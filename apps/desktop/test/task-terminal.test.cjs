@@ -10,6 +10,15 @@ const { parseTaskTerminal, parseTerminalList, parseTerminalOutput } = require('.
 const generation = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const terminal = { id: 2, taskId: 1, title: 'bash', cwd: '/task/worktree', branch: 'work', generation, sequence: 4, alive: true, status: 'idle', command: '', exitCode: 0, port: null, canRerun: false };
 
+test('local echo prompt grants are bounded, caught up and require a live integrated process', () => {
+  const output = { terminal: { ...terminal, shellIntegration: 'active' }, generation, from: 0, next: 4, data: 'test', gap: false, more: false, inputPreview: { prompt: 2 } };
+  assert.deepEqual(parseTerminalOutput(output, 1, 2), output);
+  for (const inputPreview of [null, {}, { prompt: 0 }, { prompt: -1 }, { prompt: 5 }, { prompt: '2' }, { prompt: 1.5 }])
+    assert.throws(() => parseTerminalOutput({ ...output, inputPreview }, 1, 2));
+  for (const overrides of [{ alive: false }, { shellIntegration: undefined }, { shellIntegration: 'disabled' }, { sequence: 8 }])
+    assert.throws(() => parseTerminalOutput({ ...output, terminal: { ...output.terminal, ...overrides }, ...(overrides.sequence ? { more: true } : {}) }, 1, 2));
+});
+
 test('terminal replies validate task, generation, ordered offsets and bounds', () => {
   assert.deepEqual(parseTaskTerminal(terminal, 1, 2), terminal);
   const output = { terminal, generation, from: 0, next: 4, data: 'test', gap: false, more: false };
@@ -100,7 +109,8 @@ test('serving port handoff uses the actual managed remote forward and cleans its
   const client = { state: () => ({ scope: { id: generation, environment: { kind: 'remote', hostId: 'remote' } } }), execute: async (_window, _scope, _key, _mutation, operation) => operation(endpoint, controller.signal) };
   const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); });
   const handler = handlers.get('task-terminal:open-port'), event = { senderFrame: {}, sender: { id: 11 } };
-  await handler(event, generation, { taskId: 1, terminalId: 2, port: 3000 });
+  const openedService = await handler(event, generation, { taskId: 1, terminalId: 2, port: 3000 });
+  assert.equal(openedService.url, 'https://127.0.0.1:49321/');
   assert.deepEqual(opened, ['https://127.0.0.1:49321/']); assert.equal(added, 1); assert.equal(subscriptions, 0);
   await handler(event, generation, { taskId: 1, terminalId: 2, port: 3000 }); assert.equal(added, 1);
   forwards = [{ id: 'saved', remotePort: 3000, phase: 'unavailable', boundPort: null }];
@@ -214,7 +224,7 @@ test('browser handoff freshly verifies owned sockets, IPv6, path confinement and
   context.after(stop);
   const handler = handlers.get('task-terminal:open-port'), event = { senderFrame: {}, sender: { id: 11 } };
   const open = () => handler(event, generation, { taskId: 1, terminalId: 2, port: 4200 });
-  await open();
+  assert.equal((await open()).url, 'https://[::1]:4200/app/');
   assert.deepEqual(opened, ['https://[::1]:4200/app/']);
   assert.equal(calls, 1);
   closed = true;

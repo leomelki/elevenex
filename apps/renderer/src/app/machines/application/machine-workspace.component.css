@@ -25,7 +25,3 @@ ex-skeleton { width: min(100%, 360px); }
 .waiting-region, .snapshot-region { flex: none; }
 .waiting-creations { max-height: 160px; overflow: auto; overscroll-behavior: contain; }
 .as-of { max-width: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: var(--text-ui-line); }
-
-.terminal-browser-service { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-6); text-align: center; color: var(--ink-muted); }
-.terminal-browser-service h2 { color: var(--ink); font: var(--text-title-weight) var(--text-title-size)/var(--text-title-line) var(--font-sans); margin: 0; }
-.terminal-browser-service p { margin: 0; }

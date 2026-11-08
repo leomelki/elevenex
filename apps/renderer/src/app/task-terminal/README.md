@@ -89,6 +89,35 @@ history is bounded to 256 boundaries within the retained output window; expirati
 uses the existing history-gap notice. Engines without grid metadata retain the
 original output contract.
 
+Integrated shells support local input prediction through an optional
+`inputPreview.prompt` output field. The backend grants it only at an authenticated
+shell prompt, on the final output page, and revokes it on submission, control
+input, command start, integration disable or process exit. The renderer consumes
+each prompt grant once; delayed pre-submission replies cannot reenable prediction.
+A new grant racing with user input is discarded. New grants require an output
+read started after earlier input acknowledgements, since reads and input requests
+can travel independently. Older engines and plain shells continue to display
+only remote echo.
+
+`TerminalLocalEcho` owns a transient, inaccessible overlay above xterm's cells.
+Ordinary ASCII typing and end-of-line backspace appear immediately while the
+existing bounded queue sends input in order. Confirmed server screen/cursor states
+retire predictions, including coalesced echoes and ANSI shell redraws. Predictions
+never enter the authoritative buffer, history, selection, search or agent context.
+Input acknowledgements wake output polling without the usual idle polling delay.
+No input is retried or replayed.
+
+Prediction is intentionally conservative: Enter, editing/history/control keys,
+bracketed paste, Unicode input, line wrapping, shell suggestions to the right,
+alternate screens and mouse-tracking applications use remote echo. It stops on
+unexpected output, selection, focus loss, scrolling, resize, detach, disabled
+input, transport failure or five seconds without confirmation. At most 256 edits
+are retained. It resumes at a fresh authenticated prompt; command output and
+password/program input always remain server controlled. This improves shell
+typing latency without changing the remote line editor or terminal protocol.
+The reusable `terminal-local-echo.mjs` capture scenario exercises trusted typing,
+partial echoes, deletion and password transitions on the terminal preview.
+
 ANSI is rendered by the installed xterm 6 adapter, loaded lazily. Its matching
 WebGL addon draws Powerline caps/separators, box drawing and blocks to cell edges,
 independent of font ascent, line height and letter spacing. The DOM renderer's
@@ -197,8 +226,14 @@ writing is preserved. It restores chat focus and never sends a prompt. Archived
 conversations cannot receive this action.
 
 A discovered process-owned TCP listening port produces `TerminalBrowserIntent`
-with scope/task/terminal/port, never an output URL. The workspace selects Browser;
-main rechecks the live terminal and opens its service in the system browser.
+with scope/task/terminal/port, never an output URL. The workspace keeps Terminal
+visible; main rechecks the live terminal and opens its service in the desktop's
+system browser. This is independent of the embedded Browser feature. The optional
+`url` in the successful reply is the actual desktop-local address, including the
+managed forward's bound port for SSH services. `TaskTerminal.browserState`
+accepts readonly terminal ID, busy/error and URL feedback from its owner. Feedback
+is shown only for the matching task and active terminal; the address can be
+selected and copied for manual testing. Older replies without a URL remain valid.
 Discovery reads actual listeners belonging to the PTY and its descendants,
 including silent servers and background jobs. Printed URLs only refine the
 protocol and a confined pathname of a confirmed listener; they cannot create a

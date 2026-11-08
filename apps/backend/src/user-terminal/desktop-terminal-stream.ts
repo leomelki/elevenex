@@ -46,6 +46,7 @@ export class DesktopTerminalStream {
   } | null = null;
 
   private promptReady = false;
+  private previewPrompt: number | undefined;
   private commandStarted = false;
   private submittedInput = false;
   private typeahead = false;
@@ -124,6 +125,7 @@ export class DesktopTerminalStream {
       this.tracking.event(event);
       this.integrationState = 'disabled';
       this.promptReady = false;
+      this.previewPrompt = undefined;
       this.rerunCommand = null;
       return;
     }
@@ -143,11 +145,13 @@ export class DesktopTerminalStream {
           : null;
     } else if (event.type === 'ready') {
       this.promptReady = true;
+      this.previewPrompt = event.at;
       this.submittedInput = false;
       this.typeahead = false;
       this.inputDuringCommand = false;
     } else {
       this.promptReady = false;
+      this.previewPrompt = undefined;
       if (event.type === 'started') {
         if (!this.tracking.current?.command) {
           this.command = 'Shell command';
@@ -185,6 +189,9 @@ export class DesktopTerminalStream {
       this.sizes.shift();
   }
   input(data: string): void {
+    // Only a shell-authenticated prompt can authorize prediction. Submission,
+    // history/editing keys, paste framing and program input revoke that grant.
+    if (/[^\x20-\x7e\x7f\x08]/.test(data)) this.previewPrompt = undefined;
     // An unfinished/edited prompt must never receive an injected rerun. We only
     // invalidate readiness here; command text comes exclusively from shell hooks.
     if (data) {
@@ -208,6 +215,7 @@ export class DesktopTerminalStream {
     this.tracking.interrupt(this.sequence);
     this.processExited = true;
     this.promptReady = false;
+    this.previewPrompt = undefined;
     this.exitCode = Math.max(0, Math.min(255, code));
     this.services.clear();
     this.commandStatus = code ? 'failed' : 'exited';
@@ -254,6 +262,8 @@ export class DesktopTerminalStream {
       more: next < this.sequence,
       size: { cols: size.cols, rows: size.rows },
       commandStarts: this.tracking.starts(from, next),
+      ...(next === this.sequence && this.previewPrompt !== undefined
+        ? { inputPreview: { prompt: this.previewPrompt } } : {}),
     };
   }
 }

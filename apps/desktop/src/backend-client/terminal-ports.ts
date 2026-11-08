@@ -163,10 +163,9 @@ export function registerTerminalPorts(
           if (!current()) throw new Error("The backend changed");
           const host = environment.kind === 'remote' ? '127.0.0.1' : service.host;
           const authority = host.includes(':') ? `[${host}]` : host;
-          await open(
-            `${service.protocol}://${authority}:${localPort}${service.path}`,
-          );
-          return { accepted: true as const };
+          const url = `${service.protocol}://${authority}:${localPort}${service.path}`;
+          await open(url);
+          return { accepted: true as const, url };
         },
         25000,
       );

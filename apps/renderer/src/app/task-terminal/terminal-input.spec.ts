@@ -3,6 +3,20 @@ import { TerminalInputQueue } from "./terminal-input";
 const target = { scopeId: "scope", taskId: 1, terminalId: 1, generation: "original" };
 
 describe("User terminal input ownership", () => {
+  it('accepts prediction only for queued input and stays non-idle until acknowledgement', async () => {
+    let complete!: (accepted: boolean) => void;
+    const send = vi.fn(() => new Promise<boolean>(resolve => { complete = resolve; }));
+    const queue = new TerminalInputQueue(send, vi.fn());
+    expect(queue.push('unbound')).toBe(false);
+    queue.bind(target); expect(queue.idle).toBe(true);
+    expect(queue.push('typing')).toBe(true); expect(queue.idle).toBe(false);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(queue.idle).toBe(false);
+    expect(queue.push('x'.repeat(128 * 1024 + 1))).toBe(false);
+    complete(true);
+    await vi.waitFor(() => expect(queue.idle).toBe(true));
+    queue.dispose(); expect(queue.push('closed')).toBe(false);
+  });
   it("serializes input without losing large Unicode pastes", async () => {
     const sent: string[] = [];
     let running = 0;

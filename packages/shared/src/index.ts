@@ -48,7 +48,7 @@ export interface InvokeContracts {
   'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
-  'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true; readonly url?: string }> };
   'task-terminal:list': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskTerminalList> };
   'task-terminal:create': { args: [scopeId: string, input: TaskTerminalCreate]; result: BackendResult<TaskTerminal> };
   'task-terminal:commands': { args: [scopeId: string, input: TaskTerminalCommandsRead]; result: BackendResult<TaskTerminalCommands> };
@@ -165,7 +165,7 @@ export interface ElevenexBridge {
   codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
-  taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true; readonly url?: string }>>;
   taskTerminalList(scopeId: string, taskId: number): Promise<BackendResult<TaskTerminalList>>;
   taskTerminalCreate(scopeId: string, input: TaskTerminalCreate): Promise<BackendResult<TaskTerminal>>;
   taskTerminalCommands(scopeId: string, input: TaskTerminalCommandsRead): Promise<BackendResult<TaskTerminalCommands>>;

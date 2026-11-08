@@ -4,10 +4,12 @@ import { type IMarker, Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { findTerminalMatches } from "./terminal-search";
 import { TerminalCellRenderer } from "./terminal-cell-renderer";
+import { TerminalLocalEcho } from './terminal-local-echo';
 
 /** DOM/ANSI ownership only. No transport, process or Angular output subscriptions. */
 export class TerminalSurface {
   readonly terminal: Terminal;
+  readonly localEcho: TerminalLocalEcho;
   private readonly fitAddon = new FitAddon();
   private readonly disposers: { dispose(): void }[] = [];
   private observer?: ResizeObserver;
@@ -27,7 +29,7 @@ export class TerminalSurface {
   sequence = 0;
   generation: string | null = null;
   constructor(
-    input: (data: string) => void,
+    input: (data: string) => boolean | void,
     private readonly resized: (cols: number, rows: number) => void,
     private readonly retainStyles: () => TerminalStyleLease,
   ) {
@@ -46,14 +48,21 @@ export class TerminalSurface {
       linkHandler: { activate: () => {} },
     });
     this.terminal.loadAddon(this.fitAddon);
+    this.localEcho = new TerminalLocalEcho(this.terminal);
     this.disposers.push(
-      this.terminal.onData(data => { this.navigationMarker = undefined; input(data); }),
+      this.terminal.onData(data => {
+        this.navigationMarker = undefined;
+        if (input(data) !== false) this.localEcho.input(data);
+      }),
       this.terminal.onScroll(viewport => {
+        this.localEcho.suspend();
         if (viewport !== this.navigationViewport) this.navigationMarker = undefined;
       }),
       this.terminal.onResize((size) => {
+        this.localEcho.suspend();
         if (!this.replaying) resized(size.cols, size.rows);
       }),
+      this.terminal.onSelectionChange(() => this.localEcho.suspend()),
       this.terminal.parser.registerOscHandler(52, () => true),
     );
     this.terminal.attachCustomKeyEventHandler((event) => {
@@ -85,6 +94,10 @@ export class TerminalSurface {
       try {
         lease.open(() => this.terminal.open(container));
         this.styleLease = lease;
+        const element = this.terminal.element;
+        const blur = () => this.localEcho.suspend();
+        element?.addEventListener('focusout', blur);
+        this.disposers.push({ dispose: () => element?.removeEventListener('focusout', blur) });
         this.cellRenderer = new TerminalCellRenderer(this.terminal, lease);
         this.mounted = true;
       } catch (error) {
@@ -106,12 +119,14 @@ export class TerminalSurface {
     this.fit();
   }
   detach(): void {
+    this.localEcho.suspend();
     this.terminal.options.disableStdin = true;
     this.detachObservers();
     this.cellRenderer?.detach();
     this.terminal.element?.remove();
   }
   setEnabled(enabled: boolean): void {
+    if (!enabled) this.localEcho.suspend();
     this.terminal.options.disableStdin = !enabled;
   }
   focus(): void {
@@ -196,6 +211,7 @@ export class TerminalSurface {
     this.navigationViewport = undefined;
   }
   reset(): void {
+    this.localEcho.reset();
     this.clearMarkers();
     this.terminal.reset();
     this.sequence = 0;
@@ -284,6 +300,7 @@ export class TerminalSurface {
     this.resizeFrame = undefined;
   }
   dispose(): void {
+    this.localEcho.suspend();
     this.disposed = true;
     this.clearMarkers();
     this.detachObservers();

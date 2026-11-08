@@ -175,6 +175,12 @@ export function parseTerminalOutput(
     });
     if (commandStarts?.some((marker, index) => index > 0 &&
       (marker.id <= commandStarts[index - 1]!.id || marker.at <= commandStarts[index - 1]!.at))) throw invalidResponse();
+    const rawPreview = value['inputPreview'];
+    const inputPreview = rawPreview === undefined ? undefined : {
+      prompt: integer(object(rawPreview)['prompt'], 1, next),
+    };
+    if (inputPreview && (value['more'] || !gen || !terminal.alive || terminal.shellIntegration !== 'active'))
+      throw invalidResponse();
     return {
       terminal,
       generation: gen,
@@ -185,6 +191,7 @@ export function parseTerminalOutput(
       more: value["more"],
       ...(size === undefined ? {} : { size }),
       ...(commandStarts === undefined ? {} : { commandStarts }),
+      ...(inputPreview === undefined ? {} : { inputPreview }),
     };
   } catch {
     throw invalidResponse();

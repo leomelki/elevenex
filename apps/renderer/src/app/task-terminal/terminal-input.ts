@@ -15,6 +15,9 @@ export class TerminalInputQueue {
   private closed = false;
   private revision = 0;
   blocked = false;
+  get idle(): boolean {
+    return !this.sending && !this.pending && !this.blocked && !this.closed && !!this.target;
+  }
   constructor(
     private readonly send: (data: string, target: TerminalInputTarget) => Promise<boolean>,
     private readonly failed: (message: string) => void,
@@ -26,20 +29,21 @@ export class TerminalInputQueue {
     this.reconnect();
     this.target = { ...target };
   }
-  push(data: string): void {
-    if (this.closed || this.blocked || !this.target) return;
+  push(data: string): boolean {
+    if (this.closed || this.blocked || !this.target) return false;
     if (this.pending.length + data.length > 128 * 1024) {
       this.failed("Paste is too large. Send at most 128 KiB at a time.");
-      return;
+      return false;
     }
     const bytes = this.encoder.encode(data).byteLength;
     if (this.pendingBytes + bytes > 128 * 1024) {
       this.failed("Paste is too large. Send at most 128 KiB at a time.");
-      return;
+      return false;
     }
     this.pendingBytes += bytes;
     this.pending += data;
     if (!this.sending) void this.flush();
+    return true;
   }
   private async flush(): Promise<void> {
     const target = this.target;

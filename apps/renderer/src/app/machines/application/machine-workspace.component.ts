@@ -1,6 +1,6 @@
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
-import { TaskTerminalComponent, type TerminalQuestion } from '../../task-terminal';
+import { TaskTerminalComponent, type TerminalQuestion, type TerminalBrowserState } from '../../task-terminal';
 import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
 import type { TerminalBrowserIntent } from '@elevenex/shared';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
@@ -61,7 +61,12 @@ export class MachineWorkspaceComponent {
   readonly terminalBrowser = signal<TerminalBrowserIntent | null>(null);
   readonly selectedTerminalBrowser = computed(() => { const intent = this.terminalBrowser(), selected = this.store.selected(); return intent && selected?.scopeId === intent.scopeId && selected.taskId === intent.taskId ? intent : null; });
   readonly terminalBrowserError = signal('');
+  readonly terminalBrowserUrl = signal('');
   readonly terminalBrowserBusy = signal(false);
+  readonly terminalBrowserState = computed<TerminalBrowserState | null>(() => {
+    const intent = this.selectedTerminalBrowser();
+    return intent ? { terminalId: intent.terminalId, busy: this.terminalBrowserBusy(), error: this.terminalBrowserError(), url: this.terminalBrowserUrl() } : null;
+  });
   private terminalBrowserOpening?: TerminalBrowserIntent;
   askTerminal(question: TerminalQuestion): void {
     const selected = this.store.selected();
@@ -80,19 +85,22 @@ export class MachineWorkspaceComponent {
   openTerminalPort(intent: TerminalBrowserIntent): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId) return;
-    this.terminalBrowser.set(intent); this.store.selectPanel('browser'); this.panelOpen.set(true);
+    const opening = this.terminalBrowserOpening;
+    if (opening?.scopeId === intent.scopeId && opening.taskId === intent.taskId && opening.terminalId === intent.terminalId && opening.port === intent.port) return;
+    this.terminalBrowser.set(intent);
     void this.launchTerminalPort();
   }
   async launchTerminalPort(): Promise<void> {
     const intent = this.selectedTerminalBrowser();
     if (!intent || this.terminalBrowserOpening === intent || this.store.offline()) return;
     this.terminalBrowserOpening = intent;
-    this.terminalBrowserBusy.set(true); this.terminalBrowserError.set('');
+    this.terminalBrowserBusy.set(true); this.terminalBrowserError.set(''); this.terminalBrowserUrl.set('');
     const current = () => this.terminalBrowserOpening === intent && this.selectedTerminalBrowser() === intent;
     try {
       const reply = await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port });
       if (!current()) return;
       if (!reply.ok) this.terminalBrowserError.set(reply.error.message);
+      else this.terminalBrowserUrl.set(reply.value.url ?? '');
     } catch {
       if (current()) this.terminalBrowserError.set('Could not open this service. Check the terminal and connection.');
     } finally {

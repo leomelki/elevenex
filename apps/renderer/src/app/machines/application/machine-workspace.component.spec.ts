@@ -212,4 +212,24 @@ describe('Connected workspace composition', () => {
     expect(component.selectedTerminalBrowser()).toBe(second);
   });
 
+  it('opens the external browser once, keeps Terminal visible and exposes its actual forwarded address', async () => {
+    let finish!: (reply: BackendResult<{ readonly accepted: true; readonly url?: string }>) => void;
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>(() => new Promise(resolve => { finish = resolve; }));
+    const { fixture, component } = setup(open); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    component.store.selectPanel('terminal'); component.panelOpen.set(true);
+    const selected = component.store.selected()!;
+    const intent = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 };
+    component.openTerminalPort(intent);
+    component.openTerminalPort({ ...intent });
+    expect(open).toHaveBeenCalledExactlyOnceWith(selected.scopeId, { taskId: selected.taskId, terminalId: 1, port: 4200 });
+    expect(component.panel()).toBe('terminal'); expect(component.panelOpen()).toBe(true);
+    expect(component.terminalBrowserState()?.busy).toBe(true);
+    finish({ ok: true, value: { accepted: true, url: 'http://127.0.0.1:24567/app/' } });
+    await settle(fixture);
+    expect(component.terminalBrowserState()).toEqual({ terminalId: 1, busy: false, error: '', url: 'http://127.0.0.1:24567/app/' });
+    component.store.selectSession({ taskId: '13', sessionId: '104' }); await settle(fixture);
+    expect(component.terminalBrowserState()).toBeNull();
+  });
+
 });

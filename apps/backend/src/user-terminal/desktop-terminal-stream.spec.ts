@@ -22,6 +22,37 @@ const command = (value: string) =>
   '\x07';
 
 describe('Desktop terminal process stream', () => {
+  it('authorizes input preview only at authenticated prompts and revokes it before program input', () => {
+    const stream = new DesktopTerminalStream(null, token);
+    stream.append('\x1b]133;B;bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\x07');
+    expect(stream.read(null, 0).inputPreview).toBeUndefined();
+    stream.append(prompt(0));
+    const grant = stream.read(null, 0).inputPreview;
+    expect(grant).toEqual({ prompt: stream.sequence });
+    stream.input('typing\x7f\x08');
+    expect(stream.read(stream.generation, stream.sequence).inputPreview).toEqual(grant);
+    expect(stream.canRerun).toBe(false);
+    for (const control of ['\r', '\n', '\x03', '\t', '\x1b[A', '\x1b[200~paste\x1b[201~']) {
+      stream.append(prompt(0));
+      stream.input(control);
+      expect(stream.read(stream.generation, stream.sequence).inputPreview).toBeUndefined();
+    }
+    stream.append(prompt(0)); stream.append(start);
+    expect(stream.read(stream.generation, stream.sequence).inputPreview).toBeUndefined();
+    stream.append(prompt(0)); stream.exited(0);
+    expect(stream.read(stream.generation, stream.sequence).inputPreview).toBeUndefined();
+  });
+
+  it('does not grant input preview on historical pages, scripts or untracked shells', () => {
+    const stream = new DesktopTerminalStream(null, token);
+    stream.append(prompt(0) + 'x'.repeat(40000));
+    expect(stream.read(null, 0).inputPreview).toBeUndefined();
+    expect(stream.read(stream.generation, stream.sequence).inputPreview).toBeDefined();
+    for (const plain of [new DesktopTerminalStream(), new DesktopTerminalStream({ id: 'script', file: 'node', args: [], cmd: 'node' }, token)]) {
+      plain.append(prompt(0));
+      expect(plain.read(null, 0).inputPreview).toBeUndefined();
+    }
+  });
   it('pages at resize boundaries and carries the grid that produced each page', () => {
     const stream = new DesktopTerminalStream();
     stream.append('startup');

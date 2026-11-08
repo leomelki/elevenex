@@ -78,6 +78,9 @@ export interface TaskTerminalOutput {
   readonly size?: TaskTerminalSize;
   /** Authenticated output-start boundaries within this page, at most 201. */
   readonly commandStarts?: readonly { readonly id: number; readonly at: number }[];
+  /** Authenticated shell prompt boundary, only on a caught-up output page.
+   * Missing means local input prediction must remain off (including old engines). */
+  readonly inputPreview?: { readonly prompt: number };
 }
 export interface TaskTerminalCreate {
   readonly taskId: number;

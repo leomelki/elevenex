@@ -32,6 +32,7 @@ interface SurfaceEntry {
   notice: string;
   resizing: boolean;
   reading?: Promise<void>;
+  outputRequested?: boolean;
   desiredSize?: { cols: number; rows: number };
   size?: string;
 }
@@ -41,6 +42,12 @@ export interface TerminalQuestion {
   readonly command: string;
   readonly code: number;
   readonly output: string;
+}
+export interface TerminalBrowserState {
+  readonly terminalId: number;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly url: string;
 }
 
 @Component({
@@ -59,6 +66,8 @@ export class TaskTerminalComponent {
   readonly visible = input(false);
   readonly available = input(true);
   readonly askAvailable = input(false);
+  /** External-browser handoff feedback belongs to the selected task/terminal. */
+  readonly browserState = input<TerminalBrowserState | null>(null);
   readonly question = output<TerminalQuestion>();
   readonly browserRequested = output<TerminalBrowserIntent>();
   readonly lastClosed = output<void>();
@@ -227,7 +236,8 @@ export class TaskTerminalComponent {
         (data) => {
           const active = this.surfaces.get(key);
           if (active && active === this.attached && this.canType(active))
-            active.input.push(data);
+            return active.input.push(data);
+          return false;
         },
         (cols, rows) => {
           const active = this.surfaces.get(key);
@@ -246,11 +256,20 @@ export class TaskTerminalComponent {
             target.generation,
             data,
           );
+          const active = this.surfaces.get(key);
+          if (reply.ok && active === this.attached && active) {
+            active.outputRequested = true;
+            if (!active.reading) {
+              clearTimeout(this.timer);
+              this.timer = setTimeout(() => void this.pump(active, this.revision), 0);
+            }
+          }
           return reply.ok;
         },
         (message) => {
           const active = this.surfaces.get(key);
           if (!active) return;
+          active.surface.localEcho.suspend();
           active.notice = message;
           if (active === this.attached) {
             this.notice.set(message);
@@ -320,6 +339,9 @@ export class TaskTerminalComponent {
   }
   private async readOutput(entry: SurfaceEntry, revision: number): Promise<void> {
     let more = false;
+    entry.outputRequested = false;
+    const inputRevision = entry.surface.localEcho.inputRevision;
+    const inputIdle = entry.input.idle;
     try {
       const reply = await this.store.read(
         entry.target,
@@ -329,6 +351,7 @@ export class TaskTerminalComponent {
       );
       if (this.disposed || revision !== this.revision) return;
       if (!reply) {
+        entry.surface.localEcho.suspend();
         this.timer = setTimeout(() => void this.pump(entry, revision), 1000);
         return;
       }
@@ -354,10 +377,12 @@ export class TaskTerminalComponent {
       entry.surface.generation = reply.generation;
       entry.surface.sequence = reply.next;
       if (this.disposed || revision !== this.revision) return;
+      entry.surface.localEcho.reconcile(reply.inputPreview?.prompt, inputRevision, inputIdle);
       this.store.markSeen(entry.terminal.id, reply.next);
       entry.surface.setEnabled(this.canType(entry));
       more = reply.more;
     } catch {
+      entry.surface.localEcho.suspend();
       if (revision === this.revision)
         this.notice.set(
           "Connection interrupted. Reattaching does not replay input.",
@@ -366,7 +391,7 @@ export class TaskTerminalComponent {
     if (!this.disposed && revision === this.revision)
       this.timer = setTimeout(
         () => void this.pump(entry, revision),
-        more ? 0 : 100,
+        more || entry.outputRequested ? 0 : 100,
       );
   }
   private async resize(entry: SurfaceEntry): Promise<void> {
