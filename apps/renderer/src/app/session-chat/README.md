@@ -32,6 +32,11 @@ Older engines omit the capability and retain their original send contract.
   epochs and feedback. It cancels reads on navigation, hiding or destruction.
   Pending writes can finish on their original backend; their replies never
   change a different conversation. No write is replayed by reconnect or refresh.
+  Idle heartbeats retain unchanged conversation inputs. Transient background
+  read failures retain the transcript and retry quietly; initial/explicit reads
+  and unsupported-engine errors still expose recovery feedback.
+  Confirmed non-configuration actions reconcile through that same quiet,
+  incremental read path. Repeated visibility notifications share the active read.
 - `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
   scope. Unresolved writes are not evicted silently. A failed send restores its
   text ahead of any newly typed draft. An uncertain outcome requires checking

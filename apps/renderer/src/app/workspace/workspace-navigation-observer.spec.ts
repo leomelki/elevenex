@@ -4,6 +4,23 @@ import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('WorkspaceNavigationObserver', () => {
+  it('retries a revision whose background reconciliation failed', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    let revision = 1;
+    const changed = vi.fn(async () => undefined), failed = vi.fn();
+    const observer = new WorkspaceNavigationObserver(document, async () => ({ ok: true, value: { revision, version: 1 } }), () => true, changed, failed);
+    await vi.advanceTimersByTimeAsync(0);
+    revision++;
+    changed.mockRejectedValueOnce(new Error('Transient failure'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(failed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(changed).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(changed).toHaveBeenCalledTimes(3);
+    observer.dispose();
+  });
+
   it('reads the invalidation revision before the snapshot and refreshes only when it changes', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     let revision = 1;

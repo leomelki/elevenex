@@ -323,15 +323,16 @@ export class WorkspaceStore {
 
   private async refreshVisible(): Promise<void> {
     if (this.restoring()) { await this.refresh(); return; }
-    // Keep later page cursors stable until the user explicitly returns to page one.
-    if (this.projectPage() || this.taskPage()) {
-      const scope = this.scopeId();
-      if (!scope) return;
-      const projects = await this.read(scope, () => this.bridge.workspaceProjects(scope, { limit: 50, ...(this.currentProjectCursor ? { cursor: this.currentProjectCursor } : {}) }));
-      if (projects) { this.projectRecords.set(projects.items); this.projectsCursor.set(projects.nextCursor); }
-      await this.loadTasks(this.currentTaskCursor); return;
-    }
-    await this.refresh();
+    const scope = this.scopeId(), revision = this.revision, listRevision = this.listRevision;
+    if (!scope) return;
+    const current = () => this.current(scope, revision) && this.listRevision === listRevision;
+    // Revalidate in place. Polling must not enter navigation's loading/error UI
+    // or replace the visible page after the user has navigated elsewhere.
+    const projects = await this.read(scope, () => this.bridge.workspaceProjects(scope, { limit: 50, ...(this.currentProjectCursor ? { cursor: this.currentProjectCursor } : {}) }), current, true);
+    if (!projects || !current()) return;
+    this.projectRecords.set(projects.items); this.projectsCursor.set(projects.nextCursor);
+    if (!this.projectPage() && this.activeProject() !== 'all' && !projects.items.some(project => String(project.id) === this.activeProject())) this.activeProject.set('all');
+    await this.loadTaskWindow(this.currentTaskCursor, true);
   }
   private currentTaskCursor?: string;
   private currentProjectCursor?: string;
@@ -367,20 +368,25 @@ export class WorkspaceStore {
   }
 
   async loadTasks(cursor?: string): Promise<void> {
+    await this.loadTaskWindow(cursor, false);
+  }
+
+  private async loadTaskWindow(cursor: string | undefined, background: boolean): Promise<void> {
     const scope = this.scopeId();
     if (!scope) return;
     this.leaveResume();
     const revision = ++this.listRevision;
     this.currentTaskCursor = cursor;
-    this.loading.set(true); this.error.set(null);
+    if (!background) { this.loading.set(true); this.error.set(null); }
     const projectId = this.activeProject() === 'all' ? null : Number(this.activeProject());
-    const result = await this.read(scope, () => this.bridge.workspaceTasks(scope, { projectId, state: this.closed() ? 'finished' : 'active', limit: 20, ...(cursor ? { cursor } : {}) }), () => revision === this.listRevision);
-    if (!result || revision !== this.listRevision || this.scopeId() !== scope) { if (revision === this.listRevision) this.loading.set(false); return; }
-    await this.hydrateTasks(scope, revision, result, cursor);
+    const result = await this.read(scope, () => this.bridge.workspaceTasks(scope, { projectId, state: this.closed() ? 'finished' : 'active', limit: 20, ...(cursor ? { cursor } : {}) }), () => revision === this.listRevision, background);
+    if (!result || revision !== this.listRevision || this.scopeId() !== scope) { if (!background && revision === this.listRevision) this.loading.set(false); return; }
+    await this.hydrateTasks(scope, revision, result, cursor, undefined, background);
   }
 
-  private async hydrateTasks(scope: string, revision: number, result: WorkspacePage<WorkspaceTask>, cursor?: string, restored?: RestoredTaskWindow): Promise<void> {
-    this.archives.retain(this.closed() ? [] : result.items.map(task => task.id));
+  private async hydrateTasks(scope: string, revision: number, result: WorkspacePage<WorkspaceTask>, cursor?: string, restored?: RestoredTaskWindow, background = false): Promise<void> {
+    // Keep the previous archived window until background hydration succeeds.
+    this.archives.retain(this.closed() ? [] : [...result.items, ...(background ? this.taskRecords() : [])].map(task => task.id));
     const archive = restored?.archive;
     if (archive) this.archives.acceptRestoredWindow(scope, archive.taskId, archive.page, archive.cursor);
     const sessions = new Map<number, readonly WorkspaceSession[]>();
@@ -392,17 +398,18 @@ export class WorkspaceStore {
         const task = result.items[index++];
         if (!task) continue;
         const page = restored?.sessions?.taskId === task.id ? restored.sessions.page
-          : await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, limit: 20, order: 'latest' }), () => revision === this.listRevision);
+          : await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, limit: 20, order: 'latest' }), () => revision === this.listRevision, background);
         if (page) { sessions.set(task.id, page.items); cursors.set(task.id, page.nextCursor); }
         if (revision === this.listRevision && this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && archive?.taskId !== task.id) await this.archives.refresh(scope, task.id);
       }
     }));
     if (revision !== this.listRevision || this.scopeId() !== scope) return;
+    this.archives.retain(this.closed() ? [] : result.items.map(task => task.id));
     const previous = this.selectedSession(), selection = this.chosen();
     if (previous && previous.status !== 'archived' && selection && sessions.has(selection.taskId) && !sessions.get(selection.taskId)?.some(session => session.id === previous.id)) sessions.set(selection.taskId, [...(sessions.get(selection.taskId) ?? []).slice(0, 19), previous].sort((a,b) => a.id - b.id));
     this.taskRecords.set(result.items); this.sessionRecords.set(sessions); this.sessionCursors.set(cursors); this.tasksCursor.set(result.nextCursor); this.taskPage.set(!!cursor);
     if (this.chosen() && !result.items.some(task => task.id === this.chosen()?.taskId)) this.chosen.set(null);
-    if (!this.restoring()) this.loading.set(false);
+    if (!background && !this.restoring()) this.loading.set(false);
   }
 
   selectSession(selection: { readonly taskId: string; readonly sessionId: string }): void {
@@ -853,14 +860,20 @@ export class WorkspaceStore {
     this.preparationTimer = setTimeout(() => { this.preparationTimer = undefined; void this.prepareTask(scope, taskId, revision, started, attempt + 1); }, Math.min(400 * 2 ** Math.min(attempt, 4), 5000));
   }
   private stopPreparation(): void { this.preparationRevision++; clearTimeout(this.preparationTimer); this.preparationTimer = undefined; this.pendingTask.set(null); this.preparationPaused.set(false); }
-  private async read<T>(scope: string, operation: () => Promise<BackendResult<T>>, accept: () => boolean = () => true): Promise<T | null> {
+  private async read<T>(scope: string, operation: () => Promise<BackendResult<T>>, accept: () => boolean = () => true, background = false): Promise<T | null> {
     if (!this.valid(scope) || !accept()) return null;
     try {
       const result = await operation();
       if (!this.valid(scope) || !accept()) return null;
       if (result.ok) return result.value;
+      if (background) throw new Error(result.error.message);
       this.error.set(result.error.message);
-    } catch { if (this.valid(scope) && accept()) this.error.set('The backend could not be reached. Refresh to reconnect.'); }
+    } catch (error) {
+      // The observer retries this revision; a partial refresh never removes the
+      // last good session window or creates a transient error banner.
+      if (background) throw error;
+      if (this.valid(scope) && accept()) this.error.set('The backend could not be reached. Refresh to reconnect.');
+    }
     return null;
   }
   private async mutate<T>(scope: string, operation: () => Promise<BackendResult<T>>): Promise<T | null> {

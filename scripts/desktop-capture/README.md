@@ -464,6 +464,12 @@ questions, keyboard sending, editable drafts while streaming, navigation retenti
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
 
+`scenarios/background-refresh.mjs` samples real frames during delayed background
+navigation and Git reads, transient failures and recovery. It checks retained
+chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and
+stable geometry in both themes and narrow reduced-motion layouts. Run against
+the connected workspace preview with `--url`.
+
 `scenarios/session-opening-scroll.mjs` checks that switching and reopening long
 sessions starts at the end on the first rendered frame. It also checks reading
 position through refresh, both themes, narrow layouts and reduced motion using

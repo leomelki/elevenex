@@ -24,6 +24,24 @@ function setup() {
 afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('WorkspaceTaskGitService', () => {
+  it('keeps background status checks quiet and coalesced through failure and recovery', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { git, bridge } = setup(); await settle();
+    let complete!: (value: BackendResult<WorkspaceGitSummary>) => void;
+    bridge.workspaceGit.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(git.loading()).toBe(false); expect(git.summary()).toEqual(summary);
+    window.dispatchEvent(new Event('focus')); await settle();
+    expect(bridge.workspaceGit).toHaveBeenCalledTimes(2);
+    complete({ ok: false, error: { code: 'transport', message: 'Temporary failure' } }); await settle();
+    expect(git.error()).toBeNull(); expect(git.summary()).toEqual(summary);
+    bridge.workspaceGit.mockResolvedValueOnce(ok({ ...summary, files: 3 }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(git.summary()?.files).toBe(3); expect(git.error()).toBeNull();
+    bridge.workspaceGit.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Explicit failure' } });
+    await git.refresh(); expect(git.error()).toBe('Explicit failure');
+  });
+
   it('preloads once and skips unchanged polls, including upstream-only updates', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { git, bridge } = setup(); await settle();

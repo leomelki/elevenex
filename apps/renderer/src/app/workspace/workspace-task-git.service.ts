@@ -31,6 +31,7 @@ export class WorkspaceTaskGitService {
   private disposed = false;
   private selectionEpoch = 0;
   private pollTimer?: ReturnType<typeof setTimeout>;
+  private reading = false;
   private previewGeneration = 0;
   private previewRevision?: string;
   private previewCheckedAt = 0;
@@ -38,35 +39,36 @@ export class WorkspaceTaskGitService {
 
   constructor() {
     let previousTask: number | undefined;
-    effect(() => { const key = this.key(), task = this.store.selected()?.taskId; untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => { const key = this.key(), task = this.store.selected()?.taskId; untracked(() => { this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
     effect(() => {
       const selected = this.store.selected(), scope = this.backend.state().scope?.id;
       if (selected && selected.scopeId !== scope) untracked(() => {
-        this.revision++; this.previewGeneration++; this.loading.set(false);
+        this.revision++; this.previewGeneration++; this.reading = false; this.loading.set(false);
         clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer);
         if (this.busy()) { this.uncertain.set(true); this.error.set('The git operation is unconfirmed. Check its status when the machine is back.'); }
         this.busy.set(null); this.phase.set(null);
       });
     });
-    const refreshVisible = () => { if (!this.document.hidden) void this.refresh(); };
+    const refreshVisible = () => { if (!this.document.hidden) void this.refresh(true); };
     this.document.addEventListener('visibilitychange', refreshVisible);
     this.document.defaultView?.addEventListener('focus', refreshVisible);
     inject(DestroyRef).onDestroy(() => { this.disposed = true; this.revision++; this.clearCommitPreview(); clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.document.removeEventListener('visibilitychange', refreshVisible); this.document.defaultView?.removeEventListener('focus', refreshVisible); });
   }
 
-  async refresh(): Promise<void> {
+  async refresh(background = false): Promise<void> {
     const selected = this.store.selected();
-    if (!selected || !this.key() || this.loading() || this.busy() || !this.current(selected.scopeId, selected.taskId)) return;
+    if (!selected || !this.key() || this.reading || this.busy() || !this.current(selected.scopeId, selected.taskId)) return;
     clearTimeout(this.pollTimer);
     const revision = ++this.revision;
-    this.loading.set(true); this.error.set(null);
+    this.reading = true;
+    if (!background) { this.loading.set(true); this.error.set(null); }
     try {
       const result = await this.bridge.workspaceGit(selected.scopeId, selected.taskId);
       if (!this.current(selected.scopeId, selected.taskId) || revision !== this.revision) return;
       if (result.ok) { this.acceptSummary(result.value); this.uncertain.set(false); void this.preloadCommitPreview(selected.scopeId, selected.taskId); }
-      else this.error.set(result.error.message);
-    } catch { if (this.current(selected.scopeId, selected.taskId)) this.error.set('Git status could not be loaded.'); }
-    finally { if (revision === this.revision) { this.loading.set(false); this.schedule(); } }
+      else if (!background) this.error.set(result.error.message);
+    } catch { if (!background && this.current(selected.scopeId, selected.taskId) && revision === this.revision) this.error.set('Git status could not be loaded.'); }
+    finally { if (revision === this.revision) { this.reading = false; this.loading.set(false); this.schedule(); } }
   }
 
   async perform(input: GitCommand): Promise<boolean> {
@@ -74,7 +76,7 @@ export class WorkspaceTaskGitService {
     if (this.store.offline()) { this.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return false; }
     if (!selected || this.busy() || this.uncertain() || !this.current(selected.scopeId, selected.taskId)) return false;
     const epoch = this.selectionEpoch;
-    this.revision++; this.loading.set(false);
+    this.revision++; this.reading = false; this.loading.set(false);
     this.clearCommitPreview();
     clearTimeout(this.pollTimer);
     this.busy.set(input.type); this.error.set(null);
@@ -155,6 +157,6 @@ export class WorkspaceTaskGitService {
   private schedule(): void {
     clearTimeout(this.pollTimer);
     if (this.disposed || this.document.hidden || !this.store.selected() || this.store.offline()) return;
-    this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (!this.document.hidden) void this.refresh(); }, 5000);
+    this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (!this.document.hidden) void this.refresh(true); }, 5000);
   }
 }

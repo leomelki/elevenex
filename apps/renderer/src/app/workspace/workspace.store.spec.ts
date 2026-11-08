@@ -181,6 +181,61 @@ describe('Workspace resume', () => {
 });
 
 describe('WorkspaceStore', () => {
+  it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup(); await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    store.error.set('Keep action feedback');
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true }));
+    let complete!: (value: BackendResult<WorkspacePage<WorkspaceSession>>) => void;
+    bridge.workspaceSessions.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.loading()).toBe(false);
+    expect(store.error()).toBe('Keep action feedback');
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['5']);
+    expect(store.selectedSession()?.id).toBe(5);
+    complete({ ok: false, error: { code: 'transport', message: 'Temporary failure' } });
+    await settle();
+    expect(store.error()).toBe('Keep action feedback');
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['5']);
+    bridge.workspaceSessions.mockResolvedValueOnce(ok(page([{ ...session, name: 'Updated in background' }])));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()?.name).toBe('Updated in background');
+    expect(store.loading()).toBe(false);
+    expect(store.error()).toBe('Keep action feedback');
+  });
+
+  it('discards a background project reply after explicit navigation', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup(); await start();
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true }));
+    let complete!: (value: BackendResult<WorkspacePage<WorkspaceProject>>) => void;
+    bridge.workspaceProjects.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await vi.advanceTimersByTimeAsync(5000);
+    await store.selectProject('1');
+    const calls = bridge.workspaceTasks.mock.calls.length;
+    complete(ok(page([]))); await settle();
+    expect(store.activeProject()).toBe('1');
+    expect(store.projects()).toHaveLength(1);
+    expect(bridge.workspaceTasks).toHaveBeenCalledTimes(calls);
+  });
+
+  it('retains the selected archive if a replacement background task window fails', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup(true);
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.state === 'archived' ? [{ ...session, id: 8, status: 'archived' }] : [session])));
+    await start();
+    await store.loadArchivedSessions({ taskId: '3', page: 'latest' });
+    store.selectSession({ taskId: '3', sessionId: '8' });
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true, sessionArchiveHistory: true }));
+    bridge.workspaceTasks.mockResolvedValueOnce(ok(page([{ ...task, id: 9 }])));
+    bridge.workspaceSessions.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Temporary failure' } });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()).toMatchObject({ id: 8, status: 'archived' });
+    expect(store.tasks()[0]?.id).toBe('3');
+    expect(store.error()).toBeNull();
+  });
+
   it('checks names against the backend and rejects replies after scope changes or cancellation', async () => {
     const { store, bridge, start, emit } = setup(); await start();
     const provider = store.projectNameProvider();

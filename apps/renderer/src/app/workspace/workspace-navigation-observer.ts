@@ -38,8 +38,8 @@ export class WorkspaceNavigationObserver {
       if (this.stopped) return;
       if (result.ok && result.value.version === 1) {
         const changed = this.revision === undefined || result.value.revision !== this.revision;
-        this.revision = result.value.revision;
         if (changed) await this.changed();
+        this.revision = result.value.revision;
       } else if (initial) this.failed(!result.ok && result.error.code === 'http' && result.error.status === 404 ? 'This backend needs an update before it can open the workspace.' : 'The workspace could not connect. Refresh to try again.');
     } catch { if (initial && !this.stopped) this.failed('The workspace could not connect. Refresh to try again.'); }
     finally { this.reading = false; this.schedule(); }

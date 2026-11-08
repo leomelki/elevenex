@@ -101,6 +101,29 @@ function setup() {
   store.open({ scopeId: "scope", taskId: 1, sessionId: 2 }, false);
   return { store, bridge, scope };
 }
+
+it('retains conversation inputs on idle heartbeats and keeps transient poll failures quiet', async () => {
+  const { store, bridge } = setup(); await settle();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('prompt', 'user', 'Keep this conversation')] })));
+  await store.refresh();
+  const exchanges = store.exchanges(), items = store.items(), previousState = store.state();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, state: structuredClone(state) })));
+  await vi.advanceTimersByTimeAsync(80);
+  expect(store.exchanges()).toBe(exchanges);
+  expect(store.items()).toBe(items);
+  expect(store.state()).toBe(previousState);
+  expect(store.loading()).toBe(false);
+  bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Temporary failure' } });
+  await vi.advanceTimersByTimeAsync(80);
+  expect(store.error()).toBe('');
+  expect(store.exchanges()).toBe(exchanges);
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, events: [{ type: 'item', item: item('answer', 'assistant', 'New output still arrives') }] })));
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(store.exchanges()[0]?.answer).toBe('New output still arrives');
+  bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Explicit failure' } });
+  await store.refresh();
+  expect(store.error()).toBe('Explicit failure');
+});
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
@@ -111,6 +134,78 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it.each(['idle', 'running'] as const)('keeps HTTP read failures quiet while %s and resumes from the same cursor', async (phase) => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [item('prompt', 'user', 'Existing prompt')], state: { ...state, phase },
+    })));
+    await store.refresh();
+    store.setDraft('Next thought');
+    const exchanges = store.exchanges(), previousState = store.state();
+    for (const status of [500, 502, 503]) {
+      bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'http', status, message: 'Backend request failed.' } });
+      await vi.advanceTimersByTimeAsync(status === 500 ? 80 : 3000);
+      expect(store.error()).toBe('');
+      expect(store.loading()).toBe(false);
+      expect(store.uncertain()).toBe('');
+      expect(store.exchanges()).toBe(exchanges);
+      expect(store.state()).toBe(previousState);
+      expect(store.draft()).toBe('Next thought');
+    }
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false, events: [{ type: 'item', item: item('answer', 'assistant', 'Recovered output') }],
+    })));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(bridge.sessionChatRead.mock.lastCall?.[1].after).toBe('cursor');
+    expect(store.exchanges()[0]?.answer).toBe('Recovered output');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a successful send quietly without replaying it when the following read fails', async () => {
+    const { store, bridge } = setup(); await settle();
+    const read = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(read.promise);
+    await store.submit({ text: 'Delivered prompt', intent: 'send', context: [] });
+    expect(store.loading()).toBe(false);
+    expect(bridge.sessionChatRead.mock.lastCall?.[1].after).toBe('cursor');
+    read.resolve({ ok: false, error: { code: 'http', status: 503, message: 'Backend request failed.' } });
+    await settle();
+    expect(store.error()).toBe('');
+    expect(store.uncertain()).toBe('');
+    expect(store.draft()).toBe('');
+    expect(store.exchanges().at(-1)?.prompt).toBe('Delivered prompt');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false, events: [{ type: 'item', item: item('receipt', 'user', 'Delivered prompt') }],
+    })));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(store.exchanges().map(exchange => exchange.id)).toEqual(['receipt']);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares an active background read across repeated visibility notifications', async () => {
+    const { bridge } = setup(); await settle();
+    const read = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(read.promise);
+    await vi.advanceTimersByTimeAsync(80);
+    for (let i = 0; i < 3; i++) document.dispatchEvent(new Event('visibilitychange'));
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(2);
+    read.resolve(ok(page(2, { reset: false })));
+    await settle();
+    await vi.advanceTimersByTimeAsync(80);
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(3);
+  });
+
+  it('still exposes missing-chat and rejected-send errors', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 404, message: 'Missing chat' } });
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.error()).toContain('Chat is unavailable');
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 503, message: 'Backend request failed.' } });
+    await store.submit({ text: 'Rejected prompt', intent: 'send', context: [] });
+    expect(store.error()).toBe('Backend request failed.');
+    expect(store.draft()).toBe('Rejected prompt');
+  });
+
   it("preserves the paired arrival when a saved receipt beats the first painted optimistic turn", async () => {
     const { store, bridge } = setup();
     await settle();

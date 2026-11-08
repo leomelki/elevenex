@@ -6,6 +6,21 @@ const session: WorkspaceSession = { id: 21, taskId: 1, repoId: 1, name: 'Saved c
 const ok = (items: readonly WorkspaceSession[], nextCursor: string | null = null): BackendResult<WorkspacePage<WorkspaceSession>> => ({ ok: true, value: { items, nextCursor } });
 
 describe('scoped archived session windows', () => {
+  it('keeps loaded archives interactive through pending and failed background checks', async () => {
+    let complete!: (value: BackendResult<WorkspacePage<WorkspaceSession>>) => void;
+    const bridge = { workspaceSessions: vi.fn(async (): Promise<BackendResult<WorkspacePage<WorkspaceSession>>> => ok([session])) };
+    const archives = new WorkspaceSessionArchives(bridge, () => true);
+    archives.retain([1]); await archives.load('scope', 1);
+    const previous = archives.pages().get(1);
+    bridge.workspaceSessions.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    const pending = archives.refresh('scope', 1);
+    expect(archives.pages().get(1)).toBe(previous);
+    complete({ ok: false, error: { code: 'transport', message: 'Temporary failure' } }); await pending;
+    expect(archives.pages().get(1)).toBe(previous);
+    await archives.refresh('scope', 1);
+    expect(archives.pages().get(1)?.sessions).toEqual([session]);
+  });
+
   it('adopts a restored page only for an owned task and ignores earlier in-flight replies', async () => {
     let complete!: (value: BackendResult<WorkspacePage<WorkspaceSession>>) => void;
     const bridge = { workspaceSessions: vi.fn(() => new Promise<BackendResult<WorkspacePage<WorkspaceSession>>>(resolve => { complete = resolve; })) };
