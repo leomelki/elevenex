@@ -43,6 +43,27 @@ afterEach(() => TestBed.resetTestingModule());
 describe('Point and ask source context', () => {
   const element = { selector: 'html > body:nth-child(1) > button:nth-child(1)', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
   const source = { file: 'src/Checkout.tsx', line: 88, column: 7, kind: 'react-source-map' as const };
+  it.each([
+    { file: 'src/Checkout.vue', framework: 'vue' as const },
+    { file: 'src/checkout.component.ts', framework: 'angular' as const, line: 7 },
+  ])('labels component fallbacks and stages their actual precision (%j)', async componentSource => {
+    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, componentSource });
+    fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true);
+    const intents: string[] = []; fixture.componentInstance.contextRequested.subscribe(intent => intents.push(intent.text));
+    await render(fixture);
+    expect(fixture.nativeElement.textContent).toContain(componentSource.file);
+    expect(fixture.nativeElement.textContent).toContain('Element line unavailable.');
+    expect(fixture.nativeElement.textContent).not.toContain(':undefined');
+    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change the button', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    expect(intents[0]).toContain(`Component source (page-reported ${componentSource.framework})`);
+    expect(intents[0]).toContain("selected element's template line is unavailable");
+    expect(intents[0]).not.toContain(':undefined');
+  });
+  it('labels ancestor locations without implying an exact match', async () => {
+    const { fixture } = setup([tab()], undefined, { ...element, source: { ...source, relation: 'ancestor' } });
+    fixture.componentRef.setInput('sessionId', 2); await render(fixture);
+    expect(fixture.nativeElement.textContent).toContain('Ancestor source. Selected element line unavailable.');
+  });
   it.each([undefined, source])('shows only available metadata and stages it for human review (%j)', async metadata => {
     const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, source: metadata });
     fixture.componentRef.setInput('sessionId', 2);

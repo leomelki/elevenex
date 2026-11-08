@@ -114,6 +114,34 @@ describe('remote browser interaction and display ownership', () => {
     }
   });
 
+  it.each(['angular', 'svelte', 'vue'])('preserves %s source precision through the human picker', async framework => {
+    await page.evaluate(framework => {
+      const element = document.querySelector('#hover')!;
+      if (framework === 'angular') element.setAttribute('data-ng-source-location', 'src/checkout.component.html@o:120,l:87,c:2');
+      if (framework === 'svelte') Object.defineProperty(element, '__svelte_meta', { configurable: true, value: { loc: { file: 'src/Checkout.svelte', line: 88, column: 2 } } });
+      if (framework === 'vue') Object.defineProperty(element, '__vueParentComponent', { configurable: true, value: { type: { __file: 'src/Checkout.vue' } } });
+    }, framework);
+    const tab = task.page(tabId);
+    try {
+      const structural = await tab.inspect(350, 150);
+      expect(structural?.source).toBeUndefined(); expect(structural?.componentSource).toBeUndefined();
+      await task.command({ kind: 'pick', enabled: true });
+      await task.input(tabId, tab.generation, { kind: 'pointer', type: 'down', x: 350, y: 150, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
+      const picked = task.state().picked;
+      if (framework === 'vue') {
+        expect(picked?.source).toBeUndefined();
+        expect(picked?.componentSource).toEqual({ file: 'src/Checkout.vue', framework: 'vue' });
+      } else expect(picked?.source).toEqual({ file: framework === 'angular' ? 'src/checkout.component.html' : 'src/Checkout.svelte', line: 88, column: 3, kind: framework === 'angular' ? 'angular-template' : 'svelte-metadata' });
+    } finally {
+      await task.command({ kind: 'pick', enabled: false }); await task.layout(800, 600, true, true);
+      await page.evaluate(() => {
+        const element = document.querySelector('#hover')!;
+        element.removeAttribute('data-ng-source-location');
+        Reflect.deleteProperty(element, '__svelte_meta'); Reflect.deleteProperty(element, '__vueParentComponent');
+      });
+    }
+  });
+
   it('serializes pipelined whole batches without broadcasting unchanged state', async () => {
     await page.locator('#field').focus();
     const revision = task.state().revision,

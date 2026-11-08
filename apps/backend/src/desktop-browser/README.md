@@ -306,11 +306,13 @@ need optional capability negotiation and the same no-replay policy.
 
 ## Human-picked source locations
 
-Human Point and ask inspection optionally resolves React development file/line
+Human Point and ask inspection optionally resolves development file/line
 metadata through `@elevenex/browser-inspection`, shared with desktop-local pages.
 See [the resolver guide](../../../../packages/browser-inspection/README.md) for
 supported metadata, source-map/network limits and unavailable cases. The runtime
-passes only allowlisted source identifiers and coordinates in `picked.source`;
+supports React, Angular, Svelte, Vue and explicit compiler markers. It passes
+allowlisted element coordinates in `picked.source` and separately labelled
+component declarations or filename-only hints in `picked.componentSource`;
 it does not expose source-map bodies, props, text or screenshots. Agent-driven
 inspection retains its structural-only default. Source lookup is guarded by the
 same document, viewport, control and picker lifetime as the human input.

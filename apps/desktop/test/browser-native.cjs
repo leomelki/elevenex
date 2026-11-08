@@ -181,6 +181,12 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   const rect = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugSource: { fileName: 'src/Checkout.tsx', lineNumber: 88, columnNumber: 7 } }`);
   const { elementAt } = require('../dist/browser/page-inspection');
+  await native.executeJavaScript(`document.querySelector('button').setAttribute('data-ng-source-location','src/checkout.component.html@o:120,l:87,c:2')`);
+  assert.deepEqual((await elementAt(native, rect.x, rect.y, () => true)).source, { file: 'src/checkout.component.html', line: 88, column: 3, kind: 'angular-template' });
+  await native.executeJavaScript(`document.querySelector('button').removeAttribute('data-ng-source-location');delete document.querySelector('button').__reactFiber$test;document.querySelector('button').__vueParentComponent={type:{__file:'src/Checkout.vue'}}`);
+  assert.equal((await elementAt(native, rect.x, rect.y)).componentSource, undefined);
+  assert.deepEqual((await elementAt(native, rect.x, rect.y, () => true)).componentSource, { file: 'src/Checkout.vue', framework: 'vue' });
+  await native.executeJavaScript(`delete document.querySelector('button').__vueParentComponent;document.querySelector('button').__reactFiber$test={_debugSource:{fileName:'src/Checkout.tsx',lineNumber:88,columnNumber:7}}`);
   assert.equal((await elementAt(native, rect.x, rect.y)).source, undefined, 'Agent inspection must not read source metadata');
   assert.deepEqual((await elementAt(native, rect.x, rect.y, () => true)).source, { file: 'src/Checkout.tsx', line: 88, column: 7, kind: 'react-debug-source' });
   await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugStack: Object.assign(new Error(), { stack: 'Error\\n at Checkout (' + location.origin + '/source-fixture.js:1:1)' }) }`);

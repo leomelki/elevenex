@@ -5,9 +5,22 @@ export interface BrowserSourceLocation {
   readonly file: string;
   readonly line: number;
   readonly column?: number;
-  readonly kind: 'react-debug-source' | 'react-source-map';
+  readonly kind: 'react-debug-source' | 'react-source-map' | 'angular-template' | 'svelte-metadata' | 'vue-inspector' | 'source-marker';
+  /** Omitted for the selected element; an ancestor location is explicitly less precise. */
+  readonly relation?: 'ancestor';
 }
-export interface BrowserElement extends BrowserRect { readonly selector: string; readonly tag: string; readonly source?: BrowserSourceLocation }
+/** Component fallback, deliberately separate so older clients never receive a fabricated source.line. */
+export interface BrowserComponentSource {
+  readonly file: string;
+  readonly framework: 'angular' | 'vue';
+  readonly line?: number;
+  readonly column?: number;
+}
+export interface BrowserSourceResolution {
+  readonly source?: BrowserSourceLocation;
+  readonly componentSource?: BrowserComponentSource;
+}
+export interface BrowserElement extends BrowserRect, BrowserSourceResolution { readonly selector: string; readonly tag: string }
 /** Engine placement and task-server routing, independent of embedded/stream display. */
 export type TaskBrowserPlacement = 'desktop' | 'desktop-proxy' | 'machine';
 export interface TaskBrowserCapabilities {

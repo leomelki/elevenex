@@ -1,4 +1,4 @@
-import type { BrowserSourceLocation } from '@elevenex/shared';
+import type { BrowserComponentSource, BrowserSourceLocation } from '@elevenex/shared';
 
 export function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -18,7 +18,7 @@ export function sourceFile(value: unknown): string | undefined {
   try { file = decodeURIComponent(file); } catch { return undefined; }
   if (controls(file) || /[?#]/.test(file)) return undefined;
   file = file.replace(/^\/@fs\//, '/').replace(/^(?:\(.*?\)\/)?\.\//, '').replace(/^\[project\]\//, '');
-  if (file.length > 1024 || /(?:^|\/)node_modules(?:\/|$)/.test(file) || !/\.(?:[cm]?[jt]sx?|vue|svelte)$/.test(file)) return undefined;
+  if (file.length > 1024 || /(?:^|\/)node_modules(?:\/|$)/.test(file) || !/\.(?:[cm]?[jt]sx?|vue|svelte|html?)$/.test(file)) return undefined;
   if (/^[a-z][a-z\d+.-]*:/i.test(file) && !/^[a-z]:\//i.test(file)) return undefined;
   if (!file || file.includes('//') || file.split('/').some(part => part === '..' || part === '.')) return undefined;
   return file;
@@ -26,13 +26,25 @@ export function sourceFile(value: unknown): string | undefined {
 
 export function browserSourceLocation(value: unknown): BrowserSourceLocation | undefined {
   const raw = object(value);
-  if (!raw || (raw['kind'] !== 'react-debug-source' && raw['kind'] !== 'react-source-map')) return undefined;
+  if (!raw || !sourceKind(raw['kind']) || (raw['relation'] !== undefined && raw['relation'] !== 'ancestor')) return undefined;
   const file = sourceFile(raw['file']);
   if (!file || file !== raw['file'] || !position(raw['line']) || (raw['column'] !== undefined && !position(raw['column']))) return undefined;
-  return { file, line: raw['line'], ...(raw['column'] === undefined ? {} : { column: raw['column'] }), kind: raw['kind'] };
+  return { file, line: raw['line'], ...(raw['column'] === undefined ? {} : { column: raw['column'] }), kind: raw['kind'], ...(raw['relation'] === 'ancestor' ? { relation: 'ancestor' } : {}) };
 }
 
-export function location(file: unknown, line: unknown, column: unknown, kind: BrowserSourceLocation['kind']): BrowserSourceLocation | undefined {
+function sourceKind(value: unknown): value is BrowserSourceLocation['kind'] {
+  return value === 'react-debug-source' || value === 'react-source-map' || value === 'angular-template' || value === 'svelte-metadata' || value === 'vue-inspector' || value === 'source-marker';
+}
+
+export function browserComponentSource(value: unknown): BrowserComponentSource | undefined {
+  const raw = object(value);
+  if (!raw || (raw['framework'] !== 'angular' && raw['framework'] !== 'vue')) return undefined;
+  const file = sourceFile(raw['file']);
+  if (!file || file !== raw['file'] || (raw['line'] !== undefined && !position(raw['line'])) || (raw['column'] !== undefined && (!position(raw['column']) || raw['line'] === undefined))) return undefined;
+  return { file, framework: raw['framework'], ...(raw['line'] === undefined ? {} : { line: raw['line'] }), ...(raw['column'] === undefined ? {} : { column: raw['column'] }) };
+}
+
+export function location(file: unknown, line: unknown, column: unknown, kind: unknown): BrowserSourceLocation | undefined {
   const normalized = sourceFile(file);
   return normalized ? browserSourceLocation({ file: normalized, line, column, kind }) : undefined;
 }

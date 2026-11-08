@@ -1,7 +1,7 @@
 import type { BrowserElement } from '@elevenex/shared';
 import type { WebContents } from 'electron';
 import { record } from './validation';
-import { detectBrowserSource } from '@elevenex/browser-inspection';
+import { detectBrowserSources } from '@elevenex/browser-inspection';
 
 /** Fixed structural code in a separate world. Never returns text, values, IDs, URLs, attributes or pixels.
  * All text/image/log observation is withheld, including when no secret field is detected.
@@ -31,7 +31,7 @@ export async function elementAt(contents: WebContents, x: number, y: number, sou
   const element: BrowserElement = { x: Number(left), y: Number(top), width: Number(width), height: Number(height), selector: raw['selector'], tag: raw['tag'] };
   if (!sourceCurrent) return element;
   const current = () => !contents.isDestroyed() && contents.getURL() === pageUrl && sourceCurrent();
-  const source = await detectBrowserSource(async expression => {
+  const sources = await detectBrowserSources(async expression => {
     if (!current()) return undefined;
     // MAIN world is necessary for Fiber; no preload, Node access or privileged binding is added.
     // The tab owns this debugger attachment and detaches it on destruction.
@@ -39,5 +39,5 @@ export async function elementAt(contents: WebContents, x: number, y: number, sou
     const reply: unknown = await contents.debugger.sendCommand('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, timeout: 900 });
     return record(record(reply)['result'])['value'];
   }, element.selector, pageUrl, current);
-  return source && current() ? { ...element, source } : element;
+  return current() ? { ...element, ...sources } : element;
 }

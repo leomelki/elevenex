@@ -33,10 +33,12 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - **Pick.** The ring locks in: it turns solid, and one ring goes out from the element, once.
 - **Ask.** A small card comes out of the element: under it, or over it when it sits low; on a narrow page (under 400px) or when the element is out of view, docked across the page at the edge away from it. It never covers what you picked. It holds the element's name and source line, a draft that grows to six lines, one quiet line on what it sends (`askNote`), and the send button with ↵. ↵ sends (⇧↵ for a new line), Esc or × dismisses and focus goes back where it was (the target button, when the pick left it in the page), and the target in the card picks another element and keeps the draft.
 
-Source locations are optional platform data. The task browser resolves React
-development file/line/column metadata on explicit human picks and shows it in the
-card; Add to composer stages it for review. `askNote` distinguishes a detected
-location from the selector-only fallback. A reported location never authorizes
+Source locations are optional platform data. The task browser resolves framework
+development metadata or explicit compiler markers on human picks and shows it in
+the card; Add to composer stages it for review. `askNote` distinguishes an element
+location, a DOM ancestor location, a component declaration/file with unavailable
+element line, and the selector-only fallback. Missing coordinates are omitted.
+A reported location never authorizes
 filesystem access, and unavailable metadata must not block asking. See the
 [source resolver contract](../../../../../packages/browser-inspection/README.md).
 - In the app, the page pauses while you write (it never takes input then): the card and ring sit over a quiet dotted ground with "Page paused while you ask".

@@ -115,12 +115,15 @@ The real picker consumes page input, resolves a structural `nth-child` selector,
 tag and rectangle at viewport CSS coordinates, and excludes editable controls,
 embedded frames and open shadow hosts. Closed roots remain opaque. App zoom, scrolling and responsive layout are
 accounted for. Text, attributes and element screenshots remain unavailable.
-An explicit human pick also resolves React development source metadata through
+An explicit human pick also resolves development source metadata through
 the shared [browser inspection runtime](../../../../../packages/browser-inspection/README.md):
-React 18 debug source and React 19 debug stacks with bounded same-origin source
-maps. Agent clicks do not run source detection. The optional, page-reported
-file/line/column is displayed in the card and staged in the selected conversation's
-composer only on request; it never grants file access. Missing/unsupported metadata
+React debug metadata/maps, Svelte element locations, Angular template markers
+and component declarations, Vue Inspector locations and Vue component filenames,
+plus framework-neutral source markers. Agent clicks do not run source detection.
+The card distinguishes exact element coordinates, ancestor locations and
+component-only fallbacks; a missing line is never invented. The optional,
+page-reported metadata is staged in the selected conversation's composer only
+on request; it never grants file access. Missing/unsupported metadata
 keeps the selector-and-position fallback, and `askNote` states what is available.
 The card names the
 element by its tag; the staged question carries the full selector. Main pauses

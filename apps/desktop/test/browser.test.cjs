@@ -174,6 +174,10 @@ test('remote browser replies are bounded, resource matched and content allowlist
   for (const metadata of [undefined, { ...source, line: -1 }, { ...source, file: '../secret.tsx' }, { ...source, file: 'app.tsx?token=secret' }]) {
     assert.deepEqual(remoteBrowserState({ ...withTab, picked: { ...picked, source: metadata } }, 'scope', 1).picked, picked);
   }
+  const componentSource = { file: 'src/Checkout.vue', framework: 'vue' };
+  assert.deepEqual(remoteBrowserState({ ...withTab, picked: { ...picked, componentSource: { ...componentSource, props: 'secret' } } }, 'scope', 1).picked.componentSource, componentSource);
+  assert.equal(remoteBrowserState({ ...withTab, picked: { ...picked, componentSource: { ...componentSource, line: 0 } } }, 'scope', 1).picked.componentSource, undefined);
+  assert.equal(remoteBrowserState({ ...withTab, picked: { ...picked, source, componentSource } }, 'scope', 1).picked.componentSource, undefined);
   assert.equal(remoteBrowserState(withTab, 'scope', 1).tabs[0].canGoForward, false);
   assert.equal(remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: true }] }, 'scope', 1).tabs[0].canGoForward, true);
   assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, canGoForward: 'true' }] }, 'scope', 1));

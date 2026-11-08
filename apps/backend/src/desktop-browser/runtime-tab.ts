@@ -11,7 +11,7 @@ import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
-import { detectBrowserSource } from '@elevenex/browser-inspection';
+import { detectBrowserSources } from '@elevenex/browser-inspection';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
@@ -619,12 +619,12 @@ export class RuntimeBrowserTab {
     );
     if (!element || !sourceCurrent) return element;
     const current = () => !this.disposed && this.documentUrl === pageUrl && sourceCurrent();
-    const source = await detectBrowserSource(async expression => {
+    const sources = await detectBrowserSources(async expression => {
       if (!current() || !this.cdp) return undefined;
       const reply = await this.cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, timeout: 900 });
       return reply.result.value;
     }, element.selector, pageUrl, current);
-    return source && current() ? { ...element, source } : element;
+    return current() ? { ...element, ...sources } : element;
   }
   async agentClick(
     x: number,
