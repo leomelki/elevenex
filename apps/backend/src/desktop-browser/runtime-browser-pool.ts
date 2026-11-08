@@ -1,5 +1,5 @@
 import { installRuntimeBrowser } from './runtime-install.js';
-import { chromium, type BrowserContext, type BrowserContextOptions } from 'playwright-core';
+import { chromium, type BrowserContext, type BrowserContextOptions, type Page } from 'playwright-core';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { installDownloadPolicy } from './runtime-download-policy.js';
@@ -39,6 +39,8 @@ const unsafeLoggingAtLoad = privateBrowserLoggingEnabled(process.env);
 /** At most four sandboxed Chromium profiles, each owned by one task over a private pipe. */
 @Injectable()
 export class RuntimeBrowserPool implements OnModuleDestroy {
+  private readonly windowAnchors = new WeakSet<Page>();
+  isWindowAnchor(page: Page): boolean { return this.windowAnchors.has(page) && !page.isClosed(); }
   private readonly applicationPorts = new Set<number>();
   reservePort(port: number | undefined): void {
     if (
@@ -143,8 +145,16 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
       await context.close();
       throw new Error('Browser runtime stopped');
     }
-    // Persistent Chromium starts with about:blank. Only task-owned pages may stay alive.
-    await Promise.all(context.pages().map(page => page.close()));
+    const initialPages = context.pages();
+    // macOS headless Chrome loses native pointer-lock eligibility if its last
+    // window is closed. Keep one inert tab in the task-owned context so later
+    // page creation/closure never tears down that native window. DOM focus
+    // emulation cannot replace this platform precondition.
+    const anchor = process.platform === 'darwin'
+      ? initialPages.find(page => page.url() === 'about:blank') ?? await context.newPage()
+      : undefined;
+    if (anchor) this.windowAnchors.add(anchor);
+    await Promise.all(initialPages.filter(page => page !== anchor).map(page => page.close()));
     this.contexts.set(identity, context);
     context.once('close', () => {
       if (this.contexts.get(identity) === context) this.contexts.delete(identity);

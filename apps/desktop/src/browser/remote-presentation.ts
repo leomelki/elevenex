@@ -119,6 +119,7 @@ export class RemoteBrowserPresentation {
         generation: tab.generation,
         ...(tab.displayEpoch === undefined ? {} : { displayEpoch: tab.displayEpoch }),
         ...(this.host.state()?.pointerLock ? { pointerLocked: tab.pointerLocked === true } : {}),
+        ...(this.host.state()?.pointerLock && tab.pointerLockEpoch !== undefined ? { pointerLockEpoch: tab.pointerLockEpoch } : {}),
         ...(tab.cursor ? { cursor: tab.cursor } : {}),
         ...(this.host.state()?.pointerExit ? { pointerExit: true } : {}),
         ...(this.host.state()?.keyText ? { keyText: true } : {}),

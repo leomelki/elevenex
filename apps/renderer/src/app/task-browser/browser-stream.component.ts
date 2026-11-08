@@ -18,6 +18,7 @@ import {
 } from '@angular/core';
 import type {
   TaskBrowserFrame,
+  TaskBrowserStreamEvent,
   TaskBrowserStreamInput,
   TaskBrowserSurface,
 } from '@elevenex/shared';
@@ -58,9 +59,9 @@ export class BrowserStreamComponent {
     () => this.surface().inputWindow ?? 1,
     generation => this.surface().inputWindow === 4 ? this.dispatchInput(generation, { kind: 'release' }) : Promise.resolve(),
   );
-  readonly pointerLock = new BrowserPointerLock(input => this.inputLane.send(input));
+  readonly pointerLock = new BrowserPointerLock(input => this.sendInput(input));
   readonly humanInput = new BrowserHumanInput(
-    input => this.inputLane.send(input),
+    input => this.sendInput(input),
     () => this.inputElement()?.nativeElement,
     event => this.point(event),
     () => this.viewport().height,
@@ -70,6 +71,7 @@ export class BrowserStreamComponent {
     () => this.pointerLock.locked(),
   );
   private surfaceIdentity = '';
+  private pointerSurface?: TaskBrowserSurface;
   private displayRevision = 0;
   constructor() {
     const stop = this.bridge.onTaskBrowserFrame?.((frame) => {
@@ -114,8 +116,10 @@ export class BrowserStreamComponent {
     });
     effect(() => {
       const surface = this.surface();
-      if (!surface.visible || !surface.interactive || !surface.pointerLocked) this.pointerLock.release();
       const identity = JSON.stringify([surface.scopeId, surface.taskId, surface.tabId]);
+      if (!surface.visible || !surface.interactive || !surface.pointerLocked ||
+          !this.pointerSurface || this.pointerIdentity(surface) !== this.pointerIdentity(this.pointerSurface))
+        this.pointerLock.release(identity === this.surfaceIdentity);
       if (this.pendingDisplay && (!surface.visible || identity !== this.surfaceIdentity || (surface.displayEpoch ?? 0) >= this.pendingDisplay.epoch))
         this.pendingDisplay.finish();
       if (identity !== this.surfaceIdentity || !surface.visible) {
@@ -153,8 +157,22 @@ export class BrowserStreamComponent {
   startPointerLock(): void {
     const canvas = this.canvas()?.nativeElement;
     if (!canvas || !this.surface().interactive || !this.surface().pointerLocked) return;
+    this.pointerSurface = this.surface();
+    this.inputLane.resume();
     this.inputElement()?.nativeElement.focus({ preventScroll: true });
-    void this.pointerLock.start(canvas);
+    void this.pointerLock.start(canvas, this.surface().pointerLockEpoch);
+  }
+  private pointerIdentity(surface: TaskBrowserSurface): string {
+    return JSON.stringify([surface.scopeId, surface.taskId, surface.tabId, surface.generation, surface.displayEpoch, surface.pointerLockEpoch]);
+  }
+  private sendInput(input: TaskBrowserStreamEvent): void {
+    if (input.kind === 'pointer-relative' || input.kind === 'pointer-unlock') {
+      const owner = this.pointerSurface, current = this.surface();
+      if (!owner || owner.scopeId !== current.scopeId || owner.taskId !== current.taskId || owner.tabId !== current.tabId) return;
+      if (input.kind === 'pointer-relative' && this.pointerLock.epoch !== undefined)
+        input = { ...input, pointerLockEpoch: this.pointerLock.epoch };
+    }
+    this.inputLane.send(input);
   }
   private async paint(): Promise<void> {
     if (this.decoding || !this.latest) return;
@@ -271,6 +289,7 @@ export class BrowserStreamComponent {
       surface.generation,
       surface.driver,
       surface.visible && surface.interactive && matches,
+      surface.pointerLockEpoch,
     );
   }
   private point(event: MouseEvent): { x: number; y: number } | null {

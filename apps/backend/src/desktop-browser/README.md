@@ -224,3 +224,82 @@ reopening a URL. Background popups do not steal another selected user tab.
 motion input; the viewing device requires its own explicit user gesture. Native
 cursor metadata is restricted to CSS keywords. These optional fields leave older
 JPEG/video/input contracts available.
+
+### Pointer-lock ownership and input ordering
+
+`runtime-pointer-lock` owns a tab's current lock and monotonic acquisition epoch.
+`runtime-pointer-lock-target` owns CDP subscriptions for each renderer target;
+local child frames share their parent's target and cross-process iframes receive
+separate attachments. The document-start observer runs in a private isolated
+world. Main-world scripts cannot replace its native getter or call its binding.
+Each context receives a private ticket through CDP's unique context ID, and
+notifications require that ticket and an increasing sequence. A reused numeric
+context ID therefore cannot accept a former renderer's delayed notification.
+`document.open` also rotates the ticket and reinstalls listeners, even when its
+execution context survives. Reads, exit commands and teardown are ticket-bound
+so delayed cleanup cannot affect the replacement document's observer or lock.
+Each trusted lock-change event creates a new lease even when rapid release and
+reacquisition make consecutive notifications both observe a locked element.
+
+Relative motion validates ownership, visibility, document/control generations
+and the cached lock epoch in memory. It never enumerates frames or waits for a
+JavaScript lock-state query. New tab/surface replies include optional
+`pointerLockEpoch`; viewers echo it on relative motion and unlock. Its presence
+advertises support without changing the original `pointerLock: true` capability.
+Older viewers may omit it: the host binds their requests to the epoch at
+admission, preventing queued requests from inheriting a later acquisition.
+Only viewers echoing an epoch can also distinguish old movement still in transit
+when the host reacquires the lock. Older hosts receive the original event shape.
+
+Reconciliation is outside input delivery. Initial context authorization reads
+its current state; while locked, the owner alone is checked once per second,
+with a 250 ms deadline. A stalled read revokes admission immediately and queues a
+single-flight owner-confined exit. The outstanding read remains single flight until it
+settles or its context disappears; deadlines cannot accumulate evaluations.
+Navigation, frame/context removal, hide, disconnect, handoff and disposal also
+revoke admission synchronously. Cleanup never scans unrelated frames. Native
+exit and event processing can still wait for the receiving renderer; Chromium
+acknowledgements and a game's own JavaScript are not real-time guarantees.
+
+`runtime-input-lane` separates submission order from native receipts. At most
+four consecutive single relative-movement requests with identical control,
+document, lock, button and modifier identities may overlap. Keys, buttons,
+clipboard operations, different motion identities and complete batches are
+exclusive barriers that drain all previous receipts. The task retains its
+eight-request admission bound; low-level cleanup is coalesced and ordered.
+Receipts still mean native delivery, rather than merely entering a queue.
+Failed/uncertain movement is never replayed. The viewer reserves one additional
+bounded unlock request beyond its normal four credits so Escape can revoke host
+admission while ordinary receipts are stalled. Native key/button cleanup remains
+ordered. Engine reset closes a busy page before waiting for its input cleanup.
+An unlock receipt confirms revoked admission immediately, independent of queued
+motion or clipboard receipts. Queued presses, moves and wheel input cannot cross
+a pointer-mode change; mouse-up cleanup retains its existing ordered behavior.
+Ordinary pointer input waits for native exit to settle; revocation alone cannot
+turn an absolute move into accidental relative motion. A context cannot publish
+a fresh grant while its previous exit is in progress, and an uncertain native
+exit keeps ordinary pointer input gated until a real unlock or context removal.
+
+On macOS, each task-owned Chromium context retains one inert `about:blank` tab
+outside its twelve product tabs. Closing the last headless native window causes
+subsequent pages to reject genuine pointer lock; DOM focus emulation cannot
+restore that eligibility. The anchor keeps that window alive across page
+creation/closure, has no application instrumentation or site content, and dies
+with the context. Other platforms retain their original page allocation.
+The pool tags the anchor by page identity so tab limits and the orphan-popup
+sweeper exclude it. An unrelated `about:blank` page receives no exemption.
+
+**Native routing limit:** stock Chromium's positional CDP mouse dispatcher still
+hit-tests accumulated coordinates. Crossing a cross-process iframe can deliver
+motion to that frame instead of the pointer-lock owner. The integration suite
+retains the desired owner-delivery assertion as an explicit `it.failing` case;
+it must be converted to a normal regression when native routing is fixed.
+Reliable arbitrary iframe crossing requires a browser-side routing fix or a
+native relative-input operation. This change retains the standard Chromium
+distribution and its update workflow. The observed lease, ordered input and
+viewport-edge contracts do not establish complete native routing parity.
+The preferred engine fix routes mouse movement, buttons and wheel input to
+Chromium's native lock-owning widget before positional hit-testing, preserving
+trusted events, physical metadata and delivery acknowledgements. That fix can
+remain behind the existing host/renderer contract; a new native operation would
+need optional capability negotiation and the same no-replay policy.

@@ -1,5 +1,7 @@
 import type { CDPSession, Page } from 'playwright-core';
 import type { TaskBrowserStreamEvent } from '@elevenex/shared';
+import { RuntimeInputLane } from './runtime-input-lane.js';
+import type { RuntimePointerLock } from './runtime-pointer-lock.js';
 
 /** Page-owned human input. Cleanup is ordered after accepted writes and before new input. */
 export class RuntimeBrowserInput {
@@ -15,38 +17,55 @@ export class RuntimeBrowserInput {
   private relative = false;
   private pointer = { x: 0, y: 0 };
   private revision = 0;
-  private tail: Promise<unknown> = Promise.resolve();
+  private readonly lane = new RuntimeInputLane(16);
+  private resetting?: Promise<void>;
   constructor(
     private readonly page: Page,
     private readonly cdp: CDPSession,
+    private readonly pointerLock?: Pick<RuntimePointerLock, 'epoch' | 'assert' | 'unlock' | 'settled'>,
   ) {}
 
-  settled(): Promise<unknown> {
-    return this.tail;
+  async settled(): Promise<void> {
+    await this.lane.settled();
+    await this.pointerLock?.settled();
   }
+
+  destroy(): void { this.revision++; this.lane.destroy(); }
 
   dispatch(
     input: TaskBrowserStreamEvent,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
-    if (input.kind === 'release') return this.reset().then(() => ({}));
+    if (input.kind === 'release') { void this.unlockPointer(); return this.reset().then(() => ({})); }
     const revision = this.revision;
+    const epoch = input.kind === 'pointer-relative' ? input.pointerLockEpoch ?? this.pointerLock?.epoch : undefined;
     const check = () => {
       current();
       if (revision !== this.revision)
         throw new Error('Browser input was interrupted');
+      if (input.kind === 'pointer-relative') {
+        if (!this.pointerLock || epoch === undefined) throw new Error('Pointer lock unavailable');
+        this.pointerLock.assert(epoch);
+      }
     };
-    const result = this.tail.then(async () => {
+    const motion = input.kind === 'pointer-relative'
+      ? JSON.stringify([revision, epoch, input.buttons, input.modifiers]) : undefined;
+    return this.lane.enqueue(async () => {
       check();
-      return this.deliver(input, check);
-    });
-    this.tail = result.catch(() => undefined);
-    return result;
+      try { return await this.deliver(input, check); }
+      catch (error) {
+        // A failed native write may already have arrived. Revoke this lease;
+        // pending motion fails validation and is never retried.
+        if (input.kind === 'pointer-relative') this.pointerLock?.unlock(epoch);
+        throw error;
+      }
+    }, motion);
   }
 
   reset(): Promise<void> {
     this.revision++;
-    const result = this.tail.then(async () => {
+    if (this.resetting) return this.resetting;
+    const result = this.lane.enqueue(async () => {
       const keys = [...this.keys.values()],
         buttons = [...this.buttons.values()],
         composing = this.composing;
@@ -88,13 +107,19 @@ export class RuntimeBrowserInput {
           })
           .catch(() => undefined);
     });
-    this.tail = result.catch(() => undefined);
-    return result;
+    // Disposal can remove a queued cleanup barrier. Closing the page is then
+    // the cleanup boundary; it must not leave an unhandled teardown rejection.
+    this.resetting = result.catch(() => undefined).finally(() => { this.resetting = undefined; });
+    return this.resetting;
   }
 
-  async unlockPointer(): Promise<void> {
+  pointerLockChanged(): void { this.relative = false; }
+
+  unlockPointer(epoch?: number): Promise<void> {
+    if (epoch !== undefined && epoch !== this.pointerLock?.epoch) return Promise.resolve();
     this.relative = false;
-    await Promise.all(this.page.frames().map(frame => frame.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); }).catch(() => undefined)));
+    this.pointerLock?.unlock(epoch);
+    return Promise.resolve();
   }
 
   private async edit(command: 'Undo' | 'Redo' | 'SelectAll'): Promise<void> {
@@ -109,16 +134,18 @@ export class RuntimeBrowserInput {
     input: Exclude<TaskBrowserStreamEvent, { kind: 'release' }>,
     current: () => void,
   ): Promise<{ clipboard?: string }> {
-    if (input.kind === 'pointer-unlock') {
-      await this.unlockPointer();
-    } else if (input.kind === 'pointer-relative') {
-      const locked = await Promise.all(this.page.frames().map(frame => frame.evaluate(() => !!document.pointerLockElement).catch(() => false)));
+    if (input.kind === 'pointer' || input.kind === 'wheel' || input.kind === 'pointer-exit') {
+      await this.pointerLock?.settled();
       current();
-      if (!locked.some(Boolean)) throw new Error('Pointer lock ended');
+    }
+    if (input.kind === 'pointer-unlock') {
+      await this.unlockPointer(input.pointerLockEpoch);
+    } else if (input.kind === 'pointer-relative') {
       this.relative = true;
       this.pointer = { x: this.pointer.x + input.deltaX, y: this.pointer.y + input.deltaY };
       if (Math.abs(this.pointer.x) > 1_000_000_000 || Math.abs(this.pointer.y) > 1_000_000_000) { await this.unlockPointer(); throw new Error('Pointer movement exceeded bounds'); }
       await this.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...this.pointer, buttons: input.buttons, modifiers: input.modifiers });
+      current();
     } else if (input.kind === 'pointer-exit') {
       // Preserve keyboard focus and held keys. A captured drag leaves only after
       // its release, so this event must never terminate a held host gesture.

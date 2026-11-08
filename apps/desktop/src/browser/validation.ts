@@ -15,8 +15,10 @@ function streamEvent(value: unknown): TaskBrowserStreamEvent {
   const number = (key: string, min: number, max: number): number => { const n = raw[key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) throw new Error('Invalid browser input'); return n; };
   const integer = (key: string, min: number, max: number): number => { const n = number(key, min, max); if (!Number.isSafeInteger(n)) throw new Error('Invalid browser input integer'); return n; };
   const text = (key: string, max: number): string => { const s = raw[key]; if (typeof s !== 'string' || s.length > max) throw new Error('Invalid browser input'); return s; };
-  if (kind === 'release' || kind === 'pointer-exit' || kind === 'pointer-unlock') { exact(raw, ['kind']); return { kind }; }
-  if (kind === 'pointer-relative') { exact(raw, ['kind', 'deltaX', 'deltaY', 'buttons', 'modifiers']); return { kind, deltaX: number('deltaX', -10000, 10000), deltaY: number('deltaY', -10000, 10000), buttons: integer('buttons', 0, 31), modifiers: integer('modifiers', 0, 15) }; }
+  if (kind === 'release' || kind === 'pointer-exit') { exact(raw, ['kind']); return { kind }; }
+  const lockEpoch = () => raw['pointerLockEpoch'] === undefined ? {} : { pointerLockEpoch: integer('pointerLockEpoch', 1, Number.MAX_SAFE_INTEGER) };
+  if (kind === 'pointer-unlock') { exact(raw, ['kind', 'pointerLockEpoch']); return { kind, ...lockEpoch() }; }
+  if (kind === 'pointer-relative') { exact(raw, ['kind', 'deltaX', 'deltaY', 'buttons', 'modifiers', 'pointerLockEpoch']); return { kind, deltaX: number('deltaX', -10000, 10000), deltaY: number('deltaY', -10000, 10000), buttons: integer('buttons', 0, 31), modifiers: integer('modifiers', 0, 15), ...lockEpoch() }; }
   if (kind === 'text') { exact(raw, ['kind', 'text']); return { kind, text: text('text', 65536) }; }
   if (kind === 'composition') {
     exact(raw, ['kind', 'text', 'selectionStart', 'selectionEnd']);

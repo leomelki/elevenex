@@ -10,6 +10,7 @@ import type {
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
+import { RuntimePointerLock } from './runtime-pointer-lock.js';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
@@ -19,7 +20,12 @@ export class RuntimeBrowserTab {
   readonly id = randomUUID();
   readonly workflows: RuntimeBrowserWorkflows;
   private cursor: TaskBrowserCursor = 'default';
-  private pointerLocked = false;
+  private readonly pointerLock = new RuntimePointerLock(() => {
+    this.input?.pointerLockChanged();
+    this.changed();
+  }, () => this.ready && this.driver !== 'agent');
+  get pointerLockEpoch(): number { return this.pointerLock.epoch; }
+  revokePointerLock(epoch?: number): void { this.pointerLock.unlock(epoch); }
   driver: 'you' | 'agent' | 'needs';
   generation = 1;
   displayEpoch = 1;
@@ -155,24 +161,14 @@ export class RuntimeBrowserTab {
       this.workflows.download(download); void this.capture.start(); this.changed();
     });
     this.cdp = await this.context.newCDPSession(page);
-    this.input = new RuntimeBrowserInput(page, this.cdp);
+    this.input = new RuntimeBrowserInput(page, this.cdp, this.pointerLock);
     this.cursorReader = new RuntimeBrowserCursor(page, cursor => {
       if (cursor === this.cursor) return;
       this.cursor = cursor;
       this.changed();
     });
     this.capture.attach(this.cdp);
-    await page.exposeBinding('__elevenexPointerLock', async () => {
-      const locked = (await Promise.all(page.frames().map(frame => frame.evaluate(() => !!document.pointerLockElement).catch(() => false)))).some(Boolean);
-      if (this.page !== page || this.disposed || this.pointerLocked === locked) return;
-      this.pointerLocked = locked; if (!locked) void this.input?.unlockPointer(); this.changed();
-    });
-    await page.addInitScript(() => {
-      document.addEventListener('pointerlockchange', () => {
-        const send: unknown = Reflect.get(globalThis, '__elevenexPointerLock');
-        if (typeof send === 'function') void Promise.resolve(Reflect.apply(send, globalThis, [])).catch(() => undefined);
-      });
-    });
+    await this.pointerLock.attach(page, this.cdp);
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
     // Headless Chromium target metadata does not report document.title changes.
@@ -278,12 +274,14 @@ export class RuntimeBrowserTab {
     const withinDocument = ({ frameId, url }: { frameId: string; url: string }) => {
       if (frameId === mainFrameId) this.navigated(page, url, true);
     };
-    // Playwright's framenavigated merges these events. Only a new document
-    // invalidates human coordinates: SPA panels often route before data arrives.
+    // New documents and explicit document.open invalidate human coordinates.
+    // SPA panels often route before data arrives and retain their document.
     cdp.on('Page.frameNavigated', documentChanged);
+    cdp.on('Page.documentOpened', documentChanged);
     cdp.on('Page.navigatedWithinDocument', withinDocument);
     this.stopNavigation = () => {
       cdp.off('Page.frameNavigated', documentChanged);
+      cdp.off('Page.documentOpened', documentChanged);
       cdp.off('Page.navigatedWithinDocument', withinDocument);
     };
     await cdp.send('Page.enable');
@@ -367,7 +365,8 @@ export class RuntimeBrowserTab {
       id: this.id,
       workflows: this.workflows.snapshot(),
       cursor: this.cursor,
-      pointerLocked: this.pointerLocked,
+      pointerLocked: this.pointerLock.locked,
+      pointerLockEpoch: this.pointerLock.epoch,
       title,
       url: this.url,
       by: this.by,
@@ -507,7 +506,6 @@ export class RuntimeBrowserTab {
   }
   private invalidateDisplay(): void {
     this.cursorReader?.reset();
-    this.pointerLocked = false;
     void this.input?.unlockPointer();
     this.displayEpoch++;
     this.humanEpoch++;
@@ -707,9 +705,12 @@ export class RuntimeBrowserTab {
     this.stopNavigation?.(); this.stopNavigation = undefined;
     await this.workflows.destroy();
     this.takeover();
+    const pointerCleanup = this.pointerLock.detach();
     this.capture.detach();
-    await this.capture.stop();
+    const captureCleanup = this.capture.stop();
+    this.input?.destroy();
     await this.page?.close({ runBeforeUnload: false });
+    await Promise.all([pointerCleanup, captureCleanup]);
     await this.viewportUpdate;
     this.page = undefined;
   }
@@ -722,6 +723,7 @@ export class RuntimeBrowserTab {
     this.stopNavigation?.(); this.stopNavigation = undefined;
     const page = this.page,
       cdp = this.cdp;
+    const pointerCleanup = this.pointerLock.detach();
     this.page = undefined;
     this.cdp = undefined;
     this.layoutRevision++;
@@ -736,10 +738,12 @@ export class RuntimeBrowserTab {
     this.error = null;
     this.loading = true;
     this.takeover();
-    await this.input?.reset();
+    const inputCleanup = this.input?.reset();
+    this.input?.destroy();
     this.input = undefined;
-    await cdp?.detach().catch(() => undefined);
     await page?.close({ runBeforeUnload: false }).catch(() => undefined);
+    await cdp?.detach().catch(() => undefined);
+    await Promise.all([pointerCleanup, inputCleanup]);
     await this.viewportUpdate;
   }
 }

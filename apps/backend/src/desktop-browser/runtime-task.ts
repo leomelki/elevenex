@@ -9,11 +9,13 @@ import type {
   TaskBrowserCommand,
   TaskBrowserState,
   TaskBrowserStreamInput,
+  TaskBrowserStreamEvent,
 } from '@elevenex/shared';
 import { RuntimeBrowserTab } from './runtime-tab.js';
 import type { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import { randomUUID } from 'node:crypto';
 import { RuntimeWebAuthn } from './runtime-webauthn.js';
+import { RuntimeInputLane } from './runtime-input-lane.js';
 
 /** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
@@ -100,7 +102,7 @@ export class RuntimeBrowserTask {
   private ports: readonly number[] = [];
   private readonly starting = new Map<string, Promise<void>>();
   private readonly displayStarting = new Map<string, { present: () => Promise<void> }>();
-  private readonly inputTails = new Map<string, { tail: Promise<unknown>; pending: number }>();
+  private readonly inputLanes = new Map<string, RuntimeInputLane>();
   private readonly controller = new AbortController();
   private readonly authorizedPorts = new Set<number>();
   private disposed = false;
@@ -286,7 +288,7 @@ export class RuntimeBrowserTask {
         throw new Error('Browser task closed');
       }
       context.on('page', popup => {
-        if (context.pages().length > 12) { void popup.close().catch(() => undefined); return; }
+        if (context.pages().filter(page => !this.pool.isWindowAnchor(page)).length > 12) { void popup.close().catch(() => undefined); return; }
         void this.adoptPopup(context, popup).catch(() => popup.close().catch(() => undefined));
       });
       return context;
@@ -627,20 +629,40 @@ export class RuntimeBrowserTask {
     generation: number,
     input: TaskBrowserStreamInput,
   ): Promise<{ generation: number; revision: number; clipboard?: string }> {
-    const page = this.page(tabId), epoch = page.inputEpoch;
-    let lane = this.inputTails.get(tabId);
-    if (!lane) {
-      lane = { tail: Promise.resolve(), pending: 0 };
-      this.inputTails.set(tabId, lane);
+    const page = this.page(tabId), epoch = page.inputEpoch, pointerModeEpoch = page.pointerLockEpoch;
+    // Legacy clients omit lock identities. Bind their accepted request now,
+    // rather than allowing queued motion to inherit a later acquisition.
+    const identify = (event: TaskBrowserStreamEvent) => {
+      if (event.kind !== 'pointer-relative' && event.kind !== 'pointer-unlock') return event;
+      return { ...event, pointerLockEpoch: event.pointerLockEpoch ?? page.pointerLockEpoch };
+    };
+    input = input.kind === 'batch' ? { kind: 'batch', events: input.events.map(identify) } : identify(input);
+    if (input.kind === 'pointer-unlock') {
+      this.touch();
+      if (!this.canInput(tabId) || !page.ready || page.generation !== generation || page.driver === 'agent')
+        throw new Error('Browser control changed');
+      page.revokePointerLock(input.pointerLockEpoch);
+      // This receipt acknowledges revoked admission. Native exit is owned by
+      // the lock tracker; a blocked input/clipboard receipt cannot hold Escape.
+      return { generation: page.generation, revision: this.revision };
     }
-    if (lane.pending >= 8) throw new Error('Browser input capacity reached');
-    lane.pending++;
+    if (page.generation === generation && page.driver !== 'agent') {
+      if (input.kind === 'release') page.revokePointerLock();
+      for (const event of input.kind === 'batch' ? input.events : [input])
+        if (event.kind === 'pointer-unlock') page.revokePointerLock(event.pointerLockEpoch);
+    }
+    let lane = this.inputLanes.get(tabId);
+    if (!lane) {
+      const created = new RuntimeInputLane(8, () => {
+        if (this.inputLanes.get(tabId) === created) this.inputLanes.delete(tabId);
+      });
+      lane = created;
+      this.inputLanes.set(tabId, lane);
+    }
     const owner = lane;
-    const result = owner.tail.then(() => this.deliverInput(tabId, generation, input, epoch));
-    owner.tail = result.catch(() => undefined).finally(() => {
-      owner.pending--;
-      if (!owner.pending && this.inputTails.get(tabId) === owner) this.inputTails.delete(tabId);
-    });
+    const motion = input.kind === 'pointer-relative'
+      ? JSON.stringify([generation, epoch, input.pointerLockEpoch, input.buttons, input.modifiers]) : undefined;
+    const result = owner.enqueue(() => this.deliverInput(tabId, generation, input, epoch, pointerModeEpoch), motion);
     return result;
   }
   private async deliverInput(
@@ -648,6 +670,7 @@ export class RuntimeBrowserTask {
     generation: number,
     input: TaskBrowserStreamInput,
     epoch: number,
+    pointerModeEpoch: number,
   ): Promise<{ generation: number; revision: number; clipboard?: string }> {
     this.touch();
     const page = this.page(tabId);
@@ -673,6 +696,10 @@ export class RuntimeBrowserTask {
     let expected = generation,
       result: { clipboard?: string } = {};
     for (let index = 0; index < events.length; index++) {
+      const event = events[index]!;
+      if (page.pointerLockEpoch !== pointerModeEpoch && (event.kind === 'wheel' || event.kind === 'pointer-exit' ||
+          event.kind === 'pointer' && event.type !== 'up'))
+        throw new Error('Browser pointer mode changed');
       if (
         this.picked &&
         events
@@ -829,7 +856,7 @@ export class RuntimeBrowserTask {
       .then((context) => {
         if (this.starting.size || this.disposed) return;
         for (const page of context.pages())
-          if (![...this.tabs.values()].some((tab) => tab.owns(page))) {
+          if (!this.pool.isWindowAnchor(page) && ![...this.tabs.values()].some((tab) => tab.owns(page))) {
             void page.close({ runBeforeUnload: false }).catch(() => undefined);
             this.attention = {
               kind: 'popup',
@@ -850,7 +877,8 @@ export class RuntimeBrowserTask {
     await this.webAuthn.destroy();
     this.presentations.clear();
     this.displayStarting.clear();
-    this.inputTails.clear();
+    for (const lane of this.inputLanes.values()) lane.destroy();
+    this.inputLanes.clear();
     await Promise.allSettled(
       [...this.tabs.values()].map((page) => page.destroy()),
     );

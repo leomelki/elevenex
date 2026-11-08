@@ -16,6 +16,10 @@ export class BrowserInputLane {
   private disposed = false;
   private uncertain = false;
   private queuedTextUnits = 0;
+  private unlockPending?: Extract<TaskBrowserStreamEvent, { kind: 'pointer-unlock' }>;
+  private unlocking = false;
+  private pointerEpoch?: number;
+  private motionRevision = 0;
   get needsInteraction(): boolean {
     return this.uncertain;
   }
@@ -40,7 +44,13 @@ export class BrowserInputLane {
     generation: number,
     driver: "you" | "agent" | "needs",
     enabled: boolean,
+    pointerEpoch?: number,
   ): void {
+    if (pointerEpoch !== this.pointerEpoch) {
+      this.pointerEpoch = pointerEpoch;
+      this.motionRevision++;
+      this.queue = this.queue.filter(event => event.kind !== 'pointer-relative' || event.pointerLockEpoch === pointerEpoch);
+    }
     if (
       generation > this.generation &&
       !(generation === this.expectedTakeover && driver !== "agent")
@@ -59,6 +69,14 @@ export class BrowserInputLane {
   send(input: TaskBrowserStreamEvent): void {
     if (this.disposed || !this.enabled) return;
     if (input.kind === "release") return;
+    if (input.kind === 'pointer-unlock') {
+      this.motionRevision++;
+      this.queue = this.queue.filter(event => event.kind !== 'pointer-relative' ||
+        (input.pointerLockEpoch !== undefined && event.pointerLockEpoch !== input.pointerLockEpoch));
+      this.unlockPending = input;
+      this.flushUnlock();
+      return;
+    }
     if (this.uncertain) {
       if (input.kind !== "pointer" || input.type !== "down") return;
       this.resume();
@@ -83,7 +101,7 @@ export class BrowserInputLane {
       previous.modifiers === input.modifiers
     )
       this.queue[this.queue.length - 1] = input;
-    else if (input.kind === 'pointer-relative' && previous?.kind === 'pointer-relative' && previous.buttons === input.buttons && previous.modifiers === input.modifiers && Math.abs(previous.deltaX + input.deltaX) <= 10000 && Math.abs(previous.deltaY + input.deltaY) <= 10000)
+    else if (input.kind === 'pointer-relative' && previous?.kind === 'pointer-relative' && previous.pointerLockEpoch === input.pointerLockEpoch && previous.buttons === input.buttons && previous.modifiers === input.modifiers && Math.abs(previous.deltaX + input.deltaX) <= 10000 && Math.abs(previous.deltaY + input.deltaY) <= 10000)
       this.queue[this.queue.length - 1] = { ...input, deltaX: previous.deltaX + input.deltaX, deltaY: previous.deltaY + input.deltaY };
     else if (input.kind === "composition" && previous?.kind === "composition")
       this.queue[this.queue.length - 1] = input;
@@ -123,6 +141,19 @@ export class BrowserInputLane {
       this.scheduled = false;
       this.flush();
     });
+  }
+  private flushUnlock(): void {
+    if (!this.unlockPending || this.unlocking || !this.enabled || this.disposed) return;
+    const input = this.unlockPending, generation = this.generation, revision = this.revision, motion = this.motionRevision;
+    this.unlockPending = undefined;
+    this.unlocking = true;
+    // Reserve one cleanup request beyond the normal four-credit window. Escape
+    // must revoke host admission even while movement receipts are stalled.
+    void this.dispatch(generation, input).then(accepted => {
+      if (accepted !== generation && revision === this.revision && motion === this.motionRevision && !this.disposed) this.interrupt();
+    }).catch(() => {
+      if (revision === this.revision && motion === this.motionRevision && !this.disposed) this.interrupt();
+    }).finally(() => { this.unlocking = false; this.flushUnlock(); });
   }
   private flush(): void {
     if (
@@ -171,12 +202,13 @@ export class BrowserInputLane {
       this.expectedTakeover = this.driver === "agent" ? generation + 1 : 0;
       const takeover = this.expectedTakeover,
         revision = this.revision;
+      const motion = events.every(event => event.kind === 'pointer-relative') ? this.motionRevision : undefined;
       const clipboard = first.kind === "clipboard";
       this.inFlight++;
       this.clipboardPending = clipboard;
       void this.dispatch(generation, input)
         .then((accepted) => {
-          if (!this.disposed && revision === this.revision) {
+          if (!this.disposed && revision === this.revision && (motion === undefined || motion === this.motionRevision)) {
             if (accepted !== generation && accepted !== takeover) {
               this.interrupt();
             }
@@ -185,7 +217,7 @@ export class BrowserInputLane {
           }
         })
         .catch(() => {
-          if (!this.disposed && revision === this.revision) {
+          if (!this.disposed && revision === this.revision && (motion === undefined || motion === this.motionRevision)) {
             this.interrupt();
           }
         })
@@ -216,6 +248,7 @@ export class BrowserInputLane {
   private clearQueue(): void {
     this.queue = [];
     this.queuedTextUnits = 0;
+    this.unlockPending = undefined;
   }
   reset(): void {
     this.revision++;
@@ -224,6 +257,8 @@ export class BrowserInputLane {
     this.expectedTakeover = 0;
     this.enabled = false;
     this.uncertain = false;
+    this.pointerEpoch = undefined;
+    this.motionRevision++;
     this.clearQueue();
   }
   cancel(): void {

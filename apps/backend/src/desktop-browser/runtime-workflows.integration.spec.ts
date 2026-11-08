@@ -38,7 +38,7 @@ describe('remote human browser workflows', () => {
   it('adopts OAuth popups with opener, cookies, postMessage and close returning to the originating tab', async () => {
     await page.evaluate(url => { document.cookie = 'workflow=shared'; window.addEventListener('message', event => { document.title = event.data; }); window.open(url + '/popup'); }, url);
     await wait(() => task.tabs.size === 2 && task.active !== tabId);
-    const popup = context.pages().find(candidate => candidate !== page)!;
+    const popup = context.pages().find(candidate => candidate !== page && candidate.url() !== 'about:blank')!;
     expect(await popup.evaluate(() => !!window.opener && document.cookie.includes('workflow=shared'))).toBe(true);
     await popup.evaluate(() => { window.opener.postMessage('OAuth complete', location.origin); window.close(); });
     await wait(() => task.tabs.size === 1 && task.active === tabId);

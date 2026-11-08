@@ -92,6 +92,7 @@ function tab(value: unknown): TaskBrowserTab {
     ...(Array.isArray(workflows) ? { workflows: workflows.map(workflow) } : {}),
     ...(cursor ? { cursor } : {}),
     ...(raw['pointerLocked'] === undefined ? {} : { pointerLocked: boolean(raw['pointerLocked']) }),
+    ...(raw['pointerLockEpoch'] === undefined ? {} : { pointerLockEpoch: integer(raw['pointerLockEpoch'], 1) }),
     url,
     by,
     driver,

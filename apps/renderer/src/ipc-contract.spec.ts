@@ -52,6 +52,9 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   // @ts-expect-error Browser location is a closed set.
   void invoke('task-browser:configure', 'scope', 1, 'custom-chromium');
   void invoke('task-browser:read', 'scope', 1);
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-relative', deltaX: 1, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 2 });
+  // @ts-expect-error Pointer lock identities are numeric host epochs, never arbitrary data.
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-unlock', pointerLockEpoch: 'old' });
   void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab', sessionId: 2 });
   // @ts-expect-error Browser operations must capture the expected backend scope.
   void invoke('task-browser:read', 1);

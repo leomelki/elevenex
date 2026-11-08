@@ -81,7 +81,7 @@ it('starts agent tabs without a viewer and retains the live document, network an
     const task = runtime.active(1)!;
     if (!ownedContext) throw new Error('Browser context was not acquired');
     const context = await ownedContext;
-    const page = context.pages()[0];
+    const page = context.pages().find(page => page.url() === url)!;
     const marker = await page.evaluate<string>('window.retained');
     const view = await runtime.connect(
       1,

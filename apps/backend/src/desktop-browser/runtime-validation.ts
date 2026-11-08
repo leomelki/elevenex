@@ -70,8 +70,8 @@ export const runtimeCommand = z.union([
 const runtimeEvent = z.union([
   z.object({ kind: z.literal('release') }).strict(),
   z.object({ kind: z.literal('pointer-exit') }).strict(),
-  z.object({ kind: z.literal('pointer-unlock') }).strict(),
-  z.object({ kind: z.literal('pointer-relative'), deltaX: z.number().finite().min(-10000).max(10000), deltaY: z.number().finite().min(-10000).max(10000), buttons: z.number().int().min(0).max(31), modifiers }).strict(),
+  z.object({ kind: z.literal('pointer-unlock'), pointerLockEpoch: z.number().int().positive().safe().optional() }).strict(),
+  z.object({ kind: z.literal('pointer-relative'), deltaX: z.number().finite().min(-10000).max(10000), deltaY: z.number().finite().min(-10000).max(10000), buttons: z.number().int().min(0).max(31), modifiers, pointerLockEpoch: z.number().int().positive().safe().optional() }).strict(),
   z
     .object({
       kind: z.literal('pointer'),

@@ -95,7 +95,10 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await until(async () => (await read()).tabs.find(tab => tab.id === first)?.ready, 'Direct page is not ready for native input');
   app.focus({ steal: true }); window.show(); window.focus(); native.focus();
   await native.executeJavaScript(`document.body.insertAdjacentHTML('afterbegin', '<a id="next-page" href="/browser-test?held-navigation">Next page</a>')`);
+  // Click only after the guest has painted the new link, like a real viewer.
+  await native.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const link = await native.executeJavaScript(`(() => { const box = document.querySelector('#next-page').getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; })()`);
+  native.sendInputEvent({ type: 'mouseMove', ...link });
   native.sendInputEvent({ type: 'mouseDown', ...link, button: 'left', clickCount: 1 });
   native.sendInputEvent({ type: 'mouseUp', ...link, button: 'left', clickCount: 1 });
   await until(async () => (await read()).tabs[0]?.loading, 'Link did not start navigation');

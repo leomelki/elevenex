@@ -78,6 +78,16 @@ export default async function* (capture) {
       await capture.hover('ex-browser-video-demo h1');
       assert.ok(await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]).some(input => input.kind === 'pointer-exit')), 'Leaving the streamed page clears remote hover');
       yield { name: `${theme}-h264-input`, selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };
+      const pointerLockEpoch = theme === 'light' ? 7 : 17;
+      await capture.component('ex-browser-video-demo', (component, pointerLockEpoch) => component.surface.update(surface => ({ ...surface, pointerLocked: true, pointerLockEpoch })), pointerLockEpoch);
+      yield { name: `${theme}-pointer-lock-consent`, selector: 'ex-browser-video-demo', inspect: ['canvas', '.pointer-lock-control'] };
+      // The preview host has no registered platform lock lease. The production
+      // permission policy must decline it; the component keeps consent explicit
+      // and reports the native rejection without emitting relative movement.
+      await capture.click('ex-browser-stream .pointer-lock-control button');
+      await capture.waitFor(() => document.querySelector('.pointer-lock-control')?.textContent.includes('Pointer lock was declined'));
+      yield { name: `${theme}-pointer-lock-declined`, selector: 'ex-browser-video-demo', inspect: ['canvas', '.pointer-lock-control'] };
+      await capture.component('ex-browser-video-demo', (component, pointerLockEpoch) => component.surface.update(surface => ({ ...surface, pointerLocked: false, pointerLockEpoch })), pointerLockEpoch + 1);
     }
     await capture.reducedMotion(true);
     await capture.viewport(440, 760);

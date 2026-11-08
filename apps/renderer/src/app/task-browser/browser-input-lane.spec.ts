@@ -13,6 +13,47 @@ function deferred<T>() {
 const text = (value: string) => ({ kind: "text" as const, text: value });
 const settle = async () => { for (let n = 0; n < 30; n++) await Promise.resolve(); };
 describe("Browser human input lane", () => {
+  it('reserves an immediate bounded unlock request while all movement receipts are stalled', async () => {
+    const receipts = Array.from({ length: 4 }, () => deferred<number>());
+    const dispatch = vi.fn<(generation: number, input: TaskBrowserStreamInput) => Promise<number>>();
+    for (const receipt of receipts) dispatch.mockReturnValueOnce(receipt.promise);
+    dispatch.mockResolvedValue(1);
+    const lane = new BrowserInputLane(dispatch, vi.fn(), () => 4);
+    const move = { kind: 'pointer-relative' as const, deltaX: 2, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 7 };
+    lane.authority(1, 'you', true);
+    for (let i = 0; i < 4; i++) { lane.send(move); await settle(); }
+    lane.send(move); lane.send(text('keep typing'));
+    lane.send({ kind: 'pointer-unlock', pointerLockEpoch: 7 }); await settle();
+    expect(dispatch).toHaveBeenCalledTimes(5);
+    expect(dispatch.mock.lastCall?.[1]).toEqual({ kind: 'pointer-unlock', pointerLockEpoch: 7 });
+    for (const receipt of receipts) receipt.resolve(1);
+    await settle();
+    expect(dispatch.mock.calls.slice(5).map(call => call[1])).toEqual([text('keep typing')]); lane.destroy();
+  });
+  it('sums relative deltas only within the same lock, buttons and modifiers', async () => {
+    const pending = deferred<number>(), dispatch = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(1);
+    const lane = new BrowserInputLane(dispatch, vi.fn());
+    lane.authority(1, 'you', true); lane.send(text('block'));
+    const move = { kind: 'pointer-relative' as const, deltaX: 2, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 7 };
+    lane.send(move); lane.send(move); lane.send({ ...move, pointerLockEpoch: 9 }); lane.send({ ...move, pointerLockEpoch: 9, modifiers: 8 });
+    pending.resolve(1); await settle();
+    expect(dispatch.mock.calls[1]?.[1]).toEqual({ kind: 'batch', events: [
+      { ...move, deltaX: 4, deltaY: -2 }, { ...move, pointerLockEpoch: 9 }, { ...move, pointerLockEpoch: 9, modifiers: 8 },
+    ] }); lane.destroy();
+  });
+  it('ignores late motion failures from a released lease without interrupting fresh input', async () => {
+    const old = deferred<number>(), interrupted = vi.fn();
+    const dispatch = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(1);
+    const lane = new BrowserInputLane(dispatch, interrupted, () => 4);
+    const move = { kind: 'pointer-relative' as const, deltaX: 2, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 7 };
+    lane.authority(1, 'you', true, 7); lane.send(move); await settle();
+    lane.send({ kind: 'pointer-unlock', pointerLockEpoch: 7 }); await settle();
+    lane.authority(1, 'you', true, 9); lane.send({ ...move, pointerLockEpoch: 9 }); await settle();
+    old.reject(new Error('Old lease ended')); await settle();
+    expect(interrupted).not.toHaveBeenCalled(); expect(lane.needsInteraction).toBe(false);
+    lane.send(text('fresh typing')); await settle();
+    expect(dispatch.mock.lastCall?.[1]).toEqual(text('fresh typing')); lane.destroy();
+  });
   it('preserves known queued typing when the user focuses an already healthy page', async () => {
     const pending = deferred<number>(), dispatch = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(1);
     const lane = new BrowserInputLane(dispatch, vi.fn());

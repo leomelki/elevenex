@@ -14,6 +14,8 @@ export interface TaskBrowserCapabilities {
 export interface TaskBrowserSurface {
   readonly cursor?: TaskBrowserCursor;
   readonly pointerLocked?: boolean;
+  /** Present only when the host accepts lock identities on relative motion/unlock. */
+  readonly pointerLockEpoch?: number;
   readonly scopeId: string;
   readonly taskId: number;
   readonly tabId: string;
@@ -53,8 +55,8 @@ export interface TaskBrowserFrame {
 export type TaskBrowserStreamEvent =
   | { readonly kind: 'release' }
   | { readonly kind: 'pointer-exit' }
-  | { readonly kind: 'pointer-unlock' }
-  | { readonly kind: 'pointer-relative'; readonly deltaX: number; readonly deltaY: number; readonly buttons: number; readonly modifiers: number }
+  | { readonly kind: 'pointer-unlock'; readonly pointerLockEpoch?: number }
+  | { readonly kind: 'pointer-relative'; readonly deltaX: number; readonly deltaY: number; readonly buttons: number; readonly modifiers: number; readonly pointerLockEpoch?: number }
   | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
   | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
   | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number; readonly text?: string }
@@ -75,6 +77,7 @@ export interface TaskBrowserTab {
   readonly workflows?: readonly TaskBrowserWorkflow[];
   readonly cursor?: TaskBrowserCursor;
   readonly pointerLocked?: boolean;
+  readonly pointerLockEpoch?: number;
   readonly id: string;
   readonly title: string;
   readonly url: string;

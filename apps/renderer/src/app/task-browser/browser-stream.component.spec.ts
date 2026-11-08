@@ -37,6 +37,8 @@ afterEach(() => {
   TestBed.resetTestingModule();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(document, 'pointerLockElement');
+  Reflect.deleteProperty(document, 'exitPointerLock');
 });
 
 async function setup() {
@@ -90,6 +92,30 @@ async function setup() {
     close,
   };
 }
+
+it('binds local consent and relative motion to the displayed lock identity', async () => {
+  const { fixture, canvas, dispatch } = await setup();
+  let locked: Element | null = null;
+  Object.defineProperty(document, 'pointerLockElement', { configurable: true, get: () => locked });
+  Object.defineProperty(document, 'exitPointerLock', { configurable: true, value: () => { locked = null; } });
+  canvas.requestPointerLock = vi.fn(async () => { locked = canvas; document.dispatchEvent(new Event('pointerlockchange')); });
+  const current = { ...surface, pointerLocked: true, pointerLockEpoch: 7 };
+  fixture.componentRef.setInput('surface', current); fixture.detectChanges();
+  fixture.componentInstance.startPointerLock(); await settle(); fixture.detectChanges();
+  const motion = new MouseEvent('pointermove');
+  Object.defineProperties(motion, { movementX: { value: 3 }, movementY: { value: -2 } });
+  canvas.dispatchEvent(motion); await settle();
+  expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'pointer-relative', deltaX: 3, deltaY: -2, buttons: 0, modifiers: 0, pointerLockEpoch: 7 });
+  fixture.componentRef.setInput('surface', { ...current, pointerLockEpoch: 9 }); fixture.detectChanges(); await settle();
+  expect(fixture.componentInstance.pointerLock.locked()).toBe(false);
+  expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'pointer-unlock', pointerLockEpoch: 7 });
+  fixture.componentInstance.startPointerLock(); await settle(); fixture.detectChanges(); dispatch.mockClear();
+  fixture.componentRef.setInput('surface', { ...current, pointerLockEpoch: 9, taskId: 2, tabId: 'other' });
+  fixture.componentInstance.pointerLock.release(); // Native blur can precede the surface effect.
+  fixture.detectChanges(); await settle();
+  expect(fixture.componentInstance.pointerLock.locked()).toBe(false);
+  expect(dispatch).not.toHaveBeenCalled(); // The prior task's lifecycle owns its remote cleanup.
+});
 
 it('forwards live IME updates and commits exactly once, including canceled compositions', async () => {
   const { textarea, dispatch } = await setup();

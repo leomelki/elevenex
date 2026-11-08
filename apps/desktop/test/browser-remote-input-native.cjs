@@ -21,10 +21,10 @@ async function run() {
   const heldReceived = new Promise(resolve => { receivedHeld = resolve; });
   const heldRelease = new Promise(resolve => { releaseHeld = resolve; });
   const state = () => ({ taskId: 1, revision: generation, surfaceEpoch: 0, controlsFocus: 0,
-    keyText: true, inputWindow: 4, active: tabId, picked: null, picking: false, pickerMessage: null,
+    keyText: true, inputWindow: 4, pointerLock: true, active: tabId, picked: null, picking: false, pickerMessage: null,
     feedback: false, ports: [], privacy: 'content-withheld', tabs: [{ id: tabId, title: 'Fixture',
       url: 'https://example.com', by: 'you', driver: 'you', agentSessionId: null, generation,
-      displayEpoch: 1, loading: false, ready: true, canGoBack: false, error: null, errors: 0,
+      displayEpoch: 1, pointerLocked: true, pointerLockEpoch: 7, loading: false, ready: true, canGoBack: false, error: null, errors: 0,
       width: 'full', theme: 'system', slowNetwork: false, waiting: false }] });
   const server = createServer(async (request, response) => {
     let bytes = ''; for await (const chunk of request) bytes += chunk;
@@ -91,6 +91,12 @@ async function run() {
     await until(async () => (await window.webContents.executeJavaScript('window.fixtureResults.length')) === 4);
     assert.equal(inputs.length, 4, 'Every modified page key reached the remote input lane');
     assert.deepEqual(await window.webContents.executeJavaScript('window.fixtureResults'), [true, true, true, true]);
+    assert.equal((await window.webContents.executeJavaScript('window.elevenex.taskBrowserSurfaces()'))[0].pointerLockEpoch, 7);
+    const relative = { kind: 'pointer-relative', deltaX: 3, deltaY: -2, buttons: 0, modifiers: 0, pointerLockEpoch: 7 };
+    const unlock = { kind: 'pointer-unlock', pointerLockEpoch: 7 };
+    for (const input of [relative, unlock]) await window.webContents.executeJavaScript(
+      `window.elevenex.taskBrowserInput(${JSON.stringify(scope)}, 1, ${JSON.stringify(tabId)}, 1, ${JSON.stringify(input)})`);
+    assert.deepEqual(inputs.slice(-2), [relative, unlock], 'The sandboxed bridge preserves negotiated lock identities');
     holdReceipt = true;
     await window.webContents.executeJavaScript(`void (window.fixtureLateInput = window.elevenex.taskBrowserInput(${JSON.stringify(scope)}, 1, ${JSON.stringify(tabId)}, 1, { kind: 'text', text: 'before-control-change' }))`);
     await heldReceived;
@@ -101,7 +107,7 @@ async function run() {
     await window.webContents.executeJavaScript('window.fixtureLateInput');
     const surfaces = await window.webContents.executeJavaScript('window.elevenex.taskBrowserSurfaces()');
     assert.equal(surfaces[0].generation, 2, 'A late input receipt cannot roll back newer authoritative state');
-    console.log('Remote input native smoke passed: real registration/preload, modifier keys, jittered receipts and control-generation races.');
+    console.log('Remote input native smoke passed: real registration/preload, modifier keys, lock identities, jittered receipts and control-generation races.');
   } finally {
     releaseHeld();
     if (!window.isDestroyed()) await window.webContents.executeJavaScript('clearInterval(window.fixtureHeartbeat)').catch(() => undefined);

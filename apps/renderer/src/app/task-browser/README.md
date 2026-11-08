@@ -211,7 +211,21 @@ page lock state. The user explicitly clicks **Use pointer lock** to grant the
 viewing canvas relative motion; Escape releases both ends. Main permits this only
 for a trusted app main frame with a visible, interactive, human-owned locked stream.
 Hidden pages, navigation, handoff, focus loss and disposal release the lock.
-Remote input verifies genuine Chromium lock state before accepting relative motion. Unsupported controls do not silently succeed. No web/mobile
+When a surface includes `pointerLockEpoch`, local consent and relative motion
+are bound to that host acquisition plus the displayed task/document/control
+identity. A changed identity releases local lock and discards queued old motion;
+an old unlock cannot release a newer host acquisition. Task switches never route
+the former task's unlock through the new surface. Legacy surfaces omit the epoch
+and retain their original input shape. Consecutive relative deltas sum only
+within the same epoch, buttons and modifiers. One reserved cleanup request lets
+Escape reach the host even when all ordinary input credits await receipts.
+Late receipts for released motion cannot interrupt a fresh acquisition; a new
+explicit **Use pointer lock** gesture can resume interrupted input without replay.
+The host observes real Chromium lock state in isolated frame contexts and checks
+the owner with bounded reconciliation outside ordered input. A stalled receiving
+page may still delay native delivery or cause its lock to expire; see the
+[host ownership and ordering contract](../../../../backend/src/desktop-browser/README.md#pointer-lock-ownership-and-input-ordering).
+Unsupported controls do not silently succeed. No web/mobile
 client ships in this foundation; remote desktops use the same private runtime
 protocol. A future web/phone client can implement the presentation/transport
 adapter behind an authenticated gateway without changing the task/driver contract or exposing generic HTTP/CDP.
@@ -229,6 +243,8 @@ for fresh video on a stable document and viewport. Up to 32 ordered events and
 65,536 text code units travel per batch, reducing typing round trips without dropping browser
 key events. Hosts advertising `inputWindow: 4` serialize complete batches and
 allow four outstanding writes to absorb network jitter; older hosts retain one.
+Compatible single relative moves may overlap native receipts; other input and
+complete batches remain ordered barriers.
 Clipboard commands travel separately as barriers, preserving copy/paste order.
 Queue pressure or uncertain delivery requests held-state cleanup on capable
 hosts. Typing stays stopped until fresh interaction; cleanup never replays input.
