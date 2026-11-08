@@ -63,6 +63,21 @@ test('malformed or oversized binary metadata closes the stream and rejects pendi
   } finally { await f.cleanup(); }
 });
 
+test('rejected display reads do not report an interrupted action or invalidate other requests', async () => {
+  const f = await fixture();
+  try {
+    f.socket.on('message', bytes => {
+      const request = JSON.parse(bytes);
+      f.socket.send(JSON.stringify({ id: request.id, ...(request.method === 'ping' ? { result: null } : { failed: true }) }));
+    });
+    await assert.rejects(f.stream.request('frame', {}), error => /display update interrupted/.test(error.message) && !/action/.test(error.message));
+    await assert.rejects(f.stream.request('layout', {}), /display update interrupted/);
+    await assert.rejects(f.stream.request('input', {}), /action interrupted.*Inspect state/);
+    assert.equal(await f.stream.request('ping'), null);
+    assert.equal(f.socket.readyState, 1);
+  } finally { await f.cleanup(); }
+});
+
 for (const window of [3, 8]) test(`video window ${window} negotiates compatibly and retains every dependent packet`, async () => {
   const f = await fixture();
   try {

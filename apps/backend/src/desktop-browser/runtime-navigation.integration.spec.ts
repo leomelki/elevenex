@@ -131,7 +131,7 @@ describe('remote browser document and in-page navigation', () => {
       generation,
       pointer('move', close.x + 10, close.y + 10),
     );
-    expect(tab.snapshot().cursor).toBe('crosshair');
+    await waitForState(() => tab.snapshot().cursor === 'crosshair');
     await task.input(tabId, generation, {
       kind: 'batch',
       events: [
@@ -185,7 +185,57 @@ describe('remote browser document and in-page navigation', () => {
       url: url + '/?panel=two',
     });
     await task.input(tabId, generation, pointer('move', 100, 60));
-    expect(tab.snapshot().cursor).toBe('pointer');
+    await waitForState(() => tab.snapshot().cursor === 'pointer');
+  });
+
+  it('delivers panel gestures and subsequent typing without waiting for cursor inspection', async () => {
+    const tab = task.page(tabId),
+      generation = tab.generation;
+    // A slow page can delay style/hit-test evaluation independently of native
+    // input. Hold that read to prove it cannot hold mouse-up or the next batch.
+    let finish!: (cursor: string) => void;
+    const held = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    const evaluate = jest
+      .spyOn(page, 'evaluate')
+      .mockImplementationOnce(() => held);
+    const first = task.input(tabId, generation, {
+      kind: 'batch',
+      events: [pointer('down', 100, 60), pointer('up', 100, 60)],
+    });
+    const next = task.input(tabId, generation, {
+      kind: 'batch',
+      events: [
+        pointer('down', 320, 90),
+        pointer('up', 320, 90),
+        { kind: 'text', text: 'responsive' },
+      ],
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const finished = Promise.all([first, next]).then(() => true);
+      const timedOut = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), 1000);
+      });
+      expect(await Promise.race([finished, timedOut])).toBe(true);
+      expect(await page.locator('#field').inputValue()).toBe('responsive');
+      await waitForState(() => evaluate.mock.calls.length > 0);
+      // This cursor result belongs to a retired document and must be ignored.
+      await task.command({
+        kind: 'navigate',
+        tabId,
+        url: url + '/replacement',
+      });
+      finish('crosshair');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(tab.snapshot().cursor).toBe('default');
+    } finally {
+      clearTimeout(timer);
+      finish('crosshair');
+      await Promise.allSettled([first, next]);
+      evaluate.mockRestore();
+    }
   });
 
   it('still invalidates agent authority when an in-page route changes', async () => {

@@ -1,5 +1,5 @@
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
-import { browserCursors, type TaskBrowserCursor } from '@elevenex/shared';
+import type { TaskBrowserCursor } from '@elevenex/shared';
 import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -9,6 +9,7 @@ import type {
 } from '@elevenex/shared';
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
+import { RuntimeBrowserCursor } from './runtime-cursor.js';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
@@ -47,6 +48,7 @@ export class RuntimeBrowserTab {
   private cdp?: CDPSession;
   private stopNavigation?: () => void;
   private input?: RuntimeBrowserInput;
+  private cursorReader?: RuntimeBrowserCursor;
   private disposed = false;
   private crashed = false;
   private layoutRevision = 0;
@@ -154,6 +156,11 @@ export class RuntimeBrowserTab {
     });
     this.cdp = await this.context.newCDPSession(page);
     this.input = new RuntimeBrowserInput(page, this.cdp);
+    this.cursorReader = new RuntimeBrowserCursor(page, cursor => {
+      if (cursor === this.cursor) return;
+      this.cursor = cursor;
+      this.changed();
+    });
     this.capture.attach(this.cdp);
     await page.exposeBinding('__elevenexPointerLock', async () => {
       const locked = (await Promise.all(page.frames().map(frame => frame.evaluate(() => !!document.pointerLockElement).catch(() => false)))).some(Boolean);
@@ -499,6 +506,7 @@ export class RuntimeBrowserTab {
     }
   }
   private invalidateDisplay(): void {
+    this.cursorReader?.reset();
     this.pointerLocked = false;
     void this.input?.unlockPointer();
     this.displayEpoch++;
@@ -549,23 +557,14 @@ export class RuntimeBrowserTab {
       return {};
     }
     const result = await this.input!.dispatch(input, current);
+    this.capture.changed();
     if (input.kind === 'pointer' || input.kind === 'pointer-exit') {
       const x = input.kind === 'pointer' ? input.x : -1, y = input.kind === 'pointer' ? input.y : -1;
-      const cursor = await this.page!.evaluate(({ x, y }) => {
-        let element = document.elementFromPoint(x, y);
-        while (element?.shadowRoot) { const inner = element.shadowRoot.elementFromPoint(x, y); if (!inner || inner === element) break; element = inner; }
-        if (!element) return 'default';
-        const cursor = getComputedStyle(element).cursor;
-        if (cursor === 'auto' && element.closest('input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true]')) return 'text';
-        // CSS custom cursor images remain on the host. Only their keyword
-        // fallback is relayed, never a URL or page-provided CSS expression.
-        return cursor.split(',').at(-1)?.trim() ?? 'default';
-      }, { x, y }).catch(() => 'default');
-      current();
-      const safe = browserCursors.find(value => value === cursor) ?? 'default';
-      if (safe !== this.cursor) { this.cursor = safe; this.changed(); }
+      this.cursorReader?.update(x, y, () =>
+        this.ready && this.generation === acceptedGeneration &&
+        this.inputEpoch === inputEpoch && this.navigation === navigation,
+      );
     }
-    this.capture.changed();
     return result;
   }
   async releaseInput(): Promise<void> {
@@ -703,6 +702,8 @@ export class RuntimeBrowserTab {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.cursorReader?.destroy();
+    this.cursorReader = undefined;
     this.stopNavigation?.(); this.stopNavigation = undefined;
     await this.workflows.destroy();
     this.takeover();
@@ -714,6 +715,8 @@ export class RuntimeBrowserTab {
   }
   /** Explicit human recovery; no navigation or queued action is resumed here. */
   async resetEngine(): Promise<void> {
+    this.cursorReader?.destroy();
+    this.cursorReader = undefined;
     await this.workflows.clear();
     this.invalidateDisplay();
     this.stopNavigation?.(); this.stopNavigation = undefined;

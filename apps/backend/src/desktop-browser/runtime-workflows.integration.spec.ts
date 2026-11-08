@@ -105,7 +105,7 @@ describe('remote human browser workflows', () => {
     await task.command({ kind: 'takeover', tabId }); await task.layout(800, 600, true, true);
     const rect = await page.locator('#pointer').boundingBox();
     await task.input(tabId, task.page(tabId).generation, { kind: 'pointer', type: 'move', x: rect!.x + 4, y: rect!.y + 4, button: 'none', buttons: 0, clicks: 0, modifiers: 0 });
-    expect(task.page(tabId).snapshot().cursor).toBe('crosshair');
+    await wait(() => task.page(tabId).snapshot().cursor === 'crosshair');
     await page.evaluate(() => { setTimeout(() => confirm('leave viewer'), 0); });
     await wait(() => workflows().some(item => item.kind === 'dialog'));
     task.reconcile(); await wait(() => workflows().length === 0);

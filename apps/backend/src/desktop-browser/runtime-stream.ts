@@ -304,10 +304,15 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
             result = null;
           } else {
             const { tabId, after } = credit.parse(parsed.body);
+            // Layout and frame requests are independent lanes. A hidden/closed
+            // display is a completed read, not a failed browser action.
+            if (!task.isPresented(tabId)) {
+              send({ id: parsed.id, result: null });
+              return;
+            }
             if (
               (frames.has(tabId) && !frames.get(tabId)!.signal.aborted) ||
-              videos.has(tabId) ||
-              !task.isPresented(tabId)
+              videos.has(tabId)
             )
               throw new Error();
             frames.set(tabId, controller);
@@ -316,11 +321,12 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
                 .page(tabId)
                 .nextFrame(after, controller.signal, 30000);
               if (controller.signal.aborted) return;
-              if (
-                this.browsers.viewer(taskId, token) !== task ||
-                !task.isPresented(tabId)
-              )
+              if (this.browsers.viewer(taskId, token) !== task)
                 throw new Error();
+              if (!task.isPresented(tabId)) {
+                send({ id: parsed.id, result: null });
+                return;
+              }
               if (frame) {
                 if (
                   frame.jpeg.length > 3000000 ||

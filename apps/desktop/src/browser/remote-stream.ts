@@ -153,7 +153,9 @@ export class RemoteBrowserStream {
         if (value["failed"] === true)
           entry.reject(
             new Error(
-              "Browser action interrupted. Inspect state before retrying.",
+              entry.mutation
+                ? "Browser action interrupted. Inspect state before retrying."
+                : "Browser display update interrupted. Reconnecting…",
             ),
           );
         else entry.resolve(value["result"]);

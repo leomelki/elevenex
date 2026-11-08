@@ -152,6 +152,36 @@ describe('private persistent browser channel', () => {
       expect(opened).not.toHaveBeenCalled();
     }
   });
+  it('completes obsolete frame reads without an action failure or reconnect', async () => {
+    const task = service.active(1)!;
+    const tab = await task.create('you', null, '');
+    await task.layout(800, 600, true, true);
+    let finish!: () => void;
+    const capture = jest.spyOn(tab, 'nextFrame').mockImplementation(() => new Promise(resolve => {
+      finish = () => resolve({ sequence: 1, width: 800, height: 600, jpeg: Buffer.from('old image') });
+    }));
+    const ws = open(), received: Record<string, unknown>[] = [];
+    ws.on('message', data => {
+      if (!Buffer.isBuffer(data)) throw new Error('Unexpected test packet');
+      const value: unknown = JSON.parse(data.toString());
+      if (typeof value === 'object' && value !== null) received.push({ ...value });
+    });
+    try {
+      await once(ws, 'open');
+      ws.send(JSON.stringify({ id: 1, method: 'frame', body: { tabId: tab.id, after: 0 } }));
+      while (!capture.mock.calls.length) await new Promise<void>(resolve => setImmediate(resolve));
+      await task.layout(800, 600, false);
+      finish();
+      while (!received.some(item => item.id === 1)) await once(ws, 'message');
+      expect(received.find(item => item.id === 1)).toEqual({ id: 1, result: null });
+      ws.send(JSON.stringify({ id: 2, method: 'frame', body: { tabId: tab.id, after: 0 } }));
+      ws.send(JSON.stringify({ id: 3, method: 'ping' }));
+      while (!received.some(item => item.id === 3)) await once(ws, 'message');
+      expect(received.find(item => item.id === 2)).toEqual({ id: 2, result: null });
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+    } finally { finish?.(); capture.mockRestore(); }
+  });
   it('allows only one persistent channel per viewer lease', async () => {
     const first = open();
     await once(first, 'open');
@@ -182,6 +212,9 @@ describe('private persistent browser channel', () => {
     } }));
     while (!capture.mock.calls.length) await new Promise<void>(resolve => setImmediate(resolve));
     await task.layout(800, 600, false);
+    ws.send(JSON.stringify({ id: 2, method: 'frame', body: { tabId: tab.id, after: 0 } }));
+    while (!received.some(item => item.id === 2)) await once(ws, 'message');
+    expect(received.find(item => item.id === 2)).toEqual({ id: 2, result: null });
     finish();
     while (!received.some(item => item.event === 'video-ended')) await once(ws, 'message');
     expect(received.find(item => item.event === 'video-ended')).toEqual({ event: 'video-ended', subscription: '22222222-2222-4222-8222-222222222222' });

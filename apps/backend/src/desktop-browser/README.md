@@ -127,6 +127,13 @@ roots. A separate generation-checked `release` event cleans up held human state
 after queue pressure or an uncertain outcome; it never retries text or actions.
 Ordinary input does not publish unchanged task snapshots.
 
+Cursor hit testing is optional presentation work, outside the ordered input lane.
+`RuntimeBrowserCursor` coalesces positions at a 32 ms cadence with at most one
+page evaluation in flight. A slow style/layout read cannot delay mouse-up,
+typing or capture invalidation, or turn an already delivered event into a failed
+action. Late cursor results require the same document, input epoch and driver
+generation; engine replacement and teardown retire its pending work.
+
 `displayEpoch` identifies the document and logical viewport independently of
 driver ownership. Document replacement clears old captures, serializes screencast
 restart and seeds the current page; H.264 starts a new keyframe epoch at that boundary.
@@ -173,6 +180,12 @@ cursors and a monotonic display sequence, including codec fallback; a JPEG
 receipt can never accidentally acknowledge an H.264 packet. The desktop restarts
 only a presentation whose local renderer receipt is missing for five seconds.
 This never reconnects task execution or replays input.
+
+Frame reads race independent layout updates. If their presentation hides or
+closes before delivery, the private stream completes the read with no image
+instead of reporting a failed action and reconnecting the task. Invalid parallel
+reads and expired viewer authority remain errors. Display failures are reported
+separately from mutations whose outcome may be uncertain.
 
 New hosts advertise optional `pointerExit: true`. The human-only
 `{ kind: 'pointer-exit' }` event moves the host pointer outside the viewport
