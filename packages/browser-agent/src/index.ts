@@ -15,6 +15,7 @@ export { PlaywrightTransport } from './playwright-transport.js';
 
 export { BrowserInteractions } from './interactions.js';
 export { pickBrowserElement } from './element-picker.js';
+export { browserHoverAt, BrowserPickerHover } from './picker-hover.js';
 export { browserHumanRequests } from './transport.js';
 
 export { BrowserInteractionController } from './interaction-controller.js';

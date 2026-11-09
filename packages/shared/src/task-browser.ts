@@ -1,5 +1,7 @@
 /** Task-owned browser contracts. Page content never receives this bridge. */
 export interface BrowserRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+/** Human picker presentation only; contains no page text, attributes or values. */
+export interface BrowserHover extends BrowserRect { readonly tag: string }
 /** Page-reported development metadata, never authority to read or open a file. */
 export interface BrowserSourceLocation {
   readonly file: string;
@@ -121,6 +123,8 @@ export interface TaskBrowserTab {
   readonly server?: string;
   readonly step?: { readonly n: number; readonly total?: number; readonly text: string };
   readonly target?: BrowserElement;
+  /** Optional on older hosts. Never included in agent observations. */
+  readonly hovered?: BrowserHover;
 }
 export interface TaskBrowserState {
   readonly webAuthn?: true;

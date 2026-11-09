@@ -56,6 +56,12 @@ export class TaskBrowserComponent {
     const file = source ? source.file + (source.line ? ':' + source.line : '') + (source.column ? ':' + source.column : '') : undefined;
     return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.snapshot?.reference.label ?? raw?.tag ?? element.selector, ...(file ? { file } : {}) } : undefined;
   });
+  readonly hovered = computed<BrowserTarget | undefined>(() => {
+    const raw = this.current()?.hovered;
+    if (!this.store.state()?.picking || !raw) return undefined;
+    const element = this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw;
+    return { x: element.x, y: element.y, w: element.width, h: element.height, label: raw.tag };
+  });
   readonly target = computed<BrowserTarget | undefined>(() => {
     const raw = this.current()?.target;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;

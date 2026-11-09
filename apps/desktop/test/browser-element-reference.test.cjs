@@ -84,3 +84,48 @@ test('remote ticket snapshots cannot substitute pixels from another tab', () => 
   const selection = { selector: reference.selector, frames: [], tag: reference.tag, ...reference.target, documentId: reference.documentId, snapshot: { reference: { ...reference, tabId: 'other-tab' }, jpeg: '/9j/' } };
   assert.throws(() => browserHumanRequests([{ id: reference.id, tabId: 'tab-1', sessionId: 2, kind: 'element', message: 'Choose Save', status: 'completed', expiresAt: Date.now() + 10000, selection }]), /another tab/);
 });
+
+test('picker hover coalesces reads, rejects stale results and releases its refresh timer', async () => {
+  const { BrowserPickerHover } = require('../../../packages/browser-agent/dist');
+  const { setTimeout: delay } = require('node:timers/promises');
+  const calls = [], pending = [], changes = [];
+  const hover = new BrowserPickerHover((x, y) => {
+    calls.push([x, y]);
+    return new Promise(resolve => pending.push(resolve));
+  }, () => changes.push(hover.value));
+  const result = { tag: 'button', x: 10, y: 20, width: 40, height: 30 };
+  try {
+    hover.update(10, 20, () => true);
+    await delay(50);
+    assert.deepEqual(calls, [[10, 20]]);
+    hover.update(30, 40, () => true); hover.update(50, 60, () => true);
+    pending.shift()(result);
+    await delay(50);
+    assert.equal(hover.value, undefined, 'A late hover cannot paint at an old pointer');
+    assert.deepEqual(calls, [[10, 20], [50, 60]]);
+    pending.shift()(result);
+    await delay(0);
+    assert.deepEqual(hover.value, result);
+    hover.reset();
+    await delay(50);
+    assert.equal(hover.value, undefined);
+    assert.equal(calls.length, 2, 'Reset stops refresh without new input');
+    hover.update(5, 6, () => true);
+    await delay(50);
+    hover.destroy(); pending.shift()(result);
+    await delay(50);
+    assert.equal(hover.value, undefined, 'Destroyed owners reject pending replies');
+    assert.deepEqual(changes, [result, undefined]);
+  } finally { hover.destroy(); for (const resolve of pending) resolve(undefined); }
+});
+
+test('picker hover relays only bounded geometry and a tag, with no page content', async () => {
+  const { browserHoverAt } = require('../../../packages/browser-agent/dist');
+  const send = async method => {
+    if (method === 'DOM.getNodeForLocation') return { backendNodeId: 12 };
+    if (method === 'DOM.describeNode') return { node: { localName: 'input', attributes: ['value', 'private'], nodeValue: 'private' } };
+    return { model: { border: [10, 20, 110, 20, 110, 60, 10, 60] } };
+  };
+  assert.deepEqual(await browserHoverAt(send, 30, 40), { tag: 'input', x: 10, y: 20, width: 100, height: 40 });
+  assert.equal(await browserHoverAt(async method => method === 'DOM.getBoxModel' ? { model: { border: [Infinity, 0, 1, 0, 1, 1, 0, 1] } } : send(method), 1, 2), undefined);
+});

@@ -77,6 +77,37 @@ describe('remote browser interaction and display ownership', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  it('highlights and scrolls in point mode without activating the page, then clears on exit/cancel', async () => {
+    const tab = task.page(tabId);
+    const waitFor = async (check: () => Promise<boolean> | boolean) => {
+      for (let i = 0; i < 100; i++) {
+        if (await check()) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('Picker feedback did not settle');
+    };
+    await task.command({ kind: 'pick', enabled: true, visual: 1 });
+    try {
+      await task.input(tabId, tab.generation, { kind: 'pointer', type: 'move', x: 350, y: 150, button: 'none', buttons: 0, clicks: 0, modifiers: 0 });
+      await waitFor(() => tab.snapshot().hovered?.tag === 'button');
+      expect(tab.snapshot().hovered).toEqual({ tag: 'button', x: 300, y: 100, width: 200, height: 100 });
+      await task.input(tabId, tab.generation, { kind: 'pointer', type: 'up', x: 350, y: 150, button: 'left', buttons: 0, clicks: 1, modifiers: 0 });
+      expect(await page.locator('#hover').getAttribute('data-clicks')).toBeNull();
+      await page.evaluate(() => document.body.style.height = '2000px');
+      await task.input(tabId, tab.generation, { kind: 'wheel', x: 350, y: 150, deltaX: 0, deltaY: 80, modifiers: 0 });
+      await waitFor(() => page.evaluate(() => scrollY > 0));
+      await waitFor(() => tab.snapshot().hovered?.tag === 'body');
+      expect(tab.picking).toBe(true);
+      await task.input(tabId, tab.generation, { kind: 'pointer-exit' });
+      expect(tab.snapshot().hovered).toBeUndefined();
+      await task.command({ kind: 'pick', enabled: false });
+      expect(tab.snapshot().hovered).toBeUndefined();
+    } finally {
+      await task.command({ kind: 'pick', enabled: false });
+      await page.evaluate(() => { document.body.style.height = ''; scrollTo(0, 0); });
+    }
+  });
+
   it('reloads fragment locations and produces frames for the current document epoch', async () => {
     await page.evaluate(() => history.replaceState(null, '', '#anchor'));
     const identity = await page.evaluate('window.documentIdentity');

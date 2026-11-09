@@ -1,4 +1,4 @@
-import { pickBrowserElement } from '@elevenex/browser-agent';
+import { browserHoverAt, BrowserPickerHover, pickBrowserElement } from '@elevenex/browser-agent';
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
 import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
@@ -178,7 +178,17 @@ export class RuntimeBrowserTab {
   private historyPending = false;
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
-  picking = false;
+  private pickerEnabled = false;
+  get picking(): boolean { return this.pickerEnabled; }
+  set picking(enabled: boolean) { this.pickerEnabled = enabled; this.pickerHover.reset(); }
+  private readonly pickerHover = new BrowserPickerHover(
+    (x, y) => browserHoverAt((method, params) => {
+      if (!this.cdp) throw new Error('Page unavailable');
+      // The shared human-only reader issues three fixed DOM commands.
+      return this.cdp.send(method as Parameters<CDPSession['send']>[0], params);
+    }, x, y),
+    () => this.changed(),
+  );
   visualPicking = false;
   capturePending = false;
   private page?: Page;
@@ -526,6 +536,7 @@ export class RuntimeBrowserTab {
       waiting: this.waiting,
       step: this.step,
       target: this.target,
+      ...(this.picking && this.ready && this.pickerHover.value ? { hovered: this.pickerHover.value } : {}),
     };
   }
   async navigate(address: string): Promise<void> {
@@ -571,7 +582,7 @@ export class RuntimeBrowserTab {
     const current = () => revision === this.layoutRevision && !this.disposed;
     const changed =
       this.visible !== visible || this.interactive !== interactive;
-    if (changed) this.humanEpoch++;
+    if (changed) { this.pickerHover.reset(); this.humanEpoch++; }
     this.visible = visible;
     this.interactive = interactive;
     if (changed) this.changed();
@@ -645,6 +656,7 @@ export class RuntimeBrowserTab {
     }
   }
   private invalidateDisplay(): void {
+    this.pickerHover.reset();
     this.cursorReader?.reset();
     void this.input?.unlockPointer();
     this.displayEpoch++;
@@ -688,7 +700,11 @@ export class RuntimeBrowserTab {
         throw new Error('Browser input was interrupted');
     };
     if (this.picking) {
-      if (input.kind === 'pointer' && input.type === 'down') {
+      const valid = () => { try { current(); return this.picking && !this.capturePending && !this.disposed; } catch { return false; } };
+      if (input.kind === 'pointer-exit' || input.kind === 'release') this.pickerHover.reset();
+      if (input.kind === 'pointer' && input.type === 'move' || input.kind === 'wheel') this.pickerHover.update(input.x, input.y, valid);
+      if (input.kind === 'pointer' && input.type === 'down' && input.button === 'left') {
+        this.pickerHover.reset();
         if (this.agentPicker) { await this.agentPicker(input.x, input.y); return {}; }
         if (!this.visualPicking) {
           const element = await this.inspect(input.x, input.y, () => { try { current(); return this.picking && !this.disposed; } catch { return false; } });
@@ -710,7 +726,7 @@ export class RuntimeBrowserTab {
           if (this.picking) this.picked(element);
         } finally { this.capturePending = false; this.changed(); }
       }
-      return {};
+      if (!(input.kind === 'wheel' || input.kind === 'pointer-exit' || input.kind === 'pointer' && input.type === 'move')) return {};
     }
     const result = await this.input!.dispatch(input, current);
     this.capture.changed();
@@ -867,6 +883,7 @@ export class RuntimeBrowserTab {
   async destroy(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.pickerHover.destroy();
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
     this.stopNavigation?.(); this.stopNavigation = undefined;

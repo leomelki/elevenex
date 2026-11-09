@@ -41,6 +41,20 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
 }
 afterEach(() => TestBed.resetTestingModule());
 describe('Point at an element for the chat', () => {
+  it('renders host hover geometry only while pointing and drops it on cancellation', async () => {
+    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }]);
+    await render(fixture);
+    fixture.componentInstance.store.state.update(state => state && { ...state, picking: true, tabs: state.tabs.map(tab => ({ ...tab, hovered: { x: 20, y: 30, width: 100, height: 40, tag: 'button' } })) });
+    fixture.detectChanges();
+    const ring = fixture.nativeElement.querySelector('.target.hover') as HTMLElement;
+    expect(ring.textContent).toContain('button');
+    expect(ring.style.width).toBe('108px');
+    expect(ring.style.height).toBe('48px');
+    fixture.componentInstance.store.state.update(state => state && { ...state, picking: false });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.hovered()).toBeUndefined();
+    expect(fixture.nativeElement.querySelector('.target.hover')).toBeNull();
+  });
   const element = { selector: 'css=[data-elevenex-picked="11111111-1111-4111-8111-111111111111"]', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
   const snapshot = { reference: { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', selector: element.selector, tag: 'button', frames: [], page: 'http://localhost:3000/', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: element, crop: { x: 0, y: 0, width: 200, height: 100 }, image: { width: 200, height: 100, scale: 1 } }, jpeg: '/9j/' };
   it('stages a pick in the chat directly, as a snapshot rather than prose', async () => {

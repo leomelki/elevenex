@@ -168,6 +168,9 @@ test('remote browser replies are bounded, resource matched and content allowlist
   assert.equal('pageText' in remoteBrowserState(value,'scope',1),false);
   const tab = { id, title: 'Page', url: 'https://example.com/', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: true, canGoBack: true, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
   const withTab = { ...value, tabs: [tab], active: id };
+  const hovered = { tag: 'button', x: 10, y: 20, width: 100, height: 30 };
+  assert.deepEqual(remoteBrowserState({ ...withTab, tabs: [{ ...tab, hovered: { ...hovered, text: 'private', attributes: ['value', 'secret'] } }] }, 'scope', 1).tabs[0].hovered, hovered);
+  for (const change of [{ x: NaN }, { width: -1 }, { height: Infinity }, { tag: '<script>' }]) assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, hovered: { ...hovered, ...change } }] }, 'scope', 1));
   const picked = { selector: 'html > body:nth-child(1) > button:nth-child(1)', tag: 'button', x: 1, y: 1, width: 20, height: 20 };
   const source = { file: 'src/App.tsx', line: 88, column: 7, kind: 'react-source-map' };
   assert.deepEqual(remoteBrowserState({ ...withTab, picked: { ...picked, source: { ...source, props: 'secret' } } }, 'scope', 1).picked.source, source);

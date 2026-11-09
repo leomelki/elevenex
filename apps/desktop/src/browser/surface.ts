@@ -1,7 +1,7 @@
 import { AgentDownloads } from './agent-downloads';
 import { nativeBrowserInput } from './native-input';
 import { AgentNativeInput } from './agent-input';
-import { pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { browserHoverAt, BrowserPickerHover, pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import { hardenTaskGuest } from './guest-policy';
 import { WebContentsView } from 'electron';
 import { BrowserFrameStream } from './frame-stream';
@@ -148,7 +148,18 @@ export class BrowserPage {
   slowNetwork = false;
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
-  picking = false;
+  private pickerEnabled = false;
+  get picking(): boolean { return this.pickerEnabled; }
+  set picking(enabled: boolean) { this.pickerEnabled = enabled; this.pickerHover.reset(); }
+  private readonly pickerHover = new BrowserPickerHover(async (x, y) => {
+    const debuggerApi = this.contents.debugger;
+    if (!debuggerApi.isAttached()) debuggerApi.attach('1.3');
+    return browserHoverAt((method, params) => debuggerApi.sendCommand(method, params), x, y);
+  }, () => this.host.changed());
+  private hoverAt(x: number, y: number): void {
+    const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
+    this.pickerHover.update(x, y, () => this.picking && !this.capturePending && !this.destroyed && this.ready && this.host.authorized() && navigation === this.navigation && viewport === this.viewportRevision && generation === this.lease.generation);
+  }
   visualPicking = false;
   userDownloadIntent = false;
   reducedMotion = false;
@@ -220,6 +231,7 @@ export class BrowserPage {
     contents.on('will-redirect', navigation);
     contents.on('did-start-navigation', (_event, _url, inPlace, main) => {
       if (!main) return;
+      this.pickerHover.reset();
       this.navigation++; this.lease.generation++; this.target = undefined; this.heldMouse.clear(); this.heldKeys.clear();
       if (!inPlace) { this.loading = true; this.error = null; }
       host.changed();
@@ -279,6 +291,7 @@ export class BrowserPage {
       // Revoke synchronously before Chromium accepts the user's key. Async/queued agent
       // work rechecks the generation after every await and immediately before dispatch.
       if (this.lease.driver === 'agent') { this.lease.takeOver(); host.changed(); }
+      if (this.picking && input.key === 'Escape') { event.preventDefault(); if (input.type === 'keyDown') host.shortcut('pick'); return; }
       if (input.shift && input.key === 'Escape' && input.type === 'keyDown') { event.preventDefault(); host.shortcut('controls'); return; }
       if ((input.meta || input.control) && input.type === 'keyDown' && (input.key.toLowerCase() === 't' || (input.shift && input.key.toLowerCase() === 'c'))) {
         event.preventDefault(); host.shortcut(input.key.toLowerCase() === 't' ? 'open' : 'pick');
@@ -303,8 +316,13 @@ export class BrowserPage {
       }
       if (this.picking) {
         this.heldMouse.delete(button);
-        event.preventDefault();
-        if (mouse.type === 'mouseDown') { const zoom = contents.getZoomFactor(); void this.pickAt(mouse.x / zoom, mouse.y / zoom); }
+        const zoom = contents.getZoomFactor();
+        if (mouse.type === 'mouseLeave') this.pickerHover.reset();
+        else if (mouse.type === 'mouseMove' || mouse.type === 'mouseEnter' || mouse.type === 'mouseWheel') this.hoverAt(mouse.x / zoom, mouse.y / zoom);
+        else {
+          event.preventDefault();
+          if (mouse.type === 'mouseDown' && button === 'left') void this.pickAt(mouse.x / zoom, mouse.y / zoom);
+        }
       }
     });
     void this.initialize();
@@ -349,6 +367,7 @@ export class BrowserPage {
       canGoBack: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoBack(), error: this.error,
       canGoForward: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoForward(),
       errors: this.errors, width: this.width, theme: this.theme, slowNetwork: this.slowNetwork, ...(this.step ? { step: this.step } : {}),
+      ...(this.picking && this.ready && this.pickerHover.value ? { hovered: this.pickerHover.value } : {}),
       ...(this.target ? { target: this.target } : {}) };
   }
   configureNetwork(): Promise<void> { return this.networkReady ??= this.host.configure(this.pageSession).catch(error => { this.networkReady = undefined; throw error; }); }
@@ -369,6 +388,7 @@ export class BrowserPage {
     this.layoutGeneration = ownerGeneration; this.inputReady = inputReady && !this.initializing;
     const responsiveChange = this.viewport.width !== viewport.width || this.zoom !== zoom;
     if (responsiveChange || this.viewport.height !== viewport.height) {
+      this.pickerHover.reset();
       this.viewportRevision++;
       const hadViewport = this.viewport.width > 0 && this.viewport.height > 0;
       if (responsiveChange) this.target = undefined;
@@ -381,6 +401,7 @@ export class BrowserPage {
     this.contents.setAudioMuted(false);this.attached = true; this.frames?.setActive(this.presentation === 'stream');
   }
   hide(): void {
+    this.pickerHover.reset();
     this.heldMouse.clear(); this.heldKeys.clear();
     if (!this.attached) return;
     if(this.hasContents)this.contents.setAudioMuted(true);
@@ -390,6 +411,7 @@ export class BrowserPage {
   }
   acknowledge(stream: string, sequence: number): void { this.frames?.acknowledge(stream, sequence); }
   async userInput(generation: number, input: TaskBrowserStreamEvent): Promise<void> {
+    if (input.kind === 'pointer-exit' && this.picking) { this.pickerHover.reset(); return; }
     if (input.kind === 'release' || input.kind === 'pointer-exit' || input.kind === 'pointer-relative' || input.kind === 'pointer-unlock') throw new Error('This input requires a machine stream');
     if (!this.attached || !this.hasContents || !this.host.authorized() || this.presentation !== 'stream') throw new Error('Browser presentation or control changed');
     if (this.agentSelectionPaused) return;
@@ -399,8 +421,11 @@ export class BrowserPage {
     if ((input.kind === 'pointer' || input.kind === 'wheel') && (input.x >= this.viewport.width || input.y >= this.viewport.height)) throw new Error('Input is outside the page');
     if (input.kind !== 'pointer' || input.type === 'down') this.userDownloadIntent = true;
     // This is a human-input endpoint, never part of the automation mailbox.
-    if (this.picking && input.kind === 'pointer') { if (input.type === 'down') await this.pickAt(input.x, input.y); return; }
-    if (this.picking) return;
+    if (this.picking) {
+      if (input.kind === 'pointer' && input.type === 'down' && input.button === 'left') { await this.pickAt(input.x, input.y); return; }
+      if (input.kind === 'pointer' && input.type === 'move' || input.kind === 'wheel') this.hoverAt(input.x, input.y);
+      else return;
+    }
     const contents = this.contents, revision = this.disposedInput, acceptedGeneration = this.lease.generation;
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
     await contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -517,6 +542,7 @@ export class BrowserPage {
   private pickingBusy = false;
   get capturePending(): boolean { return this.pickingBusy; }
   private async pickAt(x: number, y: number): Promise<void> {
+    this.pickerHover.reset();
     if (this.agentPicker) { await this.agentPicker(x, y); return; }
     if (!this.visualPicking) {
       const generation = this.lease.generation, navigation = this.navigation, viewport = this.viewportRevision;
@@ -544,6 +570,7 @@ export class BrowserPage {
   countError(): void { if (this.destroyed || !this.host.authorized() || this.errors >= 999) return; this.errors++; this.host.changed(); }
   destroy(): void {
     if (this.destroyed) return;
+    this.pickerHover.destroy();
     this.downloads.dispose();
     this.lease.takeOver(); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);
     const contents = this.engine;

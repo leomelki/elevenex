@@ -2,6 +2,7 @@ import { browserHumanRequests } from '@elevenex/browser-agent';
 import { isBrowserElementSnapshot, browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
 import type {
   BrowserElement,
+  BrowserHover,
   TaskBrowserState,
   TaskBrowserTab,
 } from "@elevenex/shared";
@@ -66,6 +67,18 @@ function element(value: unknown): BrowserElement {
     width: coordinates[2]!,
     height: coordinates[3]!,
   };
+}
+function hover(value: unknown): BrowserHover {
+  const raw = record(value), tag = text(raw['tag'], 64);
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(tag)) invalid();
+  const coordinate = (key: string): number => {
+    const n = raw[key];
+    if (typeof n !== 'number' || !Number.isFinite(n) || Math.abs(n) > 1_000_000) invalid();
+    return n;
+  };
+  const width = coordinate('width'), height = coordinate('height');
+  if (width <= 0 || height <= 0) invalid();
+  return { tag, x: coordinate('x'), y: coordinate('y'), width, height };
 }
 function workflow(value: unknown): TaskBrowserWorkflow {
   const raw = record(value), id = browserId(raw['id']);
@@ -132,6 +145,7 @@ function tab(value: unknown): TaskBrowserTab {
           },
         }
       : {}),
+    ...(raw['hovered'] === undefined ? {} : { hovered: hover(raw['hovered']) }),
     ...(raw["target"] === undefined ? {} : { target: element(raw["target"]) }),
   };
 }

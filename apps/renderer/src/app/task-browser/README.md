@@ -142,6 +142,15 @@ and network policy still apply. Local native popup behavior remains unchanged.
 Unsupported site flows retain Open outside, which uses a separate browser profile.
 
 The human picker consumes page input without activating the target. Its shared
+hover reader publishes only a tag and bounded viewport geometry to the human UI.
+Pointer motion and wheel scrolling remain live in point mode; clicks select without
+activating the page. Hover reads coalesce outside the ordered input lane, refresh
+under a stationary pointer during scrolling, and stop on exit, cancellation,
+capture, hidden presentation, navigation or control changes. Older hosts may omit
+hover metadata. Out-of-process frames may highlight their embedding element;
+the explicit selection still resolves the target inside the frame.
+
+The picker's shared
 Playwright inspection worker resolves open shadow roots and frame paths and
 captures actual browser pixels with surrounding context before hiding/pausing
 the page. Closed roots stay opaque. The selected reference has viewport CSS

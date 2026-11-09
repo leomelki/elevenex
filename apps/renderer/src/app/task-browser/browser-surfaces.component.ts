@@ -10,7 +10,7 @@ import {
   viewChildren,
   signal,
 } from '@angular/core';
-import type { BrowserElement, TaskBrowserSurface } from '@elevenex/shared';
+import type { BrowserRect, TaskBrowserSurface } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { EmbeddedPageComponent } from './embedded-page.component';
 import { BrowserStreamComponent } from './browser-stream.component';
@@ -31,7 +31,7 @@ export class BrowserSurfacesComponent {
       .find((stream) => stream.surface().tabId === tabId)
       ?.focusPage();
   }
-  coordinates(tabId: string, element: BrowserElement): BrowserElement {
+  coordinates<T extends BrowserRect>(tabId: string, element: T): T {
     const surface = this.surfaces().find((surface) => surface.tabId === tabId),
       stream = this.streams().find(
         (stream) => stream.surface().tabId === tabId,
