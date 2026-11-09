@@ -2,13 +2,6 @@
   (selected)="selected($event)" (added)="create()" (closed)="close($event)" (scriptRequested)="create($event.id)" (stopRequested)="interrupt($event)" (rerunRequested)="store.action(+$event.tabId, 'rerun')" (askRequested)="ask()" (portOpened)="openPort($event)" (searchRequested)="find($event)">
   @if (inputBlocked() && current()?.alive) { <button #resumeButton terminalActions exButton size="sm" variant="secondary" [disabled]="disabled()" (click)="resumeInput()">Resume typing</button> }
   <div terminalContent class="live-content" [class.has-terminal]="!!current()">
-    @if (browserState(); as browser) {
-      @if (browser.terminalId === current()?.id) {
-        @if (browser.busy) { <p class="notice" role="status">Opening in your browser…</p> }
-        @else if (browser.error) { <p class="notice error" role="alert">{{ browser.error }}<button exButton size="sm" variant="ghost" [disabled]="disabled() || !current()?.port" (click)="openPort(current()?.port ?? 0)">Try again</button></p> }
-        @else if (browser.url) { <p class="notice" role="status">Browser address: <span class="browser-address">{{ browser.url }}</span></p> }
-      }
-    }
     @if (store.error()) { <div class="notice error" role="alert">{{ store.error() }}<button exButton size="sm" variant="ghost" [disabled]="disabled()" (click)="store.refresh()">Refresh</button></div> }
     @if (!available()) { <p class="notice" role="status">Reconnect to reattach. Terminals continue on their machine.</p> }
     @if (notice()) { <ex-toast class="connection-notice" [title]="inputBlocked() ? 'Typing paused' : 'Terminal connection'" [detail]="notice()" glyph="attention" [duration]="0" (dismissed)="dismissNotice()" /> }

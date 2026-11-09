@@ -14,6 +14,12 @@ tasks cancels a pending opening before startup. New shell, script launch, interr
 rerun and process close remain user actions. There are no agent terminal tools or
 chat-output mirrors. Existing agent approval flows are unchanged.
 
+Browser handoff feedback is supplied on its owning `TerminalTab`, so the serving
+port, clickable desktop-local address, opening/retry state and Stop share the
+view's server row. The adapter does not add a separate address notice above the
+terminal output. `/terminal-stream` can exercise this with its isolated
+`platform.serve()` transport and controlled `browserState` preview signal.
+
 `lastClosed` asks the workspace to close its side panel as soon as the last tab
 is removed, while backend cleanup continues. Failed/uncertain closes reconcile
 in the background; surviving tabs and errors remain available on reopening.

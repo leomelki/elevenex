@@ -83,6 +83,19 @@ describe('Task terminal panel lifecycle', () => {
     expect(component.tabs()[0]?.cwd).toBe('/task');
   });
 
+  it('supplies browser feedback only to its owning terminal tab', async () => {
+    const { fixture, component } = setup([
+      { ...terminal(1), status: 'serving', port: 8080 }, terminal(1, 2),
+    ]);
+    fixture.componentRef.setInput('visible', true); await settle(fixture);
+    const browser = { terminalId: 1, busy: false, error: '', url: 'http://127.0.0.1:24766/' };
+    fixture.componentRef.setInput('browserState', browser); await settle(fixture);
+    expect(component.tabs()[0]?.browser).toEqual(browser);
+    expect(component.tabs()[1]?.browser).toBeUndefined();
+    fixture.componentRef.setInput('browserState', null); await settle(fixture);
+    expect(component.tabs().every(tab => !tab.browser)).toBe(true);
+  });
+
   it('updates activity titles and restores saved names without changing tab identity or selection', async () => {
     const row = terminal(1);
     const { fixture, component, rows } = setup([row]);

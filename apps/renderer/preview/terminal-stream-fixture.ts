@@ -36,6 +36,12 @@ export class TerminalStreamFixture {
     if (_scope !== this.state().scope.id) throw new Error('Stale preview scope');
     this.counts.writes++;
     this.emit({ type: 'input-ack', sequence: input.sequence });
+    if (input.data === '\x03' && this.terminal.status === 'serving') {
+      this.terminal = { ...this.terminal, status: 'idle', port: null, command: '' };
+      this.output('\r\n^C\r\nREADY> ');
+      this.emit({ type: 'metadata', list: this.list() });
+      return accepted;
+    }
     this.output(input.data);
     return accepted;
   };
@@ -50,6 +56,11 @@ export class TerminalStreamFixture {
       currentCwd: `/workspace/folder-${index}`, status: index % 2 ? 'running' : 'idle' };
     this.emit({ type: 'metadata', list: this.list() });
     this.output(`\r\nmetadata update ${index}\r\nREADY> `);
+  }
+  serve(port = 8080): void {
+    this.terminal = { ...this.terminal, status: 'serving', port, command: 'pnpm dev', activityTitle: 'web' };
+    this.output(`\r\nServer ready on http://localhost:${port}/\r\n`);
+    this.emit({ type: 'metadata', list: this.list() });
   }
   interrupt(uncertain = false): void { this.emit({ type: 'closed', uncertain, message: 'Preview transport interrupted.' }); }
   exit(code: number): void {

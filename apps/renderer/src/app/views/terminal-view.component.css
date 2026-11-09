@@ -2,7 +2,16 @@
 .terminal { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
 .find-trigger { align-self: center; }
 .toolbar { display: flex; flex: none; align-items: center; justify-content: flex-end; min-height: calc(var(--row-height) + var(--space-2) + 1px); padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--line); color: var(--ink-muted); }
-.toolbar-actions { display: flex; align-items: center; gap: var(--space-2); }
+.server { flex: 1; min-width: 0; }
+.toolbar-actions { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
+.port { flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); background: var(--surface-sunken); color: var(--ink-muted); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
+button.port-open { flex: 1; min-width: 0; justify-content: flex-start; gap: var(--space-2); }
+.port-open ex-icon, .stop { flex: none; }
+.port-address { overflow: hidden; text-overflow: ellipsis; }
+.port-address.has-url { font-family: var(--font-mono); font-size: var(--text-mono-meta-size); }
+.server-divider { height: var(--space-4); border-left: 1px solid var(--line); }
+.port-error { margin: var(--space-1) var(--space-2); color: var(--danger); font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans); overflow-wrap: anywhere; }
+.port-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .content { display: flex; flex: 1; min-height: 0; flex-direction: column; background: var(--surface-sunken); }
 .output { flex: 1; min-height: 150px; color: var(--ink); }
 .line { white-space: pre; height: 20px; min-width: max-content; padding: 0 var(--space-3); font: var(--text-code-size)/20px var(--font-mono); }

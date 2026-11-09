@@ -151,9 +151,56 @@ describe('Side-view interactions', () => {
     fixture.componentInstance.portOpened.subscribe(portOpened);
     const buttons = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>);
     buttons.find(button => button.textContent?.includes('Ask the agent'))!.click();
-    buttons.find(button => button.textContent?.includes('Open :'))!.click();
+    (fixture.nativeElement.querySelector('.port-open') as HTMLButtonElement).click();
     expect(asked).toHaveBeenCalledWith({ tabId: 'tests', failure: { code: 1, cmd: 'pnpm test' } });
     expect(portOpened).not.toHaveBeenCalled();
+  });
+
+  it('keeps browser handoff feedback and actions together for the selected server', async () => {
+    const fixture = TestBed.createComponent(TerminalViewComponent);
+    const server = { id: 'web', title: 'Web', status: 'serving' as const, port: 8080 };
+    const shell = { id: 'shell', title: 'Shell', status: 'idle' as const };
+    const update = (browser?: { busy: boolean; error: string; url: string }) => {
+      fixture.componentRef.setInput('tabs', [{ ...server, browser }, shell]);
+      fixture.detectChanges();
+    };
+    const opened = vi.fn(), stopped = vi.fn();
+    fixture.componentInstance.portOpened.subscribe(opened);
+    fixture.componentInstance.stopRequested.subscribe(stopped);
+    update();
+    const root = fixture.nativeElement as HTMLElement;
+    const open = () => root.querySelector<HTMLButtonElement>('.port-open')!;
+    const stop = () => root.querySelector<HTMLButtonElement>('.stop')!;
+    expect(open().textContent).toContain('Open in browser');
+    open().click(); expect(opened).toHaveBeenLastCalledWith(8080);
+    update({ busy: true, error: '', url: '' });
+    expect(open().disabled).toBe(true);
+    expect(open().getAttribute('aria-busy')).toBe('true');
+    open().click(); expect(opened).toHaveBeenCalledTimes(1);
+    stop().click(); expect(stopped).toHaveBeenLastCalledWith('web');
+    update({ busy: false, error: 'Could not open your browser.', url: '' });
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Could not open your browser.');
+    expect(open().textContent).toContain('Try again');
+    open().click(); expect(opened).toHaveBeenCalledTimes(2);
+    update({ busy: false, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(open().textContent).toContain('http://127.0.0.1:24766/');
+    expect(open().getAttribute('aria-label')).toBe('Open http://127.0.0.1:24766/ in your browser');
+    expect(root.querySelector('.port-status')?.textContent).toContain('Browser address: http://127.0.0.1:24766/');
+    fixture.componentRef.setInput('disabled', true); fixture.detectChanges();
+    expect(open().disabled).toBe(true); expect(stop().disabled).toBe(true);
+    fixture.componentRef.setInput('disabled', false); fixture.detectChanges();
+    const find = root.querySelector<HTMLButtonElement>('[aria-label="Find in terminal (⌘F)"]')!;
+    find.focus(); find.click(); fixture.detectChanges(); await fixture.whenStable();
+    expect(root.querySelector<HTMLElement>('.server')?.hidden).toBe(true);
+    expect(root.querySelector('.server')?.hasAttribute('inert')).toBe(true);
+    root.querySelector<HTMLInputElement>('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(root.querySelector<HTMLElement>('.server')?.hidden).toBe(false);
+    expect(open().textContent).toContain('http://127.0.0.1:24766/');
+    fixture.componentRef.setInput('active', 'shell'); fixture.detectChanges();
+    expect(root.querySelector('.port-open')).toBeNull();
+    expect(root.textContent).not.toContain('http://127.0.0.1:24766/');
   });
 
   it('requests immediate takeover for page input only while the agent drives', () => {

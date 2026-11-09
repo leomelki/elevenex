@@ -1,13 +1,13 @@
 import { ScrollingModule } from '@angular/cdk/scrolling';
 import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
-import { ButtonComponent, FoldComponent, IconComponent, IconButtonComponent } from '../ui';
+import { ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, TooltipDirective } from '../ui';
 import { TerminalFailure, TerminalFailureEvent, TerminalLine, TerminalScript, TerminalTab } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
 import { TerminalLauncherComponent } from './terminal-launcher.component';
 
 @Component({
   selector: 'ex-terminal-view',
-  imports: [ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent, TerminalLauncherComponent, ScrollingModule],
+  imports: [ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, TooltipDirective, ViewTabsComponent, TerminalLauncherComponent, ScrollingModule],
   templateUrl: './terminal-view.component.html',
   styleUrl: './terminal-view.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -71,6 +71,7 @@ export class TerminalViewComponent {
     if (!this.disabled()) this.scriptRequested.emit(script);
   }
   protected openPort(): void {
+    if (this.disabled() || this.current()?.browser?.busy) return;
     const port = this.current()?.port;
     if (port !== undefined && Number.isInteger(port) && port > 0 && port <= 65535) this.portOpened.emit(port);
   }

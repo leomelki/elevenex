@@ -28,6 +28,12 @@ export interface TerminalTab extends ViewTab {
   readonly port?: number;
   readonly cwd?: string;
   readonly branch?: string;
+  readonly browser?: TerminalBrowserFeedback;
+}
+export interface TerminalBrowserFeedback {
+  readonly busy: boolean;
+  readonly error: string;
+  readonly url: string;
 }
 export interface TerminalScript { readonly id: string; readonly name: string; readonly cmd: string }
 export interface TerminalLine {

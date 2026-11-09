@@ -5,7 +5,6 @@
 .notice { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); color: var(--ink-muted); background: var(--surface); border-bottom: 1px solid var(--line); font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans); overflow-wrap: anywhere; }
 .error { color: var(--danger); background: var(--danger-soft); }
 .connection-notice { position: absolute; z-index: 1; top: var(--space-2); inset-inline-end: var(--space-3); max-width: calc(100% - 2 * var(--space-3)); }
-.browser-address { color: var(--ink); user-select: text; }
 
 .live-content.has-terminal { flex: 1; }
 .surface[hidden] { display: none; }

@@ -108,6 +108,7 @@ export class TaskTerminalComponent {
     (this.store.snapshot()?.terminals ?? []).map((row) => {
       const title = row.activityTitle ?? row.title;
       const detail = title === row.title ? title : `${title} · ${row.title}`;
+      const browser = this.browserState();
       return {
         id: String(row.id),
         title: row.port ? `${title} :${row.port}` : title,
@@ -121,6 +122,7 @@ export class TaskTerminalComponent {
             ? "idle"
             : row.status,
         ...(row.port ? { port: row.port } : {}),
+        ...(browser?.terminalId === row.id ? { browser } : {}),
         unread:
           row.id !== this.store.active() &&
           row.sequence > (this.store.seen().get(row.id) ?? 0),
