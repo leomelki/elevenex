@@ -79,10 +79,9 @@
 }
 .target {
   position: absolute;
-  box-sizing: border-box;
-  border: 1.5px solid var(--accent);
-  border-radius: 2px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: 1px;
+  border-radius: var(--radius-xs);
   pointer-events: none;
 }
 .uploading .thumb img {

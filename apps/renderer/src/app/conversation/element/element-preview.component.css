@@ -32,22 +32,14 @@
   border-radius: var(--radius-xs);
   box-shadow: var(--shadow-raised);
 }
-/* Drawn over the image; the website and the captured pixels stay untouched. */
+/* Keep the marker outside the target, including its original border. The
+   surrounding image well has room even when the target reaches a crop edge. */
 .outline {
   position: absolute;
-  box-sizing: border-box;
-  border: 2px solid var(--accent);
-  border-radius: 3px;
-  box-shadow:
-    0 0 0 1px var(--surface-raised),
-    0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: var(--space-1);
+  border-radius: var(--radius-xs);
   pointer-events: none;
-}
-.corner {
-  position: absolute;
-  top: -11px;
-  left: -11px;
-  box-shadow: 0 0 0 2px var(--surface-raised);
 }
 .missing {
   display: grid;

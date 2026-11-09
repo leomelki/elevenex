@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+async function assertUncoveredSnapshot(capture, snapshot) {
+  const result = await capture.evaluate(() => {
+    const preview = document.querySelector('.element-popover ex-element-preview');
+    const image = preview.querySelector('.frame img');
+    const outline = preview.querySelector('.outline');
+    const style = getComputedStyle(outline);
+    const imageBox = image.getBoundingClientRect();
+    const targetBox = outline.getBoundingClientRect();
+    return {
+      source: image.src,
+      pinsOverImage: preview.querySelectorAll('.frame ex-element-pin').length,
+      titlePin: preview.querySelector('.title ex-element-pin')?.textContent.trim(),
+      border: parseFloat(style.borderWidth),
+      stroke: parseFloat(style.outlineWidth),
+      offset: parseFloat(style.outlineOffset),
+      shadow: style.boxShadow,
+      background: style.backgroundColor,
+      target: { left: (targetBox.left - imageBox.left) / imageBox.width, top: (targetBox.top - imageBox.top) / imageBox.height, width: targetBox.width / imageBox.width, height: targetBox.height / imageBox.height },
+    };
+  });
+  assert.equal(result.source, 'data:image/jpeg;base64,' + snapshot.jpeg, 'Preview must retain the original browser pixels');
+  assert.equal(result.pinsOverImage, 0, 'The pin must not obscure the image');
+  assert.equal(result.titlePin, '1', 'Keep the pin beside the title');
+  assert.equal(result.border, 0, 'No border may paint inside the target');
+  assert.ok(result.stroke > 0 && result.stroke <= 1 && result.offset >= 2, 'Keep a fine stroke clear of the target border');
+  assert.equal(result.shadow, 'none', 'No halo may cover the target border');
+  assert.equal(result.background, 'rgba(0, 0, 0, 0)', 'The target must stay unfilled');
+  const { target, crop } = snapshot.reference;
+  for (const [key, expected] of Object.entries({ left: (target.x - crop.x) / crop.width, top: (target.y - crop.y) / crop.height, width: target.width / crop.width, height: target.height / crop.height })) {
+    assert.ok(Math.abs(result.target[key] - expected) < 0.002, `Selection ${key} must match the real crop`);
+  }
+}
+
 /**
  * Element pins in the real Composer, chips, snapshot popover and sent message,
  * plus the task browser's pin mode. Run the native smoke and runtime
@@ -38,6 +71,7 @@ export default async function* (capture) {
     await capture.click('ex-element-chip:first-of-type .face');
     await capture.waitFor(() => document.querySelector('.element-popover img')?.complete);
     await capture.motion.finish();
+    await assertUncoveredSnapshot(capture, snapshot);
     yield { name: `${theme}-snapshot`, inspect: ['.element-popover', '.element-popover .outline', '.element-popover footer button'] };
     await capture.press('Escape');
     await capture.waitFor(() => !document.querySelector('.element-popover'));
@@ -113,7 +147,11 @@ export default async function* (capture) {
   await capture.click('.sent ex-element-chip .face');
   await capture.waitFor(() => document.querySelector('.element-popover img')?.complete);
   assert.equal(await capture.evaluate(() => document.querySelector('.element-popover footer')), null, 'Sent snapshots are read-only');
-  yield { name: 'narrow-sent-snapshot', inspect: ['.element-popover'] };
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    await assertUncoveredSnapshot(capture, snapshot);
+    yield { name: `narrow-sent-snapshot-${theme}`, inspect: ['.element-popover', '.element-popover .outline'] };
+  }
   await capture.press('Escape');
   await capture.reducedMotion(false);
 

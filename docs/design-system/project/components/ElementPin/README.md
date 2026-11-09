@@ -22,22 +22,24 @@ element or locator is still current.
   rings its markers. A marker with no element in this message turns danger and
   blocks Send with a repair explanation.
 - **Chip.** 32px tall in Composer's context row, beside session mentions: a 36 × 26
-  thumbnail framed on the target (the target fills most of it, outlined in
-  accent; pixels are never magnified past 1.5×), the pin, then the label as
+  thumbnail framed on the target (the target fills most of it, with a thin,
+  translucent dashed accent outline offset outside its border; pixels are never
+  magnified past 1.5×), the pin, then the label as
   `tag` (mono, muted) and readable name. Editing chips end with × (and a retry
   arrow when an upload failed). Uploading dims the thumbnail and runs a 2px
   progress line along its foot. Sent messages show the same chip, read-only.
 - **Snapshot popover.** Pressing a chip opens an anchored dialog (above the chip,
-  or below if there's no room): the whole crop on a sunken well with the target
-  outlined and its pin on the outline's corner, the name, `host/path · Picked
+  or below if there's no room): the whole crop on a sunken well with a 1px dashed,
+  translucent outline 4px outside the target, the pin beside the name, `host/path · Picked
   1:14 PM`, the page's source hint (`code` file:line · “As reported by the page”)
   when there is one, a one-line historical note, and collapsed Technical details
   (selector, frames, size). Draft actions: **Insert ❶** at the caret, **Pick
   again** in the original tab, **Remove**. Sent snapshots have no actions.
 
 Missing source never blocks a pin. No selector, geometry or other technical
-payload enters the writing area. The outline is drawn over the image; nothing
-is injected into the website or burned into the captured pixels.
+payload enters the writing area. The outline leaves the target and its border
+uncovered, with no fill, halo or pin over the image. Nothing is injected into the
+website or burned into the captured pixels; agents receive the original crop.
 
 ## Mentioning
 
