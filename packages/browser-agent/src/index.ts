@@ -22,3 +22,5 @@ export { BrowserInteractionController } from './interaction-controller.js';
 export type { InteractionTab, InteractionHost } from './interaction-controller.js';
 
 export type { BrowserAgentDownload } from './host.js';
+
+export { resolvePickedBrowserSources } from './picker-source.js';

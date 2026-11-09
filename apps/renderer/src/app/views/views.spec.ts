@@ -289,6 +289,32 @@ describe('Side-view interactions', () => {
     expect(picking).toHaveBeenCalledWith(false);
   });
 
+  it('acknowledges a pick immediately and catches Escape before streamed input consumes it', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('picking', true);
+    fixture.componentRef.setInput('hovered', { x: 10, y: 40, w: 120, h: 20, label: 'button' });
+    fixture.componentRef.setInput('pickerReady', false);
+    fixture.detectChanges();
+    const preview = fixture.nativeElement.querySelector('.preview') as HTMLElement;
+    expect(fixture.nativeElement.querySelector('.pointing-hint')?.textContent).toContain('Preparing point mode');
+    preview.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.target.hover.picked')).toBeNull();
+    fixture.componentRef.setInput('pickerReady', true); fixture.detectChanges();
+    preview.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.target.hover.picked')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.pointing-hint')?.textContent).toContain('Adding element');
+    fixture.componentRef.setInput('capturePending', true); fixture.detectChanges();
+    preview.addEventListener('keydown', event => event.stopPropagation());
+    const cancel = vi.fn(); fixture.componentInstance.pickingChange.subscribe(cancel);
+    preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(cancel).toHaveBeenCalledWith(false);
+    fixture.componentRef.setInput('picking', false); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.pointing-hint')).toBeNull();
+  });
+
   it('shows where to point, follows the hovered element and cancels picking with Escape', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);

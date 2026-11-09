@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { setTimeout: delay } = require('node:timers/promises');
+const { setInterval, clearInterval } = require('node:timers');
 const { randomUUID } = require('node:crypto');
 const { app, BrowserWindow, session } = require('electron');
 const { BrowserPage } = require('../dist/browser/surface');
@@ -34,6 +35,15 @@ module.exports = async function pickerSmoke() {
     page.contents.sendInputEvent({ type: 'mouseMove', x: 250, y: 70 });
     await until(() => page.snapshot().hovered?.tag === 'button', 'Native point hover missing');
     assert.deepEqual(page.snapshot().hovered, { tag: 'button', x: 200, y: 50, width: 120, height: 40 });
+    await page.contents.executeJavaScript(`document.querySelector('button').insertAdjacentHTML('afterend', '<button style="left:400px">Another target</button>')`);
+    const samples = new Set();
+    let move = 0;
+    const moving = setInterval(() => {
+      page.contents.sendInputEvent({ type: 'mouseMove', x: ++move % 2 ? 250 : 450, y: 70 });
+      const hover = page.snapshot().hovered; if (hover?.tag === 'button') samples.add(hover.x);
+    }, 8);
+    try { await until(() => samples.has(200) && samples.has(400), 'Continuous motion starved picker feedback'); }
+    finally { clearInterval(moving); }
     page.contents.sendInputEvent({ type: 'mouseMove', x: 50, y: 130 });
     page.contents.sendInputEvent({ type: 'mouseWheel', x: 50, y: 130, deltaY: -60, deltaX: 0, canScroll: true });
     await until(() => page.contents.executeJavaScript('document.querySelector("#nested").scrollTop > 0'), 'Native picker blocked nested scroll');
@@ -66,6 +76,18 @@ module.exports = async function pickerSmoke() {
     page.contents.sendInputEvent({ type: 'mouseMove', x: 313, y: 88 });
     await until(() => page.snapshot().hovered, 'Second hover missing');
     page.hide(); assert.equal(page.snapshot().hovered, undefined);
+    const timings = [];
+    for (let i = 0; i < 8; i++) {
+      picked = undefined; show(1.25); page.picking = true; page.visualPicking = true;
+      const start = performance.now();
+      await page.userInput(page.lease.generation, { kind: 'pointer', type: 'down', x: 250, y: 70, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
+      await until(() => picked, 'A first click did not capture the element');
+      timings.push(Math.round(performance.now() - start));
+      assert.ok(picked.snapshot?.jpeg, 'Each first click returns real pixels');
+      assert.equal(picked.snapshot.reference.tag, 'button');
+      assert.equal(await page.contents.executeJavaScript('window.clicks'), 0);
+    }
+    console.log('First-click capture latency (ms):', JSON.stringify(timings));
     console.log('Picker smoke passed: native/stream hover and nested scroll, zoom, Escape, non-activating selection, hide cleanup.');
   } finally {
     page.destroy(); window.destroy(); server.closeAllConnections();

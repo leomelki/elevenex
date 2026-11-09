@@ -55,6 +55,12 @@ export class BrowserViewComponent {
   readonly picking = input(false);
   /** The element under the pointer while picking, when the owner can inspect on hover. */
   readonly hovered = input<BrowserTarget>();
+  readonly capturePending = input(false);
+  readonly pickerReady = input(true);
+  private readonly pressedTarget = signal<BrowserTarget | undefined>(undefined);
+  private readonly pressed = signal(false);
+  protected readonly pickingBusy = computed(() => this.capturePending() || this.pressed());
+  protected readonly hoverTarget = computed(() => this.pressedTarget() ?? this.hovered());
   readonly picked = input<BrowserTarget>();
   readonly errors = input(0);
   readonly errorText = input('');
@@ -130,6 +136,31 @@ export class BrowserViewComponent {
   private wasPointing = false;
 
   constructor() {
+    let captureWasPending = false;
+    afterRenderEffect(onCleanup => {
+      const preview = this.preview()?.nativeElement;
+      const pending = this.capturePending();
+      if (captureWasPending && !pending) { this.pressedTarget.set(undefined); this.pressed.set(false); }
+      captureWasPending = pending;
+      if (!preview || !this.pointing()) { this.pressedTarget.set(undefined); this.pressed.set(false); return; }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // Capture before streamed-page input stops propagation. This is visual
+      // acknowledgement only; the host still owns selection and image capture.
+      const press = (event: PointerEvent) => {
+        if (event.button !== 0 || pending || !this.pickerReady()) return;
+        this.pressed.set(true);
+        this.pressedTarget.set(this.hovered());
+        clearTimeout(timer);
+        timer = setTimeout(() => { this.pressedTarget.set(undefined); this.pressed.set(false); }, 1500);
+      };
+      const escape = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape' || event.isComposing) return;
+        event.preventDefault(); event.stopPropagation(); this.pickingChange.emit(false);
+      };
+      preview.addEventListener('pointerdown', press, true);
+      preview.addEventListener('keydown', escape, true);
+      onCleanup(() => { clearTimeout(timer); preview.removeEventListener('pointerdown', press, true); preview.removeEventListener('keydown', escape, true); });
+    });
     afterRenderEffect(() => {
       const id = this.current()?.id;
       if (id !== this.addressTab) { this.addressTab = id; this.addressDraft.set(null); if (id && !this.current()?.url) this.addressInput()?.nativeElement.focus({ preventScroll: true }); }

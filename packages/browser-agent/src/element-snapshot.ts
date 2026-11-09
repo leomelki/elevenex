@@ -30,53 +30,54 @@ export function elementCrop(
     height: Math.floor(height),
   };
 }
+export interface SnapshotViewport {
+  readonly width: number; readonly height: number; readonly scrollX: number; readonly scrollY: number;
+  readonly dpr: number; readonly scale: number; readonly x: number; readonly y: number;
+}
+interface SnapshotSelection { readonly selector: string; readonly frames: readonly string[]; readonly tag: string; readonly documentId: string }
+interface SnapshotSource {
+  viewport(): Promise<SnapshotViewport>;
+  box(): Promise<BrowserRect | null>;
+  label(): Promise<string>;
+  url(): string;
+}
 export async function captureElementSnapshot(
-  page: Page,
-  locator: Locator,
-  selection: {
-    selector: string;
-    frames: readonly string[];
-    tag: string;
-    documentId: string;
-  },
-  tabId: string,
-  point: { x: number; y: number },
-  current: () => boolean,
-  target: BrowserAgentTarget,
+  page: Page, locator: Locator, selection: SnapshotSelection, tabId: string,
+  point: { x: number; y: number }, current: () => boolean, target: BrowserAgentTarget,
 ): Promise<BrowserElementSnapshot> {
-  const identity = () =>
-    page.evaluate<{
-      width: number;
-      height: number;
-      scrollX: number;
-      scrollY: number;
-      dpr: number;
-      scale: number;
-      x: number;
-      y: number;
-    }>(
-      "({ width: innerWidth, height: innerHeight, scrollX, scrollY, dpr: devicePixelRatio, scale: visualViewport?.scale, x: visualViewport?.offsetLeft, y: visualViewport?.offsetTop })",
-    );
+  return captureSnapshot({
+    viewport: () => page.evaluate<SnapshotViewport>("({ width: innerWidth, height: innerHeight, scrollX, scrollY, dpr: devicePixelRatio, scale: visualViewport?.scale, x: visualViewport?.offsetLeft, y: visualViewport?.offsetTop })"),
+    box: () => locator.boundingBox({ timeout: 1500 }),
+    url: () => page.url(),
+    label: () => locator.evaluate((node) => {
+      // Field contents belong only to the user-reviewed pixels, never metadata.
+      const editable = !!node.closest("input,textarea,select,[contenteditable]");
+      return String(
+        node.getAttribute("aria-label") ||
+          (editable ? node.getAttribute("placeholder") : node.textContent) ||
+          "",
+      )
+        .split("")
+        .map((char) => (char.charCodeAt(0) < 32 ? " " : char))
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 110);
+    }),
+  }, selection, tabId, point, current, target);
+}
+/** Shared image/identity validation for direct CDP and framed Playwright picks. */
+export async function captureSnapshot(
+  source: SnapshotSource, selection: SnapshotSelection, tabId: string,
+  point: { x: number; y: number }, current: () => boolean, target: BrowserAgentTarget,
+): Promise<BrowserElementSnapshot> {
+  const identity = () => source.viewport();
   const before = await identity();
-  const box = await locator.boundingBox({ timeout: 1500 });
+  const box = await source.box();
   if (!box || !current()) throw new Error("Selected element changed");
   const crop = elementCrop(box, before, point);
-  const label = await locator.evaluate((node) => {
-    // Field contents belong only to the user-reviewed pixels, never metadata.
-    const editable = !!node.closest("input,textarea,select,[contenteditable]");
-    return String(
-      node.getAttribute("aria-label") ||
-        (editable ? node.getAttribute("placeholder") : node.textContent) ||
-        "",
-    )
-      .split("")
-      .map((char) => (char.charCodeAt(0) < 32 ? " " : char))
-      .join("")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 110);
-  });
-  const url = new URL(page.url());
+  const label = await source.label();
+  const url = new URL(source.url());
   const reference = {
     version: 1 as const,
     id: randomUUID(),
@@ -129,7 +130,7 @@ export async function captureElementSnapshot(
     if (dimensions.width > 1600 || dimensions.height > 1600)
       throw new Error("Snapshot exceeds the pixel limit");
     const after = await identity(),
-      afterBox = await locator.boundingBox({ timeout: 1000 });
+      afterBox = await source.box();
     if (
       !current() ||
       JSON.stringify(before) !== JSON.stringify(after) ||

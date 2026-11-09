@@ -36,6 +36,7 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
         this.state = { ...this.state, tabs };
       }
     } else if (input.kind === 'select') this.state = { ...this.state, active: input.tabId };
+    else if (input.kind === 'pick') this.state = { ...this.state, picking: input.enabled, picked: null, capturePending: false };
     else if (input.kind === 'close') {
       const tabs = this.state.tabs.filter(tab => tab.id !== input.tabId);
       this.state = { ...this.state, tabs, active: this.state.active === input.tabId ? tabs.at(-1)?.id ?? null : this.state.active };

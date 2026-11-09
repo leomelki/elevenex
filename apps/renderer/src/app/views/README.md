@@ -40,7 +40,14 @@ the inspection. While picking without a pick, the view shows a non-interactive
 target, and emits `pickingChange(false)` for Escape from anywhere in the view. If a
 page shortcut starts picking while focus is outside the view, the preview takes
 focus so Escape works. Supply `hovered` only when the platform can inspect the
-element under the pointer; its ring follows without easing. The page itself must
+element under the pointer; its ring follows without easing. The host consumes selection clicks without activating the page. `capturePending` locks the hover ring and changes
+the existing hint to capture feedback without resizing the page. Streamed clicks
+receive immediate local acknowledgement while host state arrives; this never
+stages a reference or claims capture succeeded. Escape cancels even when streamed
+input consumes its own keyboard events. Set `pickerReady` from the host’s current
+input readiness so the hint explains preparation instead of inviting a click
+before the page can accept it.
+The page itself must
 receive the click, so the view never intercepts page pointer input. With `picked`,
 the question card is positioned in page coordinates beside the element (under,
 then over), or docked across the visible page at the edge away from it when the

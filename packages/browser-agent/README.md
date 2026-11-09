@@ -17,8 +17,12 @@ and [design research](../../docs/browser-agent.md).
 - `playwright-transport.ts` virtualizes an in-memory browser containing only
   authorized task pages. `protocol-lease.ts` aborts paused requests before detach;
   `nested-session.ts` scopes runtime frame/worker sessions without private APIs.
-- `interactions.ts` and `interaction-controller.ts` own durable human requests;
-  the picker runs in a separate worker with an explicit human/document lease.
+- `interactions.ts` and `interaction-controller.ts` own durable human requests.
+  `element-picker-direct.ts` captures main-document/open-shadow elements through
+  the explicit human/document lease. Framed picks use the inspection worker.
+  Both paths share `element-snapshot.ts` identity, crop and pixel validation.
+  `picker-hover.ts` bounds live hit testing independently of ordered page input;
+  `picker-source.ts` budgets optional development source hints.
 - `broker.ts`, `target.ts` and `cdp-policy.ts` retain first-version code helpers.
 - `host.ts` defines privileged adapters; `transport.ts` validates wire payloads.
 

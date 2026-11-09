@@ -85,7 +85,7 @@ test('remote ticket snapshots cannot substitute pixels from another tab', () => 
   assert.throws(() => browserHumanRequests([{ id: reference.id, tabId: 'tab-1', sessionId: 2, kind: 'element', message: 'Choose Save', status: 'completed', expiresAt: Date.now() + 10000, selection }]), /another tab/);
 });
 
-test('picker hover coalesces reads, rejects stale results and releases its refresh timer', async () => {
+test('picker hover coalesces reads without starving feedback during motion and releases its refresh timer', async () => {
   const { BrowserPickerHover } = require('../../../packages/browser-agent/dist');
   const { setTimeout: delay } = require('node:timers/promises');
   const calls = [], pending = [], changes = [];
@@ -101,7 +101,7 @@ test('picker hover coalesces reads, rejects stale results and releases its refre
     hover.update(30, 40, () => true); hover.update(50, 60, () => true);
     pending.shift()(result);
     await delay(50);
-    assert.equal(hover.value, undefined, 'A late hover cannot paint at an old pointer');
+    assert.deepEqual(hover.value, result, 'Completed samples keep feedback live while the next position is inspected');
     assert.deepEqual(calls, [[10, 20], [50, 60]]);
     pending.shift()(result);
     await delay(0);
@@ -121,11 +121,57 @@ test('picker hover coalesces reads, rejects stale results and releases its refre
 
 test('picker hover relays only bounded geometry and a tag, with no page content', async () => {
   const { browserHoverAt } = require('../../../packages/browser-agent/dist');
+  const raw = { tag: 'input', x: 10, y: 20, width: 100, height: 40, value: 'private', attributes: ['value', 'secret'] };
   const send = async method => {
-    if (method === 'DOM.getNodeForLocation') return { backendNodeId: 12 };
-    if (method === 'DOM.describeNode') return { node: { localName: 'input', attributes: ['value', 'private'], nodeValue: 'private' } };
-    return { model: { border: [10, 20, 110, 20, 110, 60, 10, 60] } };
+    assert.equal(method, 'Runtime.evaluate');
+    return { result: { value: raw } };
   };
   assert.deepEqual(await browserHoverAt(send, 30, 40), { tag: 'input', x: 10, y: 20, width: 100, height: 40 });
-  assert.equal(await browserHoverAt(async method => method === 'DOM.getBoxModel' ? { model: { border: [Infinity, 0, 1, 0, 1, 1, 0, 1] } } : send(method), 1, 2), undefined);
+  assert.equal(await browserHoverAt(async () => ({ result: { value: { ...raw, width: Infinity } } }), 1, 2), undefined);
+});
+
+test('stalled hover expires, bounds outstanding reads, and recovers without painting canceled sessions', async () => {
+  const { BrowserPickerHover } = require('../../../packages/browser-agent/dist');
+  const { setTimeout: delay } = require('node:timers/promises');
+  const pending = [];
+  let calls = 0;
+  const hover = new BrowserPickerHover(() => { calls++; return new Promise(resolve => pending.push(resolve)); }, () => {});
+  const result = { tag: 'button', x: 1, y: 2, width: 30, height: 20 };
+  try {
+    hover.update(10, 10, () => true);
+    await delay(450);
+    assert.equal(calls, 2, 'A stalled page must not accumulate inspection work');
+    hover.reset(); hover.update(20, 20, () => true);
+    pending.shift()(result);
+    await delay(10);
+    assert.equal(hover.value, undefined, 'A canceled session never paints into a fresh pick');
+    pending.shift()(result);
+    await delay(10);
+    pending.shift()(result);
+    await delay(0);
+    assert.deepEqual(hover.value, result);
+  } finally { hover.destroy(); for (const resolve of pending) resolve(undefined); }
+});
+
+test('slow optional source maps do not hold a captured element', async () => {
+  const { resolvePickedBrowserSources } = require('../../../packages/browser-agent/dist');
+  const element = { selector: 'button', tag: 'button', ...reference.target, snapshot: { reference, jpeg: '/9j/' } };
+  let current;
+  const start = performance.now();
+  assert.deepEqual(await resolvePickedBrowserSources(element, valid => { current = valid; return new Promise(() => {}); }, () => true), element);
+  assert.ok(performance.now() - start < 1000);
+  assert.equal(current(), false, 'Expiring optional metadata stops subsequent page reads');
+});
+
+test('canceling a stalled direct capture releases its target without waiting for page JavaScript', async () => {
+  const { pickBrowserElement } = require('../../../packages/browser-agent/dist');
+  const controller = new AbortController();
+  let disposed = 0, resume;
+  const waiting = new Promise(resolve => { resume = resolve; });
+  const target = { id: 'tab-1', send: () => waiting, dispose: async () => { disposed++; } };
+  const pending = pickBrowserElement(target, 10, 10, 'document', () => true, '140.0.0.0', true, controller.signal);
+  controller.abort();
+  await assert.rejects(pending, /canceled|timed out/);
+  assert.equal(disposed, 1);
+  resume({ result: { value: null } });
 });

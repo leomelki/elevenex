@@ -23,9 +23,11 @@ A failure shows an honest notice in the browser panel, never a pretend image.
 
 ## Snapshot and authority
 
-Both Electron and task Chromium use the human-only Playwright inspection worker.
+Both Electron and task Chromium use a direct human-only CDP capture path for
+main-document and open-shadow elements, with the Playwright inspection worker
+for framed targets.
 The explicit selection gesture authorizes only that snapshot for review/sharing;
-it does not grant agent control. The worker resolves open shadow roots and iframe
+it does not grant agent control. The paths resolve open shadow roots and iframe
 paths, captures the target's main-viewport rectangle and a visible crop padded by
 48 CSS px, and uses CSS-scale JPEG (75 quality, at most 1600 × 1600 and 750,000
 bytes). Very large elements show a bounded region around the selected point.
@@ -33,7 +35,10 @@ The raw crop compensates for Electron zoom, DPR and document scroll, and reads a
 never becomes a pretend image attachment; the person can point again or attach
 a screenshot through the ordinary file flow.
 
-Capture precedes manual hiding or request-selection pause. A small read-only hit/viewport fingerprint is sampled before inspection-worker startup; movement cannot silently substitute a different target during that startup. Host document,
+Capture precedes manual hiding or request-selection pause. Direct selection marks
+the DOM target and samples its viewport together. The framed path samples a
+read-only hit/viewport fingerprint before worker startup so movement cannot
+silently substitute another target. Host document,
 ownership and viewport guards reject intervening takeover, navigation, resize,
 hide and task closure; the worker checks scroll, visual viewport, DPR and target
 geometry around capture, plus the selected frame's loader. A later page change
@@ -113,7 +118,8 @@ The normal 8-file / 8-MiB-image budget still applies. Browser state transport ha
 a bounded 6-MiB response budget for one manual plus up to four request snapshots.
 
 The source hint fallback currently resolves the existing main-document source
-markers after capture; framed/shadow targets may have no source. This does not
+markers after capture with a 250 ms budget; slow source maps and framed/shadow
+targets may have no source. This does not
 prevent their screenshot/reference from being shared. No packaged or cross-OS
 behavior is implied by the native development fixtures.
 

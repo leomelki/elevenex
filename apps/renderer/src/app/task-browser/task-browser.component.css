@@ -32,6 +32,3 @@ label, .tool-group > span { font-size: var(--text-ui-size); font-weight: var(--t
 .settle { animation: browser-settle var(--dur-base) var(--ease-out); }
 @keyframes browser-settle { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .settle { animation: none; } }
-
-/* Capture feedback must not resize the guest and invalidate the pixels in flight. */
-.capture-pending { position: absolute; top: var(--space-2); right: var(--space-2); z-index: 3; pointer-events: none; padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--ink-muted); font-size: var(--text-caption-size); box-shadow: var(--shadow-raised); }

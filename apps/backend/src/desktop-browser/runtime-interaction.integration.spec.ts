@@ -108,6 +108,41 @@ describe('remote browser interaction and display ownership', () => {
     }
   });
 
+  it('captures every first click with real pixels without activating the target', async () => {
+    const tab = task.page(tabId), timings: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      await task.command({ kind: 'pick', enabled: true, visual: 1 });
+      const start = performance.now();
+      await task.input(tabId, tab.generation, { kind: 'pointer', type: 'down', x: 350, y: 150, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
+      timings.push(Math.round(performance.now() - start));
+      const selected = task.state().picked;
+      expect(selected?.snapshot?.jpeg).toBeTruthy();
+      expect(selected?.tag).toBe('button');
+      expect(await page.locator('#hover').getAttribute('data-clicks')).toBeNull();
+      await task.command({ kind: 'pick', enabled: false });
+    }
+    console.log('Remote-runtime first-click capture latency (ms):', timings);
+  });
+
+  it('keeps a failed visual capture ready for the next click without interrupting input', async () => {
+    const tab = task.page(tabId), original = tab.agentTarget.bind(tab);
+    const fault = jest.spyOn(tab, 'agentTarget').mockImplementation(async (...args) => {
+      const target = await original(...args);
+      return { ...target, send: (method, params, child) => method === 'Page.captureScreenshot' ? Promise.reject(new Error('Temporary capture failure')) : target.send(method, params, child) };
+    });
+    try {
+      await task.command({ kind: 'pick', enabled: true, visual: 1 });
+      const click = { kind: 'pointer' as const, type: 'down' as const, x: 350, y: 150, button: 'left' as const, buttons: 1, clicks: 1, modifiers: 0 };
+      await task.input(tabId, tab.generation, click);
+      expect(task.state().picked).toBeNull();
+      expect(task.state().picking).toBe(true);
+      expect(task.state().capturePending).toBe(false);
+      fault.mockRestore();
+      await task.input(tabId, tab.generation, click);
+      expect(task.state().picked?.snapshot?.jpeg).toBeTruthy();
+    } finally { fault.mockRestore(); await task.command({ kind: 'pick', enabled: false }); }
+  });
+
   it('reloads fragment locations and produces frames for the current document epoch', async () => {
     await page.evaluate(() => history.replaceState(null, '', '#anchor'));
     const identity = await page.evaluate('window.documentIdentity');

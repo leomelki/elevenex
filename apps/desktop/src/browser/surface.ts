@@ -1,7 +1,7 @@
 import { AgentDownloads } from './agent-downloads';
 import { nativeBrowserInput } from './native-input';
 import { AgentNativeInput } from './agent-input';
-import { browserHoverAt, BrowserPickerHover, pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { browserHoverAt, BrowserPickerHover, resolvePickedBrowserSources, pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import { hardenTaskGuest } from './guest-policy';
 import { WebContentsView } from 'electron';
 import { BrowserFrameStream } from './frame-stream';
@@ -148,13 +148,18 @@ export class BrowserPage {
   slowNetwork = false;
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
+  private pickerEpoch = 0;
+  private pickerCancellation = new AbortController();
   private pickerEnabled = false;
   get picking(): boolean { return this.pickerEnabled; }
-  set picking(enabled: boolean) { this.pickerEnabled = enabled; this.pickerHover.reset(); }
-  private readonly pickerHover = new BrowserPickerHover(async (x, y) => {
+  set picking(enabled: boolean) {
+    this.pickerCancellation.abort(); this.pickerCancellation = new AbortController();
+    this.pickerEpoch++; this.pickerEnabled = enabled; this.pickerHover.reset();
+  }
+  private readonly pickerHover = new BrowserPickerHover(async (x, y, signal) => {
     const debuggerApi = this.contents.debugger;
     if (!debuggerApi.isAttached()) debuggerApi.attach('1.3');
-    return browserHoverAt((method, params) => debuggerApi.sendCommand(method, params), x, y);
+    return browserHoverAt((method, params) => debuggerApi.sendCommand(method, params), x, y, signal);
   }, () => this.host.changed());
   private hoverAt(x: number, y: number): void {
     const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
@@ -317,8 +322,9 @@ export class BrowserPage {
       if (this.picking) {
         this.heldMouse.delete(button);
         const zoom = contents.getZoomFactor();
+        if (this.capturePending) { event.preventDefault(); return; }
         if (mouse.type === 'mouseLeave') this.pickerHover.reset();
-        else if (mouse.type === 'mouseMove' || mouse.type === 'mouseEnter' || mouse.type === 'mouseWheel') this.hoverAt(mouse.x / zoom, mouse.y / zoom);
+        else if (mouse.type === 'mouseMove' || mouse.type === 'mouseEnter' || mouse.type === 'mouseWheel') { this.hoverAt(mouse.x / zoom, mouse.y / zoom); if (mouse.type !== 'mouseWheel') event.preventDefault(); }
         else {
           event.preventDefault();
           if (mouse.type === 'mouseDown' && button === 'left') void this.pickAt(mouse.x / zoom, mouse.y / zoom);
@@ -422,8 +428,10 @@ export class BrowserPage {
     if (input.kind !== 'pointer' || input.type === 'down') this.userDownloadIntent = true;
     // This is a human-input endpoint, never part of the automation mailbox.
     if (this.picking) {
+      if (this.capturePending) return;
       if (input.kind === 'pointer' && input.type === 'down' && input.button === 'left') { await this.pickAt(input.x, input.y); return; }
-      if (input.kind === 'pointer' && input.type === 'move' || input.kind === 'wheel') this.hoverAt(input.x, input.y);
+      if (input.kind === 'pointer' && input.type === 'move') { this.hoverAt(input.x, input.y); return; }
+      if (input.kind === 'wheel') this.hoverAt(input.x, input.y);
       else return;
     }
     const contents = this.contents, revision = this.disposedInput, acceptedGeneration = this.lease.generation;
@@ -539,10 +547,10 @@ export class BrowserPage {
     void operation.finally(() => { if (this.inspection === operation) this.inspection = undefined; }).catch(() => undefined);
     return operation;
   }
-  private pickingBusy = false;
-  get capturePending(): boolean { return this.pickingBusy; }
+  private capturingEpoch?: number;
+  get capturePending(): boolean { return this.capturingEpoch === this.pickerEpoch; }
   private async pickAt(x: number, y: number): Promise<void> {
-    this.pickerHover.reset();
+    this.pickerHover.pause();
     if (this.agentPicker) { await this.agentPicker(x, y); return; }
     if (!this.visualPicking) {
       const generation = this.lease.generation, navigation = this.navigation, viewport = this.viewportRevision;
@@ -551,25 +559,23 @@ export class BrowserPage {
       if (current()) { this.hide(); this.host.pick(element); }
       return;
     }
-    if (this.pickingBusy) return;
-    this.pickingBusy = true;
+    if (this.capturePending) return;
+    this.capturingEpoch = this.pickerEpoch;
     this.host.changed();
-    const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
-    const current = () => !this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
+    const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation, picker = this.pickerEpoch;
+    const current = () => !this.destroyed && this.picking && picker === this.pickerEpoch && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
     try {
       const target = await this.agentTarget(1, () => current(), () => Promise.reject(new Error('Inspection cannot navigate')), () => Promise.reject(new Error('Inspection cannot close')), AbortSignal.timeout(15000), current);
-      let element = await pickBrowserElement(target, x, y, this.documentId, current, process.versions.chrome);
-      const hint = await this.inspectAt(x, y, current).catch(() => null);
-      if (hint && hint.tag === element.tag && Math.abs(hint.x - element.x) < 0.5 && Math.abs(hint.y - element.y) < 0.5 && Math.abs(hint.width - element.width) < 0.5 && Math.abs(hint.height - element.height) < 0.5 && element.snapshot) {
-        const sources = { ...(hint.source ? { source: hint.source } : {}), ...(hint.componentSource ? { componentSource: hint.componentSource } : {}) };
-        element = { ...element, ...sources, snapshot: { ...element.snapshot, reference: { ...element.snapshot.reference, ...sources } } };
-      }
+      let element = await pickBrowserElement(target, x, y, this.documentId, current, process.versions.chrome, true, this.pickerCancellation.signal);
+      if (!element.snapshot?.jpeg) throw new Error('Element snapshot unavailable');
+      element = await resolvePickedBrowserSources(element, live => this.inspectAt(x, y, live), current);
       if (current()) { this.hide(); this.host.pick(element); }
-    } catch { if (current()) this.host.pick(null); } finally { this.pickingBusy = false; this.host.changed(); }
+    } catch { if (current()) this.host.pick(null); } finally { if (this.capturingEpoch === picker) this.capturingEpoch = undefined; this.host.changed(); }
   }
   countError(): void { if (this.destroyed || !this.host.authorized() || this.errors >= 999) return; this.errors++; this.host.changed(); }
   destroy(): void {
     if (this.destroyed) return;
+    this.pickerCancellation.abort();
     this.pickerHover.destroy();
     this.downloads.dispose();
     this.lease.takeOver(); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);

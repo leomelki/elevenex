@@ -144,14 +144,16 @@ Unsupported site flows retain Open outside, which uses a separate browser profil
 The human picker consumes page input without activating the target. Its shared
 hover reader publishes only a tag and bounded viewport geometry to the human UI.
 Pointer motion and wheel scrolling remain live in point mode; clicks select without
-activating the page. Hover reads coalesce outside the ordered input lane, refresh
-under a stationary pointer during scrolling, and stop on exit, cancellation,
+activating the page. Hover reads coalesce outside the ordered input lane and publish completed samples
+through continuous motion. Layout-based hit testing refreshes under a stationary
+pointer during scrolling. Reads expire after 200 ms with at most two underlying
+operations outstanding, and stop on exit, cancellation,
 capture, hidden presentation, navigation or control changes. Older hosts may omit
 hover metadata. Out-of-process frames may highlight their embedding element;
 the explicit selection still resolves the target inside the frame.
 
-The picker's shared
-Playwright inspection worker resolves open shadow roots and frame paths and
+Main-document/open-shadow picks use the direct capture path; framed picks use
+the shared Playwright inspection worker, which resolves frame paths and
 captures actual browser pixels with surrounding context before hiding/pausing
 the page. Closed roots stay opaque. The selected reference has viewport CSS
 geometry, a document identity, and a bounded JPEG snapshot. Selection and capture
@@ -220,7 +222,10 @@ guest identity for the replacement engine; the renderer replaces that guest whil
 keeping the tab stable. Ordinary site navigation and layout updates retain the
 existing guest. Closing a companion tab destroys its engine directly, and closing
 a restored active tab starts the next lazy page. Picker exit clears native input
-interception together with the visible picker state.
+interception together with the visible picker state. Capture blocks subsequent
+page gestures until its pixels are settled, retaining the locked ring and hint
+without resizing the page. Failed visual captures remain armed for another click.
+Optional development source hints can delay image delivery by at most 250 ms.
 
 Location changes prepare the target before replacing the current host, then
 recheck task selection, tab identities, control generations and loaded/pending

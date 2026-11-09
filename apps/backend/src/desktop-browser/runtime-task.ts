@@ -416,7 +416,7 @@ export class RuntimeBrowserTask {
     const tab = new RuntimeBrowserTab(by, sessionId, () => this.alive, () => this.revision++, element => {
       this.picked = element;
       this.pickerMessage = element ? null : tab.visualPicking ? 'The page changed or this element could not be captured. Pick it again.' : 'Editable fields and embedded content are private. Pick another element.';
-      this.picking = false; tab.picking = false; this.revision++;
+      this.picking = !element && tab.visualPicking; tab.picking = this.picking; this.revision++;
     }, this.network, (kind, message) => {
       this.attention = { kind, message, outside: true, tabId: tab.id }; this.revision++;
     }, this.workflowBudget, () => this.synchronizeControls());

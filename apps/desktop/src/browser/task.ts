@@ -246,9 +246,10 @@ export class TaskBrowser implements DesktopBrowserHost {
       resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(), authorize: async url => { await this.network.outside(browserUrl(url)); },
       authorized: () => this.selected() && this.client.state(this.window.webContents.id).scope?.id === this.scopeId,
       changed: () => this.emit(), controlChanged: () => this.synchronizeControls(), pick: element => {
-        this.picked = element; this.picking = false; page.picking = false;
+        this.picked = element; this.picking = !element && page.visualPicking; page.picking = this.picking;
         this.pickerMessage = element ? null : page.visualPicking ? 'The page changed or this element could not be captured. Pick it again.' : 'Editable fields and embedded frames are private. Pick another element.';
-        this.hide(); this.emit(); this.window.webContents.focus();
+        if (element || !page.visualPicking) { this.hide(); this.window.webContents.focus(); }
+        this.emit();
       }, shortcut: kind => {
         if (page.displayWindow) { const view = this.detached.get(page.id); if (view) view.controlsFocus++; this.emit(); page.displayWindow.webContents.focus(); return; }
         if (kind === 'controls') { this.controlsFocus++; this.emit(); this.window.webContents.focus(); return; }
@@ -514,7 +515,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.revision++;
     for (const observer of this.observers) observer();
     if (this.timer) return;
-    this.timer = setTimeout(() => { this.timer = undefined; if (!this.disposed) { this.place(); this.changed(this.snapshot()); this.surfacesChanged(); this.persist(); } }, 32);
+    this.timer = setTimeout(() => { this.timer = undefined; if (!this.disposed) { this.place(); this.changed(this.snapshot()); this.surfacesChanged(); this.persist(); } }, 16);
   }
   destroy(): void {
     if (this.disposed) return;

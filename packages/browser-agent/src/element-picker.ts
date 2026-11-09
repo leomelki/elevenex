@@ -1,3 +1,4 @@
+import { pickBrowserElementDirect } from "./element-picker-direct.js";
 import { selectionFingerprintExpression } from "./element-selection.js";
 import { object } from "./host.js";
 import type { BrowserHumanElement } from "@elevenex/shared";
@@ -14,9 +15,27 @@ export async function pickBrowserElement(
   current: () => boolean,
   version = "140.0.0.0",
   capture = true,
+  signal?: AbortSignal,
 ): Promise<BrowserHumanElement> {
+  const lifetime = AbortSignal.any([AbortSignal.timeout(10000), ...(signal ? [signal] : [])]);
+  const valid = () => !lifetime.aborted && current();
   let worker: PlaywrightWorkerClient | undefined;
   try {
+    if (capture) {
+      lifetime.throwIfAborted();
+      let stop: () => void = () => undefined;
+      let direct: BrowserHumanElement | undefined;
+      try {
+        direct = await Promise.race([
+          pickBrowserElementDirect(target, x, y, documentId, valid),
+          new Promise<never>((_resolve, reject) => {
+            stop = () => reject(new Error('Element selection canceled or timed out'));
+            lifetime.addEventListener('abort', stop, { once: true });
+          }),
+        ]);
+      } finally { lifetime.removeEventListener('abort', stop); }
+      if (direct) return direct;
+    }
     const fingerprint = capture
       ? object(
           object(
@@ -27,10 +46,10 @@ export async function pickBrowserElement(
           )["result"],
         )["value"]
       : undefined;
-    if (!current()) throw new Error("Element selection changed");
+    if (!valid()) throw new Error("Element selection changed");
     worker = new PlaywrightWorkerClient(
       {
-        list: () => [{ id: target.id, owned: current() }],
+        list: () => [{ id: target.id, owned: valid() }],
         get: () => Promise.resolve(target),
         open: () => Promise.reject(new Error("Inspection cannot open pages")),
       },
@@ -38,9 +57,9 @@ export async function pickBrowserElement(
     );
     const selection = await worker.inspect(
       { tabId: target.id, x, y, documentId, version, capture, fingerprint },
-      AbortSignal.timeout(15000),
+      lifetime,
     );
-    if (!current()) throw new Error("Element selection changed");
+    if (!valid()) throw new Error("Element selection changed");
     return selection as BrowserHumanElement;
   } finally {
     worker?.dispose();
