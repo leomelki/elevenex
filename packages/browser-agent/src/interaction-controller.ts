@@ -13,6 +13,7 @@ import {
 export interface InteractionTab {
   readonly documentId: string;
   readonly ownership: number;
+  readonly viewportId?: string;
   readonly picking?: boolean;
   assertAgent(sessionId: number): void;
   takeOver(): void;
@@ -38,6 +39,7 @@ export class BrowserInteractionController {
   constructor(private readonly host: InteractionHost) {
     this.store = new BrowserInteractions(() => host.changed());
   }
+  get capturing(): boolean { return [...this.picking.values()].some(state => state.busy); }
   get pending(): readonly BrowserHumanRequest[] {
     const pending = this.store.pending();
     for (const [id, request] of this.resources)
@@ -80,12 +82,8 @@ export class BrowserInteractionController {
       this.stopPicker(request);
       return this.store.cancel(request.id, sessionId);
     }
-    if (
-      request.status === 'completed' &&
-      request.selection &&
-      this.host.tab(request.tabId).documentId !== request.selection.documentId
-    )
-      throw new Error('The selected document changed; ask for a fresh element');
+    // Reading a confirmed snapshot is historical observation. Only the broker's
+    // human.locator path requires current page/document authority.
     // A selection awaiting confirmation is shown to the person, not yet shared
     // with the requesting agent.
     return request.status !== 'completed' && request.selection
@@ -98,6 +96,7 @@ export class BrowserInteractionController {
       | 'agent-request-cancel'
       | 'agent-request-pick',
     id: string,
+    capture = false,
   ): Promise<void> {
     const request = this.store.get(id);
     if (kind === 'agent-request-cancel') {
@@ -119,14 +118,16 @@ export class BrowserInteractionController {
       tab.picker(async (x, y) => {
         if (state.busy) return;
         state.busy = true;
+        this.host.changed();
         const documentId = tab.documentId,
-          ownership = tab.ownership;
+          ownership = tab.ownership, viewportId = tab.viewportId;
         const current = () =>
           !this.disposed &&
           this.picking.get(request.tabId) === state &&
           this.store.get(id).status === 'pending' &&
           tab.documentId === documentId &&
           tab.ownership === ownership &&
+          tab.viewportId === viewportId &&
           tab.picking !== false;
         try {
           const target = await tab.target(current);
@@ -137,6 +138,7 @@ export class BrowserInteractionController {
             documentId,
             current,
             this.host.version,
+            capture,
           );
           if (!current()) throw new Error('Selection changed');
           this.store.select(id, selection);
@@ -146,6 +148,7 @@ export class BrowserInteractionController {
           this.host.changed();
         } finally {
           state.busy = false;
+          this.host.changed();
         }
       });
       this.host.changed();

@@ -81,6 +81,8 @@ port.on('message', (value: unknown) => {
         String(input['documentId']),
         () => host.list().some((row) => row.id === id && row.owned),
         String(input['version'] ?? '140.0.0.0'),
+        input['capture'] !== false,
+        input['fingerprint'],
       );
     }
     if (raw['op'] !== 'invoke')

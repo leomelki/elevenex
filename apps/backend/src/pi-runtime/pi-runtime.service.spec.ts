@@ -267,6 +267,17 @@ describe('PiRuntimeService lifecycle', () => {
       await service.onModuleDestroy();
     }
   });
+  it('sends element prose and actual image data together through native Pi RPC', async () => {
+    const { service } = createService();
+    const child = createPiProcess('/tmp/pi-element.jsonl'); mockSpawn.mockReturnValue(child as never);
+    try {
+      const prompt = 'Align @element-11111111 (image 1).';
+      await service.submitPrompt(1, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+      const commands = child.stdin.writes.map(line => JSON.parse(line) as Record<string, unknown>);
+      expect(commands.find(command => command.type === 'prompt')).toMatchObject({ message: prompt, images: [{ type: 'image', mimeType: 'image/jpeg', data: '/9j/image' }] });
+    } finally { await service.onModuleDestroy(); }
+  });
+
   it('retains a cold effort without spawning, applies it through native RPC, and rejects failed changes', async () => {
     const { service } = createService();
     const child = createPiProcess('/tmp/pi-thinking.jsonl');

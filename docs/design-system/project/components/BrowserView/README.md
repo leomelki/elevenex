@@ -55,3 +55,5 @@ filesystem access, and unavailable metadata must not block asking. See the
 - Do keep everything in the task: tabs open in its workspace's servers and come back when you reopen the task.
 - Do let the agent open tabs freely (docs, the app). It drives only the ones it opened, unless you hand one over.
 - Don't let the agent type in a tab you're using, or into a password, card or code field.
+
+The desktop element-reference flow uses Add to message with an optional note (`askOptional`, `askPlaceholder` in Angular). Selecting a target captures its historical image; adding it stages ElementReference in the ordinary composer. No note or prompt is required before staging.

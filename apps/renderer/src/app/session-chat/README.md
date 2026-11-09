@@ -493,3 +493,7 @@ at offset zero, cancel previous reads and reject stale responses. A message or
 an orphan result never displays an input tab for a missing call. The reader
 retains existing machine scope checks, bounded pages, inert text and cancellation
 on close/navigation.
+
+## Visual element mentions
+
+Point and ask stages a first-class element attachment with its original browser crop and stable @ alias, rather than appending selector/geometry text. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md) for the shared snapshot model, untrusted metadata, image association, ownership and limitations. Source hints remain optional.

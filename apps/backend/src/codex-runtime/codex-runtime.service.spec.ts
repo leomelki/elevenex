@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { jest } from '@jest/globals';
 
@@ -1095,6 +1096,27 @@ describe('CodexRuntimeService', () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
+  });
+
+  it('keeps element context text beside native localImage inputs containing the actual bytes', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const prompt = 'Align @element-11111111. Image 1 is element-one.jpg; image 2 is element-two.jpg.';
+    const images = [{ mediaType: 'image/jpeg' as const, data: '/9j/one=' }, { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }];
+    await service.submitPrompt(7, prompt, undefined, images, { waitForCompletion: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    for (let attempt = 0; attempt < 100 && !wire.turnStartParams; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 10));
+    const params = wire.turnStartParams;
+    if (!params || typeof params !== 'object' || !('input' in params) || !Array.isArray(params.input)) throw new Error('Missing native turn input');
+    expect(params.input[0]).toEqual({ type: 'text', text: prompt });
+    for (let index = 0; index < images.length; index++) {
+      const input: unknown = params.input[index + 1];
+      if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string') throw new Error('Missing native image input');
+      expect(input).toMatchObject({ type: 'localImage' });
+      expect(await readFile(input.path)).toEqual(Buffer.from(images[index]!.data, 'base64'));
+    }
+    wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    await new Promise<void>(resolve => setImmediate(resolve));
   });
 
   it('acknowledges desktop sends while retaining the running turn and streaming lifecycle', async () => {

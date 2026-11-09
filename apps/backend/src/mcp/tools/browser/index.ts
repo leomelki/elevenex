@@ -171,7 +171,9 @@ const browserWaitUser = defineTool({
   handler: async (args, ctx) => {
     const identity = await caller(args.taskId, ctx);
     const data = await ctx.services.browsers.waitForUser(identity.taskId, identity.sessionId, args.requestId, args.timeoutMs, ctx.signal);
-    return { data, nextStep: data.status === 'completed' ? 'Run fresh code. Reacquire the page or call human.locator(requestId). No old code was replayed.' : data.status === 'pending' ? 'The request is still pending; wait again or explicitly cancel it.' : 'Respect the cancelled/expired request; do not automatically repeat it.' };
+    const snapshot = data.status === 'completed' ? data.selection?.snapshot : undefined;
+    const shared = data.selection?.snapshot ? { ...data, selection: { ...data.selection, snapshot: { reference: data.selection.snapshot.reference, ...(data.selection.snapshot.error ? { error: data.selection.snapshot.error } : {}) } } } : data;
+    return { data: shared, ...(snapshot?.jpeg ? { images: [{ data: snapshot.jpeg, mimeType: 'image/jpeg' as const, width: snapshot.reference.image.width, height: snapshot.reference.image.height }] } : {}), nextStep: data.status === 'completed' ? 'Run fresh code. Reacquire the page or call human.locator(requestId). No old code was replayed.' : data.status === 'pending' ? 'The request is still pending; wait again or explicitly cancel it.' : 'Respect the cancelled/expired request; do not automatically repeat it.' };
   },
 });
 

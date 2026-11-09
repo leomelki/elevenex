@@ -61,11 +61,11 @@
             <ex-icon-button icon="target" label="Pick another element" size="sm" (pressed)="pickingChange.emit(true)" />
             <ex-icon-button icon="x" label="Dismiss question (Esc)" size="sm" (pressed)="dismissQuestion()" />
           </header>
-          <textarea #askInput rows="1" maxlength="2000" aria-label="What should change here?" placeholder="What should change here?" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
+          <textarea #askInput rows="1" maxlength="2000" [attr.aria-label]="askPlaceholder()" [placeholder]="askPlaceholder()" [value]="askText()" (input)="askText.set(askInput.value)" (keydown)="askKeydown($event)"></textarea>
           <footer>
             @if (askNote()) { <span class="note">{{ askNote() }}</span> } @else { <span class="note" aria-hidden="true"></span> }
             <ex-kbd aria-hidden="true">↵</ex-kbd>
-            <button exButton variant="primary" size="sm" type="submit" [disabled]="!askText().trim()">{{ askLabel() }}<ex-icon name="arrow-up" [size]="14" /></button>
+            <button exButton variant="primary" size="sm" type="submit" [disabled]="!askOptional() && !askText().trim()">{{ askLabel() }}<ex-icon name="arrow-up" [size]="14" /></button>
           </footer>
         </form>
       }

@@ -76,7 +76,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     tab: id => {
       const page = this.page(id), live = () => { this.assertScope(); if (this.pages.get(id) !== page) throw new Error('Tab replaced'); };
       return {
-        get documentId() { live(); return page.documentId; }, get ownership() { live(); return page.lease.ownership; }, get picking() { return page.picking; },
+        get documentId() { live(); return page.documentId; }, get ownership() { live(); return page.lease.ownership; }, get viewportId() { live(); return page.selectionViewportId; }, get picking() { return page.picking; },
         assertAgent: sessionId => { live(); page.lease.assert(page.lease.generation, sessionId); },
         takeOver: () => { live(); page.lease.takeOver(true); }, handBack: sessionId => { live(); this.handBackGroup(page, sessionId); },
         select: () => { live(); this.select(page); this.emit(); }, picker: callback => { page.agentPicker = callback ?? undefined; page.picking = callback !== null; }, pause: paused => { page.agentSelectionPaused = paused; },
@@ -230,12 +230,13 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active) { const active = this.pages.get(this.active); if (active?.url) void this.navigate(active, active.url).catch(() => { active.error = 'Task server unavailable. Retry to reconnect.'; this.emit(); }); }
     this.emit();
   }
-  snapshot(): TaskBrowserState { return { agentCode: 1, agentRequests: this.interactions.pending, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
+  snapshot(): TaskBrowserState { return { agentCode: 1, elementSnapshots: 1, agentRequests: this.interactions.pending, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
     active: this.active, tabs: [...this.pages.values()].map(page => {
       const tab = { ...page.snapshot(), detached: this.detached.has(page.id) };
       try { const url = new URL(tab.url); if (loopback(url) && this.ports.includes(Number(url.port || (url.protocol === 'https:' ? 443 : 80)))) return { ...tab, server: 'Task server' }; } catch { /* Empty tab. */ }
       return tab;
     }), picked: this.picked,
+    capturePending: this.interactions.capturing || [...this.pages.values()].some(page => page.capturePending),
     picking: this.picking || [...this.pages.values()].some(page => page.picking && !!page.agentPicker), pickerMessage: this.pickerMessage, feedback: this.feedback, ports: this.ports, privacy: 'content-withheld', ...(this.attention ? { attention: this.attention } : {}) }; }
   private create(by: 'you' | 'agent', sessionId: number | null = null, tabId?: string): BrowserPage {
     this.assertScope();
@@ -246,21 +247,21 @@ export class TaskBrowser implements DesktopBrowserHost {
       authorized: () => this.selected() && this.client.state(this.window.webContents.id).scope?.id === this.scopeId,
       changed: () => this.emit(), controlChanged: () => this.synchronizeControls(), pick: element => {
         this.picked = element; this.picking = false; page.picking = false;
-        this.pickerMessage = element ? null : 'Editable fields and embedded frames are private. Pick another element.';
+        this.pickerMessage = element ? null : page.visualPicking ? 'The page changed or this element could not be captured. Pick it again.' : 'Editable fields and embedded frames are private. Pick another element.';
         this.hide(); this.emit(); this.window.webContents.focus();
       }, shortcut: kind => {
         if (page.displayWindow) { const view = this.detached.get(page.id); if (view) view.controlsFocus++; this.emit(); page.displayWindow.webContents.focus(); return; }
         if (kind === 'controls') { this.controlsFocus++; this.emit(); this.window.webContents.focus(); return; }
         this.hide(); this.window.webContents.focus();
         if (kind === 'open') { const next = this.create('you'); this.select(next); this.emit(); }
-        else { this.picking = !this.picking; page.picking = this.picking; this.emit(); }
+        else { this.picking = !this.picking; page.picking = this.picking; page.visualPicking = true; this.emit(); }
       }, attention: (kind, message) => { this.attention = { kind, message, outside: true, tabId: page.id }; this.emit(); } }, by, sessionId, tabId);
     page.presentation = this.defaultPresentation;
     this.pages.set(page.id, page); return page;
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
-    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId); return this.snapshot(); }
+    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId, input.kind === 'agent-request-pick' && input.visual === 1); return this.snapshot(); }
     if (input.kind === 'handoff') { const request = this.interactions.pending.find(request => this.relatedTabs.members(input.tabId).includes(request.tabId)); if (request) { await this.interactions.viewer('agent-request-complete', request.id); return this.snapshot(); } }
     if (input.kind === 'dialog-response' || input.kind === 'choose-files' || input.kind === 'save-download' || input.kind === 'cancel-workflow') throw new Error('This site request belongs to a streamed browser.');
     if (input.kind === 'move-tab') {
@@ -276,7 +277,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     else if (input.kind === 'open') {
       const page = this.create('you'); page.userDownloadIntent = true; this.select(page); await this.navigate(page, input.url);
     } else if (input.kind === 'pick') {
-      const page = this.current(); page.lease.takeOver(); this.clearPicker(); this.picking = input.enabled; page.picking = input.enabled;
+      const page = this.current(); page.lease.takeOver(); this.clearPicker(); this.picking = input.enabled; page.picking = input.enabled; page.visualPicking = input.visual === 1;
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);

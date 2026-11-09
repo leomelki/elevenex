@@ -102,6 +102,7 @@ export class ComposerComponent implements OnChanges {
   readonly showTools = input(true);
   readonly attachmentsEnabled = input(false);
   readonly attachments = input<readonly ConversationAttachment[]>([]);
+  readonly elementRepick = output<NonNullable<ConversationAttachment["element"]>>();
   readonly attachmentRemoved = output<string>();
   readonly attachmentRetry = output<string>();
   readonly fileInput = viewChild<ElementRef<HTMLInputElement>>("fileInput");
@@ -144,6 +145,10 @@ export class ComposerComponent implements OnChanges {
   readonly context = input<readonly ConversationMention[]>([]);
   readonly queue = input<readonly QueuedMessage[]>([]);
   readonly mentionItems = input<readonly ConversationMention[]>([]);
+  readonly allMentionItems = computed(() => [...this.attachments().flatMap(file => file.element ? [{ id: file.element.id, kind: 'element' as const, label: 'element-' + file.element.id.slice(0, 8), meta: file.element.label }] : []), ...this.mentionItems()]);
+  mentionElement(file: ConversationAttachment): void {
+    if (file.element) this.insertMention({ id: file.element.id, kind: 'element', label: 'element-' + file.element.id.slice(0, 8), meta: file.element.label });
+  }
   readonly running = input(false);
   readonly disabled = input(false);
   readonly sending = input(false);
@@ -266,7 +271,7 @@ export class ComposerComponent implements OnChanges {
       }
       element.focus({ preventScroll: true });
     }
-    if (!duplicate) this.mentionInserted.emit(mention);
+    if (!duplicate && mention.kind !== 'element') this.mentionInserted.emit(mention);
     this.dropAnnouncement.set(duplicate ? `${mention.label} is already mentioned.` : `Added ${mention.label} to message context.`);
     this.mentionQuery.set(null);
   }

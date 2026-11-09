@@ -14,7 +14,7 @@ import type { ConversationMention } from "../conversation.models";
       <ex-status-glyph [status]="mention().status || 'done'" [size]="12" />
     } @else {
       <ex-icon
-        [name]="mention().kind === 'file' ? 'file' : 'task'"
+        [name]="mention().kind === 'element' ? 'globe' : mention().kind === 'file' ? 'file' : 'task'"
         [size]="12"
       />
     }

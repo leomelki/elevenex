@@ -216,3 +216,5 @@ following until selection changes, so metadata updates never pull the strip
 back. Selection jumps scroll smoothly (instant under reduced motion); growth
 tracking is immediate. Resize observers and scheduled measurements are disposed
 with the component. Revelation never scrolls an ancestor.
+
+`BrowserView.askOptional` permits staging a selected element with an empty note; it defaults to false for existing Ask consumers. `askPlaceholder` supplies the accessible name and placeholder. The new task browser uses Add to message with an optional note, then lets the person compose prose and @ mentions in chat.

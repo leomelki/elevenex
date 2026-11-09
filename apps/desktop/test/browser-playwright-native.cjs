@@ -171,7 +171,7 @@ module.exports = async function browserPlaywrightNative() {
       'A related popup must not retain a path to the human-controlled opener',
     );
     await task.command({
-      kind: 'agent-request-pick',
+      kind: 'agent-request-pick', visual: 1,
       requestId: ticket.value.id,
     });
     const page = task.pages.get(ticket.value.tabId),
@@ -180,6 +180,16 @@ module.exports = async function browserPlaywrightNative() {
       );
     await page.agentPicker(rect.x, rect.y);
     assert.equal(task.snapshot().agentRequests[0].selection.tag, 'input');
+    const snapshot = task.snapshot().agentRequests[0].selection.snapshot;
+    assert.equal(snapshot?.reference.label, 'input · Name');
+    assert.ok(snapshot?.jpeg, JSON.stringify(snapshot));
+    assert.equal(Buffer.from(snapshot.jpeg, 'base64').readUInt16BE(0), 0xffd8);
+    assert.equal(snapshot.reference.image.scale, 1);
+    assert.ok(snapshot.reference.crop.width <= 1600);
+    const evidence = resolve(process.cwd(), 'artifacts/element-mentions');
+    await require('node:fs/promises').mkdir(evidence, { recursive: true });
+    await require('node:fs/promises').writeFile(require('node:path').join(evidence, 'native-snapshot.json'), JSON.stringify(snapshot));
+    await require('node:fs/promises').writeFile(require('node:path').join(evidence, 'native-crop.jpg'), Buffer.from(snapshot.jpeg, 'base64'));
     assert.equal(page.lease.driver, 'needs');
     await task.command({
       kind: 'agent-request-complete',

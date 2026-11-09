@@ -17,14 +17,16 @@
     </div>
     <p class="message">{{ request.message }}</p>
     @if (request.selection; as element) {
+      @if (snapshot(request); as file) { <ex-element-reference [file]="file" /> }
       <p class="selection">
         Selected <code>{{ element.tag }}</code
         ><span>{{ element.frames.length ? ' · Inside a frame' : '' }}</span>
       </p>
       <small
-        >Confirm this selection to return control to the requesting
+        >Confirm to share this selection{{ element.snapshot?.jpeg ? ' and its snapshot' : '' }}, and return control to the requesting
         agent.</small
       >
+      @if (!element.snapshot?.jpeg) { <small>{{ element.snapshot?.error || 'No image is available. Only the element context will be shared.' }}</small> }
     } @else if (request.kind === 'element') {
       <small>{{
         picking()
@@ -57,6 +59,7 @@
           {{ request.selection ? 'Choose again' : 'Select element' }}
         </button>
       }
+      @if (request.selection?.snapshot?.jpeg) { <button exButton size="sm" [disabled]="busy()" (click)="elementShared.emit(request)">Add to composer</button> }
       <button
         exButton
         size="sm"

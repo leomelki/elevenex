@@ -1,3 +1,4 @@
+import { serializeBrowserElements } from '@elevenex/shared';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -133,6 +134,28 @@ describe('selected session chat', () => {
       const text = `Review this image.\n\n[reference.png](<${upload.path}>)`;
       await chat.command(1, 2, { type: 'send', text, queue: false });
       expect(runtime.submitPrompt).toHaveBeenCalledWith(2, text, undefined, [{ mediaType: 'image/png', data }], { human: true, queue: false, waitForCompletion: false });
+    } finally {
+      await attachments.onModuleDestroy();
+      if (previous === undefined) delete process.env.ELEVENEX_DATA_ROOT; else process.env.ELEVENEX_DATA_ROOT = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('delivers element text and native image with their exact association through queued sending', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'chat-element-image-'));
+    const previous = process.env.ELEVENEX_DATA_ROOT; process.env.ELEVENEX_DATA_ROOT = root;
+    const attachments = new DesktopChatAttachments();
+    const reference = { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', tag: 'button', selector: 'button', frames: [], page: 'https://example.com/checkout', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: { x: 20, y: 30, width: 80, height: 30 }, crop: { x: 0, y: 0, width: 148, height: 108 }, image: { width: 148, height: 108, scale: 1 } };
+    try {
+      const data = 'iVBORw0KGgo=';
+      const upload = await attachments.chunk(2, { id: reference.id, name: 'element.jpg', size: 8, offset: 0, data });
+      const envelope = serializeBrowserElements([{ reference, attachment: 'element.jpg', imageIndex: 1 }]);
+      const text = `Align @element-11111111.\n\n${envelope}\n\n[element.jpg](<${upload.path}>)`;
+      await chat.command(1, 2, { type: 'send', text, queue: true });
+      expect(runtime.submitPrompt).toHaveBeenCalledWith(2, text, undefined, [{ mediaType: 'image/png', data }], { human: true, queue: true, waitForCompletion: false });
+      runtime.submitPrompt.mockClear();
+      await expect(chat.command(1, 2, { type: 'send', text: envelope, queue: false })).rejects.toThrow('missing');
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
     } finally {
       await attachments.onModuleDestroy();
       if (previous === undefined) delete process.env.ELEVENEX_DATA_ROOT; else process.env.ELEVENEX_DATA_ROOT = previous;

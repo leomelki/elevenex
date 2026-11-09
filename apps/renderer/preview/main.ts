@@ -8,6 +8,7 @@ void bootstrapApplication(PreviewComponent, {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'element-mentions', loadComponent: () => import('./element-mentions-demo.component').then(module => module.ElementMentionsDemoComponent) },
         { path: 'browser-window', loadComponent: () => import('./browser-window-demo.component').then(module => module.BrowserWindowDemoComponent) },
         { path: 'task-browser', loadComponent: () => import('./task-browser-demo.component').then(module => module.TaskBrowserDemoComponent) },
         { path: 'browser-video', loadComponent: () => import('./browser-video-demo.component').then(module => module.BrowserVideoDemoComponent) },

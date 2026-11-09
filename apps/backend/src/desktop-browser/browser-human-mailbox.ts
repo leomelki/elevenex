@@ -75,6 +75,17 @@ export class BrowserHumanMailbox {
           : value;
       if (value.status !== 'pending') this.resolve(value.id, entry.value);
     }
+    this.boundSnapshots();
+  }
+  private boundSnapshots(): void {
+    const entries = [...this.records.values()].filter(entry => entry.value.selection?.snapshot?.jpeg);
+    let bytes = entries.reduce((total, entry) => total + (entry.value.selection?.snapshot?.jpeg?.length ?? 0), 0);
+    for (const entry of entries) {
+      if (bytes <= 32 * 1024 * 1024) break;
+      const selection = entry.value.selection!, snapshot = selection.snapshot!;
+      bytes -= snapshot.jpeg!.length;
+      entry.value = { ...entry.value, selection: { ...selection, snapshot: { reference: snapshot.reference, error: 'Snapshot bytes expired. Request a fresh selection for an image.' } } };
+    }
   }
   get(taskId: number, sessionId: number, id: string): RecordEntry {
     this.sweep();

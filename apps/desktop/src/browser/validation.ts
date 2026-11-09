@@ -70,10 +70,10 @@ export function layout(value: unknown): TaskBrowserLayout {
 }
 export function command(value: unknown): TaskBrowserCommand {
   const raw = record(value), kind = raw['kind'];
-  if (kind === 'agent-request-complete' || kind === 'agent-request-cancel' || kind === 'agent-request-pick') { exact(raw, ['kind','requestId']); return { kind, requestId: browserId(raw['requestId']) }; }
+  if (kind === 'agent-request-complete' || kind === 'agent-request-cancel' || kind === 'agent-request-pick') { exact(raw, kind === 'agent-request-pick' ? ['kind','requestId','visual'] : ['kind','requestId']); if (raw['visual'] !== undefined && raw['visual'] !== 1) throw new Error('Invalid element capture option'); return { kind, requestId: browserId(raw['requestId']), ...(kind === 'agent-request-pick' && raw['visual'] === 1 ? { visual: 1 as const } : {}) }; }
   if (kind === 'dismiss-attention' || kind === 'new-tab') { exact(raw, ['kind']); return { kind }; }
   if (kind === 'open') { exact(raw, ['kind', 'url']); return { kind, url: browserUrl(raw['url']) }; }
-  if (kind === 'pick' || kind === 'feedback') { exact(raw, ['kind', 'enabled']); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'] }; }
+  if (kind === 'pick' || kind === 'feedback') { exact(raw, kind === 'pick' ? ['kind', 'enabled', 'visual'] : ['kind', 'enabled']); if (raw['visual'] !== undefined && raw['visual'] !== 1) throw new Error('Invalid element capture option'); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'], ...(kind === 'pick' && raw['visual'] === 1 ? { visual: 1 as const } : {}) }; }
   const tabId = browserId(raw['tabId']);
   if (kind === 'choose-files' || kind === 'save-download' || kind === 'cancel-workflow') { exact(raw, ['kind', 'tabId', 'requestId']); return { kind, tabId, requestId: browserId(raw['requestId']) }; }
   if (kind === 'dialog-response') { exact(raw, ['kind', 'tabId', 'requestId', 'accept', 'text']); if (typeof raw['accept'] !== 'boolean' || typeof raw['text'] !== 'string' || raw['text'].length > 4096) throw new Error('Invalid dialog response'); return { kind, tabId, requestId: browserId(raw['requestId']), accept: raw['accept'], text: raw['text'] }; }

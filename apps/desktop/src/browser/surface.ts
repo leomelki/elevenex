@@ -1,7 +1,7 @@
 import { AgentDownloads } from './agent-downloads';
 import { nativeBrowserInput } from './native-input';
 import { AgentNativeInput } from './agent-input';
-import { delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import { hardenTaskGuest } from './guest-policy';
 import { WebContentsView } from 'electron';
 import { BrowserFrameStream } from './frame-stream';
@@ -149,6 +149,7 @@ export class BrowserPage {
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
   picking = false;
+  visualPicking = false;
   userDownloadIntent = false;
   reducedMotion = false;
   attached = false;
@@ -160,6 +161,7 @@ export class BrowserPage {
   private syntheticInput = false;
   private navigation = 0;
   private viewportRevision = 0;
+  get selectionViewportId(): string { return this.viewportRevision + ":" + this.attached; }
   private layoutGeneration = 0;
   private inputReady = false;
   private readonly heldMouse = new Map<string, number>();
@@ -512,14 +514,32 @@ export class BrowserPage {
     void operation.finally(() => { if (this.inspection === operation) this.inspection = undefined; }).catch(() => undefined);
     return operation;
   }
+  private pickingBusy = false;
+  get capturePending(): boolean { return this.pickingBusy; }
   private async pickAt(x: number, y: number): Promise<void> {
     if (this.agentPicker) { await this.agentPicker(x, y); return; }
+    if (!this.visualPicking) {
+      const generation = this.lease.generation, navigation = this.navigation, viewport = this.viewportRevision;
+      const current = () => !this.destroyed && this.picking && this.attached && this.lease.generation === generation && this.navigation === navigation && this.viewportRevision === viewport;
+      const element = await this.inspectAt(x, y, current).catch(() => null);
+      if (current()) { this.hide(); this.host.pick(element); }
+      return;
+    }
+    if (this.pickingBusy) return;
+    this.pickingBusy = true;
+    this.host.changed();
     const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
     const current = () => !this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
     try {
-      const element = await this.inspectAt(x, y, current);
+      const target = await this.agentTarget(1, () => current(), () => Promise.reject(new Error('Inspection cannot navigate')), () => Promise.reject(new Error('Inspection cannot close')), AbortSignal.timeout(15000), current);
+      let element = await pickBrowserElement(target, x, y, this.documentId, current, process.versions.chrome);
+      const hint = await this.inspectAt(x, y, current).catch(() => null);
+      if (hint && hint.tag === element.tag && Math.abs(hint.x - element.x) < 0.5 && Math.abs(hint.y - element.y) < 0.5 && Math.abs(hint.width - element.width) < 0.5 && Math.abs(hint.height - element.height) < 0.5 && element.snapshot) {
+        const sources = { ...(hint.source ? { source: hint.source } : {}), ...(hint.componentSource ? { componentSource: hint.componentSource } : {}) };
+        element = { ...element, ...sources, snapshot: { ...element.snapshot, reference: { ...element.snapshot.reference, ...sources } } };
+      }
       if (current()) { this.hide(); this.host.pick(element); }
-    } catch { if (current()) this.host.pick(null); }
+    } catch { if (current()) this.host.pick(null); } finally { this.pickingBusy = false; this.host.changed(); }
   }
   countError(): void { if (this.destroyed || !this.host.authorized() || this.errors >= 999) return; this.errors++; this.host.changed(); }
   destroy(): void {

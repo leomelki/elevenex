@@ -69,3 +69,9 @@ export async function validateBrowserSelection(
     await target.dispose?.();
   }
 }
+
+/** Small, read-only hit identity sampled before starting an inspection worker.
+ * No page text, attributes, values or pixels enter this fingerprint. */
+export function selectionFingerprintExpression(x: number, y: number): string {
+  return `(() => { const x=${JSON.stringify(x)}, y=${JSON.stringify(y)}; let node=document.elementFromPoint(x,y); while(node?.shadowRoot){const next=node.shadowRoot.elementFromPoint(x,y);if(!next||next===node)break;node=next;} if(!node)return null; const r=node.getBoundingClientRect(); return {tag:node.localName,x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight,scrollX,scrollY,dpr:devicePixelRatio}; })()`;
+}

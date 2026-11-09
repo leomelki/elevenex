@@ -116,3 +116,7 @@ scope/window/task closure; limits; artifact cleanup and compatibility with the
 legacy mailbox. Real Chromium, native Electron, MCP SDK and renderer captures
 provide separate evidence. Passing a facade unit test does not establish native
 or protocol isolation.
+
+## Visual element references
+
+Confirmed human element selections include a historical, bounded crop with 48 CSS px of context. `browser_wait_user` and `human.result` return actual MCP image content separately from metadata; JSON/code results omit base64. Reading that snapshot survives navigation, while `human.locator` still validates live document and element identity. The viewer can stage the same reference in chat without confirming a handoff or sending a prompt. See [the snapshot and mention contract](browser-element-mentions.md).

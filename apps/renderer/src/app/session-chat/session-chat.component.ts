@@ -1,3 +1,4 @@
+import type { BrowserElementSnapshot } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
@@ -111,6 +112,8 @@ export class SessionChatComponent {
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
+  readonly browserPickRequested = output<ChatSelection & { readonly tabId: string }>();
+  pickBrowserElement(tabId: string): void { if (!this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...this.selection(), tabId }); }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   readonly media = inject(SessionChatMedia);
@@ -124,10 +127,18 @@ export class SessionChatComponent {
     }) : null;
   });
   /** Browser context is staged for review; it never submits a prompt automatically. */
-  stageBrowserContext(text: string): void {
-    const previous = this.store.draft();
-    this.store.setDraft((previous ? previous + '\n\n' : '') + text);
+  stageBrowserContext(text: string, element?: BrowserElementSnapshot): boolean {
+    if (this.store.readOnly() || this.store.historical() || this.store.busy() || this.store.uncertain()) { this.attachments.error.set('This conversation cannot add context right now. Finish the pending action or choose an active conversation.'); return false; }
+    if (element) {
+      if (!this.store.state()?.browserElements) { this.attachments.error.set('This engine or harness cannot send element images. Update it or choose a harness with image support.'); return false; }
+      if (!this.attachments.addElement(element)) return false;
+    }
+    if (text.trim()) {
+      const previous = this.store.draft();
+      this.store.setDraft((previous ? previous + '\n\n' : '') + text);
+    }
     this.composer()?.textarea()?.nativeElement.focus({ preventScroll: true });
+    return true;
   }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);

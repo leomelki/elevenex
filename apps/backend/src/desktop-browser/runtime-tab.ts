@@ -1,3 +1,4 @@
+import { pickBrowserElement } from '@elevenex/browser-agent';
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
 import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
@@ -178,6 +179,8 @@ export class RuntimeBrowserTab {
   step?: TaskBrowserTab['step'];
   target?: BrowserElement;
   picking = false;
+  visualPicking = false;
+  capturePending = false;
   private page?: Page;
   private context?: BrowserContext;
   private cdp?: CDPSession;
@@ -192,6 +195,7 @@ export class RuntimeBrowserTab {
   private navigation = 0;
   private loadRevision = 0;
   private visible = false;
+  get selectionViewportId(): string { return this.displayEpoch + ":" + this.visible; }
   private interactive = false;
   private pixelRatio = 1;
   private viewport = { width: 800, height: 600 };
@@ -686,11 +690,25 @@ export class RuntimeBrowserTab {
     if (this.picking) {
       if (input.kind === 'pointer' && input.type === 'down') {
         if (this.agentPicker) { await this.agentPicker(input.x, input.y); return {}; }
-        const element = await this.inspect(input.x, input.y, () => {
-          try { current(); return this.picking && !this.disposed; } catch { return false; }
-        });
-        current();
-        if (this.picking) this.picked(element);
+        if (!this.visualPicking) {
+          const element = await this.inspect(input.x, input.y, () => { try { current(); return this.picking && !this.disposed; } catch { return false; } });
+          current(); if (this.picking) this.picked(element);
+          return {};
+        }
+        if (this.capturePending) return {};
+        this.capturePending = true; this.changed();
+        try {
+          const valid = () => { try { current(); return this.picking && !this.disposed; } catch { return false; } };
+          const target = await this.agentTarget(1, valid, () => Promise.reject(new Error('Inspection cannot navigate')), () => Promise.reject(new Error('Inspection cannot close')), undefined, () => () => undefined, valid);
+          let element = await pickBrowserElement(target, input.x, input.y, this.documentId, valid);
+          const hint = await this.inspect(input.x, input.y, valid).catch(() => null);
+          if (hint && hint.tag === element.tag && Math.abs(hint.x - element.x) < 0.5 && Math.abs(hint.y - element.y) < 0.5 && Math.abs(hint.width - element.width) < 0.5 && Math.abs(hint.height - element.height) < 0.5 && element.snapshot) {
+            const sources = { ...(hint.source ? { source: hint.source } : {}), ...(hint.componentSource ? { componentSource: hint.componentSource } : {}) };
+            element = { ...element, ...sources, snapshot: { ...element.snapshot, reference: { ...element.snapshot.reference, ...sources } } };
+          }
+          current();
+          if (this.picking) this.picked(element);
+        } finally { this.capturePending = false; this.changed(); }
       }
       return {};
     }

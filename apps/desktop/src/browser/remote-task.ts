@@ -249,7 +249,7 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
             path:
               "/api/desktop-browser/runtime/tasks/" + this.taskId + "/" + path,
             ...(body === undefined ? {} : { method: "POST", body }),
-            limit: path === 'transfer' ? 100000 : 512000,
+            limit: path === 'transfer' ? 100000 : 6 * 1024 * 1024,
             conflictMessages: {
               "browser-viewer-in-use":
                 "This task browser is active in another window. Close its browser panel, then reconnect here.",

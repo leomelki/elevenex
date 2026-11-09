@@ -1,3 +1,4 @@
+import { parseBrowserElements, serializeBrowserElements } from '@elevenex/shared';
 import { DragDropModule, type CdkDragDrop } from "@angular/cdk/drag-drop";
 import {
   ChangeDetectionStrategy,
@@ -28,6 +29,11 @@ import type { QueuedMessage } from "../conversation.models";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ComposerQueueComponent implements OnChanges {
+  preview(text: string): string {
+    const parsed = parseBrowserElements(text);
+    if (!parsed.elements.length) return text;
+    return parsed.text.split('\n').filter(line => !parsed.elements.some(element => line.startsWith('[' + element.attachment + ']'))).join('\n').trim() + '\n' + parsed.elements.map(element => element.reference.label + ' (@element-' + element.reference.id.slice(0, 8) + ')').join(' · ');
+  }
   readonly items = input<readonly QueuedMessage[]>([]);
   readonly waitingFor = input<string>();
   readonly editable = input(true);
@@ -40,21 +46,26 @@ export class ComposerQueueComponent implements OnChanges {
   readonly reordered = output<readonly string[]>();
   readonly editing = signal<string | null>(null);
   readonly editText = signal("");
+  private retainedContext = "";
   beginEdit(item: QueuedMessage): void {
     if (this.disabled() || !this.editable() || item.editable === false) return;
     this.editing.set(item.id);
     this.editingChanged.emit(item.id);
-    this.editText.set(item.text);
+    const parsed = parseBrowserElements(item.text);
+    const lines = parsed.text.split('\n');
+    const isElementImage = (line: string) => parsed.elements.some(element => line.startsWith('[' + element.attachment + ']'));
+    this.retainedContext = parsed.elements.length ? [serializeBrowserElements(parsed.elements), ...lines.filter(isElementImage)].join('\n\n') : '';
+    this.editText.set(parsed.elements.length ? lines.filter(line => !isElementImage(line)).join('\n').trim() : item.text);
   }
   ngOnChanges(): void { const id = this.editing(); if (id && !this.items().some(item => item.id === id)) this.cancelEdit(); }
-  cancelEdit(): void { this.editing.set(null); this.editingChanged.emit(null); }
+  cancelEdit(): void { this.retainedContext = ""; this.editing.set(null); this.editingChanged.emit(null); }
   update(event: Event): void {
     if (event.target instanceof HTMLTextAreaElement)
       this.editText.set(event.target.value);
   }
   save(id: string): void {
     if (this.disabled() || !this.editable() || !this.editText().trim()) return;
-    this.edited.emit({ id, text: this.editText().trim() });
+    this.edited.emit({ id, text: [this.editText().trim(), this.retainedContext].filter(Boolean).join("\n\n") });
     this.cancelEdit();
   }
   drop(event: CdkDragDrop<readonly QueuedMessage[]>): void {

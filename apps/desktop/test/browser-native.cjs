@@ -5,7 +5,7 @@ const {setInterval,clearInterval}=require('node:timers');
 const assert = require('node:assert/strict');
 const { webContents, BrowserWindow, WebContentsView, session, net, app } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
-async function until(check, message) { const end = Date.now() + 6000; while (Date.now() < end) { const value = await check(); if (value) return value; await delay(25); } throw new Error(message); }
+async function until(check, message, timeout = 6000) { const end = Date.now() + timeout; while (Date.now() < end) { const value = await check(); if (value) return value; await delay(25); } throw new Error(message); }
 module.exports = async function browserSmoke(window, scope, url, backendUrl = url) {
   const call = async (method, ...args) => {
     if (method === 'taskBrowserLayout') {
@@ -176,7 +176,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await until(async()=>await native.executeJavaScript('window.clicks')===beforeGesture+1,'A visible gesture lost its release during chrome motion');
   await native.executeJavaScript('window.clicks=0');
   await call('taskBrowserLayout',scope,1,{...layout,inputReady:true});
-  await command({ kind: 'pick', enabled: true });
+  await command({ kind: 'pick', enabled: true, visual: 1 });
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 7 });
   const rect = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugSource: { fileName: 'src/Checkout.tsx', lineNumber: 88, columnNumber: 7 } }`);
@@ -192,11 +192,20 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await native.executeJavaScript(`document.querySelector('button').__reactFiber$test = { _debugStack: Object.assign(new Error(), { stack: 'Error\\n at Checkout (' + location.origin + '/source-fixture.js:1:1)' }) }`);
   native.sendInputEvent({ type: 'mouseDown', ...rect, button: 'left', clickCount: 1 });
   native.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 });
-  state = await until(async () => { const state = await read(); return state.picked ? state : null; }, 'Element picker did not return');
-  assert.match(state.picked.selector, /button:nth-child/); await delay(50); assert.equal(await visibleCount(), 0);
+  state = await until(async () => { const state = await read(); return state.picked ? state : null; }, 'Element picker did not return', 20000);
+  assert.match(state.picked.selector, /data-elevenex-picked/); await delay(50); assert.equal(await visibleCount(), 0);
   assert.deepEqual(state.picked.source, { file: 'src/Checkout.tsx', line: 88, column: 1, kind: 'react-source-map' });
   await native.executeJavaScript(`delete document.querySelector('button').__reactFiber$test`);
   assert.equal(await native.executeJavaScript('window.clicks'), 0, 'Picker must consume page input');
+  await command({ kind: 'pick', enabled: false });
+  await call('taskBrowserLayout', scope, 1, layout);
+  await until(async () => await visibleCount() === 1, 'Legacy picker surface did not return');
+  await command({ kind: 'pick', enabled: true });
+  native.sendInputEvent({ type: 'mouseDown', ...rect, button: 'left', clickCount: 1 });
+  native.sendInputEvent({ type: 'mouseUp', ...rect, button: 'left', clickCount: 1 });
+  const legacyPick = await until(async () => (await read()).picked, 'Legacy picker did not resolve');
+  assert.match(legacyPick.selector, /button:nth-child/);
+  assert.equal(legacyPick.snapshot, undefined, 'Older callers must not receive a changed picker contract');
   await command({ kind: 'pick', enabled: false });
   const previousUrl = native.getURL();
   await command({ kind: 'navigate', tabId: first, url: url + '/browser-test?next=1' });
@@ -220,7 +229,7 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   const sibling = await command({ kind: 'new-tab' });
   await command({ kind: 'select', tabId: first });
   for (const exit of [{ kind: 'close', tabId: sibling.active }, { kind: 'reload', tabId: first }, { kind: 'back', tabId: first }, { kind: 'forward', tabId: first }]) {
-    await command({ kind: 'pick', enabled: true });
+    await command({ kind: 'pick', enabled: true, visual: 1 });
     await command(exit);
     await until(async () => !(await read()).tabs.find(tab => tab.id === first)?.loading, 'Picker exit navigation did not finish');
     await call('taskBrowserLayout', scope, 1, layout);
@@ -241,13 +250,20 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   assert.equal(native.getZoomFactor(), 1.25);
   await until(async()=>await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible)?.bounds.x') === 500, 'Zoom layout not published');
   assert.equal(await window.webContents.executeJavaScript('window.__browserSurfaces.find(s=>s.visible).bounds.x'), 500, 'App CSS bounds must be converted to native DIPs');
-  await command({ kind: 'pick', enabled: true });
-  const zoomed = await native.executeJavaScript(`(() => {const r=document.querySelector('button').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`);
+  await command({ kind: 'pick', enabled: true, visual: 1 });
+  const zoomed = await native.executeJavaScript(`new Promise(resolve=>{document.querySelector('button').style.backgroundColor='rgb(20,120,200)';requestAnimationFrame(()=>requestAnimationFrame(()=>{const r=document.querySelector('button').getBoundingClientRect();resolve({x:r.x,y:r.y,width:r.width,height:r.height});}));})`);
   const zoomedPoint = { x: Math.round((zoomed.x + zoomed.width / 2) * 1.25), y: Math.round((zoomed.y + zoomed.height / 2) * 1.25) };
   native.sendInputEvent({ type: 'mouseDown', ...zoomedPoint, button: 'left', clickCount: 1 });
   native.sendInputEvent({ type: 'mouseUp', ...zoomedPoint, button: 'left', clickCount: 1 });
-  const zoomPick = await until(async () => { const snapshot = await read(); return snapshot.picked; }, 'Zoomed picker did not resolve');
-  assert.ok(Math.abs(zoomPick.x - zoomed.x) < 1); assert.ok(Math.abs(zoomPick.y - zoomed.y) < 1);
+  const zoomPick = await until(async () => { const snapshot = await read(); return snapshot.picked; }, 'Zoomed picker did not resolve', 20000);
+
+  assert.ok(zoomPick.snapshot?.jpeg, 'Zoomed pick must retain real pixels');
+  await require('node:fs/promises').writeFile(join(process.cwd(), 'artifacts/element-mentions/native-zoom-crop.jpg'), Buffer.from(zoomPick.snapshot.jpeg, 'base64'));
+  assert.deepEqual(require('electron').nativeImage.createFromBuffer(Buffer.from(zoomPick.snapshot.jpeg, 'base64')).getSize(), { width: zoomPick.snapshot.reference.image.width, height: zoomPick.snapshot.reference.image.height });
+  const crop = zoomPick.snapshot.reference.crop, image = require('electron').nativeImage.createFromBuffer(Buffer.from(zoomPick.snapshot.jpeg, 'base64'));
+  const bitmap = image.toBitmap(), pixel = (Math.round(zoomed.y - crop.y + 5) * image.getSize().width + Math.round(zoomed.x - crop.x + 5)) * 4;
+  assert.ok(bitmap[pixel] > 100 && bitmap[pixel + 1] > 50 && bitmap[pixel + 2] < 100, 'Captured pixels must put the selected blue button at its CSS target offset');
+  assert.ok(Math.abs(zoomPick.x - zoomed.x) < 1, JSON.stringify({ target: zoomPick.snapshot?.reference.target, crop: zoomPick.snapshot?.reference.crop, zoomed, x: zoomPick.x, y: zoomPick.y })); assert.ok(Math.abs(zoomPick.y - zoomed.y) < 1);
   await command({ kind: 'pick', enabled: false });
   window.webContents.setZoomFactor(1);
   await call('taskBrowserLayout', scope, 1, { ...layout, sequence: 9 });
@@ -399,12 +415,12 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
     ? new Promise((_resolve, reject) => { failInspection = reject; markInspection(); })
     : Reflect.apply(inspect, viewportPage.contents, [world, ...args]);
   try {
-    await remoteTask.command({ kind: 'pick', enabled: true });
+    await remoteTask.command({ kind: 'pick', enabled: true, visual: 1 });
     remoteTask.position({ ...layout, surfaceEpoch: remoteTask.snapshot().surfaceEpoch, ownerGeneration: viewportPage.lease.generation, sequence: 4, bounds: { ...layout.bounds, width: 420 } });
     viewportPage.contents.sendInputEvent({ type: 'mouseDown', x: 30, y: 30, button: 'left', clickCount: 1 });
     await inspecting;
     await remoteTask.command({ kind: 'pick', enabled: false });
-    await remoteTask.command({ kind: 'pick', enabled: true });
+    await remoteTask.command({ kind: 'pick', enabled: true, visual: 1 });
     failInspection(new Error('Obsolete inspection'));
     for (let i = 0; i < 12; i++) await Promise.resolve();
     assert.equal(remoteTask.snapshot().picking, true, 'An obsolete picker failure must not dismiss the current picker');

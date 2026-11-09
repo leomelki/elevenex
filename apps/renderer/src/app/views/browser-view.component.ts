@@ -67,6 +67,8 @@ export class BrowserViewComponent {
   readonly addressEditable = input(false);
   readonly pageFocusAvailable = input(true);
   readonly askLabel = input('Ask');
+  readonly askOptional = input(false);
+  readonly askPlaceholder = input('What should change here?');
   /** One short line in the question card saying what the question carries. */
   readonly askNote = input('');
   readonly navigated = output<string>();
@@ -125,6 +127,7 @@ export class BrowserViewComponent {
   private wasPointing = false;
 
   constructor() {
+    afterRenderEffect(() => { if (!this.picked() && !this.picking()) this.askText.set(''); });
     afterRenderEffect(() => {
       const id = this.current()?.id;
       if (id !== this.addressTab) { this.addressTab = id; this.addressDraft.set(null); if (id && !this.current()?.url) this.addressInput()?.nativeElement.focus({ preventScroll: true }); }
@@ -191,9 +194,9 @@ export class BrowserViewComponent {
     const target = this.picked();
     const tab = this.current();
     const text = this.askText().trim();
-    if (!target || !tab || !text) return;
+    if (!target || !tab || (!text && !this.askOptional())) return;
     this.asked.emit({ tabId: tab.id, target, text });
-    this.askText.set('');
+    if (!this.askOptional()) this.askText.set('');
   }
   protected askKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); this.ask(); }

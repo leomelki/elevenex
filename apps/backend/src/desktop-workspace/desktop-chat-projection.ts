@@ -52,7 +52,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
   const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
   const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
   mediaCache?.set(item, projected);
-  const text = display(projected.text);
+  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
   let changes = changeSummary(item.turnChanges);
   if (!item.turnChanges && call) {
     const previous = cache?.get(call);
@@ -232,7 +232,7 @@ export function chatState(
       .slice(0, 50)
       .map((value) => {
         const p = record(value);
-        return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 16000) };
+        return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 64000) };
       }),
     queuePaused: raw.queuePaused === true,
     permission:

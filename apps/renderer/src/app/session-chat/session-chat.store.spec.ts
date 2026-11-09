@@ -1,3 +1,4 @@
+import { parseBrowserElements } from '@elevenex/shared';
 import { TestBed } from "@angular/core/testing";
 import { signal } from "@angular/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,7 +84,7 @@ function setup() {
   });
   const bridge = {
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
-    sessionChatCommand: vi.fn(async () => ok({ accepted: true as const })),
+    sessionChatCommand: vi.fn<NonNullable<ElevenexBridge["sessionChatCommand"]>>(async () => ok({ accepted: true as const })),
     sessionChatCancel: vi.fn(async () => undefined),
   } satisfies Pick<
     ElevenexBridge,
@@ -345,6 +346,28 @@ describe("session chat ownership", () => {
     expect(store.draft()).toBe('Review @Same title');
     store.removeMention('12'); expect(store.mentions()).toEqual([]);
   });
+  it('retains element identity and image association through uncertain queue delivery without replaying', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, browserElements: true, attachments: true } }))); await store.refresh();
+    const drafts = TestBed.inject(SessionChatDrafts), entry = drafts.entry('scope', 2);
+    const reference = { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', tag: 'button', selector: 'button', frames: [], page: 'https://example.com/checkout', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: { x: 20, y: 30, width: 80, height: 30 }, crop: { x: 0, y: 0, width: 148, height: 108 }, image: { width: 148, height: 108, scale: 1 } };
+    const file = { id: 'image-1', name: 'element.jpg', path: '/stored/element.jpg', kind: 'image' as const, status: 'ready' as const, element: reference, file: new File(['image'], 'element.jpg') };
+    entry.files.set([file]);
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Check delivery' } });
+    await store.submit({ text: 'Align @element-11111111', intent: 'queue', context: [] });
+    const action = bridge.sessionChatCommand.mock.calls.at(-1)?.[1].action;
+    if (action?.type !== 'send') throw new Error('Missing send');
+    expect(parseBrowserElements(action.text).elements[0]).toMatchObject({ attachment: 'element.jpg', imageIndex: 1, reference: { id: reference.id } });
+    expect(entry.files()[0]?.element?.id).toBe(reference.id);
+    expect(store.uncertain()).toBe('Check delivery');
+    const writes = bridge.sessionChatCommand.mock.calls.length;
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    expect(drafts.entry('scope', 3).files()).toHaveLength(0);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
+    expect(store.uncertain()).toBeTruthy(); expect(entry.files()[0]?.element).toEqual(reference);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(writes);
+  });
+
   it("shows files-only prompts immediately and restores attachments to their original session after a rejected send", async () => {
     const { store, bridge } = setup();
     await settle();

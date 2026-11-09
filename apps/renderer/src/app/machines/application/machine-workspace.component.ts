@@ -219,12 +219,20 @@ export class MachineWorkspaceComponent {
     this.flights = []; this.disposers = []; this.source = null; this.launch.set('idle'); this.setupStarted.set(false);
   }
 
+  private readonly taskBrowser = viewChild(TaskBrowserComponent);
+  pickBrowserElement(request: { scopeId: string; taskId: number; sessionId: number; tabId: string }): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== request.scopeId || selected.taskId !== request.taskId || selected.sessionId !== request.sessionId) return;
+    this.browserAttention();
+    void this.taskBrowser()?.beginElementPick(request.tabId);
+  }
   private readonly chat = viewChild(SessionChatComponent);
   browserAttention(): void { this.store.selectPanel('browser'); this.panelOpen.set(true); }
   browserContext(intent: BrowserComposerIntent): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId) return;
-    this.chat()?.stageBrowserContext(intent.text);
+    const staged = this.chat()?.stageBrowserContext(intent.text, intent.element) ?? false;
+    this.taskBrowser()?.contextStaged(intent, staged);
   }
   focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
   closePanel(): void { this.panelOpen.set(false); this.wideReview.set(false); }

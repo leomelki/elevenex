@@ -1511,6 +1511,21 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('sends element prose and image bytes together through the native Claude SDK stream', async () => {
+    const observed: unknown[] = [];
+    (query as jest.Mock).mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({ model: 'sonnet', totalTokens: 0, maxTokens: 0, percentage: 0 }),
+      close: jest.fn(),
+      async *[Symbol.asyncIterator]() {
+        for await (const message of prompt) { observed.push(message); yield successfulResultMessage(); break; }
+      },
+    }));
+    const prompt = 'Align @element-11111111 (image 1).';
+    await service.submitPrompt(7, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+    expect(observed).toEqual([expect.objectContaining({ message: { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/image' } }] } })]);
+  });
+
   it('uses the independently installed Claude CLI when submitting prompts', async () => {
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),

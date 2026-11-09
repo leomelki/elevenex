@@ -1,3 +1,4 @@
+import type { BrowserElementSnapshot } from '@elevenex/shared';
 import {
   DestroyRef,
   Injectable,
@@ -57,7 +58,15 @@ export class SessionChatAttachments {
       ),
     );
   }
-  add(files: readonly File[]): void {
+  addElement(snapshot: BrowserElementSnapshot): boolean {
+    if (!this.entry() || !this.selection) { this.error.set('Open an active conversation before adding the snapshot.'); return false; }
+    if (!snapshot.jpeg) { this.error.set(snapshot.error || 'Snapshot unavailable. Pick the element again.'); return false; }
+    if (this.files().some(file => file.element?.id === snapshot.reference.id)) return true;
+    const bytes = Uint8Array.from(atob(snapshot.jpeg), char => char.charCodeAt(0));
+    this.add([new File([bytes], `element-${snapshot.reference.id}.jpg`, { type: 'image/jpeg' })], snapshot);
+    return this.files().some(file => file.element?.id === snapshot.reference.id);
+  }
+  add(files: readonly File[], snapshot?: BrowserElementSnapshot): void {
     const entry = this.entry(),
       selection = this.selection;
     if (!entry || !selection) return;
@@ -97,6 +106,7 @@ export class SessionChatAttachments {
       size += file.size;
       if (kind === "image") imageSize += file.size;
       accepted.push({
+        ...(snapshot ? { element: snapshot.reference } : {}),
         id: crypto.randomUUID(),
         path: "",
         name: file.name,

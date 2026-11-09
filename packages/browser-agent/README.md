@@ -30,3 +30,5 @@ Elevenex owns the task profile and supplies only private page connections.
 
 Behavioral tests run through backend Jest. Real Chromium, native Electron, MCP
 SDK, runtime archive and renderer capture tests exercise separate boundaries.
+
+Human element inspection captures bounded JPEG pixels through the existing scoped target in the inspection worker. `element-snapshot` owns visible CSS crop geometry, DPR/zoom/scroll mapping, image dimensions and stale-capture checks. Snapshot metadata never grants authority; only the live confirmed-locator path validates page/frame/DOM identity. See [visual element mentions](../../docs/browser-element-mentions.md) for sharing, image associations and retention.

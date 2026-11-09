@@ -141,26 +141,24 @@ tab. Closing a selected popup returns to its surviving opener. The twelve-tab ca
 and network policy still apply. Local native popup behavior remains unchanged.
 Unsupported site flows retain Open outside, which uses a separate browser profile.
 
-The real picker consumes page input, resolves a structural `nth-child` selector,
-tag and rectangle at viewport CSS coordinates, and excludes editable controls,
-embedded frames and open shadow hosts. Closed roots remain opaque. App zoom, scrolling and responsive layout are
-accounted for. Text, attributes and element screenshots remain unavailable.
-An explicit human pick also resolves development source metadata through
-the shared [browser inspection runtime](../../../../../packages/browser-inspection/README.md):
-React debug metadata/maps, Svelte element locations, Angular template markers
-and component declarations, Vue Inspector locations and Vue component filenames,
-plus framework-neutral source markers. Agent clicks do not run source detection.
-The card distinguishes exact element coordinates, ancestor locations and
-component-only fallbacks; a missing line is never invented. The optional,
-page-reported metadata is staged in the selected conversation's composer only
-on request; it never grants file access. Missing/unsupported metadata
-keeps the selector-and-position fallback, and `askNote` states what is available.
-The card names the
-element by its tag; the staged question carries the full selector. Main pauses
-(hides) the page after a pick, so the trusted preview slot shows a dotted
-"Page paused while you ask" ground under the ring and card. Main does not inspect
-on hover, so production omits `hovered`. Sending stages the geometric
-context in the selected session's composer for review.
+The human picker consumes page input without activating the target. Its shared
+Playwright inspection worker resolves open shadow roots and frame paths and
+captures actual browser pixels with surrounding context before hiding/pausing
+the page. Closed roots stay opaque. The selected reference has viewport CSS
+geometry, a document identity, and a bounded JPEG snapshot. Selection and capture
+share viewport/navigation/ownership guards; capture feedback does not resize the
+page. Agent clicks do not gain human-only inspection or source detection.
+
+Main-document source hints reuse the shared browser-inspection runtime: React,
+Svelte, Angular, Vue and framework-neutral development markers. Framed/shadow
+source hints may be unavailable. Page-reported source is always untrusted and
+never grants filesystem access. Missing source does not prevent a visual reference.
+
+Add to composer stages the snapshot and semantic reference for the original
+selected session without sending a prompt. The conversation's ElementReference
+card owns preview and deliberate @ mention interactions; selectors and geometry
+remain outside the textarea. Older engines without capture explain the limit.
+See the visual-element contract below for image delivery and recovery.
 
 Errors retain counts only, capped at 999. **Send to agent** is an explicit composer
 intent. The optional “Share error counts during agent work” setting exposes those
@@ -443,3 +441,7 @@ tab. Concurrent metadata refreshes reuse an opening/live connection; blank tabs
 do not start pixel reads. Display-only interruption messages do not claim an
 unknown action outcome. Dispatched commands and human input still require
 inspection after interruption and are never replayed.
+
+## Visual element mentions
+
+Point and ask stages a first-class element attachment with its original browser crop and stable @ alias, rather than appending selector/geometry text. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md) for the shared snapshot model, untrusted metadata, image association, ownership and limitations. Source hints remain optional.

@@ -8,6 +8,7 @@ export type BrowserHumanCommand =
   | { readonly kind: 'read' | 'cancel'; readonly requestId: string };
 
 export interface BrowserHumanElement {
+  readonly snapshot?: import('./browser-element-reference.js').BrowserElementSnapshot;
   readonly selector: string;
   readonly frames: readonly string[];
   readonly tag: string;

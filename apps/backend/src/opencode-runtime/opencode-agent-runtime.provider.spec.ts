@@ -383,6 +383,16 @@ describe('OpenCode runtime lifecycle', () => {
     }
   });
 
+  it('sends element prose and image bytes as native file parts in their original order', async () => {
+    const f = fixture('s');
+    try {
+      const prompt = 'Align @element-11111111 (image 1).';
+      await f.provider.submitPrompt(1, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+      await tick();
+      expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({ parts: [{ type: 'text', text: prompt }, { type: 'file', mime: 'image/jpeg', url: 'data:image/jpeg;base64,/9j/image' }] }), expect.anything());
+    } finally { f.provider.onModuleDestroy(); }
+  });
+
   it('connects coding sessions to Elevenex and adds current-session instructions', async () => {
     const f = fixture('s');
     try {

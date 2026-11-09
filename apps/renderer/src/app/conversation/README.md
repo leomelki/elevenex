@@ -401,3 +401,7 @@ Forward `waitingEditing` to the outbox owner to hold first dispatch while an edi
 is open. Save/Cancel releases the hold; navigation cancels the local edit while
 preserving the original queued request. `ComposerQueue.editingChanged` supplies
 the same lifecycle for direct consumers.
+
+## Browser element references
+
+`ConversationAttachment.element` supplies the versioned historical reference to `ElementReferenceComponent`, exported by this family. Attachments composes its thumbnail, target outline, upload states and keyboard-accessible retained modal in Composer and sent messages. `elementMentioned` forwards the alias intent; Composer inserts `@element-xxxxxxxx` at the caret and offers the same staged references in the @ menu. Children do not capture, upload or grant browser authority. See [the canonical component](../../../../../docs/design-system/project/components/ElementReference/README.md) and [wire/lifetime contract](../../../../../docs/browser-element-mentions.md). The `/element-mentions` preview stages actual host snapshots.

@@ -1,7 +1,8 @@
+import { captureElementSnapshot } from './element-snapshot.js';
 import { randomUUID } from 'node:crypto';
 import { chromium, type Frame } from 'playwright-core';
 import type { BrowserHumanElement } from '@elevenex/shared';
-import { selectedBrowserElement, frameLoader } from './element-selection.js';
+import { selectedBrowserElement, frameLoader, selectionFingerprintExpression } from './element-selection.js';
 import { PlaywrightTransport } from './playwright-transport.js';
 import { object, type BrowserAgentTarget } from './host.js';
 
@@ -56,6 +57,8 @@ export async function pickBrowserElement(
   documentId: string,
   current: () => boolean,
   version = '140.0.0.0',
+  capture = true,
+  fingerprint?: unknown,
 ): Promise<BrowserHumanElement> {
   const transport = new PlaywrightTransport(
     {
@@ -74,6 +77,11 @@ export async function pickBrowserElement(
     if (!current()) throw new Error('Element request changed');
     const page = browser.contexts()[0]?.pages()[0];
     if (!page) throw new Error('Inspection page unavailable');
+    if (fingerprint !== undefined) {
+      const actual = object(await page.evaluate(selectionFingerprintExpression(x, y))), expected = object(fingerprint);
+      // Native CDP may reorder object keys while relaying values.
+      if (Object.keys(actual).length !== Object.keys(expected).length || Object.keys(expected).some(key => actual[key] !== expected[key])) throw new Error('The page moved before selection; pick the element again');
+    }
     let frame: Frame = page.mainFrame(),
       localX = x,
       localY = y;
@@ -112,7 +120,7 @@ export async function pickBrowserElement(
       !current() ||
       typeof picked['selector'] !== 'string' ||
       picked['selector'].length > 2048 ||
-      typeof picked['tag'] !== 'string'
+      (typeof picked['tag'] !== 'string' || picked['tag'].length > 64)
     )
       throw new Error('Element selection is stale or too deep');
     const hit = object(
@@ -128,14 +136,15 @@ export async function pickBrowserElement(
     const loaderId = frameId ? frameLoader(tree, frameId) : undefined;
     if (!frameId || !loaderId)
       throw new Error('Cannot establish the selected document identity');
+    const locator = frame.locator(picked['selector']);
+    const snapshot = capture ? await captureElementSnapshot(page, locator, { selector: picked['selector'], tag: picked['tag'], frames, documentId }, target.id, { x, y }, current, target) : undefined;
+    if (!current() || frameLoader(await target.send('Page.getFrameTree', {}), frameId) !== loaderId) throw new Error('Selected document changed during capture');
     return {
+      ...(snapshot ? { snapshot } : {}),
       selector: picked['selector'],
       tag: picked['tag'],
       frames,
-      x,
-      y,
-      width: Number(picked['width']),
-      height: Number(picked['height']),
+      ...(snapshot?.reference.target ?? { x, y, width: Number(picked['width']), height: Number(picked['height']) }),
       documentId,
       frameId,
       loaderId,

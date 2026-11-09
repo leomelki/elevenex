@@ -72,7 +72,7 @@ export class RuntimeBrowserTask {
     tab: id => {
       const tab = this.page(id), live = () => { if (!this.alive || this.tabs.get(id) !== tab) throw new Error('Tab closed or replaced'); };
       return {
-        get documentId() { live(); return tab.documentId; }, get ownership() { live(); return tab.ownership; }, get picking() { return tab.picking; },
+        get documentId() { live(); return tab.documentId; }, get ownership() { live(); return tab.ownership; }, get viewportId() { live(); return tab.selectionViewportId; }, get picking() { return tab.picking; },
         assertAgent: sessionId => { live(); tab.assertAgent(tab.generation, sessionId); },
         takeOver: () => { live(); tab.takeover(true); }, handBack: sessionId => { live(); this.handBackGroup(tab, sessionId); },
         select: () => this.select(id), picker: callback => { tab.agentPicker = callback ?? undefined; tab.picking = callback !== null; }, pause: paused => { tab.agentSelectionPaused = paused; },
@@ -244,7 +244,7 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
-      agentCode: 1,
+      agentCode: 1, elementSnapshots: 1,
       agentRequests: this.interactions.pending,
       // Advertise the private protocol before the lazy Chromium launch so clients
       // can opt in on connect without sending new fields to older engines.
@@ -284,6 +284,7 @@ export class RuntimeBrowserTask {
         return tab;
       }),
       picked: this.picked,
+      capturePending: this.interactions.capturing || [...this.tabs.values()].some(tab => tab.capturePending),
       picking: this.picking || [...this.tabs.values()].some(tab => tab.picking && !!tab.agentPicker),
       pickerMessage: this.pickerMessage,
       feedback: this.feedback,
@@ -414,7 +415,7 @@ export class RuntimeBrowserTask {
   private makeTab(by: 'you' | 'agent', sessionId: number | null): RuntimeBrowserTab {
     const tab = new RuntimeBrowserTab(by, sessionId, () => this.alive, () => this.revision++, element => {
       this.picked = element;
-      this.pickerMessage = element ? null : 'Editable fields and embedded content are private. Pick another element.';
+      this.pickerMessage = element ? null : tab.visualPicking ? 'The page changed or this element could not be captured. Pick it again.' : 'Editable fields and embedded content are private. Pick another element.';
       this.picking = false; tab.picking = false; this.revision++;
     }, this.network, (kind, message) => {
       this.attention = { kind, message, outside: true, tabId: tab.id }; this.revision++;
@@ -619,7 +620,7 @@ export class RuntimeBrowserTask {
     await page?.layout(width, height, visible, interactive, pixelRatio);
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
-    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId); return this.state(); }
+    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId, input.kind === 'agent-request-pick' && input.visual === 1); return this.state(); }
     if (input.kind === 'handoff') { const request = this.interactions.pending.find(request => this.relatedTabs.members(input.tabId).includes(request.tabId)); if (request) { await this.interactions.viewer('agent-request-complete', request.id); return this.state(); } }
     this.touch();
     if (input.kind === 'move-tab') {
@@ -647,7 +648,7 @@ export class RuntimeBrowserTask {
       page.takeover();
       this.clearPicker();
       this.picking = input.enabled;
-      page.picking = input.enabled;
+      page.picking = input.enabled; page.visualPicking = input.visual === 1;
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);

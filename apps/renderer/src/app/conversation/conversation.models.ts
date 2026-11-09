@@ -1,3 +1,4 @@
+import type { BrowserElementReference } from '@elevenex/shared';
 import type { ToolContentSource, ToolPresentation } from './tool-presentation';
 
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
@@ -74,7 +75,7 @@ export interface McpServer {
 }
 export interface ConversationMention {
   readonly id: string;
-  readonly kind: "session" | "task" | "file";
+  readonly kind: "session" | "task" | "file" | "element";
   readonly label: string;
   readonly status?: ConversationStatus;
   readonly meta?: string;
@@ -92,6 +93,7 @@ export interface QueuedMessage {
   readonly text: string;
 }
 export interface ConversationAttachment {
+  readonly element?: BrowserElementReference;
   readonly id: string;
   readonly path: string;
   readonly name: string;

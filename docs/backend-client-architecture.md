@@ -490,3 +490,5 @@ expire on engine shutdown/startup. Existing clients may omit the owner and retai
 engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
 termination; opening an empty Terminal pane creates a fresh shell through the
 existing explicit opening flow. There is no shutdown channel in the preload.
+
+The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.

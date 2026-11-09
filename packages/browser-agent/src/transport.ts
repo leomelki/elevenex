@@ -1,3 +1,4 @@
+import { isBrowserElementSnapshot } from '@elevenex/shared';
 import type {
   BrowserCodeCommand,
   BrowserCodeResult,
@@ -124,6 +125,7 @@ export function browserHumanRequests(
       item['selection'] === undefined
         ? undefined
         : browserHumanElement(item['selection']);
+    if (selection?.snapshot && selection.snapshot.reference.tabId !== item['tabId']) throw new Error('Snapshot belongs to another tab');
     return {
       id: item['id'],
       tabId: item['tabId'],
@@ -153,6 +155,7 @@ function browserHumanElement(
     'documentId',
     'frameId',
     'loaderId',
+    'snapshot',
   ]);
   if (
     typeof item['selector'] !== 'string' ||
@@ -181,7 +184,10 @@ function browserHumanElement(
       (typeof item[key] !== 'string' || item[key].length > 100)
     )
       throw new Error('Invalid selection document identity');
+  const snapshot = item['snapshot'];
+  if (snapshot !== undefined && (!isBrowserElementSnapshot(snapshot) || snapshot.reference.documentId !== item['documentId'] || snapshot.reference.selector !== item['selector'] || JSON.stringify(snapshot.reference.frames) !== JSON.stringify(item['frames']))) throw new Error('Invalid element snapshot identity');
   return {
+    ...(isBrowserElementSnapshot(snapshot) ? { snapshot } : {}),
     selector: item['selector'],
     frames: item['frames'] as string[],
     tag: item['tag'],

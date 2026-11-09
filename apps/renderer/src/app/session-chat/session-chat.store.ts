@@ -1,3 +1,4 @@
+import { serializeBrowserElements } from '@elevenex/shared';
 import {
   DestroyRef,
   effect,
@@ -407,6 +408,11 @@ export class SessionChatStore {
       return;
     }
     const files = this.entry.files();
+    const aliases = new Set(files.flatMap(file => file.element ? ['element-' + file.element.id.slice(0, 8)] : []));
+    if ([...submission.text.matchAll(/@(element-[a-f0-9]{8})\b/g)].some(match => !aliases.has(match[1]!))) {
+      this.error.set('An element mention has no snapshot. Remove the mention or pick that element again.'); return;
+    }
+    if (aliases.size && !this.state()?.browserElements) { this.error.set('This harness cannot receive element images. Remove the references or choose a supported harness.'); return; }
     const mentions = this.mentions();
     if (mentions.length > 8) {
       this.error.set('Keep up to 8 session mentions before sending.'); return;
@@ -414,7 +420,7 @@ export class SessionChatStore {
     if (mentions.length && !this.state()?.sessionMentions) {
       this.error.set('This backend does not support session mentions. Remove the mentions before sending.'); return;
     }
-    const text = [submission.text.trim(), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
+    const text = [submission.text.trim(), serializeBrowserElements(files.flatMap(file => file.element ? [{ reference: file.element, attachment: file.name, imageIndex: files.filter(image => image.kind === 'image').findIndex(image => image.id === file.id) + 1 }] : [])), ...files.map(file => `[${file.name.replace(/[[\]\r\n]/g, '_')}](<${file.path}>)`)].filter(Boolean).join('\n\n');
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     if (this.offline() && this.outbox && this.selection) {
       if (this.outbox.enqueue(this.selection, { type: 'send', text, queue: false, ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}) }, text, null)) {

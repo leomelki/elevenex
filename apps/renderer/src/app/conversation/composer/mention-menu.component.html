@@ -1,7 +1,7 @@
 <section
   [id]="listId()"
   role="listbox"
-  aria-label="Mention a session, task or file"
+  aria-label="Mention a session, task, file or element"
 >
   @for (item of matches(); track item.kind + ":" + item.id; let i = $index) {
     @if (i === 0 || matches()[i - 1]?.kind !== item.kind) {
@@ -11,7 +11,7 @@
             ? "Sessions"
             : item.kind === "task"
               ? "Tasks"
-              : "Files"
+              : item.kind === "element" ? "Elements in this message" : "Files"
         }}
       </h3>
     }

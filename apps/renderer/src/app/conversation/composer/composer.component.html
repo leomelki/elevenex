@@ -21,7 +21,7 @@
         (edited)="queueEdited.emit($event)"
         (reordered)="queueReordered.emit($event)"
       />
-      @if (attachments().length) { <ex-attachments [files]="attachments()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" /> }
+      @if (attachments().length) { <ex-attachments [files]="attachments()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" (elementMentioned)="mentionElement($event)" (elementRepick)="elementRepick.emit($event)" /> }
       @if (context().length) {
         <div class="context">
           @for (mention of context(); track mention.kind + ":" + mention.id) {
@@ -204,7 +204,7 @@
 >
   <ex-mention-menu
     [query]="mentionQuery() || ''"
-    [items]="mentionItems()"
+    [items]="allMentionItems()"
     (selected)="insertMention($event)"
     (closed)="mentionQuery.set(null)"
   />

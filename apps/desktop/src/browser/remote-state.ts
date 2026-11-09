@@ -1,5 +1,5 @@
 import { browserHumanRequests } from '@elevenex/browser-agent';
-import { browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
+import { isBrowserElementSnapshot, browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
 import type {
   BrowserElement,
   TaskBrowserState,
@@ -38,7 +38,7 @@ function element(value: unknown): BrowserElement {
   const selector = text(raw["selector"], 2048),
     tag = text(raw["tag"], 40);
   if (
-    !/^html(?: > (?:[a-z][a-z0-9-]{0,40}|\*):nth-child\([1-9][0-9]*\)){1,20}$/.test(
+    !/^(?:css=\[data-elevenex-picked="[a-f0-9-]{36}"\]|html(?: > (?:[a-z][a-z0-9-]{0,40}|\*):nth-child\([1-9][0-9]*\)){1,20})$/.test(
       selector,
     ) ||
     !/[a-z]/.test(tag)
@@ -50,11 +50,14 @@ function element(value: unknown): BrowserElement {
       invalid();
     return n;
   });
+  const snapshot = raw['snapshot'];
+  if (snapshot !== undefined && (!isBrowserElementSnapshot(snapshot) || snapshot.reference.selector !== selector)) invalid();
   const source = browserSourceLocation(raw['source']);
   const componentSource = source ? undefined : browserComponentSource(raw['componentSource']);
   return {
     selector,
     tag,
+    ...(isBrowserElementSnapshot(snapshot) ? { snapshot } : {}),
     // Unknown/malformed optional metadata degrades independently of the usable pick.
     ...(source ? { source } : {}),
     ...(componentSource ? { componentSource } : {}),
@@ -160,8 +163,11 @@ export function remoteBrowserState(
     )
   )
     invalid();
+  const picked = raw['picked'] === null ? null : element(raw['picked']);
+  if (picked?.snapshot && (picked.snapshot.reference.tabId !== active || ['x', 'y', 'width', 'height'].some(key => record(picked)[key] !== record(picked.snapshot?.reference.target)[key]))) invalid();
   return {
     ...(raw['webAuthn'] === true ? { webAuthn: true as const } : {}),
+    ...(raw['elementSnapshots'] === 1 ? { elementSnapshots: 1 } : {}),
     ...(raw['agentCode'] === 1 ? { agentCode: 1 } : {}),
     ...(raw['agentRequests'] === undefined ? {} : { agentRequests: browserHumanRequests(raw['agentRequests']) }),
     ...(raw['webAuthnRequest'] === undefined ? {} : { webAuthnRequest: webAuthnRequest(raw['webAuthnRequest']) }),
@@ -183,8 +189,9 @@ export function remoteBrowserState(
     controlsFocus: integer(raw["controlsFocus"]),
     active,
     tabs,
-    picked: raw["picked"] === null ? null : element(raw["picked"]),
+    picked,
     picking: boolean(raw["picking"]),
+    ...(raw["capturePending"] === undefined ? {} : { capturePending: boolean(raw["capturePending"]) }),
     pickerMessage:
       raw["pickerMessage"] === null ? null : text(raw["pickerMessage"], 400),
     feedback: boolean(raw["feedback"]),

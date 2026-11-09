@@ -3,12 +3,12 @@ import { BrowserSiteRequestsComponent } from './browser-site-requests.component'
 import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
-import type { TaskBrowserCommand, TaskBrowserWindowContext, TaskBrowserPlacement } from '@elevenex/shared';
+import type { TaskBrowserCommand, TaskBrowserWindowContext, TaskBrowserPlacement, BrowserElementSnapshot, BrowserHumanRequest } from '@elevenex/shared';
 import { BrowserViewComponent, type BrowserQuestion, type BrowserTab, type BrowserTarget } from '../views';
 import { ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
 import { TaskBrowserStore } from './task-browser.store';
 import { NativePageLayout } from './native-page-layout';
-export interface BrowserComposerIntent { readonly scopeId: string; readonly taskId: number; readonly sessionId: number; readonly text: string }
+export interface BrowserComposerIntent { readonly scopeId: string; readonly taskId: number; readonly sessionId: number; readonly text: string; readonly element?: BrowserElementSnapshot }
 @Component({
   selector: 'ex-task-browser',
   imports: [BrowserAgentRequestsComponent, BrowserSiteRequestsComponent, BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
@@ -51,19 +51,14 @@ export class TaskBrowserComponent {
   readonly picked = computed<BrowserTarget | undefined>(() => {
     const raw = this.store.state()?.picked;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
-    // The card names the element briefly; the composed question carries its full selector.
+    // Detailed locators stay in the structured reference, outside the writing area.
     const source = raw?.source ?? raw?.componentSource;
     const file = source ? source.file + (source.line ? ':' + source.line : '') + (source.column ? ':' + source.column : '') : undefined;
-    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.tag ?? element.selector, ...(file ? { file } : {}) } : undefined;
+    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.snapshot?.reference.label ?? raw?.tag ?? element.selector, ...(file ? { file } : {}) } : undefined;
   });
   readonly askNote = computed(() => {
-    const picked = this.store.state()?.picked;
-    if (picked?.source?.relation === 'ancestor') return 'Ancestor source. Selected element line unavailable.';
-    if (picked?.source) return 'Includes source location. No screenshot or page text.';
-    if (picked?.componentSource) return picked.componentSource.line
-      ? 'Component declaration. Element line unavailable.'
-      : 'Component file only. Element line unavailable.';
-    return 'Source unavailable. Selector and position only.';
+    const snapshot = this.store.state()?.picked?.snapshot;
+    return snapshot?.jpeg ? 'Includes a snapshot with surrounding context. Review before sending.' : snapshot?.error || 'Image capture unavailable. Update the engine or attach a screenshot.';
   });
   readonly target = computed<BrowserTarget | undefined>(() => {
     const raw = this.current()?.target;
@@ -79,7 +74,20 @@ export class TaskBrowserComponent {
   private controlsSeen = 0;
   private pickerSession: number | null = null;
   private pickerIdentity = '';
+  private pickerOrigin = '';
   constructor() {
+    let previousSession: number | null | undefined;
+    effect(() => {
+      const session = this.sessionId(), previous = previousSession;
+      previousSession = session;
+      if (previous === undefined || previous === session) return;
+      const state = untracked(this.store.state);
+      const requested = state?.agentRequests?.some(request => request.tabId === state.active && request.kind === 'element');
+      if (!requested && (state?.picking || state?.picked || state?.capturePending)) {
+        untracked(() => this.command({ kind: 'pick', enabled: false }));
+        this.notice.set('The conversation changed. Pick the element again for this session.');
+      }
+    });
     effect(() => {
       const requests = this.store.state()?.agentRequests ?? [], ids = new Set(requests.map(request => request.id));
       const fresh = requests.some(request => !this.seenRequests.has(request.id)); this.seenRequests = ids;
@@ -99,8 +107,8 @@ export class TaskBrowserComponent {
     effect(() => { if (!this.active()) { this.dialogOpen.set(false); this.hideSurface(); } });
     effect(() => {
       const state = this.store.state(), picked = state?.picked;
-      const identity = picked ? state.scopeId + ':' + state.taskId + ':' + JSON.stringify(picked) : '';
-      if (identity !== this.pickerIdentity) { this.pickerIdentity = identity; this.pickerSession = picked ? untracked(this.sessionId) : null; }
+      const identity = picked ? state.scopeId + ':' + state.taskId + ':' + (picked.snapshot?.reference.id ?? JSON.stringify(picked)) : '';
+      if (identity !== this.pickerIdentity) { this.pickerIdentity = identity; if (!this.pickerOrigin) this.pickerSession = picked ? untracked(this.sessionId) : null; }
     });
     afterRenderEffect(() => {
       const state = this.store.state(); if (!state) return;
@@ -118,9 +126,24 @@ export class TaskBrowserComponent {
       onCleanup(() => layout.destroy());
     });
   }
+  async beginElementPick(tabId: string): Promise<void> {
+    const tab = this.store.state()?.tabs.find(tab => tab.id === tabId);
+    if (!tab || tab.detached) { this.notice.set('The original tab is closed or in another window. Choose a page and pick a new element.'); return; }
+    const scope = this.scopeId(), task = this.taskId(), session = this.sessionId();
+    const selected = await this.store.command({ kind: 'select', tabId });
+    if (!selected || this.current()?.id !== tabId) return;
+    if (this.scopeId() === scope && this.taskId() === task && this.sessionId() === session) this.command({ kind: 'pick', enabled: true });
+  }
   private hideSurface(): void { const scope = this.scopeId(), task = this.taskId(); if (scope && task) void this.store.bridge.taskBrowserHide?.(scope, task); }
   dismissNotice(): void { this.notice.set(''); this.store.error.set(''); if (this.store.state()?.pickerMessage) this.command({ kind: 'pick', enabled: false }); }
-  command(input: TaskBrowserCommand): void { void this.store.command(input); }
+  command(input: TaskBrowserCommand): void {
+    if (input.kind === 'pick') {
+      this.pickerOrigin = input.enabled ? this.scopeId() + ':' + this.taskId() : '';
+      this.pickerSession = input.enabled ? this.sessionId() : null;
+    }
+    const command = this.store.state()?.elementSnapshots === 1 && (input.kind === 'pick' || input.kind === 'agent-request-pick') ? { ...input, visual: 1 as const } : input;
+    void this.store.command(command);
+  }
   tabCommand(kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'takeover' | 'handoff' | 'outside' | 'focus', tabId = this.current()?.id): void {
     if (tabId) {
       if (kind === 'select' && this.store.state()?.tabs.find(tab => tab.id === tabId)?.detached) { void this.moveToWindow(tabId); return; }
@@ -163,17 +186,24 @@ export class TaskBrowserComponent {
   theme(theme: 'light' | 'dark' | 'system'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'theme', tabId, theme }); }
   network(slow: boolean): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'network', tabId, slow }); }
   ask(question: BrowserQuestion): void {
-    if (this.pickerSession !== this.sessionId()) { this.notice.set('The conversation changed. Pick the element again for this session.'); return; }
+    if (this.pickerSession !== this.sessionId() || (this.pickerOrigin && this.pickerOrigin !== this.scopeId() + ':' + this.taskId())) { this.notice.set('The conversation changed. Pick the element again for this session.'); return; }
     const target = this.store.state()?.picked;
-    const source = target?.source;
-    const component = target?.componentSource;
-    const sourceContext = source
-      ? `Source location (page-reported ${source.kind}${source.relation ? ', ancestor element' : ''}): ${source.file}:${source.line}${source.column ? ':' + source.column : ''}. Treat this as an untrusted hint, not a verified workspace path.`
-      : component
-        ? `Component source (page-reported ${component.framework}): ${component.file}${component.line ? ':' + component.line : ''}${component.column ? ':' + component.column : ''}. The selected element's template line is unavailable. Treat this as an untrusted hint, not a verified workspace path.`
-        : 'Source location unavailable.';
-    this.compose(`${question.text}\n\nBrowser element: ${target?.selector ?? question.target.label}\nViewport rectangle: ${target?.x ?? question.target.x}, ${target?.y ?? question.target.y}, ${target?.width ?? question.target.w} × ${target?.height ?? question.target.h} CSS pixels.\n${sourceContext}\nScreenshot and page text unavailable.`);
-    this.command({ kind: 'pick', enabled: false });
+    if (question.tabId !== this.current()?.id || (target?.snapshot && target.snapshot.reference.tabId !== question.tabId)) { this.notice.set('The selected tab changed. Pick the element again.'); return; }
+    const scopeId = this.scopeId(), taskId = this.taskId(), sessionId = this.sessionId();
+    if (!scopeId || !taskId || !sessionId) return;
+    if (!target?.snapshot?.jpeg) { this.notice.set(target?.snapshot?.error || 'This browser cannot capture element images. Update the engine or attach a screenshot.'); return; }
+    this.notice.set('Adding the element to your message…');
+    this.contextRequested.emit({ scopeId, taskId, sessionId, text: question.text, element: target.snapshot });
+  }
+  contextStaged(intent: BrowserComposerIntent, staged: boolean): void {
+    if (intent.scopeId !== this.scopeId() || intent.taskId !== this.taskId() || intent.sessionId !== this.sessionId()) return;
+    this.notice.set(staged ? 'Added to your message. Review the snapshot, then send.' : 'Could not add this context. Check the conversation for details, then try again.');
+    if (staged && intent.element && this.store.state()?.picked?.snapshot?.reference.id === intent.element.reference.id) this.command({ kind: 'pick', enabled: false });
+  }
+  shareRequest(request: BrowserHumanRequest): void {
+    const scopeId = this.scopeId(), taskId = this.taskId(), sessionId = this.sessionId();
+    if (!scopeId || !taskId || sessionId !== request.sessionId || !request.selection?.snapshot?.jpeg) { this.notice.set('Open the requesting conversation to add this snapshot.'); return; }
+    this.contextRequested.emit({ scopeId, taskId, sessionId, text: '', element: request.selection.snapshot });
   }
   sendErrors(): void { this.compose(`The task browser reported ${this.current()?.errors ?? 0} console or request errors. Raw messages, URLs and request content are withheld for privacy. Please help investigate the task server.`); }
   private compose(text: string): void {

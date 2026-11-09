@@ -940,7 +940,12 @@ export class PlaywrightBroker {
         kind: op === 'human-cancel' ? 'cancel' : 'read',
         requestId: input['id'],
       });
-      result = request;
+      const snapshot = request.status === 'completed' ? request.selection?.snapshot : undefined;
+      if (snapshot?.jpeg) {
+        if (images.length >= 8) throw new Error('Image output limit reached. Read the human result in a fresh browser_run call.');
+        images.push({ data: snapshot.jpeg, mimeType: 'image/jpeg', width: snapshot.reference.image.width, height: snapshot.reference.image.height });
+      }
+      result = request.selection?.snapshot ? { ...request, selection: { ...request.selection, snapshot: { reference: request.selection.snapshot.reference, ...(request.selection.snapshot.error ? { error: request.selection.snapshot.error } : {}) } } } : request;
       if (op === 'human-locator') {
         if (request.status !== 'completed' || !request.selection)
           throw new Error('The human has not selected an element');

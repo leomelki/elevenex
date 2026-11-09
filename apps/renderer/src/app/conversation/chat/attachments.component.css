@@ -108,3 +108,6 @@ ex-markdown-media {
   width: fit-content;
   max-width: 100%;
 }
+
+.editing ex-element-reference { flex: 1 1 290px; max-width: 100%; }
+.editing:has(ex-element-reference) { max-height: 240px; }

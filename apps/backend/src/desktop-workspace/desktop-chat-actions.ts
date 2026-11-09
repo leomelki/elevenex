@@ -1,3 +1,4 @@
+import { parseBrowserElements } from '@elevenex/shared';
 import {
   chatMedia,
   readChatMedia,
@@ -82,6 +83,9 @@ export async function executeChatAction(
         (media) =>
           media.kind === 'image' && uploadedAttachment(media.source, sessionId),
       );
+      const elements = parseBrowserElements(text(action.text, 64000)).elements;
+      if (elements.length && !provider.info.capabilities.multimodalPrompts) throw new BadRequestException('This harness cannot receive element images.');
+      if (elements.some(element => refs.findIndex(ref => ref.caption === element.attachment) + 1 !== element.imageIndex)) throw new BadRequestException('Element screenshot attachment is missing.');
       const images: AgentImageInput[] = [];
       let imageBytes = 0;
       for (const ref of refs.slice(0, 8)) {

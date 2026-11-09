@@ -1,3 +1,4 @@
+import { ElementReferenceComponent } from './element-reference.component';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -16,6 +17,7 @@ import {
 @Component({
   selector: "ex-attachments",
   imports: [
+    ElementReferenceComponent,
     IconComponent,
     IconButtonComponent,
     ButtonComponent,
@@ -32,6 +34,8 @@ export class AttachmentsComponent {
   readonly resolve = input<MarkdownAssetResolver>();
   readonly removed = output<string>();
   readonly retry = output<string>();
+  readonly elementRepick = output<NonNullable<ConversationAttachment["element"]>>();
+  readonly elementMentioned = output<ConversationAttachment>();
   readonly copyPath = output<string>();
   preview(source: string): string {
     return safeMediaSource(source);

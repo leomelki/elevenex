@@ -40,49 +40,50 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
   });
 }
 afterEach(() => TestBed.resetTestingModule());
-describe('Point and ask source context', () => {
-  const element = { selector: 'html > body:nth-child(1) > button:nth-child(1)', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
-  const source = { file: 'src/Checkout.tsx', line: 88, column: 7, kind: 'react-source-map' as const };
-  it.each([
-    { file: 'src/Checkout.vue', framework: 'vue' as const },
-    { file: 'src/checkout.component.ts', framework: 'angular' as const, line: 7 },
-  ])('labels component fallbacks and stages their actual precision (%j)', async componentSource => {
-    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, componentSource });
+describe('Point and ask visual context', () => {
+  const element = { selector: 'css=[data-elevenex-picked="11111111-1111-4111-8111-111111111111"]', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
+  const snapshot = { reference: { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', selector: element.selector, tag: 'button', frames: [], page: 'http://localhost:3000/', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: element, crop: { x: 0, y: 0, width: 200, height: 100 }, image: { width: 200, height: 100, scale: 1 } }, jpeg: '/9j/' };
+  it('stages the original screenshot and reference separately from user prose', async () => {
+    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
     fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true);
-    const intents: string[] = []; fixture.componentInstance.contextRequested.subscribe(intent => intents.push(intent.text));
+    const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
     await render(fixture);
-    expect(fixture.nativeElement.textContent).toContain(componentSource.file);
-    expect(fixture.nativeElement.textContent).toContain('Element line unavailable.');
-    expect(fixture.nativeElement.textContent).not.toContain(':undefined');
-    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change the button', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
-    expect(intents[0]).toContain(`Component source (page-reported ${componentSource.framework})`);
-    expect(intents[0]).toContain("selected element's template line is unavailable");
-    expect(intents[0]).not.toContain(':undefined');
+    expect(emit).not.toHaveBeenCalled();
+    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Make it wider', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    expect(emit).toHaveBeenCalledWith({ scopeId: 'scope', taskId: 1, sessionId: 2, text: 'Make it wider', element: snapshot });
   });
-  it('labels ancestor locations without implying an exact match', async () => {
-    const { fixture } = setup([tab()], undefined, { ...element, source: { ...source, relation: 'ancestor' } });
+  it('allows staging without a browser note and retains the selection when staging is rejected', async () => {
+    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
+    fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true); await render(fixture);
+    const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
+    const submit = fixture.nativeElement.querySelector('button[type="submit"]') as HTMLButtonElement;
+    expect(submit.disabled).toBe(false); submit.click(); fixture.detectChanges();
+    const intent = emit.mock.calls[0]?.[0]; expect(intent?.text).toBe('');
+    fixture.componentInstance.contextStaged(intent, false);
+    expect(fixture.componentInstance.store.state()?.picked?.snapshot?.reference.id).toBe(snapshot.reference.id);
+    expect(fixture.componentInstance.notice()).toContain('Could not add');
+    const note = fixture.nativeElement.querySelector('textarea[aria-label="Add a note (optional)"]') as HTMLTextAreaElement;
+    note.value = 'Keep this note'; note.dispatchEvent(new Event('input')); fixture.detectChanges(); submit.click(); fixture.detectChanges();
+    fixture.componentInstance.contextStaged(emit.mock.calls.at(-1)?.[0], false); fixture.detectChanges();
+    expect(note.value).toBe('Keep this note');
+  });
+  it('does not start a re-pick on another tab after the original tab selection fails', async () => {
+    const { fixture } = setup([tab()]); await render(fixture);
+    const command = vi.spyOn(fixture.componentInstance.store, 'command').mockResolvedValueOnce(false);
+    await fixture.componentInstance.beginElementPick('tab-1');
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-1' });
+  });
+  it('explains missing capture without pretending an image was staged', async () => {
+    const { fixture } = setup([tab()], undefined, element);
     fixture.componentRef.setInput('sessionId', 2); await render(fixture);
-    expect(fixture.nativeElement.textContent).toContain('Ancestor source. Selected element line unavailable.');
-  });
-  it.each([undefined, source])('shows only available metadata and stages it for human review (%j)', async metadata => {
-    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, source: metadata });
-    fixture.componentRef.setInput('sessionId', 2);
-    fixture.componentRef.setInput('active', true);
-    const intents: string[] = [];
-    fixture.componentInstance.contextRequested.subscribe(intent => intents.push(intent.text));
-    await render(fixture);
-    const text = fixture.nativeElement.textContent;
-    expect(text).toContain(metadata ? 'src/Checkout.tsx:88:7' : 'Source unavailable.');
-    expect(intents).toHaveLength(0);
-    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Make it wider', target: { x: 20, y: 20, w: 100, h: 30, label: 'button', file: 'forged.tsx:1' } });
-    expect(intents).toHaveLength(1);
-    expect(intents[0]).toContain(element.selector);
-    expect(intents[0]).toContain(metadata ? 'src/Checkout.tsx:88:7' : 'Source location unavailable.');
-    expect(intents[0]).not.toContain('forged');
-    if (metadata) expect(intents[0]).toContain('untrusted hint');
+    const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
+    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change it', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    expect(emit).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.notice()).toContain('cannot capture');
   });
   it('rejects a pick retained from a different conversation', async () => {
-    const { fixture } = setup([tab()], undefined, { ...element, source });
+    const { fixture } = setup([tab()], undefined, { ...element, snapshot });
     fixture.componentRef.setInput('sessionId', 2); await render(fixture);
     fixture.componentRef.setInput('sessionId', 3); fixture.detectChanges();
     const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);

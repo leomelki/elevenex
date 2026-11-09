@@ -72,6 +72,12 @@ export class BrowserInteractions {
       ...(selection ? { selection } : {}),
     };
     this.requests.set(id, resolved);
+    // Completed tool snapshots are transient; sent chat images use durable attachments.
+    const snapshots = [...this.requests.values()].filter(row => row.status === 'completed' && row.selection?.snapshot?.jpeg);
+    for (const older of snapshots.slice(0, -4)) {
+      const selection = older.selection!;
+      this.requests.set(older.id, { ...older, selection: { ...selection, snapshot: { reference: selection.snapshot!.reference, error: 'Snapshot bytes expired. Select the element again for a new image.' } } });
+    }
     this.changed();
     return resolved;
   }
@@ -89,7 +95,7 @@ export class BrowserInteractions {
   cancel(id: string, sessionId?: number): BrowserHumanRequest {
     const request = this.get(id, sessionId);
     if (request.status !== 'pending') return request;
-    const resolved = { ...request, status: 'cancelled' as const };
+    const resolved = { ...request, selection: undefined, status: 'cancelled' as const };
     this.requests.set(id, resolved);
     this.changed();
     return resolved;
@@ -102,7 +108,7 @@ export class BrowserInteractions {
     let changed = false;
     for (const [id, request] of this.requests)
       if (request.status === 'pending' && Date.now() >= request.expiresAt) {
-        this.requests.set(id, { ...request, status: 'expired' });
+        this.requests.set(id, { ...request, selection: undefined, status: 'expired' });
         changed = true;
       }
     if (changed && !this.closed) this.changed();

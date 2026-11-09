@@ -1,0 +1,35 @@
+<main>
+  <h1>Browser element references</h1>
+  <p>
+    Pick an element in the task browser to stage a historical snapshot. Use
+    Mention or @ to refer to it in your message.
+  </p>
+  <nav aria-label="Preview states">
+    <button exButton (click)="state('uploading')" [disabled]="!hasFiles()">
+      Uploading</button
+    ><button exButton (click)="state('error')" [disabled]="!hasFiles()">
+      Upload failure</button
+    ><button exButton (click)="state('ready')" [disabled]="!hasFiles()">
+      Ready</button
+    ><button exButton (click)="disabled.set(!disabled())">
+      Toggle disabled
+    </button>
+  </nav>
+  @if (sent().length) {
+    <section class="sent" aria-label="Sent message">
+      <p>{{ prompt() }}</p>
+      <ex-attachments [files]="sent()" />
+    </section>
+  }
+  <ex-composer
+    [(draft)]="draft"
+    [attachments]="files()"
+    [disabled]="disabled()"
+    [showSettings]="false"
+    [showTools]="false"
+    [showDictation]="false"
+    (attachmentRemoved)="remove($event)"
+    (attachmentRetry)="state('ready')"
+    (submitted)="send($event)"
+  />
+</main>

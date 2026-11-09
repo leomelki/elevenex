@@ -98,6 +98,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     return {
       attachments: true,
+      browserElements: provider.info.capabilities.multimodalPrompts === true,
       sessionMentions: true,
       presetCatalogs: true,
       presets: chatPresets(this.settings, this.registry),

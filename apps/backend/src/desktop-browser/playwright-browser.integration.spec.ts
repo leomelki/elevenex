@@ -334,7 +334,7 @@ describe('Real Playwright in the task browser', () => {
     );
     expect(pending.error).toBeUndefined();
     expect((pending.value as { status: string }).status).toBe('pending');
-    await task.command({ kind: 'agent-request-pick', requestId: ticket.id });
+    await task.command({ kind: 'agent-request-pick', visual: 1, requestId: ticket.id });
     const tab = task.tabs.get(ticket.tabId)!;
     const trustedTarget = await tab.agentTarget(
       1,
@@ -354,6 +354,11 @@ describe('Real Playwright in the task browser', () => {
       .result.value;
     await tab.agentPicker!(point.x, point.y);
     expect(task.userRequest(ticket.id).selection?.tag).toBe('input');
+    const snapshot = task.userRequest(ticket.id).selection?.snapshot;
+    expect(snapshot?.jpeg).toBeTruthy();
+    expect(Buffer.from(snapshot!.jpeg!, 'base64').readUInt16BE(0)).toBe(0xffd8);
+    expect(snapshot!.reference.image.scale).toBe(1);
+    expect(snapshot!.reference.crop.width).toBeLessThanOrEqual(1600);
     expect(tab.driver).toBe('needs');
     await task.command({
       kind: 'agent-request-complete',
@@ -386,7 +391,7 @@ describe('Real Playwright in the task browser', () => {
       `return await human.requestElement(state.page,{message:'Choose the button inside the frame'})`,
     );
     const picked = created.value as { id: string; tabId: string };
-    await task.command({ kind: 'agent-request-pick', requestId: picked.id });
+    await task.command({ kind: 'agent-request-pick', visual: 1, requestId: picked.id });
     const tab = task.tabs.get(picked.tabId)!;
     const inspect = await tab.agentTarget(
       1,

@@ -20,7 +20,7 @@ export interface BrowserSourceResolution {
   readonly source?: BrowserSourceLocation;
   readonly componentSource?: BrowserComponentSource;
 }
-export interface BrowserElement extends BrowserRect, BrowserSourceResolution { readonly selector: string; readonly tag: string }
+export interface BrowserElement extends BrowserRect, BrowserSourceResolution { readonly selector: string; readonly tag: string; readonly snapshot?: import('./browser-element-reference.js').BrowserElementSnapshot }
 /** Engine placement and task-server routing, independent of embedded/stream display. */
 export type TaskBrowserPlacement = 'desktop' | 'desktop-proxy' | 'machine';
 export interface TaskBrowserCapabilities {
@@ -161,11 +161,13 @@ export interface TaskBrowserState {
   readonly tabs: readonly TaskBrowserTab[];
   readonly picked: BrowserElement | null;
   readonly picking: boolean;
+  readonly capturePending?: boolean;
   readonly pickerMessage: string | null;
   readonly feedback: boolean;
   readonly ports: readonly number[];
   /** Code-first MCP can observe only tabs owned by its authenticated session. */
   readonly agentCode?: 1;
+  readonly elementSnapshots?: 1;
   readonly agentRequests?: readonly import('./browser-human.js').BrowserHumanRequest[];
   /** Legacy metadata-only observation policy; agentCode advertises the new API. */
   readonly privacy: 'content-withheld';
@@ -173,7 +175,7 @@ export interface TaskBrowserState {
 export type TaskBrowserCommand =
   | { readonly kind: 'agent-request-complete'; readonly requestId: string }
   | { readonly kind: 'agent-request-cancel'; readonly requestId: string }
-  | { readonly kind: 'agent-request-pick'; readonly requestId: string }
+  | { readonly kind: 'agent-request-pick'; readonly requestId: string; readonly visual?: 1 }
   | { readonly kind: 'dialog-response'; readonly tabId: string; readonly requestId: string; readonly accept: boolean; readonly text: string }
   | { readonly kind: 'choose-files' | 'save-download' | 'cancel-workflow'; readonly tabId: string; readonly requestId: string }
   | { readonly kind: 'dismiss-attention' }
@@ -185,7 +187,7 @@ export type TaskBrowserCommand =
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
   | { readonly kind: 'navigate'; readonly tabId: string; readonly url: string }
   | { readonly kind: 'width'; readonly tabId: string; readonly width: 'full' | 'phone' }
-  | { readonly kind: 'pick'; readonly enabled: boolean }
+  | { readonly kind: 'pick'; readonly enabled: boolean; readonly visual?: 1 }
   | { readonly kind: 'feedback'; readonly enabled: boolean }
   | { readonly kind: 'theme'; readonly tabId: string; readonly theme: 'light' | 'dark' | 'system' }
   | { readonly kind: 'network'; readonly tabId: string; readonly slow: boolean };

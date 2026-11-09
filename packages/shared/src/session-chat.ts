@@ -70,6 +70,7 @@ export interface SessionChatState {
   /** Explicit send can resolve at most eight session identities into context. */
   readonly sessionMentions?: boolean;
   readonly attachments?: boolean;
+  readonly browserElements?: boolean;
   /** Bounded saved starting configurations; omitted by older engines. */
   readonly presets?: readonly SessionChatPreset[];
   readonly presetCatalogs?: boolean;
