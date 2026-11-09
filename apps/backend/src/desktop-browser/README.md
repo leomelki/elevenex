@@ -1,11 +1,17 @@
 # Task browser automation and remote host
 
-`DesktopBrowserService` keeps the existing at-most-once desktop MCP mailbox and
-additively routes an explicitly selected runtime worker to `RuntimeBrowserService`.
-The tool is authenticated to its task/session and returns allowlisted ownership
-metadata only. It cannot observe DOM/AX, pixels, page strings, headers, secrets or
-arbitrary CDP. Driver generations are rechecked after every await; input is never
-replayed after interruption.
+The new browser MCP exposes `browser_run` and `browser_reset`. See the
+[code-first design and agent API](../../../../docs/browser-agent.md) for research,
+execution, ownership, output limits and recovery. `@elevenex/browser-agent` runs
+code in task-owned, per-session workers and grants page-scoped JSON capabilities.
+Agents can observe and interact with their own tabs; human takeover revokes both.
+
+`DesktopBrowserService` routes code to the selected desktop or task runtime.
+Version-one desktop mailboxes use cancellable long polling and independent
+execution/heartbeats. Legacy mailbox consumers retain metadata-only allowlisted
+replies. The old `task_browser` MCP tool is removed. The renderer bridge does not
+expose code execution. Optional `agentCode: 1` state distinguishes the new agent
+observation policy from older hosts; `privacy` retains its legacy wire value.
 
 The remote host uses pinned `playwright-core@1.61.0` over a private Chromium pipe.
 Streamed WebAuthn uses Chromium's fixed proxy extension and a human-approved
@@ -313,6 +319,6 @@ supported metadata, source-map/network limits and unavailable cases. The runtime
 supports React, Angular, Svelte, Vue and explicit compiler markers. It passes
 allowlisted element coordinates in `picked.source` and separately labelled
 component declarations or filename-only hints in `picked.componentSource`;
-it does not expose source-map bodies, props, text or screenshots. Agent-driven
-inspection retains its structural-only default. Source lookup is guarded by the
+it does not expose source-map bodies, props, text or screenshots. Human point-and-ask inspection retains its structural-only default; code-first
+agent observations use the separately scoped browser engine. Source lookup is guarded by the
 same document, viewport, control and picker lifetime as the human input.

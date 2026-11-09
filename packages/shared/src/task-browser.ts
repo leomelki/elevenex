@@ -164,7 +164,9 @@ export interface TaskBrowserState {
   readonly pickerMessage: string | null;
   readonly feedback: boolean;
   readonly ports: readonly number[];
-  /** Deliberately withheld: arbitrary pages cannot prove complete secret redaction. */
+  /** Code-first MCP can observe only tabs owned by its authenticated session. */
+  readonly agentCode?: 1;
+  /** Legacy metadata-only observation policy; agentCode advertises the new API. */
   readonly privacy: 'content-withheld';
 }
 export type TaskBrowserCommand =

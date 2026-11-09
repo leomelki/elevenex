@@ -20,7 +20,8 @@ project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
 replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with explicit driver handoff;
-see [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
+see [code-first browser automation](../../docs/browser-agent.md) and
+[the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
 Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;

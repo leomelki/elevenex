@@ -1,4 +1,6 @@
 import type { DesktopBrowserHost } from './host';
+import { BrowserAgentEngine, delay } from '@elevenex/browser-agent';
+import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { BrowserTaskSession, type BrowserTaskProfiles } from './task-session';
 import { TaskBrowserNetwork } from './network';
 import type { BrowserAgentCommand, BrowserAgentState, BrowserElement, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserState, TaskBrowserSurface, TaskBrowserStreamInput, TaskBrowserFrame } from '@elevenex/shared';
@@ -13,6 +15,41 @@ import type { BrowserPersistence, SavedBrowser } from './persistence';
 
 /** Task workspace lifetime, independent of the selected conversation and panel. */
 export class TaskBrowser implements DesktopBrowserHost {
+  private readonly codeEngine = new BrowserAgentEngine({
+    list: sessionId => {
+      this.assertScope();
+      return [...this.pages.values()].map(page => ({ id: page.id, owned: page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId,
+        ...(page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId ? { url: page.url } : {}) }));
+    },
+    open: async (sessionId, url, signal) => {
+      browserUrl(url); this.assertScope(); signal.throwIfAborted();
+      const page = this.create('agent', sessionId);
+      const active = this.active ? this.pages.get(this.active) : undefined;
+      if (!active || (active.lease.driver === 'agent' && active.lease.agentSessionId === sessionId)) this.select(page);
+      const ownership = page.lease.ownership;
+      try {
+        page.ensureAgentView(); this.emit();
+        return await this.codeTarget(page, sessionId, signal);
+      } catch (error) {
+        if (this.pages.get(page.id) === page && page.lease.ownership === ownership && page.lease.driver === 'agent')
+          await this.closePage(page).catch(() => undefined);
+        throw error;
+      }
+    },
+    get: async (sessionId, id) => this.codeTarget(this.page(id), sessionId, AbortSignal.timeout(1000)),
+  });
+  private codeTarget(page: BrowserPage, sessionId: number, signal: AbortSignal) {
+    return page.agentTarget(sessionId, () => {
+      this.assertScope(); return this.selected() && this.pages.get(page.id) === page;
+    }, async (url, pending) => {
+      pending.throwIfAborted(); await this.navigate(page, url);
+      while (page.loading) { await delay(25, pending); if (this.pages.get(page.id) !== page) throw new Error('Tab closed'); }
+      if (page.error) throw new Error(page.error);
+    }, () => this.closePage(page), signal);
+  }
+  code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult> {
+    this.assertScope(); return this.codeEngine.execute(sessionId, command, signal);
+  }
   readonly engine = 'desktop';
   hasContents(tabId: string): boolean { return this.pages.get(tabId)?.hasContents === true; }
   private readonly detached = new Map<string, { window: BrowserWindow; layout?: TaskBrowserLayout; heartbeat: number; sequence: number; controlsFocus: number; presentation: 'embedded' | 'stream' }>();
@@ -34,6 +71,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.surfaceEpoch++; this.emit();
   }
   private rehostPage(previous: BrowserPage, window?: BrowserWindow): BrowserPage {
+    if (previous.independent) { previous.displayWindow = window; previous.lease.takeOver(); return previous; }
     const { id, url, documentUrl, width, theme, slowNetwork } = previous;
     const generation = previous.lease.generation + 1, by = previous.lease.by, sessionId = previous.lease.agentSessionId;
     previous.destroy();
@@ -57,7 +95,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   detachedSurfaces(tabId: string): readonly TaskBrowserSurface[] {
     const view = this.detached.get(tabId), page = this.pages.get(tabId);
-    return view && page ? this.surfaces().filter(surface => surface.tabId === tabId).map(surface => ({ ...surface, guest: { partition: page.partition, bootstrap: page.bootstrap }, partition: page.partition, bootstrap: page.bootstrap, visible: page.attached, interactive: view.layout?.inputReady === true && page.attached, zoom: view.window.webContents.getZoomFactor() })) : [];
+    return view && page ? this.surfaces().filter(surface => surface.tabId === tabId).map(surface => ({ ...surface, ...(page.independent ? {} : { guest: { partition: page.partition, bootstrap: page.bootstrap } }), partition: page.independent ? '' : page.partition, bootstrap: page.bootstrap, visible: page.attached, interactive: view.layout?.inputReady === true && page.attached, zoom: view.window.webContents.getZoomFactor() })) : [];
   }
   detachedSnapshot(tabId: string, state = this.snapshot()): TaskBrowserState { return { ...state, controlsFocus: this.detached.get(tabId)?.controlsFocus ?? state.controlsFocus }; }
   applicationInputDetached(tabId: string, x?: number, y?: number): void {
@@ -132,7 +170,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active) { const active = this.pages.get(this.active); if (active?.url) void this.navigate(active, active.url).catch(() => { active.error = 'Task server unavailable. Retry to reconnect.'; this.emit(); }); }
     this.emit();
   }
-  snapshot(): TaskBrowserState { return { capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
+  snapshot(): TaskBrowserState { return { agentCode: 1, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
     active: this.active, tabs: [...this.pages.values()].map(page => {
       const tab = { ...page.snapshot(), detached: this.detached.has(page.id) };
       try { const url = new URL(tab.url); if (loopback(url) && this.ports.includes(Number(url.port || (url.protocol === 'https:' ? 443 : 80)))) return { ...tab, server: 'Task server' }; } catch { /* Empty tab. */ }
@@ -277,7 +315,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   surfaces(): readonly TaskBrowserSurface[] {
     if (this.disposed) return [];
-    return [...this.pages.values()].filter(page => page.requested).map(page => ({ scopeId: this.scopeId, taskId: this.taskId, tabId: page.id, ...(this.detached.has(page.id) ? {} : { guest: { partition: page.partition, bootstrap: page.bootstrap } }), partition: this.detached.has(page.id) ? '' : page.partition, bootstrap: page.bootstrap,
+    return [...this.pages.values()].filter(page => page.requested).map(page => ({ scopeId: this.scopeId, taskId: this.taskId, tabId: page.id, ...(this.detached.has(page.id) || page.independent ? {} : { guest: { partition: page.partition, bootstrap: page.bootstrap } }), partition: this.detached.has(page.id) || page.independent ? '' : page.partition, bootstrap: page.bootstrap,
       bounds: page.bounds, viewport: page.viewport, zoom: this.window.webContents.getZoomFactor(), visible: page.attached && !this.detached.has(page.id), generation: page.lease.generation, driver: page.lease.driver, interactive: this.layout?.inputReady === true && !this.picked && page.attached, presentation: page.presentation }));
   }
   attach(contents: import('electron').WebContents, tabId: string): boolean {
@@ -286,7 +324,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     page.attach(contents); this.emit(); return true;
   }
   presentation(tabId: string, value: 'embedded' | 'stream'): void {
-    this.assertScope(); if (this.detached.has(tabId)) throw new Error('Return this tab before changing its display'); const page = this.page(tabId); page.hide(); page.lease.takeOver(); page.presentation = value; this.emit();
+    this.assertScope(); if (this.detached.has(tabId)) throw new Error('Return this tab before changing its display'); const page = this.page(tabId); if (page.independent && value !== 'stream') throw new Error('Agent-created tabs use streaming presentation'); page.hide(); page.lease.takeOver(); page.presentation = value; this.emit();
   }
   acknowledge(tabId: string, stream: string, sequence: number): void { this.page(tabId).acknowledge(stream, sequence); }
   async userInput(tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number> {
@@ -413,6 +451,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   destroy(): void {
     if (this.disposed) return;
+    this.codeEngine.dispose();
     this.persist(); this.disposed = true; if (this.timer) clearTimeout(this.timer);
     for (const page of this.pages.values()) page.destroy(); this.pages.clear();
     this.detached.clear(); this.network.close(); this.profile.destroy(); this.surfacesChanged();

@@ -323,3 +323,5 @@ export interface ElevenexBridge {
   remoteDiagnostics(): Promise<readonly RemoteDiagnostic[]>;
   onEnvironmentChanged(listener: (status: EnvironmentSnapshot) => void): () => void;
 }
+
+export type { BrowserCodeCommand, BrowserCodeResult, BrowserCodeImage } from './browser-code.js';

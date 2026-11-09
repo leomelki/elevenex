@@ -186,8 +186,9 @@ or runtime exists. Its authenticated task determines the incarnation/profile;
 agents cannot supply filesystem/profile IDs. Existing desktop routing and explicit
 `desktopId` selection remain supported. Ambiguous targets require a selection.
 Agent-created tabs belong to their creating session. User tabs still require
-explicit handoff. Observation remains withheld; this change does not grant arbitrary
-JavaScript, page text, screenshots, raw CDP or private-field access.
+explicit handoff. The [code-first MCP](browser-agent.md) separately grants page
+JavaScript, snapshots, images and scoped CDP to the owning session; human takeover
+revokes those capabilities. Legacy mailbox observation remains withheld.
 
 Hiding or disconnecting a viewer pauses image production and rejects human input.
 It preserves live pages, their network connections and current agent ownership.

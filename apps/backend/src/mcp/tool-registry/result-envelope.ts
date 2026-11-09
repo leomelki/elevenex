@@ -55,8 +55,16 @@ export function envelopeToResult(env: ToolResultEnvelope): CallToolResult {
   if (env.truncated) payload.truncated = true;
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    content: [
+      { type: 'text', text: JSON.stringify(payload) },
+      ...(env.images ?? []).map((image) => ({
+        type: 'image' as const,
+        data: image.data,
+        mimeType: image.mimeType,
+      })),
+    ],
     structuredContent: payload,
+    ...(env.isError ? { isError: true } : {}),
   };
 }
 

@@ -135,6 +135,11 @@ Use `--url http://127.0.0.1:4310` against `pnpm desktop:preview`. The bridge is 
 isolated preview provider; host input/transport and profiles have native integration
 tests. This capture is not an external SSH/WAN or packaged-app test.
 
+`scenarios/browser-agent-policy.mjs` checks the production browser owner on
+`/task-browser`: code-first host access wording, older-host fallback, both themes,
+narrow layouts and reduced motion. It changes only the preview store’s advertised
+capability; native browser behavior has separate Electron/Chromium regressions.
+
 `scenarios/browser-tabs.mjs` checks the shared Browser/Terminal tab strip through
 the Browser preview: middle selection, idle dividers and hover suppression,
 natural wheel/trackpad scrolling, metadata refreshes, keyboard selection/closing,

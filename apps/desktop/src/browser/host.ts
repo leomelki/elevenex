@@ -8,6 +8,7 @@ import type {
   TaskBrowserSurface,
 } from "@elevenex/shared";
 import type { BrowserWindow, WebContents } from "electron";
+import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 
 /** Task ownership API. Electron guest adoption and MCP execution are desktop-engine capabilities. */
 export interface BrowserTaskHost {
@@ -42,6 +43,7 @@ export interface BrowserTaskHost {
   detachedSnapshot(tabId: string, state?: TaskBrowserState): TaskBrowserState;
 }
 export interface DesktopBrowserHost extends BrowserTaskHost {
+  code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult>;
   readonly engine: "desktop";
   hasContents(tabId: string): boolean;
   attach(contents: WebContents, tabId: string): boolean;

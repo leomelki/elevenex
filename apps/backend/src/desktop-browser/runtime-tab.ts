@@ -1,4 +1,5 @@
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
+import { AGENT_EVENTS, AgentInputState, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
 import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +19,40 @@ export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
+  private readonly agentInputs = new Set<AgentInputState>();
+  /** Main-only page capability. Ownership survives navigation, never a takeover. */
+  agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>): BrowserAgentTarget {
+    const ownership = this.ownership;
+    const assert = () => {
+      if (!active() || this.disposed || !this.started || this.driver !== 'agent' || this.agentSessionId !== sessionId || this.ownership !== ownership || !this.cdp) throw new Error('Tab control changed; wait for human handoff, then get a fresh tab handle');
+    };
+    assert();
+    const cdp = this.cdp!;
+    const send = (method: string, params: Record<string, unknown>) => cdp.send(method as Parameters<CDPSession['send']>[0], params);
+    const input = new AgentInputState(send);
+    return {
+      id: this.id, assert,
+      // The shared broker validates protocol names and parameters at runtime.
+      send: (method, params) => { input.record(method, params); return send(method, params); },
+      subscribe: listener => {
+        this.agentInputs.add(input);
+        const cleanups = AGENT_EVENTS.map(method => {
+          const receive = (params: unknown) => listener(method, params);
+          cdp.on(method, receive); return () => cdp.off(method, receive);
+        });
+        return () => { input.release(); this.agentInputs.delete(input); for (const cleanup of cleanups) cleanup(); };
+      },
+      goto: async (url, signal) => { assert(); await goto(url, signal); assert(); },
+      close: async () => { assert(); if (this.by !== 'agent') throw new Error('User-created tabs require user closure'); await close(); },
+      interrupt: () => {
+        assert();
+        input.release();
+        void cdp.send('Runtime.terminateExecution').catch(() => undefined);
+        void cdp.send('Page.stopLoading').catch(() => undefined);
+        void this.input?.reset();
+      },
+    };
+  }
   readonly id = randomUUID();
   readonly workflows: RuntimeBrowserWorkflows;
   private cursor: TaskBrowserCursor = 'default';
@@ -94,6 +129,7 @@ export class RuntimeBrowserTab {
     this.network = network;
   }
   takeover(needs = false): void {
+    for (const input of this.agentInputs) input.release();
     void this.input?.reset();
     void this.input?.unlockPointer();
     this.ownership++;
@@ -103,6 +139,7 @@ export class RuntimeBrowserTab {
     this.target = undefined;
   }
   handoff(sessionId: number): void {
+    for (const input of this.agentInputs) input.release();
     void this.input?.reset();
     void this.input?.unlockPointer();
     this.ownership++;

@@ -248,3 +248,39 @@ test('site workflow replies and relative input are human-only bounded intents', 
   assert.throws(() => streamInput({ ...relative, deltaX: Infinity }));
   assert.throws(() => streamInput({ ...relative, deltaY: 10001 }));
 });
+
+test('code mailbox keeps polling during concurrent scripts and cancels revoked IDs', async context => {
+  const { BrowserAutomation } = require('../dist/browser/automation');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+  const started = [], signals = [], completions = [];
+  let reads = 0, running = [], currentScope = 'scope';
+  const task = { scopeId: 'scope', taskId: 1, setPorts: () => {}, revoke: () => {},
+    code: (session, command, signal) => {
+      started.push(session); signals.push(signal);
+      return new Promise(resolve => completions.push(() => resolve({ sandboxId: 'test', value: command.code, logs: [], images: [] })));
+    },
+  };
+  const client = { state: () => ({scope: {id: currentScope}}), cancel: () => {},
+    execute: async () => {
+      const index = reads++;
+      const id = ids[index];
+      if (id) running.push(id);
+      return {ok: true, value: {ports: [], running, command: id ? {id, sessionId: index + 2, input: {kind: 'code', code: 'return 42', timeoutMs: 15000}} : null}};
+    },
+  };
+  const settle = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
+  const automation = new BrowserAutomation(1, client);
+  try {
+    automation.select(task); context.mock.timers.tick(0); await settle();
+    context.mock.timers.tick(150); await settle();
+    assert.deepEqual(started, [2, 3], 'Two sessions execute without waiting for the first script');
+    running = [ids[1]]; context.mock.timers.tick(150); await settle();
+    assert.equal(signals[0].aborted, true); assert.equal(signals[1].aborted, false);
+    assert.ok(reads >= 3, 'Heartbeats continue while code is running');
+    currentScope = 'new-scope'; context.mock.timers.tick(150); await settle();
+    assert.equal(signals[1].aborted, true, 'Scope changes cancel all remaining code');
+  } finally {
+    automation.dispose(); for (const complete of completions) complete(); await settle();
+  }
+});

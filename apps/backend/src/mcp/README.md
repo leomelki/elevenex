@@ -165,4 +165,13 @@ Repository/project removal is destructive and authenticated. Finish active tasks
 
 The task definitions are split into discovery, lifecycle, composer, and shared-schema modules. Chat rendering uses domain adapters for command outcomes, search matches, diff summaries, and completion transcripts; a command timestamp never implies a finished task.
 
-Tool discovery currently advertises all 75 primitives for compatibility across Claude, Codex, Pi, OpenCode, and external MCP clients. The SDK tool listing is approximately 85 KB of JSON; this is a catalog size measurement, not a model token count. Shared scope guidance is kept concise. Client-side deferred discovery can reduce model context cost without changing the server’s callable tool surface.
+Tool discovery advertises the full catalog for compatibility across Claude, Codex, Pi, OpenCode, and external MCP clients. Shared scope guidance is kept concise; larger browser API guidance is returned only when requested. Client-side deferred discovery can reduce model context cost without changing the server’s callable tool surface.
+
+## Browser code
+
+`browser_run` and `browser_reset` replace `task_browser`. Call `browser_run`
+without code for the versioned API and host choices; execute batched JavaScript
+against the authenticated conversation's task. The [browser design](../../../../docs/browser-agent.md)
+documents worker isolation, ownership, inline images, bounded diagnostics and
+timeout recovery. Other MCP consumers and legacy desktop mailbox commands keep
+their existing contracts.

@@ -16,14 +16,17 @@ action available; returning to the empty browser creates its default again.
 Tab labels follow the page title, including live title changes, in both local and
 streamed browsers. Titles are normalized and bounded to 200 characters, with the
 location as fallback and “New tab” for an empty tab. They are human-facing only:
-navigation persistence and MCP replies do not include page titles.
+navigation persistence does not include page titles. Code-first agents can
+explicitly read titles on tabs they control.
 
 ## Rendering and composition
 
 Browser Tools selects **Local**, **Local · task proxy**, or **Remote** through
 the scope-bound configuration operation. Main supplies the available locations;
 local tasks offer only Local. There is no separate display-mode choice: local
-engines embed natively and remote engines stream from the task machine.
+user tabs embed natively and remote engines stream from the task machine. Local
+code-first agent tabs use app-owned sandboxed offscreen views and the existing
+stream surface, including when the panel starts hidden.
 Close tabs with loaded pages before switching; profiles are separate. The proxy
 forwards task localhost servers while public traffic stays on this device. Local
 tasks default to Local; remote tasks default to Remote.
@@ -81,7 +84,8 @@ It uses an isolated preview bridge; it does not establish external SSH behavior.
 Each tab has one authoritative driver and a monotonic generation. User-created
 tabs start with the user; agent-created tabs remember their session. Hand back is
 explicit and backend-authorized against that task/session. Agents cannot select
-over a user's active tab, type into private controls, or close user-created tabs.
+over a user's active tab or close user-created tabs. Human-controlled tabs
+require explicit handoff before agents can observe or interact with them.
 Native `before-input-event`/`before-mouse-event`, or the remote host's first human
 input, revokes agent authority before accepting interaction. Every awaited action
 rechecks its generation, task, visibility, viewport and navigation. Menus, motion,
@@ -90,20 +94,25 @@ An uncertain action is never retried or replayed automatically.
 
 Agent steps/targets are trusted app overlays in **page CSS coordinates**. They do
 not grant authority and are cleared when their coordinate generation changes.
-The MCP `task_browser` tool offers bounded list/open/select/close/navigate/back/
-reload/click/scroll/needs-user operations, not arbitrary JS, CDP, text entry,
-filesystem, snapshots or screenshots. Agent replies are independently allowlisted
-on the backend. The local at-most-once mailbox permits 64 desktop leases and 16
-pending requests per lease; the remote engine permits eight requests per task
-and one observation/action per tab. Remote viewer reconnects rotate the viewer lease
-and preserve task execution and current agent control. Reconnect never replays input.
+The MCP surface is `browser_run` plus `browser_reset`; the old `task_browser`
+tool is removed. The [code-first browser guide](../../../../../docs/browser-agent.md)
+describes the shared execution engine, page-scoped CDP, bounded AX snapshots,
+CSS/ref targeting, native input, inline images and incremental console/network
+observations. `agentCode: 1` advertises this policy. The `privacy` field keeps its
+legacy wire value for older consumers; UI copy follows the capability. Older
+hosts continue to show the metadata-only policy.
 
-Complete secret redaction cannot be established for arbitrary DOM, accessibility,
-canvas, frames, closed shadow roots, console strings or screenshots. **All those
-agent-readable channels are withheld** on every page. There is no advertised
-masking. Only bounded error counts and structural geometry are shared. Chromium
-or Playwright debug logging that could expose private page data fails closed.
-Sign-in/2FA/payment fields hand control to the user. Machine hosts advertising
+Human-controlled tabs withhold both reads and writes. Once handed back, agents
+can read and change page content, including editable fields; no secret masking
+is promised. Agents cannot close user-created tabs. Code state is confined to
+the authenticated task/session, and ownership epochs invalidate old handles.
+Timeout and cancellation stop code without closing the browser; accepted actions
+are never replayed. The mailbox negotiates code support, long-polls for commands,
+keeps heartbeats independent of execution and bounds replies. The legacy mailbox
+still returns only allowlisted metadata. Debug logging that could expose page
+data continues to fail closed.
+
+Machine hosts advertising
 `workflows: true` adopt popup pages into the same task context, retaining cookies,
 `window.opener`, `postMessage` and site-driven close for OAuth. A popup from the
 active page selects its new tab; background popups do not replace another selected

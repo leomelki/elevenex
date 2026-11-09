@@ -13,6 +13,9 @@ importers:
 
   apps/backend:
     dependencies:
+      '@elevenex/browser-agent':
+        specifier: workspace:*
+        version: link:../../packages/browser-agent
       '@elevenex/browser-inspection':
         specifier: workspace:*
         version: link:../../packages/browser-inspection
@@ -218,6 +221,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@elevenex/browser-agent':
+        specifier: workspace:*
+        version: link:../../packages/browser-agent
       '@elevenex/browser-inspection':
         specifier: workspace:*
         version: link:../../packages/browser-inspection
@@ -473,6 +479,19 @@ importers:
       '@playwright/test':
         specifier: ^1.50.1
         version: 1.61.0
+
+  packages/browser-agent:
+    dependencies:
+      '@elevenex/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   packages/browser-inspection:
     dependencies:

@@ -1,4 +1,8 @@
 import { nativeBrowserInput } from './native-input';
+import { AgentNativeInput } from './agent-input';
+import { AGENT_EVENTS, delay, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { hardenTaskGuest } from './guest-policy';
+import { WebContentsView } from 'electron';
 import { BrowserFrameStream } from './frame-stream';
 import { clipboard, app } from 'electron';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +30,62 @@ export interface BrowserPageHost {
 }
 /** One sandboxed, unprivileged page. The creating task owns and destroys it explicitly. */
 export class BrowserPage {
+  private readonly agentInputs = new Set<AgentNativeInput>();
+  private agentView?: WebContentsView;
+  get independent(): boolean { return !!this.agentView; }
+  /** Agent tabs can start while their panel is hidden. Main owns an offscreen
+   * sandboxed view; the existing stream surface displays it when requested. */
+  ensureAgentView(): void {
+    if (this.hasContents) return;
+    const preferences: Electron.WebPreferences = { partition: this.partition, offscreen: true };
+    if (!hardenTaskGuest(preferences, { partition: this.partition, src: this.bootstrap }, this.partition, this.bootstrap)) throw new Error('Invalid agent page preferences');
+    preferences.backgroundThrottling = false;
+    this.agentView = new WebContentsView({ webPreferences: preferences });
+    // A native parent establishes the renderer's viewport. Keep the view hidden;
+    // presentation uses the existing pixel stream, never a native overlay.
+    this.host.window.contentView.addChildView(this.agentView);
+    this.agentView.setVisible(false);
+    this.agentView.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    this.presentation = 'stream';
+    this.attach(this.agentView.webContents);
+  }
+  async agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>, signal: AbortSignal): Promise<BrowserAgentTarget> {
+    const ownership = this.lease.ownership;
+    const assert = () => {
+      if (!active() || this.destroyed || this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId || this.lease.ownership !== ownership) throw new Error('Tab control changed; wait for handoff and get a fresh handle');
+    };
+    assert();
+    while (!this.hasContents || this.initializing) { assert(); await delay(25, signal); }
+    // A newly constructed native view has no document yet. CDP Runtime.enable
+    // waits for one, so load the inert document before installing observation.
+    if (this.independent && !this.contents.getURL()) await this.contents.loadURL('about:blank');
+    assert(); signal.throwIfAborted();
+    const contents = this.contents, debuggerApi = contents.debugger;
+    if (!debuggerApi.isAttached()) debuggerApi.attach('1.3');
+    const native = new AgentNativeInput(contents, input => {
+      this.syntheticInput = true;
+      try { contents.sendInputEvent(input); } finally { this.syntheticInput = false; }
+    });
+    return {
+      id: this.id, assert: () => { assert(); if (!this.hasContents || this.contents !== contents) throw new Error('Browser engine replaced'); },
+      send: async (method, params) => {
+        assert();
+        if (method.startsWith('Input.')) await debuggerApi.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+        assert();
+        return await (native.send(method, params) ?? debuggerApi.sendCommand(method, params));
+      },
+      subscribe: listener => {
+        this.agentInputs.add(native);
+        const receive = (_event: Electron.Event, method: string, params: unknown, sessionId?: string) => {
+          if (!sessionId && AGENT_EVENTS.some(name => name === method)) listener(method, params);
+        };
+        debuggerApi.on('message', receive); return () => { native.release(); this.agentInputs.delete(native); debuggerApi.removeListener('message', receive); };
+      },
+      goto: async (url, pending) => { assert(); await goto(url, pending); assert(); },
+      close: async () => { assert(); if (this.lease.by !== 'agent') throw new Error('User-created tabs require user closure'); await close(); },
+      interrupt: () => { assert(); native.release(); void debuggerApi.sendCommand('Runtime.terminateExecution').catch(() => undefined); void debuggerApi.sendCommand('Page.stopLoading').catch(() => undefined); },
+    };
+  }
   readonly id: string;
   readonly bootstrap: string;
   displayWindow?: BrowserWindow;
@@ -80,7 +140,7 @@ export class BrowserPage {
     // A tab survives engine recovery; a main-issued guest identity does not.
     this.bootstrap = 'about:blank#' + id + ':' + randomUUID();
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
-    this.lease = new BrowserDriverLease(by, sessionId);
+    this.lease = new BrowserDriverLease(by, sessionId, () => { for (const input of this.agentInputs) input.release(); });
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
     // The task owns a durable profile shared by its tabs; Chromium keeps site data
     // across task eviction and application restarts.
@@ -156,6 +216,7 @@ export class BrowserPage {
     // No raw messages, URLs, headers or request bodies are retained or forwarded.
     contents.on('console-message', details => { if (details.level === 'error') this.countError(); });
     contents.on('before-input-event', (event, input) => {
+      if (this.syntheticInput) return;
       const key = input.code || input.key;
       const release = input.type === 'keyUp' && this.heldKeys.get(key) === this.navigation;
       if (input.type === 'keyUp') this.heldKeys.delete(key);
@@ -175,6 +236,7 @@ export class BrowserPage {
       }
     });
     contents.on('before-mouse-event', (event, mouse) => {
+      if (this.syntheticInput) return;
       const button = mouse.button || 'left';
       const release = mouse.type === 'mouseUp' && this.heldMouse.get(button) === this.navigation;
       if (mouse.type === 'mouseUp') this.heldMouse.delete(button);
@@ -264,6 +326,7 @@ export class BrowserPage {
       if (hadViewport && this.lease.driver === 'agent') { if (responsiveChange) this.lease.takeOver(); else this.lease.generation++; this.host.changed(); }
     }
     this.bounds = bounds; this.viewport = viewport; this.zoom = zoom;
+    this.agentView?.setBounds({ x: 0, y: 0, width: Math.max(2, Math.round(bounds.width)), height: Math.max(2, Math.round(bounds.height)) });
     if (this.destroyed || !this.hasContents || this.error || bounds.width < 2 || bounds.height < 2) { this.hide(); return; }
     if (this.contents.getZoomFactor() !== zoom) this.contents.setZoomFactor(zoom);
     this.contents.setAudioMuted(false);this.attached = true; this.frames?.setActive(this.presentation === 'stream');
@@ -414,6 +477,7 @@ export class BrowserPage {
     if (this.destroyed) return;
     this.lease.takeOver(); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);
     const contents = this.engine;
+    if (this.agentView && !this.host.window.isDestroyed()) this.host.window.contentView.removeChildView(this.agentView);
     if (contents && !contents.isDestroyed()) { if (contents.debugger.isAttached()) contents.debugger.detach(); contents.close({ waitForBeforeUnload: false }); }
 
   }

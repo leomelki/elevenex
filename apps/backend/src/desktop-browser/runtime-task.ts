@@ -1,5 +1,7 @@
 import { RuntimeWorkflowBudget } from './runtime-workflows.js';
 import type { BrowserContext, Page } from 'playwright-core';
+import { BrowserAgentEngine } from '@elevenex/browser-agent';
+import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { RuntimeBrowserNetwork } from './runtime-network.js';
 import { browserLoopbackHost } from '@elevenex/browser-network';
 import type { SavedRuntimeBrowser } from './runtime-persistence.js';
@@ -19,6 +21,34 @@ import { RuntimeInputLane } from './runtime-input-lane.js';
 
 /** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
+  private readonly codeEngine = new BrowserAgentEngine({
+    list: sessionId => [...this.tabs.values()].map(tab => ({ id: tab.id, owned: tab.driver === 'agent' && tab.agentSessionId === sessionId, ...(tab.driver === 'agent' && tab.agentSessionId === sessionId ? { url: tab.url } : {}) })),
+    open: async (sessionId, url, signal) => {
+      this.authorize(url);
+      const tab = await this.create('agent', sessionId, '', signal);
+      const ownership = tab.ownership;
+      try {
+        const context = await this.contextForTask();
+        signal.throwIfAborted();
+        await tab.start(context);
+        signal.throwIfAborted();
+        return this.codeTarget(tab, sessionId);
+      } catch (error) {
+        if (this.tabs.get(tab.id) === tab && tab.ownership === ownership && tab.driver === 'agent')
+          await this.command({ kind: 'close', tabId: tab.id }).catch(() => undefined);
+        throw error;
+      }
+    },
+    get: (sessionId, tabId) => Promise.resolve(this.codeTarget(this.page(tabId), sessionId)),
+  });
+  private codeTarget(tab: RuntimeBrowserTab, sessionId: number) {
+    return tab.agentTarget(sessionId, () => this.alive && this.tabs.get(tab.id) === tab,
+      async (url, signal) => { signal.throwIfAborted(); this.authorize(url); await tab.navigate(url); signal.throwIfAborted(); },
+      async () => { await this.command({ kind: 'close', tabId: tab.id }); });
+  }
+  code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult> {
+    return this.codeEngine.execute(sessionId, command, signal);
+  }
   readonly webAuthn = new RuntimeWebAuthn(() => this.revision++, origin => {
     const matches = [...this.tabs.values()].filter(tab => {
       try { return new URL(tab.documentUrl).origin === origin; } catch { return false; }
@@ -83,7 +113,7 @@ export class RuntimeBrowserTask {
   get retained(): boolean {
     // Unviewed empty user start tabs have no live document to lose. Loaded
     // pages and agent-owned drafts always require explicit closure.
-    return this.starting.size > 0 || this.agentPending > 0 || [...this.tabs.values()].some(tab => !!tab.url || tab.started || tab.driver === 'agent');
+    return this.codeEngine.active || this.starting.size > 0 || this.agentPending > 0 || [...this.tabs.values()].some(tab => !!tab.url || tab.started || tab.driver === 'agent');
   }
   private controlsFocus = 0;
   private picked: TaskBrowserState['picked'] = null;
@@ -159,6 +189,7 @@ export class RuntimeBrowserTask {
   }
   state(): TaskBrowserState {
     return {
+      agentCode: 1,
       // Advertise the private protocol before the lazy Chromium launch so clients
       // can opt in on connect without sending new fields to older engines.
       webAuthn: true,
@@ -871,6 +902,7 @@ export class RuntimeBrowserTask {
   }
   async destroy(): Promise<void> {
     if (this.disposed) return;
+    this.codeEngine.dispose();
     this.disposed = true;
     this.controller.abort();
     this.listeners.clear();

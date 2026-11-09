@@ -35,6 +35,7 @@
   "dependencies": {
     "@elevenex/browser-network": "workspace:*",
     "ws": "8.22.1",
-    "@elevenex/browser-inspection": "workspace:*"
+    "@elevenex/browser-inspection": "workspace:*",
+    "@elevenex/browser-agent": "workspace:*"
   }
 }

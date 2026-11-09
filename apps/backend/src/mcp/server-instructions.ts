@@ -23,6 +23,9 @@ Elevenex organizes coding work into projects, repositories, tasks, and conversat
 ## Finishing and cancelling tasks
 ${TASK_FINISH_INSTRUCTIONS}
 
+## Browser work
+- browser_run without code returns its API and host choices. Execute async JavaScript with browser/state/console, batch operations, and request snapshots or inline screenshots only when useful. browser_reset clears code state and preserves tabs. Human takeover revokes page reads and writes; inspect after interrupted work and never replay a script automatically.
+
 ## Working inside the current session
 - Prefer native coding tools for implementing the current task. File/search/diff/context and saved-command tools can default to the current checkout; session-scoped file tools validate task ownership and lifecycle. Historical read_session does not require reacquiring a checkout.
 - get_session_config discovers paged model IDs, selected/default model, reasoning levels and supported permission modes. Use before set_model/set_permission_mode; session_status remains the cheap liveness read.

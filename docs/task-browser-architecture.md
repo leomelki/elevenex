@@ -94,8 +94,10 @@ unknown outcomes require reconciliation and fresh user authority. The native
 screencast source also reconciles after a stale start finishes, so an old display
 cannot stop the currently visible stream.
 
-Frames, DOM/AX, secrets, arbitrary CDP and raw errors remain unavailable to MCP.
-Engine placement never grants an agent more observation or control. Host-side
+The [code-first browser MCP](browser-agent.md) allows page text, DOM/AX, images,
+diagnostics and scoped CDP on tabs owned by the authenticated conversation.
+Human takeover revokes reads and writes. Browser-wide CDP, filesystem and
+transport access remain excluded. Legacy mailbox replies stay metadata-only. Host-side
 validators, task/session membership, input generations, sandbox, TLS, Origin
 checks, runtime private-socket authentication, bounded queues and destination
 policy remain trust boundaries.
