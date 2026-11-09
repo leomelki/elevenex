@@ -1,10 +1,12 @@
 :host { display: block; flex: none; min-width: 0; }
 .row { display: flex; align-items: flex-end; gap: var(--space-1); padding: var(--space-2) var(--space-2) 0; background: var(--surface-sunken); }
-.tabs { --fade-before: 0px; --fade-after: 0px; display: flex; flex: 1; align-items: flex-end; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; min-width: 0;
+/* The strip only takes the width its tabs need, so New follows the last tab; it scrolls once it fills the row. */
+.tabs { --fade-before: 0px; --fade-after: 0px; display: flex; flex: 0 1 auto; align-items: flex-end; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; min-width: 0;
   /* Edge fades replace a scrollbar or arrow buttons as the "more tabs" cue; 24px matches FADE_WIDTH. */
   mask-image: linear-gradient(to right, transparent, #000 var(--fade-before), #000 calc(100% - var(--fade-after)), transparent);
   transition: --fade-before var(--dur-fast) var(--ease-out), --fade-after var(--dur-fast) var(--ease-out); }
 .tabs::-webkit-scrollbar { display: none; }
+.spacer { flex: 1 0 0; }
 .tabs.more-before { --fade-before: var(--space-6); }
 .tabs.more-after { --fade-after: var(--space-6); }
 @property --fade-before { syntax: '<length>'; inherits: false; initial-value: 0px; }

@@ -1,7 +1,5 @@
 :host { container-type: inline-size; display: block; height: 100%; min-height: 0; }
 .terminal { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
-select { width: 100px; max-width: 100px; min-height: var(--control-height); border: 0; border-radius: var(--radius-sm); color: var(--ink-muted); background: transparent; font: inherit; font-size: var(--text-caption-size); }
-select:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .find-trigger { align-self: center; }
 .toolbar { display: flex; flex: none; align-items: center; justify-content: flex-end; min-height: calc(var(--row-height) + var(--space-2) + 1px); padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--line); color: var(--ink-muted); }
 .toolbar-actions { display: flex; align-items: center; gap: var(--space-2); }

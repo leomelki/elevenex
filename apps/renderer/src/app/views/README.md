@@ -8,6 +8,9 @@ generate diffs, or access the filesystem. Outputs carry stable IDs, not position
 focus and animated entry/exit. Set `animateEntries=false` while attaching an
 existing tab window; `TerminalView.animateTabs` forwards this policy. Browser and Terminal reserve Command/Ctrl-T while
 focused and expose `selected`, `closed` and `added`.
+The New button follows the last tab; the strip takes only the width its tabs need
+and scrolls with edge fades once it fills the row. Content marked `viewTabsNew` is
+projected directly after New; other projected actions stay right-aligned.
 
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation
@@ -37,7 +40,13 @@ Do not put the agent's tool output in this view. `disabled`, `askDisabled` and
 `rerunDisabled` control platform actions. `searchRequested` carries query/direction
 to the real adapter; `findStatus` displays its bounded match count or “No results”.
 The optional `findMatches` count disables navigation for zero matches (null means
-unknown). The Find button lives in the tab bar beside the script picker. It
+unknown). When scripts are supplied, `TerminalLauncher` adds a chevron beside New that
+opens a searchable launcher: New shell, then the project's scripts with their
+commands. Its field is focused on open, so typing filters immediately; arrows
+move the active option, Enter launches, and Escape, Tab or an outside click
+closes and restores the chevron's focus. Matches are bounded to 50 rows with a
+“refine the search” note. It is a combobox dialog rather than a menu because it
+holds a text field. The Find button stays at the right edge of the tab bar. It
 opens a compact folding row with a single focus border, previous/next buttons
 and Close. The row collapses completely when closed unless the selected terminal
 is serving a local port; its Open/Stop actions share the row and return when Find

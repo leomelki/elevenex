@@ -3,10 +3,11 @@ import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, Elemen
 import { ButtonComponent, FoldComponent, IconComponent, IconButtonComponent } from '../ui';
 import { TerminalFailure, TerminalFailureEvent, TerminalLine, TerminalScript, TerminalTab } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
+import { TerminalLauncherComponent } from './terminal-launcher.component';
 
 @Component({
   selector: 'ex-terminal-view',
-  imports: [ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent, ScrollingModule],
+  imports: [ButtonComponent, FoldComponent, IconComponent, IconButtonComponent, ViewTabsComponent, TerminalLauncherComponent, ScrollingModule],
   templateUrl: './terminal-view.component.html',
   styleUrl: './terminal-view.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -66,10 +67,8 @@ export class TerminalViewComponent {
 
   protected searchKey(event: KeyboardEvent): void { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); this.search(this.query(), event.shiftKey); } }
   protected search(query: string, backwards = false): void { this.query.set(query); this.searchRequested.emit({ query, backwards }); }
-  protected script(id: string): void {
-    if (this.disabled()) return;
-    const script = this.scripts().find(item => item.id === id);
-    if (script) this.scriptRequested.emit(script);
+  protected script(script: TerminalScript): void {
+    if (!this.disabled()) this.scriptRequested.emit(script);
   }
   protected openPort(): void {
     const port = this.current()?.port;
