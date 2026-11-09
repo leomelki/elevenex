@@ -1,4 +1,5 @@
 import { OverlayModule } from "@angular/cdk/overlay";
+import { elementMarker, elementMarkersIn, MAX_BROWSER_ELEMENTS } from "@elevenex/shared";
 import { SESSION_DRAG_TYPE, readSessionDrag } from '../../tasks';
 import {
   ChangeDetectionStrategy,
@@ -41,6 +42,8 @@ import { MentionMenuComponent } from "./mention-menu.component";
 import { ModeToggleComponent } from "./mode-toggle.component";
 import { PermissionPickerComponent } from "./permission-picker.component";
 import { AttachmentsComponent } from "../chat/attachments.component";
+import { ElementChipComponent } from "../element/element-chip.component";
+import { elementPlace } from "../element/element-geometry";
 import { ToolsMenuComponent } from "./tools-menu.component";
 @Component({
   selector: "ex-composer",
@@ -59,6 +62,7 @@ import { ToolsMenuComponent } from "./tools-menu.component";
     PermissionPickerComponent,
     ToolsMenuComponent,
     AttachmentsComponent,
+    ElementChipComponent,
   ],
   templateUrl: "./composer.component.html",
   styleUrl: "./composer.component.css",
@@ -102,7 +106,11 @@ export class ComposerComponent implements OnChanges {
   readonly showTools = input(true);
   readonly attachmentsEnabled = input(false);
   readonly attachments = input<readonly ConversationAttachment[]>([]);
+  /** Pick again from a staged element's snapshot. */
   readonly elementRepick = output<NonNullable<ConversationAttachment["element"]>>();
+  /** Offers the ⌖ button and the @ menu command for pointing at a browser element. */
+  readonly elementPickAvailable = input(false);
+  readonly elementPickRequested = output<void>();
   readonly attachmentRemoved = output<string>();
   readonly attachmentRetry = output<string>();
   readonly fileInput = viewChild<ElementRef<HTMLInputElement>>("fileInput");
@@ -145,9 +153,112 @@ export class ComposerComponent implements OnChanges {
   readonly context = input<readonly ConversationMention[]>([]);
   readonly queue = input<readonly QueuedMessage[]>([]);
   readonly mentionItems = input<readonly ConversationMention[]>([]);
-  readonly allMentionItems = computed(() => [...this.attachments().flatMap(file => file.element ? [{ id: file.element.id, kind: 'element' as const, label: 'element-' + file.element.id.slice(0, 8), meta: file.element.label }] : []), ...this.mentionItems()]);
-  mentionElement(file: ConversationAttachment): void {
-    if (file.element) this.insertMention({ id: file.element.id, kind: 'element', label: 'element-' + file.element.id.slice(0, 8), meta: file.element.label });
+  /** Element snapshots read as chips in the context row; other files keep their tiles. */
+  readonly elementFiles = computed(() =>
+    this.attachments()
+      .filter((file) => file.element && file.marker)
+      .sort((a, b) => (a.marker ?? 0) - (b.marker ?? 0)),
+  );
+  readonly otherFiles = computed(() => this.attachments().filter((file) => !file.element));
+  readonly referencedMarkers = computed(() => new Set(elementMarkersIn(this.draft())));
+  /** The pin whose chip has pointer or focus; its markers light up in the prose. */
+  readonly hotMarker = signal<number | null>(null);
+  readonly allMentionItems = computed<readonly ConversationMention[]>(() => [
+    ...this.elementFiles().map((file) => ({
+      id: file.element!.id,
+      kind: "element" as const,
+      label: file.element!.label,
+      marker: file.marker,
+      meta: elementPlace(file.element!.page),
+    })),
+    ...this.mentionItems(),
+  ]);
+  /**
+   * Paints a soft mark behind each pin character, positioned exactly by
+   * mirroring the textarea's text. Only rendered while the draft holds a pin.
+   */
+  readonly markerHighlights = computed(() => {
+    const draft = this.draft();
+    if (!this.elementFiles().length || !elementMarkersIn(draft).length) return null;
+    const known = new Set(this.elementFiles().map((file) => file.marker));
+    const parts: { text: string; marker?: number; known?: boolean }[] = [];
+    let run = "";
+    for (const char of draft) {
+      const marker = elementMarkersIn(char)[0];
+      if (!marker) {
+        run += char;
+        continue;
+      }
+      if (run) parts.push({ text: run });
+      run = "";
+      parts.push({ text: char, marker, known: known.has(marker) });
+    }
+    // A trailing newline needs content after it to occupy a line, like the textarea.
+    parts.push({ text: run + "\u200b" });
+    return parts;
+  });
+  readonly highlightScroll = signal(0);
+  /** Inserts a pin at the caret, spaced from neighbouring words. */
+  insertElement(marker: number): void {
+    const glyph = elementMarker(marker);
+    if (!glyph || this.disabled() || this.sending()) return;
+    const element = this.textarea()?.nativeElement;
+    const draft = this.draft();
+    const start = element?.selectionStart ?? draft.length;
+    const end = element?.selectionEnd ?? draft.length;
+    this.replaceRange(start, end, glyph);
+    this.dropAnnouncement.set(`Pin ${marker} added to your message.`);
+  }
+  /** Removing a chip also removes its pins, so no marker is left pointing at nothing. */
+  removeElement(file: ConversationAttachment): void {
+    const glyph = file.marker ? elementMarker(file.marker) : "";
+    if (glyph && this.draft().includes(glyph)) {
+      // Keep one space where the pin sat between two words.
+      const draft = this.draft().replace(new RegExp(`( ?)${glyph}( ?)`, "g"), (_, lead: string, trail: string) => (lead && trail ? " " : ""));
+      this.draft.set(draft);
+      const element = this.textarea()?.nativeElement;
+      if (element) element.value = draft;
+    }
+    this.hotMarker.set(null);
+    this.attachmentRemoved.emit(file.id);
+    this.textarea()?.nativeElement.focus({ preventScroll: true });
+  }
+  requestElementPick(): void {
+    if (!this.elementPickAvailable() || this.disabled() || this.sending()) return;
+    if (this.elementFiles().length >= MAX_BROWSER_ELEMENTS) {
+      this.dropAnnouncement.set(`You can point at up to ${MAX_BROWSER_ELEMENTS} elements in a message.`);
+      return;
+    }
+    this.elementPickRequested.emit();
+  }
+  /** The @ menu command consumes its query, then starts a pick. */
+  pickFromMentions(): void {
+    const element = this.textarea()?.nativeElement;
+    const before = this.draft().slice(0, element?.selectionStart ?? 0);
+    const query = /(?:^|\s)@[^\s@]*$/.exec(before);
+    if (element && query) {
+      const start = before.lastIndexOf("@");
+      this.replaceRange(start, element.selectionEnd, "", false);
+    }
+    this.mentionQuery.set(null);
+    this.requestElementPick();
+  }
+  private replaceRange(start: number, end: number, token: string, spaced = true): void {
+    const draft = this.draft();
+    const before = draft.slice(0, start);
+    const after = draft.slice(end);
+    const lead = spaced && before && !/\s$/.test(before) ? " " : "";
+    const trail = spaced && !/^\s/.test(after) ? " " : "";
+    const inserted = before + lead + token + trail;
+    const next = inserted + after;
+    this.draft.set(next);
+    const element = this.textarea()?.nativeElement;
+    if (element) {
+      // Set the value before the selection: a later binding would move the caret.
+      element.value = next;
+      element.setSelectionRange(inserted.length, inserted.length);
+      element.focus({ preventScroll: true });
+    }
   }
   readonly running = input(false);
   readonly disabled = input(false);
@@ -247,6 +358,15 @@ export class ComposerComponent implements OnChanges {
   }
   insertMention(mention: ConversationMention, source: 'picker' | 'drop' = 'picker'): void {
     if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
+    if (mention.kind === 'element') {
+      const element = this.textarea()?.nativeElement;
+      const before = this.draft().slice(0, element?.selectionStart ?? 0);
+      const query = /(?:^|\s)@[^\s@]*$/.exec(before);
+      const start = query ? before.lastIndexOf('@') : (element?.selectionStart ?? this.draft().length);
+      this.replaceRange(start, element?.selectionEnd ?? this.draft().length, elementMarker(mention.marker ?? 0));
+      this.mentionQuery.set(null);
+      return;
+    }
     const duplicate = mention.kind === 'session' && this.context().some(item => item.kind === mention.kind && item.id === mention.id);
     if (!duplicate && mention.kind === 'session' && this.context().filter(item => item.kind === 'session').length >= 8) {
       this.dropAnnouncement.set('You can mention up to 8 sessions in a message.'); return;
@@ -271,7 +391,7 @@ export class ComposerComponent implements OnChanges {
       }
       element.focus({ preventScroll: true });
     }
-    if (!duplicate && mention.kind !== 'element') this.mentionInserted.emit(mention);
+    if (!duplicate) this.mentionInserted.emit(mention);
     this.dropAnnouncement.set(duplicate ? `${mention.label} is already mentioned.` : `Added ${mention.label} to message context.`);
     this.mentionQuery.set(null);
   }

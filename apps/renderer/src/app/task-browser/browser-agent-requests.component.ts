@@ -1,4 +1,4 @@
-import { ElementReferenceComponent, type ConversationAttachment } from '../conversation';
+import { ElementPreviewComponent, type ConversationAttachment } from '../conversation';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -11,7 +11,7 @@ import { ButtonComponent, IconComponent } from '../ui';
 /** Presentational requests. The host owns tickets, selection and handoff. */
 @Component({
   selector: 'ex-browser-agent-requests',
-  imports: [ElementReferenceComponent, ButtonComponent, IconComponent],
+  imports: [ElementPreviewComponent, ButtonComponent, IconComponent],
   templateUrl: './browser-agent-requests.component.html',
   styleUrl: './browser-agent-requests.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

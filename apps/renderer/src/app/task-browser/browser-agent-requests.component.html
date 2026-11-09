@@ -17,7 +17,7 @@
     </div>
     <p class="message">{{ request.message }}</p>
     @if (request.selection; as element) {
-      @if (snapshot(request); as file) { <ex-element-reference [file]="file" /> }
+      @if (snapshot(request); as file) { <ex-element-preview class="snapshot" [file]="file" [compact]="true" /> }
       <p class="selection">
         Selected <code>{{ element.tag }}</code
         ><span>{{ element.frames.length ? ' · Inside a frame' : '' }}</span>

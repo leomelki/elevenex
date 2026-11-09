@@ -496,4 +496,4 @@ on close/navigation.
 
 ## Visual element mentions
 
-Point and ask stages a first-class element attachment with its original browser crop and stable @ alias, rather than appending selector/geometry text. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md) for the shared snapshot model, untrusted metadata, image association, ownership and limitations. Source hints remain optional.
+`stageBrowserContext` stages a picked element as a first-class attachment with its original browser crop. `SessionChatAttachments.addElement` assigns the lowest free pin (❶–❽) and `Composer.insertElement` places it at the caret; send rejects markers with no element. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts and gate the Composer pick entry points. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md). Source hints remain optional.

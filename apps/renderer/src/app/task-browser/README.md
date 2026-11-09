@@ -154,11 +154,13 @@ Svelte, Angular, Vue and framework-neutral development markers. Framed/shadow
 source hints may be unavailable. Page-reported source is always untrusted and
 never grants filesystem access. Missing source does not prevent a visual reference.
 
-Add to composer stages the snapshot and semantic reference for the original
-selected session without sending a prompt. The conversation's ElementReference
-card owns preview and deliberate @ mention interactions; selectors and geometry
-remain outside the textarea. Older engines without capture explain the limit.
-See the visual-element contract below for image delivery and recovery.
+A manual pick stages the snapshot in the original selected session as soon as it
+is captured and drops its pin at the composer caret; nothing is sent. The browser
+runs `BrowserView` in `pin` mode, so no question card appears. `beginElementPick(tabId?)`
+arms the picker for the Composer's ⌖ button, `@` command and chip Pick again,
+on the named tab or the current page. The conversation's ElementPin chip owns the
+preview; selectors and geometry remain outside the textarea. Older engines
+without capture explain the limit. See the visual-element contract below.
 
 Errors retain counts only, capped at 999. **Send to agent** is an explicit composer
 intent. The optional “Share error counts during agent work” setting exposes those
@@ -444,4 +446,4 @@ inspection after interruption and are never replayed.
 
 ## Visual element mentions
 
-Point and ask stages a first-class element attachment with its original browser crop and stable @ alias, rather than appending selector/geometry text. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md) for the shared snapshot model, untrusted metadata, image association, ownership and limitations. Source hints remain optional.
+Pointing at an element stages a first-class element attachment with its original browser crop and a numbered pin in the prose, rather than appending selector/geometry text. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md) for the shared snapshot model, untrusted metadata, image association, ownership and limitations. Source hints remain optional.

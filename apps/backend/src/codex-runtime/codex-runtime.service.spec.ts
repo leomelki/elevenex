@@ -1101,7 +1101,7 @@ describe('CodexRuntimeService', () => {
   it('keeps element context text beside native localImage inputs containing the actual bytes', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
-    const prompt = 'Align @element-11111111. Image 1 is element-one.jpg; image 2 is element-two.jpg.';
+    const prompt = 'Align ❶. Image 1 is element-one.jpg; image 2 is element-two.jpg.';
     const images = [{ mediaType: 'image/jpeg' as const, data: '/9j/one=' }, { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }];
     await service.submitPrompt(7, prompt, undefined, images, { waitForCompletion: false });
     await new Promise<void>(resolve => setImmediate(resolve));

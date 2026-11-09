@@ -1,0 +1,203 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+.chip:hover,
+.chip.open {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.chip.failed {
+  box-shadow: inset 0 0 0 1px var(--danger);
+  background: var(--danger-soft);
+}
+.face {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-2) 0 3px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.chip.editing .face {
+  padding-inline-end: 2px;
+}
+.face:focus-visible {
+  outline: 0;
+}
+/* The whole chip carries the ring, so it reads as one control. */
+.chip:has(.face:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+.act:focus-visible,
+.close:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.face:disabled,
+.act:disabled {
+  cursor: default;
+}
+.chip:has(.face:disabled) {
+  opacity: 0.45;
+}
+.thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 26px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-muted);
+}
+.thumb img {
+  position: absolute;
+  max-width: none;
+}
+.target {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  pointer-events: none;
+}
+.uploading .thumb img {
+  opacity: 0.55;
+  filter: saturate(0.4);
+}
+.progress {
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 200px;
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.tag {
+  flex: none;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+}
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.act {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-inline-end: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.act:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.act.retry {
+  margin-inline-end: 0;
+  color: var(--danger);
+}
+.element-popover {
+  position: relative;
+  width: min(400px, calc(100vw - var(--space-8)));
+  max-height: calc(100vh - var(--space-8));
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
+  transform-origin: 18px 100%;
+  animation: popover-enter var(--dur-base) var(--ease-glide) both;
+}
+.element-popover.leaving {
+  pointer-events: none;
+  animation: popover-leave var(--dur-fast) var(--ease-in) both;
+}
+.close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.close:hover {
+  color: var(--ink);
+}
+@keyframes popover-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+@keyframes popover-leave {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip,
+  .progress {
+    transition: none;
+  }
+  .element-popover,
+  .element-popover.leaving {
+    animation: none;
+  }
+}

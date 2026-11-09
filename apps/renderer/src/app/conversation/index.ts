@@ -44,5 +44,4 @@ export * from "./markdown/code-tokens";
 export * from "./markdown/markdown-code.component";
 export * from "./markdown/markdown-media-group.component";
 export * from "./markdown/markdown-recording.component";
-
-export * from "./chat/element-reference.component";
+export * from "./element";

@@ -19,4 +19,4 @@ The message box at the foot of the chat, holding every agent control without clu
 
 **When its machine is out of reach** (`waitingFor: { machine, action, onAction, sending }`, `onRemoveQueued`), you can still write. ↵ puts the message in the line above the input ("2 messages wait for dev-box", `ComposerQueue`), and the placeholder says "Write now, it sends when dev-box is back…". The same goes for an answer, an approval, Stop and a new task: they're all writing, and writing waits.
 
-Browser elements use [ElementReference](../ElementReference/README.md): a controlled snapshot card, stable @ alias and exact image association. Composer keeps cards above the textarea; MentionMenu reuses staged elements; sent Message retains read-only previews. Capture and delivery belong to platform/feature owners.
+Browser elements use [ElementPin](../ElementPin/README.md): picking an element drops its numbered pin (❶–❽) at the caret, its chip (thumbnail, pin, label) joins the context row, and the chip opens the historical snapshot. `@` lists the message’s pins first and ends with “Point at an element in the browser”.

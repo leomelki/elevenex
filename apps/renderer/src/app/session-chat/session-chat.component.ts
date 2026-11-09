@@ -1,4 +1,4 @@
-import type { BrowserElementSnapshot } from '@elevenex/shared';
+import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
@@ -112,8 +112,9 @@ export class SessionChatComponent {
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
-  readonly browserPickRequested = output<ChatSelection & { readonly tabId: string }>();
-  pickBrowserElement(tabId: string): void { if (!this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...this.selection(), tabId }); }
+  /** Without a tab, the browser picks on its current page. */
+  readonly browserPickRequested = output<ChatSelection & { readonly tabId?: string }>();
+  pickBrowserElement(tabId?: string): void { if (!this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...this.selection(), ...(tabId ? { tabId } : {}) }); }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   readonly media = inject(SessionChatMedia);
@@ -126,19 +127,28 @@ export class SessionChatComponent {
       input: request.input, error: false, truncated: false,
     }) : null;
   });
-  /** Browser context is staged for review; it never submits a prompt automatically. */
-  stageBrowserContext(text: string, element?: BrowserElementSnapshot): boolean {
-    if (this.store.readOnly() || this.store.historical() || this.store.busy() || this.store.uncertain()) { this.attachments.error.set('This conversation cannot add context right now. Finish the pending action or choose an active conversation.'); return false; }
+  /**
+   * Browser context is staged for review; it never submits a prompt. An element
+   * drops its pin at the caret, so pointing reads like part of the sentence.
+   * Returns the pin (0 for text-only context), or null when nothing was staged.
+   */
+  stageBrowserContext(text: string, element?: BrowserElementSnapshot): number | null {
+    if (this.store.readOnly() || this.store.historical() || this.store.busy() || this.store.uncertain()) { this.attachments.error.set('This conversation cannot add context right now. Finish the pending action or choose an active conversation.'); return null; }
+    let marker = 0;
     if (element) {
-      if (!this.store.state()?.browserElements) { this.attachments.error.set('This engine or harness cannot send element images. Update it or choose a harness with image support.'); return false; }
-      if (!this.attachments.addElement(element)) return false;
+      if (!this.store.state()?.browserElements) { this.attachments.error.set('This engine or harness cannot send element images. Update it or choose a harness with image support.'); return null; }
+      const staged = this.attachments.addElement(element);
+      if (!staged) return null;
+      marker = staged;
     }
     if (text.trim()) {
       const previous = this.store.draft();
       this.store.setDraft((previous ? previous + '\n\n' : '') + text);
     }
-    this.composer()?.textarea()?.nativeElement.focus({ preventScroll: true });
-    return true;
+    const composer = this.composer();
+    if (marker && composer && !elementMarkersIn(composer.draft()).includes(marker)) composer.insertElement(marker);
+    else composer?.textarea()?.nativeElement.focus({ preventScroll: true });
+    return marker;
   }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);

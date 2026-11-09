@@ -217,4 +217,4 @@ back. Selection jumps scroll smoothly (instant under reduced motion); growth
 tracking is immediate. Resize observers and scheduled measurements are disposed
 with the component. Revelation never scrolls an ancestor.
 
-`BrowserView.askOptional` permits staging a selected element with an empty note; it defaults to false for existing Ask consumers. `askPlaceholder` supplies the accessible name and placeholder. The new task browser uses Add to message with an optional note, then lets the person compose prose and @ mentions in chat.
+`BrowserView.pickMode` defaults to `ask`. `pin` keeps the pointing frame and picked ring but shows no question card and says “Click an element to point at it in your message”; the task browser uses it to stage picks as chat pins.

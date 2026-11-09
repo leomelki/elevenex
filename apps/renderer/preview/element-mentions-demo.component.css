@@ -6,27 +6,53 @@
   color: var(--ink);
 }
 main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   max-width: 760px;
+  min-height: 100%;
   margin: auto;
-  padding: var(--space-6);
-  container-type: inline-size;
+  padding: var(--space-6) var(--space-4);
 }
 h1 {
+  margin: 0 0 var(--space-2);
   font-size: var(--text-title-size);
 }
-p {
+header p {
+  margin: 0;
+  color: var(--ink-muted);
   font-size: var(--text-body-size);
   line-height: var(--text-body-line);
 }
 nav {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+.thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   gap: var(--space-2);
-  margin-block: var(--space-4);
 }
 .sent {
-  margin-block: var(--space-6);
+  align-self: flex-end;
+  max-width: min(100%, 520px);
   padding: var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface-raised);
+  box-shadow: var(--shadow-raised), inset 0 0 0 1px var(--line);
+}
+.sent p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line);
+}
+.pick-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
 }

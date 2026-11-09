@@ -11,7 +11,9 @@
             ? "Sessions"
             : item.kind === "task"
               ? "Tasks"
-              : item.kind === "element" ? "Elements in this message" : "Files"
+              : item.kind === "element"
+                ? "Elements in this message"
+                : "Files"
         }}
       </h3>
     }
@@ -28,6 +30,20 @@
     </button>
   } @empty {
     <p>No matches for “{{ query() }}”</p>
+  }
+  @if (actionLabel()) {
+    <button
+      type="button"
+      role="option"
+      class="action"
+      [id]="listId() + '-' + matches().length"
+      tabindex="-1"
+      [attr.aria-selected]="highlighted() === matches().length"
+      (mouseenter)="highlighted.set(matches().length)"
+      (click)="action.emit()"
+    >
+      <ex-icon name="target" [size]="14" /><span>{{ actionLabel() }}</span>
+    </button>
   }
   <footer>↑↓ choose · ↵ insert · Tab next group</footer>
 </section>

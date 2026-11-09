@@ -40,32 +40,31 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
   });
 }
 afterEach(() => TestBed.resetTestingModule());
-describe('Point and ask visual context', () => {
+describe('Point at an element for the chat', () => {
   const element = { selector: 'css=[data-elevenex-picked="11111111-1111-4111-8111-111111111111"]', tag: 'button', x: 20, y: 20, width: 100, height: 30 };
   const snapshot = { reference: { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', selector: element.selector, tag: 'button', frames: [], page: 'http://localhost:3000/', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: element, crop: { x: 0, y: 0, width: 200, height: 100 }, image: { width: 200, height: 100, scale: 1 } }, jpeg: '/9j/' };
-  it('stages the original screenshot and reference separately from user prose', async () => {
-    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
+  it('stages a pick in the chat directly, as a snapshot rather than prose', async () => {
+    const { fixture, bridge } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
     fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true);
     const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
     await render(fixture);
-    expect(emit).not.toHaveBeenCalled();
-    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Make it wider', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
-    expect(emit).toHaveBeenCalledWith({ scopeId: 'scope', taskId: 1, sessionId: 2, text: 'Make it wider', element: snapshot });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith({ scopeId: 'scope', taskId: 1, sessionId: 2, text: '', element: snapshot });
+    expect(fixture.nativeElement.querySelector('form.question')).toBeNull();
+    fixture.componentInstance.contextStaged(emit.mock.calls[0]![0], 1);
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'pick', enabled: false });
+    expect(fixture.componentInstance.notice()).toBe('');
+    fixture.detectChanges();
+    expect(emit).toHaveBeenCalledTimes(1);
   });
-  it('allows staging without a browser note and retains the selection when staging is rejected', async () => {
-    const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
-    fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true); await render(fixture);
+  it('explains a pick the chat could not stage and releases the picker', async () => {
+    const { fixture, bridge } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }], undefined, { ...element, snapshot });
+    fixture.componentRef.setInput('sessionId', 2); fixture.componentRef.setInput('active', true);
     const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
-    const submit = fixture.nativeElement.querySelector('button[type="submit"]') as HTMLButtonElement;
-    expect(submit.disabled).toBe(false); submit.click(); fixture.detectChanges();
-    const intent = emit.mock.calls[0]?.[0]; expect(intent?.text).toBe('');
-    fixture.componentInstance.contextStaged(intent, false);
-    expect(fixture.componentInstance.store.state()?.picked?.snapshot?.reference.id).toBe(snapshot.reference.id);
+    await render(fixture);
+    fixture.componentInstance.contextStaged(emit.mock.calls[0]![0], null);
     expect(fixture.componentInstance.notice()).toContain('Could not add');
-    const note = fixture.nativeElement.querySelector('textarea[aria-label="Add a note (optional)"]') as HTMLTextAreaElement;
-    note.value = 'Keep this note'; note.dispatchEvent(new Event('input')); fixture.detectChanges(); submit.click(); fixture.detectChanges();
-    fixture.componentInstance.contextStaged(emit.mock.calls.at(-1)?.[0], false); fixture.detectChanges();
-    expect(note.value).toBe('Keep this note');
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'pick', enabled: false });
   });
   it('does not start a re-pick on another tab after the original tab selection fails', async () => {
     const { fixture } = setup([tab()]); await render(fixture);
@@ -74,20 +73,35 @@ describe('Point and ask visual context', () => {
     expect(command).toHaveBeenCalledTimes(1);
     expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-1' });
   });
+  it('picks on the current page when no tab is named, and explains when there is none', async () => {
+    const empty = setup([]);
+    await vi.waitFor(() => { empty.fixture.detectChanges(); expect(empty.fixture.componentInstance.store.state()).not.toBeNull(); });
+    vi.spyOn(empty.fixture.componentInstance.store, 'command').mockResolvedValue(true);
+    empty.fixture.componentInstance.store.state.update(state => state && { ...state, tabs: [], active: null });
+    await empty.fixture.componentInstance.beginElementPick();
+    expect(empty.fixture.componentInstance.notice()).toContain('Open a page');
+    TestBed.resetTestingModule();
+    const { fixture } = setup([tab()]); await render(fixture);
+    const command = vi.spyOn(fixture.componentInstance.store, 'command').mockResolvedValue(true);
+    await fixture.componentInstance.beginElementPick();
+    expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-1' });
+  });
   it('explains missing capture without pretending an image was staged', async () => {
     const { fixture } = setup([tab()], undefined, element);
-    fixture.componentRef.setInput('sessionId', 2); await render(fixture);
+    fixture.componentRef.setInput('sessionId', 2);
     const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
-    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change it', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    await render(fixture);
     expect(emit).not.toHaveBeenCalled();
     expect(fixture.componentInstance.notice()).toContain('cannot capture');
   });
-  it('rejects a pick retained from a different conversation', async () => {
-    const { fixture } = setup([tab()], undefined, { ...element, snapshot });
+  it('rejects a pick that lands after the conversation changed', async () => {
+    const { fixture } = setup([tab()]);
     fixture.componentRef.setInput('sessionId', 2); await render(fixture);
+    fixture.componentInstance.command({ kind: 'pick', enabled: true });
     fixture.componentRef.setInput('sessionId', 3); fixture.detectChanges();
     const emit = vi.fn(); fixture.componentInstance.contextRequested.subscribe(emit);
-    fixture.componentInstance.ask({ tabId: 'tab-1', text: 'Change it', target: { x: 20, y: 20, w: 100, h: 30, label: 'button' } });
+    fixture.componentInstance.store.state.update(state => state && { ...state, revision: state.revision + 1, picked: { ...element, snapshot } });
+    fixture.detectChanges();
     expect(emit).not.toHaveBeenCalled();
     expect(fixture.componentInstance.notice()).toContain('conversation changed');
   });

@@ -41,3 +41,8 @@ code {
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+ex-element-preview.snapshot {
+  --element-preview-image-height: 96px;
+  max-width: 420px;
+}

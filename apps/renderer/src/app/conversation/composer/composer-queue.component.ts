@@ -29,10 +29,19 @@ import type { QueuedMessage } from "../conversation.models";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ComposerQueueComponent implements OnChanges {
+  /** Queued prose without the element envelope or its image links; pins stay in place. */
   preview(text: string): string {
+    return this.split(text).prose;
+  }
+  private split(text: string): { prose: string; context: string } {
     const parsed = parseBrowserElements(text);
-    if (!parsed.elements.length) return text;
-    return parsed.text.split('\n').filter(line => !parsed.elements.some(element => line.startsWith('[' + element.attachment + ']'))).join('\n').trim() + '\n' + parsed.elements.map(element => element.reference.label + ' (@element-' + element.reference.id.slice(0, 8) + ')').join(' · ');
+    if (!parsed.elements.length) return { prose: text, context: "" };
+    const isElementImage = (line: string) => parsed.elements.some(element => line.startsWith('[' + element.attachment + ']'));
+    const lines = parsed.text.split('\n');
+    return {
+      prose: lines.filter(line => !isElementImage(line)).join('\n').trim(),
+      context: [serializeBrowserElements(parsed.elements), ...lines.filter(isElementImage)].join('\n\n'),
+    };
   }
   readonly items = input<readonly QueuedMessage[]>([]);
   readonly waitingFor = input<string>();
@@ -51,11 +60,9 @@ export class ComposerQueueComponent implements OnChanges {
     if (this.disabled() || !this.editable() || item.editable === false) return;
     this.editing.set(item.id);
     this.editingChanged.emit(item.id);
-    const parsed = parseBrowserElements(item.text);
-    const lines = parsed.text.split('\n');
-    const isElementImage = (line: string) => parsed.elements.some(element => line.startsWith('[' + element.attachment + ']'));
-    this.retainedContext = parsed.elements.length ? [serializeBrowserElements(parsed.elements), ...lines.filter(isElementImage)].join('\n\n') : '';
-    this.editText.set(parsed.elements.length ? lines.filter(line => !isElementImage(line)).join('\n').trim() : item.text);
+    const { prose, context } = this.split(item.text);
+    this.retainedContext = context;
+    this.editText.set(prose);
   }
   ngOnChanges(): void { const id = this.editing(); if (id && !this.items().some(item => item.id === id)) this.cancelEdit(); }
   cancelEdit(): void { this.retainedContext = ""; this.editing.set(null); this.editingChanged.emit(null); }

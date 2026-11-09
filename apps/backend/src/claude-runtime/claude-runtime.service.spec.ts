@@ -1521,7 +1521,7 @@ describe('ClaudeRuntimeService', () => {
         for await (const message of prompt) { observed.push(message); yield successfulResultMessage(); break; }
       },
     }));
-    const prompt = 'Align @element-11111111 (image 1).';
+    const prompt = 'Align ❶ (image 1).';
     await service.submitPrompt(7, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
     expect(observed).toEqual([expect.objectContaining({ message: { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/image' } }] } })]);
   });

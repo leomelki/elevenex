@@ -21,9 +21,23 @@
         (edited)="queueEdited.emit($event)"
         (reordered)="queueReordered.emit($event)"
       />
-      @if (attachments().length) { <ex-attachments [files]="attachments()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" (elementMentioned)="mentionElement($event)" (elementRepick)="elementRepick.emit($event)" /> }
-      @if (context().length) {
+      @if (otherFiles().length) { <ex-attachments [files]="otherFiles()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" /> }
+      @if (context().length || elementFiles().length) {
         <div class="context">
+          @for (file of elementFiles(); track file.id) {
+            <ex-element-chip
+              [file]="file"
+              [editing]="true"
+              [disabled]="disabled() || sending()"
+              [mentioned]="referencedMarkers().has(file.marker!)"
+              [pickAvailable]="elementPickAvailable()"
+              (highlighted)="hotMarker.set($event ? file.marker! : null)"
+              (mention)="insertElement(file.marker!)"
+              (removed)="removeElement(file)"
+              (retry)="attachmentRetry.emit($event)"
+              (repick)="elementRepick.emit($event)"
+            />
+          }
           @for (mention of context(); track mention.kind + ":" + mention.id) {
             <ex-mention
               [mention]="mention"
@@ -39,6 +53,10 @@
         <span>{{ dropping() === 'session' ? 'Add this conversation as context' : 'Add files to your message' }}</span>
       </div>
       <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
+      <div class="field">
+      @if (markerHighlights(); as parts) {
+        <div class="marker-layer" aria-hidden="true"><div class="marker-text" [style.transform]="'translateY(' + -highlightScroll() + 'px)'">@for (part of parts; track $index) {@if (part.marker) {<mark [class.hot]="hotMarker() === part.marker" [class.orphan]="!part.known">{{ part.text }}</mark>} @else {<ng-container>{{ part.text }}</ng-container>}}</div></div>
+      }
       <textarea
         #textarea
         [class.words-leaving]="wordsLeaving()"
@@ -53,7 +71,9 @@
         [value]="draft()"
         (input)="update($event)"
         (keydown)="onKey($event)"
+        (scroll)="highlightScroll.set(textarea.scrollTop)"
       ></textarea>
+      </div>
       @if (recording(); as recording) {
         <div class="recording" role="status">
           <ex-icon name="mic" [size]="14" /><span>{{ recording.time }}</span
@@ -134,6 +154,9 @@
       </ex-presence>
     }
     <span class="grow"></span>
+    @if (elementPickAvailable()) {
+      <ex-icon-button icon="target" label="Point at an element in the browser" [disabled]="disabled() || sending()" (pressed)="requestElementPick()" />
+    }
     @if (attachmentsEnabled()) {
       <input #fileInput type="file" multiple hidden (change)="filesChosen($event)" />
       <ex-icon-button icon="attach" label="Attach files (⌘U)" [disabled]="disabled() || sending()" (pressed)="chooseFiles()" />
@@ -205,7 +228,9 @@
   <ex-mention-menu
     [query]="mentionQuery() || ''"
     [items]="allMentionItems()"
+    [actionLabel]="elementPickAvailable() ? 'Point at an element in the browser' : ''"
     (selected)="insertMention($event)"
+    (action)="pickFromMentions()"
     (closed)="mentionQuery.set(null)"
   />
 </ng-template>

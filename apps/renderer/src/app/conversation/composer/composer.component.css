@@ -44,7 +44,12 @@
     var(--shadow-raised),
     inset 0 0 0 1px var(--line-strong);
 }
+.field {
+  position: relative;
+  display: grid;
+}
 textarea {
+  position: relative;
   width: 100%;
   min-height: 44px;
   max-height: 240px;
@@ -56,6 +61,35 @@ textarea {
   background: transparent;
   color: var(--ink);
   font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
+}
+/* Mirrors the textarea's text box exactly so each mark sits behind its pin. */
+.marker-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.marker-text {
+  padding: 0 var(--space-1);
+  color: transparent;
+  font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.marker-text mark {
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: transparent;
+  box-shadow: 0 0 0 1px var(--accent-soft);
+  transition: box-shadow var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.marker-text mark.hot {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* A pin with no element in this message would leave the agent guessing. */
+.marker-text mark.orphan {
+  background: var(--danger-soft);
+  box-shadow: 0 0 0 2px var(--danger);
 }
 textarea.words-leaving {
   animation: placeholder-return 240ms steps(1, end);
@@ -134,7 +168,9 @@ textarea::placeholder {
 .drop-label > span:last-child { font-size: var(--text-caption-size); font-weight: var(--text-caption-weight); }
 .drop-icon { display: grid; place-items: center; }
 .drop-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.context ex-mention { animation: mention-arrive var(--dur-slow) var(--ease-glide); }
+.context ex-mention,
+.context ex-element-chip { animation: mention-arrive var(--dur-slow) var(--ease-glide); }
+.context { align-items: center; }
 @keyframes mention-arrive { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 .disabled textarea {
   opacity: 0.45;
@@ -144,7 +180,9 @@ textarea::placeholder {
     transition: none;
   }
   .drop-label { transition: none; transform: none; }
-  .context ex-mention { animation: none; }
+  .context ex-mention,
+  .context ex-element-chip { animation: none; }
+  .marker-text mark { transition: none; }
 }
 @container composer (max-width: 340px) {
   .send span {

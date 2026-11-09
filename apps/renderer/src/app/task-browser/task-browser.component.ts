@@ -4,7 +4,7 @@ import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import type { TaskBrowserCommand, TaskBrowserWindowContext, TaskBrowserPlacement, BrowserElementSnapshot, BrowserHumanRequest } from '@elevenex/shared';
-import { BrowserViewComponent, type BrowserQuestion, type BrowserTab, type BrowserTarget } from '../views';
+import { BrowserViewComponent, type BrowserTab, type BrowserTarget } from '../views';
 import { ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
 import { TaskBrowserStore } from './task-browser.store';
 import { NativePageLayout } from './native-page-layout';
@@ -56,10 +56,6 @@ export class TaskBrowserComponent {
     const file = source ? source.file + (source.line ? ':' + source.line : '') + (source.column ? ':' + source.column : '') : undefined;
     return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: raw?.snapshot?.reference.label ?? raw?.tag ?? element.selector, ...(file ? { file } : {}) } : undefined;
   });
-  readonly askNote = computed(() => {
-    const snapshot = this.store.state()?.picked?.snapshot;
-    return snapshot?.jpeg ? 'Includes a snapshot with surrounding context. Review before sending.' : snapshot?.error || 'Image capture unavailable. Update the engine or attach a screenshot.';
-  });
   readonly target = computed<BrowserTarget | undefined>(() => {
     const raw = this.current()?.target;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
@@ -75,6 +71,7 @@ export class TaskBrowserComponent {
   private pickerSession: number | null = null;
   private pickerIdentity = '';
   private pickerOrigin = '';
+  private stagedPick = '';
   constructor() {
     let previousSession: number | null | undefined;
     effect(() => {
@@ -85,7 +82,7 @@ export class TaskBrowserComponent {
       const requested = state?.agentRequests?.some(request => request.tabId === state.active && request.kind === 'element');
       if (!requested && (state?.picking || state?.picked || state?.capturePending)) {
         untracked(() => this.command({ kind: 'pick', enabled: false }));
-        this.notice.set('The conversation changed. Pick the element again for this session.');
+        this.notice.set('The conversation changed. Point at the element again for this session.');
       }
     });
     effect(() => {
@@ -125,10 +122,21 @@ export class TaskBrowserComponent {
         () => this.store.bridge.taskBrowserHide(scope, task), () => this.store.state()?.surfaceEpoch ?? 0, this.overlays.getContainerElement(), () => this.current()?.generation ?? 0);
       onCleanup(() => layout.destroy());
     });
+    // After picker ownership is recorded: a manual pick goes straight into the chat as a pin; there is no question card.
+    effect(() => {
+      const state = this.store.state(), picked = state?.picked;
+      if (!state || !picked) { this.stagedPick = ''; return; }
+      const key = state.scopeId + ':' + state.taskId + ':' + (picked.snapshot?.reference.id ?? `${picked.selector}@${picked.x},${picked.y}`);
+      if (key === this.stagedPick) return;
+      this.stagedPick = key;
+      untracked(() => this.stagePicked());
+    });
   }
-  async beginElementPick(tabId: string): Promise<void> {
+  /** Starts a pick for the chat on `tabId`, or on the current page. */
+  async beginElementPick(tabId = this.current()?.id): Promise<void> {
+    if (!tabId) { this.notice.set('Open a page, then point at an element.'); return; }
     const tab = this.store.state()?.tabs.find(tab => tab.id === tabId);
-    if (!tab || tab.detached) { this.notice.set('The original tab is closed or in another window. Choose a page and pick a new element.'); return; }
+    if (!tab || tab.detached) { this.notice.set('That tab is closed or in another window. Choose a page and point at the element again.'); return; }
     const scope = this.scopeId(), task = this.taskId(), session = this.sessionId();
     const selected = await this.store.command({ kind: 'select', tabId });
     if (!selected || this.current()?.id !== tabId) return;
@@ -185,20 +193,22 @@ export class TaskBrowserComponent {
   setWidth(width: 'full' | 'phone'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'width', tabId, width }); }
   theme(theme: 'light' | 'dark' | 'system'): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'theme', tabId, theme }); }
   network(slow: boolean): void { const tabId = this.current()?.id; if (tabId) this.command({ kind: 'network', tabId, slow }); }
-  ask(question: BrowserQuestion): void {
-    if (this.pickerSession !== this.sessionId() || (this.pickerOrigin && this.pickerOrigin !== this.scopeId() + ':' + this.taskId())) { this.notice.set('The conversation changed. Pick the element again for this session.'); return; }
-    const target = this.store.state()?.picked;
-    if (question.tabId !== this.current()?.id || (target?.snapshot && target.snapshot.reference.tabId !== question.tabId)) { this.notice.set('The selected tab changed. Pick the element again.'); return; }
+  private stagePicked(): void {
+    const state = this.store.state(), target = state?.picked;
+    if (!state || !target) return;
     const scopeId = this.scopeId(), taskId = this.taskId(), sessionId = this.sessionId();
+    const release = () => this.command({ kind: 'pick', enabled: false });
+    if (this.pickerSession !== sessionId || (this.pickerOrigin && this.pickerOrigin !== scopeId + ':' + taskId)) { release(); this.notice.set('The conversation changed. Point at the element again for this session.'); return; }
+    if (target.snapshot && target.snapshot.reference.tabId !== this.current()?.id) { release(); this.notice.set('The selected tab changed. Point at the element again.'); return; }
     if (!scopeId || !taskId || !sessionId) return;
-    if (!target?.snapshot?.jpeg) { this.notice.set(target?.snapshot?.error || 'This browser cannot capture element images. Update the engine or attach a screenshot.'); return; }
-    this.notice.set('Adding the element to your message…');
-    this.contextRequested.emit({ scopeId, taskId, sessionId, text: question.text, element: target.snapshot });
+    if (!target.snapshot?.jpeg) { release(); this.notice.set(target.snapshot?.error || 'This browser cannot capture element images. Update the engine, or attach a screenshot instead.'); return; }
+    this.contextRequested.emit({ scopeId, taskId, sessionId, text: '', element: target.snapshot });
   }
-  contextStaged(intent: BrowserComposerIntent, staged: boolean): void {
+  /** The chat reports the pin it placed, or null when it could not stage the element. */
+  contextStaged(intent: BrowserComposerIntent, marker: number | null): void {
     if (intent.scopeId !== this.scopeId() || intent.taskId !== this.taskId() || intent.sessionId !== this.sessionId()) return;
-    this.notice.set(staged ? 'Added to your message. Review the snapshot, then send.' : 'Could not add this context. Check the conversation for details, then try again.');
-    if (staged && intent.element && this.store.state()?.picked?.snapshot?.reference.id === intent.element.reference.id) this.command({ kind: 'pick', enabled: false });
+    if (marker === null) this.notice.set('Could not add this element. Check the conversation for details, then try again.');
+    if (intent.element && this.store.state()?.picked?.snapshot?.reference.id === intent.element.reference.id) this.command({ kind: 'pick', enabled: false });
   }
   shareRequest(request: BrowserHumanRequest): void {
     const scopeId = this.scopeId(), taskId = this.taskId(), sessionId = this.sessionId();

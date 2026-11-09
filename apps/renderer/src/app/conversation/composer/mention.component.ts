@@ -5,16 +5,19 @@ import {
   output,
 } from "@angular/core";
 import { IconComponent, StatusGlyphComponent } from "../../ui";
+import { ElementPinComponent } from "../element/element-pin.component";
 import type { ConversationMention } from "../conversation.models";
 @Component({
   selector: "ex-mention",
-  imports: [IconComponent, StatusGlyphComponent],
+  imports: [IconComponent, StatusGlyphComponent, ElementPinComponent],
   template: `<span class="mention" [attr.data-kind]="mention().kind">
-    @if (mention().kind === "session" && mention().status) {
+    @if (mention().kind === "element" && mention().marker) {
+      <ex-element-pin [marker]="mention().marker!" />
+    } @else if (mention().kind === "session" && mention().status) {
       <ex-status-glyph [status]="mention().status || 'done'" [size]="12" />
     } @else {
       <ex-icon
-        [name]="mention().kind === 'element' ? 'globe' : mention().kind === 'file' ? 'file' : 'task'"
+        [name]="mention().kind === 'element' ? 'target' : mention().kind === 'file' ? 'file' : 'task'"
         [size]="12"
       />
     }
@@ -49,6 +52,11 @@ import type { ConversationMention } from "../conversation.models";
     }
     .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     ex-icon, ex-status-glyph, button { flex: none; }
+    .mention[data-kind="element"] {
+      padding-inline-start: 2px;
+      background: transparent;
+      color: var(--ink);
+    }
     .mention[data-kind="task"],
     .mention[data-kind="file"] {
       background: var(--surface-sunken);

@@ -1,0 +1,132 @@
+@if (element(); as element) {
+  <span
+    class="chip"
+    [class.failed]="failed()"
+    [class.uploading]="uploading()"
+    [class.editing]="editing()"
+    [class.open]="open()"
+    cdkOverlayOrigin
+    #origin="cdkOverlayOrigin"
+  >
+    <button
+      type="button"
+      class="face"
+      aria-haspopup="dialog"
+      [attr.aria-expanded]="open()"
+      [attr.aria-label]="name()"
+      [attr.aria-busy]="uploading()"
+      [disabled]="disabled()"
+      (click)="toggle()"
+      (pointerenter)="highlighted.emit(true)"
+      (pointerleave)="highlighted.emit(false)"
+      (focus)="highlighted.emit(true)"
+      (blur)="highlighted.emit(false)"
+    >
+      <span class="thumb">
+        @if (source() && frame(); as frame) {
+          <img
+            [src]="source()"
+            alt=""
+            draggable="false"
+            [style.left.px]="frame.image.left"
+            [style.top.px]="frame.image.top"
+            [style.width.px]="frame.image.width"
+            [style.height.px]="frame.image.height"
+          />
+          @if (frame.target.width && frame.target.height) {
+            <span
+              class="target"
+              [style.left.px]="frame.target.left"
+              [style.top.px]="frame.target.top"
+              [style.width.px]="frame.target.width"
+              [style.height.px]="frame.target.height"
+            ></span>
+          }
+        } @else {
+          <ex-icon name="globe" [size]="14" />
+        }
+        @if (uploading()) {
+          <span class="progress" [style.--progress]="(file().progress ?? 0) / 100"></span>
+        }
+      </span>
+      @if (file().marker; as marker) {
+        <ex-element-pin
+          [marker]="marker"
+          [hollow]="editing() && !mentioned()"
+          [tone]="failed() ? 'danger' : 'accent'"
+        />
+      }
+      <span class="label">
+        @if (label().tag) {
+          <span class="tag">{{ label().tag }}</span>
+        }
+        <span class="name">{{ label().name }}</span>
+      </span>
+    </button>
+    @if (editing()) {
+      @if (failed()) {
+        <button
+          type="button"
+          class="act retry"
+          [attr.aria-label]="'Retry uploading ' + element.label"
+          [title]="file().error || 'Upload failed. Retry'"
+          [disabled]="disabled()"
+          (click)="retry.emit(file().id)"
+        >
+          <ex-icon name="refresh" [size]="12" />
+        </button>
+      }
+      <button
+        type="button"
+        class="act"
+        [attr.aria-label]="'Remove ' + element.label"
+        title="Remove"
+        [disabled]="disabled()"
+        (click)="remove(file().id)"
+      >
+        <ex-icon name="x" [size]="12" />
+      </button>
+    }
+  </span>
+  <ng-template
+    cdkConnectedOverlay
+    [cdkConnectedOverlayOrigin]="origin"
+    [cdkConnectedOverlayOpen]="presence.rendered()"
+    [cdkConnectedOverlayPositions]="positions"
+    [cdkConnectedOverlayViewportMargin]="16"
+    [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayHasBackdrop]="open()"
+    cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+    (backdropClick)="close()"
+    (overlayKeydown)="$event.key === 'Escape' && close()"
+    (detach)="close()"
+  >
+    @let data = presence.data();
+    <section
+      class="element-popover"
+      role="dialog"
+      [attr.aria-labelledby]="headingId"
+      [class.leaving]="presence.leaving()"
+      [attr.inert]="presence.leaving() ? '' : null"
+      cdkTrapFocus
+      [cdkTrapFocusAutoCapture]="true"
+      (animationend)="presence.finish($event)"
+    >
+      <ex-element-preview
+        [file]="data.file"
+        [resolve]="resolve()"
+        [editing]="data.editing"
+        [disabled]="disabled()"
+        [pickAvailable]="data.pickAvailable"
+        [headingId]="headingId"
+        (mention)="insert()"
+        (repick)="pickAgain($event)"
+        (removed)="remove($event)"
+        (retry)="retry.emit($event)"
+      />
+      <button type="button" class="close" aria-label="Close snapshot" cdkFocusInitial (click)="close()">
+        <ex-icon name="x" [size]="14" />
+      </button>
+    </section>
+  </ng-template>
+}

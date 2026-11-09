@@ -1,12 +1,13 @@
-import { ElementReferenceComponent } from './element-reference.component';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from "@angular/core";
 import { IconComponent, IconButtonComponent, ButtonComponent } from "../../ui";
 import type { ConversationAttachment } from "../conversation.models";
+import { ElementChipComponent } from "../element/element-chip.component";
 import { MarkdownMediaComponent } from "../markdown/markdown-media.component";
 import {
   safeMediaSource,
@@ -17,7 +18,7 @@ import {
 @Component({
   selector: "ex-attachments",
   imports: [
-    ElementReferenceComponent,
+    ElementChipComponent,
     IconComponent,
     IconButtonComponent,
     ButtonComponent,
@@ -34,8 +35,13 @@ export class AttachmentsComponent {
   readonly resolve = input<MarkdownAssetResolver>();
   readonly removed = output<string>();
   readonly retry = output<string>();
-  readonly elementRepick = output<NonNullable<ConversationAttachment["element"]>>();
-  readonly elementMentioned = output<ConversationAttachment>();
+  /** Browser elements read as chips in pin order; other files keep their tiles. */
+  readonly elements = computed(() =>
+    this.files()
+      .filter((file) => file.element)
+      .sort((a, b) => (a.marker ?? 0) - (b.marker ?? 0)),
+  );
+  readonly others = computed(() => this.files().filter((file) => !file.element));
   readonly copyPath = output<string>();
   preview(source: string): string {
     return safeMediaSource(source);

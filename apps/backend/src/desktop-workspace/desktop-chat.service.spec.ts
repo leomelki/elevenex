@@ -149,8 +149,8 @@ describe('selected session chat', () => {
     try {
       const data = 'iVBORw0KGgo=';
       const upload = await attachments.chunk(2, { id: reference.id, name: 'element.jpg', size: 8, offset: 0, data });
-      const envelope = serializeBrowserElements([{ reference, attachment: 'element.jpg', imageIndex: 1 }]);
-      const text = `Align @element-11111111.\n\n${envelope}\n\n[element.jpg](<${upload.path}>)`;
+      const envelope = serializeBrowserElements([{ reference, marker: 1, attachment: 'element.jpg', imageIndex: 1 }]);
+      const text = `Align ❶.\n\n${envelope}\n\n[element.jpg](<${upload.path}>)`;
       await chat.command(1, 2, { type: 'send', text, queue: true });
       expect(runtime.submitPrompt).toHaveBeenCalledWith(2, text, undefined, [{ mediaType: 'image/png', data }], { human: true, queue: true, waitForCompletion: false });
       runtime.submitPrompt.mockClear();

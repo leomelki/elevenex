@@ -1,26 +1,30 @@
 <main>
-  <h1>Browser element references</h1>
-  <p>
-    Pick an element in the task browser to stage a historical snapshot. Use
-    Mention or @ to refer to it in your message.
-  </p>
-  <nav aria-label="Preview states">
-    <button exButton (click)="state('uploading')" [disabled]="!hasFiles()">
-      Uploading</button
-    ><button exButton (click)="state('error')" [disabled]="!hasFiles()">
-      Upload failure</button
-    ><button exButton (click)="state('ready')" [disabled]="!hasFiles()">
-      Ready</button
-    ><button exButton (click)="disabled.set(!disabled())">
-      Toggle disabled
-    </button>
-  </nav>
-  @if (sent().length) {
-    <section class="sent" aria-label="Sent message">
-      <p>{{ prompt() }}</p>
-      <ex-attachments [files]="sent()" />
-    </section>
-  }
+  <header>
+    <h1>Element pins</h1>
+    <p>
+      Point at an element in the task browser and its pin drops where you're
+      typing: “Align ❶ with ❷”. Press a chip to see the snapshot.
+    </p>
+    <nav aria-label="Preview states">
+      <button exButton size="sm" (click)="state('uploading')" [disabled]="!hasFiles()">Uploading</button>
+      <button exButton size="sm" (click)="state('error')" [disabled]="!hasFiles()">Upload failure</button>
+      <button exButton size="sm" (click)="state('ready')" [disabled]="!hasFiles()">Ready</button>
+      <button exButton size="sm" (click)="disabled.set(!disabled())">Toggle disabled</button>
+    </nav>
+  </header>
+  <section class="thread" aria-label="Conversation">
+    @if (sent().length || prompt()) {
+      <article class="sent" aria-label="Sent message">
+        <p><ex-element-prose [text]="prompt()" [attachments]="sent()" /></p>
+        <ex-attachments [files]="sent()" />
+      </article>
+    }
+    @if (pickRequests()) {
+      <p class="pick-note" role="status">
+        In the app, this arms the browser picker ({{ pickRequests() }}).
+      </p>
+    }
+  </section>
   <ex-composer
     [(draft)]="draft"
     [attachments]="files()"
@@ -28,6 +32,9 @@
     [showSettings]="false"
     [showTools]="false"
     [showDictation]="false"
+    [elementPickAvailable]="true"
+    (elementPickRequested)="pickRequests.set(pickRequests() + 1)"
+    (elementRepick)="pickRequests.set(pickRequests() + 1)"
     (attachmentRemoved)="remove($event)"
     (attachmentRetry)="state('ready')"
     (submitted)="send($event)"

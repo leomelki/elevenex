@@ -14,4 +14,4 @@ A message in the chat. Yours is a bubble on the right (its tail at the bottom ri
 - Streamed text un-blurs in through `StreamText`.
 - Don't put avatars or names on your own messages.
 
-Browser elements use [ElementReference](../ElementReference/README.md): a controlled snapshot card, stable @ alias and exact image association. Composer keeps cards above the textarea; MentionMenu reuses staged elements; sent Message retains read-only previews. Capture and delivery belong to platform/feature owners.
+Browser elements use [ElementPin](../ElementPin/README.md): sent prose draws each marker as its pin, and the message ends with read-only element chips that open the historical snapshot.

@@ -35,7 +35,7 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 
 Source locations are optional platform data. The task browser resolves framework
 development metadata or explicit compiler markers on human picks and shows it in
-the card; Add to composer stages it for review. `askNote` distinguishes an element
+the card. `askNote` distinguishes an element
 location, a DOM ancestor location, a component declaration/file with unavailable
 element line, and the selector-only fallback. Missing coordinates are omitted.
 A reported location never authorizes
@@ -56,4 +56,4 @@ filesystem access, and unavailable metadata must not block asking. See the
 - Do let the agent open tabs freely (docs, the app). It drives only the ones it opened, unless you hand one over.
 - Don't let the agent type in a tab you're using, or into a password, card or code field.
 
-The desktop element-reference flow uses Add to message with an optional note (`askOptional`, `askPlaceholder` in Angular). Selecting a target captures its historical image; adding it stages ElementReference in the ordinary composer. No note or prompt is required before staging.
+The desktop task browser uses `pickMode = "pin"` (Angular): the pointing pill reads "Click an element to point at it in your message", the picked ring locks in, and no question card grows; the owner stages the element in the chat as an [ElementPin](../ElementPin/README.md). The default `ask` mode keeps the card below.

@@ -3,58 +3,70 @@ import {
   Component,
   computed,
   signal,
+  viewChild,
 } from "@angular/core";
-import type { BrowserElementSnapshot } from "@elevenex/shared";
+import { MAX_BROWSER_ELEMENTS, type BrowserElementSnapshot } from "@elevenex/shared";
 import {
-  ComposerComponent,
   AttachmentsComponent,
-  type ConversationAttachment,
+  ComposerComponent,
+  ElementProseComponent,
   type ComposerSubmission,
+  type ConversationAttachment,
 } from "../src/app/conversation";
 import { ButtonComponent } from "../src/app/ui";
 
-/** Supply a real host snapshot through stage(); no generated screenshot fixtures. */
+/**
+ * Element pins in a composer and a sent message. Supply real host snapshots
+ * through stage(); there are no generated screenshot fixtures.
+ */
 @Component({
   selector: "ex-element-mentions-demo",
-  imports: [ComposerComponent, AttachmentsComponent, ButtonComponent],
+  imports: [ComposerComponent, AttachmentsComponent, ElementProseComponent, ButtonComponent],
   templateUrl: "./element-mentions-demo.component.html",
   styleUrl: "./element-mentions-demo.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ElementMentionsDemoComponent {
+  readonly composer = viewChild(ComposerComponent);
   readonly files = signal<readonly ConversationAttachment[]>([]);
   readonly sent = signal<readonly ConversationAttachment[]>([]);
   readonly prompt = signal("");
-  readonly draft = signal("Align this element with the page heading.");
+  readonly draft = signal("");
   readonly disabled = signal(false);
+  readonly pickRequests = signal(0);
   readonly hasFiles = computed(() => this.files().length > 0);
-  stage(snapshot: BrowserElementSnapshot): void {
-    this.files.update((files) =>
-      files.some((file) => file.id === snapshot.reference.id)
-        ? files
-        : [
-            ...files,
-            {
-              id: snapshot.reference.id,
-              element: snapshot.reference,
-              name: `element-${snapshot.reference.id}.jpg`,
-              path: "",
-              kind: "image",
-              status: "ready",
-              preview: snapshot.jpeg
-                ? "data:image/jpeg;base64," + snapshot.jpeg
-                : undefined,
-            },
-          ],
-    );
+  /** Like SessionChat: the lowest free pin, then the pin drops at the caret. */
+  stage(snapshot: BrowserElementSnapshot): number | null {
+    const existing = this.files().find((file) => file.element?.id === snapshot.reference.id);
+    const used = new Set(this.files().map((file) => file.marker));
+    const marker =
+      existing?.marker ??
+      Array.from({ length: MAX_BROWSER_ELEMENTS }, (_, index) => index + 1).find((n) => !used.has(n));
+    if (!marker || !snapshot.jpeg) return null;
+    if (!existing)
+      this.files.update((files) => [
+        ...files,
+        {
+          id: snapshot.reference.id,
+          element: snapshot.reference,
+          marker,
+          name: `element-${snapshot.reference.id}.jpg`,
+          path: "",
+          kind: "image",
+          status: "ready",
+          preview: "data:image/jpeg;base64," + snapshot.jpeg,
+        },
+      ]);
+    this.composer()?.insertElement(marker);
+    return marker;
   }
   state(status: "ready" | "error" | "uploading"): void {
     this.files.update((files) =>
       files.map((file) => ({
         ...file,
         status,
-        progress: 42,
-        error: status === "error" ? "Upload interrupted" : undefined,
+        progress: status === "uploading" ? 42 : undefined,
+        error: status === "error" ? "Upload interrupted. Your pixels are kept." : undefined,
       })),
     );
   }

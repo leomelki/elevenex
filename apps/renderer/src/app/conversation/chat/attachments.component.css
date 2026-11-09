@@ -109,5 +109,9 @@ ex-markdown-media {
   max-width: 100%;
 }
 
-.editing ex-element-reference { flex: 1 1 290px; max-width: 100%; }
-.editing:has(ex-element-reference) { max-height: 240px; }
+.elements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}

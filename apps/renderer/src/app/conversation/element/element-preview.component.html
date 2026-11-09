@@ -1,0 +1,136 @@
+@if (element(); as element) {
+  <figure class="snapshot">
+    @if (source()) {
+      <span
+        class="frame"
+        [style.aspect-ratio]="element.image.width + ' / ' + element.image.height"
+      >
+        <img
+          [src]="source()"
+          [alt]="'Snapshot of ' + element.label + ' and the page around it'"
+          draggable="false"
+        />
+        @if (outline(); as box) {
+          <span
+            class="outline"
+            [style.left]="box.left"
+            [style.top]="box.top"
+            [style.width]="box.width"
+            [style.height]="box.height"
+            aria-hidden="true"
+          >
+            @if (marker(); as marker) {
+              <ex-element-pin class="corner" [marker]="marker" size="md" />
+            }
+          </span>
+        }
+      </span>
+    } @else {
+      <span class="missing" role="img" aria-label="Snapshot unavailable">
+        <ex-icon name="globe" [size]="20" />
+        <span>{{
+          file().status === "uploading" ? "Preparing snapshot…" : "Snapshot unavailable"
+        }}</span>
+      </span>
+    }
+  </figure>
+  <div class="details">
+    <h2 class="title" [id]="headingId()">
+      @if (marker(); as marker) {
+        <ex-element-pin [marker]="marker" />
+      }
+      @if (label().tag) {
+        <span class="tag">{{ label().tag }}</span>
+      }
+      <span class="name" [title]="label().name">{{ label().name }}</span>
+    </h2>
+    <p class="where">
+      <span class="place" [title]="element.page">{{ place() }}</span>
+      @if (captured()) {
+        <span class="dot" aria-hidden="true">·</span>
+        <span>Picked {{ captured() }}</span>
+      }
+    </p>
+    @if (hint(); as hint) {
+      <p class="source" [title]="hint.full">
+        <ex-icon name="code" [size]="12" />
+        <code>{{ hint.file }}@if (hint.line) {<span class="line">:{{ hint.line }}</span>}</code>
+        <span class="unverified">{{ hint.note }}</span>
+      </p>
+    }
+    @if (file().status === "error") {
+      <p class="error" role="alert">
+        {{ file().error || "The snapshot didn’t upload." }}
+      </p>
+    }
+    @if (!compact()) {
+    <p class="note">
+      A snapshot from when it was picked. The page may have changed since.
+    </p>
+    <details class="technical">
+      <summary>Technical details</summary>
+      <dl>
+        <dt>Selector</dt>
+        <dd><code>{{ element.selector }}</code></dd>
+        @if (element.frames.length) {
+          <dt>Frames</dt>
+          <dd>{{ element.frames.length }} enclosing</dd>
+        }
+        <dt>Size</dt>
+        <dd>
+          {{ element.target.width | number: "1.0-0" }} ×
+          {{ element.target.height | number: "1.0-0" }} px
+        </dd>
+      </dl>
+    </details>
+    }
+  </div>
+  @if (editing()) {
+    <footer>
+      @if (file().status === "error") {
+        <button
+          exButton
+          size="sm"
+          variant="secondary"
+          [disabled]="disabled()"
+          (click)="retry.emit(file().id)"
+        >
+          <ex-icon name="refresh" [size]="14" />Retry upload
+        </button>
+      } @else if (marker(); as marker) {
+        <button
+          exButton
+          size="sm"
+          variant="secondary"
+          [disabled]="disabled()"
+          [attr.aria-label]="'Insert pin ' + marker + ' at the cursor'"
+          (click)="mention.emit()"
+        >
+          Insert <ex-element-pin [marker]="marker" />
+        </button>
+      }
+      @if (pickAvailable()) {
+        <button
+          exButton
+          size="sm"
+          variant="ghost"
+          [disabled]="disabled()"
+          (click)="repick.emit(element)"
+        >
+          <ex-icon name="target" [size]="14" />Pick again
+        </button>
+      }
+      <span class="grow"></span>
+      <button
+        exButton
+        size="sm"
+        variant="ghost"
+        class="remove"
+        [disabled]="disabled()"
+        (click)="removed.emit(file().id)"
+      >
+        <ex-icon name="trash" [size]="14" />Remove
+      </button>
+    </footer>
+  }
+}

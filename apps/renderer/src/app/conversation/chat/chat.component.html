@@ -13,7 +13,7 @@
           [isNew]="exchange.isNew || false"
           [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
-          >{{ exchange.prompt }}
+          ><ex-element-prose [text]="exchange.prompt" [attachments]="exchange.attachments ?? []" />
           @if (exchange.mentions?.length) {
             <div
               class="message-mentions"

@@ -77,6 +77,8 @@ export interface ConversationMention {
   readonly id: string;
   readonly kind: "session" | "task" | "file" | "element";
   readonly label: string;
+  /** Element pin number; element mentions insert this pin instead of `@label`. */
+  readonly marker?: number;
   readonly status?: ConversationStatus;
   readonly meta?: string;
 }
@@ -93,7 +95,10 @@ export interface QueuedMessage {
   readonly text: string;
 }
 export interface ConversationAttachment {
+  /** Historical browser element snapshot carried by this image. */
   readonly element?: BrowserElementReference;
+  /** The element's pin number within its message (1–8). */
+  readonly marker?: number;
   readonly id: string;
   readonly path: string;
   readonly name: string;

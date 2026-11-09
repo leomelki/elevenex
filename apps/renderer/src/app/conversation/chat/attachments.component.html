@@ -1,8 +1,13 @@
+@if (elements().length) {
+  <div class="elements" role="list" aria-label="Browser elements">
+    @for (file of elements(); track file.id) {
+      <ex-element-chip role="listitem" [file]="file" [resolve]="resolve()" />
+    }
+  </div>
+}
+@if (others().length) {
 <div class="attachments" [class.editing]="editing()" aria-label="Attachments">
-  @for (file of files(); track file.id) {
-    @if (file.element) {
-      <ex-element-reference [file]="file" [editing]="editing()" [disabled]="disabled()" [resolve]="resolve()" (removed)="removed.emit($event)" (retry)="retry.emit($event)" (mention)="elementMentioned.emit(file)" (pickAgain)="elementRepick.emit($event)" />
-    } @else {
+  @for (file of others(); track file.id) {
     <article
       class="attachment"
       [class.document]="file.kind === 'file' && !editing()"
@@ -95,6 +100,6 @@
         ></progress>
       }
     </article>
-    }
   }
 </div>
+}

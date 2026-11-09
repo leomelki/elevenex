@@ -302,6 +302,8 @@
       [showTools]="false"
       [attachmentsEnabled]="!!store.state()?.attachments"
       [attachments]="attachments.files()"
+      [elementPickAvailable]="!!store.state()?.browserElements && !archived() && !store.readOnly()"
+      (elementPickRequested)="pickBrowserElement()"
       (elementRepick)="pickBrowserElement($event.tabId)"
       (filesAttached)="attachments.add($event)"
       (attachmentRemoved)="attachments.remove($event); focusComposer()"
