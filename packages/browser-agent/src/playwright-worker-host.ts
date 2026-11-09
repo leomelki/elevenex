@@ -105,7 +105,7 @@ export class WorkerBrowserHost implements BrowserAgentHost {
         !this.snapshot.rows.some((row) => row.id === state.id && row.owned)
       )
         throw new Error(
-          'Browser control changed; acquire a fresh page after handoff',
+          'Browser control changed. Acquire a fresh page; a user stop requires Hand back.',
         );
     };
     const call = (method: string, args: unknown[] = []) => {
@@ -131,6 +131,7 @@ export class WorkerBrowserHost implements BrowserAgentHost {
       playwright: async () => {
         await call('playwright');
       },
+      present: async (command, documentId, generation) => { await call('present', [command, documentId, generation]); },
       goto: async (url) => {
         await call('goto', [url]);
       },
@@ -165,6 +166,9 @@ export class WorkerBrowserHost implements BrowserAgentHost {
   };
   list(): BrowserHostSnapshot['rows'] {
     return this.snapshot.rows;
+  }
+  async acquire(_sessionId: number, tabId: string): Promise<void> {
+    await this.call('acquire', [tabId]);
   }
   document(id: string): string | undefined {
     return this.snapshot.documents.find((row) => row[0] === id)?.[1];

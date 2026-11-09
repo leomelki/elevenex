@@ -25,6 +25,13 @@ and [design research](../../docs/browser-agent.md).
   `picker-source.ts` budgets optional development source hints.
 - `broker.ts`, `target.ts` and `cdp-policy.ts` retain first-version code helpers.
 - `host.ts` defines privileged adapters; `transport.ts` validates wire payloads.
+  Optional `acquire` is called only by explicit `browser.page`/`tabs.get` code,
+  before read-only `get`. Adapters reject user stops, human workflows and foreign
+  conversation owners. Transport attachment/reconnect never acquires authority.
+- `presentation.ts` validates bounded progress/cursor metadata and owns each
+  page's latest feedback and one coalescing timer. `playwright-presentation.ts`
+  resolves visible locator geometry without causing page input. Only explicit
+  live page capabilities can publish it; renderer chrome owns all animation.
 
 Build with `pnpm --filter @elevenex/browser-agent build`. The existing esbuild
 embeds the trusted worker so ASAR/backend bundling does not depend on an adjacent

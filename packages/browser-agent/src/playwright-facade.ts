@@ -53,6 +53,11 @@ const __pw = (() => {
       if(key==='then'||key==='constructor'||key==='__proto__'||typeof key==='symbol')return undefined;
       if(target.type==='Browser'&&key==='tabs')return __bridge.browser.tabs;
       if(target.type==='Browser'&&key==='page')return tabId=>send({op:'page',tabId});
+      if(target.type==='Browser'&&key==='step')return (page,step)=>send({op:'browser-step',page:encode(page),step:encode(step)});
+      if(target.type==='Browser'&&key==='cursor')return Object.freeze({
+        move:(page,target,options={})=>send({op:'browser-cursor',page:encode(page),target:encode(target),options:encode(options)}),
+        hide:page=>send({op:'browser-cursor-hide',page:encode(page)})
+      });
       if(target.type==='Browser'&&key==='wait')return __bridge.browser.wait;
       if(key==='toJSON')return ()=>({type:target.type,handle:target.id});
       const entry=target.__pw==='handle'?handles.get(target.id):null;

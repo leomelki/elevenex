@@ -1,4 +1,5 @@
 import { AgentDownloads } from './agent-downloads';
+import { BrowserAgentPresentation } from '@elevenex/browser-agent';
 import { nativeBrowserInput } from './native-input';
 import { AgentNativeInput } from './agent-input';
 import { browserHoverAt, BrowserPickerHover, resolvePickedBrowserSources, pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
@@ -34,6 +35,7 @@ export interface BrowserPageHost {
 }
 /** One sandboxed, unprivileged page. The creating task owns and destroys it explicitly. */
 export class BrowserPage {
+  private readonly presentationFeedback = new BrowserAgentPresentation(() => this.host.changed());
   agentPicker?: (x: number, y: number) => Promise<void>;
   agentSelectionPaused = false;
   get documentId(): string { return this.bootstrap + ':' + this.navigation; }
@@ -75,7 +77,7 @@ export class BrowserPage {
   async agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>, signal: AbortSignal, human?: () => boolean): Promise<BrowserAgentTarget> {
     const ownership = this.lease.ownership;
     const assert = () => {
-      if (!active() || this.destroyed || (!human && (this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId)) || (human && (!human() || this.lease.driver === 'agent')) || this.lease.ownership !== ownership) throw new Error('Tab control changed; wait for handoff and get a fresh handle');
+      if (!active() || this.destroyed || (!human && (this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId)) || (human && (!human() || this.lease.driver === 'agent')) || this.lease.ownership !== ownership) throw new Error('Tab control changed. Acquire a fresh handle; a user stop requires Hand back.');
     };
     assert();
     while (!this.hasContents || this.initializing) { assert(); await delay(25, signal); }
@@ -109,7 +111,16 @@ export class BrowserPage {
     this.agentInputs.add(native); contents.setIgnoreMenuShortcuts(true); debuggerApi.on('message', receive);
     return {
       id: this.id, assert: () => { assert(); if (!this.hasContents || this.contents !== contents) throw new Error('Browser engine replaced'); },
-      send: async (method, params, child) => { assert(); return lease.send(method, params, child); },
+      send: async (method, params, child) => { assert(); const generation = this.lease.generation; const result = await lease.send(method, params, child); assert(); if (!human && generation === this.lease.generation) { if (method === 'Input.dispatchMouseEvent') this.target = undefined; this.presentationFeedback.input(method, params); } return result; },
+      present: (command, documentId, generation) => {
+        assert();
+        if (human || (command.kind === 'cursor' && documentId !== this.documentId)) throw new Error('Browser feedback document changed');
+        // Chrome/panel motion may resize the viewport mid-batch. Drop an old
+        // cosmetic pose without interrupting the real Playwright workflow.
+        if (command.kind === 'cursor' && generation !== this.lease.generation) return;
+        this.target = undefined;
+        this.presentationFeedback.update(command);
+      },
       subscribe: listener => {
         const stopEvents = lease.subscribe(listener), stop = this.lease.subscribe(() => listener('Elevenex.controlRevoked', {}));
         return () => { stop(); stopEvents(); };
@@ -117,7 +128,7 @@ export class BrowserPage {
       authorize: async (url, pending) => { assert(); pending.throwIfAborted(); browserUrl(url); await this.host.authorize?.(url); await this.host.configure(this.pageSession); pending.throwIfAborted(); if (!this.host.resourceUrl(url)) throw new Error('Task destination is not authorized'); },
       playwright: async () => { await this.downloads.prepare(); if (!playing) { playing = true; this.playwrightConnections++; } },
       subscribeDownloads: listener => this.downloads.subscribe(listener),
-      dispose: async () => { if (closed) return; closed = true; if (playing) this.playwrightConnections--; native.release(); await lease.dispose(); debuggerApi.removeListener('message', receive); this.agentInputs.delete(native); if (!this.agentInputs.size && !contents.isDestroyed()) contents.setIgnoreMenuShortcuts(false); },
+      dispose: async () => { if (closed) return; closed = true; if (playing && --this.playwrightConnections === 0 && this.lease.driver === 'agent') this.presentationFeedback.interrupt(); native.release(); await lease.dispose(); debuggerApi.removeListener('message', receive); this.agentInputs.delete(native); if (!this.agentInputs.size && !contents.isDestroyed()) contents.setIgnoreMenuShortcuts(false); },
       goto: async (url, pending) => { assert(); await goto(url, pending); assert(); },
       close: async () => { assert(); if (this.lease.by !== 'agent') throw new Error('User-created tabs require user closure'); await close(); },
       interrupt: () => { assert(); native.release(); void debuggerApi.sendCommand('Runtime.terminateExecution').catch(() => undefined); void debuggerApi.sendCommand('Page.stopLoading').catch(() => undefined); },
@@ -196,7 +207,7 @@ export class BrowserPage {
     // A tab survives engine recovery; a main-issued guest identity does not.
     this.bootstrap = 'about:blank#' + id + ':' + randomUUID();
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
-    this.lease = new BrowserDriverLease(by, sessionId, () => { for (const input of this.agentInputs) input.release(); }, () => host.controlChanged?.());
+    this.lease = new BrowserDriverLease(by, sessionId, () => { for (const input of this.agentInputs) input.release(); }, () => { this.presentationFeedback.clear(); host.controlChanged?.(); });
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
     // The task owns a durable profile shared by its tabs; Chromium keeps site data
     // across task eviction and application restarts.
@@ -237,7 +248,7 @@ export class BrowserPage {
     contents.on('did-start-navigation', (_event, _url, inPlace, main) => {
       if (!main) return;
       this.pickerHover.reset();
-      this.navigation++; this.lease.generation++; this.target = undefined; this.heldMouse.clear(); this.heldKeys.clear();
+      this.navigation++; this.lease.generation++; this.target = undefined; this.presentationFeedback.clearPointer(); this.heldMouse.clear(); this.heldKeys.clear();
       if (!inPlace) { this.loading = true; this.error = null; }
       host.changed();
     });
@@ -372,7 +383,9 @@ export class BrowserPage {
       agentSessionId: this.lease.agentSessionId, generation: this.lease.generation, waiting: this.lease.waiting, loading: this.loading, ready: this.ready,
       canGoBack: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoBack(), error: this.error,
       canGoForward: !this.destroyed && this.hasContents && this.contents.navigationHistory.canGoForward(),
-      errors: this.errors, width: this.width, theme: this.theme, slowNetwork: this.slowNetwork, ...(this.step ? { step: this.step } : {}),
+      errors: this.errors, width: this.width, theme: this.theme, slowNetwork: this.slowNetwork, ...((this.presentationFeedback.step ?? this.step) ? { step: this.presentationFeedback.step ?? this.step } : {}),
+      ...(this.presentationFeedback.cursor ? { agentCursor: this.presentationFeedback.cursor } : {}),
+      ...(this.presentationFeedback.highlight ? { agentHighlight: this.presentationFeedback.highlight } : {}),
       ...(this.picking && this.ready && this.pickerHover.value ? { hovered: this.pickerHover.value } : {}),
       ...(this.target ? { target: this.target } : {}) };
   }
@@ -398,7 +411,8 @@ export class BrowserPage {
       this.viewportRevision++;
       const hadViewport = this.viewport.width > 0 && this.viewport.height > 0;
       if (responsiveChange) this.target = undefined;
-      if (hadViewport && this.lease.driver === 'agent') { if (responsiveChange) this.lease.takeOver(); else this.lease.generation++; this.host.changed(); }
+      this.presentationFeedback.clearPointer();
+      if (hadViewport && this.lease.driver === 'agent') { if (responsiveChange) this.lease.takeOver(false, false); else this.lease.generation++; this.host.changed(); }
     }
     this.bounds = bounds; this.viewport = viewport; this.zoom = zoom;
     this.agentView?.setBounds({ x: 0, y: 0, width: Math.max(2, Math.round(bounds.width)), height: Math.max(2, Math.round(bounds.height)) });
@@ -578,7 +592,7 @@ export class BrowserPage {
     this.pickerCancellation.abort();
     this.pickerHover.destroy();
     this.downloads.dispose();
-    this.lease.takeOver(); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);
+    this.presentationFeedback.dispose(); this.lease.takeOver(false, false); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);
     const contents = this.engine;
     if (this.agentView && !this.host.window.isDestroyed()) this.host.window.contentView.removeChildView(this.agentView);
     if (contents && !contents.isDestroyed()) { if (contents.debugger.isAttached()) contents.debugger.detach(); contents.close({ waitForBeforeUnload: false }); }

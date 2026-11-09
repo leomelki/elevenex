@@ -103,10 +103,14 @@ It uses an isolated preview bridge; it does not establish external SSH behavior.
 ## Driver ownership and privacy
 
 Each tab has one authoritative driver and a monotonic generation. User-created
-tabs start with the user; agent-created tabs remember their session. Hand back is
-explicit and backend-authorized against that task/session. Agents cannot select
-over a user's active tab or close user-created tabs. Human-controlled tabs
-require explicit handoff before agents can observe or interact with them.
+tabs start with the user; agent-created tabs remember their session. Explicit
+`browser.page(tabId)` or legacy `browser.tabs.get(tabId)` can acquire available
+task tabs without a user handoff. Agents cannot seize another conversation's
+controlled tab or close user-created tabs. **Stop agent** is available whenever
+a tab is agent-controlled, including without step metadata. Stop and human page
+input pause the entire opener/popup group until explicit, backend-authorized
+**Hand back**. Code reset and presentation changes do not clear that pause.
+UI-only rehosting/resizing invalidates old handles but allows fresh acquisition.
 Native `before-input-event`/`before-mouse-event`, or the remote host's first human
 input, revokes agent authority before accepting interaction. Every awaited action
 rechecks its generation, task, visibility, viewport and navigation. Menus, motion,
@@ -115,6 +119,12 @@ An uncertain action is never retried or replayed automatically.
 
 Agent steps/targets are trusted app overlays in **page CSS coordinates**. They do
 not grant authority and are cleared when their coordinate generation changes.
+Code-first `browser.step` publishes the current phase and status. `browser.cursor`
+publishes `agentCursor` and optional `agentHighlight`; genuine pointer input also
+updates cursor metadata. The owner maps both through the same streamed viewport
+conversion used by picked/hovered elements, including phone and companion views.
+The presentational view animates position and one-shot pulses; no page markup,
+custom styles, delay or extra renderer/platform capability is involved.
 The MCP surface is `browser_run` plus `browser_reset`; the old `task_browser`
 tool is removed. The [code-first browser guide](../../../../../docs/browser-agent.md)
 describes the shared execution engine, page-scoped CDP, bounded AX snapshots,
@@ -123,7 +133,7 @@ observations. `agentCode: 1` advertises this policy. The `privacy` field keeps i
 legacy wire value for older consumers; UI copy follows the capability. Older
 hosts continue to show the metadata-only policy.
 
-Human-controlled tabs withhold both reads and writes. Once handed back, agents
+Tabs withhold reads and writes until acquired or handed back. Once controlling a tab, agents
 can read and change page content, including editable fields; no secret masking
 is promised. Agents cannot close user-created tabs. Code state is confined to
 the authenticated task/session, and ownership epochs invalidate old handles.

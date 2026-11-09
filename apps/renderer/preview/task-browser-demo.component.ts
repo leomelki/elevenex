@@ -15,6 +15,11 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
     this.changed?.(this.state);
   }
   private nextId = 0;
+  /** Simulate agent acquisition without adding automation to the product bridge. */
+  drive(tabId: string): void {
+    this.state = { ...this.state, agentCode: 1, revision: this.state.revision + 1, tabs: this.state.tabs.map(tab => tab.id === tabId ? { ...tab, driver: 'agent', agentSessionId: 2, generation: tab.generation + 1, waiting: false } : tab) };
+    this.changed?.(this.state);
+  }
   async taskBrowserRead(): Promise<BackendResult<TaskBrowserState>> { return { ok: true, value: this.state }; }
   async taskBrowserConfigure(_scope: string, _task: number, placement: TaskBrowserPlacement): Promise<BackendResult<TaskBrowserState>> {
     if (this.state.tabs.some(tab => tab.url)) return { ok: false, error: { code: 'unavailable', message: 'Close loaded tabs first.' } };
@@ -40,6 +45,8 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
     else if (input.kind === 'close') {
       const tabs = this.state.tabs.filter(tab => tab.id !== input.tabId);
       this.state = { ...this.state, tabs, active: this.state.active === input.tabId ? tabs.at(-1)?.id ?? null : this.state.active };
+    } else if (input.kind === 'takeover' || input.kind === 'handoff') {
+      this.state = { ...this.state, tabs: this.state.tabs.map(tab => tab.id === input.tabId ? { ...tab, driver: input.kind === 'takeover' ? 'you' : 'agent', waiting: input.kind === 'takeover', generation: tab.generation + 1 } : tab) };
     } else if (input.kind === 'navigate') {
       this.state = { ...this.state, tabs: this.state.tabs.map(tab => tab.id === input.tabId ? { ...tab, url: input.url, title: new URL(input.url).host, error: 'Website loading is unavailable in this component preview.' } : tab) };
     }

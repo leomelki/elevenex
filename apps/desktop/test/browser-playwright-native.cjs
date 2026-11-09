@@ -61,6 +61,7 @@ module.exports = async function browserPlaywrightNative() {
       value: await operation({ url: base }, new AbortController().signal),
     }),
   };
+  const presentationUpdates = [];
   const task = new TaskBrowser(
     'scope',
     1,
@@ -71,7 +72,11 @@ module.exports = async function browserPlaywrightNative() {
     'native-pw-' + Date.now(),
     profiles,
     false,
-    () => {},
+    state => {
+      const tab = state.tabs.at(-1);
+      if (tab?.step?.text.startsWith('Native feedback') && presentationUpdates.length < 128)
+        presentationUpdates.push({ status: tab.step.status, cursor: tab.agentCursor, highlight: tab.agentHighlight });
+    },
     () => true,
   );
   const run = (code, timeoutMs = 20000) =>
@@ -81,22 +86,72 @@ module.exports = async function browserPlaywrightNative() {
       new AbortController().signal,
     );
   try {
+    console.log('Native Playwright: checking autonomous acquisition and user stop');
+    const opened = await task.command({ kind: 'open', url: base });
+    const userPage = task.pages.get(opened.active);
+    userPage.ensureAgentView();
+    const readyDeadline = Date.now() + 15000;
+    while (userPage.loading || userPage.contents.getURL() === 'about:blank' || !userPage.contents.getURL()) {
+      if (Date.now() > readyDeadline) throw new Error('User tab did not load');
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const id = JSON.stringify(userPage.id);
+    const acquired = await run(`
+      state.userPage=await browser.page(${id});
+      await state.userPage.getByLabel('Name',{exact:true}).fill('Acquired');
+      await state.userPage.frameLocator('iframe').getByRole('button').click();
+      return await state.userPage.frameLocator('iframe').getByRole('button').textContent();
+    `);
+    assert.equal(acquired.error, undefined, JSON.stringify(acquired));
+    assert.equal(acquired.value, 'Frame done');
+    const foreign = await task.code(3, { kind: 'code', code: `await browser.page(${id})`, timeoutMs: 15000 }, new AbortController().signal);
+    assert.match(foreign.error.message, /another conversation/);
+    await task.command({ kind: 'takeover', tabId: userPage.id });
+    assert.ok((await run('return await state.userPage.title()')).error);
+    assert.match((await run(`await browser.page(${id})`)).error.message, /stopped/);
+    assert.match((await run(`await browser.tabs.get(${id})`)).error.message, /stopped/);
+    await task.code(2, { kind: 'code', code: '', reset: true, timeoutMs: 15000 }, new AbortController().signal);
+    assert.match((await run(`await browser.page(${id})`)).error.message, /stopped/);
+    await task.command({ kind: 'handoff', tabId: userPage.id, sessionId: 2 });
+    const resumed = await run(`state.userPage=await browser.page(${id});return await state.userPage.getByLabel('Name',{exact:true}).inputValue()`);
+    assert.equal(resumed.error, undefined, JSON.stringify(resumed));
+    assert.equal(resumed.value, 'Acquired');
+    assert.match((await run(`const tab=await browser.tabs.get(${id});await tab.close()`)).error.message, /User-created/);
+    userPage.lease.takeOver(false, false);
+    const helper = await run(`state.userTab=await browser.tabs.get(${id});return await state.userTab.evaluate(()=>document.title)`);
+    assert.equal(helper.error, undefined, JSON.stringify(helper));
+    assert.equal(helper.value, 'Native Playwright');
+    await task.command({ kind: 'close', tabId: userPage.id });
     console.log('Native Playwright: starting page and locator checks');
     const result = await run(`
       state.page=await context.newPage();const label='Native real Playwright';
       await state.page.route('**/api',route=>route.fulfill({json:{label}}));
       await state.page.goto(${JSON.stringify(base)});
+      await browser.step(state.page,{n:1,total:3,text:'Native feedback: choose Save',status:'running'});
       await state.page.getByLabel('Name',{exact:true}).fill('Native text');
-      await state.page.getByRole('button',{name:'Save',exact:true}).click();
+      const save=state.page.getByRole('button',{name:'Save',exact:true});
+      await browser.cursor.move(state.page,save,{highlight:true,label:'Save'});
+      await browser.step(state.page,{n:2,total:3,text:'Native feedback: verify result',status:'waiting'});
+      await save.click();
       await expect(state.page.getByRole('heading')).toHaveText(label);
       await state.page.frameLocator('iframe').getByRole('button').click();
       await expect(state.page.frameLocator('iframe').getByRole('button')).toHaveText('Frame done');
+      await browser.step(state.page,{n:3,total:3,text:'Native feedback verified',status:'done'});
       await emitImage(await state.page.screenshot({fullPage:true}));
       return await state.page.getByLabel('Name',{exact:true}).inputValue();
     `);
     assert.equal(result.error, undefined, JSON.stringify(result));
     assert.equal(result.value, 'Native text');
     assert.equal(result.images.length, 1);
+    assert.ok(presentationUpdates.some(update => update.cursor && update.highlight), JSON.stringify(presentationUpdates));
+    assert.equal(task.snapshot().tabs.at(-1).step.status, 'done');
+    assert.equal(task.snapshot().tabs.at(-1).agentCursor, undefined);
+    const cursorShown = await run("await browser.cursor.move(state.page,{x:45,y:55},{pulse:true});return await state.page.evaluate(()=>document.querySelector('.agent-cursor')===null)");
+    assert.equal(cursorShown.error, undefined, JSON.stringify(cursorShown));
+    assert.equal(cursorShown.value, true, 'Decorations belong to trusted app chrome, not the website');
+    assert.equal(task.snapshot().tabs.at(-1).agentCursor.x, 45);
+    await run('await browser.cursor.hide(state.page)');
+    assert.equal(task.snapshot().tabs.at(-1).agentCursor, undefined);
     const artifacts = resolve(
       dirname(require.resolve('./browser-playwright-native.cjs')),
       '../../../artifacts/browser-playwright',

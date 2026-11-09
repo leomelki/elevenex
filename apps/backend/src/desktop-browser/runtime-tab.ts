@@ -1,4 +1,5 @@
 import { browserHoverAt, BrowserPickerHover, resolvePickedBrowserSources, pickBrowserElement } from '@elevenex/browser-agent';
+import { BrowserAgentPresentation } from '@elevenex/browser-agent';
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
 import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
@@ -20,6 +21,7 @@ export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
+  private readonly presentationFeedback = new BrowserAgentPresentation(() => this.changed());
   agentPicker?: (x: number, y: number) => Promise<void>;
   agentSelectionPaused = false;
   private readonly documentScope = randomUUID();
@@ -51,7 +53,7 @@ export class RuntimeBrowserTab {
         !this.cdp
       )
         throw new Error(
-          'Tab control changed; wait for human handoff, then get a fresh tab handle',
+          'Tab control changed. Acquire a fresh handle; a user stop requires Hand back.',
         );
     };
     assert();
@@ -92,10 +94,21 @@ export class RuntimeBrowserTab {
         id: this.id,
         assert,
         // The shared broker validates protocol names and parameters at runtime.
-        send: (method, params, child) => {
+        send: async (method, params, child) => {
           assert();
+          const generation = this.generation;
           input.record(method, params);
-          return lease.send(method, params, child);
+          const result = await lease.send(method, params, child);
+          assert(); if (!human && generation === this.generation) { if (method === 'Input.dispatchMouseEvent') this.target = undefined; this.presentationFeedback.input(method, params); }
+          return result;
+        },
+        present: (command, documentId, generation) => {
+          assert();
+          if (human || (command.kind === 'cursor' && documentId !== this.documentId)) throw new Error('Browser feedback document changed');
+          // A viewport-only race discards decoration, never delays/replays input.
+          if (command.kind === 'cursor' && generation !== this.generation) return;
+          this.target = undefined;
+          this.presentationFeedback.update(command);
         },
         subscribe: (listener) => {
           const stopEvents = lease.subscribe(listener);
@@ -125,7 +138,7 @@ export class RuntimeBrowserTab {
         dispose: async () => {
           if (closed) return;
           closed = true;
-          if (playing) this.playwrightConnections--;
+          if (playing && --this.playwrightConnections === 0 && this.driver === 'agent') this.presentationFeedback.interrupt();
           input.release();
           await lease.dispose();
           for (const stop of events) stop();
@@ -251,7 +264,11 @@ export class RuntimeBrowserTab {
     this.agentSessionId = sessionId;
     this.network = network;
   }
-  takeover(needs = false): void {
+  agentPaused = false;
+  stopAgent(): void { this.agentPaused = true; this.waiting = true; this.takeover(); }
+  takeover(needs = false, pauseAgent = true): void {
+    this.presentationFeedback.clear();
+    this.agentPaused ||= pauseAgent && (this.driver === 'agent' || needs);
     for (const input of this.agentInputs) input.release();
     void this.input?.reset();
     void this.input?.unlockPointer();
@@ -263,6 +280,8 @@ export class RuntimeBrowserTab {
     this.controlChanged();
   }
   handoff(sessionId: number): void {
+    this.presentationFeedback.clear();
+    this.agentPaused = false;
     for (const input of this.agentInputs) input.release();
     void this.input?.reset();
     void this.input?.unlockPointer();
@@ -453,6 +472,7 @@ export class RuntimeBrowserTab {
   }
   private navigated(page: Page, address: string, sameDocument: boolean): void {
     if (this.disposed || this.page !== page) return;
+    this.presentationFeedback.clearPointer();
     if (!sameDocument) {
       void this.workflows.documentChanged();
       this.cursor = 'default';
@@ -549,7 +569,9 @@ export class RuntimeBrowserTab {
       theme: this.theme,
       slowNetwork: this.slowNetwork,
       waiting: this.waiting,
-      step: this.step,
+      step: this.presentationFeedback.step ?? this.step,
+      ...(this.presentationFeedback.cursor ? { agentCursor: this.presentationFeedback.cursor } : {}),
+      ...(this.presentationFeedback.highlight ? { agentHighlight: this.presentationFeedback.highlight } : {}),
       target: this.target,
       ...(this.picking && this.ready && this.pickerHover.value ? { hovered: this.pickerHover.value } : {}),
     };
@@ -640,7 +662,8 @@ export class RuntimeBrowserTab {
       if (!current()) return;
       const resized = viewport.width !== this.viewport.width || viewport.height !== this.viewport.height;
       if (resized) {
-        if (viewport.width !== this.viewport.width) this.takeover();
+        this.presentationFeedback.clearPointer();
+        if (viewport.width !== this.viewport.width) this.takeover(false, false);
         else this.generation++;
       }
       // Publish the new generation with its epoch, before any asynchronous CDP
@@ -897,6 +920,7 @@ export class RuntimeBrowserTab {
   }
   async destroy(): Promise<void> {
     if (this.disposed) return;
+    this.presentationFeedback.dispose();
     this.disposed = true;
     this.pickerCancellation.abort();
     this.pickerHover.destroy();

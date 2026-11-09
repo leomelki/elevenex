@@ -3,6 +3,8 @@ export interface BrowserAgentTarget {
   readonly id: string;
   /** Must reject closed/replaced targets and every intervening human takeover. */
   assert(): void;
+  /** Cosmetic metadata only, subject to this same live page capability. */
+  present?(command: import('@elevenex/shared').BrowserPresentationCommand, documentId?: string, generation?: number): void | Promise<void>;
   send(
     method: string,
     params: Record<string, unknown>,
@@ -51,6 +53,8 @@ export interface BrowserAgentHost {
   ): Promise<import('@elevenex/shared').BrowserHumanRequest>;
   document?(tabId: string): string | undefined;
   newPage?(sessionId: number, signal: AbortSignal): Promise<BrowserAgentTarget>;
+  /** Explicit code acquisition only. Internal reads/reconnects must use get. */
+  acquire?(sessionId: number, tabId: string, signal: AbortSignal): Promise<void>;
   list(
     sessionId: number,
   ): readonly {
@@ -58,6 +62,7 @@ export interface BrowserAgentHost {
     owned: boolean;
     url?: string;
     populated?: boolean;
+    generation?: number;
   }[];
   open(
     sessionId: number,

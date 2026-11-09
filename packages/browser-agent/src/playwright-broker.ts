@@ -1,4 +1,6 @@
 import { PlaywrightRoutes } from './playwright-routes.js';
+import { browserPresentationCommand } from './presentation.js';
+import { browserCursorCommand } from './playwright-presentation.js';
 import { selectedBrowserElement, validateBrowserSelection } from './element-selection.js';
 import { PlaywrightHTTP } from './playwright-http.js';
 import { Readable } from 'node:stream';
@@ -110,7 +112,7 @@ export class PlaywrightBroker {
         .some((row) => row.id === owner && row.owned)
     )
       throw new Error(
-        'Page control changed. Wait for handoff and explicitly acquire a fresh page.',
+        'Page control changed. Acquire a fresh page; a user stop requires Hand back.',
       );
   }
   private async connect(): Promise<void> {
@@ -906,6 +908,27 @@ export class PlaywrightBroker {
         done: next.done === true,
         value: await this.encode(next.value, entry.owner),
       };
+    } else if (op === 'browser-step' || op === 'browser-cursor' || op === 'browser-cursor-hide') {
+      const entry = await this.resolve(object(input['page']));
+      if (entry.type !== 'Page' || !entry.owner) throw new Error('Browser feedback requires a controlled Playwright Page');
+      const documentId = this.host.document?.(entry.owner);
+      const generation = this.host.list(this.sessionId).find(row => row.id === entry.owner)?.generation;
+      let command: import('@elevenex/shared').BrowserPresentationCommand;
+      if (op === 'browser-step') command = browserPresentationCommand({ kind: 'step', step: await this.decode(input['step']) });
+      else if (op === 'browser-cursor-hide') command = { kind: 'hide-cursor' };
+      else {
+        const rawTarget = object(input['target']);
+        let target: { locator: import('playwright-core').Locator } | { point: unknown };
+        if (rawTarget['__pw']) {
+          const locator = await this.resolve(rawTarget);
+          if (locator.type !== 'Locator' || locator.owner !== entry.owner) throw new Error('Cursor locator must belong to this page');
+          target = { locator: locator.value as import('playwright-core').Locator };
+        } else target = { point: rawTarget };
+        command = await browserCursorCommand(entry.value as Page, target, await this.decode(input['options']));
+      }
+      this.assertOwner(entry.owner);
+      await this.transport.present(entry.owner, command, documentId, generation);
+      result = null;
     } else if (op === 'human-request') {
       if (!this.host.interact)
         throw new Error('This browser host does not support human requests');
@@ -997,6 +1020,7 @@ export class PlaywrightBroker {
     else if (op === 'page') {
       await this.connect();
       const id = String(input['tabId']);
+      await this.host.acquire?.(this.sessionId, id, signal);
       await this.transport.acquire(id);
       for (let attempts = 0; attempts < 400; attempts++) {
         for (const page of this.context!.pages()) {

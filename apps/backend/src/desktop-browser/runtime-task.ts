@@ -31,7 +31,7 @@ export class RuntimeBrowserTask {
         if (tab.driver !== 'agent')
           for (const id of this.relatedTabs.members(tab.id)) {
             const sibling = this.tabs.get(id);
-            if (sibling?.driver === 'agent') sibling.takeover(true);
+            if (sibling?.driver === 'agent') sibling.takeover(tab.driver === 'needs', tab.agentPaused);
           }
     } finally {
       this.controlUpdating = false;
@@ -52,6 +52,24 @@ export class RuntimeBrowserTask {
     }
     this.revision++;
   }
+  private async acquirePage(sessionId: number, tabId: string, signal: AbortSignal): Promise<void> {
+    const tab = this.page(tabId);
+    const check = () => {
+      signal.throwIfAborted();
+      if (!this.alive || this.tabs.get(tabId) !== tab)
+        throw new Error('Tab control changed while acquiring it.');
+      const members = this.relatedTabs.members(tabId).map(id => this.page(id));
+      if (members.some(page => page.agentPaused || page.driver === 'needs'))
+        throw new Error('Browser agent is stopped. Wait for the user to hand control back.');
+      if (members.some(page => page.driver === 'agent' && page.agentSessionId !== sessionId))
+        throw new Error('This tab is controlled by another conversation.');
+      return members;
+    };
+    check();
+    await this.ensure(tab);
+    const members = check();
+    if (members.some(page => page.driver !== 'agent')) this.handBackGroup(tab, sessionId);
+  }
   private readonly codeEngine = new BrowserAgentEngine({
     playwright: true,
     profile: { cookies: async () => (await this.contextForTask()).cookies(), addCookies: async cookies => (await this.contextForTask()).addCookies(cookies), clearCookies: async () => (await this.contextForTask()).clearCookies() },
@@ -62,7 +80,8 @@ export class RuntimeBrowserTask {
     version: async () => (await this.contextForTask()).browser()?.version() ?? '140.0.0.0',
     proxy: () => this.network.start(),
     newPage: (sessionId, signal) => this.openCodePage(sessionId, '', signal),
-    list: sessionId => [...this.tabs.values()].map(tab => ({ id: tab.id, populated: !!tab.url || tab.started, owned: tab.driver === 'agent' && tab.agentSessionId === sessionId, ...(tab.driver === 'agent' && tab.agentSessionId === sessionId ? { url: tab.url } : {}) })),
+    acquire: (sessionId, tabId, signal) => this.acquirePage(sessionId, tabId, signal),
+    list: sessionId => [...this.tabs.values()].map(tab => ({ id: tab.id, generation: tab.generation, populated: !!tab.url || tab.started, owned: tab.driver === 'agent' && tab.agentSessionId === sessionId, ...(tab.driver === 'agent' && tab.agentSessionId === sessionId ? { url: tab.url } : {}) })),
     open: (sessionId, url, signal) => this.openCodePage(sessionId, url, signal),
     get: (sessionId, tabId) => Promise.resolve(this.codeTarget(this.page(tabId), sessionId)),
   });
@@ -128,10 +147,10 @@ export class RuntimeBrowserTask {
   }
   async layoutTab(tabId: string, width: number, height: number, visible: boolean, interactive: boolean, pixelRatio: number, colorScheme: 'light' | 'dark', detached = true): Promise<void> {
     const page = this.page(tabId);
-    if (!detached) { this.presentations.delete(tabId); page.takeover(); await page.layout(width, height, false); this.revision++; return; }
+    if (!detached) { this.presentations.delete(tabId); page.takeover(false, false); await page.layout(width, height, false); this.revision++; return; }
     this.touch();
     const view = { width, height, visible, interactive, pixelRatio, colorScheme, seen: Date.now() };
-    if (!this.presentations.has(tabId)) { page.takeover(); this.revision++; }
+    if (!this.presentations.has(tabId)) { page.takeover(false, false); this.revision++; }
     this.presentations.set(tabId, view);
     if (visible && !page.started && page.url && !page.error) {
       this.launchForDisplay(page, () => {
@@ -673,7 +692,8 @@ export class RuntimeBrowserTask {
         if (authentication && page.documentUrl && new URL(page.documentUrl).origin === authentication.origin) throw new Error('Finish authentication before handing control back');
         this.handBackGroup(page, input.sessionId);
       }
-      else if (input.kind === 'takeover' || input.kind === 'focus')
+      else if (input.kind === 'takeover') page.stopAgent();
+      else if (input.kind === 'focus')
         page.takeover();
       else if (input.kind === 'navigate') {
         page.takeover();

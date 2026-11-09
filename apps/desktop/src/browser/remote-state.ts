@@ -1,4 +1,4 @@
-import { browserHumanRequests } from '@elevenex/browser-agent';
+import { browserHumanRequests, browserAgentCursor, browserAgentHighlight } from '@elevenex/browser-agent';
 import { isBrowserElementSnapshot, browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
 import type {
   BrowserElement,
@@ -110,8 +110,14 @@ function tab(value: unknown): TaskBrowserTab {
   const cursor = raw['cursor'] === undefined ? undefined : browserCursors.find(value => value === raw['cursor']);
   if (raw['cursor'] !== undefined && cursor === undefined) invalid();
   const step = raw["step"] === undefined ? undefined : record(raw["step"]);
+  const status = step?.['status'];
+  if (status !== undefined && status !== 'running' && status !== 'waiting' && status !== 'done' && status !== 'error') invalid();
+  const agentCursor = raw['agentCursor'] === undefined ? undefined : record(raw['agentCursor']);
+  const agentHighlight = raw['agentHighlight'] === undefined ? undefined : record(raw['agentHighlight']);
   return {
     id,
+    ...(agentCursor ? { agentCursor: browserAgentCursor({ x: agentCursor['x'], y: agentCursor['y'], pulse: agentCursor['pulse'] }) } : {}),
+    ...(agentHighlight ? { agentHighlight: browserAgentHighlight({ x: agentHighlight['x'], y: agentHighlight['y'], width: agentHighlight['width'], height: agentHighlight['height'], label: agentHighlight['label'] }) } : {}),
     ...(Array.isArray(workflows) ? { workflows: workflows.map(workflow) } : {}),
     ...(cursor ? { cursor } : {}),
     ...(raw['pointerLocked'] === undefined ? {} : { pointerLocked: boolean(raw['pointerLocked']) }),
@@ -137,6 +143,7 @@ function tab(value: unknown): TaskBrowserTab {
     ...(step
       ? {
           step: {
+            ...(status === undefined ? {} : { status }),
             n: integer(step["n"], 1, 10000),
             text: text(step["text"], 400),
             ...(step["total"] === undefined

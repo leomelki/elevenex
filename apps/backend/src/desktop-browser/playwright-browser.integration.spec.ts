@@ -80,6 +80,82 @@ describe('Real Playwright in the task browser', () => {
     else process.env['ELEVENEX_DATA_ROOT'] = previous;
     await rm(root, { recursive: true, force: true });
   });
+  it('acquires a user tab in one call, respects Stop through reset and resumes only after handoff', async () => {
+    const opened = await task.command({ kind: 'open', url: base });
+    const id = opened.active!;
+    const acquired = await run(`
+      state.userPage=await browser.page(${JSON.stringify(id)});
+      await state.userPage.getByLabel('Name',{exact:true}).fill('Acquired');
+      await state.userPage.getByRole('button',{name:'Save',exact:true}).click();
+      return await state.userPage.evaluate(()=>trusted);
+    `);
+    expect(acquired.error).toBeUndefined();
+    expect(acquired.value).toEqual([true, true]);
+    expect(task.tabs.get(id)!.driver).toBe('agent');
+    const foreign = await task.code(3, { kind: 'code', code: `await browser.page(${JSON.stringify(id)})`, timeoutMs: 15000 }, new AbortController().signal);
+    expect(foreign.error?.message).toContain('another conversation');
+
+    await task.command({ kind: 'takeover', tabId: id });
+    expect((await run('return await state.userPage.title()')).error).toBeDefined();
+    expect((await run(`await browser.page(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
+    expect((await run(`await browser.tabs.get(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
+    await task.code(2, { kind: 'code', code: '', reset: true, timeoutMs: 15000 }, new AbortController().signal);
+    expect((await run(`await browser.page(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
+    await task.command({ kind: 'handoff', tabId: id, sessionId: 2 });
+    const resumed = await run(`state.userPage=await browser.page(${JSON.stringify(id)});return await state.userPage.getByLabel('Name',{exact:true}).inputValue()`);
+    expect(resumed.error).toBeUndefined();
+    expect(resumed.value).toBe('Acquired');
+    expect((await run(`const tab=await browser.tabs.get(${JSON.stringify(id)});await tab.close()`)).error?.message).toContain('User-created');
+    // UI-only ownership changes allow fresh acquisition without replaying old work.
+    task.tabs.get(id)!.takeover(false, false);
+    expect((await run(`state.userTab=await browser.tabs.get(${JSON.stringify(id)});return await state.userTab.evaluate(()=>document.title)`)).value).toBe('Playwright task');
+    await task.command({ kind: 'close', tabId: id });
+  });
+  it('publishes steps and cursor feedback live within one call, then rejects stale/stopped feedback', async () => {
+    const updates: { status?: string; cursor?: { x: number; y: number; pulse: number }; highlight?: { width: number } }[] = [];
+    const stop = task.subscribe(() => {
+      const tab = task.state().tabs.at(-1);
+      if (tab?.step?.text.startsWith('Feedback')) updates.push({ status: tab.step.status, cursor: tab.agentCursor, highlight: tab.agentHighlight });
+    });
+    try {
+      const result = await run(`
+        state.feedbackPage=await context.newPage();
+        await state.feedbackPage.goto(${JSON.stringify(base)});
+        await browser.step(state.feedbackPage,{n:1,total:3,text:'Feedback: locate Save',status:'running'});
+        const save=state.feedbackPage.getByRole('button',{name:'Save',exact:true});
+        await browser.cursor.move(state.feedbackPage,save,{highlight:true,label:'Save changes'});
+        await browser.step(state.feedbackPage,{n:2,total:3,text:'Feedback: waiting for result',status:'waiting'});
+        await state.feedbackPage.route('**/api',route=>route.fulfill({json:{label:'Feedback verified'}}));
+        await save.click();
+        await expect(state.feedbackPage.getByRole('heading')).toHaveText('Feedback verified');
+        await browser.step(state.feedbackPage,{n:3,total:3,text:'Feedback verified',status:'done'});
+        return await state.feedbackPage.evaluate(()=>document.querySelector('.agent-cursor')===null);
+      `);
+      expect(result.error).toBeUndefined(); expect(result.value).toBe(true);
+      expect(updates.some(update => update.status === 'running' && update.cursor && update.highlight && update.highlight.width > 0)).toBe(true);
+      expect(updates.some(update => update.status === 'waiting' && (update.cursor?.pulse ?? 0) > 0)).toBe(true);
+      expect(updates.at(-1)).toEqual({ status: 'done', cursor: undefined, highlight: undefined });
+      const tab = [...task.tabs.values()].at(-1)!;
+      expect((await run('await browser.cursor.move(state.feedbackPage,{x:Infinity,y:20})')).error).toBeDefined();
+      await run('await browser.cursor.move(state.feedbackPage,{x:40,y:50},{pulse:true});await browser.cursor.hide(state.feedbackPage)');
+      expect(tab.snapshot().agentCursor).toBeUndefined();
+      const target = await tab.agentTarget(2, () => true, () => Promise.resolve(), () => Promise.resolve());
+      const documentId = tab.documentId;
+      const generation = tab.generation;
+      const viewport = await run('return await state.feedbackPage.evaluate(()=>({width:innerWidth,height:innerHeight}))');
+      const size = viewport.value as { width: number; height: number };
+      await tab.layout(size.width, size.height + 20, true, false);
+      await target.present!({ kind: 'cursor', point: { x: 20, y: 20 } }, documentId, generation);
+      expect(tab.snapshot().agentCursor).toBeUndefined();
+      await tab.navigate(base + '?next-document');
+      await expect(Promise.resolve().then(() => target.present!({ kind: 'cursor', point: { x: 20, y: 20 } }, documentId))).rejects.toThrow('document changed');
+      await target.dispose?.();
+      await task.command({ kind: 'takeover', tabId: tab.id });
+      expect((await run("await browser.step(state.feedbackPage,{n:1,text:'Late',status:'running'})")).error).toBeDefined();
+      expect(tab.snapshot().agentCursor).toBeUndefined();
+      await task.command({ kind: 'close', tabId: tab.id });
+    } finally { stop(); }
+  });
   it('uses actual locators, callback closures, assertions, frames and PNGs', async () => {
     const result = await run(`
       state.page=await context.newPage(); state.console=[];

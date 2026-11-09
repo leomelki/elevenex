@@ -29,7 +29,7 @@ export class TaskBrowser implements DesktopBrowserHost {
         )
           for (const id of this.relatedTabs.members(page.id)) {
             const sibling = this.pages.get(id);
-            if (sibling?.lease.driver === 'agent') sibling.lease.takeOver(true);
+            if (sibling?.lease.driver === 'agent') sibling.lease.takeOver(page.lease.driver === 'needs', page.lease.agentPaused);
           }
     } finally {
       this.controlUpdating = false;
@@ -46,6 +46,16 @@ export class TaskBrowser implements DesktopBrowserHost {
     }
     this.emit();
   }
+  private acquirePage(sessionId: number, tabId: string): void {
+    this.assertScope();
+    const page = this.page(tabId);
+    const members = this.relatedTabs.members(tabId).map(id => this.page(id));
+    if (members.some(item => item.lease.agentPaused || item.lease.driver === 'needs'))
+      throw new Error('Browser agent is stopped. Wait for the user to hand control back.');
+    if (members.some(item => item.lease.driver === 'agent' && item.lease.agentSessionId !== sessionId))
+      throw new Error('This tab is controlled by another conversation.');
+    if (members.some(item => item.lease.driver !== 'agent')) this.handBackGroup(page, sessionId);
+  }
   private readonly codeEngine = new BrowserAgentEngine({
     playwright: true,
     profile: { cookies: () => agentProfile(this.profile.session).cookies(), addCookies: cookies => agentProfile(this.profile.session).addCookies(cookies), clearCookies: () => agentProfile(this.profile.session).clearCookies() },
@@ -56,9 +66,10 @@ export class TaskBrowser implements DesktopBrowserHost {
     authorizeUrl: async (url, signal) => { signal.throwIfAborted(); await this.network.outside(browserUrl(url)); signal.throwIfAborted(); },
     version: () => Promise.resolve(process.versions.chrome ?? '140.0.0.0'),
     newPage: (sessionId, signal) => this.openCodePage(sessionId, signal),
+    acquire: async (sessionId, tabId, signal) => { signal.throwIfAborted(); this.acquirePage(sessionId, tabId); },
     list: sessionId => {
       this.assertScope();
-      return [...this.pages.values()].map(page => ({ id: page.id, populated: !!page.url || page.hasContents, owned: page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId,
+      return [...this.pages.values()].map(page => ({ id: page.id, generation: page.lease.generation, populated: !!page.url || page.hasContents, owned: page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId,
         ...(page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId ? { url: page.url } : {}) }));
     },
     open: async (sessionId, url, signal) => { browserUrl(url); return this.openCodePage(sessionId, signal); },
@@ -116,7 +127,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     const page = this.page(tabId);
     if (this.detached.has(tabId)) throw new Error('Tab already detached');
     if (this.active === tabId) this.clearPicker();
-    page.hide(); page.lease.takeOver();
+    page.hide(); page.lease.takeOver(false, false);
     this.detached.set(tabId, { window, heartbeat: 0, sequence: -1, controlsFocus: 0, presentation: page.presentation });
     this.rehostPage(page, window); this.surfaceEpoch++; this.emit();
   }
@@ -129,15 +140,15 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.surfaceEpoch++; this.emit();
   }
   private rehostPage(previous: BrowserPage, window?: BrowserWindow): BrowserPage {
-    if (previous.independent) { previous.displayWindow = window; previous.lease.takeOver(); return previous; }
+    if (previous.independent) { previous.displayWindow = window; previous.lease.takeOver(false, false); return previous; }
     const { id, url, documentUrl, width, theme, slowNetwork } = previous;
-    const generation = previous.lease.generation + 1, by = previous.lease.by, sessionId = previous.lease.agentSessionId;
+    const generation = previous.lease.generation + 1, by = previous.lease.by, sessionId = previous.lease.agentSessionId, paused = previous.lease.agentPaused, waiting = previous.lease.waiting;
     previous.destroy();
     // Electron cannot transfer an attached guest between renderer documents.
     // Rehost with the same task profile and tab identity, without reading forms,
     // page text or storage into the app. Location loads explicitly with user control.
     const page = this.create(by, sessionId, id);
-    page.lease.takeOver(); page.lease.generation = generation; page.width = width;
+    page.lease.takeOver(false, false); page.lease.agentPaused = paused; page.lease.waiting = waiting; page.lease.generation = generation; page.width = width;
     page.theme = theme; page.slowNetwork = slowNetwork; page.documentUrl = documentUrl; page.displayWindow = window; page.presentation = previous.presentation;
     if (url && this.selected()) void this.navigate(page, url).catch(() => undefined); else page.url = url;
     return page;
@@ -222,7 +233,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (!saved) return;
     for (const item of saved.tabs) {
       const page = this.create(item.by ?? 'you', item.agentSessionId ?? null); page.width = item.width;
-      page.lease.takeOver();
+      page.lease.takeOver(false, false);
       // Restored URLs load lazily on selection. No actions, handoffs or input are replayed.
       page.url = item.url; page.documentUrl = item.url;
     }
@@ -285,7 +296,7 @@ export class TaskBrowser implements DesktopBrowserHost {
       if (input.kind === 'select') { this.select(page); if (page.url && (!page.hasContents || !page.contents.getURL() || page.contents.getURL() === 'about:blank')) await this.navigate(page, page.url); }
       else if (input.kind === 'close') {
         await this.closePage(page);
-      } else if (input.kind === 'takeover') page.lease.takeOver();
+      } else if (input.kind === 'takeover') page.lease.stopAgent();
       else if (input.kind === 'focus') {
         if (!page.url || page.loading || page.error) throw new Error('Wait for the page to finish loading');
         if (page.lease.driver === 'agent') page.lease.takeOver();
@@ -389,7 +400,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     page.attach(contents); this.emit(); return true;
   }
   presentation(tabId: string, value: 'embedded' | 'stream'): void {
-    this.assertScope(); if (this.detached.has(tabId)) throw new Error('Return this tab before changing its display'); const page = this.page(tabId); if (page.independent && value !== 'stream') throw new Error('Agent-created tabs use streaming presentation'); page.hide(); page.lease.takeOver(); page.presentation = value; this.emit();
+    this.assertScope(); if (this.detached.has(tabId)) throw new Error('Return this tab before changing its display'); const page = this.page(tabId); if (page.independent && value !== 'stream') throw new Error('Agent-created tabs use streaming presentation'); page.hide(); page.lease.takeOver(false, false); page.presentation = value; this.emit();
   }
   acknowledge(tabId: string, stream: string, sequence: number): void { this.page(tabId).acknowledge(stream, sequence); }
   async userInput(tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number> {
@@ -432,7 +443,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (!retainDetached) for (const tabId of this.detached.keys()) this.hideDetached(tabId);
     for (const page of this.pages.values()) {
       if (retainDetached && this.detached.has(page.id)) continue;
-      page.lease.takeOver();
+      page.lease.takeOver(false, false);
       if (page.loading && page.hasContents && !page.contents.isLoadingMainFrame()) {
         page.loading = false; page.error = 'Browser work was interrupted. Check the server, then retry explicitly.';
       }

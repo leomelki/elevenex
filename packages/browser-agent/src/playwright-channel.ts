@@ -20,6 +20,7 @@ export interface BrowserHostSnapshot {
     owned: boolean;
     url?: string;
     populated?: boolean;
+    generation?: number;
   }[];
   readonly documents: readonly [string, string | undefined][];
 }

@@ -16,7 +16,8 @@ export interface BrowserTab extends ViewTab {
 }
 
 export type BrowserDriver = 'agent' | 'you' | 'needs';
-export interface BrowserStep { readonly n: number; readonly total?: number; readonly text: string }
+export interface BrowserStep { readonly n: number; readonly total?: number; readonly text: string; readonly status?: 'running' | 'waiting' | 'done' | 'error' }
+export interface BrowserCursor { readonly x: number; readonly y: number; readonly pulse: number }
 export interface BrowserTarget {
   readonly x: number; readonly y: number; readonly w: number; readonly h: number;
   readonly label: string; readonly file?: string;

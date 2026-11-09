@@ -687,6 +687,18 @@ native captures after building. When starting a disposable backend, set both
 directory, to avoid inheriting a running development session's database.
 ### Native task browser integration
 
+`scenarios/browser-agent-feedback.mjs` uses `/browser-agent` to check the real
+BrowserView's independent cursor, sampled glide, interrupted retarget, one-shot
+click pulse, running/waiting/done/error feedback, Stop focus and narrow/reduced
+motion in both themes. Native Electron and backend Chromium tests separately
+verify that the scoped agent API publishes this data during real browser work.
+
+`scenarios/browser-agent-control.mjs` uses the `/task-browser` preview to verify
+the production Stop/Hand back controls without step metadata, keyboard access
+and focus retention in both themes and narrow reduced-motion layouts. The
+preview transport simulates ownership; real acquisition/revocation is exercised
+separately by the native Electron and backend Chromium regressions.
+
 `scenarios/browser-new-tab.mjs` uses `--url http://127.0.0.1:4310/task-browser`
 to check the production default tab, +/Command/Ctrl-T, address focus/drafts,
 Enter navigation, task-server shortcuts, empty tabs and narrow/reduced-motion

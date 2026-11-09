@@ -60,7 +60,7 @@ const browserRun = defineTool({
   mutates: true,
   annotations: { openWorldHint: true, idempotentHint: false },
   description:
-    'Run JavaScript against the task browser with real Playwright locators, callbacks, HTTP/WebSocket mocking, assertions, files, inline screenshots and human action/element requests. Batch a workflow in one call. FIRST call without code for the full API and host choices. Top-level await/return; await all operations. No automatic page output. Human takeover revokes access. Never replay interrupted scripts; inspect first.',
+    'Run JavaScript against the task browser with real Playwright, assertions, files, screenshots and human requests. FIRST call without code for the API and host choices; reuse that guide afterward. Do as much useful work as possible per call: acquire, inspect, act, wait for conditions and verify together; return only for new reasoning, human input or deadlines. Update browser.step at meaningful phases and use browser.cursor.move to show targets within that same call. Genuine input also moves the displayed cursor. No animation sleeps or unnecessary observations. Top-level await/return; await operations. Human Stop revokes access. Never replay interrupted scripts; inspect first.',
   inputShape: {
     ...scope,
     code: z

@@ -73,6 +73,7 @@ export class BrowserAgentBroker {
       throw new Error(
         'At most twelve tab handles; reset the sandbox to release stale handles',
       );
+    if (id) await this.host.acquire?.(this.sessionId, id, signal);
     const raw = id
       ? await this.host.get(this.sessionId, id)
       : await this.host.open(this.sessionId, url!, signal);

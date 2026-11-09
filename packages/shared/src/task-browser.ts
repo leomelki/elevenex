@@ -121,7 +121,9 @@ export interface TaskBrowserTab {
   readonly waiting: boolean;
   readonly detached?: boolean;
   readonly server?: string;
-  readonly step?: { readonly n: number; readonly total?: number; readonly text: string };
+  readonly step?: import('./browser-presentation.js').BrowserAgentStep;
+  readonly agentCursor?: import('./browser-presentation.js').BrowserAgentCursor;
+  readonly agentHighlight?: import('./browser-presentation.js').BrowserAgentHighlight;
   readonly target?: BrowserElement;
   /** Optional on older hosts. Never included in agent observations. */
   readonly hovered?: BrowserHover;

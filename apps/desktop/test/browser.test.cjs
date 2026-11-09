@@ -15,13 +15,29 @@ test('tab moves validate stable anchors and remain unavailable to agent commands
   assert.throws(() => agentCommand({ kind: 'move-tab', tabId: id, generation: 1, beforeTabId: null }));
 });
 
-test('user tabs require explicit handoff; takeover invalidates every previously queued generation', () => {
+test('tab input requires an agent lease; takeover invalidates every previously queued generation', () => {
   const lease = new BrowserDriverLease('you');
   assert.throws(() => lease.assert(1));
   lease.handBack(2); const generation = lease.generation; lease.assert(generation);
   lease.takeOver(); assert.equal(lease.waiting, true); assert.throws(() => lease.assert(generation));
   lease.handBack(2); assert.throws(() => lease.assert(generation)); lease.assert(lease.generation, 2); assert.throws(() => lease.assert(lease.generation, 3));
   lease.takeOver(true); assert.equal(lease.driver, 'needs'); assert.throws(() => lease.assert(lease.generation));
+});
+test('user Stop survives presentation revocation until explicit handoff', () => {
+  const lease = new BrowserDriverLease('you');
+  assert.equal(lease.agentPaused, false);
+  lease.handBack(2);
+  lease.takeOver(false, false);
+  assert.equal(lease.agentPaused, false, 'A UI-only revocation allows fresh acquisition');
+  lease.handBack(2);
+  lease.stopAgent();
+  lease.takeOver(false, false);
+  assert.equal(lease.agentPaused, true);
+  assert.equal(lease.waiting, true);
+  lease.handBack(2);
+  assert.equal(lease.agentPaused, false);
+  lease.takeOver(true);
+  assert.equal(lease.agentPaused, true, 'Human workflows cannot be reclaimed');
 });
 test('navigation and tools reject privileged protocols, credentials, unknown fields and invalid coordinates', () => {
   for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'app://elevenex', 'https://user:pass@example.com', 'https://example.com/\nsecret']) assert.throws(() => browserUrl(url));
@@ -168,6 +184,13 @@ test('remote browser replies are bounded, resource matched and content allowlist
   assert.equal('pageText' in remoteBrowserState(value,'scope',1),false);
   const tab = { id, title: 'Page', url: 'https://example.com/', by: 'you', driver: 'you', agentSessionId: null, generation: 1, loading: false, ready: true, canGoBack: true, error: null, errors: 0, width: 'full', theme: 'system', slowNetwork: false, waiting: false };
   const withTab = { ...value, tabs: [tab], active: id };
+  const step = { n: 2, total: 3, text: 'Waiting for results', status: 'waiting' };
+  const agentCursor = { x: 50, y: 70, pulse: 3 };
+  const agentHighlight = { x: 30, y: 50, width: 100, height: 40, label: 'Save' };
+  const decorated = remoteBrowserState({ ...withTab, tabs: [{ ...tab, step, agentCursor: { ...agentCursor, script: 'withheld' }, agentHighlight }] }, 'scope', 1).tabs[0];
+  assert.deepEqual(decorated.step, step); assert.deepEqual(decorated.agentCursor, agentCursor); assert.deepEqual(decorated.agentHighlight, agentHighlight);
+  for (const change of [{ agentCursor: { ...agentCursor, x: NaN } }, { agentCursor: { ...agentCursor, pulse: -1 } }, { agentHighlight: { ...agentHighlight, width: -1 } }, { step: { ...step, status: 'html' } }])
+    assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, ...change }] }, 'scope', 1));
   const hovered = { tag: 'button', x: 10, y: 20, width: 100, height: 30 };
   assert.deepEqual(remoteBrowserState({ ...withTab, tabs: [{ ...tab, hovered: { ...hovered, text: 'private', attributes: ['value', 'secret'] } }] }, 'scope', 1).tabs[0].hovered, hovered);
   for (const change of [{ x: NaN }, { width: -1 }, { height: Infinity }, { tag: '<script>' }]) assert.throws(() => remoteBrowserState({ ...withTab, tabs: [{ ...tab, hovered: { ...hovered, ...change } }] }, 'scope', 1));

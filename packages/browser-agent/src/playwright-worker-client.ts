@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { browserPresentationCommand } from './presentation.js';
 import type {
   BrowserCodeImage,
   BrowserHumanCommand,
@@ -320,6 +321,11 @@ export class PlaywrightWorkerClient {
       if (!this.host.newPage) throw new Error('Page creation unavailable');
       return this.lease(await this.host.newPage(this.sessionId, signal));
     }
+    if (method === 'acquire') {
+      if (typeof args[0] !== 'string') throw new Error('Invalid page identifier');
+      await this.host.acquire?.(this.sessionId, args[0], signal);
+      return null;
+    }
     if (method === 'get' || method === 'open') {
       if (typeof args[0] !== 'string')
         throw new Error('Invalid page identifier');
@@ -389,6 +395,11 @@ export class PlaywrightWorkerClient {
         args[3] as string | undefined,
       );
       if (profile) this.assertProfile();
+    } else if (method === 'target-present') {
+      if (!target.present) throw new Error('Update this browser host to show agent feedback');
+      if (args[2] !== undefined && typeof args[2] !== 'string') throw new Error('Invalid document identity');
+      if (args[3] !== undefined && (typeof args[3] !== 'number' || !Number.isSafeInteger(args[3]) || args[3] < 1)) throw new Error('Invalid presentation generation');
+      await target.present(browserPresentationCommand(args[1]), args[2], args[3]);
     } else if (method === 'target-authorize') {
       if (typeof args[1] !== 'string') throw new Error('Invalid destination');
       await target.authorize?.(args[1], signal);

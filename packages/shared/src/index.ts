@@ -327,3 +327,4 @@ export interface ElevenexBridge {
 export type { BrowserCodeCommand, BrowserCodeResult, BrowserCodeImage } from './browser-code.js';
 export type { BrowserHumanCommand, BrowserHumanRequest, BrowserHumanElement } from './browser-human.js';
 export * from './browser-element-reference.js';
+export * from './browser-presentation.js';

@@ -1,6 +1,6 @@
 import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, inject, output, signal, viewChild } from '@angular/core';
 import { ButtonComponent, IconComponent } from '../src/app/ui';
-import { BrowserDriver, BrowserTab, BrowserTarget, BrowserViewComponent } from '../src/app/views';
+import { BrowserDriver, BrowserTab, BrowserTarget, BrowserViewComponent, type BrowserStep, type BrowserCursor } from '../src/app/views';
 
 /** Example content and geometry belong to this preview, never the browser bridge. */
 @Component({
@@ -23,6 +23,8 @@ export class BrowserDemoComponent {
     { id: 'docs', title: 'API docs', url: 'docs.example.com', by: 'you' },
   ]);
   protected readonly action = signal<BrowserTarget | undefined>(undefined);
+  protected readonly step = signal<BrowserStep>({ n: 5, total: 9, text: 'Checking the payment form', status: 'running' });
+  protected readonly cursor = signal<BrowserCursor | undefined>(undefined);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly checkout = viewChild<ElementRef<HTMLElement>>('checkout');
   private readonly pay = viewChild<unknown, ElementRef<HTMLButtonElement>>('pay', { read: ElementRef });
@@ -54,6 +56,18 @@ export class BrowserDemoComponent {
   }
 
   protected selectDriver(driver: BrowserDriver): void { this.driver.set(driver); this.setPicking(false); }
+  protected showTarget(): void {
+    const button = this.pay()?.nativeElement, target = button ? this.measure(button) : undefined;
+    if (!target) return;
+    this.selectDriver('agent');
+    this.action.set({ ...target, label: 'Checking the payment action' });
+    this.cursor.set({ x: target.x + target.w / 2, y: target.y + target.h / 2, pulse: (this.cursor()?.pulse ?? 0) + 1 });
+    this.step.set({ n: 2, total: 3, text: 'Checking the payment action', status: 'running' });
+  }
+  protected completeStep(): void {
+    this.cursor.set(undefined); this.action.set(undefined);
+    this.step.set({ n: 3, total: 3, text: 'Payment action verified', status: 'done' });
+  }
   /** Picking takes the page from the agent, as the desktop's control lease does. */
   protected setPicking(enabled: boolean): void {
     this.picking.set(enabled); this.picked.set(undefined); this.hovered.set(undefined); this.pickedNode = undefined;

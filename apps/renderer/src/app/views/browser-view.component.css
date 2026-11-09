@@ -41,9 +41,11 @@ small { color: var(--ink-muted); font-size: var(--text-caption-size); }
 .ring-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
 @keyframes ring-enter { from { opacity: 0; scale: 1.04; } }
 @keyframes ring-fade { to { opacity: 0; } }
-.agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out); }
+.agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-glide); }
+.cursor-enter { animation: fade-in var(--dur-fast) var(--ease-out) both; }
+.cursor-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
 .agent-cursor svg { position: relative; display: block; filter: drop-shadow(0 1px 2px var(--line-strong)); }
-.cursor-pulse { position: absolute; top: calc(-1 * var(--space-2)); left: calc(-1 * var(--space-2)); width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); animation: cursor-pulse calc(var(--dur-base) * 8) var(--ease-out) infinite; }
+.cursor-pulse { position: absolute; top: calc(-1 * var(--space-2)); left: calc(-1 * var(--space-2)); width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); animation: cursor-pulse var(--dur-deliberate) var(--ease-out) both; }
 @keyframes cursor-pulse { from { transform: scale(.4); opacity: .8; } to { transform: scale(1.6); opacity: 0; } }
 /* Picking: a quiet frame and one hint, both above the page and transparent to the pointer. */
 .page.pointing { cursor: crosshair; }
@@ -91,7 +93,11 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .step-copy b { flex: none; }
 .separator { margin-inline: var(--space-1); color: var(--ink-muted); }
 .step-copy ex-ease-swap { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.foot > .step-dots { display: flex; flex: none; gap: var(--space-1); min-height: var(--space-1); }
+.step-status { flex: none; color: var(--ink-muted); font: var(--text-caption-weight) var(--text-caption-size)/var(--text-caption-line) var(--font-sans); }
+.step-status.failed { color: var(--danger); }
+.agent-mark.failed { background: var(--danger-soft); color: var(--danger); }
+.foot > .step-progress { display: flex; flex: none; align-items: center; gap: var(--space-2); min-height: var(--text-caption-line); }
+.step-dots { display: flex; flex: none; gap: var(--space-1); min-height: var(--space-1); }
 .step-dots i { width: var(--space-1); height: var(--space-1); border-radius: var(--radius-full); background: var(--line-strong); opacity: .45; transition: background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
 .step-dots .done { background: var(--accent); opacity: .55; }
 .step-dots .now { background: var(--accent); opacity: 1; box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -100,8 +106,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); color: var(--ink-muted); font-size: var(--text-ui-size); }
 .empty p { margin: 0; }
 @container (max-width: 540px) {
-  .agent-step { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto var(--space-1); column-gap: var(--space-2); row-gap: var(--space-1); }
-  .agent-step > .step-dots { grid-column: 2; }
+  .agent-step { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: var(--space-2); row-gap: var(--space-1); }
+  .agent-step > .step-progress { grid-column: 2; }
 }
 @container (max-width: 360px) {
   .toolbar { flex-wrap: wrap; padding-block: var(--space-1); }
@@ -111,7 +117,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .driver, .page, .target, .agent-cursor, .step-dots i { transition: none; }
   .cursor-pulse { animation: none; opacity: 0; }
-  .ring-enter, .ring-leave, .frame-enter, .frame-leave, .hint-enter, .hint-leave, .question-enter, .question-leave { animation: none; }
+  .cursor-leave { opacity: 0; }
+  .ring-enter, .ring-leave, .frame-enter, .frame-leave, .hint-enter, .hint-leave, .question-enter, .question-leave, .cursor-enter, .cursor-leave { animation: none; }
   .target.picked::after { animation: none; opacity: 0; }
 }
 

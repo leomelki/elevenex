@@ -6,7 +6,10 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - `tabs`: `[{ id, title, url, server, by, color }]`. `by` is `'agent'` for tabs the agent opened; they carry its mark. `server` names the task's dev server serving the tab (web, api, storybook) and shows as a chip in the address bar.
 - `active`, `onSelect`, `onClose`, `onNew`.
 - `driver`: `'agent'` | `'you'` | `'needs'`, with `onTakeOver` and `onHandBack`.
-- `step`: `{ n, total, text }`, what the agent is doing now.
+- `step`: `{ n, total, text, status? }`, what the agent is doing now. The Angular
+  implementation accepts running, waiting, done or error and reuses status glyphs.
+- `cursor`: optional `{ x, y, pulse }`, an independent viewport-CSS cursor. A new
+  pulse identity produces one ripple; movement retargets the current glide.
 - `action`: `{ x, y, w, h, label }`, the element it acts on, in page coordinates.
 - `agentWaiting`: you took over in the middle of the agent's work.
 - `picking`, `onPick(on)`, `hovered` and `picked` (`{ x, y, w, h, label, file }`), `onAsk(text)`, `askLabel`, `askNote`.
@@ -18,7 +21,7 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 **While the agent drives**
 - Its tab's mark breathes. The pill in the address bar says **Driving**, and the view gets a thin accent frame with "Click anywhere to take over".
 - A ring and a label show the element it's acting on ("Typing a test card"), and its cursor **glides** to each new target (`dur-slow`, `ease-in-out`), with a soft pulse where it clicks. It never jumps.
-- The bar under the page says what it's doing: **Step 5 of 9 · Filling the card with a test number**, with a dot per step. The text crossfades from step to step. **Take over** is there too.
+- The bar under the page says what it's doing: **Step 5 of 9 · Filling the card with a test number**, with bounded step dots and current status. The text crossfades from step to step. **Stop agent** is always available, including without step metadata, and becomes **Hand back** when stopped.
 - **Your click or keystroke in the page takes over at once.** The agent stops and waits, and the bar says "You're driving; the agent waits" with **Hand back**.
 
 **When it needs you** (a sign-in, a 2FA code, a payment form):

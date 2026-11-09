@@ -32,7 +32,7 @@
       <button exButton variant="primary" size="sm" (click)="handBack()">I’m done</button>
     </div>
   </ex-fold>
-  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="takeOver()">
+  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="previewKeydown($event)">
     <div #page class="page" [class.clipped]="clipPreview()" [class.pointing]="pointing()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
       @if (pointing() && hoverTarget(); as hover) {
@@ -43,12 +43,12 @@
       }
       @if (target(); as target) {
         <span class="target" [class.picked]="!!picked()" [class.label-below]="labelBelow(target)" [style.transform]="ringTransform(target)" [style.width.px]="coordinate(target.w) + 8" [style.height.px]="coordinate(target.h) + 8" animate.enter="ring-enter" animate.leave="ring-leave" aria-hidden="true">
-          @if (!picked()) { <span class="ring-label">{{ target.label }}</span> }
+          @if (!picked() && target.label) { <span class="ring-label">{{ target.label }}</span> }
         </span>
       }
-      @if (driver() === 'agent' && action() && !picked() && !pointing()) {
-        <span class="agent-cursor" [style.transform]="cursorTransform()" aria-hidden="true">
-          <span class="cursor-pulse"></span>
+      @if (driver() === 'agent' && (cursor() || action()) && !picked() && !pointing()) {
+        <span class="agent-cursor" [style.transform]="cursorTransform()" animate.enter="cursor-enter" animate.leave="cursor-leave" aria-hidden="true">
+          @for (pulse of cursorPulses(); track pulse) { <span class="cursor-pulse"></span> }
           <svg width="20" height="20" viewBox="0 0 16 16" fill="var(--surface-raised)" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"><path d="M3.5 2l9 5.2-4 1.1 2.4 4.3-1.7 1-2.4-4.3-3.3 2.7z" /></svg>
         </span>
       }
@@ -77,13 +77,16 @@
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }
   </div>
-  <ex-fold [open]="!!current() && ((driver() === 'agent' && !!step()) || (driver() === 'you' && agentWaiting()))">
+  <ex-fold [open]="!!current() && (driver() === 'agent' || (driver() === 'you' && agentWaiting()))">
       <div class="foot agent-step">
-        <span class="agent-mark" [class.waiting]="driver() !== 'agent'" aria-hidden="true">@if (driver() === 'agent') { Ag } @else { <ex-icon name="cursor" [size]="14" /> }</span>
-        <span class="step-copy" role="status">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } } @else { You’re driving; the agent waits }</span>
-        <span class="step-dots" aria-hidden="true">@if (driver() === 'agent') { @for (dot of stepDots(); track $index) { <i [class.done]="dot === 'done'" [class.now]="dot === 'now'"></i> } }</span>
+        <span class="agent-mark" [class.waiting]="driver() !== 'agent'" [class.failed]="driver() === 'agent' && stepStatus() === 'failed'" aria-hidden="true">@if (driver() === 'agent') { @if (step()?.status) { <ex-status-glyph [status]="stepStatus()" /> } @else { Ag } } @else { <ex-icon name="cursor" [size]="14" /> }</span>
+        <span class="step-copy" role="status" aria-atomic="true" [attr.title]="driver() === 'agent' ? step()?.text : null">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } @else { Agent driving } } @else { You’re driving; the agent waits }</span>
+        <span class="step-progress">
+          <span class="step-dots" aria-hidden="true">@if (driver() === 'agent') { @for (dot of stepDots(); track $index) { <i [class.done]="dot === 'done'" [class.now]="dot === 'now'"></i> } }</span>
+          @if (driver() === 'agent' && step()?.status) { <span class="step-status" [class.failed]="stepStatus() === 'failed'">{{ stepStatusLabel() }}</span> }
+        </span>
         <span class="workflow-actions">
-          <button exButton size="sm" variant="secondary" [attr.aria-label]="driver() === 'agent' ? 'Take over browser' : 'Hand back browser'" (click)="driver() === 'agent' ? takeOverFromBar() : handBack()">{{ driver() === 'agent' ? 'Take over' : 'Hand back' }}</button>
+          <button exButton size="sm" variant="secondary" [attr.aria-label]="driver() === 'agent' ? 'Stop browser agent' : 'Hand back browser'" (click)="driver() === 'agent' ? takeOverFromBar() : handBack()">{{ driver() === 'agent' ? 'Stop agent' : 'Hand back' }}</button>
           @if (errors() > 0) { <button exButton size="sm" variant="secondary" class="workflow-errors" [attr.aria-label]="'Send ' + errors() + ' error counts to agent'" (click)="sendErrorsRequested.emit()"><ex-icon name="bug" [size]="14" />{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</button> }
         </span>
       </div>

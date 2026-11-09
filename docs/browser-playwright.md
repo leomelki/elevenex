@@ -33,7 +33,10 @@ artifacts and human interaction. It does not implement another selector engine.
    retries; the real tab remains alive. Opener-linked popups form one control
    group because same-origin JavaScript can follow window references independently
    of CDP. Taking over any member synchronously revokes every member. Explicit
-   handoff covers the group; unrelated pages remain independent. Cancellation closes the private agent
+   handoff covers the group; unrelated pages remain independent. Explicit
+   browser.page acquisition can claim available task tabs. Stop agent and human
+   input pause the group until Hand back; reset/reconnect cannot clear the pause.
+   Internal transport reads never acquire control. Cancellation closes the private agent
    connection, releases input and routing, and never replays code.
 
 This is a serialization membrane around real Playwright, not a security claim

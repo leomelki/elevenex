@@ -69,6 +69,18 @@ Reduced motion stops the cursor pulse, tab breathing and target travel. The
 isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
 the production browser owner must supply its own page coordinates.
 
+`cursor?: BrowserCursor` supplies an independent viewport-CSS position and a
+monotonic `pulse` identity. The same cursor element glides between updates on
+`dur-slow`/`ease-glide`; a new pulse triggers one finite ripple. Without this
+input the existing `action` target supplies the compatible cursor position.
+All decoration is inert, ignores pointer input, and fades out on takeover or
+point mode. Reduced motion applies positions immediately and disables ripples.
+`step.status` optionally supplies running, waiting, done or error; the shared
+status glyph, caption and bounded step dots reflect it without moving focus.
+The Stop/Hand back control keeps its DOM identity through those updates.
+The `/browser-agent` preview shows the controls, target/cursor and completion;
+`browser-agent-feedback.mjs` captures motion, interruption and both themes.
+
 `TerminalView` accepts `[terminalContent]` for the [production user-terminal adapter](../task-terminal/README.md).
 Its `[terminalActions]` slot projects owner-supplied toolbar actions beside Find; the
 owner retains menu lifecycle, capability checks and typed platform operations.
@@ -184,8 +196,13 @@ Targets use page viewport CSS coordinates in the native adapter. Positions may
 be negative when an element is partly scrolled out of view; widths/heights remain
 nonnegative and the preview clips the ring naturally.
 
+The browser workflow footer remains visible for every agent-controlled tab,
+even without step metadata. **Stop agent** emits `takeOverRequested`; the owner
+must revoke access and pause acquisition until **Hand back**. The same button
+retains keyboard focus when it changes to Hand back.
+
 `pageFocusRequested` lets a platform owner focus its actual page from the driver
-pill or Take over. `pageFocusAvailable=false` disables that action for unavailable
+pill. `pageFocusAvailable=false` disables that action for unavailable
 surfaces. The projected HTML preview retains ordinary keyboard focus behavior.
 
 Production Browser sets `keepPreviewMounted` so its trusted platform slot stays

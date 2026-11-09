@@ -684,6 +684,14 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
   async acquire(tabId: string): Promise<string> {
     return (await this.attach(tabId)).targetId;
   }
+  async present(tabId: string, command: import('@elevenex/shared').BrowserPresentationCommand, documentId?: string, generation?: number): Promise<void> {
+    const source = [...this.sources.values()].find(item => item.target.id === tabId);
+    if (!source) throw new Error('Page authority expired');
+    source.target.assert();
+    if (!source.target.present) throw new Error('Update this browser host to show agent feedback');
+    await source.target.present(command, documentId, generation);
+    source.target.assert();
+  }
   private remove(source: Source): void {
     if (this.sources.get(source.targetId) !== source) return;
     this.sources.delete(source.targetId);

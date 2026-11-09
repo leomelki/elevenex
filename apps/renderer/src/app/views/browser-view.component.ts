@@ -1,6 +1,6 @@
 import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, ElementRef, input, output, signal, viewChild } from '@angular/core';
-import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent } from '../ui';
-import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab, type ViewTabMove } from './view.models';
+import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, StatusGlyphComponent, type Status } from '../ui';
+import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab, type ViewTabMove, type BrowserCursor } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
 
 /** Page and question-card measurements, in the page's scrolled CSS coordinates. */
@@ -27,7 +27,7 @@ const LABEL_ROOM = 24;
 /** Browser chrome. The owner supplies a trusted platform adapter through the preview slot. */
 @Component({
   selector: 'ex-browser-view',
-  imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, ViewTabsComponent],
+  imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, ViewTabsComponent, StatusGlyphComponent],
   templateUrl: './browser-view.component.html',
   styleUrl: './browser-view.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,6 +51,7 @@ export class BrowserViewComponent {
   readonly driver = input<BrowserDriver>('you');
   readonly step = input<BrowserStep>();
   readonly action = input<BrowserTarget>();
+  readonly cursor = input<BrowserCursor>();
   readonly agentWaiting = input(false);
   readonly picking = input(false);
   /** The element under the pointer while picking, when the owner can inspect on hover. */
@@ -101,23 +102,31 @@ export class BrowserViewComponent {
   protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent driving. Take over and focus page.' : this.driver() === 'needs' ? 'Your turn. Focus page.' : 'You are driving. Focus page.') + ' Shift+Escape returns to browser controls.');
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
-  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: tab.icon ?? 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && tab.id === this.current()?.id })));
+  protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: tab.icon ?? 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && this.step()?.status !== 'done' && this.step()?.status !== 'error' && tab.id === this.current()?.id })));
   /** Choosing an element: the page shows the picking frame and hint until one is picked. */
   protected readonly pointing = computed(() => !!this.current() && this.picking() && !this.picked());
   /** Point and ask is in use, from choosing an element until its question is sent or dismissed. */
   protected readonly pointAndAsk = computed(() => this.picking() || !!this.picked());
   protected readonly target = computed(() => this.picked() ?? (this.driver() === 'agent' && !this.pointing() ? this.action() : undefined));
   protected readonly cursorTransform = computed(() => {
+    const cursor = this.cursor();
+    if (cursor) return `translate(${this.coordinate(cursor.x)}px, ${this.coordinate(cursor.y)}px)`;
     const target = this.action();
     return target ? `translate(${this.position(target.x) + this.coordinate(target.w) * .62}px, ${this.position(target.y) + this.coordinate(target.h) * .55}px)` : '';
   });
+  protected readonly cursorPulses = computed(() => this.cursor()?.pulse ? [this.cursor()!.pulse] : []);
+  protected readonly stepStatus = computed<Status>(() => {
+    const status = this.step()?.status;
+    return status === 'error' ? 'failed' : status === 'done' ? 'done' : status === 'waiting' ? 'queued' : 'running';
+  });
+  protected readonly stepStatusLabel = computed(() => ({ running: 'Running', queued: 'Waiting', done: 'Done', failed: 'Failed', attention: 'Needs you', review: 'Review' })[this.stepStatus()]);
   protected readonly stepDots = computed(() => {
     const step = this.step();
     if (!step?.total || !Number.isFinite(step.total) || step.total < 1) return [];
     const count = Math.min(12, Math.floor(step.total));
     // Keep long workflows bounded while still showing their current position.
     const current = Math.min(count - 1, Math.max(0, Math.floor((step.n - 1) * count / step.total)));
-    return Array.from({ length: count }, (_, index) => index < current ? 'done' : index === current ? 'now' : 'next');
+    return Array.from({ length: count }, (_, index) => index < current || (step.status === 'done' && index === current) ? 'done' : index === current ? 'now' : 'next');
   });
   private readonly questionLayout = signal<QuestionLayout | undefined>(undefined);
   /** Beside the element when it fits (under it first), otherwise docked at the visible page's far edge. */
@@ -208,11 +217,16 @@ export class BrowserViewComponent {
   protected labelBelow(target: BrowserTarget): boolean { return this.position(target.y) < LABEL_ROOM; }
 
   protected takeOver(): void { if (this.driver() === 'agent') this.takeOverRequested.emit(); }
+  protected previewKeydown(event: KeyboardEvent): void {
+    // Tabbing past the preview to Stop is browser-chrome navigation. Actual
+    // page key events still revoke control at the native/stream input boundary.
+    if (event.key !== 'Tab') this.takeOver();
+  }
   focusControls(): void { this.driverControl()?.nativeElement.focus({ preventScroll: true }); }
   protected focusPage(): void {
     this.preview()?.nativeElement.focus({ preventScroll: true }); this.takeOver(); this.pageFocusRequested.emit();
   }
-  protected takeOverFromBar(): void { this.focusPage(); }
+  protected takeOverFromBar(): void { this.takeOver(); }
   protected handBack(): void {
     // Move focus before the owning control's Fold becomes inert and hidden.
     this.driverControl()?.nativeElement.focus({ preventScroll: true });

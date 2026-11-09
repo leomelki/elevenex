@@ -4,7 +4,7 @@ import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import type { TaskBrowserCommand, TaskBrowserWindowContext, TaskBrowserPlacement, BrowserElementSnapshot, BrowserHumanRequest } from '@elevenex/shared';
-import { BrowserViewComponent, type BrowserTab, type BrowserTarget } from '../views';
+import { BrowserViewComponent, type BrowserTab, type BrowserTarget, type BrowserCursor } from '../views';
 import { ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent } from '../ui';
 import { TaskBrowserStore } from './task-browser.store';
 import { NativePageLayout } from './native-page-layout';
@@ -63,9 +63,15 @@ export class TaskBrowserComponent {
     return { x: element.x, y: element.y, w: element.width, h: element.height, label: raw.tag };
   });
   readonly target = computed<BrowserTarget | undefined>(() => {
-    const raw = this.current()?.target;
+    const raw = this.current()?.agentHighlight ?? this.current()?.target;
     const element = raw ? this.surfaces()?.coordinates(this.current()?.id ?? '', raw) ?? raw : null;
-    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: element.tag } : undefined;
+    return element ? { x: element.x, y: element.y, w: element.width, h: element.height, label: 'tag' in element ? element.tag : element.label ?? '' } : undefined;
+  });
+  readonly agentCursor = computed<BrowserCursor | undefined>(() => {
+    const raw = this.current()?.agentCursor;
+    if (!raw || this.current()?.detached) return undefined;
+    const point = this.surfaces()?.coordinates(this.current()?.id ?? '', { ...raw, width: 0, height: 0 }) ?? raw;
+    return { x: point.x, y: point.y, pulse: raw.pulse };
   });
   private readonly overlays = inject(OverlayContainer);
   private readonly surface = viewChild<ElementRef<HTMLElement>>('surface');

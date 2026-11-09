@@ -24,3 +24,4 @@ export type { InteractionTab, InteractionHost } from './interaction-controller.j
 export type { BrowserAgentDownload } from './host.js';
 
 export { resolvePickedBrowserSources } from './picker-source.js';
+export { BrowserAgentPresentation, browserPresentationCommand, browserAgentStep, browserAgentCursor, browserAgentHighlight } from './presentation.js';

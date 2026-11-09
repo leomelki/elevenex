@@ -2,9 +2,11 @@
   <button exButton size="sm" [variant]="driver() === 'agent' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'agent'" (click)="selectDriver('agent')">Agent drives</button>
   <button exButton size="sm" [variant]="driver() === 'you' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'you'" (click)="selectDriver('you')">You drive</button>
   <button exButton size="sm" [variant]="driver() === 'needs' ? 'primary' : 'secondary'" [attr.aria-pressed]="driver() === 'needs'" (click)="selectDriver('needs')">Needs you</button>
+  <button exButton size="sm" variant="secondary" (click)="showTarget()">Show target</button>
+  <button exButton size="sm" variant="secondary" (click)="completeStep()">Complete step</button>
 </div>
 <div class="browser-demo">
-  <ex-browser-view [tabs]="tabs()" [active]="active()" [driver]="driver()" [step]="{ n: 5, total: 9, text: 'Checking the payment form' }" [action]="action()" [agentWaiting]="true" [width]="width()" [picking]="picking()" [hovered]="hovered()" [picked]="picked()" askNote="Sends a screenshot and the source line" [errors]="2" errorText="· POST /charges 504 after 8s" needsTitle="The agent needs you to sign in"
+  <ex-browser-view [tabs]="tabs()" [active]="active()" [driver]="driver()" [step]="step()" [action]="action()" [cursor]="cursor()" [agentWaiting]="true" [width]="width()" [picking]="picking()" [hovered]="hovered()" [picked]="picked()" askNote="Sends a screenshot and the source line" [errors]="2" errorText="· POST /charges 504 after 8s" needsTitle="The agent needs you to sign in"
     (selected)="active.set($event)" (closed)="closeTab($event)" (added)="addTab()" (takeOverRequested)="driver.set('you')" (handBackRequested)="selectDriver('agent')" (pickingChange)="setPicking($event)" (asked)="asked($event.text)" (sendErrorsRequested)="event.emit('Send browser errors to agent')" (widthChange)="width.set($event)" (reloadRequested)="event.emit('Reload page')" (moreRequested)="event.emit('Open browser tools')">
     <div browserPreview #checkout class="checkout" [class.pointing]="picking() && !picked()">
       <header class="shop-header" data-pick="header.shop" data-source="ShopHeader.tsx:12"><span class="shop-mark"><ex-icon name="bag" [size]="16" /></span><b>A small shop</b><span>Cart · 1</span></header>
