@@ -242,6 +242,18 @@ describe('Desktop task terminals with real PTYs', () => {
     expect(output.terminal.exitCode).toBe(7);
     expect(output.data).toContain('failure context');
     expect(output.terminal.canRerun).toBe(true);
+    const resize = { type: 'resize', generation: terminal.generation, cols: 100, rows: 30 };
+    const resizePty = jest.spyOn(ptys, 'resize');
+    try {
+      // Late view geometry must not break observation or alter retained output.
+      await expect(service.command(task, terminal.id, resize)).resolves.toEqual({ accepted: true });
+      expect(resizePty).not.toHaveBeenCalled();
+      expect(await service.read(task, terminal.id, null, 0)).toEqual(output);
+      await expect(service.command(task, terminal.id, { ...resize, cols: Infinity })).rejects.toThrow('size');
+      await expect(service.command(task, terminal.id, { ...resize, generation: 'a'.repeat(36) })).rejects.toThrow('changed');
+      await expect(service.command(task + 100, terminal.id, resize)).rejects.toThrow();
+      await expect(service.command(task, terminal.id, { type: 'input', generation: terminal.generation, data: 'never' })).rejects.toThrow('exited');
+    } finally { resizePty.mockRestore(); }
     await service.command(task, terminal.id, {
       type: 'rerun',
       generation: terminal.generation,

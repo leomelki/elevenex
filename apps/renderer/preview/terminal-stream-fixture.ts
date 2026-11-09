@@ -7,7 +7,7 @@ const accepted = { ok: true as const, value: { accepted: true as const } };
 @Injectable()
 export class TerminalStreamFixture {
   readonly state = signal({ revision: 1, scope: { id: 'terminal-preview' } });
-  readonly counts = { create: 0, attach: 0, detach: 0, writes: 0 };
+  readonly counts = { create: 0, attach: 0, detach: 0, writes: 0, resizes: 0 };
   private readonly listeners = new Set<(event: TaskTerminalStreamEvent) => void>();
   private target?: TaskTerminalAttach;
   private delivery = 0;
@@ -41,7 +41,7 @@ export class TerminalStreamFixture {
   };
   taskTerminalStreamAcknowledge = async () => {};
   taskTerminalStreamFocus = async () => accepted;
-  taskTerminalStreamResize = async () => accepted;
+  taskTerminalStreamResize = async () => { this.counts.resizes++; return accepted; };
   onTaskTerminalStream = (listener: (event: TaskTerminalStreamEvent) => void) => {
     this.listeners.add(listener); return () => this.listeners.delete(listener);
   };
@@ -51,7 +51,13 @@ export class TerminalStreamFixture {
     this.emit({ type: 'metadata', list: this.list() });
     this.output(`\r\nmetadata update ${index}\r\nREADY> `);
   }
-  interrupt(): void { this.emit({ type: 'closed', uncertain: false, message: 'Preview transport interrupted.' }); }
+  interrupt(uncertain = false): void { this.emit({ type: 'closed', uncertain, message: 'Preview transport interrupted.' }); }
+  exit(code: number): void {
+    this.terminal = { ...this.terminal, alive: false, status: code ? 'failed' : 'exited', exitCode: code,
+      command: 'pnpm run fail', canRerun: true };
+    this.output(`\r\nCommand exited with code ${code}.\r\n`);
+    this.emit({ type: 'metadata', list: this.list() });
+  }
   private output(data: string): void {
     const from = this.terminal.sequence;
     this.terminal = { ...this.terminal, sequence: from + data.length };

@@ -91,6 +91,13 @@ this also applies when hiding a view with unacknowledged input. Reconnect uses a
 new attachment and input sequence, and only resumes confirmed output. One focused
 view owns input/resize when several windows display the same PTY.
 
+Connection and paused-typing notices float above the output without changing
+the terminal grid or moving its content. Dismissing a notice reveals covered
+output without unpausing typing; **Resume typing** stays available in the toolbar.
+Ordinary reconnects never claim that
+input was lost. A paused-typing warning survives further reconnects until the
+person explicitly resumes; reconnect does not resend unconfirmed keystrokes.
+
 The backend worker retains confirmed screen state independently of the view and
 answers terminal queries even while hidden. Cursor recovery uses incremental
 history when available, otherwise a bounded serialized checkpoint plus subsequent
@@ -104,6 +111,10 @@ back and finish drawing before resize/reflow. Output carries its producing grid;
 historical resizes never reach the PTY. Initial creation supplies font-measured
 geometry when available. Windows replies carry validated ConPTY metadata.
 Visible and headless emulators both use the official Unicode 11 addon.
+Exited processes retain their final grid. The view stops sending resizes when
+it learns of the exit; the backend validates and accepts a late resize as a
+no-op, so an exit racing with layout changes cannot disconnect output or trigger
+a reconnect loop. Stale owners' geometry updates are ignored after focus moves.
 
 `TerminalLocalEcho` maintains a bounded reversible prediction timeline through
 xterm's renderer. There is no DOM text overlay. The public serialization addon

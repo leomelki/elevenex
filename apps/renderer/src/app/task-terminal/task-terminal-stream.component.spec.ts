@@ -169,4 +169,47 @@ describe('Task terminal streaming attachment lifetime', () => {
     expect(surfaces[0]!.terminal.element).toBe(node);
     expect(node?.isConnected).toBe(true);
   });
+
+  it('retains failed process output without sending resizes or retrying its healthy stream', async () => {
+    const state = setup();
+    await settle(state.fixture);
+    await vi.waitFor(() => expect(state.bridge.taskTerminalAttach).toHaveBeenCalledTimes(1));
+    await state.handshake();
+    state.surfaces[0]!.terminal.resize(90, 20);
+    await vi.waitFor(() => expect(state.bridge.taskTerminalStreamResize).toHaveBeenCalledTimes(1));
+    state.metadata({ alive: false, status: 'failed', exitCode: 7, command: 'pnpm fail', canRerun: true });
+    await settle(state.fixture);
+    state.bridge.taskTerminalStreamResize.mockClear();
+    state.surfaces[0]!.terminal.resize(100, 25);
+    state.surfaces[0]!.terminal.resize(110, 30);
+    await settle(state.fixture);
+    expect(state.bridge.taskTerminalStreamResize).not.toHaveBeenCalled();
+    expect(state.bridge.taskTerminalAttach).toHaveBeenCalledTimes(1);
+    expect(state.bridge.taskTerminalDetach).not.toHaveBeenCalled();
+    expect(state.component.notice()).toBe('');
+    expect(state.component.inputBlocked()).toBe(false);
+    expect(state.surfaces[0]!.terminal.options.disableStdin).toBe(true);
+    expect(state.surfaces[0]!.context()).toContain('$');
+  });
+
+  it('preserves the input warning through repeated interruptions until explicit resume', async () => {
+    const state = setup();
+    await settle(state.fixture);
+    await vi.waitFor(() => expect(state.bridge.taskTerminalAttach).toHaveBeenCalledTimes(1));
+    await state.handshake();
+    state.emit({ type: 'closed', uncertain: true, message: 'Legacy engine input interruption' });
+    await settle(state.fixture);
+    expect(state.component.inputBlocked()).toBe(true);
+    expect(state.component.notice()).toContain('Some keystrokes');
+    await vi.waitFor(() => expect(state.bridge.taskTerminalAttach).toHaveBeenCalledTimes(2));
+    await state.handshake();
+    const warning = state.component.notice();
+    state.emit({ type: 'closed', uncertain: false, message: 'Another interruption' });
+    await settle(state.fixture);
+    expect(state.component.notice()).toBe(warning);
+    expect(state.component.inputBlocked()).toBe(true);
+    expect(state.bridge.taskTerminalStreamWrite).not.toHaveBeenCalled();
+    state.fixture.componentRef.setInput('visible', false);
+    await settle(state.fixture);
+  });
 });

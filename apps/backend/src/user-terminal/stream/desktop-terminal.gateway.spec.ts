@@ -12,7 +12,7 @@ const until = async (predicate: () => boolean) => {
     await new Promise(resolve => setTimeout(resolve, 5));
   }
 };
-interface Packet { type: string; delivery?: number; output?: { data: string }; sequence?: number; writable?: boolean }
+interface Packet { type: string; delivery?: number; output?: { data: string }; sequence?: number; writable?: boolean; message?: string; uncertain?: boolean }
 
 async function setup(mode: 'direct' | 'local' | 'upstream' = 'direct') {
   const stream = new DesktopTerminalStream(); stream.append('$ ');
@@ -120,6 +120,35 @@ describe('Desktop terminal bidirectional protocol', () => {
       const { ws } = await fixture.connect();
       ws.send(JSON.stringify({ type: 'input', kind: 'text', sequence: 2, generation: fixture.stream.generation, data: 'never' }));
       await until(() => ws.readyState === WebSocket.CLOSED);
+      expect(fixture.commands).toEqual([]);
+    } finally { await fixture.close(); }
+  });
+  it('ignores obsolete resizes after focus moves without disconnecting output', async () => {
+    const fixture = await setup();
+    try {
+      const first = await fixture.connect();
+      await fixture.connect();
+      await until(() => first.packets.some(packet => packet.type === 'control' && packet.writable === false));
+      first.ws.send(JSON.stringify({ type: 'resize', cols: 90, rows: 20 }));
+      fixture.stream.append('retained observer');
+      await until(() => first.packets.some(packet => packet.output?.data.includes('retained observer')));
+      expect(first.ws.readyState).toBe(WebSocket.OPEN);
+      expect(fixture.service.command).not.toHaveBeenCalled();
+    } finally { await fixture.close(); }
+  });
+  it.each(['resize', 'input'] as const)('reports a rejected %s once and flags only pending input as uncertain', async type => {
+    const fixture = await setup();
+    try {
+      const { ws, packets } = await fixture.connect();
+      fixture.service.command.mockRejectedValue(new Error('Command rejected'));
+      const command = type === 'resize' ? { type, cols: 90, rows: 20 }
+        : { type, kind: 'text', sequence: 1, generation: fixture.stream.generation, data: 'never replay' };
+      ws.send(JSON.stringify(command));
+      await until(() => ws.readyState === WebSocket.CLOSED);
+      const closed = packets.filter(packet => packet.type === 'closed');
+      expect(closed).toHaveLength(1);
+      expect(closed[0].uncertain).toBe(type === 'input');
+      expect(closed[0].message).toContain(type === 'input' ? 'keystrokes' : 'connection lost');
       expect(fixture.commands).toEqual([]);
     } finally { await fixture.close(); }
   });

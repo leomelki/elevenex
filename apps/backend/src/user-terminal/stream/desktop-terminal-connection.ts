@@ -87,6 +87,7 @@ export class DesktopTerminalConnection {
     this.departed(this);
   }
   private close(message: string): void {
+    if (this.closed) return;
     this.send({ type: 'closed', uncertain: this.queuedInput > 0, message });
     this.dispose(); this.ws.close(1008, 'Terminal stream closed');
   }
@@ -104,7 +105,7 @@ export class DesktopTerminalConnection {
       this.acknowledged = delivery; this.wake(); return;
     }
     if (value.type === 'focus') { this.focus(this); return; }
-    if (!this.writable) throw new Error('Another terminal view owns input');
+    if (!this.writable && value.type !== 'resize') throw new Error('Another terminal view owns input');
     const generation = this.attachment.stream.generation;
     let command: Record<string, unknown>, sequence: number | undefined, size = 0;
     if (value.type === 'input') {
@@ -118,15 +119,23 @@ export class DesktopTerminalConnection {
       command = { type: value.kind === 'text' ? 'input' : 'binary', generation, data: value.data };
     } else if (value.type === 'resize') command = { type: 'resize', generation, cols: integer(value.cols, 2, 500), rows: integer(value.rows, 1, 300) };
     else throw new Error('Unknown terminal operation');
+    if (!this.writable) return;
     if (++this.queuedOperations > 256) throw new Error('Terminal operation queue is full');
     this.operations = this.operations.then(async () => {
       if (this.closed) return;
       // Focus can change while an asynchronous ownership check is running.
-      if (!this.writable) throw new Error('Terminal control changed');
+      if (!this.writable) {
+        // A queued geometry update from the previous owner is obsolete. It
+        // must not disconnect an otherwise healthy output observer.
+        if (sequence === undefined) return;
+        throw new Error('Terminal control changed');
+      }
       await this.service.command(this.taskId, this.terminalId, command);
       if (sequence !== undefined) this.send({ type: 'input-ack', sequence });
       this.wake();
-    }).catch(() => this.close('Terminal input was interrupted. Inspect the terminal before resuming.'))
+    }).catch(() => this.close(this.queuedInput > 0
+      ? 'Some keystrokes may not have reached the terminal. Check the output before resuming; nothing will be resent.'
+      : 'Terminal connection lost. Reconnecting…'))
       .finally(() => { this.queuedInput -= size; this.queuedOperations--; });
   }
   private wake(): void {

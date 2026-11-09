@@ -666,3 +666,9 @@ production task-terminal owner and xterm with a preview-only stream transport.
 It checks automatic first creation, retained DOM/focus and native typing through
 metadata/output changes, plus one replacement stream after interruption. Both
 themes and a narrow reduced-motion layout run against the same preview URL.
+
+`scenarios/terminal-recovery.mjs` uses the same production adapter and preview
+transport to check stable terminal geometry during connection notices, persistent
+paused typing across reconnects, keyboard resume/focus restoration, and retained
+failed output without resize/reconnect loops. It covers both themes and a narrow
+reduced-motion layout.

@@ -17,6 +17,12 @@ only the view. `DesktopTerminalService` verifies durable task/terminal ownership
 at attach and again for each mutation, including process generations and task
 finishing. `UserPtyManager` retains process and shutdown ownership.
 
+Process exit does not disconnect output observers. A resize arriving after exit
+is validated against the task, terminal, generation and size, then accepted
+without changing the retained grid. Geometry updates from a view that has lost
+focus are discarded. Rejected input still closes the stream with an uncertainty
+flag; geometry-only failures never claim that keystrokes were interrupted.
+
 `TerminalScreenHost`, owned by the PTY manager, uses one worker for all desktop
 screens. The worker applies writes and resizes in order, responds to supported
 terminal queries and supplies checkpoints/confirmed agent context. Ordinary

@@ -5,6 +5,9 @@ export interface TerminalInputTarget {
   readonly generation: string;
 }
 
+export const TERMINAL_INPUT_INTERRUPTED =
+  'Some keystrokes may not have reached the terminal. Check the output before resuming; nothing will be resent.';
+
 /** Ordered, bounded input. A queued chunk can never acquire a replacement process. */
 export class TerminalInputQueue {
   private target?: TerminalInputTarget;
@@ -77,7 +80,7 @@ export class TerminalInputQueue {
       this.pendingBytes = 0;
       this.blocked = true;
       this.failed(
-        "Input may have been interrupted. Nothing will be replayed. Inspect the terminal, then resume typing.",
+        TERMINAL_INPUT_INTERRUPTED,
       );
     } finally {
       this.sending = false;
@@ -92,7 +95,7 @@ export class TerminalInputQueue {
     if (interrupted) {
       this.blocked = true;
       this.failed(
-        "Input may have been interrupted. Nothing will be replayed. Inspect the terminal, then resume typing.",
+        TERMINAL_INPUT_INTERRUPTED,
       );
     }
   }

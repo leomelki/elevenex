@@ -1,8 +1,10 @@
 :host { display: block; height: 100%; min-height: 0; }
-.live-content { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; overflow: hidden; text-align: start; }
-.surface { flex: 1; min-height: 0; padding: var(--space-2) var(--space-3); overflow: hidden; }
+.live-content { position: relative; display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; overflow: hidden; text-align: start; }
+/* Confine xterm's link canvas so it cannot intercept notification controls. */
+.surface { isolation: isolate; flex: 1; min-height: 0; padding: var(--space-2) var(--space-3); overflow: hidden; }
 .notice { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); color: var(--ink-muted); background: var(--surface); border-bottom: 1px solid var(--line); font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans); overflow-wrap: anywhere; }
 .error { color: var(--danger); background: var(--danger-soft); }
+.connection-notice { position: absolute; z-index: 1; top: var(--space-2); inset-inline-end: var(--space-3); max-width: calc(100% - 2 * var(--space-3)); }
 .browser-address { color: var(--ink); user-select: text; }
 
 .live-content.has-terminal { flex: 1; }

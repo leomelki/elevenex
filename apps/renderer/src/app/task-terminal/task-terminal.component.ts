@@ -16,12 +16,12 @@ import {
 } from "@angular/core";
 import type { TaskTerminal, TerminalBrowserIntent, TaskTerminalPreferences } from "@elevenex/shared";
 import { TerminalViewComponent, type TerminalTab } from "../views";
-import { ButtonComponent } from "../ui";
+import { ButtonComponent, ToastComponent } from "../ui";
 import {
   TaskTerminalStore,
   type TerminalSelection,
 } from "./task-terminal.store";
-import { TerminalInputQueue } from "./terminal-input";
+import { TerminalInputQueue, TERMINAL_INPUT_INTERRUPTED } from "./terminal-input";
 import type { TerminalSurface } from "./terminal-surface";
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { TerminalStreamAttachment } from './terminal-stream-attachment';
@@ -58,7 +58,7 @@ export interface TerminalBrowserState {
 @Component({
   selector: "ex-task-terminal",
   providers: [TaskTerminalStore],
-  imports: [TerminalViewComponent, ButtonComponent],
+  imports: [TerminalViewComponent, ButtonComponent, ToastComponent],
   templateUrl: "./task-terminal.component.html",
   styleUrl: "./task-terminal.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -81,6 +81,7 @@ export class TaskTerminalComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private focusOnAttach = false;
   private readonly host = viewChild<ElementRef<HTMLElement>>("surface");
+  private readonly resumeButton = viewChild<unknown, ElementRef<HTMLButtonElement>>('resumeButton', { read: ElementRef });
   private readonly surfaces = new Map<string, SurfaceEntry>();
   private attached?: SurfaceEntry;
   private attachmentKey = '';
@@ -250,7 +251,7 @@ export class TaskTerminalComponent {
       this.store.markSeen(this.attached.terminal.id, this.attached.surface.sequence);
       if (this.attached.stream) {
         this.diagnoseAttachment('streamDetach', reason);
-        if (this.attached.stream.uncertain) this.attached.input.interrupt('Input may have been interrupted. Inspect the terminal, then resume typing.');
+        if (this.attached.stream.uncertain) this.attached.input.interrupt(TERMINAL_INPUT_INTERRUPTED);
         this.attached.reading = this.attached.stream.settled();
         this.attached.stream.dispose(); this.attached.stream = undefined;
       }
@@ -403,14 +404,21 @@ export class TaskTerminalComponent {
         }
         entry.streamReady = stream.ready;
       },
-      interrupted: (message, uncertain) => {
+      interrupted: (_message, uncertain) => {
         if (entry !== this.attached || revision !== this.revision || entry.stream !== stream) return;
         this.diagnoseAttachment('retry', 'stream/interrupted');
         this.diagnoseAttachment('streamDetach', 'stream/interrupted');
         entry.reading = stream.settled();
         entry.stream = undefined; entry.streamReady = false;
-        if (uncertain) entry.input.interrupt(message);
-        else { entry.input.reconnect(); entry.notice = message; this.notice.set(message); }
+        if (uncertain) entry.input.interrupt(TERMINAL_INPUT_INTERRUPTED);
+        else {
+          entry.input.reconnect();
+          // Preserve an existing input warning across repeated reconnects.
+          if (!entry.input.blocked) {
+            entry.notice = 'Terminal connection lost. Reconnecting…';
+            this.notice.set(entry.notice);
+          }
+        }
         entry.surface.setEnabled(false);
         void this.store.refresh();
         clearTimeout(this.timer);
@@ -513,10 +521,12 @@ export class TaskTerminalComponent {
       );
   }
   private async resize(entry: SurfaceEntry): Promise<void> {
-    if (entry.resizing || !entry.terminal.generation) return;
+    if (entry.resizing || !entry.terminal.generation || !entry.terminal.alive ||
+        (this.protocolVersion() === 1 && !entry.stream?.ready)) return;
     entry.resizing = true;
     try {
-      while (entry.desiredSize && !this.disposed && entry === this.attached) {
+      while (entry.desiredSize && !this.disposed && entry === this.attached && entry.terminal.alive &&
+          (this.protocolVersion() !== 1 || entry.stream?.ready)) {
         const size = entry.desiredSize;
         entry.desiredSize = undefined;
         const key = `${entry.target.scopeId}:${entry.terminal.generation}:${size.cols}:${size.rows}`;
@@ -535,7 +545,8 @@ export class TaskTerminalComponent {
       /* Output reconciliation will restore the next attachment's size. */
     } finally {
       entry.resizing = false;
-      if (entry.desiredSize && !this.disposed && entry === this.attached)
+      if (entry.desiredSize && !this.disposed && entry === this.attached && entry.terminal.alive &&
+          (this.protocolVersion() !== 1 || entry.stream?.ready))
         void this.resize(entry);
     }
   }
@@ -594,6 +605,12 @@ export class TaskTerminalComponent {
       entry.surface.setEnabled(this.canType(entry));
       entry.surface.focus();
     }
+  }
+  dismissNotice(): void {
+    if (this.attached) this.attached.notice = '';
+    this.notice.set('');
+    if (this.inputBlocked()) this.resumeButton()?.nativeElement.focus();
+    else this.attached?.surface.focus();
   }
   find(event: { query: string; backwards: boolean }): void {
     const result = this.attached?.surface.search(event.query, event.backwards);

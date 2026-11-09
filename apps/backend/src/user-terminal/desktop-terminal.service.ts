@@ -531,7 +531,7 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
         throw error;
       }
     } else {
-      if (!this.ptys.isAlive(id))
+      if (type !== 'resize' && !this.ptys.isAlive(id))
         throw new ConflictException('Terminal has exited');
       if (type === 'input' || type === 'binary') {
         if (
@@ -556,7 +556,9 @@ export class DesktopTerminalService implements OnModuleInit, OnModuleDestroy {
           input.rows > 300
         )
           throw new BadRequestException('Invalid terminal size');
-        this.ptys.resize(id, input.cols, input.rows);
+        // A view can resize while the process exits. Retained output remains
+        // observable at its final grid; there is no live PTY left to resize.
+        if (this.ptys.isAlive(id)) this.ptys.resize(id, input.cols, input.rows);
       } else if (type === 'interrupt') this.ptys.write(id, '\x03');
       else if (type === 'rerun' && stream.rerunInput())
         this.ptys.write(id, stream.rerunInput()!);
