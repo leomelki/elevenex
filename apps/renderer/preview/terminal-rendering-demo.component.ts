@@ -2,13 +2,11 @@ import { afterNextRender, ChangeDetectionStrategy, Component, DestroyRef, Elemen
 import { ButtonComponent } from '../src/app/ui';
 import { TerminalStylePolicy } from '../src/app/task-terminal/terminal-style-nonce';
 import { prepareTerminalFonts, TerminalSurface } from '../src/app/task-terminal/terminal-surface';
-import { TerminalPreferencesComponent } from '../src/app/task-terminal/terminal-preferences.component';
-import type { TaskTerminalPreferences } from '@elevenex/shared';
 
 /** Real terminal adapter with isolated ANSI samples; no PTY or production test hooks. */
 @Component({
   selector: 'ex-terminal-rendering-demo',
-  imports: [ButtonComponent, TerminalPreferencesComponent],
+  imports: [ButtonComponent],
   templateUrl: './terminal-rendering-demo.component.html',
   styleUrl: './terminal-rendering-demo.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -18,13 +16,9 @@ export class TerminalRenderingDemoComponent {
   private readonly host = viewChild.required<ElementRef<HTMLElement>>('surface');
   readonly ready = signal(false);
   readonly input = signal('');
-  readonly settingsOpen = signal(false);
-  readonly settingsBusy = signal(false);
-  readonly settingsError = signal('');
   readonly paintLatency: number[] = [];
   private readonly pendingKeys: number[] = [];
   private stopMetrics?: () => void;
-  readonly preferences = signal<TaskTerminalPreferences>({ prediction: 'auto', profile: { executable: '/bin/zsh', args: [], env: { EDITOR: 'vim' }, login: false } });
   private disposed = false;
   surface?: TerminalSurface;
 

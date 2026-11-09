@@ -1,5 +1,4 @@
 import { TerminalStylePolicy } from "./terminal-style-nonce";
-import { CdkMenuTrigger } from '@angular/cdk/menu';
 import {
   afterRenderEffect,
   ChangeDetectionStrategy,
@@ -17,7 +16,7 @@ import {
 } from "@angular/core";
 import type { TaskTerminal, TerminalBrowserIntent, TaskTerminalPreferences } from "@elevenex/shared";
 import { TerminalViewComponent, type TerminalTab } from "../views";
-import { ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent } from "../ui";
+import { ButtonComponent } from "../ui";
 import {
   TaskTerminalStore,
   type TerminalSelection,
@@ -26,7 +25,6 @@ import { TerminalInputQueue } from "./terminal-input";
 import type { TerminalSurface } from "./terminal-surface";
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { TerminalStreamAttachment } from './terminal-stream-attachment';
-import { TerminalPreferencesComponent } from './terminal-preferences.component';
 
 interface SurfaceEntry {
   readonly surface: TerminalSurface;
@@ -60,7 +58,7 @@ export interface TerminalBrowserState {
 @Component({
   selector: "ex-task-terminal",
   providers: [TaskTerminalStore],
-  imports: [TerminalViewComponent, ButtonComponent, IconComponent, DropdownMenuComponent, DropdownItemComponent, CdkMenuTrigger, TerminalPreferencesComponent],
+  imports: [TerminalViewComponent, ButtonComponent],
   templateUrl: "./task-terminal.component.html",
   styleUrl: "./task-terminal.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -83,7 +81,6 @@ export class TaskTerminalComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private focusOnAttach = false;
   private readonly host = viewChild<ElementRef<HTMLElement>>("surface");
-  private readonly optionsMenu = viewChild(CdkMenuTrigger);
   private readonly surfaces = new Map<string, SurfaceEntry>();
   private attached?: SurfaceEntry;
   private attachmentKey = '';
@@ -102,12 +99,8 @@ export class TaskTerminalComponent {
   readonly searchMatches = signal<number | null>(null);
   readonly preferences = signal<TaskTerminalPreferences>({ profile: null, prediction: 'auto' });
   readonly prediction = computed(() => this.preferences().prediction === 'auto');
-  readonly settingsOpen = signal(false);
-  readonly settingsBusy = signal(false);
-  readonly settingsError = signal('');
-  private settingsScope = '';
+  private preferencesScope = '';
   private preferencesRead?: Promise<void>;
-  private preferencesRevision = 0;
   readonly current = this.store.current;
   private readonly protocolVersion = computed(() => this.store.snapshot()?.streamVersion);
   readonly tabs = computed<readonly TerminalTab[]>(() =>
@@ -149,16 +142,10 @@ export class TaskTerminalComponent {
   constructor() {
     afterRenderEffect(() => {
       const scope = this.store.selection()?.scopeId ?? '';
-      if (scope === this.settingsScope) return;
-      this.settingsScope = scope; this.settingsOpen.set(false);
-      this.settingsBusy.set(false); this.settingsError.set('');
+      if (scope === this.preferencesScope) return;
+      this.preferencesScope = scope;
       this.preferences.set({ profile: null, prediction: 'auto' });
       if (scope) untracked(() => { this.preferencesRead = this.loadPreferences(scope); });
-    });
-    afterRenderEffect(() => {
-      this.visible(); this.available(); this.store.selection();
-      const menu = this.optionsMenu();
-      untracked(() => menu?.close());
     });
     afterRenderEffect(() => {
       const machine = this.machineId();
@@ -557,7 +544,7 @@ export class TaskTerminalComponent {
     if (entry?.terminal.id === Number(id) && this.canType(entry))
       entry.input.push("\x03");
   }
-  async create(scriptId?: string, shellIntegration = true): Promise<void> {
+  async create(scriptId?: string): Promise<void> {
     this.focusOnAttach = true;
     const target = this.store.selection(), host = this.host()?.nativeElement;
     let size;
@@ -568,7 +555,7 @@ export class TaskTerminalComponent {
       if (this.disposed || target?.scopeId !== this.store.selection()?.scopeId || target?.taskId !== this.store.selection()?.taskId) return;
       size = initialTerminalSize(host);
     }
-    await this.store.create(scriptId, shellIntegration, size, this.preferences().profile ?? undefined);
+    await this.store.create(scriptId, true, size, this.preferences().profile ?? undefined);
     requestAnimationFrame(() => this.attached?.surface.focus());
   }
   private async open(signal: AbortSignal): Promise<void> {
@@ -641,33 +628,14 @@ export class TaskTerminalComponent {
       output,
     });
   }
-  togglePrediction(): void {
-    void this.savePreferences({ ...this.preferences(), prediction: this.prediction() ? 'off' : 'auto' });
-  }
   private async loadPreferences(scope: string): Promise<void> {
-    const revision = this.preferencesRevision;
     let reply;
     try { reply = await this.bridge.taskTerminalPreferences(scope); } catch { return; }
-    if (this.settingsScope !== scope || this.disposed || revision !== this.preferencesRevision) return;
+    if (this.preferencesScope !== scope || this.disposed) return;
     if (reply?.ok) {
       this.preferences.set(reply.value);
       for (const entry of this.surfaces.values()) entry.surface.localEcho.setEnabled(this.prediction());
     }
-  }
-  async savePreferences(value: TaskTerminalPreferences): Promise<void> {
-    const scope = this.settingsScope;
-    if (!scope || this.settingsBusy()) return;
-    this.preferencesRevision++;
-    this.settingsBusy.set(true); this.settingsError.set('');
-    try {
-      const reply = await this.bridge.taskTerminalSavePreferences(scope, value);
-      if (this.settingsScope !== scope || this.disposed) return;
-      if (!reply.ok) { this.settingsError.set(reply.error.message); return; }
-      this.preferences.set(value);
-      for (const entry of this.surfaces.values()) entry.surface.localEcho.setEnabled(this.prediction());
-      this.settingsOpen.set(false);
-    } catch { if (this.settingsScope === scope) this.settingsError.set('Terminal settings could not be saved.'); }
-    finally { if (this.settingsScope === scope) this.settingsBusy.set(false); }
   }
   openPort(port: number): void {
     const target = this.selection(),

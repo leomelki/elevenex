@@ -1,15 +1,14 @@
 import { BrowserDemoComponent } from './browser-demo.component';
-import { CdkMenuTrigger } from '@angular/cdk/menu';
 import { MachineFlowDemoComponent } from './machine-flow-demo.component';
 import { TitleIslandDemoComponent } from './title-island-demo.component';
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
-import { ButtonComponent, DropdownMenuComponent, DropdownItemComponent } from '../src/app/ui';
+import { ButtonComponent } from '../src/app/ui';
 import { GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, Machine, MachineCardComponent, PairingTextComponent, PairPasteComponent, SshHost } from '../src/app/machines';
 import { ChangeFile, ChangeListComponent, DiffContextRequest, DiffFileContent, DiffFileRequest, DiffReviewComponent, ReviewMode, TerminalLine, TerminalTab, TerminalViewComponent } from '../src/app/views';
 
 @Component({
   selector: 'ex-machines-views-demo',
-  imports: [CdkMenuTrigger, DropdownMenuComponent, DropdownItemComponent, MachineFlowDemoComponent, TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, MachineCardComponent, PairingTextComponent, PairPasteComponent, BrowserDemoComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
+  imports: [MachineFlowDemoComponent, TitleIslandDemoComponent, ButtonComponent, GettingReadyComponent, HostFieldComponent, HostKeyCheckComponent, MachineCardComponent, PairingTextComponent, PairPasteComponent, BrowserDemoComponent, TerminalViewComponent, DiffReviewComponent, ChangeListComponent],
   templateUrl: './machines-views-demo.component.html',
   styleUrl: './machines-views-demo.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -10,6 +10,10 @@ export default async function* (capture) {
     await capture.reducedMotion(theme === 'dark');
     await capture.viewport(theme === 'dark' ? 420 : 900, 600);
     await capture.settle();
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-task-terminal [aria-label="Terminal options"], ex-terminal-preferences')), null,
+      'Task terminals have no options dropdown or settings sheet, even when the engine supports untracked shells');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-task-terminal [aria-label="New terminal (⌘T)"]')), true,
+      'Direct terminal creation stays available');
     await capture.click('.surface .xterm');
     await capture.component('ex-task-terminal', component => {
       component.captureNode = component.attached.surface.terminal.element;

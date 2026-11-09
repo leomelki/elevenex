@@ -44,35 +44,6 @@ export default async function* (capture) {
       assert.equal(password.predicting, false);
       assert.equal(password.output.split('\n').map(line => line.trimEnd()).join('\n'), 'server ~/project $ echo snapp\nPassword:');
       yield { name: `${theme}-${width}-password`, selector: '.terminal[data-ready=true]' };
-
-      await capture.click('#terminal-settings');
-      await capture.waitFor(() => !!document.querySelector('[role=dialog]'));
-      await capture.settle();
-      yield { name: `${theme}-${width}-settings`, inspect: ['[role=dialog]'] };
-      await owner(component => component.settingsBusy.set(true));
-      assert.equal(await capture.evaluate(() => [...document.querySelectorAll('[role=dialog] input, [role=dialog] textarea, [role=dialog] [role=switch]')].every(control => control.disabled)), true);
-      yield { name: `${theme}-${width}-settings-saving`, inspect: ['[role=dialog]'] };
-      await owner(component => { component.settingsBusy.set(false); component.settingsError.set('Settings could not be saved. Try again.'); });
-      yield { name: `${theme}-${width}-settings-error`, inspect: ['[role=dialog] [role=alert]'] };
-      await owner(component => component.settingsError.set(''));
-      // Native tabbing scrolls the settings body to its editable controls.
-      for (let step = 0; step < 12; step++) {
-        if (await capture.evaluate(() => document.activeElement === document.querySelector('[role=dialog] textarea:last-of-type'))) break;
-        await capture.press('Tab');
-      }
-      await capture.fill('[role=dialog] textarea:last-of-type', 'bad name=value');
-      await capture.press('Tab'); await capture.press('Tab'); await capture.press('Enter');
-      await capture.waitFor(() => !!document.querySelector('[role=dialog] [role=alert]'));
-      assert.match(await capture.evaluate(() => document.querySelector('[role=dialog] [role=alert]')?.textContent ?? ''), /NAME=value/);
-      yield { name: `${theme}-${width}-settings-validation`, inspect: ['[role=dialog] [role=alert]'] };
-      await capture.press('Escape');
-      await capture.waitFor(() => !document.querySelector('[role=dialog]'));
-      assert.equal(await capture.evaluate(() => document.activeElement?.id), 'terminal-settings');
-      await capture.click('#terminal-settings');
-      await capture.waitFor(() => !!document.querySelector('[role=dialog]'));
-      assert.equal(await capture.evaluate(() => document.querySelector('[role=dialog] textarea:last-of-type')?.value), 'EDITOR=vim');
-      await capture.press('Escape');
-      await capture.waitFor(() => !document.querySelector('[role=dialog]'));
     }
   }
 }

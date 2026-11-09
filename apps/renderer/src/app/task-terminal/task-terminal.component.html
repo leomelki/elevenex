@@ -1,8 +1,5 @@
 <ex-terminal-view [animateTabs]="animateTabs()" [tabs]="tabs()" [active]="store.active() === null ? undefined : '' + store.active()" [scripts]="store.snapshot()?.scripts ?? []" [failure]="failure()" [disabled]="disabled()" [askDisabled]="!askAvailable()" [rerunDisabled]="!current()?.canRerun" [findStatus]="searchResult()" [findMatches]="searchMatches()"
   (selected)="selected($event)" (added)="create()" (closed)="close($event)" (scriptRequested)="create($event.id)" (stopRequested)="interrupt($event)" (rerunRequested)="store.action(+$event.tabId, 'rerun')" (askRequested)="ask()" (portOpened)="openPort($event)" (searchRequested)="find($event)">
-  @if (store.snapshot()?.shellIntegrationControl) {
-    <button terminalActions exButton variant="ghost" size="sm" [cdkMenuTriggerFor]="terminalMenu" [disabled]="disabled()" aria-label="Terminal options"><ex-icon name="chevron-down" [size]="14" /></button>
-  }
   <div terminalContent class="live-content" [class.has-terminal]="!!current()">
     @if (browserState(); as browser) {
       @if (browser.terminalId === current()?.id) {
@@ -12,7 +9,6 @@
       }
     }
     @if (store.error()) { <div class="notice error" role="alert">{{ store.error() }}<button exButton size="sm" variant="ghost" [disabled]="disabled()" (click)="store.refresh()">Refresh</button></div> }
-    @if (settingsError() && !settingsOpen()) { <div class="notice error" role="alert">{{ settingsError() }}</div> }
     @if (!available()) { <p class="notice" role="status">Reconnect to reattach. Terminals continue on their machine.</p> }
     @if (notice()) { <div class="notice" role="status">{{ notice() }}@if (inputBlocked()) { <button exButton size="sm" variant="secondary" (click)="resumeInput()">Resume typing</button> }</div> }
     @if (store.loading()) { <p class="notice" role="status">Loading task terminals…</p> }
@@ -24,12 +20,3 @@
     @if (!selection()) { <p class="notice">Select a ready task to open its terminals.</p> }
   </div>
 </ex-terminal-view>
-<ng-template #terminalMenu>
-  <ex-dropdown-menu label="Terminal options">
-    <button exDropdownItem (triggered)="create()">New terminal</button>
-    <button exDropdownItem (triggered)="create(undefined, false)">New terminal without command tracking</button>
-    <button exDropdownItem (triggered)="togglePrediction()">Input prediction: {{ prediction() ? 'Auto' : 'Off' }}</button>
-    @if (store.snapshot()?.streamVersion === 1) { <button exDropdownItem (triggered)="settingsOpen.set(true)">Terminal settings…</button> }
-  </ex-dropdown-menu>
-</ng-template>
-<ex-terminal-preferences [open]="settingsOpen()" [initial]="preferences()" [busy]="settingsBusy()" [error]="settingsError()" (closed)="settingsOpen.set(false)" (saved)="savePreferences($event)" />

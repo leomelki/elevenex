@@ -3,8 +3,6 @@
   <button exButton size="sm" (click)="metrics(1, 0)">Compact cells</button>
   <button exButton size="sm" (click)="metrics(1.5, 0)">Default cells</button>
   <button exButton size="sm" (click)="metrics(2, 2)">Spaced cells</button>
-  <button id="terminal-settings" exButton size="sm" (click)="settingsOpen.set(true)">Terminal settings</button>
 </div>
 <div #surface class="terminal" [attr.data-ready]="ready()" aria-label="Terminal rendering samples"></div>
 <output aria-label="Terminal input">{{ input() }}</output>
-<ex-terminal-preferences [open]="settingsOpen()" [initial]="preferences()" [busy]="settingsBusy()" [error]="settingsError()" (closed)="settingsOpen.set(false)" (saved)="preferences.set($event); settingsOpen.set(false)" />

@@ -14,7 +14,7 @@ export class TerminalStreamFixture {
   private created = false;
   private terminal: TaskTerminal = { id: 1, taskId: 1, title: 'bash', cwd: '/workspace', branch: 'terminal-fix',
     generation: 'preview-generation', sequence: 0, alive: true, status: 'idle', command: '', exitCode: null, port: null, canRerun: false };
-  private list() { return { taskId: 1, terminals: this.created ? [this.terminal] : [], scripts: [], limit: 16 as const, streamVersion: 1 as const }; }
+  private list() { return { taskId: 1, terminals: this.created ? [this.terminal] : [], scripts: [], limit: 16 as const, streamVersion: 1 as const, shellIntegrationControl: true as const }; }
   taskTerminalList = async () => ({ ok: true as const, value: this.list() });
   taskTerminalCreate = async () => { this.created = true; this.counts.create++; return { ok: true as const, value: this.terminal }; };
   taskTerminalPreferences = async () => ({ ok: true as const, value: { profile: null, prediction: 'off' } });

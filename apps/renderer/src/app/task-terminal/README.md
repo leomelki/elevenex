@@ -1,8 +1,10 @@
 # Production task terminals
 
 `TaskTerminalComponent` adapts the existing `TerminalView` / `ViewTabs`. The
-toolbar shows terminal actions only; directory and branch context belongs in the
-shell, where it reflects the user's current directory rather than startup metadata.
+tab strip provides direct creation (+ or Command/Ctrl-T), close, script and find
+actions, without a terminal options menu or settings sheet. Directory and branch
+context belongs in the shell, where it reflects the user's current directory
+rather than startup metadata.
 The workspace projects it through `WorkspacePanels[workspaceTerminal]`; task identity
 is independent of the selected conversation. Terminal data and surfaces activate lazily on first
 use. Opening Terminal checks the current task's backend list and starts one shell
@@ -123,15 +125,15 @@ must not race with queued/unacknowledged input or later user edits.
 Copy and search follow visible text, including tentative characters. **Ask the
 agent** uses only bounded confirmed backend context (80 lines/8,000 characters);
 older engines roll back predictions before collecting local context. No prompt
-is sent automatically. Prediction can be switched between **Auto** and **Off**.
+is sent automatically. Existing per-machine prediction preferences remain respected.
 
-**Terminal settings** stores the user's default/custom shell profile per machine
-in a private, atomic file under desktop application data. Executable, literal
-argument arrays, environment overrides/removals and POSIX login mode apply to new
-shells. Shells use explicit argument arrays in the resolved task directory.
+Existing saved default/custom shell profiles remain supported per machine
+in a private, atomic file under desktop application data, without a settings UI.
+Executable, literal argument arrays, environment overrides/removals and POSIX
+login mode apply to new shells. Shells use explicit argument arrays in the resolved task directory.
 Profiles with startup arguments/login mode bypass injected hooks so the user's
 initialization wins; ordinary supported shells retain optional integration.
-Engine capability variables are not inherited by desktop shells. Settings do not
+Engine capability variables are not inherited by desktop shells. Saved profiles do not
 mutate existing PTYs or write into task checkouts. Script discovery still reads
 one confined root manifest (256 KiB/100 scripts), with its bounded cache.
 
@@ -186,10 +188,8 @@ pending integration becomes unavailable after ten seconds without a valid event;
 a late successful initialization can still activate tracking. Typing is never
 blocked by that state. Untracked shells do not show a guessed running indicator.
 
-The Terminal options menu offers **New terminal without command tracking** on
-engines advertising the optional capability. The existing shell is retained;
-the new one uses the same task-owned PTY lifecycle without injected hooks. Set
-`ELEVENEX_TERMINAL_SHELL_INTEGRATION=0` in the backend environment to disable
+The backend retains its optional untracked-shell launch capability for existing
+callers. Set `ELEVENEX_TERMINAL_SHELL_INTEGRATION=0` in the backend environment to disable
 injection for new shells globally, or in the user's rc to opt out of hooks for
 that shell. Existing engines and callers retain their default contracts.
 

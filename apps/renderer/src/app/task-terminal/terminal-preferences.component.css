@@ -1,8 +1,0 @@
-.heading { padding: var(--space-4); font-weight: 600; }
-.settings { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4); }
-h2, p { margin: 0; }
-p, label span { color: var(--ink-muted); font-size: var(--text-caption-size); }
-label { display: flex; flex-direction: column; gap: var(--space-1); }
-textarea { box-sizing: border-box; width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-2); background: var(--surface-raised); color: var(--ink); font-family: var(--font-mono); }
-footer { display: flex; justify-content: flex-end; gap: var(--space-2); }
-.error { color: var(--danger); }
