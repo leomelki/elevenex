@@ -1515,12 +1515,12 @@ export class ClaudeRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
     const selectedModel = model ?? null;
-    state.selectedModel = selectedModel;
-
     const runtime = this.sessionRuntimes.get(sessionId);
     if (runtime) {
       await runtime.setModel(selectedModel ?? undefined);
-      this.restartIdleRuntimeForOptionChange(sessionId);
+    }
+    state.selectedModel = selectedModel;
+    if (runtime) {
       // Context/model discovery is optional UI metadata. Publish the accepted
       // selection immediately rather than holding the picker on a CLI probe.
       void this.refreshRuntimeMetadata(sessionId, {
@@ -1531,8 +1531,9 @@ export class ClaudeRuntimeService
           `Model metadata refresh failed session=${sessionId}: ${String(error)}`,
         );
       });
-      this.emitRunState(sessionId);
     }
+
+    this.emitRunState(sessionId);
 
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -3759,6 +3760,16 @@ export class ClaudeRuntimeService
     // system:init arrives after the user stops, we still need to persist the
     // session ID so that getHistory can load it and the next run can resume.
     this.captureClaudeSessionId(sessionId, message);
+    // Native set_model receipts are control traffic, even during the grace
+    // window for background replies. They must never create a user turn/run.
+    if (
+      (message.type === 'user' &&
+        this.isModelChangeOutput(message.message.content)) ||
+      (message.type === 'system' &&
+        message.subtype === 'local_command_output' &&
+        this.isModelChangeOutput(message.content, false))
+    )
+      return;
     if (
       this.activeRuns.get(sessionId)?.interruptRequested &&
       (message.type === 'assistant' ||
@@ -4638,7 +4649,9 @@ export class ClaudeRuntimeService
     if (message.permissionMode === 'plan') {
       state.planMode = true;
     }
-    state.selectedModel = metadata.model || state.selectedModel;
+    // init/context report the wire ID, which loses custom labels and model
+    // capabilities if it replaces the alias chosen in the catalog.
+    state.selectedModel ??= this.catalogModelId(state, metadata.model);
     this.emitEvent({
       type: 'session_metadata',
       payload: { sessionId, metadata },
@@ -6768,7 +6781,8 @@ export class ClaudeRuntimeService
         .then((models) => {
           if (!isCurrent()) return;
           const mappedModels = models.map((model) => this.toModelOption(model));
-          state.availableModels = mappedModels;
+          if (mappedModels.length) state.availableModels = mappedModels;
+          state.selectedModel = this.catalogModelId(state, state.selectedModel);
           // Warm sessions may still run the previous CLI or have project-only
           // settings. They can seed a cold cache, but cannot replace a probe.
           if (mappedModels.length && !this.modelsCacheFromGlobalProbe) {
@@ -6795,8 +6809,7 @@ export class ClaudeRuntimeService
         if (!isCurrent() || state.selectedModel !== selectedModelAtStart)
           return;
         state.contextUsage = this.toContextUsage(contextUsage);
-        if (options.reason !== 'model_change')
-          state.selectedModel = contextUsage.model || state.selectedModel;
+        state.selectedModel ??= this.catalogModelId(state, contextUsage.model);
         if (state.sessionMetadata && contextUsage.model) {
           state.sessionMetadata = {
             ...state.sessionMetadata,
@@ -6836,9 +6849,24 @@ export class ClaudeRuntimeService
     await Promise.all([refreshPromise, modelsPromise]);
   }
 
+  private catalogModelId(
+    state: RuntimeState,
+    id: string | null | undefined,
+  ): string | null {
+    if (!id) return null;
+    // Match exact selections first: the default and custom aliases may resolve
+    // to the same wire model while representing different user choices.
+    return (
+      state.availableModels.find((model) => model.id === id)?.id ??
+      state.availableModels.find((model) => model.resolvedModel === id)?.id ??
+      id
+    );
+  }
+
   private toModelOption(model: ModelInfo): ClaudeModelOption {
     return {
       id: model.value,
+      ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
       displayName: model.displayName,
       description: model.description,
       supportsEffort: model.supportsEffort,
@@ -7097,6 +7125,11 @@ export class ClaudeRuntimeService
       if (!rawPayload) {
         continue;
       }
+      if (
+        message.type === 'user' &&
+        this.isModelChangeOutput(rawPayload.content)
+      )
+        continue;
       const payload =
         typeof rawPayload.content === 'string'
           ? {
@@ -7360,6 +7393,7 @@ export class ClaudeRuntimeService
     if (record.isSidechain === true || record.isMeta === true) return false;
 
     const content = (record.message as { content?: unknown }).content;
+    if (this.isModelChangeOutput(content)) return false;
     if (!Array.isArray(content)) return true;
 
     return !content.some(
@@ -7768,6 +7802,26 @@ export class ClaudeRuntimeService
 
   private normalizeToolName(name: string): string {
     return name.toLowerCase().replace(/[_-]/g, '');
+  }
+
+  private isModelChangeOutput(content: unknown, wrapped = true): boolean {
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content) &&
+            content.length > 0 &&
+            content.every((part: unknown) => {
+              const block = asRecord(part);
+              return block?.type === 'text' && typeof block.text === 'string';
+            })
+          ? content.map((part: { text: string }) => part.text).join('\n')
+          : '';
+    return (
+      /^\s*<local-command-stdout>\s*Set model to\b[\s\S]*<\/local-command-stdout>\s*$/.test(
+        text,
+      ) ||
+      (!wrapped && /^\s*Set model to\b/.test(text))
+    );
   }
 
   private isSyntheticUserMessage(text: string): boolean {

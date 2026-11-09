@@ -185,6 +185,13 @@ applies changes through `set_thinking_level` before prompting. Catalog failures
 and unknown model capabilities do not invent supported efforts. Both live
 settings and preset catalogs carry these same per-model capabilities.
 
+Claude model selections retain their catalog aliases across startup and context
+updates, preserving custom display names and per-model thinking choices. When
+only a wire model ID is known, the SDK's `resolvedModel` catalog field supplies
+the match. Model changes publish state even before a runtime starts; a warm
+query applies them without rebuilding the process. Native model-change receipts
+are control traffic and are omitted from live and saved conversation turns.
+
 The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
 permission picker directly. Harness, model, thinking and fast mode live inside
 the agent popover; the toolbar stays on one row. All choices use authoritative

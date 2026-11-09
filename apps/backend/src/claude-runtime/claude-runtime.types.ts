@@ -231,6 +231,8 @@ export interface ClaudeAutocompleteItem {
 
 export interface ClaudeModelOption {
   id: string;
+  /** Canonical wire ID reported by Claude for this catalog alias. */
+  resolvedModel?: string;
   displayName: string;
   description: string;
   supportsEffort?: boolean;
