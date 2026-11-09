@@ -19,6 +19,27 @@ location as fallback and “New tab” for an empty tab. They are human-facing o
 navigation persistence does not include page titles. Code-first agents can
 explicitly read titles on tabs they control.
 
+## Agent requests
+
+The browser accepts task-owned `agentRequests` from the typed host state.
+`BrowserAgentRequestsComponent` renders their messages and emits named
+complete/cancel/pick commands. New requests open the Browser panel without
+moving keyboard focus. Requests are attached to the creating conversation;
+returning control never uses whichever session is currently selected.
+
+Action requests let the person work in the page and explicitly return control.
+Element requests require Select element, a non-activating click, and Confirm and
+return. The host checks ownership and document/frame identity at confirmation and
+when the agent consumes the locator. Selection values are withheld from the
+agent until confirmation; field values are never part of the selection payload.
+Controls remain usable while selection input is paused. Opener-linked popups
+share this control boundary: takeover revokes the group and explicit handoff
+returns the group to the authorized session. Unrelated pages stay independent. Expiry, cancellation or
+page closure clears the picker. Tickets survive a code worker reset, expire after
+ten minutes and never send a prompt or replay an interrupted script.
+
+See [scoped Playwright and human tickets](../../../../../docs/browser-playwright.md).
+
 ## Rendering and composition
 
 Browser Tools selects **Local**, **Local · task proxy**, or **Remote** through

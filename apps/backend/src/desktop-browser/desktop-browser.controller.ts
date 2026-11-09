@@ -1,3 +1,4 @@
+import { browserHumanRequests } from '@elevenex/browser-agent';
 import { createHash } from 'node:crypto';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { TaskBrowserServers } from './task-browser-servers.js';
@@ -20,7 +21,8 @@ const inputSchema = z
     taskId: z.number().int().positive().safe(),
     desktopId: z.string().uuid(),
     token: z.string().uuid(),
-    codeVersion: z.literal(1).optional(),
+    codeVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+    requests: z.array(z.unknown()).max(32).optional(),
     busy: z.array(z.string().uuid()).max(8).optional(),
     receipt: z
       .object({
@@ -110,6 +112,7 @@ export class DesktopBrowserController {
       data.receipt,
       data.codeVersion,
       data.busy,
+      data.requests === undefined ? undefined : browserHumanRequests(data.requests, 32),
     );
     if (
       data.codeVersion &&

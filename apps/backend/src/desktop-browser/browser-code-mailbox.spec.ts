@@ -13,6 +13,20 @@ describe('Code-first desktop mailbox', () => {
     service.poll(1, 'desktop', 'lease', undefined, 1);
   });
   afterEach(() => service.onModuleDestroy());
+  it('keeps a confirmed human result readable after its desktop disconnects', async () => {
+    const request = { id: '11111111-1111-4111-8111-111111111111', tabId: 'tab', sessionId: 2, kind: 'action' as const, message: 'Continue manually', status: 'pending' as const, expiresAt: Date.now() + 600000 };
+    service.poll(1, 'desktop', 'lease', undefined, 2);
+    const pending = service.requestCode(1, 2, command, new AbortController().signal);
+    const delivered = service.poll(1, 'desktop', 'lease', undefined, 2).command!;
+    service.poll(1, 'desktop', 'lease', { id: delivered.id, value: { ...result, requests: [request] } }, 2, [], [{ ...request, status: 'completed' }]);
+    await pending;
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 11000);
+    try {
+      expect(service.desktops(1)).toEqual([]);
+      await expect(service.waitForUser(1, 2, request.id, 1000, new AbortController().signal)).resolves.toMatchObject({ status: 'completed' });
+      await expect(service.waitForUser(1, 3, request.id, 1000, new AbortController().signal)).rejects.toThrow('unavailable');
+    } finally { clock.mockRestore(); }
+  });
   it('wakes an idle long poll immediately and never redelivers code', async () => {
     const wait = service.wait('desktop', 'lease', new AbortController().signal);
     const pending = service.requestCode(

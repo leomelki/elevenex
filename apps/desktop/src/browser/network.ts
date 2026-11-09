@@ -42,6 +42,10 @@ export class TaskBrowserNetwork {
     if (route.trim() !== `SOCKS5 127.0.0.1:${proxy.port}`) throw new Error('This Chromium runtime cannot isolate remote loopback routing');
     this.assertCurrent();
   }
+  async proxyAddress(): Promise<string> {
+    if (!this.proxy) throw new Error('Task proxy not initialized');
+    return 'socks5://127.0.0.1:' + (await this.proxy).port;
+  }
   authorizePorts(ports: readonly number[]): void { void ports; /* Discovery supplies UI suggestions, never network authority. */ }
   allowed(value: string): boolean {
     if (this.closed || !this.current() || !this.active()) return false;

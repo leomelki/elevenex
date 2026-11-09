@@ -9,7 +9,7 @@ import { McpConnectionRegistryService } from '../connection/mcp-connection-regis
 import type { McpToolServices } from '../tool-registry/mcp-tool-services.js';
 
 describe('Code-first browser over the real MCP SDK', () => {
-  it('discovers two tools, defaults task scope, emits native image blocks and gates identity', async () => {
+  it('discovers three tools, defaults task scope, emits native image blocks and gates identity', async () => {
     const image = {
       data: '/9j/2Q==',
       mimeType: 'image/jpeg',
@@ -22,6 +22,8 @@ describe('Code-first browser over the real MCP SDK', () => {
       logs: [],
       images: [image],
     });
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const waitForUser = jest.fn().mockResolvedValue({ id: requestId, status: 'completed' });
     const services = {
       sessions: {
         findOne: () =>
@@ -36,7 +38,7 @@ describe('Code-first browser over the real MCP SDK', () => {
         record: () =>
           Promise.resolve({ id: 5, taskState: 'ready', archivedAt: null }),
       },
-      browsers: { requestCode, desktops: () => [] },
+      browsers: { requestCode, waitForUser, desktops: () => [] },
     } as unknown as McpToolServices;
     let identity: number | null = 42;
     const registry = new ToolRegistryService(
@@ -60,7 +62,7 @@ describe('Code-first browser over the real MCP SDK', () => {
           .filter((tool) => tool.name.startsWith('browser_'))
           .map((tool) => tool.name)
           .sort(),
-      ).toEqual(['browser_reset', 'browser_run']);
+      ).toEqual(['browser_reset', 'browser_run', 'browser_wait_user']);
       const guide = await client.callTool({
         name: 'browser_run',
         arguments: {},
@@ -76,7 +78,7 @@ describe('Code-first browser over the real MCP SDK', () => {
       expect(requestCode).toHaveBeenCalledWith(
         5,
         42,
-        { kind: 'code', code: 'return 42', timeoutMs: 15000 },
+        { kind: 'code', api: 2, code: 'return 42', timeoutMs: 15000 },
         expect.any(AbortSignal),
         undefined,
       );
@@ -136,6 +138,9 @@ describe('Code-first browser over the real MCP SDK', () => {
         expect.any(AbortSignal),
         undefined,
       );
+      const completed = await client.callTool({ name: 'browser_wait_user', arguments: { requestId, timeoutMs: 1000 } });
+      expect(completed.isError).not.toBe(true);
+      expect(waitForUser).toHaveBeenCalledWith(5, 42, requestId, 1000, expect.any(AbortSignal));
       identity = null;
       expect(
         (

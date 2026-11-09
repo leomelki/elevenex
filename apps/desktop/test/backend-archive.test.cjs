@@ -9,6 +9,8 @@ const { promisify } = require('node:util');
 const { pruneStagedNodeModules } = require('../../../scripts/archive-electron-backend');
 
 const run = promisify(execFile);
+const agentRequire = createRequire(require.resolve('../../../packages/browser-agent/package.json'));
+const testRequire = createRequire(agentRequire.resolve('@playwright/test'));
 const backendRequire = createRequire(require.resolve('../../backend/package.json'));
 
 test('browser runtime packages remain usable after final pruning and archive extraction', async t => {
@@ -16,8 +18,8 @@ test('browser runtime packages remain usable after final pruning and archive ext
   t.after(() => rm(root, { recursive: true, force: true }));
   const modules = join(root, 'stage/backend/node_modules');
   await mkdir(modules, { recursive: true });
-  for (const name of ['playwright-core', 'ffmpeg-static']) {
-    await cp(dirname(backendRequire.resolve(`${name}/package.json`)), join(modules, name), { recursive: true, dereference: true });
+  for (const name of ['playwright-core', 'ffmpeg-static', '@playwright/test', 'playwright']) {
+    await cp(dirname((name === '@playwright/test' ? agentRequire : name === 'playwright' ? testRequire : backendRequire).resolve(`${name}/package.json`)), join(modules, name), { recursive: true, dereference: true });
   }
   // Installation-only dependencies must still be removed from the runtime.
   await mkdir(join(modules, 'https-proxy-agent'));
@@ -37,9 +39,29 @@ test('browser runtime packages remain usable after final pruning and archive ext
   const { stdout } = await run(process.execPath, ['-e', `
     const assert = require('node:assert/strict');
     const { chromium } = require(process.argv[1]);
+    const { expect } = require(require('node:path').join(process.argv[1], '..', '@playwright/test'));
+    expect(3).toBe(3);
     assert.equal(typeof chromium.launch, 'function');
     assert.equal(typeof chromium.executablePath(), 'string');
-  `, playwrightRoot], { timeout: 10000 });
+    const { Worker } = require('node:worker_threads');
+    const { PLAYWRIGHT_WORKER_SOURCE } = require(process.argv[2]);
+    const worker = new Worker(PLAYWRIGHT_WORKER_SOURCE, {
+      eval: true, env: {}, execArgv: [],
+      workerData: { artifacts: process.argv[3], modules: {
+        'playwright-core': process.argv[1],
+        '@playwright/test': require('node:path').join(process.argv[1], '..', '@playwright/test'),
+      } },
+    });
+    worker.once('error', error => { console.error(error); process.exit(1); });
+    worker.on('message', async message => {
+      if (message.type !== 'reply') return;
+      assert.equal(message.error, undefined);
+      assert.equal(message.value.length, 2);
+      worker.postMessage({ type: 'dispose' }); await worker.terminate();
+    });
+    worker.postMessage({ type: 'snapshot', value: { rows: [], documents: [] } });
+    worker.postMessage({ type: 'call', id: 1, op: 'prepare' });
+  `, playwrightRoot, agentRequire.resolve('./dist/playwright-worker-source.js'), join(root, 'worker-artifacts')], { timeout: 10000 });
   assert.equal(stdout, '');
   const cli = await run(process.execPath, [join(playwrightRoot, 'cli.js'), 'install', '--dry-run', 'chromium', '--no-shell'], { timeout: 10000 });
   assert.match(cli.stdout, /chromium/i);

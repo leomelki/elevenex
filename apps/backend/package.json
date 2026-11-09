@@ -61,7 +61,8 @@
     "@elevenex/browser-network": "workspace:*",
     "@elevenex/shared": "workspace:*",
     "@elevenex/browser-inspection": "workspace:*",
-    "@elevenex/browser-agent": "workspace:*"
+    "@elevenex/browser-agent": "workspace:*",
+    "@playwright/test": "1.61.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

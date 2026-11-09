@@ -314,8 +314,7 @@ export class AgentTarget {
   dispose(): void {
     this.unsubscribe();
     this.history.length = 0;
-    void this.target
-      .send("Runtime.releaseObjectGroup", { objectGroup: this.group })
-      .catch(() => undefined);
+    void Promise.resolve().then(() => this.target.send('Runtime.releaseObjectGroup', { objectGroup: this.group }))
+      .catch(() => undefined).then(() => this.target.dispose?.()).catch(() => undefined);
   }
 }

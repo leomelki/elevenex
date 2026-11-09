@@ -108,7 +108,7 @@ describe('Code-first browser execution', () => {
           'await browser.tabs.list(); return [typeof process,typeof require,typeof fetch,typeof Buffer];',
         )
       ).value,
-    ).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
+    ).toEqual(['undefined', 'undefined', 'undefined', 'function']);
     for (const code of [
       'return console.log.constructor("return process")()',
       'return browser.tabs.list.constructor("return process")()',

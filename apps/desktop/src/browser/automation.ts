@@ -18,12 +18,13 @@ export class BrowserAutomation {
   private cancelAction?: () => void;
   private readonly codeActions = new Map<string, AbortController>();
   private supportsCode = true;
+  private codeVersion: 1 | 2 = 2;
   private receipts: Receipt[] = [];
   constructor(private readonly windowId: number, private readonly client: BackendClient) {}
   select(task: TaskBrowser): void {
     if (this.current === task) return;
     if (this.current) { this.cancelActions(); this.current.suspend(); this.client.cancel(this.windowId, this.current.scopeId, 'task-browser-poll'); }
-    this.current = task; this.token = randomUUID(); this.receipts = []; this.supportsCode = true;
+    this.current = task; this.token = randomUUID(); this.receipts = []; this.supportsCode = true; this.codeVersion = 2;
     if (!this.timer) this.timer = setTimeout(() => { this.timer = undefined; void this.poll(); }, 0);
   }
   deactivate(task: TaskBrowser): void {
@@ -39,13 +40,13 @@ export class BrowserAutomation {
     const receipt = this.receipts.shift();
     const result = await this.client.execute(this.windowId, task.scopeId, 'task-browser-poll:' + task.taskId + ':' + token, false,
       (endpoint, signal) => requestBackendJson(endpoint, { path: '/api/desktop-browser/poll', method: 'POST',
-        body: { taskId: task.taskId, desktopId: this.desktopId, token, ...(this.supportsCode ? { codeVersion: 1, ...(this.codeActions.size ? { busy: [...this.codeActions.keys()] } : {}) } : {}), ...(receipt ? { receipt } : {}) }, limit: 262144 }, signal), this.supportsCode ? 5000 : 2000);
+        body: { taskId: task.taskId, desktopId: this.desktopId, token, ...(this.supportsCode ? { codeVersion: this.codeVersion, ...(this.codeVersion === 2 ? { requests: task.humanResults?.() ?? [] } : {}), ...(this.codeActions.size ? { busy: [...this.codeActions.keys()] } : {}) } : {}), ...(receipt ? { receipt } : {}) }, limit: 262144 }, signal), this.supportsCode ? 5000 : 2000);
     if (this.disposed || this.current !== task || this.token !== token) return;
     if (!result.ok) {
       if (this.supportsCode && result.error.code === 'http' && result.error.status === 400) {
         // A rejected capability field has not delivered an action. Older hosts
         // keep their original mailbox contract and legacy automation behavior.
-        this.supportsCode = false;
+        if (this.codeVersion === 2) this.codeVersion = 1; else this.supportsCode = false;
         this.timer = setTimeout(() => { this.timer = undefined; void this.poll(); }, 0); return;
       }
       if (result.error.code === 'http' && (result.error.status === 400 || result.error.status === 404)) { this.deactivate(task); task.destroy(); return; }

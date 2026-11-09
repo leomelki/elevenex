@@ -4,7 +4,17 @@
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "scripts": { "build": "tsc -p tsconfig.json" },
-  "dependencies": { "@elevenex/shared": "workspace:*" },
-  "devDependencies": { "@types/node": "26.6.5", "typescript": "6.0.3" }
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build-worker.mjs"
+  },
+  "dependencies": {
+    "@elevenex/shared": "workspace:*",
+    "playwright-core": "1.61.0",
+    "@playwright/test": "1.61.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "6.0.3",
+    "esbuild": "0.28.2"
+  }
 }

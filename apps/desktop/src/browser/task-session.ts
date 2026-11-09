@@ -36,6 +36,7 @@ export class BrowserTaskSession {
     observe: (contentsId: number) => void,
     canDownload: (contentsId: number) => boolean,
     notify: (contentsId: number, message: string, outside?: boolean) => void,
+    agentDownload?: (contentsId: number, item: DownloadItem) => boolean,
   ) {
     this.partition = "persist:task-browser-" + createHash("sha256").update(identity).digest("hex");
     this.previous = profiles.acquire(this.partition);
@@ -46,6 +47,7 @@ export class BrowserTaskSession {
     this.session.setPermissionCheckHandler(() => false);
     this.session.on("will-download", (event, item, contents) => {
       const contentsId = contents.id;
+      if (this.downloads.size < 2 && agentDownload?.(contentsId, item)) { this.downloads.add(item); item.once('done', () => this.downloads.delete(item)); return; }
       if (!canDownload(contentsId) || this.downloads.size >= 2) {
         event.preventDefault();
         return;

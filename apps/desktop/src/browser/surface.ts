@@ -1,6 +1,7 @@
+import { AgentDownloads } from './agent-downloads';
 import { nativeBrowserInput } from './native-input';
 import { AgentNativeInput } from './agent-input';
-import { AGENT_EVENTS, delay, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import { hardenTaskGuest } from './guest-policy';
 import { WebContentsView } from 'electron';
 import { BrowserFrameStream } from './frame-stream';
@@ -17,7 +18,10 @@ export interface BrowserPageHost {
   resourceUrl(url: string): string | null;
   logicalUrl(url: string): string;
   configure(session: Session): Promise<void>;
+  authorize?(url: string): Promise<void>;
+  popup?(sessionId: number, options: Electron.BrowserWindowConstructorOptions): WebContents;
   changed(): void;
+  controlChanged?(): void;
   frame(frame: TaskBrowserFrame): void;
   readonly scopeId: string;
   readonly taskId: number;
@@ -30,17 +34,36 @@ export interface BrowserPageHost {
 }
 /** One sandboxed, unprivileged page. The creating task owns and destroys it explicitly. */
 export class BrowserPage {
+  agentPicker?: (x: number, y: number) => Promise<void>;
+  agentSelectionPaused = false;
+  get documentId(): string { return this.bootstrap + ':' + this.navigation; }
+  private playwrightConnections = 0;
+  private readonly downloads = new AgentDownloads();
+  acceptAgentDownload(item: Electron.DownloadItem): boolean { return this.agentPlaywright && this.downloads.accept(item); }
+  get agentPlaywright(): boolean { return this.lease.driver === 'agent' && this.playwrightConnections > 0; }
   private readonly agentInputs = new Set<AgentNativeInput>();
   private agentView?: WebContentsView;
+  private agentBlank?: Promise<void>;
+  private agentPopup = false;
   get independent(): boolean { return !!this.agentView; }
   /** Agent tabs can start while their panel is hidden. Main owns an offscreen
    * sandboxed view; the existing stream surface displays it when requested. */
-  ensureAgentView(): void {
+  ensureAgentView(popup?: Electron.BrowserWindowConstructorOptions): void {
     if (this.hasContents) return;
-    const preferences: Electron.WebPreferences = { partition: this.partition, offscreen: true };
+    // Electron supplies opener metadata in these preferences. Preserve it while
+    // pinning the task session and reapplying every security setting.
+    const preferences: Electron.WebPreferences = { ...popup?.webPreferences, session: this.pageSession, partition: this.partition, offscreen: true };
     if (!hardenTaskGuest(preferences, { partition: this.partition, src: this.bootstrap }, this.partition, this.bootstrap)) throw new Error('Invalid agent page preferences');
-    preferences.backgroundThrottling = false;
-    this.agentView = new WebContentsView({ webPreferences: preferences });
+    preferences.backgroundThrottling = false; preferences.disableDialogs = false;
+    this.agentPopup = popup !== undefined;
+    // createWindow receives an already-created WebContents. Replacing it loses
+    // the opener and can strand window.open() in Chromium's creation handshake.
+    const supplied = popup ? Reflect.get(popup, 'webContents') as WebContents | undefined : undefined;
+    if (supplied) {
+      const inherited = popup!.webPreferences!;
+      if (supplied.session !== this.pageSession || !inherited.sandbox || !inherited.contextIsolation || inherited.nodeIntegration || inherited.webviewTag || !inherited.webSecurity) throw new Error('Unsafe popup preferences');
+    }
+    this.agentView = new WebContentsView(supplied ? { webContents: supplied } : { webPreferences: preferences });
     // A native parent establishes the renderer's viewport. Keep the view hidden;
     // presentation uses the existing pixel stream, never a native overlay.
     this.host.window.contentView.addChildView(this.agentView);
@@ -49,42 +72,57 @@ export class BrowserPage {
     this.presentation = 'stream';
     this.attach(this.agentView.webContents);
   }
-  async agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>, signal: AbortSignal): Promise<BrowserAgentTarget> {
+  async agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>, signal: AbortSignal, human?: () => boolean): Promise<BrowserAgentTarget> {
     const ownership = this.lease.ownership;
     const assert = () => {
-      if (!active() || this.destroyed || this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId || this.lease.ownership !== ownership) throw new Error('Tab control changed; wait for handoff and get a fresh handle');
+      if (!active() || this.destroyed || (!human && (this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId)) || (human && (!human() || this.lease.driver === 'agent')) || this.lease.ownership !== ownership) throw new Error('Tab control changed; wait for handoff and get a fresh handle');
     };
     assert();
     while (!this.hasContents || this.initializing) { assert(); await delay(25, signal); }
     // A newly constructed native view has no document yet. CDP Runtime.enable
     // waits for one, so load the inert document before installing observation.
-    if (this.independent && !this.contents.getURL()) await this.contents.loadURL('about:blank');
+    if (this.independent && !this.agentPopup && !this.contents.getURL()) await (this.agentBlank ??= this.contents.loadURL('about:blank'));
     assert(); signal.throwIfAborted();
     const contents = this.contents, debuggerApi = contents.debugger;
     if (!debuggerApi.isAttached()) debuggerApi.attach('1.3');
+    const targetInfo = await debuggerApi.sendCommand('Target.getTargetInfo') as { targetInfo: { targetId: string } };
+    const attached = await debuggerApi.sendCommand('Target.attachToTarget', { targetId: targetInfo.targetInfo.targetId, flatten: true }) as { sessionId: string };
+    const protocolSession = attached.sessionId;
+    try {
+    let playing = false, closed = false;
+    assert();
     const native = new AgentNativeInput(contents, input => {
       this.syntheticInput = true;
       try { contents.sendInputEvent(input); } finally { this.syntheticInput = false; }
     });
+    const children = new Set<string>();
+    const raw = async (method: string, params: Record<string, unknown>, child?: string) => {
+      if (method.startsWith('Input.')) await debuggerApi.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }, child ?? protocolSession);
+      return await ((!child ? native.send(method, params) : null) ?? debuggerApi.sendCommand(method, params, child ?? protocolSession));
+    };
+    const lease = new ProtocolLease(raw, () => debuggerApi.sendCommand('Target.detachFromTarget', { sessionId: protocolSession }));
+    const receive = (_event: Electron.Event, method: string, params: unknown, id?: string) => {
+      if (id !== protocolSession && (!id || !children.has(id))) return;
+      if (method === 'Target.attachedToTarget' && params && typeof params === 'object') { const child = Reflect.get(params, 'sessionId'); if (typeof child === 'string') children.add(child); }
+      lease.receive(method, params, id === protocolSession ? undefined : id);
+    };
+    this.agentInputs.add(native); contents.setIgnoreMenuShortcuts(true); debuggerApi.on('message', receive);
     return {
       id: this.id, assert: () => { assert(); if (!this.hasContents || this.contents !== contents) throw new Error('Browser engine replaced'); },
-      send: async (method, params) => {
-        assert();
-        if (method.startsWith('Input.')) await debuggerApi.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-        assert();
-        return await (native.send(method, params) ?? debuggerApi.sendCommand(method, params));
-      },
+      send: async (method, params, child) => { assert(); return lease.send(method, params, child); },
       subscribe: listener => {
-        this.agentInputs.add(native);
-        const receive = (_event: Electron.Event, method: string, params: unknown, sessionId?: string) => {
-          if (!sessionId && AGENT_EVENTS.some(name => name === method)) listener(method, params);
-        };
-        debuggerApi.on('message', receive); return () => { native.release(); this.agentInputs.delete(native); debuggerApi.removeListener('message', receive); };
+        const stopEvents = lease.subscribe(listener), stop = this.lease.subscribe(() => listener('Elevenex.controlRevoked', {}));
+        return () => { stop(); stopEvents(); };
       },
+      authorize: async (url, pending) => { assert(); pending.throwIfAborted(); browserUrl(url); await this.host.authorize?.(url); await this.host.configure(this.pageSession); pending.throwIfAborted(); if (!this.host.resourceUrl(url)) throw new Error('Task destination is not authorized'); },
+      playwright: async () => { await this.downloads.prepare(); if (!playing) { playing = true; this.playwrightConnections++; } },
+      subscribeDownloads: listener => this.downloads.subscribe(listener),
+      dispose: async () => { if (closed) return; closed = true; if (playing) this.playwrightConnections--; native.release(); await lease.dispose(); debuggerApi.removeListener('message', receive); this.agentInputs.delete(native); if (!this.agentInputs.size && !contents.isDestroyed()) contents.setIgnoreMenuShortcuts(false); },
       goto: async (url, pending) => { assert(); await goto(url, pending); assert(); },
       close: async () => { assert(); if (this.lease.by !== 'agent') throw new Error('User-created tabs require user closure'); await close(); },
       interrupt: () => { assert(); native.release(); void debuggerApi.sendCommand('Runtime.terminateExecution').catch(() => undefined); void debuggerApi.sendCommand('Page.stopLoading').catch(() => undefined); },
     };
+    } catch (error) { await debuggerApi.sendCommand('Target.detachFromTarget', { sessionId: protocolSession }).catch(() => undefined); throw error; }
   }
   readonly id: string;
   readonly bootstrap: string;
@@ -140,7 +178,7 @@ export class BrowserPage {
     // A tab survives engine recovery; a main-issued guest identity does not.
     this.bootstrap = 'about:blank#' + id + ':' + randomUUID();
     if (process.env['ELECTRON_ENABLE_LOGGING'] || app.commandLine.hasSwitch('enable-logging')) throw new Error('Private browsing is unavailable while Chromium page logging is enabled. Disable page logging before opening a tab.');
-    this.lease = new BrowserDriverLease(by, sessionId, () => { for (const input of this.agentInputs) input.release(); });
+    this.lease = new BrowserDriverLease(by, sessionId, () => { for (const input of this.agentInputs) input.release(); }, () => host.controlChanged?.());
     if (by === 'agent') this.step = { n: 1, text: 'Opening page' };
     // The task owns a durable profile shared by its tabs; Chromium keeps site data
     // across task eviction and application restarts.
@@ -162,7 +200,14 @@ export class BrowserPage {
       // no-argument callback denies selection. Never auto-send an OS credential.
       Reflect.apply(callback, undefined, []);
     });
-    contents.setWindowOpenHandler(() => { this.lease.takeOver(true); host.attention('popup', 'This site requested a popup window. Continue this workflow outside; sign-in state is separate.'); return { action: 'deny' }; });
+    contents.setWindowOpenHandler(() => {
+      if (this.agentPlaywright && this.host.popup && this.lease.agentSessionId) return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { webPreferences: { session: this.pageSession, offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, webviewTag: false, devTools: false, backgroundThrottling: false, disableDialogs: false } },
+        createWindow: options => this.host.popup!(this.lease.agentSessionId!, options),
+      };
+      this.lease.takeOver(true); host.attention('popup', 'This site requested a popup window. Continue this workflow outside; sign-in state is separate.'); return { action: 'deny' };
+    });
     contents.on('will-attach-webview', event => event.preventDefault());
     contents.on('content-bounds-updated', event => event.preventDefault());
     contents.on('will-prevent-unload', event => event.preventDefault());
@@ -217,6 +262,7 @@ export class BrowserPage {
     contents.on('console-message', details => { if (details.level === 'error') this.countError(); });
     contents.on('before-input-event', (event, input) => {
       if (this.syntheticInput) return;
+      if (this.agentSelectionPaused) { event.preventDefault(); return; }
       const key = input.code || input.key;
       const release = input.type === 'keyUp' && this.heldKeys.get(key) === this.navigation;
       if (input.type === 'keyUp') this.heldKeys.delete(key);
@@ -225,6 +271,7 @@ export class BrowserPage {
         event.preventDefault(); return;
       }
       if (this.syntheticInput) return;
+      if (this.agentSelectionPaused) { event.preventDefault(); return; }
       if (input.type === 'keyDown' && this.heldKeys.size < 128) this.heldKeys.set(key, this.navigation);
       if (input.type === 'keyDown') this.userDownloadIntent = true;
       // Revoke synchronously before Chromium accepts the user's key. Async/queued agent
@@ -343,6 +390,7 @@ export class BrowserPage {
   async userInput(generation: number, input: TaskBrowserStreamEvent): Promise<void> {
     if (input.kind === 'release' || input.kind === 'pointer-exit' || input.kind === 'pointer-relative' || input.kind === 'pointer-unlock') throw new Error('This input requires a machine stream');
     if (!this.attached || !this.hasContents || !this.host.authorized() || this.presentation !== 'stream') throw new Error('Browser presentation or control changed');
+    if (this.agentSelectionPaused) return;
     const previousGeneration = this.lease.generation;
     if (this.lease.driver === 'agent') { this.lease.takeOver(); this.host.changed(); }
     if (generation !== previousGeneration) throw new Error('Browser control changed');
@@ -465,6 +513,7 @@ export class BrowserPage {
     return operation;
   }
   private async pickAt(x: number, y: number): Promise<void> {
+    if (this.agentPicker) { await this.agentPicker(x, y); return; }
     const navigation = this.navigation, viewport = this.viewportRevision, generation = this.lease.generation;
     const current = () => !this.destroyed && this.picking && this.attached && this.navigation === navigation && this.viewportRevision === viewport && this.lease.generation === generation;
     try {
@@ -475,6 +524,7 @@ export class BrowserPage {
   countError(): void { if (this.destroyed || !this.host.authorized() || this.errors >= 999) return; this.errors++; this.host.changed(); }
   destroy(): void {
     if (this.destroyed) return;
+    this.downloads.dispose();
     this.lease.takeOver(); this.hide(); this.destroyed = true; this.pendingLoad = undefined; this.frames?.destroy(); this.cancelTool?.(); if (this.loadTimer) clearTimeout(this.loadTimer);
     const contents = this.engine;
     if (this.agentView && !this.host.window.isDestroyed()) this.host.window.contentView.removeChildView(this.agentView);

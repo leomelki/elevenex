@@ -60,7 +60,7 @@ const browserRun = defineTool({
   mutates: true,
   annotations: { openWorldHint: true, idempotentHint: false },
   description:
-    'Run JavaScript against the task browser with persistent state, page evaluation, native input, snapshots, inline screenshots and page-scoped CDP. Batch a workflow in one call. FIRST call without code for the full API and host choices. Top-level await/return; await all operations. No automatic page output. Human takeover revokes access. Never replay interrupted scripts; inspect first.',
+    'Run JavaScript against the task browser with real Playwright locators, callbacks, HTTP/WebSocket mocking, assertions, files, inline screenshots and human action/element requests. Batch a workflow in one call. FIRST call without code for the full API and host choices. Top-level await/return; await all operations. No automatic page output. Human takeover revokes access. Never replay interrupted scripts; inspect first.',
   inputShape: {
     ...scope,
     code: z
@@ -68,7 +68,7 @@ const browserRun = defineTool({
       .max(65536)
       .optional()
       .describe(
-        'Async JavaScript body using browser, state and console. Omit to read the API guide without starting a browser.',
+        'Async JavaScript body using context, browser, expect, state, emitImage and human. Omit to read the API guide without starting a browser.',
       ),
     timeoutMs: z
       .number()
@@ -81,20 +81,22 @@ const browserRun = defineTool({
       ),
   },
   handler: async (args, ctx) => {
-    if (args.code === undefined)
+    if (args.code === undefined) {
+      const identity = await caller(args.taskId, ctx);
       return {
         data: {
           guide: BROWSER_AGENT_GUIDE,
           cdpMethods: [...CDP_METHODS],
-          hosts: args.taskId ? ctx.services.browsers.desktops(args.taskId) : [],
+          hosts: ctx.services.browsers.desktops(identity.taskId),
         },
       };
+    }
     const identity = await caller(args.taskId, ctx);
     const result = await ctx.services.browsers
       .requestCode(
         identity.taskId,
         identity.sessionId,
-        { kind: 'code', code: args.code, timeoutMs: args.timeoutMs },
+        { kind: 'code', api: 2, code: args.code, timeoutMs: args.timeoutMs },
         ctx.signal,
         args.desktopId,
       )
@@ -110,8 +112,12 @@ const browserRun = defineTool({
           retryable: false,
         });
       });
+    for (const request of result.requests ?? []) {
+      if (request.status === 'pending') await ctx.human.notify({ level: 'warning', message: request.message, deepLink: ctx.deepLink.task(identity.taskId) });
+    }
     return {
       data: {
+        requests: result.requests,
         sandboxId: result.sandboxId,
         value: result.value,
         logs: result.logs,
@@ -153,4 +159,20 @@ const browserReset = defineTool({
   },
 });
 
-export const BROWSER_TOOLS = [browserRun, browserReset];
+const browserWaitUser = defineTool({
+  name: 'browser_wait_user', title: 'Wait for browser interaction', costClass: 'heavy', requiresAgent: true,
+  currentSessionScope: 'task', annotations: { readOnlyHint: true, idempotentHint: true },
+  description: 'Wait for a browser human-request ticket created by human.requestAction/requestElement in browser_run. Event-driven; no script remains blocked. Returns completed/cancelled/expired or still pending at the wait deadline. Never resumes or replays previous code. Reacquire the page or use human.locator(requestId) after completion.',
+  inputShape: {
+    taskId: scope.taskId,
+    requestId: z.string().uuid().describe('Ticket ID returned in browser_run requests or by human.requestAction/requestElement.'),
+    timeoutMs: z.number().int().min(1).max(170000).default(120000).describe('Maximum event wait in milliseconds; default 120000, cap 170000. Timeout leaves the request pending.'),
+  },
+  handler: async (args, ctx) => {
+    const identity = await caller(args.taskId, ctx);
+    const data = await ctx.services.browsers.waitForUser(identity.taskId, identity.sessionId, args.requestId, args.timeoutMs, ctx.signal);
+    return { data, nextStep: data.status === 'completed' ? 'Run fresh code. Reacquire the page or call human.locator(requestId). No old code was replayed.' : data.status === 'pending' ? 'The request is still pending; wait again or explicitly cancel it.' : 'Respect the cancelled/expired request; do not automatically repeat it.' };
+  },
+});
+
+export const BROWSER_TOOLS = [browserRun, browserReset, browserWaitUser];

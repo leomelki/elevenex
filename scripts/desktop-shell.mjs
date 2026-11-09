@@ -54,6 +54,7 @@ async function compileMain() {
   await run(tsc, ['-p', join(shared, 'tsconfig.json')]);
   await run(tsc, ['-p', join(root, 'packages/browser-inspection/tsconfig.json')]);
   await run(tsc, ['-p', join(root, 'packages/browser-agent/tsconfig.json')]);
+  await run(join(root, 'packages/browser-agent/build-worker.mjs'), []);
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
   await stageBackendRelease(root);
   await stageCodeAssets(root);

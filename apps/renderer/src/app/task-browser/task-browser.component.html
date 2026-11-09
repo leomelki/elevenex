@@ -3,6 +3,7 @@
 } @else if (!store.state()) {
   <div class="no-task" [attr.aria-busy]="store.pending() > 0"><ex-icon name="globe" [size]="24" /><p role="status">{{ store.error() || 'Opening task browser…' }}</p>@if (store.error()) { <button exButton (click)="store.read()">Refresh browser</button> }</div>
 } @else {
+  <ex-browser-agent-requests [requests]="store.state()?.agentRequests ?? []" [busy]="store.pending() > 0" [picking]="store.state()?.picking ?? false" (commandRequested)="command($event)" />
   @if (current(); as tab) { <ex-browser-site-requests [tabId]="tab.id" [pageUrl]="tab.url" [requests]="tab.workflows ?? []" (commandRequested)="command($event)" /> }
   <ex-fold [open]="!!store.state()?.attention"><div class="notice" role="status"><span>{{ store.state()?.attention?.message }}</span>@if(store.state()?.attention?.outside){<button exButton size="sm" (click)="tabCommand('outside', store.state()?.attention?.tabId)">Open outside</button>}<button exButton size="sm" variant="ghost" (click)="command({kind:'dismiss-attention'})">Dismiss</button></div></ex-fold>
   <ex-fold [open]="!!store.state()?.connection?.message"><div class="notice" role="status"><span>{{ store.state()?.connection?.message }}</span><button exButton size="sm" [disabled]="store.state()?.connection?.phase === 'connecting'" (click)="store.read()">Reconnect</button></div></ex-fold>
@@ -12,7 +13,7 @@
     [picking]="store.state()?.picking ?? false" [picked]="picked()" [width]="current()?.width ?? 'full'"
     [loading]="current()?.loading ?? false" [canGoBack]="current()?.canGoBack ?? false" [canGoForward]="current()?.canGoForward ?? false"
     [errors]="current()?.detached ? 0 : current()?.errors ?? 0" errorText=" · Details withheld for privacy."
-    needsTitle="The agent needs you here" [needsText]="store.state()?.agentCode === 1 ? 'Complete sign-in, codes or payment yourself. The agent cannot inspect this tab while you control it. I’m done returns control and page access.' : 'Complete sign-in, codes or payment yourself. Agent page text, screenshots and logs are withheld. I’m done explicitly returns control.'"
+    needsTitle="The agent needs you here" [needsText]="store.state()?.agentCode === 1 ? 'Complete sign-in, codes or payment yourself. The agent cannot inspect this tab while you control it. I’m done returns control and page access, including related popups.' : 'Complete sign-in, codes or payment yourself. Agent page text, screenshots and logs are withheld. I’m done explicitly returns control.'"
     (selected)="tabCommand('select', $event)" (closed)="tabCommand('close', $event)" (added)="newTab()"
     (navigated)="navigate($event)" (backRequested)="tabCommand('back')" (forwardRequested)="tabCommand('forward')" (reloadRequested)="tabCommand('reload')"
     (pageFocusRequested)="tabCommand('focus')" (takeOverRequested)="tabCommand('takeover')" (handBackRequested)="tabCommand('handoff')" (widthChange)="setWidth($event)"
@@ -27,7 +28,7 @@
         <div class="page-state" role="alert"><ex-icon name="globe" [size]="24" /><p>{{ current()?.error }}</p><button exButton (click)="tabCommand('reload')">Retry page</button></div>
       } @else if (store.state()?.picked) {
         <div class="page-state paused" animate.enter="settle"><span class="paused-caption"><ex-icon name="target" [size]="14" />Page paused while you ask</span></div>
-      } @else if (!current()?.url && current()) {
+      } @else if (!current()?.url && current() && current()?.by !== 'agent') {
         <div class="page-state start-page">
           <ex-icon name="globe" [size]="40" /><h2>New tab</h2><p>Where would you like to go?</p>
           @if (store.state()?.ports?.length) {
@@ -47,7 +48,7 @@
           <ex-dropdown appearance="quiet" prefix="Browser location:" label="Browser location" [value]="store.state()?.placement ?? 'desktop'" [options]="placements()" [disabled]="placementLocked() || placements().length < 2" [active]="dialogOpen()" (changed)="configurePlacement($event)" />
           <small>Close tabs with loaded pages before changing location. Each location has its own sign-in profile.</small>
         }
-        <p class="privacy"><ex-icon name="shield" [size]="16" />{{ store.state()?.agentCode === 1 ? 'Agents can read page content, screenshots and logs while they control a tab. Take over to stop agent access.' : 'Agent observation is withheld: arbitrary pages cannot guarantee complete secret redaction.' }}</p>
+        <p class="privacy"><ex-icon name="shield" [size]="16" />{{ store.state()?.agentCode === 1 ? 'Agents can read page content, screenshots and logs while they control a tab. Take over to stop agent access to this page and related popups.' : 'Agent observation is withheld: arbitrary pages cannot guarantee complete secret redaction.' }}</p>
         <div class="tool-group"><span>Page appearance</span><div class="actions"><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'light' ? 'primary' : 'secondary'" (click)="theme('light')">Light</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'dark' ? 'primary' : 'secondary'" (click)="theme('dark')">Dark</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.theme === 'system' ? 'primary' : 'secondary'" (click)="theme('system')">System</button></div></div>
         <div class="tool-group"><span>Network</span><div class="actions"><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="current()?.slowNetwork ? 'primary' : 'secondary'" (click)="network(true)">Slow network</button><button exButton size="sm" [disabled]="!current()?.url || !!current()?.error || current()?.loading || store.pending() > 0" [variant]="!current()?.slowNetwork ? 'primary' : 'secondary'" (click)="network(false)">Normal</button></div></div>
         @if (!detachedWindow()) { <label class="feedback"><input type="checkbox" [checked]="store.state()?.feedback" (change)="command({kind: 'feedback', enabled: !store.state()?.feedback})" />Share error counts during agent work</label><small>{{ store.state()?.agentCode === 1 ? 'Shows counts during agent work. Agents can inspect logs while they control the tab.' : 'Opt-in shares counts only while the agent owns a tab. Messages and requests remain private.' }}</small> }
@@ -60,4 +61,4 @@
   </ex-modal-layer>
 }
 
-<ex-browser-surfaces [interactive]="active()" (shortcutRequested)="shortcut($event)" />
+<ex-browser-surfaces [interactive]="active() && !selectionPaused()" (shortcutRequested)="shortcut($event)" />

@@ -220,6 +220,7 @@ export class MachineWorkspaceComponent {
   }
 
   private readonly chat = viewChild(SessionChatComponent);
+  browserAttention(): void { this.store.selectPanel('browser'); this.panelOpen.set(true); }
   browserContext(intent: BrowserComposerIntent): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId) return;

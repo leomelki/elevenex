@@ -1,3 +1,5 @@
+import { BrowserHumanMailbox } from './browser-human-mailbox.js';
+import type { BrowserHumanRequest, BrowserCodeResult } from '@elevenex/shared';
 import { browserCodeCommand, browserCodeResult } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand } from '@elevenex/shared';
 import { TasksService } from '../tasks/tasks.service.js';
@@ -23,12 +25,13 @@ interface Lease {
   readonly token: string;
   seen: number;
   readonly pending: Map<string, Pending>;
-  codeVersion?: 1;
+  codeVersion?: 1 | 2;
 }
 
 /** Bounded desktop mailbox and task-runtime routing. Neither path fabricates user handoff. */
 @Injectable()
 export class DesktopBrowserService implements OnModuleDestroy {
+  private readonly humanRequests = new BrowserHumanMailbox();
   private readonly leases = new Map<string, Lease>();
   private readonly waiting = new Map<string, () => void>();
   private readonly timer = setInterval(() => this.expire(), 1000);
@@ -44,8 +47,9 @@ export class DesktopBrowserService implements OnModuleDestroy {
     desktopId: string,
     token: string,
     receipt?: { id: string; value?: unknown; failed?: boolean },
-    codeVersion?: 1,
+    codeVersion?: 1 | 2,
     busy?: readonly string[],
+    humanResults?: readonly BrowserHumanRequest[],
   ) {
     this.expire();
     let lease = this.leases.get(desktopId);
@@ -82,7 +86,7 @@ export class DesktopBrowserService implements OnModuleDestroy {
           try {
             pending.resolve(
               pending.command['kind'] === 'code'
-                ? browserCodeResult(receipt.value)
+                ? this.recordCode(lease.taskId, pending.sessionId, lease.desktopId, browserCodeResult(receipt.value))
                 : browserReply(receipt.value),
             );
           } catch {
@@ -95,6 +99,7 @@ export class DesktopBrowserService implements OnModuleDestroy {
         }
       }
     }
+    if (humanResults) this.humanRequests.update(taskId, desktopId, humanResults);
     const running = [...lease.pending.values()]
       .filter((item) => item.delivered)
       .map((item) => item.id);
@@ -178,9 +183,9 @@ export class DesktopBrowserService implements OnModuleDestroy {
           'Several task browsers are connected. Supply desktopId.',
         );
       return command['kind'] === 'code'
-        ? browserCodeResult(
+        ? this.recordCode(taskId, sessionId, hosted.id, browserCodeResult(
             await hosted.code(sessionId, browserCodeCommand(command), signal),
-          )
+          ))
         : this.runtimeRequest(
             hosted,
             command as BrowserAgentCommand,
@@ -199,7 +204,7 @@ export class DesktopBrowserService implements OnModuleDestroy {
           : 'Open this task’s Browser in the desktop. No task browser is connected.',
       );
     const lease = matches[0];
-    if (command['kind'] === 'code' && lease.codeVersion !== 1)
+    if (command['kind'] === 'code' && (command['api'] === 2 ? lease.codeVersion !== 2 : !lease.codeVersion))
       throw new Error(
         'This desktop needs an update for code-first browser automation',
       );
@@ -255,6 +260,19 @@ export class DesktopBrowserService implements OnModuleDestroy {
       signal.addEventListener('abort', fail, { once: true });
       this.waiting.get(lease.desktopId)?.();
     });
+  }
+  private recordCode(taskId: number, sessionId: number, hostId: string, result: BrowserCodeResult): BrowserCodeResult {
+    this.humanRequests.register(taskId, sessionId, hostId, result.requests ?? []); return result;
+  }
+  async waitForUser(taskId: number, sessionId: number, requestId: string, timeoutMs: number, signal: AbortSignal) {
+    const entry = this.humanRequests.get(taskId, sessionId, requestId), runtime = this.runtime?.active(taskId);
+    if (entry.value.status !== 'pending') return entry.value;
+    let stop: (() => void) | undefined;
+    if (runtime?.id === entry.hostId) {
+      const refresh = () => this.humanRequests.update(taskId, runtime.id, runtime.humanResults());
+      stop = runtime.subscribe(refresh); refresh();
+    } else if (![...this.leases.values()].some(lease => lease.desktopId === entry.hostId && lease.taskId === taskId)) throw new Error('Open the task browser to complete this human request');
+    try { return await this.humanRequests.wait(taskId, sessionId, requestId, timeoutMs, signal); } finally { stop?.(); }
   }
   requestCode(
     taskId: number,
@@ -320,11 +338,13 @@ export class DesktopBrowserService implements OnModuleDestroy {
     }
   }
   private expire(): void {
+    this.humanRequests.sweep();
     for (const lease of this.leases.values())
       if (Date.now() - lease.seen > (lease.codeVersion ? 10000 : 3000))
         this.drop(lease);
   }
   private drop(lease: Lease): void {
+    this.humanRequests.disconnected(lease.desktopId);
     this.waiting.get(lease.desktopId)?.();
     this.leases.delete(lease.desktopId);
     for (const pending of [...lease.pending.values()]) {
@@ -337,6 +357,7 @@ export class DesktopBrowserService implements OnModuleDestroy {
     }
   }
   onModuleDestroy(): void {
+    this.humanRequests.dispose();
     clearInterval(this.timer);
     for (const lease of [...this.leases.values()]) this.drop(lease);
   }

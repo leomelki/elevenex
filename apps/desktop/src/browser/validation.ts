@@ -70,6 +70,7 @@ export function layout(value: unknown): TaskBrowserLayout {
 }
 export function command(value: unknown): TaskBrowserCommand {
   const raw = record(value), kind = raw['kind'];
+  if (kind === 'agent-request-complete' || kind === 'agent-request-cancel' || kind === 'agent-request-pick') { exact(raw, ['kind','requestId']); return { kind, requestId: browserId(raw['requestId']) }; }
   if (kind === 'dismiss-attention' || kind === 'new-tab') { exact(raw, ['kind']); return { kind }; }
   if (kind === 'open') { exact(raw, ['kind', 'url']); return { kind, url: browserUrl(raw['url']) }; }
   if (kind === 'pick' || kind === 'feedback') { exact(raw, ['kind', 'enabled']); if (typeof raw['enabled'] !== 'boolean') throw new Error('Invalid browser toggle'); return { kind, enabled: raw['enabled'] }; }

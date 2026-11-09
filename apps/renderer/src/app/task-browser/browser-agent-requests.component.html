@@ -1,0 +1,86 @@
+@for (request of requests(); track request.id) {
+  <section
+    class="request"
+    role="status"
+    aria-live="polite"
+    [attr.data-request-kind]="request.kind"
+  >
+    <div class="heading">
+      <ex-icon
+        [name]="request.kind === 'element' ? 'target' : 'chat'"
+        [size]="16"
+      /><strong>{{
+        request.kind === 'element'
+          ? 'Choose an element for the agent'
+          : 'The agent needs you'
+      }}</strong>
+    </div>
+    <p class="message">{{ request.message }}</p>
+    @if (request.selection; as element) {
+      <p class="selection">
+        Selected <code>{{ element.tag }}</code
+        ><span>{{ element.frames.length ? ' · Inside a frame' : '' }}</span>
+      </p>
+      <small
+        >Confirm this selection to return control to the requesting
+        agent.</small
+      >
+    } @else if (request.kind === 'element') {
+      <small>{{
+        picking()
+          ? 'Click the element on the page. The click selects it without activating it.'
+          : 'Select an element on the page, then review it before returning control.'
+      }}</small>
+    } @else {
+      <small
+        >Complete the requested steps, then explicitly return control to the
+        requesting agent.</small
+      >
+    }
+    <small>Related popups share this handoff.</small>
+    <div class="actions">
+      <button
+        exButton
+        size="sm"
+        [disabled]="busy()"
+        (click)="show(request.tabId)"
+      >
+        Show page
+      </button>
+      @if (request.kind === 'element') {
+        <button
+          exButton
+          size="sm"
+          [disabled]="busy()"
+          (click)="command('agent-request-pick', request.id)"
+        >
+          {{ request.selection ? 'Choose again' : 'Select element' }}
+        </button>
+      }
+      <button
+        exButton
+        size="sm"
+        variant="primary"
+        [disabled]="
+          busy() || (request.kind === 'element' && !request.selection)
+        "
+        (click)="command('agent-request-complete', request.id)"
+      >
+        {{
+          request.kind === 'element'
+            ? 'Confirm and return'
+            : 'Done, return control'
+        }}
+      </button>
+      <button
+        exButton
+        size="sm"
+        variant="ghost"
+        [disabled]="busy()"
+        (click)="command('agent-request-cancel', request.id)"
+      >
+        Cancel request
+      </button>
+    </div>
+  </section>
+}

@@ -240,6 +240,7 @@ void (async () => {
   const browserSite = await require('./browser-site.cjs')();
   window.once('closed', () => { void browserSite.close(); });
   await require('./browser-code-native.cjs')();
+  await require('./browser-playwright-native.cjs')();
   const reconnectingBrowserPage = await require('./browser-native.cjs')(window, firstScope.scope.id, browserSite.url, backendUrl);
   const gitSummary = await window.webContents.executeJavaScript(`window.elevenex.workspaceGit('${firstScope.scope.id}', 1)`);
   assert.equal(gitSummary.ok, true); assert.equal(gitSummary.value.changesRevision, 'b'.repeat(64));

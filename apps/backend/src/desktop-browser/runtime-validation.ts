@@ -20,6 +20,7 @@ const url = z
 const unit = z.number().finite().min(0).max(16384),
   modifiers = z.number().int().min(0).max(15);
 export const runtimeCommand = z.union([
+  z.object({ kind: z.enum(['agent-request-complete', 'agent-request-cancel', 'agent-request-pick']), requestId: tabId }).strict(),
   z.object({ kind: z.literal('move-tab'), tabId, beforeTabId: tabId.nullable() }).strict(),
   z.object({ kind: z.literal('new-tab') }).strict(),
   z.object({ kind: z.literal('dialog-response'), tabId, requestId: tabId, accept: z.boolean(), text: z.string().max(4096) }).strict(),

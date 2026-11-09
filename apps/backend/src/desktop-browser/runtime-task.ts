@@ -1,6 +1,6 @@
 import { RuntimeWorkflowBudget } from './runtime-workflows.js';
 import type { BrowserContext, Page } from 'playwright-core';
-import { BrowserAgentEngine } from '@elevenex/browser-agent';
+import { BrowserAgentEngine, BrowserInteractionController, RelatedBrowserTabs } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { RuntimeBrowserNetwork } from './runtime-network.js';
 import { browserLoopbackHost } from '@elevenex/browser-network';
@@ -21,30 +21,84 @@ import { RuntimeInputLane } from './runtime-input-lane.js';
 
 /** The task owns browser execution. A viewer owns only presentation and human input. */
 export class RuntimeBrowserTask {
+  private readonly relatedTabs = new RelatedBrowserTabs();
+  private controlUpdating = false;
+  private synchronizeControls(): void {
+    if (this.controlUpdating || this.disposed) return;
+    this.controlUpdating = true;
+    try {
+      for (const tab of this.tabs.values())
+        if (tab.driver !== 'agent')
+          for (const id of this.relatedTabs.members(tab.id)) {
+            const sibling = this.tabs.get(id);
+            if (sibling?.driver === 'agent') sibling.takeover(true);
+          }
+    } finally {
+      this.controlUpdating = false;
+    }
+    this.revision++;
+  }
+  private handBackGroup(tab: RuntimeBrowserTab, sessionId: number): void {
+    const members = this.relatedTabs.members(tab.id).map((id) => this.page(id));
+    if (members.some((page) => page.workflows.snapshot().length))
+      throw new Error(
+        'Resolve related-page site requests before returning control',
+      );
+    this.controlUpdating = true;
+    try {
+      for (const page of members) page.handoff(sessionId);
+    } finally {
+      this.controlUpdating = false;
+    }
+    this.revision++;
+  }
   private readonly codeEngine = new BrowserAgentEngine({
-    list: sessionId => [...this.tabs.values()].map(tab => ({ id: tab.id, owned: tab.driver === 'agent' && tab.agentSessionId === sessionId, ...(tab.driver === 'agent' && tab.agentSessionId === sessionId ? { url: tab.url } : {}) })),
-    open: async (sessionId, url, signal) => {
-      this.authorize(url);
-      const tab = await this.create('agent', sessionId, '', signal);
-      const ownership = tab.ownership;
-      try {
-        const context = await this.contextForTask();
-        signal.throwIfAborted();
-        await tab.start(context);
-        signal.throwIfAborted();
-        return this.codeTarget(tab, sessionId);
-      } catch (error) {
-        if (this.tabs.get(tab.id) === tab && tab.ownership === ownership && tab.driver === 'agent')
-          await this.command({ kind: 'close', tabId: tab.id }).catch(() => undefined);
-        throw error;
-      }
-    },
+    playwright: true,
+    profile: { cookies: async () => (await this.contextForTask()).cookies(), addCookies: async cookies => (await this.contextForTask()).addCookies(cookies), clearCookies: async () => (await this.contextForTask()).clearCookies() },
+    watch: listener => this.subscribe(listener),
+    interact: (sessionId, command) => this.interactions.execute(sessionId, command),
+    document: tabId => this.tabs.get(tabId)?.documentId,
+    authorizeUrl: async (url, signal) => { signal.throwIfAborted(); this.authorize(url); },
+    version: async () => (await this.contextForTask()).browser()?.version() ?? '140.0.0.0',
+    proxy: () => this.network.start(),
+    newPage: (sessionId, signal) => this.openCodePage(sessionId, '', signal),
+    list: sessionId => [...this.tabs.values()].map(tab => ({ id: tab.id, populated: !!tab.url || tab.started, owned: tab.driver === 'agent' && tab.agentSessionId === sessionId, ...(tab.driver === 'agent' && tab.agentSessionId === sessionId ? { url: tab.url } : {}) })),
+    open: (sessionId, url, signal) => this.openCodePage(sessionId, url, signal),
     get: (sessionId, tabId) => Promise.resolve(this.codeTarget(this.page(tabId), sessionId)),
   });
+  private readonly interactions = new BrowserInteractionController({
+    changed: () => this.revision++,
+    authorize: sessionId => this.authorizeSession(sessionId),
+    tab: id => {
+      const tab = this.page(id), live = () => { if (!this.alive || this.tabs.get(id) !== tab) throw new Error('Tab closed or replaced'); };
+      return {
+        get documentId() { live(); return tab.documentId; }, get ownership() { live(); return tab.ownership; }, get picking() { return tab.picking; },
+        assertAgent: sessionId => { live(); tab.assertAgent(tab.generation, sessionId); },
+        takeOver: () => { live(); tab.takeover(true); }, handBack: sessionId => { live(); this.handBackGroup(tab, sessionId); },
+        select: () => this.select(id), picker: callback => { tab.agentPicker = callback ?? undefined; tab.picking = callback !== null; }, pause: paused => { tab.agentSelectionPaused = paused; },
+        target: current => tab.agentTarget(1, () => this.alive && this.tabs.get(id) === tab, () => Promise.reject(new Error('Inspection cannot navigate')), () => Promise.reject(new Error('Inspection cannot close pages')), undefined, listener => this.subscribe(listener), current),
+      };
+    },
+  });
+  userRequest(id: string, sessionId?: number) { return this.interactions.get(id, sessionId); }
+  humanResults() { return this.interactions.results; }
+  private async openCodePage(sessionId: number, url: string, signal: AbortSignal) {
+    if (url) this.authorize(url);
+    const tab = await this.create('agent', sessionId, '', signal), ownership = tab.ownership;
+    try {
+      const context = await this.contextForTask(); signal.throwIfAborted();
+      await tab.start(context); signal.throwIfAborted();
+      return await this.codeTarget(tab, sessionId);
+    } catch (error) {
+      if (this.tabs.get(tab.id) === tab && tab.ownership === ownership && tab.driver === 'agent') await this.command({ kind: 'close', tabId: tab.id }).catch(() => undefined);
+      throw error;
+    }
+  }
   private codeTarget(tab: RuntimeBrowserTab, sessionId: number) {
     return tab.agentTarget(sessionId, () => this.alive && this.tabs.get(tab.id) === tab,
       async (url, signal) => { signal.throwIfAborted(); this.authorize(url); await tab.navigate(url); signal.throwIfAborted(); },
-      async () => { await this.command({ kind: 'close', tabId: tab.id }); });
+      async () => { await this.command({ kind: 'close', tabId: tab.id }); },
+      async (url, signal) => { signal.throwIfAborted(); this.authorize(url); }, listener => this.subscribe(listener));
   }
   code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult> {
     return this.codeEngine.execute(sessionId, command, signal);
@@ -150,6 +204,7 @@ export class RuntimeBrowserTask {
     readonly taskId: number,
     private readonly pool: RuntimeBrowserPool,
     private readonly profileIdentity: string,
+    private readonly authorizeSession: (sessionId: number) => Promise<void> = () => Promise.resolve(),
   ) {
     this.network = new RuntimeBrowserNetwork(
       () => this.alive,
@@ -190,6 +245,7 @@ export class RuntimeBrowserTask {
   state(): TaskBrowserState {
     return {
       agentCode: 1,
+      agentRequests: this.interactions.pending,
       // Advertise the private protocol before the lazy Chromium launch so clients
       // can opt in on connect without sending new fields to older engines.
       webAuthn: true,
@@ -228,7 +284,7 @@ export class RuntimeBrowserTask {
         return tab;
       }),
       picked: this.picked,
-      picking: this.picking,
+      picking: this.picking || [...this.tabs.values()].some(tab => tab.picking && !!tab.agentPicker),
       pickerMessage: this.pickerMessage,
       feedback: this.feedback,
       ports: this.ports,
@@ -333,13 +389,16 @@ export class RuntimeBrowserTask {
     if (!opener) return; // Ordinary tabs are adopted by ensure().
     const origin = [...this.tabs.values()].find(tab => tab.owns(opener));
     if (!origin || !this.alive || this.tabs.size >= 12) { await popup.close(); return; }
-    origin.takeover(true);
-    const tab = this.makeTab('you', null);
+    const driven = origin.agentPlaywright;
+    if (!driven) origin.takeover(true);
+    const tab = this.makeTab(driven ? 'agent' : 'you', driven ? origin.agentSessionId : null);
     // Keep the actual page in this context: OAuth relies on window.opener,
     // postMessage, window.close and the task's shared cookies.
     this.tabs.set(tab.id, tab);
+    this.relatedTabs.link(tab.id, origin.id);
     popup.once('close', () => {
       if (!this.alive || this.tabs.get(tab.id) !== tab) return;
+      this.relatedTabs.remove(tab.id); this.interactions.pageClosed(tab.id);
       this.tabs.delete(tab.id); this.presentations.delete(tab.id);
       if (this.active === tab.id) {
         this.active = this.tabs.has(origin.id) ? origin.id : [...this.tabs.keys()].at(-1) ?? null;
@@ -359,7 +418,7 @@ export class RuntimeBrowserTask {
       this.picking = false; tab.picking = false; this.revision++;
     }, this.network, (kind, message) => {
       this.attention = { kind, message, outside: true, tabId: tab.id }; this.revision++;
-    }, this.workflowBudget);
+    }, this.workflowBudget, () => this.synchronizeControls());
     return tab;
   }
   private async ensure(
@@ -560,6 +619,8 @@ export class RuntimeBrowserTask {
     await page?.layout(width, height, visible, interactive, pixelRatio);
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
+    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId); return this.state(); }
+    if (input.kind === 'handoff') { const request = this.interactions.pending.find(request => this.relatedTabs.members(input.tabId).includes(request.tabId)); if (request) { await this.interactions.viewer('agent-request-complete', request.id); return this.state(); } }
     this.touch();
     if (input.kind === 'move-tab') {
       const page = this.page(input.tabId);
@@ -597,6 +658,8 @@ export class RuntimeBrowserTask {
       if (input.kind === 'select') await this.select(page.id);
       else if (input.kind === 'close') {
         if (this.attention?.tabId === page.id) this.attention = undefined;
+        this.relatedTabs.remove(page.id);
+        this.interactions.pageClosed(page.id);
         await page.destroy();
         this.tabs.delete(page.id); this.presentations.delete(page.id);
         if (this.active === page.id) {
@@ -607,7 +670,7 @@ export class RuntimeBrowserTask {
         if (page.workflows.snapshot().length) throw new Error('Resolve site requests before handing control back');
         const authentication = this.webAuthn.snapshot();
         if (authentication && page.documentUrl && new URL(page.documentUrl).origin === authentication.origin) throw new Error('Finish authentication before handing control back');
-        page.handoff(input.sessionId);
+        this.handBackGroup(page, input.sessionId);
       }
       else if (input.kind === 'takeover' || input.kind === 'focus')
         page.takeover();
@@ -902,6 +965,7 @@ export class RuntimeBrowserTask {
   }
   async destroy(): Promise<void> {
     if (this.disposed) return;
+    this.interactions.dispose();
     this.codeEngine.dispose();
     this.disposed = true;
     this.controller.abort();

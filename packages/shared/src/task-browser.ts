@@ -166,10 +166,14 @@ export interface TaskBrowserState {
   readonly ports: readonly number[];
   /** Code-first MCP can observe only tabs owned by its authenticated session. */
   readonly agentCode?: 1;
+  readonly agentRequests?: readonly import('./browser-human.js').BrowserHumanRequest[];
   /** Legacy metadata-only observation policy; agentCode advertises the new API. */
   readonly privacy: 'content-withheld';
 }
 export type TaskBrowserCommand =
+  | { readonly kind: 'agent-request-complete'; readonly requestId: string }
+  | { readonly kind: 'agent-request-cancel'; readonly requestId: string }
+  | { readonly kind: 'agent-request-pick'; readonly requestId: string }
   | { readonly kind: 'dialog-response'; readonly tabId: string; readonly requestId: string; readonly accept: boolean; readonly text: string }
   | { readonly kind: 'choose-files' | 'save-download' | 'cancel-workflow'; readonly tabId: string; readonly requestId: string }
   | { readonly kind: 'dismiss-attention' }

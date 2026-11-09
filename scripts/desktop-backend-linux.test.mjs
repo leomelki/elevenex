@@ -39,10 +39,10 @@ async function fixture(t) {
   }
   await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@8.15.4' }));
   await writeFile(join(root, 'apps/backend/package.json'), JSON.stringify({ name: 'elevenex-backend', dependencies: Object.fromEntries(
-    ['playwright-core', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
+    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
   ) }));
   await writeFile(join(root, 'pnpm-lock.yaml'), `lockfileVersion: '6.0'\nimporters:\n  apps/backend:\n    dependencies:\n${
-    ['playwright-core', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
+    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
   }  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n`);
   return root;
 }
@@ -66,6 +66,7 @@ for (const architecture of ['arm64', 'x64']) {
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
       assert.equal(backend.dependencies['playwright-core'], '1.0.0');
+      assert.equal(backend.dependencies['@playwright/test'], '1.0.0');
       assert.equal(backend.dependencies['ffmpeg-static'], '1.0.0');
       assert.equal(backend.dependencies['unused-agent-cli'], undefined);
       assert.equal(await readFile(join(cwd, 'runtime/scripts/runtime-stage-utils.js'), 'utf8'), 'scripts/runtime-stage-utils.js');

@@ -1,3 +1,4 @@
+import { BrowserAgentRequestsComponent } from './browser-agent-requests.component';
 import { BrowserSiteRequestsComponent } from './browser-site-requests.component';
 import { BrowserSurfacesComponent } from './browser-surfaces.component';
 import { OverlayContainer } from '@angular/cdk/overlay';
@@ -10,7 +11,7 @@ import { NativePageLayout } from './native-page-layout';
 export interface BrowserComposerIntent { readonly scopeId: string; readonly taskId: number; readonly sessionId: number; readonly text: string }
 @Component({
   selector: 'ex-task-browser',
-  imports: [BrowserSiteRequestsComponent, BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
+  imports: [BrowserAgentRequestsComponent, BrowserSiteRequestsComponent, BrowserSurfacesComponent, BrowserViewComponent, ButtonComponent, DropdownComponent, FoldComponent, IconComponent, ModalLayerComponent],
   providers: [TaskBrowserStore],
   templateUrl: './task-browser.component.html', styleUrl: './task-browser.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,6 +25,9 @@ export class TaskBrowserComponent {
   readonly sessionId = input<number | null>(null);
   readonly active = input(false);
   readonly contextRequested = output<BrowserComposerIntent>();
+  readonly attentionRequested = output<void>();
+  readonly selectionPaused = computed(() => this.store.state()?.agentRequests?.some(request => request.tabId === this.current()?.id && !!request.selection) ?? false);
+  private seenRequests = new Set<string>();
   readonly store = inject(TaskBrowserStore);
   readonly dialog = signal<'tools' | null>(null);
   readonly dialogOpen = signal(false);
@@ -76,6 +80,11 @@ export class TaskBrowserComponent {
   private pickerSession: number | null = null;
   private pickerIdentity = '';
   constructor() {
+    effect(() => {
+      const requests = this.store.state()?.agentRequests ?? [], ids = new Set(requests.map(request => request.id));
+      const fresh = requests.some(request => !this.seenRequests.has(request.id)); this.seenRequests = ids;
+      if (fresh) this.attentionRequested.emit();
+    });
     effect(() => this.store.open(this.scopeId(), this.taskId()));
     effect(() => {
       const state = this.store.state();

@@ -1,5 +1,6 @@
+import { agentProfile } from './agent-profile';
 import type { DesktopBrowserHost } from './host';
-import { BrowserAgentEngine, delay } from '@elevenex/browser-agent';
+import { BrowserAgentEngine, BrowserInteractionController, RelatedBrowserTabs, delay } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { BrowserTaskSession, type BrowserTaskProfiles } from './task-session';
 import { TaskBrowserNetwork } from './network';
@@ -15,29 +16,86 @@ import type { BrowserPersistence, SavedBrowser } from './persistence';
 
 /** Task workspace lifetime, independent of the selected conversation and panel. */
 export class TaskBrowser implements DesktopBrowserHost {
+  private readonly relatedTabs = new RelatedBrowserTabs();
+  private controlUpdating = false;
+  private synchronizeControls(): void {
+    if (this.controlUpdating || this.disposed) return;
+    this.controlUpdating = true;
+    try {
+      for (const page of this.pages.values())
+        if (
+          page.lease.driver !== 'agent' &&
+          !(page.independent && page.requested && page.contents.isDestroyed())
+        )
+          for (const id of this.relatedTabs.members(page.id)) {
+            const sibling = this.pages.get(id);
+            if (sibling?.lease.driver === 'agent') sibling.lease.takeOver(true);
+          }
+    } finally {
+      this.controlUpdating = false;
+    }
+    this.emit();
+  }
+  private handBackGroup(page: BrowserPage, sessionId: number): void {
+    this.controlUpdating = true;
+    try {
+      for (const id of this.relatedTabs.members(page.id))
+        this.pages.get(id)?.lease.handBack(sessionId);
+    } finally {
+      this.controlUpdating = false;
+    }
+    this.emit();
+  }
   private readonly codeEngine = new BrowserAgentEngine({
+    playwright: true,
+    profile: { cookies: () => agentProfile(this.profile.session).cookies(), addCookies: cookies => agentProfile(this.profile.session).addCookies(cookies), clearCookies: () => agentProfile(this.profile.session).clearCookies() },
+    watch: listener => { this.observers.add(listener); return () => this.observers.delete(listener); },
+    interact: (sessionId, command) => this.interactions.execute(sessionId, command),
+    document: tabId => this.pages.get(tabId)?.documentId,
+    proxy: async () => { await this.profile.configure(); return this.network.proxyAddress(); },
+    authorizeUrl: async (url, signal) => { signal.throwIfAborted(); await this.network.outside(browserUrl(url)); signal.throwIfAborted(); },
+    version: () => Promise.resolve(process.versions.chrome ?? '140.0.0.0'),
+    newPage: (sessionId, signal) => this.openCodePage(sessionId, signal),
     list: sessionId => {
       this.assertScope();
-      return [...this.pages.values()].map(page => ({ id: page.id, owned: page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId,
+      return [...this.pages.values()].map(page => ({ id: page.id, populated: !!page.url || page.hasContents, owned: page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId,
         ...(page.lease.driver === 'agent' && page.lease.agentSessionId === sessionId ? { url: page.url } : {}) }));
     },
-    open: async (sessionId, url, signal) => {
-      browserUrl(url); this.assertScope(); signal.throwIfAborted();
-      const page = this.create('agent', sessionId);
-      const active = this.active ? this.pages.get(this.active) : undefined;
-      if (!active || (active.lease.driver === 'agent' && active.lease.agentSessionId === sessionId)) this.select(page);
-      const ownership = page.lease.ownership;
-      try {
-        page.ensureAgentView(); this.emit();
-        return await this.codeTarget(page, sessionId, signal);
-      } catch (error) {
-        if (this.pages.get(page.id) === page && page.lease.ownership === ownership && page.lease.driver === 'agent')
-          await this.closePage(page).catch(() => undefined);
-        throw error;
-      }
-    },
+    open: async (sessionId, url, signal) => { browserUrl(url); return this.openCodePage(sessionId, signal); },
     get: async (sessionId, id) => this.codeTarget(this.page(id), sessionId, AbortSignal.timeout(1000)),
   });
+  private readonly interactions = new BrowserInteractionController({
+    changed: () => this.emit(), version: process.versions.chrome,
+    authorize: async sessionId => {
+      const result = await this.client.execute(this.window.webContents.id, this.scopeId, null, false, async (endpoint, signal) => {
+        const value = record(await requestBackendJson(endpoint, { path: '/api/desktop-browser/authorize', method: 'POST', body: { taskId: this.taskId, sessionId } }, signal));
+        if (value['available'] !== true || value['taskId'] !== this.taskId || value['sessionId'] !== sessionId) throw new Error('Conversation is unavailable');
+      });
+      this.assertScope(); if (!result.ok) throw new Error('Cannot return browser control to this conversation');
+    },
+    tab: id => {
+      const page = this.page(id), live = () => { this.assertScope(); if (this.pages.get(id) !== page) throw new Error('Tab replaced'); };
+      return {
+        get documentId() { live(); return page.documentId; }, get ownership() { live(); return page.lease.ownership; }, get picking() { return page.picking; },
+        assertAgent: sessionId => { live(); page.lease.assert(page.lease.generation, sessionId); },
+        takeOver: () => { live(); page.lease.takeOver(true); }, handBack: sessionId => { live(); this.handBackGroup(page, sessionId); },
+        select: () => { live(); this.select(page); this.emit(); }, picker: callback => { page.agentPicker = callback ?? undefined; page.picking = callback !== null; }, pause: paused => { page.agentSelectionPaused = paused; },
+        target: current => page.agentTarget(1, () => { live(); return this.selected(); }, () => Promise.reject(new Error('Inspection cannot navigate')), () => Promise.reject(new Error('Inspection cannot close pages')), AbortSignal.timeout(10000), current),
+      };
+    },
+  });
+  humanResults() { return this.interactions.results; }
+  private async openCodePage(sessionId: number, signal: AbortSignal) {
+    this.assertScope(); signal.throwIfAborted();
+    const page = this.create('agent', sessionId), ownership = page.lease.ownership;
+    const active = this.active ? this.pages.get(this.active) : undefined;
+    if (!active || (active.lease.driver === 'agent' && active.lease.agentSessionId === sessionId)) this.select(page);
+    try { page.ensureAgentView(); this.emit(); return await this.codeTarget(page, sessionId, signal); }
+    catch (error) {
+      if (this.pages.get(page.id) === page && page.lease.ownership === ownership && page.lease.driver === 'agent') await this.closePage(page).catch(() => undefined);
+      throw error;
+    }
+  }
   private codeTarget(page: BrowserPage, sessionId: number, signal: AbortSignal) {
     return page.agentTarget(sessionId, () => {
       this.assertScope(); return this.selected() && this.pages.get(page.id) === page;
@@ -124,6 +182,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   private timer?: ReturnType<typeof setTimeout>;
   private disposed = false;
   get closed(): boolean { return this.disposed; }
+  private readonly observers = new Set<() => void>();
   private readonly network: TaskBrowserNetwork;
   private readonly profile: BrowserTaskSession;
   constructor(readonly scopeId: string, readonly taskId: number,
@@ -142,6 +201,7 @@ export class TaskBrowser implements DesktopBrowserHost {
       },
       contentsId => this.allowDownload(contentsId),
       (contentsId, message, outside = false) => { const page = [...this.pages.values()].find(page => page.hasContents && page.contents.id === contentsId); this.attention = { kind: 'download', message, outside: outside && !!page, ...(page ? {tabId: page.id} : {}) }; this.emit(); },
+      (contentsId, item) => [...this.pages.values()].find(page => page.hasContents && page.contents.id === contentsId)?.acceptAgentDownload(item) ?? false,
     );
   }
 
@@ -170,20 +230,21 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active) { const active = this.pages.get(this.active); if (active?.url) void this.navigate(active, active.url).catch(() => { active.error = 'Task server unavailable. Retry to reconnect.'; this.emit(); }); }
     this.emit();
   }
-  snapshot(): TaskBrowserState { return { agentCode: 1, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
+  snapshot(): TaskBrowserState { return { agentCode: 1, agentRequests: this.interactions.pending, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
     active: this.active, tabs: [...this.pages.values()].map(page => {
       const tab = { ...page.snapshot(), detached: this.detached.has(page.id) };
       try { const url = new URL(tab.url); if (loopback(url) && this.ports.includes(Number(url.port || (url.protocol === 'https:' ? 443 : 80)))) return { ...tab, server: 'Task server' }; } catch { /* Empty tab. */ }
       return tab;
     }), picked: this.picked,
-    picking: this.picking, pickerMessage: this.pickerMessage, feedback: this.feedback, ports: this.ports, privacy: 'content-withheld', ...(this.attention ? { attention: this.attention } : {}) }; }
+    picking: this.picking || [...this.pages.values()].some(page => page.picking && !!page.agentPicker), pickerMessage: this.pickerMessage, feedback: this.feedback, ports: this.ports, privacy: 'content-withheld', ...(this.attention ? { attention: this.attention } : {}) }; }
   private create(by: 'you' | 'agent', sessionId: number | null = null, tabId?: string): BrowserPage {
     this.assertScope();
     if (this.pages.size >= 12 && (!tabId || !this.pages.has(tabId))) throw new Error('A task can have up to 12 browser tabs. Close a tab first.');
     const page = new BrowserPage({ window: this.window, scopeId: this.scopeId, taskId: this.taskId, frame: this.frame, session: this.profile.session, partition: this.profile.partition,
-      resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(),
+      popup: (sessionId, options) => { const popup = this.create('agent', sessionId); this.relatedTabs.link(popup.id, page.id); popup.ensureAgentView(options); this.emit(); return popup.contents; },
+      resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(), authorize: async url => { await this.network.outside(browserUrl(url)); },
       authorized: () => this.selected() && this.client.state(this.window.webContents.id).scope?.id === this.scopeId,
-      changed: () => this.emit(), pick: element => {
+      changed: () => this.emit(), controlChanged: () => this.synchronizeControls(), pick: element => {
         this.picked = element; this.picking = false; page.picking = false;
         this.pickerMessage = element ? null : 'Editable fields and embedded frames are private. Pick another element.';
         this.hide(); this.emit(); this.window.webContents.focus();
@@ -199,6 +260,8 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
+    if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId); return this.snapshot(); }
+    if (input.kind === 'handoff') { const request = this.interactions.pending.find(request => this.relatedTabs.members(input.tabId).includes(request.tabId)); if (request) { await this.interactions.viewer('agent-request-complete', request.id); return this.snapshot(); } }
     if (input.kind === 'dialog-response' || input.kind === 'choose-files' || input.kind === 'save-download' || input.kind === 'cancel-workflow') throw new Error('This site request belongs to a streamed browser.');
     if (input.kind === 'move-tab') {
       const page = this.page(input.tabId);
@@ -235,7 +298,7 @@ export class TaskBrowser implements DesktopBrowserHost {
         });
         this.assertScope();
         if (!authorized.ok || !this.selected() || this.pages.get(page.id) !== page || page.lease.generation !== generation) throw new Error('Browser control changed. Hand control back explicitly when ready.');
-        page.lease.handBack(input.sessionId); page.target = undefined; page.step = { n: 1, text: 'Waiting for a browser action' };
+        this.handBackGroup(page, input.sessionId); page.target = undefined; page.step = { n: 1, text: 'Waiting for a browser action' };
       }
       else if (input.kind === 'width') page.width = input.width;
       else if (input.kind === 'navigate') { page.userDownloadIntent = true; page.lease.takeOver(); await this.navigate(page, input.url); }
@@ -387,7 +450,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active && this.detached.has(this.active)) return;
     const page = this.active ? this.pages.get(this.active) : undefined;
     const layout = this.layout;
-    if (!page || !page.url || !layout?.visible || this.disposed || this.window.isDestroyed() || !this.window.isVisible() || this.window.isMinimized()) { page?.hide(); return; }
+    if (!page || (!page.url && !page.independent) || !layout?.visible || this.disposed || this.window.isDestroyed() || !this.window.isVisible() || this.window.isMinimized()) { page?.hide(); return; }
     const viewport = this.window.getContentBounds();
     page.reducedMotion = layout.reducedMotion;
     const zoom = this.window.webContents.getZoomFactor();
@@ -399,6 +462,8 @@ export class TaskBrowser implements DesktopBrowserHost {
     for (const other of this.pages.values()) other.picking = false;
   }
   private async closePage(page: BrowserPage): Promise<void> {
+    this.relatedTabs.remove(page.id);
+    this.interactions.pageClosed(page.id);
     this.clearPicker();
     if (this.attention?.tabId === page.id) this.attention = undefined;
     // Closing a companion tab must not rehost a replacement page on the way out.
@@ -446,14 +511,16 @@ export class TaskBrowser implements DesktopBrowserHost {
   private emit(): void {
     if (this.disposed) return;
     this.revision++;
+    for (const observer of this.observers) observer();
     if (this.timer) return;
     this.timer = setTimeout(() => { this.timer = undefined; if (!this.disposed) { this.place(); this.changed(this.snapshot()); this.surfacesChanged(); this.persist(); } }, 32);
   }
   destroy(): void {
     if (this.disposed) return;
+    this.interactions.dispose();
     this.codeEngine.dispose();
     this.persist(); this.disposed = true; if (this.timer) clearTimeout(this.timer);
     for (const page of this.pages.values()) page.destroy(); this.pages.clear();
-    this.detached.clear(); this.network.close(); this.profile.destroy(); this.surfacesChanged();
+    this.observers.clear(); this.detached.clear(); this.network.close(); this.profile.destroy(); this.surfacesChanged();
   }
 }

@@ -8,7 +8,7 @@ const __bridge = (() => {
   let sequence = 0, done = null, bytes = 0;
   const stringify = JSON.stringify;
   function rpc(method, args = []) {
-    if (pending.size >= 16) return Promise.reject(new Error('At most 16 concurrent browser operations'));
+    if (pending.size >= 64) return Promise.reject(new Error('At most 64 concurrent browser operations'));
     const id = ++sequence;
     return new Promise((resolve, reject) => {
       pending.set(id, {resolve, reject});
@@ -47,6 +47,7 @@ const __bridge = (() => {
     bytes += text.length; logs.push(text);
   }
   return Object.freeze({
+    rpc,
     browser: Object.freeze({tabs: Object.freeze({
       list: () => rpc('list'),
       new: async url => tab(await rpc('new', [url])),
@@ -59,16 +60,15 @@ const __bridge = (() => {
       pending.delete(id);
       if (error !== null) entry.reject(new Error(error)); else entry.resolve(value);
     },
-    complete(value, error) { done = {value: value ?? null, ...(arguments.length > 1 ? {error: String(error?.message ?? error) || 'Browser code threw an empty value'} : {})}; },
+    complete(runId, value, failed, error) { done = {runId, value: value ?? null, ...(failed ? {error: String(error?.message ?? error) || 'Browser code threw an empty value'} : {})}; },
     begin() { done = null; logs.length = 0; bytes = 0; },
     drain() {
-      const result = stringify({queue: queue.splice(0), logs: logs.splice(0), done, pending: pending.size});
+      const result = stringify({queue: queue.splice(0), logs: logs.splice(0), done, pending: pending.size, callbacks: __pw.drain()});
       if (result.length > 1048576) throw new Error('Execution output exceeded 1 MiB; summarize in code');
       return result;
     }
   });
 })();
-const browser = __bridge.browser;
 const console = __bridge.console;
 `;
 
@@ -80,8 +80,49 @@ const context = vm.createContext(Object.create(null), {
   codeGeneration: {strings: false, wasm: false}, microtaskMode: 'afterEvaluate'
 });
 const run = code => vm.runInContext(code, context, {timeout: 250});
+const scopeTimers = new Map();
+let timerWindow=Date.now(),timerFirings=0;
+const primitive = input => {
+  if(typeof input!=='string'||input.length>1048576)return '{"error":"Data utility limit exceeded"}';
+  try {
+    const item=JSON.parse(input);let value;
+    if(item.op==='timer-set'||item.op==='timer-clear'){
+      if(!Number.isSafeInteger(item.id)||item.id<1)throw new Error();
+      if(scopeTimers.has(item.id)){clearTimeout(scopeTimers.get(item.id));scopeTimers.delete(item.id);}
+      if(item.op==='timer-set'){
+        if(scopeTimers.size>=128||!Number.isFinite(item.ms)||item.ms<0||item.ms>60000)throw new Error();
+        scopeTimers.set(item.id,setTimeout(()=>{
+          scopeTimers.delete(item.id);
+          if(Date.now()-timerWindow>1000){timerWindow=Date.now();timerFirings=0;}
+          if(++timerFirings>2000){parentPort.postMessage({fatal:'Code timer rate exceeded'});return;}
+          try{run('__timers.fire('+item.id+')');drain();}catch{parentPort.postMessage({fatal:'Code timer callback failed or exceeded CPU limits'});}
+        },item.ms));
+      }
+      value=null;
+    }else if(item.op==='url'){
+      if(typeof item.href!=='string'||(item.base!==undefined&&item.base!==null&&typeof item.base!=='string'))throw new Error();
+      const url=new URL(item.href,item.base??undefined);
+      const fields='href protocol username password host hostname port pathname search hash origin'.split(' ');
+      if(item.key!==undefined){if(!fields.includes(item.key)||item.key==='origin'||typeof item.value!=='string')throw new Error();url[item.key]=item.value;}
+      value=Object.fromEntries(fields.map(key=>[key,url[key]]));
+    }else if(item.op==='params'||item.op==='params-string'){
+      const params=new URLSearchParams(item.value);
+      if(item.method!==undefined){if(!['append','set','delete','sort'].includes(item.method)||!Array.isArray(item.args)||item.args.some(arg=>typeof arg!=='string'))throw new Error();params[item.method](...item.args);}
+      value=item.op==='params-string'?params.toString():[...params.entries()];
+    }else if(item.op==='bytes-from'||item.op==='bytes-string'){
+      if(!['utf8','utf-8','hex','base64'].includes(item.encoding))throw new Error();
+      if(item.op==='bytes-from'){if(typeof item.value!=='string')throw new Error();const bytes=Buffer.from(item.value,item.encoding);if(bytes.length>1048576)throw new Error();value=Array.from(bytes);}
+      else{if(!Array.isArray(item.value)||item.value.length>1048576||item.value.some(byte=>!Number.isInteger(byte)||byte<0||byte>255))throw new Error();value=Buffer.from(item.value).toString(item.encoding);}
+    }else throw new Error();
+    const result=JSON.stringify({value});return result.length>4194304?'{"error":"Data utility limit exceeded"}':result;
+  }catch{return '{"error":"Invalid URL or binary data"}';}
+};
+Object.setPrototypeOf(primitive,null);Object.freeze(primitive);
+context.__elevenexData=primitive;
+run(workerData.realmData);
 run(workerData.bootstrap);
-let active = false;
+run(workerData.facade);
+let active = false, currentRun = 0;
 process.on('unhandledRejection', () => {
   parentPort.postMessage({fatal: 'An unawaited browser-code promise rejected. Await every operation.'});
   process.exit(1);
@@ -91,16 +132,21 @@ function drain() {
   if (Buffer.byteLength(serialized) > 1048576) throw new Error('Execution output exceeded 1 MiB; summarize in code');
   const message = JSON.parse(serialized);
   parentPort.postMessage(message);
-  if (message.done && !message.pending && !message.queue.length) active = false;
+  if (message.done?.runId === currentRun && !message.pending && !message.queue.length) active = false;
 }
 parentPort.on('message', message => {
   try {
     if (message.type === 'run') {
       if (active) throw new Error('Execution already running');
-      active = true;
+      active = true; currentRun = message.runId;
       run('__bridge.begin()');
-      run('(async () => {\n' + message.code + '\n})().then(v => __bridge.complete(v), e => __bridge.complete(null, e))');
-    } else if (message.type === 'reply' && active) {
+      run('(async () => {\n' + message.code + '\n})().then(v => __bridge.complete(' + message.runId + ',v,false), e => __bridge.complete(' + message.runId + ',null,true,e))');
+    } else if (message.type === 'init') {
+      run('__pw.update(' + JSON.stringify(message.handles) + ')');
+      return;
+    } else if (message.type === 'callback') {
+      run('__pw.update(' + JSON.stringify(message.handles) + '); __pw.invoke(' + message.id + ',' + message.functionId + ',' + JSON.stringify(message.args) + ')');
+    } else if (message.type === 'reply') {
       run('__bridge.reply(' + message.id + ',' + JSON.stringify(message.value ?? null) + ',' + JSON.stringify(message.error ?? null) + ')');
     }
     drain();

@@ -1,3 +1,4 @@
+import { browserHumanRequests } from '@elevenex/browser-agent';
 import { browserCursors, type TaskBrowserWorkflow } from '@elevenex/shared';
 import type {
   BrowserElement,
@@ -162,6 +163,7 @@ export function remoteBrowserState(
   return {
     ...(raw['webAuthn'] === true ? { webAuthn: true as const } : {}),
     ...(raw['agentCode'] === 1 ? { agentCode: 1 } : {}),
+    ...(raw['agentRequests'] === undefined ? {} : { agentRequests: browserHumanRequests(raw['agentRequests']) }),
     ...(raw['webAuthnRequest'] === undefined ? {} : { webAuthnRequest: webAuthnRequest(raw['webAuthnRequest']) }),
     ...(raw['pointerLock'] === true ? { pointerLock: true } : {}),
     ...(raw['workflows'] === true ? { workflows: true } : {}),

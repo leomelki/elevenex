@@ -43,6 +43,7 @@ export interface BrowserTaskHost {
   detachedSnapshot(tabId: string, state?: TaskBrowserState): TaskBrowserState;
 }
 export interface DesktopBrowserHost extends BrowserTaskHost {
+  humanResults(): readonly import('@elevenex/shared').BrowserHumanRequest[];
   code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult>;
   readonly engine: "desktop";
   hasContents(tabId: string): boolean;

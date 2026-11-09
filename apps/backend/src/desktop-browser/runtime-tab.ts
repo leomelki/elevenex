@@ -1,5 +1,5 @@
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
-import { AGENT_EVENTS, AgentInputState, type BrowserAgentTarget } from '@elevenex/browser-agent';
+import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
 import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
 import { randomUUID } from 'node:crypto';
@@ -19,39 +19,132 @@ export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
+  agentPicker?: (x: number, y: number) => Promise<void>;
+  agentSelectionPaused = false;
+  private readonly documentScope = randomUUID();
+  get documentId(): string { return this.documentScope + ':' + this.navigation; }
+  private playwrightConnections = 0;
+  private readonly agentDownloads = new Set<(download: BrowserAgentDownload) => void>();
+  get agentPlaywright(): boolean { return this.driver === 'agent' && this.playwrightConnections > 0; }
   private readonly agentInputs = new Set<AgentInputState>();
   /** Main-only page capability. Ownership survives navigation, never a takeover. */
-  agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>): BrowserAgentTarget {
+  async agentTarget(
+    sessionId: number,
+    active: () => boolean,
+    goto: BrowserAgentTarget['goto'],
+    close: () => Promise<void>,
+    authorize?: BrowserAgentTarget['authorize'],
+    watch?: (listener: () => void) => () => void,
+    human?: () => boolean,
+  ): Promise<BrowserAgentTarget> {
     const ownership = this.ownership;
     const assert = () => {
-      if (!active() || this.disposed || !this.started || this.driver !== 'agent' || this.agentSessionId !== sessionId || this.ownership !== ownership || !this.cdp) throw new Error('Tab control changed; wait for human handoff, then get a fresh tab handle');
+      if (
+        !active() ||
+        this.disposed ||
+        !this.started ||
+        (!human &&
+          (this.driver !== 'agent' || this.agentSessionId !== sessionId)) ||
+        (human && (!human() || this.driver === 'agent')) ||
+        this.ownership !== ownership ||
+        !this.cdp
+      )
+        throw new Error(
+          'Tab control changed; wait for human handoff, then get a fresh tab handle',
+        );
     };
     assert();
-    const cdp = this.cdp!;
-    const send = (method: string, params: Record<string, unknown>) => cdp.send(method as Parameters<CDPSession['send']>[0], params);
-    const input = new AgentInputState(send);
-    return {
-      id: this.id, assert,
-      // The shared broker validates protocol names and parameters at runtime.
-      send: (method, params) => { input.record(method, params); return send(method, params); },
-      subscribe: listener => {
-        this.agentInputs.add(input);
-        const cleanups = AGENT_EVENTS.map(method => {
-          const receive = (params: unknown) => listener(method, params);
-          cdp.on(method, receive); return () => cdp.off(method, receive);
-        });
-        return () => { input.release(); this.agentInputs.delete(input); for (const cleanup of cleanups) cleanup(); };
-      },
-      goto: async (url, signal) => { assert(); await goto(url, signal); assert(); },
-      close: async () => { assert(); if (this.by !== 'agent') throw new Error('User-created tabs require user closure'); await close(); },
-      interrupt: () => {
-        assert();
-        input.release();
-        void cdp.send('Runtime.terminateExecution').catch(() => undefined);
-        void cdp.send('Page.stopLoading').catch(() => undefined);
-        void this.input?.reset();
-      },
-    };
+    const cdp = await this.context!.newCDPSession(this.page!);
+    try {
+      assert();
+      const send = (method: string, params: Record<string, unknown>) =>
+        cdp.send(method as Parameters<CDPSession['send']>[0], params);
+      let playing = false,
+        closed = false;
+      const nested = new NestedSessions(send);
+      const input = new AgentInputState(send);
+      const lease = new ProtocolLease(
+        (method, params, child) => nested.send(method, params, child),
+        async () => {
+          await cdp.detach();
+        },
+      );
+      const events = PROTOCOL_EVENTS.map((method) => {
+        const receive = (params: unknown) =>
+          nested.receive(method, params, (method, params, child) =>
+            lease.receive(method, params, child),
+          );
+        cdp.on(method, receive);
+        return () => cdp.off(method, receive);
+      });
+      this.agentInputs.add(input);
+      return {
+        id: this.id,
+        assert,
+        // The shared broker validates protocol names and parameters at runtime.
+        send: (method, params, child) => {
+          assert();
+          input.record(method, params);
+          return lease.send(method, params, child);
+        },
+        subscribe: (listener) => {
+          const stopEvents = lease.subscribe(listener);
+          const stop = watch?.(() => {
+            try {
+              assert();
+            } catch {
+              listener('Elevenex.controlRevoked', {});
+            }
+          });
+          return () => {
+            stop?.();
+            stopEvents();
+          };
+        },
+        authorize,
+        subscribeDownloads: (listener) => {
+          this.agentDownloads.add(listener);
+          return () => this.agentDownloads.delete(listener);
+        },
+        playwright: () => {
+          if (!playing) {
+            playing = true;
+            this.playwrightConnections++;
+          }
+        },
+        dispose: async () => {
+          if (closed) return;
+          closed = true;
+          if (playing) this.playwrightConnections--;
+          input.release();
+          await lease.dispose();
+          for (const stop of events) stop();
+          nested.dispose();
+          this.agentInputs.delete(input);
+        },
+        goto: async (url, signal) => {
+          assert();
+          await goto(url, signal);
+          assert();
+        },
+        close: async () => {
+          assert();
+          if (this.by !== 'agent')
+            throw new Error('User-created tabs require user closure');
+          await close();
+        },
+        interrupt: () => {
+          assert();
+          input.release();
+          void cdp.send('Runtime.terminateExecution').catch(() => undefined);
+          void cdp.send('Page.stopLoading').catch(() => undefined);
+          void this.input?.reset();
+        },
+      };
+    } catch (error) {
+      await cdp.detach().catch(() => undefined);
+      throw error;
+    }
   }
   readonly id = randomUUID();
   readonly workflows: RuntimeBrowserWorkflows;
@@ -121,6 +214,7 @@ export class RuntimeBrowserTab {
       message: string,
     ) => void = () => undefined,
     workflowBudget = new RuntimeWorkflowBudget(),
+    private readonly controlChanged: () => void = () => undefined,
   ) {
     this.workflows = new RuntimeBrowserWorkflows(() => this.changed(), () => this.takeover(true), workflowBudget, message => this.attention('download', message));
     this.driver = by;
@@ -137,6 +231,7 @@ export class RuntimeBrowserTab {
     this.driver = needs ? 'needs' : 'you';
     this.generation++;
     this.target = undefined;
+    this.controlChanged();
   }
   handoff(sessionId: number): void {
     for (const input of this.agentInputs) input.release();
@@ -148,6 +243,7 @@ export class RuntimeBrowserTab {
     this.waiting = false;
     this.generation++;
     this.step = { n: 1, text: 'Waiting for a browser action' };
+    this.controlChanged();
   }
   assertAgent(generation: number, sessionId: number, requireReady = false): void {
     if (
@@ -189,14 +285,16 @@ export class RuntimeBrowserTab {
     }
     this.page = page;
     this.crashed = false;
-    page.on('dialog', dialog => this.workflows.dialog(dialog));
-    page.on('filechooser', chooser => this.workflows.upload(chooser));
+    page.on('dialog', dialog => { if (!this.agentPlaywright) this.workflows.dialog(dialog); });
+    page.on('filechooser', chooser => { if (!this.agentPlaywright) this.workflows.upload(chooser); });
     page.on('download', download => {
       // A download navigation keeps the existing document. It is not a failed
       // replacement page, and must not leave input/capture stuck loading.
       this.loadRevision++; this.documentRequest = undefined;
       this.loading = false; this.error = null; this.url = this.documentUrl;
-      this.workflows.download(download); void this.capture.start(); this.changed();
+      if (this.agentPlaywright) { for (const listener of this.agentDownloads) listener({ url: download.url(), filename: download.suggestedFilename(), path: () => download.path(), cancel: () => download.cancel(), dispose: () => download.delete() }); }
+      else this.workflows.download(download);
+      void this.capture.start(); this.changed();
     });
     this.cdp = await this.context.newCDPSession(page);
     this.input = new RuntimeBrowserInput(page, this.cdp, this.pointerLock);
@@ -558,6 +656,7 @@ export class RuntimeBrowserTab {
     generation: number,
     input: TaskBrowserStreamEvent,
   ): Promise<{ clipboard?: string }> {
+    if (this.agentSelectionPaused) return {};
     const previousGeneration = this.generation;
     // A stale human display still stops automation. It cannot authorize input
     // at outdated coordinates, so that event fails and fresh state is required.
@@ -586,6 +685,7 @@ export class RuntimeBrowserTab {
     };
     if (this.picking) {
       if (input.kind === 'pointer' && input.type === 'down') {
+        if (this.agentPicker) { await this.agentPicker(input.x, input.y); return {}; }
         const element = await this.inspect(input.x, input.y, () => {
           try { current(); return this.picking && !this.disposed; } catch { return false; }
         });

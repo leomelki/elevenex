@@ -79,6 +79,13 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
 const FINAL_RUNTIME_PACKAGE_PLANS = {
   // Playwright stays external to main.cjs. Keep its loader, browser registry,
   // installer CLI and platform helpers together; Chromium is installed later.
+  '@playwright/test': {
+    files: ['package.json', 'index.js', 'index.mjs', 'LICENSE', 'NOTICE'],
+  },
+  'playwright': {
+    files: ['package.json', 'index.js', 'index.mjs', 'test.js', 'test.mjs', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
+    directories: ['lib'],
+  },
   'playwright-core': {
     files: ['package.json', 'index.js', 'index.mjs', 'cli.js', 'browsers.json', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
     directories: ['lib', 'bin'],

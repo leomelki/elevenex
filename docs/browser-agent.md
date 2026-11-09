@@ -32,20 +32,24 @@ motivates a specific recovery regression.
 2. **Raw page evaluation only:** excellent for extraction, but cannot provide
    genuine input, past console messages, network response bodies or page capture.
    Add a host-side page capability and native input.
-3. **Unrestricted Playwright/Node object:** familiar and flexible, but crosses
-   browser/context/process/filesystem boundaries. It also requires a different
-   connection model for native Electron pages. Use a common page-scoped CDP
-   adapter with deliberate navigation/capture helpers instead. This API does not
-   claim Playwright compatibility.
-4. **Stateless code:** simple recovery, but repeatedly reconstructs tab handles
-   and helpers. Retain explicit `state` in a per-session worker, expire idle
-   workers, and return `sandboxId` so resets are visible.
-5. **Final architecture:** two MCP tools, a task-owned execution engine, a
-   validated broker, and desktop/runtime page adapters. Batch freely in code;
-   order operations on each tab; allow concurrency across tabs. Keep outputs
-   explicit and leave browser lifetime independent of execution-worker lifetime.
+3. **Unrestricted Playwright/Node object:** familiar, but crosses browser/context,
+   process and filesystem boundaries. The initial page helper API avoided that
+   exposure; it remains compatible for existing callers.
+4. **Real Playwright through capabilities:** use the library's public in-memory
+   CDP transport with virtual task targets. Preserve its locators, frames, waits,
+   assertions and routing instead of maintaining a second browser automation API.
+5. **Separate execution owners:** closures run in a code-realm worker; real
+   Playwright runs in a separate bounded worker. Main retains live session leases
+   and cleanup, so even a stuck regex cannot block takeover or a paused-request
+   abort. Persistent state and explicit output keep code batches efficient.
+6. **Human work as tickets:** add a third MCP tool, browser_wait_user, to wait for
+   action/element requests independently of a code deadline. Require explicit
+   confirmation and return to the original requester; never replay old code.
 
-## Agent API
+The implemented API 2 architecture, supported surface and explicit exclusions
+are described in [Playwright in the Elevenex browser](browser-playwright.md).
+
+## Compatible first-version helpers
 
 `browser_run` without `code` returns the versioned API guide, exact supported CDP
 methods and connected host choices without launching Chromium. With `code`, it
@@ -81,20 +85,23 @@ repeating anything. An ordinary script error also does not undo earlier effects.
 
 `packages/shared` owns private serializable code transport contracts.
 `packages/browser-agent` owns worker execution, the public code facade, method
-policy, bounded observations and ordered RPC. It has no Electron or Playwright
-dependency. Backend and desktop adapters own real pages, network permissions,
+policy, bounded observations and RPC. It depends on pinned Playwright, its
+assertions and shared contracts; it has no Electron dependency. Backend and desktop adapters own real pages, network permissions,
 debugger attachments, browser profiles and cleanup. MCP adapters only resolve
 authenticated task/session identity and translate results.
 
-Code executes inside a resource-limited worker and a VM context. No host
-functions, objects, promises or exception instances enter that context: both
-directions carry JSON. Dynamic code generation and imports are unavailable.
+Code executes inside a resource-limited worker and a VM context. Playwright
+objects and privileged adapter functions never enter it. Browser RPC carries JSON.
+A private frozen null-prototype callable accepts/returns bounded strings for
+URL/binary conversion and numeric timers; all public objects are created inside
+the realm. It is deleted from the global object after initialization. Dynamic
+code generation and imports are unavailable.
 The broker validates every request independently. Node's VM is not treated as
 an OS security sandbox: task ownership, CDP method restrictions, browser network
 policy and Chromium's sandbox remain independently enforced. The worker is a
 fault/resource boundary, not an arbitrary untrusted Node execution service.
 
-The exact CDP allowlist excludes browser-wide targets, transport discovery,
+The compatible first-version helper CDP allowlist excludes browser-wide targets, transport discovery,
 filesystem operations, file inputs, raw navigation and raw screenshot methods.
 The navigation helper applies task network policy. Capture applies pixel and
 payload limits. Page `evaluate` is intentionally powerful within an owned tab;
@@ -109,19 +116,19 @@ be discarded. User-created tabs require user
 closure. New API access is not exposed through `window.elevenex`; the renderer's
 existing narrow bridge, CSP and guest security are retained.
 
-## Lifecycle, transport and budgets
+## Lifecycle, transport and compatible helper budgets
 
 Each task owns its engine. Each authenticated conversation has at most one
 active script and its own warm worker. Task destruction disposes workers,
-observations and subscriptions. A five-minute idle deadline retires unused
-workers. At most eight workers per task and twelve tabs are retained; live
+observations and subscriptions. A five-minute idle deadline retires workers without retained callbacks/routes.
+At most eight conversation sandboxes per task and twelve tabs are retained; live
 browser tabs are not evicted to satisfy worker capacity.
 
 Desktop code uses capability-negotiated, cancellable long polling with concurrent
 execution and heartbeats. A delivered script is never delivered again. Running
 IDs let cancellation/reset stop a desktop script. A lease replacement rejects
 pending requests. Older desktops/backends retain the existing mailbox contract.
-Remote-host code runs in-process through the same engine and page facade,
+Remote-host code uses the same task engine and isolated workers,
 without adding a public CDP listener or a renderer network capability.
 
 Desktop agent tabs use main-owned sandboxed offscreen views and the existing
@@ -133,8 +140,9 @@ Runtime tabs keep their task-owned persistent Chromium context.
 | Resource | Bound |
 | --- | --- |
 | Code / total deadline | 65,536 characters / 250–60,000 ms, default 15,000 |
-| Synchronous JS slice / worker old heap | 250 ms / 64 MiB |
-| Browser operations | 512 per call, 16 outstanding, ordered per tab |
+| Synchronous JS slice / code-worker old heap | 250 ms / 64 MiB |
+| Playwright worker old heap | 128 MiB |
+| Browser operations | 512 per call, 64 outstanding; legacy helper writes ordered per tab |
 | JSON return / console | 1 MiB / 32k characters and 100 messages |
 | Screenshots | Four per call, 2 MiB each, at most 1920×1440 output |
 | Screenshot source crop | 4096 pixels per axis and eight megapixels |
@@ -150,11 +158,16 @@ accepted native operations cannot be undone. Browser popups, site permissions,
 WebAuthn and human file workflows continue to follow the host's existing policy.
 The short CSS targeting helpers address the main document. Page evaluation can
 work with same-origin frames, and AX refs/CDP can address supported shadow DOM.
-Cross-process iframe target attachment is not exposed; a future frame capability
-needs the same explicit ownership and cleanup boundary. AX refs invalidate on document
-replacement and can also become detached after DOM changes. They are not a
-durable selector system. For robust application readiness, use explicit
+For full frames/shadow DOM, use API 2 Playwright locators and frameLocator. Its
+private child-target transport preserves the same explicit authority and cleanup
+boundary. AX refs invalidate on document replacement and can become detached
+after DOM changes; they are not a durable selector system. Use explicit readiness
 conditions; a successful navigation alone does not establish readiness.
+
+The capture/event/CDP rows above describe first-version helpers. API 2 has larger
+bounded screenshots, 8 MiB/4 MiB network buffers, 2 MiB/8 MiB CDP parameters/replies,
+1024 opaque handles, 512 callbacks, private artifacts and human tickets; see the
+[current code guide](../packages/browser-agent/src/guide.ts) for exact bounds.
 
 ## Validation and extension
 

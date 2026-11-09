@@ -1,3 +1,4 @@
+import { SessionsService } from '../sessions/sessions.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import {
@@ -32,6 +33,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     private readonly pool: RuntimeBrowserPool,
     private readonly persistence: RuntimeBrowserPersistence,
     @Optional() private readonly taskRecords?: TasksService,
+    @Optional() private readonly sessionRecords?: SessionsService,
   ) {
     this.timer.unref();
   }
@@ -116,7 +118,10 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       if (this.stopped) throw new Error('Browser runtime stopped');
       const saved = await this.persistence.read(identity);
       if (this.stopped) throw new Error('Browser runtime stopped');
-      task = new RuntimeBrowserTask(taskId, this.pool, identity);
+      task = new RuntimeBrowserTask(taskId, this.pool, identity, async sessionId => {
+        const session = await this.sessionRecords?.findOne(sessionId);
+        if (!session || session.workspaceId !== taskId || session.status === 'archived') throw new Error('Requesting conversation is unavailable');
+      });
       if (saved) task.restore(saved);
       this.tasks.set(taskId, task);
       this.identities.set(taskId, identity);

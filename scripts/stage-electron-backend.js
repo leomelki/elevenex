@@ -25,6 +25,7 @@ const stageBackendRoot = path.join(stageBaseRoot, "backend");
 const backendPackageJson = require(path.join(backendRoot, "package.json"));
 const NATIVE_RUNTIME_DEPENDENCIES = [
   "playwright-core",
+  "@playwright/test",
   "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
@@ -160,7 +161,7 @@ function copyDependencyTree(packageName, searchPaths) {
 
 function resolveInstalledPackagePath(
   packageName,
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   const packageParts = packageName.split("/");
   for (const searchPath of searchPaths) {
@@ -276,7 +277,7 @@ function stageBundledNodeRuntime() {
 function stageNativePackageTree(
   packageName,
   seen = new Set(),
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   if (seen.has(packageName)) {
     return;
