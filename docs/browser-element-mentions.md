@@ -45,6 +45,9 @@ geometry around capture, plus the selected frame's loader. A later page change
 never causes a silent Send-time recapture. A snapshot is historical; a live
 `human.locator` still requires current confirmed document/element identity. Reading the confirmed historical result remains possible after navigation; it grants no live locator authority.
 Native capture uses browser pixels, not the renderer's resized/streamed preview.
+Remote human snapshots use the viewport-owning CDP session so clipped capture
+restores the configured device pixel density. Temporary inspection connections
+retain their document/ownership lease without changing stream emulation.
 
 Agent-requested picks use the same snapshot and reference. The viewer sees it in
 the request card (`ElementPreview`) and can optionally add it to the requesting

@@ -111,6 +111,11 @@ need one manual stop as described in the remote guide. Production remote data is
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 
+SSH backends keep application APIs on their private Unix socket and give agent
+MCP clients a separate, authenticated loopback endpoint. Each backend publishes
+its own address to its agent providers; it does not rely on a server at port
+11111. This listener exposes only MCP, including the task-scoped browser tools.
+
 If the engine fails to start, open the machine card's **… → View error details…**
 to read and select the diagnostic output. Startup failures include bounded tails
 from stderr and stdout. A missing `better-sqlite3` binding requires rebuilding

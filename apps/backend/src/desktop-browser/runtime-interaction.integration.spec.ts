@@ -124,6 +124,53 @@ describe('remote browser interaction and display ownership', () => {
     console.log('Remote-runtime first-click capture latency (ms):', timings);
   });
 
+  it.each([1.25, 1.5, 2])('captures during an active stream without changing the website viewport or density (%s×)', async pixelRatio => {
+    const tab = task.page(tabId), controller = new AbortController();
+    await task.layout(800, 600, true, true, pixelRatio);
+    await page.evaluate(() => {
+      Reflect.set(window, 'pickerResizes', []);
+      window.addEventListener('resize', () => {
+        (Reflect.get(window, 'pickerResizes') as unknown[]).push([innerWidth, innerHeight]);
+      });
+      document.body.style.height = '2000px';
+      document.querySelector<HTMLElement>('#hover')!.style.position = 'fixed';
+      scrollTo(0, 80);
+    });
+    let sequence = 0;
+    const stream = (async () => {
+      while (!controller.signal.aborted) {
+        const frame = await tab.nextFrame(sequence, controller.signal, 1000);
+        if (frame) sequence = frame.sequence;
+      }
+    })().catch(error => { if (!controller.signal.aborted) throw error; });
+    try {
+      for (let i = 0; i < 6; i++) {
+        await task.command({ kind: 'pick', enabled: true, visual: 1 });
+        await task.input(tabId, tab.generation, { kind: 'pointer', type: 'down', x: 350, y: 150, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
+        expect(task.state().picked?.snapshot?.jpeg).toBeTruthy();
+        expect(await page.evaluate(() => Reflect.get(window, 'pickerResizes'))).toEqual([]);
+        expect(await page.evaluate(() => devicePixelRatio)).toBe(pixelRatio);
+        const snapshot = task.state().picked!.snapshot!;
+        const pixel = await page.evaluate(async ({ jpeg, x, y }) => {
+          const bytes = Uint8Array.from(atob(jpeg), char => char.charCodeAt(0));
+          const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+          try {
+            const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+            const ctx = canvas.getContext('2d')!; ctx.drawImage(bitmap, 0, 0);
+            return [...ctx.getImageData(x, y, 1, 1).data];
+          } finally { bitmap.close(); }
+        }, { jpeg: snapshot.jpeg!, x: Math.round((snapshot.reference.target.x - snapshot.reference.crop.x + 10) * snapshot.reference.image.scale), y: Math.round((snapshot.reference.target.y - snapshot.reference.crop.y + 10) * snapshot.reference.image.scale) });
+        expect(pixel[0]).toBeLessThan(80); expect(pixel[1]).toBeLessThan(100); expect(pixel[2]).toBeGreaterThan(150);
+        await task.command({ kind: 'pick', enabled: false });
+      }
+    } finally {
+      controller.abort(); await stream;
+      await task.command({ kind: 'pick', enabled: false });
+      await page.evaluate(() => { document.body.style.height = ''; document.querySelector<HTMLElement>('#hover')!.style.position = ''; scrollTo(0, 0); });
+      await task.layout(800, 600, true, true, 1);
+    }
+  });
+
   it('keeps a failed visual capture ready for the next click without interrupting input', async () => {
     const tab = task.page(tabId), original = tab.agentTarget.bind(tab);
     const fault = jest.spyOn(tab, 'agentTarget').mockImplementation(async (...args) => {

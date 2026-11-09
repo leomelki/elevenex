@@ -65,7 +65,16 @@ export class RuntimeBrowserTab {
       const nested = new NestedSessions(send);
       const input = new AgentInputState(send);
       const lease = new ProtocolLease(
-        (method, params, child) => nested.send(method, params, child),
+        (method, params, child) => {
+          // Screenshot clipping temporarily changes device emulation. Run human
+          // captures on its owning session so Chromium restores the stream's
+          // pixel density, rather than this temporary inspection session's 1x.
+          if (human && !child && method === 'Page.captureScreenshot') {
+            if (!this.cdp) throw new Error('Browser presentation changed');
+            return this.cdp.send('Page.captureScreenshot', params);
+          }
+          return nested.send(method, params, child);
+        },
         async () => {
           await cdp.detach();
         },

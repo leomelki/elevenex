@@ -15,6 +15,14 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   milliseconds from 1000 to 86400000. An active tool suspends expiry and starts a fresh idle
   period when it finishes. SSE disconnects preserve the logical session. Initialization failure,
   expiry, DELETE and module shutdown close transports/servers and clear registrations/cursors.
+- **Private-socket runtimes**: SSH desktop backends retain their private Unix socket
+  for application APIs. Before module initialization, they also allocate an ephemeral
+  loopback listener exposing only `/api/mcp`, with a valid session bearer token
+  required on every request. Browser-origin requests and all other paths are denied.
+  The runtime publishes that address through `ELEVENEX_MCP_URL` so Claude, Codex,
+  Pi, OpenCode and the shared mission configuration use their own backend instead
+  of the legacy port 11111. Shutdown closes the listener. Explicit MCP URL overrides
+  and legacy/local TCP defaults remain supported.
 - **Identity**: every coding session and mission lazily receives a stable `mcpAgentToken`.
   Claude, Codex, and OpenCode receive the authenticated HTTP server through runtime configuration;
   Pi receives `ELEVENEX_AGENT_TOKEN` and `ELEVENEX_MCP_URL` through its extension environment.

@@ -27,6 +27,7 @@ import { McpAgentTokenService } from './identity/mcp-agent-token.service.js';
 import { McpConnectionRegistryService } from './connection/mcp-connection-registry.service.js';
 import { McpServerFactory } from './transport/mcp-server.factory.js';
 import { ElevenexMcpHttpTransport } from './transport/elevenex-mcp-http.transport.js';
+import { McpAgentEndpointService } from './transport/mcp-agent-endpoint.service.js';
 import { DesktopPortForwardingGateway } from './port-forwarding/desktop-port-forwarding.gateway.js';
 
 /**
@@ -65,6 +66,7 @@ import { DesktopPortForwardingGateway } from './port-forwarding/desktop-port-for
     ToolRegistryService,
     McpServerFactory,
     ElevenexMcpHttpTransport,
+    McpAgentEndpointService,
     AgentChannelGateway,
     DesktopPortForwardingGateway,
   ],
@@ -73,6 +75,7 @@ import { DesktopPortForwardingGateway } from './port-forwarding/desktop-port-for
     // service is reused by the agent-session creation path to mint
     // ELEVENEX_AGENT_TOKEN.
     ElevenexMcpHttpTransport,
+    McpAgentEndpointService,
     AgentChannelGateway,
     DesktopPortForwardingGateway,
     McpAgentTokenService,
