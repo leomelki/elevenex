@@ -24,6 +24,7 @@ import { MachineApplication } from './machines/application';
 import { MachinePreferences } from './machines/preferences';
 import { registerMachineIpc } from './machines/ipc';
 import { applicationIcon, installApplicationIdentity } from './application-identity';
+import { registerClipboardIpc } from './clipboard';
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true },
@@ -217,6 +218,8 @@ void app.whenReady().then(async () => {
     await registerRendererProtocol();
   }
   handle('app:version', trusted, () => app.getVersion());
+  const unregisterClipboard = registerClipboardIpc(trusted);
+  app.once('will-quit', unregisterClipboard);
   const unsubscribeBackend = registerBackendIpc(backend, trusted);
   app.once('will-quit', unsubscribeBackend);
   const unregisterCode = registerCodeIpc(code, trusted);

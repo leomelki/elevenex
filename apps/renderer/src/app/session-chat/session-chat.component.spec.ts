@@ -96,6 +96,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
+    writeClipboardText: vi.fn<(text: string) => Promise<void>>(async () => undefined),
     sessionChatCatalog: vi.fn(async () => ({
       ok: true as const,
       value: {
@@ -156,6 +157,36 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('copies reply and code text through the native bridge and reports native failures', async () => {
+    const text = '  café 👩🏽‍💻\n\t代码\r\n';
+    const { fixture, root, bridge } = setup([item('answer', 'assistant', text)]);
+    await settle(fixture);
+    fixture.componentInstance.turnAction({ id: fixture.componentInstance.store.exchanges()[0]!.id, action: 'copy' });
+    await settle(fixture);
+    expect(bridge.writeClipboardText).toHaveBeenLastCalledWith(text);
+    expect(fixture.componentInstance.store.notice()).toBe('Copied');
+    await fixture.componentInstance.copy(text, true); await settle(fixture);
+    expect(fixture.componentInstance.copiedCode()).toBe(text);
+    bridge.writeClipboardText.mockRejectedValueOnce(new Error('Clipboard busy'));
+    await fixture.componentInstance.copy('failed'); await settle(fixture);
+    expect(root.textContent).toContain('Could not copy.');
+    await fixture.componentInstance.copy('retry'); await settle(fixture);
+    expect(fixture.componentInstance.store.error()).toBe('');
+  });
+
+  it.each(['navigation', 'destruction', 'newer-copy'] as const)('rejects late clipboard feedback after %s', async change => {
+    const { fixture, bridge } = setup(); await settle(fixture);
+    let finish!: () => void;
+    bridge.writeClipboardText.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const pending = fixture.componentInstance.copy('old', true);
+    if (change === 'navigation') {
+      fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+      await settle(fixture);
+    } else if (change === 'destruction') fixture.destroy();
+    else await fixture.componentInstance.copy('latest', true);
+    finish(); await pending;
+    expect(fixture.componentInstance.copiedCode()).toBe(change === 'newer-copy' ? 'latest' : null);
+  });
   it.each(['text', 'input'] as const)('opens shortened tool %s in the bounded reader and switches to the paired receipt', async part => {
     const { root, fixture, bridge } = setup([
       item('u', 'user', 'Check the output'),

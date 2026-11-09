@@ -170,6 +170,17 @@ without its generated nonce. External HTTP(S) links open in the system browser.
 App windows deny all permission requests and reject IPC from other origins or
 subframes. The preload exposes named methods, never raw Electron objects.
 
+Copy actions use `writeClipboardText(text)` through the trusted preload, with a
+16 MiB UTF-8 limit enforced in main. Main awaits Electron's native system
+clipboard write on macOS, Windows and Linux; it does not use Linux's separate
+primary selection. Browser clipboard permissions remain denied, and clipboard
+reads are not exposed. Copying is local to the desktop, independent of the
+selected machine or its connection state.
+The `clipboard.mjs` desktop-capture scenario exercises reply, code, branch and
+original-page copy against the native clipboard in both themes, plus failure
+and retry feedback. Run it with the component preview URL as described in the
+[capture guide](../../scripts/desktop-capture/README.md).
+
 Window state is saved asynchronously in `Elevenex Desktop/window-state.json`
 under Electron's application-data directory, separate from the existing app.
 Shift+Cmd+N on macOS, or Shift+Ctrl+N elsewhere, opens another window.

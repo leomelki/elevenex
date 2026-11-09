@@ -1,6 +1,6 @@
 // Run with Electron after building. This exercises the real sandboxed preload
 // and app:// handler, rather than Node mocks. Not part of the headless unit suite.
-const { app, BrowserWindow, Menu, nativeTheme, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, nativeTheme, nativeImage, clipboard, ClipboardItem } = require('electron');
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
 const { rm } = require('node:fs/promises');
@@ -84,6 +84,21 @@ void (async () => {
   assert.equal(prefs.contextIsolation, true);
   assert.equal(prefs.nodeIntegration, false);
   assert.equal(prefs.sandbox, true);
+  // Real app:// + sandboxed preload + native clipboard, with browser clipboard
+  // permissions denied. Preserve all clipboard formats around this regression.
+  const savedClipboard = await Promise.all((await clipboard.read()).map(async item =>
+    new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
+  try {
+    for (const text of ['fix/clipboard', '  café 👩🏽‍💻\n\t代码\n', 'first\r\nsecond\r\n', '', 'large output\n'.repeat(10000)]) {
+      await window.webContents.executeJavaScript(`window.elevenex.writeClipboardText(${JSON.stringify(text)})`);
+      const copied = await clipboard.readText();
+      // Windows normalizes plain-text newlines to CRLF for native applications.
+      assert.equal(copied.replaceAll('\r\n', '\n'), text.replaceAll('\r\n', '\n'));
+    }
+    assert.equal(await window.webContents.executeJavaScript('window.elevenex.writeClipboardText({html:"bad"}).then(()=>false,()=>true)'), true);
+  } finally {
+    await clipboard.write(savedClipboard);
+  }
   const bridge = await window.webContents.executeJavaScript(`(async () => ({
     node: typeof require,
     keys: Object.keys(window.elevenex).sort(),
@@ -93,7 +108,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);

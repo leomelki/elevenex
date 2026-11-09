@@ -59,7 +59,7 @@ export class WorkspaceTaskHeaderComponent {
       this.taskKey(); this.epoch++;
       this.copied.set(false); this.gitDialogOpen.set(false); this.commitOpen.set(false); this.closing.set(false); this.closeLoading.set(false); clearTimeout(this.resetTimer);
     });
-    inject(DestroyRef).onDestroy(() => clearTimeout(this.resetTimer));
+    inject(DestroyRef).onDestroy(() => { this.epoch++; clearTimeout(this.resetTimer); });
   }
 
   protected stage(stage: TaskStage): void { if (stage === 'closed') this.close(); else void this.store.setStage(stage); }
@@ -91,8 +91,9 @@ export class WorkspaceTaskHeaderComponent {
   protected async copy(branch: string): Promise<void> {
     const epoch = this.epoch;
     try {
-      await navigator.clipboard.writeText(branch);
+      await this.bridge.writeClipboardText(branch);
       if (epoch !== this.epoch) return;
+      if (this.store.error() === 'The branch name could not be copied.') this.store.error.set(null);
       this.copied.set(true); clearTimeout(this.resetTimer);
       this.resetTimer = setTimeout(() => this.copied.set(false), 1800);
     } catch { if (epoch === this.epoch) this.store.error.set('The branch name could not be copied.'); }

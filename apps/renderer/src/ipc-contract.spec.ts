@@ -35,6 +35,14 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  expectTypeOf(invoke('clipboard:write-text', 'copy')).toEqualTypeOf<Promise<void>>();
+  expectTypeOf<ElevenexBridge['writeClipboardText']>().toEqualTypeOf<(text: string) => Promise<void>>();
+  // @ts-expect-error Clipboard writes accept text only.
+  void invoke('clipboard:write-text', { html: '<script>unsafe</script>' });
+  // @ts-expect-error The renderer cannot choose a clipboard or write arbitrary formats.
+  void invoke('clipboard:write-text', 'copy', 'selection');
+  // @ts-expect-error The bridge never exposes clipboard reads.
+  void ({} as ElevenexBridge).readClipboardText();
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});

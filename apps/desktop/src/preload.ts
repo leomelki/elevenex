@@ -44,6 +44,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   sshHostSuggestions: query => invoke('machines:ssh-hosts', query),
   onMachineStateChanged: listener => subscribe('machines:changed', listener),
   appVersion: () => invoke('app:version'),
+  writeClipboardText: text => invoke('clipboard:write-text', text),
   gitStatus: (path: string) => invoke('git:status', path),
   onThemeChanged: (listener) => subscribe('theme:changed', listener),
   backendStatus: () => invoke('backend:status'),

@@ -29,7 +29,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');
@@ -37,6 +37,9 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   await bridge.retryBackend();
   await bridge.restartBackend();
   assert.deepEqual(calls, [['app:version'], ['git:status', '/workspace'], ['backend:status'], ['backend:retry'], ['backend:restart']]);
+  calls.length = 0;
+  await bridge.writeClipboardText('  café 👩🏽‍💻\n\t代码\r\n');
+  assert.deepEqual(calls, [['clipboard:write-text', '  café 👩🏽‍💻\n\t代码\r\n']]);
   calls.length = 0;
   await bridge.backendClientState();
   await bridge.backendInfo('scope');

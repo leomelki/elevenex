@@ -4,6 +4,49 @@ const { readFile } = require('node:fs/promises');
 const vm = require('node:vm');
 const { URLSearchParams } = require('node:url');
 
+test('clipboard IPC validates trust, arity and UTF-8 bounds, awaits native writes and unregisters', async () => {
+  const handlers = new Map(), writes = [];
+  const ipc = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipc, require: () => ({ ipcMain: {
+      handle: (channel, handler) => handlers.set(channel, handler),
+      removeHandler: channel => handlers.delete(channel),
+    } }),
+  });
+  let complete;
+  const nativeWrite = new Promise(resolve => { complete = resolve; });
+  let failure;
+  const module = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/clipboard'), 'utf8'), {
+    exports: module, Buffer, require: name => name === './ipc' ? ipc : { clipboard: {
+      writeText: text => { writes.push(text); return failure ? Promise.reject(failure) : nativeWrite; },
+    } },
+  });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = module.registerClipboardIpc((candidate, contents) => candidate === frame && contents === sender);
+  const write = handlers.get('clipboard:write-text');
+  for (const badEvent of [{ senderFrame: {}, sender }, { senderFrame: null, sender }, { senderFrame: frame, sender: { id: 43 } }]) {
+    assert.throws(() => write(badEvent, 'copy'), /Untrusted/);
+  }
+  const maxBytes = 16 * 1024 * 1024;
+  for (const args of [[], [null], [42], [{}], ['copy', 'selection'], ['x'.repeat(maxBytes + 1)], ['é'.repeat(maxBytes / 2 + 1)]]) {
+    assert.throws(() => write(event, ...args), /Clipboard requires/);
+  }
+  assert.equal(writes.length, 0);
+  let settled = false;
+  const text = '  café 👩🏽‍💻\n\t代码\r\n';
+  const pending = write(event, text).then(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false);
+  complete(); await pending; assert.equal(settled, true);
+  await write(event, ''); // Empty text deliberately clears the text clipboard.
+  const boundary = 'é'.repeat(maxBytes / 2);
+  await write(event, boundary);
+  assert.deepEqual(writes, [text, '', boundary]);
+  failure = new Error('Native clipboard unavailable');
+  await assert.rejects(write(event, 'retry'), /Native clipboard unavailable/);
+  stop(); assert.equal(handlers.size, 0);
+});
+
 test('backend IPC validates the sender and all zero-argument operations, and cleans up events', async () => {
   const handlers = new Map();
   const events = [];

@@ -65,6 +65,8 @@ export interface InvokeContracts {
   'machines:undo-remove': { args: [token: string]; result: MachineState };
   'machines:dismiss-removal': { args: [token: string]; result: void };
   'app:version': { args: []; result: string };
+  /** Write plain text (at most 16 MiB UTF-8) to the local system clipboard. */
+  'clipboard:write-text': { args: [text: string]; result: void };
   'git:status': { args: [path: string]; result: GitStatus };
   'backend:status': { args: []; result: BackendStatus };
   'backend:retry': { args: []; result: BackendStatus };
@@ -175,6 +177,7 @@ export interface ElevenexBridge {
   sshHostSuggestions(query: string): Promise<readonly SshHostSuggestion[]>;
   onMachineStateChanged(listener: (state: MachineState) => void): () => void;
   appVersion(): Promise<InvokeContracts['app:version']['result']>;
+  writeClipboardText(...args: InvokeContracts['clipboard:write-text']['args']): Promise<InvokeContracts['clipboard:write-text']['result']>;
   gitStatus(...args: InvokeContracts['git:status']['args']): Promise<InvokeContracts['git:status']['result']>;
   onThemeChanged(listener: (theme: EventContracts['theme:changed']) => void): () => void;
   backendStatus(): Promise<BackendStatus>;

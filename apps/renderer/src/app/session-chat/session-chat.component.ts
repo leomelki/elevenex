@@ -52,6 +52,9 @@ import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
 import { presentSessionTool } from './session-chat-tools';
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+
+const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
 @Component({
   selector: "ex-session-chat",
@@ -87,6 +90,8 @@ import { presentSessionTool } from './session-chat-tools';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
+  private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
     const items = this.store.items();
     const item = items.find(item => item.id === request.itemId);
@@ -339,6 +344,9 @@ export class SessionChatComponent {
     effect(() => {
       this.identity();
       this.presetFlow.reset();
+      this.copyRevision++;
+      clearTimeout(this.copyTimer);
+      this.copiedCode.set(null);
     });
     effect(() => { this.store.viewRevision(); this.contentId.set(null); });
     let scrollIdentity = -1;
@@ -363,6 +371,7 @@ export class SessionChatComponent {
       cleanup(() => clearInterval(timer));
     });
     inject(DestroyRef).onDestroy(() => {
+      this.copyRevision++;
       clearTimeout(this.copyTimer);
       this.presetFlow.dispose();
     });
@@ -388,8 +397,12 @@ export class SessionChatComponent {
       void this.store.perform({ type: "answer", id: request.id, answers });
   }
   async copy(text: string, code = false): Promise<void> {
+    const revision = ++this.copyRevision;
+    const identity = this.identity();
     try {
-      await navigator.clipboard.writeText(text);
+      await this.bridge.writeClipboardText(text);
+      if (revision !== this.copyRevision || identity !== this.identity()) return;
+      if (this.store.error() === copyFailureMessage) this.store.error.set('');
       this.store.notice.set("Copied");
       if (code) {
         clearTimeout(this.copyTimer);
@@ -397,9 +410,8 @@ export class SessionChatComponent {
         this.copyTimer = setTimeout(() => this.copiedCode.set(null), 2000);
       }
     } catch {
-      this.store.error.set(
-        "Could not copy. Select the text and copy it manually.",
-      );
+      if (revision !== this.copyRevision || identity !== this.identity()) return;
+      this.store.error.set(copyFailureMessage);
     }
   }
   turnAction(intent: {
