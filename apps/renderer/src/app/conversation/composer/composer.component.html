@@ -22,22 +22,8 @@
         (reordered)="queueReordered.emit($event)"
       />
       @if (otherFiles().length) { <ex-attachments [files]="otherFiles()" [editing]="true" [disabled]="disabled() || sending()" (removed)="attachmentRemoved.emit($event)" (retry)="attachmentRetry.emit($event)" /> }
-      @if (context().length || elementFiles().length) {
+      @if (context().length) {
         <div class="context">
-          @for (file of elementFiles(); track file.id) {
-            <ex-element-chip
-              [file]="file"
-              [editing]="true"
-              [disabled]="disabled() || sending()"
-              [mentioned]="referencedMarkers().has(file.marker!)"
-              [pickAvailable]="elementPickAvailable()"
-              (highlighted)="hotMarker.set($event ? file.marker! : null)"
-              (mention)="insertElement(file.marker!)"
-              (removed)="removeElement(file)"
-              (retry)="attachmentRetry.emit($event)"
-              (repick)="elementRepick.emit($event)"
-            />
-          }
           @for (mention of context(); track mention.kind + ":" + mention.id) {
             <ex-mention
               [mention]="mention"
@@ -54,9 +40,31 @@
       </div>
       <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
       <div class="field">
-      @if (markerHighlights(); as parts) {
-        <div class="marker-layer" aria-hidden="true"><div class="marker-text" [style.transform]="'translateY(' + -highlightScroll() + 'px)'">@for (part of parts; track $index) {@if (part.marker) {<mark [class.hot]="hotMarker() === part.marker">{{ part.text }}</mark>} @else {<ng-container>{{ part.text }}</ng-container>}}</div></div>
-      }
+      @if (richMode()) {
+        <ex-element-editor [value]="draft()" [files]="elementFiles()" [disabled]="disabled()" [sending]="sending()"
+          [pickAvailable]="elementPickAvailable()" [initialSelection]="initialEditorSelection" [autofocus]="editorAutofocus"
+          [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
+          [controls]="mentions()?.listId() || null" [activeOption]="mentions()?.activeOptionId() || null"
+          (changed)="updateRich($event)" (keyed)="onKey($event)" (removed)="removeElementById($event)"
+          (retry)="attachmentRetry.emit($event)" (repick)="elementRepick.emit($event)" (mention)="insertElement($event)" />
+        @if (unreferencedElements().length) {
+          <div class="staged-elements" aria-label="Attached browser elements">
+          @for (file of unreferencedElements(); track file.id) {
+            <ex-element-chip
+              [file]="file"
+              [editing]="true"
+              [disabled]="disabled() || sending()"
+              [mentioned]="referencedMarkers().has(file.marker!)"
+              [pickAvailable]="elementPickAvailable()"
+              (mention)="insertElement(file.marker!)"
+              (removed)="removeElement(file)"
+              (retry)="attachmentRetry.emit($event)"
+              (repick)="elementRepick.emit($event)"
+            />
+          }
+          </div>
+        }
+      } @else {
       <textarea
         #textarea
         [class.words-leaving]="wordsLeaving()"
@@ -68,11 +76,11 @@
         rows="2"
         [disabled]="disabled()"
         [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
-        [value]="displayDraft()"
+        [value]="draft()"
         (input)="update($event)"
         (keydown)="onKey($event)"
-        (scroll)="highlightScroll.set(textarea.scrollTop)"
       ></textarea>
+      }
       </div>
       @if (recording(); as recording) {
         <div class="recording" role="status">

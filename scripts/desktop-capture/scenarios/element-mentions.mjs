@@ -45,10 +45,8 @@ export default async function* (capture) {
   const snapshot = JSON.parse(await readFile(new URL('../../../artifacts/element-mentions/native-snapshot.json', import.meta.url), 'utf8'));
   const second = JSON.parse(await readFile(new URL('../../../artifacts/element-mentions/runtime-snapshot.json', import.meta.url), 'utf8'));
   assert.ok(snapshot.jpeg && second.jpeg);
-  const firstName = '@“' + snapshot.reference.label.split(' · ').slice(1).join(' · ') + '”';
-  const secondName = '@“' + second.reference.label.split(' · ').slice(1).join(' · ') + '”';
   const type = text => capture.cdp('Input.insertText', { text });
-  const draft = () => capture.evaluate(() => document.querySelector('ex-composer textarea').value);
+  const draft = () => capture.component('ex-composer', component => component.draft());
 
   await capture.viewport(760, 720);
   await capture.evaluate(() => { location.href = '/element-mentions'; });
@@ -62,16 +60,16 @@ export default async function* (capture) {
   await type('with');
   await capture.component('ex-element-mentions-demo', (component, value) => component.stage(value), second);
   await type('and match its height.');
-  assert.equal(await draft(), `Align ${firstName} with ${secondName} and match its height.`);
-  await capture.waitFor(() => [...document.querySelectorAll('ex-element-chip img')].every(image => image.complete) && document.querySelectorAll('.marker-text mark').length === 2);
+  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.');
+  assert.equal(await capture.evaluate(() => document.querySelector('.context ex-element-chip')), null, 'No duplicated top attachment row');
+  await capture.waitFor(() => [...document.querySelectorAll('ex-element-chip img')].every(image => image.complete) && document.querySelectorAll('ex-element-editor ex-element-chip').length === 2);
 
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
     await capture.settle();
-    yield { name: `${theme}-pinned`, inspect: ['ex-element-chip', '.marker-text mark', 'ex-composer textarea'] };
+    yield { name: `${theme}-pinned`, selector: 'ex-composer', inspect: ['ex-element-editor .surface', 'ex-element-chip'] };
     await capture.hover('ex-element-chip:nth-of-type(2) .face');
-    await capture.waitFor(() => document.querySelector('.marker-text mark.hot'));
-    yield { name: `${theme}-chip-hover-lights-pin`, inspect: ['.marker-text mark.hot'] };
+    yield { name: `${theme}-inline-hover`, inspect: ['ex-element-chip .chip:hover'] };
     await capture.click('ex-element-chip:first-of-type .face');
     await capture.waitFor(() => document.querySelector('.element-popover img')?.complete);
     await capture.motion.finish();
@@ -86,6 +84,24 @@ export default async function* (capture) {
     yield { name: `${theme}-error`, inspect: ['ex-element-chip .retry'] };
     await capture.component('ex-element-mentions-demo', component => component.state('ready'));
   }
+
+  // The real editing surface keeps newlines, native IME composition and inert paste.
+  await capture.component('ex-element-editor', component => { component.setSelection({ start: component.value().length, end: component.value().length }); component.focus(); });
+  await capture.press('Enter', 8);
+  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.\n');
+  await capture.cdp('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
+  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.\n', 'Do not publish unfinished composition');
+  await type('日本語');
+  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.\n日本語');
+  await capture.evaluate(() => {
+    const transfer = new window.DataTransfer();
+    transfer.setData('text/plain', '<b>plain text</b>'); transfer.setData('text/html', '<b>formatted</b>');
+    document.querySelector('ex-element-editor .surface').dispatchEvent(new window.ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  assert.ok((await draft()).endsWith('日本語<b>plain text</b>'));
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-element-editor .surface b')), null);
+  yield { name: 'multiline-composed-and-pasted', inspect: ['ex-element-editor .surface'] };
+  await capture.component('ex-element-editor', component => component.replace(0, component.value().length, 'Align ❶ with ❷ and match its height.'));
 
   // An interrupted opening reverses cleanly and reopens.
   await capture.motion.freeze();
@@ -103,16 +119,30 @@ export default async function* (capture) {
   await capture.motion.play();
   await capture.waitFor(() => !document.querySelector('.element-popover'));
 
-  // Unreferenced pins turn hollow; removing a chip removes its pins.
-  await capture.evaluate(() => {
-    const textarea = document.querySelector('ex-composer textarea');
-    textarea.focus();
-    textarea.setSelectionRange(0, textarea.value.length);
+  // Token deletion is atomic; undo restores its identity and original position.
+  await capture.component('ex-element-editor', component => { component.setSelection({ start: 7, end: 7 }); component.focus(); });
+  await capture.press('Backspace');
+  assert.equal(await draft(), 'Align  with ❷ and match its height.');
+  assert.equal(await capture.evaluate(() => document.querySelectorAll('.staged-elements ex-element-chip').length), 1);
+  await capture.press('z', process.platform === 'darwin' ? 4 : 2);
+  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.');
+  assert.equal(await capture.evaluate(() => document.querySelector('.staged-elements')), null);
+  // Tab reaches a real inline button; Enter previews instead of sending.
+  await capture.press('Tab');
+  assert.ok(await capture.evaluate(() => document.activeElement?.classList.contains('face')));
+  await capture.press('Enter');
+  await capture.waitFor(() => document.querySelector('.element-popover'));
+  await capture.press('Escape');
+  await capture.waitFor(() => !document.querySelector('.element-popover'));
+
+  // Unreferenced snapshots remain visible below the line, never hidden attachments.
+  await capture.component('ex-element-editor', component => {
+    component.setSelection({ start: 0, end: component.value().length }); component.focus();
   });
   await type('Make it wider.');
   await capture.waitFor(() => document.querySelectorAll('ex-element-chip .unreferenced').length === 2);
   yield { name: 'unreferenced-elements', inspect: ['ex-element-chip .unreferenced'] };
-  await capture.evaluate(() => document.querySelector('ex-composer textarea').setSelectionRange(5, 5));
+  await capture.component('ex-element-editor', component => { component.setSelection({ start: 5, end: 5 }); component.focus(); });
   await capture.click('ex-composer ex-icon-button[label="Point at an element in the browser"] button');
   assert.equal(await capture.evaluate(() => document.querySelector('.pick-note') !== null), true);
 
@@ -123,27 +153,25 @@ export default async function* (capture) {
   // Narrow, reduced motion: the @ menu reuses staged pins and offers a pick.
   await capture.reducedMotion(true);
   await capture.viewport(380, 760);
-  await capture.evaluate(() => {
-    const textarea = document.querySelector('ex-composer textarea');
-    textarea.focus();
-    textarea.setSelectionRange(0, textarea.value.length);
+  await capture.component('ex-element-editor', component => {
+    component.setSelection({ start: 0, end: component.value().length }); component.focus();
   });
   await type('Align ');
   await type('@');
   await capture.waitFor(() => document.querySelector('ex-mention-menu .action'));
   yield { name: 'narrow-at-menu', inspect: ['ex-mention-menu [role=option]'] };
   await capture.press('Enter');
-  assert.equal(await draft(), `Align ${firstName} `);
+  assert.equal(await draft(), 'Align ❶ ');
   await type('with ');
   await type('@');
   await capture.waitFor(() => document.querySelector('ex-mention-menu [role=option]'));
   await capture.press('ArrowDown');
   await capture.press('Enter');
-  assert.ok((await draft()).includes(secondName));
-  yield { name: 'narrow-two-pins', inspect: ['ex-element-chip', '.marker-text mark'] };
+  assert.ok((await draft()).includes('❷'));
+  yield { name: 'narrow-two-pins', inspect: ['ex-element-chip', 'ex-element-editor .surface'] };
   await capture.click('ex-element-chip:nth-of-type(2) .act');
   await capture.waitFor(() => document.querySelectorAll('ex-composer ex-element-chip').length === 1);
-  assert.equal(await draft(), `Align ${firstName} with `);
+  assert.equal(await draft(), 'Align ❶ with ');
   await type('the heading.');
   await capture.click('ex-composer .send');
   await capture.waitFor(() => document.querySelector('.sent ex-element-chip img')?.complete);

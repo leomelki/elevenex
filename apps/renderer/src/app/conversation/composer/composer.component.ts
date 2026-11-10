@@ -45,8 +45,10 @@ import { ModeToggleComponent } from "./mode-toggle.component";
 import { PermissionPickerComponent } from "./permission-picker.component";
 import { AttachmentsComponent } from "../chat/attachments.component";
 import { ElementChipComponent } from "../element/element-chip.component";
+import { ElementEditorComponent } from "./element-editor.component";
+import type { EditorSelection } from "./element-editor-dom";
 import { elementPlace } from "../element/element-geometry";
-import { displayElementMentions, elementMentionNames, elementMentionParts, encodeElementMentions } from "../element/element-mention-text";
+import { displayElementMentions, elementMentionNames } from "../element/element-mention-text";
 import { ToolsMenuComponent } from "./tools-menu.component";
 @Component({
   selector: "ex-composer",
@@ -66,6 +68,7 @@ import { ToolsMenuComponent } from "./tools-menu.component";
     ToolsMenuComponent,
     AttachmentsComponent,
     ElementChipComponent,
+    ElementEditorComponent,
   ],
   templateUrl: "./composer.component.html",
   styleUrl: "./composer.component.css",
@@ -128,7 +131,7 @@ export class ComposerComponent implements OnChanges {
     event.target.value = "";
     if (files.length && !this.disabled() && !this.sending())
       this.filesAttached.emit(files);
-    this.textarea()?.nativeElement.focus();
+    this.focusEditor();
   }
   canSend(): boolean {
     return (
@@ -157,7 +160,7 @@ export class ComposerComponent implements OnChanges {
   readonly context = input<readonly ConversationMention[]>([]);
   readonly queue = input<readonly QueuedMessage[]>([]);
   readonly mentionItems = input<readonly ConversationMention[]>([]);
-  /** Element snapshots read as chips in the context row; other files keep their tiles. */
+  /** Referenced element snapshots render in the writing line; other files keep their tiles. */
   readonly elementFiles = computed(() =>
     this.attachments()
       .filter((file) => file.element && file.marker)
@@ -165,8 +168,6 @@ export class ComposerComponent implements OnChanges {
   );
   readonly otherFiles = computed(() => this.attachments().filter((file) => !file.element));
   readonly referencedMarkers = computed(() => new Set(elementMarkersIn(this.draft())));
-  /** The element whose chip has pointer or focus; its names light up in the prose. */
-  readonly hotMarker = signal<number | null>(null);
   readonly allMentionItems = computed<readonly ConversationMention[]>(() => [
     ...this.elementFiles().map((file) => ({
       id: file.element!.id,
@@ -179,12 +180,29 @@ export class ComposerComponent implements OnChanges {
   ]);
   readonly elementNames = computed(() => elementMentionNames(this.elementFiles()));
   readonly displayDraft = computed(() => displayElementMentions(this.draft(), this.elementNames()));
-  /** Mirror the native textarea so named mentions receive a quiet highlight. */
-  readonly markerHighlights = computed(() => {
-    if (!this.referencedMarkers().size) return null;
-    return [...elementMentionParts(this.displayDraft(), this.elementNames()), { text: "\u200b" }];
-  });
-  readonly highlightScroll = signal(0);
+  readonly richMode = signal(false);
+  readonly elementEditor = viewChild(ElementEditorComponent);
+  initialEditorSelection: EditorSelection | undefined;
+  editorAutofocus = false;
+  readonly unreferencedElements = computed(() => this.elementFiles().filter(file => !this.referencedMarkers().has(file.marker!)));
+  focusEditor(): void {
+    if (this.elementEditor()) this.elementEditor()!.focus();
+    else this.textarea()?.nativeElement.focus({ preventScroll: true });
+  }
+  private selection(): EditorSelection {
+    const editor = this.elementEditor();
+    const textarea = this.textarea()?.nativeElement;
+    return editor ? editor.selection() : { start: textarea?.selectionStart ?? this.draft().length, end: textarea?.selectionEnd ?? this.draft().length };
+  }
+  updateRich(state: { readonly text: string; readonly start: number }): void {
+    this.wordsLeaving.set(false);
+    this.draft.set(state.text);
+    this.updateMentionQuery(state.text.slice(0, state.start));
+  }
+  private updateMentionQuery(before: string): void {
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
+    this.mentionQuery.set(this.mentionsEnabled() ? (match?.[1] ?? null) : null);
+  }
   /** Inserts a named element reference at the native caret, spaced from neighbouring words. */
   insertElement(marker: number): void {
     const glyph = elementMarker(marker);
@@ -197,11 +215,8 @@ export class ComposerComponent implements OnChanges {
       }, { injector: this.injector });
       return;
     }
-    const element = this.textarea()?.nativeElement;
-    const draft = this.displayDraft();
-    const start = element?.selectionStart ?? draft.length;
-    const end = element?.selectionEnd ?? draft.length;
-    this.replaceRange(start, end, this.elementNames().get(marker) ?? glyph);
+    const { start, end } = this.selection();
+    this.replaceRange(start, end, glyph);
     this.dropAnnouncement.set(`${this.elementNames().get(marker) ?? "Element"} added to your message.`);
   }
   /** Removing a chip also removes its pins, so no marker is left pointing at nothing. */
@@ -212,11 +227,14 @@ export class ComposerComponent implements OnChanges {
       const draft = this.draft().replace(new RegExp(`( ?)${glyph}( ?)`, "g"), (_, lead: string, trail: string) => (lead && trail ? " " : ""));
       this.draft.set(draft);
       const element = this.textarea()?.nativeElement;
-      if (element) element.value = this.displayDraft();
+      if (element) element.value = draft;
     }
-    this.hotMarker.set(null);
     this.attachmentRemoved.emit(file.id);
-    this.textarea()?.nativeElement.focus({ preventScroll: true });
+    afterNextRender(() => this.focusEditor(), { injector: this.injector });
+  }
+  removeElementById(id: string): void {
+    const file = this.elementFiles().find(file => file.id === id);
+    if (file) this.removeElement(file);
   }
   requestElementPick(): void {
     if (!this.elementPickAvailable() || this.disabled() || this.sending()) return;
@@ -228,25 +246,24 @@ export class ComposerComponent implements OnChanges {
   }
   /** The @ menu command consumes its query, then starts a pick. */
   pickFromMentions(): void {
-    const element = this.textarea()?.nativeElement;
-    const before = this.displayDraft().slice(0, element?.selectionStart ?? 0);
+    const { start, end } = this.selection();
+    const before = this.draft().slice(0, start);
     const query = /(?:^|\s)@[^\s@]*$/.exec(before);
-    if (element && query) {
-      const start = before.lastIndexOf("@");
-      this.replaceRange(start, element.selectionEnd, "", false);
-    }
+    if (query) this.replaceRange(before.lastIndexOf("@"), end, "", false);
     this.mentionQuery.set(null);
     this.requestElementPick();
   }
   private replaceRange(start: number, end: number, token: string, spaced = true): void {
-    const draft = this.displayDraft();
+    const draft = this.draft();
     const before = draft.slice(0, start);
     const after = draft.slice(end);
     const lead = spaced && before && !/\s$/.test(before) ? " " : "";
     const trail = spaced && !/^\s/.test(after) ? " " : "";
     const inserted = before + lead + token + trail;
     const next = inserted + after;
-    this.draft.set(encodeElementMentions(next, this.elementNames()));
+    const editor = this.elementEditor();
+    if (editor) { editor.replace(start, end, lead + token + trail); return; }
+    this.draft.set(next);
     const element = this.textarea()?.nativeElement;
     if (element) {
       // Set the value before the selection: a later binding would move the caret.
@@ -291,16 +308,20 @@ export class ComposerComponent implements OnChanges {
   readonly agentPicker = viewChild(AgentPickerComponent);
   readonly mentions = viewChild(MentionMenuComponent);
   ngOnChanges(): void {
+    if (this.elementFiles().length && !this.richMode()) {
+      this.initialEditorSelection = this.selection();
+      this.editorAutofocus = document.activeElement === this.textarea()?.nativeElement;
+      this.richMode.set(true);
+    }
     if (this.disabled() || this.sending() || !this.mentionsEnabled()) this.mentionQuery.set(null);
     if (this.disabled() || this.sending() || (!this.mentionsEnabled() && this.dropping() === 'session')) this.dropping.set(null);
   }
   update(event: Event): void {
     if (!(event.target instanceof HTMLTextAreaElement)) return;
     this.wordsLeaving.set(false);
-    this.draft.set(encodeElementMentions(event.target.value, this.elementNames()));
+    this.draft.set(event.target.value);
     const before = event.target.value.slice(0, event.target.selectionStart);
-    const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    this.mentionQuery.set(this.mentionsEnabled() && !match?.[1]?.startsWith('“') ? (match?.[1] ?? null) : null);
+    this.updateMentionQuery(before);
   }
   send(steer = false): void {
     const text = this.draft().trim();
@@ -311,11 +332,11 @@ export class ComposerComponent implements OnChanges {
       this.recording()
     )
       return;
-    const textarea = this.textarea()?.nativeElement;
+    const textarea = this.elementEditor()?.surface()?.nativeElement ?? this.textarea()?.nativeElement;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const intent = this.waitingFor() ? "queue" : this.running() ? (steer ? "steer" : "queue") : "send";
-    // A textarea has no text Range. Its content origin includes padding and its
-    // internal scroll offset; long/scrolled drafts use the message rise instead.
+    // Both editor surfaces share a padded content origin. Scrolled drafts use
+    // the message rise rather than claiming a visible text origin.
     const rect = textarea?.getBoundingClientRect();
     const style = textarea ? getComputedStyle(textarea) : undefined;
     const sendOrigin = intent === "send" && text && rect && style && !textarea?.scrollTop
@@ -338,7 +359,7 @@ export class ComposerComponent implements OnChanges {
     });
     if (this.clearOnSubmit()) this.draft.set("");
     this.mentionQuery.set(null);
-    this.textarea()?.nativeElement.focus({ preventScroll: true });
+    this.focusEditor();
   }
   private animateSend(element: Element, frames: Keyframe[], duration: number, easing: string): void {
     // Repeated sends restart the small press feedback and release old effects.
@@ -353,12 +374,12 @@ export class ComposerComponent implements OnChanges {
   }
   insertMention(mention: ConversationMention, source: 'picker' | 'drop' = 'picker'): void {
     if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
+    const { start, end } = this.selection();
+    const before = this.draft().slice(0, start);
+    const query = /(?:^|\s)@[^\s@]*$/.exec(before);
+    const queryStart = query ? before.lastIndexOf('@') : start;
     if (mention.kind === 'element') {
-      const element = this.textarea()?.nativeElement;
-      const before = this.displayDraft().slice(0, element?.selectionStart ?? 0);
-      const query = /(?:^|\s)@[^\s@]*$/.exec(before);
-      const start = query ? before.lastIndexOf('@') : (element?.selectionStart ?? this.displayDraft().length);
-      this.replaceRange(start, element?.selectionEnd ?? this.displayDraft().length, this.elementNames().get(mention.marker ?? 0) ?? "");
+      this.replaceRange(queryStart, end, elementMarker(mention.marker ?? 0));
       this.mentionQuery.set(null);
       return;
     }
@@ -366,33 +387,18 @@ export class ComposerComponent implements OnChanges {
     if (!duplicate && mention.kind === 'session' && this.context().filter(item => item.kind === 'session').length >= 8) {
       this.dropAnnouncement.set('You can mention up to 8 sessions in a message.'); return;
     }
-    const element = this.textarea()?.nativeElement;
-    if (element) {
-      const before = this.displayDraft().slice(0, element.selectionStart);
-      const after = this.displayDraft().slice(element.selectionEnd);
-      const query = /(?:^|\s)@[^\s@]*$/.exec(before);
-      // Session context lives only in its controlled chip. A picker consumes its
-      // active query; a drop never rewrites the draft or the selected text.
-      if (mention.kind !== 'session' || (source === 'picker' && this.mentionQuery() !== null && query)) {
-        const prefix = query
-          ? before.slice(0, before.lastIndexOf("@"))
-          : before + (before && !/\s$/.test(before) ? " " : "");
-        const inserted = mention.kind === 'session' ? prefix : `${prefix}@${mention.label} `;
-        const draft = inserted + after;
-        this.draft.set(encodeElementMentions(draft, this.elementNames()));
-        // Set the value before the selection: a later binding would move the caret.
-        element.value = draft;
-        element.setSelectionRange(inserted.length, inserted.length);
-      }
-      element.focus({ preventScroll: true });
+    if (mention.kind !== 'session' || (source === 'picker' && this.mentionQuery() !== null && query)) {
+      if (mention.kind === 'session') this.replaceRange(queryStart, end, '', false);
+      else this.replaceRange(queryStart, end, `@${mention.label}`);
     }
+    this.focusEditor();
     if (!duplicate) this.mentionInserted.emit(mention);
     this.dropAnnouncement.set(duplicate ? `${mention.label} is already mentioned.` : `Added ${mention.label} to message context.`);
     this.mentionQuery.set(null);
   }
   openMentions(): void {
     this.mentionQuery.set("");
-    this.textarea()?.nativeElement.focus();
+    this.focusEditor();
   }
   onKey(event: KeyboardEvent): void {
     if (event.isComposing || this.disabled()) return;

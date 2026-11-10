@@ -62,30 +62,7 @@ textarea {
   color: var(--ink);
   font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
 }
-/* Match the native text metrics; highlights must not change wrapping or caret geometry. */
-.marker-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-.marker-text {
-  padding: 0 var(--space-1);
-  color: transparent;
-  font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-.marker-text mark {
-  border-radius: var(--radius-xs);
-  background: var(--accent-soft);
-  color: transparent;
-  box-shadow: 0 0 0 1px var(--accent-soft);
-  transition: box-shadow var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
-}
-.marker-text mark.hot {
-  box-shadow: 0 0 0 1.5px var(--accent);
-}
+.staged-elements { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); }
 textarea.words-leaving {
   animation: placeholder-return 240ms steps(1, end);
 }
@@ -177,7 +154,6 @@ textarea::placeholder {
   .drop-label { transition: none; transform: none; }
   .context ex-mention,
   .context ex-element-chip { animation: none; }
-  .marker-text mark { transition: none; }
 }
 @container composer (max-width: 340px) {
   .send span {

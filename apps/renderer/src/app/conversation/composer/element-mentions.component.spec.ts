@@ -8,6 +8,7 @@ import type { ConversationAttachment } from '../conversation.models';
 import { AttachmentsComponent } from '../chat/attachments.component';
 import { displayElementMentions, elementMentionNames, encodeElementMentions } from '../element/element-mention-text';
 import { ElementProseComponent } from '../element/element-prose.component';
+import { editorText } from './element-editor-dom';
 import { thumbnailFrame } from '../element/element-geometry';
 import { chatExchanges } from '../../session-chat/session-chat-transcript';
 
@@ -24,29 +25,29 @@ function mount(attachments: readonly ConversationAttachment[] = [file, other]) {
   fixture.componentRef.setInput('attachments', attachments);
   fixture.componentRef.setInput('elementPickAvailable', true);
   fixture.detectChanges();
-  return { fixture, composer: fixture.componentInstance, textarea: fixture.componentInstance.textarea()!.nativeElement };
+  return { fixture, composer: fixture.componentInstance, editor: fixture.componentInstance.elementEditor()!, surface: fixture.componentInstance.elementEditor()!.surface()!.nativeElement };
 }
 
 describe('element pins in the composer', () => {
   it('drops a pin at the caret, spaced from the words around it', () => {
-    const { fixture, composer, textarea } = mount([file]);
+    const { fixture, composer, editor } = mount([file]);
     composer.draft.set('Alignwith the heading'); fixture.detectChanges();
-    textarea.setSelectionRange(5, 5);
+    editor.setSelection({ start: 5, end: 5 });
     composer.insertElement(1); fixture.detectChanges();
     expect(composer.draft()).toBe('Align ❶ with the heading');
-    expect(textarea.value).toBe('Align @“Save” with the heading');
-    expect(textarea.selectionStart).toBe('Align @“Save” '.length);
+    expect(editorText(editor.surface()!.nativeElement)).toBe('Align ❶ with the heading');
+    expect(editor.selection().start).toBe('Align ❶ '.length);
   });
-  it('renders named chips and highlights readable mentions in the native textarea', () => {
+  it('renders named chips inside the editor without a duplicated context row', () => {
     const { fixture, composer } = mount();
     composer.draft.set('Make ❶ wider'); fixture.detectChanges();
-    const chips = [...fixture.nativeElement.querySelectorAll('.context ex-element-chip')] as HTMLElement[];
-    expect(chips).toHaveLength(2);
+    const chips = [...fixture.nativeElement.querySelectorAll('ex-element-editor ex-element-chip')] as HTMLElement[];
+    expect(chips).toHaveLength(1);
     expect(fixture.nativeElement.querySelector('ex-attachments')).toBeNull();
     expect(chips[0]!.textContent).toContain('Save');
     expect(chips[0]!.querySelector('ex-element-pin')).toBeNull();
-    expect(chips[1]!.querySelector('.face')!.getAttribute('aria-label')).toContain('not referenced');
-    expect(fixture.nativeElement.querySelectorAll('.marker-text mark')).toHaveLength(1);
+    expect(fixture.nativeElement.querySelector('.context ex-element-chip')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.staged-elements')?.textContent).toContain('Checkout');
   });
   it('removes a chip together with its pins, so no marker points at nothing', () => {
     const { fixture, composer } = mount();
@@ -57,8 +58,8 @@ describe('element pins in the composer', () => {
     expect(removed).toHaveBeenCalledWith('upload-2');
   });
   it('lists staged elements first in the @ menu and inserts the pin instead of an @ label', () => {
-    const { fixture, composer, textarea } = mount();
-    composer.draft.set('Align @'); fixture.detectChanges(); textarea.setSelectionRange(7, 7);
+    const { fixture, composer, editor } = mount();
+    composer.draft.set('Align @'); fixture.detectChanges(); editor.setSelection({ start: 7, end: 7 });
     const mention = vi.fn(); composer.mentionInserted.subscribe(mention);
     expect(composer.allMentionItems().slice(0, 2).map(item => [item.kind, item.marker, item.label])).toEqual([['element', 1, 'button · Save'], ['element', 2, 'h1 · Checkout']]);
     composer.insertMention(composer.allMentionItems()[1]!); fixture.detectChanges();
@@ -66,9 +67,9 @@ describe('element pins in the composer', () => {
     expect(mention).not.toHaveBeenCalled();
   });
   it('offers pointing at a new element from the @ menu and the bar, consuming the query', () => {
-    const { fixture, composer, textarea } = mount([file]);
+    const { fixture, composer, editor } = mount([file]);
     const picks = vi.fn(); composer.elementPickRequested.subscribe(picks);
-    composer.draft.set('Align @po'); fixture.detectChanges(); textarea.setSelectionRange(9, 9);
+    composer.draft.set('Align @po'); fixture.detectChanges(); editor.setSelection({ start: 9, end: 9 });
     composer.pickFromMentions();
     expect(composer.draft()).toBe('Align ');
     fixture.nativeElement.querySelector('ex-icon-button[label="Point at an element in the browser"] button').click();
@@ -166,20 +167,131 @@ describe('named element draft projection', () => {
     expect(encodeElementMentions('Make @“Sav” wider', names)).toBe('Make @“Sav” wider');
   });
   it('keeps native selection offsets correct when inserting after an existing named mention', () => {
-    const { fixture, composer, textarea } = mount();
+    const { fixture, composer, editor } = mount();
     composer.draft.set('Align ❶ with @'); fixture.detectChanges();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    editor.setSelection({ start: composer.draft().length, end: composer.draft().length });
     composer.insertMention(composer.allMentionItems()[1]!); fixture.detectChanges();
     expect(composer.draft()).toBe('Align ❶ with ❷ ');
-    expect(textarea.value).toBe('Align @“Save” with @“Checkout” ');
-    expect(textarea.selectionStart).toBe(textarea.value.length);
+    expect(editorText(editor.surface()!.nativeElement)).toBe('Align ❶ with ❷ ');
+    expect(editor.selection().start).toBe(composer.draft().length);
   });
   it('submits marker identities after native input while preserving copyable labels in the editor', () => {
-    const { fixture, composer, textarea } = mount();
-    textarea.value = 'Make @“Save” wider';
-    textarea.dispatchEvent(new Event('input')); fixture.detectChanges();
+    const { fixture, composer, editor } = mount();
+    editor.replace(0, 0, 'Make ❶ wider'); fixture.detectChanges();
     const sent = vi.fn(); composer.submitted.subscribe(sent);
     composer.send();
     expect(sent.mock.calls[0]?.[0].text).toBe('Make ❶ wider');
   });
+});
+
+describe('inline element editing', () => {
+  it('deletes one atomic mention, retains its attachment below the writing line, and supports undo/redo', () => {
+    const { fixture, composer, editor, surface } = mount([file]);
+    composer.draft.set('Make ❶ wider'); fixture.detectChanges();
+    editor.setSelection({ start: 6, end: 6 });
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('Make  wider');
+    expect(surface.querySelector('ex-element-chip')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.staged-elements ex-element-chip')).not.toBeNull();
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('Make ❶ wider');
+    expect(surface.querySelectorAll('ex-element-chip')).toHaveLength(1);
+    expect(fixture.nativeElement.querySelector('.staged-elements')).toBeNull();
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('Make  wider');
+  });
+  it('shows the placeholder only while the draft is empty, including plain text beside unreferenced elements', () => {
+    const { fixture, composer, surface } = mount([file]);
+    composer.draft.set(''); fixture.detectChanges();
+    expect(surface.classList).toContain('empty');
+    composer.draft.set('Make it wider.'); fixture.detectChanges();
+    expect(surface.querySelector('ex-element-chip')).toBeNull();
+    expect(surface.classList).not.toContain('empty');
+    composer.draft.set(''); fixture.detectChanges();
+    surface.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+    expect(surface.classList).not.toContain('empty');
+  });
+  it('updates inline progress without replacing the writing DOM or chip controls', () => {
+    const { fixture, composer, surface } = mount([file]);
+    composer.draft.set('Make ❶ wider'); fixture.detectChanges();
+    const text = surface.firstChild, face = surface.querySelector('.face');
+    fixture.componentRef.setInput('attachments', [{ ...file, status: 'uploading', progress: 42 }]); fixture.detectChanges();
+    expect(surface.firstChild).toBe(text);
+    expect(surface.querySelector('.face')).toBe(face);
+    expect(surface.querySelector('.progress')).not.toBeNull();
+    expect(composer.canSend()).toBe(false);
+  });
+  it('pastes only plain text, preserving a selected known reference and rejecting HTML markup', () => {
+    const { fixture, composer, editor, surface } = mount([file]);
+    composer.draft.set('Align ❶'); fixture.detectChanges();
+    editor.setSelection({ start: 0, end: composer.draft().length });
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { files: [], getData: (type: string) => type === 'text/plain' ? 'Make @“Save” <img src=x onerror=alert(1)>' : '<img src=x onerror=alert(1)>' } });
+    surface.dispatchEvent(event); fixture.detectChanges();
+    expect(composer.draft()).toBe('Make ❶ <img src=x onerror=alert(1)>');
+    expect(surface.querySelectorAll('ex-element-chip')).toHaveLength(1);
+    expect(surface.querySelector('img')).toBeNull();
+    expect(surface.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+  it('leaves composition in the browser until it ends and keeps ordinary typing beside a chip', () => {
+    const { fixture, composer, surface } = mount([file]);
+    composer.draft.set('Name ❶'); fixture.detectChanges();
+    const text = surface.firstChild!;
+    surface.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+    text.textContent = '名前 ';
+    surface.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, inputType: 'insertCompositionText' })); fixture.detectChanges();
+    expect(composer.draft()).toBe('Name ❶');
+    expect(surface.firstChild).toBe(text);
+    surface.dispatchEvent(new Event('compositionend', { bubbles: true }));
+    fixture.detectChanges();
+    expect(composer.draft()).toBe('名前 ❶');
+    expect(surface.querySelectorAll('ex-element-chip')).toHaveLength(1);
+  });
+  it('does not submit when Enter activates an inline chip control, and clears stale undo on a new draft', () => {
+    const { fixture, composer, editor, surface } = mount([file]);
+    editor.replace(0, 0, 'Make ❶ wider'); fixture.detectChanges();
+    const sent = vi.fn(); composer.submitted.subscribe(sent);
+    surface.querySelector('.face')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(sent).not.toHaveBeenCalled();
+    composer.draft.set('A different draft'); fixture.detectChanges();
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('A different draft');
+  });
+});
+
+describe('editor handoff and cancellation', () => {
+  it('transfers the native caret when the first element arrives', async () => {
+    const fixture = TestBed.createComponent(ComposerComponent);
+    fixture.componentRef.setInput('elementPickAvailable', true); fixture.detectChanges();
+    const composer = fixture.componentInstance;
+    composer.draft.set('Alignwith the heading'); fixture.detectChanges();
+    const textarea = composer.textarea()!.nativeElement;
+    textarea.focus(); textarea.setSelectionRange(5, 5);
+    composer.insertElement(1);
+    fixture.componentRef.setInput('attachments', [file]); fixture.detectChanges();
+    await fixture.whenStable(); fixture.detectChanges();
+    expect(composer.draft()).toBe('Align ❶ with the heading');
+    expect(composer.elementEditor()!.selection().start).toBe(8);
+    expect(fixture.nativeElement.querySelector('textarea')).toBeNull();
+  });
+  it('discards unfinished composition when an external draft replaces it', () => {
+    const { fixture, composer, surface } = mount([file]);
+    composer.draft.set('Old ❶'); fixture.detectChanges();
+    surface.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+    surface.firstChild!.textContent = '未確定 ';
+    composer.draft.set('New draft'); fixture.detectChanges();
+    surface.dispatchEvent(new Event('compositionend', { bubbles: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('New draft');
+    expect(editorText(surface)).toBe('New draft');
+  });
+});
+
+it('does not resurrect a removed attachment through undo after erasing its reference', () => {
+  const { fixture, composer, editor, surface } = mount([file]);
+  editor.replace(0, 0, 'Make ❶ wider'); fixture.detectChanges();
+  editor.replace(5, 6, ''); fixture.detectChanges();
+  composer.removeElement(file); fixture.componentRef.setInput('attachments', []); fixture.detectChanges();
+  surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+  expect(composer.draft()).toBe('Make  wider');
+  expect(surface.querySelector('ex-element-chip')).toBeNull();
 });

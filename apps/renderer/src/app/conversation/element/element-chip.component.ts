@@ -26,6 +26,8 @@ import { ElementPreviewComponent } from "./element-preview.component";
 
 const THUMB_WIDTH = 36;
 const THUMB_HEIGHT = 26;
+const INLINE_THUMB_WIDTH = 24;
+const INLINE_THUMB_HEIGHT = 16;
 
 /**
  * A browser element staged with, or sent in, a message: a thumbnail
@@ -85,7 +87,11 @@ export class ElementChipComponent {
   readonly source = computed(() => elementImageSource(this.file(), this.resolve()));
   readonly frame = computed(() => {
     const element = this.element();
-    return element ? thumbnailFrame(element, this.inline() ? 28 : THUMB_WIDTH, this.inline() ? 20 : THUMB_HEIGHT) : null;
+    return element ? thumbnailFrame(
+          element,
+          this.inline() ? INLINE_THUMB_WIDTH : THUMB_WIDTH,
+          this.inline() ? INLINE_THUMB_HEIGHT : THUMB_HEIGHT,
+        ) : null;
   });
   readonly failed = computed(() => this.file().status === "error");
   readonly uploading = computed(() => this.file().status === "uploading");

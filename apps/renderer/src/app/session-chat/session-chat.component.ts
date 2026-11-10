@@ -147,7 +147,7 @@ export class SessionChatComponent {
     }
     const composer = this.composer();
     if (marker && composer && !elementMarkersIn(composer.draft()).includes(marker)) composer.insertElement(marker);
-    else composer?.textarea()?.nativeElement.focus({ preventScroll: true });
+    else composer?.focusEditor();
     return marker;
   }
   readonly composer = viewChild(ComposerComponent);
@@ -408,7 +408,7 @@ export class SessionChatComponent {
     this.requestElement()?.nativeElement.focus({ preventScroll: true });
   }
   focusComposer(): void {
-    this.composer()?.textarea()?.nativeElement.focus();
+    this.composer()?.focusEditor();
   }
   queueAction(type: "steer-queued" | "cancel-queued", id: string): void {
     this.focusComposer();
