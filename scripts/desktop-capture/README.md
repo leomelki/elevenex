@@ -337,6 +337,21 @@ focus restoration and narrow reduced-motion layouts in both themes.
 
 ## Output and failures
 
+`scenarios/terminal-rendering.mjs` runs against `/terminal-rendering` in the
+component preview. It checks actual rounded-cap pixels at compact/default/spaced
+cell sizes, native-density canvas scaling, both themes, narrow/reduced-motion
+layouts, keyboard input, Find selection, retained output/selection through
+reattachment, GPU context release and input after GPU-loss fallback. It uses the
+production `TerminalSurface` with preview-only ANSI samples. Native display
+density is retained because Chromium's device-pixel ResizeObserver boxes do not
+follow the capture driver's default 1x CDP emulation on Retina displays.
+
+`scenarios/terminal-startup.mjs` checks zsh's 80-column startup spacer in a narrow
+pane through the production adapter. It verifies row-zero prompts, resizing and
+detachment between replay pages, preserved intentional blank lines, filled and
+scrolled output, trusted keyboard input, both themes and reduced motion. Run it
+with `--url http://127.0.0.1:4310`; its ANSI samples stay in the capture scenario.
+
 `scenarios/session-mentions.mjs` checks sidebar transfer data and trusted Chromium
 drops against the connected workspace preview, with drop-entry frames, duplicate
 prevention, focus handoff, draft navigation, keyboard insertion and narrow
@@ -667,3 +682,21 @@ reconciliation, successful dismissal, both themes and compact reduced-motion
 layouts. Use the connected-workspace preview URL, and run native captures
 sequentially. `task-screen-update.mjs` and `commit-panel-motion.mjs` cover the
 existing selection and anchored-panel motion contracts.
+
+`scenarios/terminal-tabs.mjs` verifies TerminalView's shared tab strip: repeated
+creation and automatic revelation, edge fades, wheel browsing without
+selection changes, metadata refresh, Home/End/Delete, ancestor scroll and focus retention,
+empty strips and 320px reduced-motion layouts in both themes. Run against the
+component preview with `--url http://127.0.0.1:4310`.
+
+`scenarios/terminal-attachment.mjs` uses `/terminal-stream` to exercise the
+production task-terminal owner and xterm with a preview-only stream transport.
+It checks automatic first creation, retained DOM/focus and native typing through
+metadata/output changes, plus one replacement stream after interruption. Both
+themes and a narrow reduced-motion layout run against the same preview URL.
+
+`scenarios/terminal-recovery.mjs` uses the same production adapter and preview
+transport to check stable terminal geometry during connection notices, persistent
+paused typing across reconnects, keyboard resume/focus restoration, and retained
+failed output without resize/reconnect loops. It covers both themes and a narrow
+reduced-motion layout.

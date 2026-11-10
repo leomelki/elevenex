@@ -32,6 +32,7 @@ import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
 import * as http from 'http';
 import * as express from 'express';
 import { createEdgeProxyServer } from './proxy/edge-proxy.server.js';
+import { DesktopTerminalGateway } from './user-terminal/stream/desktop-terminal.gateway.js';
 import {
   getEdgeProxyUpstreamOrigin,
   getElevenexBindHost,
@@ -234,6 +235,7 @@ async function bootstrap() {
 
   const userTerminalGateway = app.get(UserTerminalGateway);
   userTerminalGateway.attachToServer(httpServer);
+  app.get(DesktopTerminalGateway).attachToServer(httpServer);
 
   const actionsGateway = app.get(ActionsGateway);
   actionsGateway.attachToServer(httpServer);

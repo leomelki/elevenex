@@ -64,10 +64,38 @@ One SSH stdio channel runs an uploaded Node bridge. It multiplexes bounded TCP
 streams, so initialization does not depend on SSH TCP forwarding permissions,
 SOCKS, ControlMaster, tmux, a remote login Node installation, or remote internet
 access. Managed forwards bind **127.0.0.1 only** and target remote loopback only.
-Port 0 requests an OS-allocated local port. Both an occupied local port and an
+For generic forwards, port 0 requests an OS-allocated local port. Both an occupied local port and an
 unreachable remote service have distinct status. A remote-service probe verifies
 TCP acceptance, not the arbitrary service's application protocol. Retry forward
 rebinds/rechecks it; connection recovery recreates forwards once per generation.
+
+Terminal-created automatic forwards use `remote/terminal-forwards.ts` instead.
+The desktop hashes the saved host ID, exact numeric loopback target and remote
+port with SHA-256; the first unsigned big-endian 32 bits select a preferred port
+in 20000–29999. Initial allocation tries up to 64 consecutive candidates with
+wraparound, skipping saved/in-flight assignments and retrying only `EADDRINUSE`.
+It binds the actual tunnel, without a separate availability-check socket.
+This range is an allocation policy, not a system reservation.
+
+The successful assignment and automatic definitions (including their IPv4/IPv6
+target) are atomically persisted in `remote-settings.json.terminal-forwards.json`
+beside the existing settings. The original settings format is unchanged for
+older releases. Persistence failure closes the new listener; corrupt sidecars
+require repair rather than silently changing established URLs. Missing sidecars
+are supported. Existing auto forwards adopt stable allocation on their next
+explicit terminal opening; manually chosen local ports and generic port-0
+forwards retain their defaults.
+
+Assignments survive reconnects, desktop/website restarts and removal/recreation
+of a terminal's saved forward, provided its saved host and remote endpoint stay
+the same. An occupied established local port reports a conflict without remapping;
+Retry reuses that port, or remove the forward and add an explicit local port.
+Assignments are device-local, and changing the remote listening port identifies
+a different service. Multiple windows opening the same endpoint share one
+listener with independent leases; the last owner closes it. Explicit retry
+recreates the shared listener and updates every owner. A target change replaces
+only that window's lease. Connection replacement awaits old listener cleanup,
+and callbacks from retired attempts cannot update the new listener.
 
 `wire.ts` bounds frames to 96 KiB, data chunks to 64 KiB, aggregate pending output
 to 4 MiB and concurrent stream channels to 64 per transport. Each channel has a

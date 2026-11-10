@@ -1,5 +1,8 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
+import type { TaskTerminalCommandsRead, TaskTerminalCommands, TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
+import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrite, TaskTerminalStreamEvent, TaskTerminalSize, TaskTerminalPreferences } from './task-terminal';
+export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
@@ -36,6 +39,15 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'task-terminal:preferences': { args: [scopeId: string]; result: BackendResult<TaskTerminalPreferences> };
+  'task-terminal:save-preferences': { args: [scopeId: string, value: TaskTerminalPreferences]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:attach': { args: [scopeId: string, input: TaskTerminalAttach]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:detach': { args: [scopeId: string, input: TaskTerminalAttachment]; result: void };
+  'task-terminal:stream-write': { args: [scopeId: string, input: TaskTerminalStreamWrite]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-resize': { args: [scopeId: string, input: TaskTerminalAttachment & TaskTerminalSize]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-focus': { args: [scopeId: string, input: TaskTerminalAttachment]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:stream-ack': { args: [scopeId: string, input: TaskTerminalAttachment & { readonly delivery: number }]; result: void };
+  'task-terminal:context': { args: [scopeId: string, input: TaskTerminalTarget & { readonly generation: string }]; result: BackendResult<string> };
   'code:window-context': { args: []; result: CodeWindowContext | null };
   'code:open': { args: [target: CodeTarget]; result: BackendResult<CodeSurfaceState> };
   'code:present': { args: [target: CodeTarget, presentation: CodePresentation]; result: void };
@@ -46,6 +58,16 @@ export interface InvokeContracts {
   'code:action': { args: [target: CodeTarget, action: CodeAction]; result: void };
   'code:focus': { args: [target: CodeTarget]; result: void };
   'code:release': { args: [target: CodeTarget]; result: void };
+  'task-terminal:open-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true; readonly url?: string }> };
+  'task-terminal:copy-port': { args: [scopeId: string, input: TaskTerminalTarget & { readonly port: number }]; result: BackendResult<{ readonly accepted: true; readonly url: string }> };
+  'task-terminal:list': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskTerminalList> };
+  'task-terminal:create': { args: [scopeId: string, input: TaskTerminalCreate]; result: BackendResult<TaskTerminal> };
+  'task-terminal:commands': { args: [scopeId: string, input: TaskTerminalCommandsRead]; result: BackendResult<TaskTerminalCommands> };
+  'task-terminal:read': { args: [scopeId: string, input: TaskTerminalRead]; result: BackendResult<TaskTerminalOutput> };
+  'task-terminal:input': { args: [scopeId: string, input: TaskTerminalInput]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:resize': { args: [scopeId: string, input: TaskTerminalResize]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:action': { args: [scopeId: string, input: TaskTerminalAction]; result: BackendResult<{ readonly accepted: true }> };
+  'task-terminal:close': { args: [scopeId: string, input: TaskTerminalTarget]; result: BackendResult<{ readonly accepted: true }> };
 
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
@@ -123,6 +145,7 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
   'machines:changed': MachineState;
@@ -144,6 +167,16 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  taskTerminalPreferences(scopeId: string): Promise<BackendResult<TaskTerminalPreferences>>;
+  taskTerminalSavePreferences(scopeId: string, value: TaskTerminalPreferences): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalAttach(scopeId: string, input: TaskTerminalAttach): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalDetach(scopeId: string, input: TaskTerminalAttachment): Promise<void>;
+  taskTerminalStreamWrite(scopeId: string, input: TaskTerminalStreamWrite): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamResize(scopeId: string, input: TaskTerminalAttachment & TaskTerminalSize): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamFocus(scopeId: string, input: TaskTerminalAttachment): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalStreamAcknowledge(scopeId: string, input: TaskTerminalAttachment & { readonly delivery: number }): Promise<void>;
+  taskTerminalContext(scopeId: string, input: TaskTerminalTarget & { readonly generation: string }): Promise<BackendResult<string>>;
+  onTaskTerminalStream(listener: (event: TaskTerminalStreamEvent) => void): () => void;
   onCodeExitRequested(listener: (target: CodeTarget) => void): () => void;
   onCodeChanged(listener: (event: { readonly target: CodeTarget; readonly state: CodeSurfaceState }) => void): () => void;
   codeWindowContext(): Promise<CodeWindowContext | null>;
@@ -156,6 +189,16 @@ export interface ElevenexBridge {
   codeAction(target: CodeTarget, action: CodeAction): Promise<void>;
   codeFocus(target: CodeTarget): Promise<void>;
   codeRelease(target: CodeTarget): Promise<void>;
+  taskTerminalOpenPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true; readonly url?: string }>>;
+  taskTerminalCopyPort(scopeId: string, input: TaskTerminalTarget & { readonly port: number }): Promise<BackendResult<{ readonly accepted: true; readonly url: string }>>;
+  taskTerminalList(scopeId: string, taskId: number): Promise<BackendResult<TaskTerminalList>>;
+  taskTerminalCreate(scopeId: string, input: TaskTerminalCreate): Promise<BackendResult<TaskTerminal>>;
+  taskTerminalCommands(scopeId: string, input: TaskTerminalCommandsRead): Promise<BackendResult<TaskTerminalCommands>>;
+  taskTerminalRead(scopeId: string, input: TaskTerminalRead): Promise<BackendResult<TaskTerminalOutput>>;
+  taskTerminalInput(scopeId: string, input: TaskTerminalInput): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalResize(scopeId: string, input: TaskTerminalResize): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalAction(scopeId: string, input: TaskTerminalAction): Promise<BackendResult<{ readonly accepted: true }>>;
+  taskTerminalClose(scopeId: string, input: TaskTerminalTarget): Promise<BackendResult<{ readonly accepted: true }>>;
 
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;

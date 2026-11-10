@@ -4,7 +4,7 @@ import { DiffFileComponent } from './diff-file.component';
 import { DiffReviewComponent } from './diff-review.component';
 import { TerminalViewComponent } from './terminal-view.component';
 import { ViewTabsComponent } from './view-tabs.component';
-import { ChangeFile, DiffFileContent } from './view.models';
+import { ChangeFile, DiffFileContent, TerminalBrowserFeedback } from './view.models';
 
 describe('Side-view interactions', () => {
   it('moves tab focus by keyboard and emits stable identities for closing', () => {
@@ -66,8 +66,77 @@ describe('Side-view interactions', () => {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
     fixture.detectChanges();
     await fixture.whenStable();
+    expect(input.value).toBe('Passed');
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    await fixture.whenStable();
     expect(input.value).toBe('');
     expect(document.activeElement).toBe(trigger);
+    expect(input.closest('.find')?.hasAttribute('inert')).toBe(true);
+    expect(trigger.closest('ex-view-tabs')).not.toBeNull();
+    expect(input.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+  });
+
+  it('navigates terminal matches by buttons and keyboard, and restores focus from Close', async () => {
+    const fixture = TestBed.createComponent(TerminalViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Shell', status: 'idle' }]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const root = fixture.nativeElement as HTMLElement;
+    const trigger = root.querySelector<HTMLButtonElement>('[aria-label="Find in terminal (⌘F)"]')!;
+    const previous = root.querySelector<HTMLButtonElement>('[aria-label="Previous match (Shift+Enter)"]')!;
+    const next = root.querySelector<HTMLButtonElement>('[aria-label="Next match (Enter)"]')!;
+    trigger.focus(); trigger.click(); fixture.detectChanges(); await fixture.whenStable();
+    expect(trigger.closest('ex-view-tabs')).not.toBeNull();
+    expect(root.querySelector('input')?.closest('.toolbar')).not.toBeNull();
+    expect(previous.disabled).toBe(true);
+    expect(next.disabled).toBe(true);
+    const requested = vi.fn();
+    fixture.componentInstance.searchRequested.subscribe(requested);
+    const input = root.querySelector<HTMLInputElement>('input[type="search"]')!;
+    input.value = 'test'; input.dispatchEvent(new Event('input'));
+    fixture.componentRef.setInput('findMatches', 3);
+    fixture.componentRef.setInput('findStatus', '1 of 3'); fixture.detectChanges();
+    previous.click(); expect(requested).toHaveBeenLastCalledWith({ query: 'test', backwards: true });
+    next.click(); expect(requested).toHaveBeenLastCalledWith({ query: 'test', backwards: false });
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    expect(requested).toHaveBeenLastCalledWith({ query: 'test', backwards: true });
+    requested.mockClear();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+    expect(requested).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('findMatches', 0);
+    fixture.componentRef.setInput('findStatus', 'No results'); fixture.detectChanges();
+    expect(previous.disabled).toBe(true); expect(next.disabled).toBe(true);
+    expect(root.querySelector('.find-status')?.textContent).toBe('No results');
+    const close = root.querySelector<HTMLButtonElement>('[aria-label="Close find (Escape)"]')!;
+    close.focus(); close.click(); fixture.detectChanges(); await fixture.whenStable();
+    expect(document.activeElement).toBe(trigger);
+    expect(input.closest('.find')?.hasAttribute('inert')).toBe(true);
+    expect(requested).toHaveBeenLastCalledWith({ query: '', backwards: false });
+    expect(root.querySelector('.find-status')?.textContent).toBe('');
+  });
+
+  for (const modifier of ['metaKey', 'ctrlKey']) it(`opens Find from terminal output with ${modifier} and returns focus on Escape`, async () => {
+    const fixture = TestBed.createComponent(TerminalViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Shell', status: 'idle' }]);
+    fixture.detectChanges(); await fixture.whenStable();
+    const root = fixture.nativeElement as HTMLElement;
+    const terminal = root.querySelector<HTMLElement>('.terminal')!;
+    const input = root.querySelector<HTMLInputElement>('input[type="search"]')!;
+    const trigger = root.querySelector<HTMLButtonElement>('[aria-label="Find in terminal (⌘F)"]')!;
+    expect(trigger.closest('ex-view-tabs')).not.toBeNull();
+    expect(input.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    terminal.focus();
+    terminal.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', [modifier]: true, bubbles: true }));
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(document.activeElement).toBe(input);
+    expect(input.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(document.activeElement).toBe(terminal);
     expect(input.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
   });
 
@@ -82,9 +151,65 @@ describe('Side-view interactions', () => {
     fixture.componentInstance.portOpened.subscribe(portOpened);
     const buttons = Array.from(fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>);
     buttons.find(button => button.textContent?.includes('Ask the agent'))!.click();
-    buttons.find(button => button.textContent?.includes('Open :'))!.click();
+    (fixture.nativeElement.querySelector('.port-open') as HTMLButtonElement).click();
     expect(asked).toHaveBeenCalledWith({ tabId: 'tests', failure: { code: 1, cmd: 'pnpm test' } });
     expect(portOpened).not.toHaveBeenCalled();
+  });
+
+  it('keeps browser handoff feedback and actions together for the selected server', async () => {
+    const fixture = TestBed.createComponent(TerminalViewComponent);
+    const server = { id: 'web', title: 'Web', status: 'serving' as const, port: 8080 };
+    const shell = { id: 'shell', title: 'Shell', status: 'idle' as const };
+    const update = (browser?: TerminalBrowserFeedback) => {
+      fixture.componentRef.setInput('tabs', [{ ...server, browser }, shell]);
+      fixture.detectChanges();
+    };
+    const opened = vi.fn(), stopped = vi.fn(), copied = vi.fn();
+    fixture.componentInstance.portOpened.subscribe(opened);
+    fixture.componentInstance.stopRequested.subscribe(stopped);
+    fixture.componentInstance.portCopyRequested.subscribe(copied);
+    update();
+    const root = fixture.nativeElement as HTMLElement;
+    const open = () => root.querySelector<HTMLButtonElement>('.port-open')!;
+    const stop = () => root.querySelector<HTMLButtonElement>('.stop')!;
+    const copy = () => root.querySelector<HTMLButtonElement>('.port-copy button')!;
+    expect(open().textContent).toContain('http://127.0.0.1:8080/');
+    copy().click(); expect(copied).toHaveBeenLastCalledWith(8080);
+    expect(opened).not.toHaveBeenCalled();
+    open().click(); expect(opened).toHaveBeenLastCalledWith(8080);
+    update({ busy: true, error: '', url: '' });
+    expect(open().disabled).toBe(true);
+    expect(copy().disabled).toBe(true);
+    expect(open().getAttribute('aria-busy')).toBe('true');
+    open().click(); expect(opened).toHaveBeenCalledTimes(1);
+    stop().click(); expect(stopped).toHaveBeenLastCalledWith('web');
+    update({ busy: false, error: 'Could not open your browser.', url: '' });
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Could not open your browser.');
+    expect(open().textContent).toContain('http://127.0.0.1:8080/');
+    open().click(); expect(opened).toHaveBeenCalledTimes(2);
+    update({ busy: false, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(open().textContent).toContain('http://127.0.0.1:24766/');
+    expect(open().getAttribute('aria-label')).toBe('Open http://127.0.0.1:24766/ in your browser');
+    update({ busy: false, copyBusy: true, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(copy().disabled).toBe(true); expect(open().disabled).toBe(true); expect(stop().disabled).toBe(false);
+    update({ busy: false, copied: true, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(copy().getAttribute('aria-label')).toBe('URL copied');
+    expect(root.querySelector('.port-status')?.textContent).toBe('URL copied');
+    fixture.componentRef.setInput('disabled', true); fixture.detectChanges();
+    expect(open().disabled).toBe(true); expect(copy().disabled).toBe(true); expect(stop().disabled).toBe(true);
+    fixture.componentRef.setInput('disabled', false); fixture.detectChanges();
+    const find = root.querySelector<HTMLButtonElement>('[aria-label="Find in terminal (⌘F)"]')!;
+    find.focus(); find.click(); fixture.detectChanges(); await fixture.whenStable();
+    expect(root.querySelector<HTMLElement>('.server')?.hidden).toBe(true);
+    expect(root.querySelector('.server')?.hasAttribute('inert')).toBe(true);
+    root.querySelector<HTMLInputElement>('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(root.querySelector<HTMLElement>('.server')?.hidden).toBe(false);
+    expect(open().textContent).toContain('http://127.0.0.1:24766/');
+    fixture.componentRef.setInput('active', 'shell'); fixture.detectChanges();
+    expect(root.querySelector('.port-open')).toBeNull();
+    expect(root.textContent).not.toContain('http://127.0.0.1:24766/');
   });
 
   it('requests immediate takeover for page input only while the agent drives', () => {

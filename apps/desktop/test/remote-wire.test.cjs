@@ -6,11 +6,11 @@ const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
 const { Wire, SocketChannels } = require('../dist/remote/wire');
 
-async function listen(server) {
-  server.listen(0, '127.0.0.1'); await once(server, 'listening'); return server.address().port;
+async function listen(server, host = '127.0.0.1') {
+  server.listen(0, host); await once(server, 'listening'); return server.address().port;
 }
 
-async function tunnel(t, serve, prefetched) {
+async function tunnel(t, serve, prefetched, serviceHost = '127.0.0.1', collision = false) {
   const toRemote = new PassThrough(); const toLocal = new PassThrough();
   const local = new Wire(toLocal, toRemote); const remote = new Wire(toRemote, toLocal);
   const localChannels = new SocketChannels(local); const remoteChannels = new SocketChannels(remote);
@@ -18,17 +18,24 @@ async function tunnel(t, serve, prefetched) {
   const service = createServer({ allowHalfOpen: true }, socket => {
     sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.on('error', () => undefined); serve(socket);
   });
-  const remotePort = await listen(service);
-  remote.on('message', frame => { if (frame.type === 'open') remoteChannels.accept(frame.id, frame.port, ''); });
+  const remotePort = await listen(service, serviceHost);
+  const unrelated = collision ? createServer(socket => {
+    sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.end('unrelated');
+  }) : null;
+  if (unrelated) {
+    unrelated.listen(remotePort, '127.0.0.1'); await once(unrelated, 'listening');
+  }
+  remote.on('message', frame => { if (frame.type === 'open') remoteChannels.accept(frame.id, frame.port, '', frame.host); });
   const forward = createServer({ allowHalfOpen: true }, socket => {
     if (prefetched) socket.unshift(prefetched);
-    localChannels.open(socket, remotePort);
+    localChannels.open(socket, remotePort, undefined, serviceHost);
   }); const port = await listen(forward);
   const client = connect(port, '127.0.0.1'); client.on('error', () => undefined);
   t.after(async () => {
     client.destroy(); localChannels.dispose(); remoteChannels.dispose(); local.close(); remote.close();
     for (const socket of sockets) socket.destroy();
     await Promise.all([new Promise(resolve => service.close(resolve)), new Promise(resolve => forward.close(resolve))]);
+    if (unrelated) await new Promise(resolve => unrelated.close(resolve));
   });
   await once(client, 'connect');
   return { client, local, remote, toRemote, toLocal, port, sockets, localChannels, remoteChannels };
@@ -45,6 +52,43 @@ test('TCP half-close preserves a complete response after the request EOF', { tim
   const bytes = Buffer.concat(received);
   assert.equal(bytes.length, response.length);
   assert.ok(bytes.equals(response));
+});
+
+test('service forwards reach an IPv6-only loopback listener', { timeout: 5000 }, async t => {
+  const { client } = await tunnel(t, socket => {
+    socket.once('data', () => socket.end('ipv6 response'));
+  }, undefined, '::1');
+  const chunks = [];
+  client.on('data', bytes => chunks.push(bytes));
+  const ended = once(client, 'end');
+  client.end('request');
+  await ended;
+  assert.equal(Buffer.concat(chunks).toString(), 'ipv6 response');
+});
+
+test('an exact IPv6 target cannot accidentally connect to an unrelated IPv4 service on the same port', { timeout: 5000 }, async t => {
+  const { client } = await tunnel(t, socket => socket.once('data', () => socket.end('owned')), undefined, '::1', true);
+  const chunks = []; client.on('data', bytes => chunks.push(bytes));
+  const ended = once(client, 'end'); client.end('request'); await ended;
+  assert.equal(Buffer.concat(chunks).toString(), 'owned');
+});
+
+test('wire rejects non-loopback targets while preserving old frames without an address', () => {
+  for (const host of ['example.com', '192.168.1.2', '0.0.0.0', '::', '127.0.0.999']) {
+    const input = new PassThrough(), output = new PassThrough(), wire = new Wire(input, output);
+    let closed = false;
+    wire.on('closed', () => { closed = true; });
+    input.write(JSON.stringify({ type: 'open', id: 1, port: 4200, host }) + '\n');
+    assert.equal(closed, true);
+    wire.close(); input.destroy(); output.destroy();
+  }
+  const input = new PassThrough(), output = new PassThrough(), wire = new Wire(input, output);
+  const received = []; wire.on('message', frame => received.push(frame));
+  input.write(JSON.stringify({ type: 'open', id: 1, port: 4200 }) + '\n');
+  input.write(JSON.stringify({ type: 'open', id: 2, port: 4200, host: '::1' }) + '\n');
+  assert.equal(received.length, 2);
+  assert.equal(received[1].host, '::1');
+  wire.close(); input.destroy(); output.destroy();
 });
 
 test('a tunnel pipelines a bounded window while acknowledgements are delayed', { timeout: 5000 }, async t => {

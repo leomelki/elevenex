@@ -1,0 +1,17 @@
+# Preserve normal zsh startup, including a user's redirected configuration path.
+ELEVENEX_USER_INTEGRATION_ZDOTDIR="$ZDOTDIR"
+if [[ -n "$ELEVENEX_USER_ZDOTDIR" ]]; then
+  ZDOTDIR="$ELEVENEX_USER_ZDOTDIR"
+else
+  unset ZDOTDIR
+fi
+[[ -r "${ZDOTDIR:-$HOME}/.zshenv" ]] && builtin source "${ZDOTDIR:-$HOME}/.zshenv"
+ELEVENEX_USER_ZDOTDIR="${ZDOTDIR-}"
+if [[ -o rcs ]]; then
+  ZDOTDIR="$ELEVENEX_USER_INTEGRATION_ZDOTDIR"
+else
+  # Honor intentional suppression of startup files without leaking our private
+  # directory into nested shells or the user's history configuration.
+  builtin printf '\033]133;X;__ELEVENEX_TOKEN__\007'
+fi
+unset ELEVENEX_USER_INTEGRATION_ZDOTDIR

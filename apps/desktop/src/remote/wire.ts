@@ -1,13 +1,13 @@
 /** Shared by the local SSH adapter and the uploaded, plain-Node bridge. */
 import { EventEmitter } from 'node:events';
 import type { Readable, Writable } from 'node:stream';
-import { Socket } from 'node:net';
+import { Socket, isIP } from 'node:net';
 
 export type WireMessage =
   | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean }
   | { type: 'ping' | 'pong'; id: number; ready?: boolean; instance?: string }
-  | { type: 'open'; id: number; port: number }
-  | { type: 'probe'; id: number; port: number }
+  | { type: 'open'; id: number; port: number; host?: string }
+  | { type: 'probe'; id: number; port: number; host?: string }
   | { type: 'probed'; id: number; available: boolean }
   | { type: 'opened' | 'end' | 'close' | 'error'; id: number }
   | { type: 'ack'; id: number; bytes: number }
@@ -25,6 +25,8 @@ function message(value: unknown): WireMessage {
     if (!Number.isSafeInteger(input['id']) || Number(input['id']) < 1) throw new Error('Invalid bridge sequence');
     if (type === 'open' || type === 'probe') {
       if (!Number.isInteger(input['port']) || Number(input['port']) < 0 || Number(input['port']) > 65535) throw new Error('Invalid remote port');
+      const host = input['host'];
+      if (host !== undefined && (typeof host !== 'string' || (host !== '::1' && !(isIP(host) === 4 && host.startsWith('127.'))))) throw new Error('Invalid remote loopback address');
     } else if (type === 'ack') {
       if (!Number.isInteger(input['bytes']) || Number(input['bytes']) < 1 || Number(input['bytes']) > 65536) throw new Error('Invalid byte acknowledgement');
     } else if (type === 'data') {
@@ -131,11 +133,11 @@ export class SocketChannels {
     wire.on('message', this.receive); wire.once('closed', this.closed); wire.on('drain', this.drained);
   }
 
-  open(socket: Socket, port: number, onOpen?: (available: boolean) => void): void {
+  open(socket: Socket, port: number, onOpen?: (available: boolean) => void, host?: string): void {
     const id = ++this.sequence;
-    if (this.attach(id, socket, onOpen)) this.send({ type: 'open', id, port });
+    if (this.attach(id, socket, onOpen)) this.send({ type: 'open', id, port, ...(host === undefined ? {} : { host }) });
   }
-  accept(id: number, port: number, backendSocket: string): void {
+  accept(id: number, port: number, backendSocket: string, host = '127.0.0.1'): void {
     if (this.channels.has(id)) { this.wire.close(); return; }
     const socket = new Socket({ allowHalfOpen: true });
     if (!this.attach(id, socket)) return;
@@ -144,7 +146,7 @@ export class SocketChannels {
       clearTimeout(entry.timer); entry.opened = true;
       this.send({ type: 'opened', id }); this.pump(id, entry);
     });
-    if (port === 0) socket.connect(backendSocket); else socket.connect(port, '127.0.0.1');
+    if (port === 0) socket.connect(backendSocket); else socket.connect(port, host);
   }
   private send(frame: WireMessage): void {
     try { this.wire.send(frame); } catch { this.dispose(); }

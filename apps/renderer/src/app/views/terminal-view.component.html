@@ -1,13 +1,51 @@
 <section class="terminal" tabindex="-1" aria-label="Your terminals" (keydown)="keydown($event)">
-  <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
-    @if (scripts().length) { <select #scriptSelect aria-label="Run a project script" (change)="script(scriptSelect.value); scriptSelect.value = ''"><option value="">Run script…</option>@for (script of scripts(); track script.id) { <option [value]="script.id">{{ script.name }}</option> }</select> }
+  <ex-view-tabs label="Terminal tabs" newLabel="New terminal (⌘T)" [items]="tabs()" [active]="current()?.id" [disabled]="disabled()" [animateEntries]="animateTabs()" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+    @if (scripts().length) { <ex-terminal-launcher viewTabsNew [scripts]="scripts()" [disabled]="disabled()" (shellRequested)="added.emit()" (scriptRequested)="script($event)" /> }
+    <ng-content select="[terminalActions]" />
+    <ex-icon-button class="find-trigger" icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />
   </ex-view-tabs>
-  <div class="toolbar"><ex-icon name="folder" [size]="13" /><span class="cwd" [title]="current()?.cwd ?? ''">{{ current()?.cwd ?? 'Workspace' }}</span>@if (current()?.branch; as branch) { <span class="branch"><ex-icon name="branch" [size]="12" />{{ branch }}</span> }
-    @if (current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="openPort()">Open :{{ current()?.port }}</button> }
-    @if (current()?.status === 'running' || current()?.status === 'serving') { <button exButton variant="ghost" size="sm" (click)="stopRequested.emit(current()!.id)">Stop</button> }
-    <ex-icon-button icon="search" label="Find in terminal (⌘F)" size="sm" [active]="findOpen()" (pressed)="find()" />
-  </div>
-  <ex-fold [open]="findOpen()"><label class="find">Find<input #findInput type="search" aria-label="Find in terminal output" [value]="query()" (input)="query.set(findInput.value)" /></label></ex-fold>
+  <ex-fold [open]="toolbarOpen()">
+    <div class="toolbar">
+      <div class="server" [hidden]="findOpen()" [attr.inert]="findOpen() ? '' : null">
+        @if (current(); as tab) {
+          @if (tab.status === 'serving') {
+            <div class="toolbar-actions" role="group" aria-label="Local server">
+              <span class="port" [attr.aria-label]="'Service port ' + tab.port">:{{ tab.port }}</span>
+              <div class="address-control">
+                <button exButton class="port-open" variant="ghost" size="sm"
+                  [disabled]="disabled() || !!tab.browser?.busy || !!tab.browser?.copyBusy"
+                  [attr.aria-busy]="!!tab.browser?.busy"
+                  [attr.aria-label]="'Open ' + portUrl() + ' in your browser'"
+                  [exTooltip]="'Open ' + portUrl()"
+                  (click)="openPort()">
+                  <ex-icon name="globe" [size]="14" />
+                  <span class="port-address">{{ portUrl() }}</span>
+                </button>
+                <ex-icon-button class="port-copy" [icon]="tab.browser?.copied ? 'check' : 'copy'" [label]="tab.browser?.copied ? 'URL copied' : 'Copy URL'" size="sm" [disabled]="disabled() || !!tab.browser?.busy || !!tab.browser?.copyBusy" (pressed)="copyPort()" />
+              </div>
+              <span class="server-divider" aria-hidden="true"></span>
+              <button exButton class="stop" variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(tab.id)"><ex-icon name="stop" [size]="14" />Stop</button>
+            </div>
+            <span class="port-status" role="status" aria-atomic="true">{{ tab.browser?.busy ? 'Opening in your browser…' : tab.browser?.copyBusy ? 'Copying URL…' : tab.browser?.copied ? 'URL copied' : '' }}</span>
+            @if (tab.browser?.error && !tab.browser.busy && !tab.browser.copyBusy) { <p class="port-error" role="alert">{{ tab.browser.error }}</p> }
+          }
+        }
+      </div>
+      <div #findBar class="find" role="search" aria-label="Find in terminal" [hidden]="!findOpen()" [attr.inert]="findOpen() ? null : ''">
+        <div class="find-field">
+          <ex-icon name="search" [size]="14" />
+          <input #findInput type="search" aria-label="Find in terminal output" placeholder="Find in terminal…" autocomplete="off" autocapitalize="off" spellcheck="false" [value]="query()" (input)="search(findInput.value)" (keydown)="searchKey($event)" />
+          <span class="find-status" role="status" aria-atomic="true">{{ query() ? findStatus() : '' }}</span>
+        </div>
+        <div class="find-actions">
+          <ex-icon-button icon="chevron-up" label="Previous match (Shift+Enter)" size="sm" [disabled]="!query() || findMatches() === 0" (pressed)="search(query(), true)" />
+          <ex-icon-button icon="chevron-down" label="Next match (Enter)" size="sm" [disabled]="!query() || findMatches() === 0" (pressed)="search(query())" />
+          <span class="find-divider" aria-hidden="true"></span>
+          <ex-icon-button icon="x" label="Close find (Escape)" size="sm" (pressed)="closeFind()" />
+        </div>
+      </div>
+    </div>
+  </ex-fold>
   <div class="content"><ng-content select="[terminalContent]" />
     @if (output().length) {
       @if (omitted()) { <p class="omitted">Showing the last 2,000 lines ({{ omitted() }} earlier)</p> }
@@ -15,7 +53,7 @@
         <div class="line" *cdkVirtualFor="let line of preview(); trackBy: trackLine" [attr.data-kind]="line.kind">{{ line.text }}</div>
       </cdk-virtual-scroll-viewport>
     }
-    @if (!tabs().length) { <div class="empty"><ex-icon name="terminal" [size]="24" /><p>Your terminals run in this task’s workspace.</p><button exButton variant="secondary" (click)="added.emit()">New terminal</button></div> }
+    @if (!tabs().length) { <div class="empty"><ex-icon name="terminal" [size]="24" /><p>Your terminals run in this task’s workspace.</p><button exButton variant="secondary" [disabled]="disabled()" (click)="added.emit()">New terminal</button></div> }
   </div>
-  <ex-fold [open]="!!failure()">@if (failure(); as failed) { <div class="failure" role="status"><ex-icon name="alert" [size]="14" /><span>Exited {{ failed.code }} · <code>{{ failed.cmd }}</code></span><button exButton size="sm" variant="secondary" (click)="failureAction('ask')">Ask the agent</button><button exButton size="sm" variant="ghost" (click)="failureAction('rerun')">Run again</button></div> }</ex-fold>
+  <ex-fold [open]="!!failure()">@if (failure(); as failed) { <div class="failure" role="status"><ex-icon name="alert" [size]="14" /><span>Exited {{ failed.code }} · <code>{{ failed.cmd }}</code></span><button exButton size="sm" variant="secondary" [disabled]="disabled() || askDisabled()" (click)="failureAction('ask')">Ask the agent</button><button exButton size="sm" variant="ghost" [disabled]="disabled() || rerunDisabled()" (click)="failureAction('rerun')">Run again</button></div> }</ex-fold>
 </section>

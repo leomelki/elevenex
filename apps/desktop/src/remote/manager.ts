@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { TerminalForwards, type TerminalForwardLease } from './terminal-forwards';
+import { terminalForwardTarget } from './terminal-forward-store';
 import { WaitingWritingStore, type SavedWaitingWriting } from './waiting-writing-store';
 import { waitingWriting } from './waiting-writing';
 import type { WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
@@ -13,6 +15,7 @@ interface WindowForward {
   generation: number;
   running?: Awaited<ReturnType<RemoteTransport['forward']>>;
   available?: boolean;
+  lease?: TerminalForwardLease;
 }
 interface WindowState {
   readonly saved: SavedWindow;
@@ -20,6 +23,8 @@ interface WindowState {
   revision: number;
   pendingHost: string | undefined;
   readonly forwards: Map<string, WindowForward>;
+  /** Exact targets for app-owned task processes; generic saved definitions stay compatible. */
+  readonly forwardTargets: Map<string, string>;
 }
 export interface RemoteManagerOptions extends Omit<ConnectionOptions, 'host' | 'changed'> { readonly settingsPath: string }
 
@@ -33,17 +38,26 @@ export class RemoteManager {
   private readonly directoryListeners = new Set<() => void>();
   private readonly store: RemoteSettingsStore;
   private readonly waitingStore: WaitingWritingStore;
+  private readonly terminalForwards: TerminalForwards;
   private waitingError = false;
   private readonly fileGrants = { identity: new Set<string>(), config: new Set<string>() };
   private error: Error | undefined;
   private disposed = false;
   private shutdown: Promise<void> | undefined;
   private readonly changingMachines = new Set<string>();
-  constructor(private readonly options: RemoteManagerOptions) { this.store = new RemoteSettingsStore(options.settingsPath); this.waitingStore = new WaitingWritingStore(`${options.settingsPath}.waiting-writing.json`); }
+  constructor(private readonly options: RemoteManagerOptions) {
+    this.store = new RemoteSettingsStore(options.settingsPath);
+    this.waitingStore = new WaitingWritingStore(`${options.settingsPath}.waiting-writing.json`);
+    this.terminalForwards = new TerminalForwards(`${options.settingsPath}.terminal-forwards.json`);
+  }
 
   async load(): Promise<void> {
     try {
-      this.settings = await this.store.load();
+      const settings = await this.store.load();
+      await this.terminalForwards.load(settings.hosts.map(host => host.id), settings.windows.flatMap(window =>
+        Object.entries(window.forwards).flatMap(([hostId, forwards]) => forwards.filter(forward => forward.localPort === 0)
+          .map(forward => ({ id: forward.id, hostId, remotePort: forward.remotePort })))));
+      this.settings = settings;
       try { const saved = await this.waitingStore.load(this.settings.hosts.map(host => host.id)); this.settings.windows.forEach((window, index) => { window.waiting = saved[index]; }); } catch { this.waitingError = true; }
       for (const host of this.settings.hosts) {
         if (host.identityFile) this.fileGrants.identity.add(host.identityFile);
@@ -82,7 +96,7 @@ export class RemoteManager {
       if (this.settings.windows.length >= 32) throw new Error('Too many saved desktop windows');
       this.settings.windows.push(saved);
     }
-    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, pendingHost: undefined, forwards: new Map() });
+    this.windows.set(windowId, { saved, intent: saved.connect ? 'connected' : 'disconnected', revision: 0, pendingHost: undefined, forwards: new Map(), forwardTargets: new Map() });
     // Launch restoration is deliberately noninteractive. Unknown trust or a
     // locked key pauses rather than presenting a background credential dialog.
     if (saved.connect && saved.selection.kind === 'remote') this.connection(saved.selection.hostId).acquire(windowId, false);
@@ -365,26 +379,69 @@ export class RemoteManager {
   }
   diagnostics(windowId: number) { return this.connections.get(this.hostId(this.remoteWindow(windowId)))?.logs() ?? []; }
 
-  async addForward(windowId: number, input: RemoteForwardInput): Promise<EnvironmentSnapshot> {
+  async addForward(windowId: number, input: RemoteForwardInput, targetHost?: string): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId); const validated = validate.forward(input);
+    if (targetHost !== undefined) terminalForwardTarget(targetHost);
+    const retained = new Set(Object.values(window.saved.forwards).flatMap(inputs => inputs.map(input => input.id)));
+    for (const id of window.forwardTargets.keys()) if (!retained.has(id)) window.forwardTargets.delete(id);
     const inputs = this.forwardInputs(window); if (inputs.length >= 32) throw new Error('Forward limit reached');
     if (inputs.some(value => value.remotePort === validated.remotePort || (validated.localPort && value.localPort === validated.localPort))) throw new Error('This service or local port already has a forward in this window');
-    inputs.push({ ...validated, id: randomUUID() }); window.saved.forwards[this.hostId(window)] = inputs;
-    await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
+    const id = randomUUID();
+    if (targetHost !== undefined) window.forwardTargets.set(id, targetHost);
+    inputs.push({ ...validated, id }); window.saved.forwards[this.hostId(window)] = inputs;
+    try {
+      if (targetHost !== undefined && validated.localPort === 0) await this.terminalForwards.register(id, {
+        hostId: this.hostId(window), targetHost, remotePort: validated.remotePort,
+      });
+      await this.save();
+    } catch (error) {
+      const index = inputs.findIndex(input => input.id === id); if (index >= 0) inputs.splice(index, 1);
+      window.forwardTargets.delete(id);
+      const pending = window.forwards.get(id); window.forwards.delete(id); await this.closeForward(pending);
+      throw error;
+    }
+    this.changed({ windowId }); return this.snapshot(windowId);
+  }
+  /** Main-only: bind a task's user-requested forward to its verified socket family.
+   * Automatic definitions also retain the exact target in a compatible sidecar;
+   * manual forwards keep their existing window-owned override. */
+  async targetForward(windowId: number, forwardId: string, host: string): Promise<boolean> {
+    this.assertWritable(); terminalForwardTarget(host);
+    const window = this.remoteWindow(windowId); validate.id(forwardId);
+    const input = this.forwardInputs(window).find(input => input.id === forwardId);
+    if (!input) throw new Error('Unknown forward');
+    const definition = this.terminalForwards.definition(forwardId);
+    const previousHost = window.forwardTargets.get(forwardId) ?? definition?.targetHost ?? '127.0.0.1';
+    if (previousHost === host && (input.localPort !== 0 || definition)) return false;
+    if (input.localPort === 0) await this.terminalForwards.register(forwardId, { hostId: this.hostId(window), targetHost: host, remotePort: input.remotePort });
+    window.forwardTargets.set(forwardId, host);
+    // A different endpoint requires a new lease. Retrying the existing shared
+    // lease would also retarget other windows that still own the old endpoint.
+    const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await this.closeForward(previous);
+    this.changed({ windowId });
+    return true;
   }
   async retryForward(windowId: number, forwardId: string): Promise<EnvironmentSnapshot> {
     this.assertWritable();
     const window = this.remoteWindow(windowId); validate.id(forwardId);
     if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
-    const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await previous?.running?.close();
+    const retained = window.forwards.get(forwardId);
+    if (retained?.lease) {
+      // Retry the shared listener for every owner, rather than allocating a
+      // competing socket or requiring all other windows to disconnect first.
+      await retained.lease.retry().catch(() => undefined);
+      return this.snapshot(windowId);
+    }
+    const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await this.closeForward(previous);
     this.changed({ windowId }); return this.snapshot(windowId);
   }
   async removeForward(windowId: number, forwardId: string): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId); validate.id(forwardId);
     if (!this.forwardInputs(window).some(input => input.id === forwardId)) throw new Error('Unknown forward');
     window.saved.forwards[this.hostId(window)] = this.forwardInputs(window).filter(input => input.id !== forwardId);
-    const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await previous?.running?.close();
-    await this.save(); this.changed({ windowId }); return this.snapshot(windowId);
+    window.forwardTargets.delete(forwardId);
+    const previous = window.forwards.get(forwardId); window.forwards.delete(forwardId); await this.closeForward(previous);
+    await this.save(); await this.terminalForwards.forget(forwardId); this.changed({ windowId }); return this.snapshot(windowId);
   }
   networkChanged(): void { for (const connection of this.connections.values()) connection.networkChanged(); }
   dispose(): Promise<void> {
@@ -394,6 +451,7 @@ export class RemoteManager {
         ...[...this.connections.values()].map(connection => connection.dispose()),
         ...this.retiringConnections,
         ...[...this.windows.values()].map(window => this.closeForwards(window)),
+        this.terminalForwards.dispose(),
       ]);
       if (!this.error) await this.save();
       this.listeners.clear(); this.directoryListeners.clear(); this.windows.clear(); this.connections.clear();
@@ -431,7 +489,10 @@ export class RemoteManager {
   private forwardInputs(window: WindowState) { return window.saved.selection.kind === 'remote' ? window.saved.forwards[window.saved.selection.hostId] ?? [] : []; }
   private async closeForwards(window: WindowState): Promise<void> {
     const values = [...window.forwards.values()]; window.forwards.clear();
-    await Promise.all(values.map(value => value.running?.close()));
+    await Promise.all(values.map(value => this.closeForward(value)));
+  }
+  private async closeForward(value: WindowForward | undefined): Promise<void> {
+    if (value?.lease) await value.lease.close(); else await value?.running?.close();
   }
   private changed(scope?: { readonly hostId: string } | { readonly windowId: number }): void {
     if (this.disposed) return;
@@ -452,29 +513,41 @@ export class RemoteManager {
     for (const input of this.forwardInputs(window)) {
       let entry = window.forwards.get(input.id);
       if (entry && (!transport || entry.generation !== generation)) {
-        window.forwards.delete(input.id); void entry.running?.close(); entry = undefined;
+        window.forwards.delete(input.id); void this.closeForward(entry); entry = undefined;
       }
       if (!transport || entry) continue;
       const current: WindowForward = { status: { ...input, phase: 'waiting', boundPort: null, message: null }, generation };
       window.forwards.set(input.id, current);
-      void transport.forward(input.remotePort, input.localPort, available => {
+      const availableChanged = (available: boolean, port?: number, error?: unknown) => {
         if (this.windows.get(windowId) !== window || window.forwards.get(input.id) !== current || connection?.currentTransport() !== transport) return;
+        if (error !== undefined) { this.forwardFailed(windowId, current, error); return; }
         current.available = available;
-        current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: current.running?.port ?? null,
+        current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: port ?? current.running?.port ?? null,
           message: available ? null : 'The remote service could not accept a connection. Start the service or retry this forward.' };
         this.changed({ windowId });
-      }).then(async running => {
-        if (this.windows.get(windowId) !== window || window.forwards.get(input.id) !== current || connection?.currentTransport() !== transport) { await running.close(); return; }
+      };
+      const definition = input.localPort === 0 ? this.terminalForwards.definition(input.id) : undefined;
+      if (definition) current.lease = this.terminalForwards.acquire(definition, transport, availableChanged);
+      const starting = current.lease?.ready ?? transport.forward(input.remotePort, input.localPort, availableChanged, window.forwardTargets.get(input.id));
+      void starting.then(async running => {
+        if (this.windows.get(windowId) !== window || window.forwards.get(input.id) !== current || connection?.currentTransport() !== transport) {
+          if (current.lease) await current.lease.close(); else await running.close();
+          return;
+        }
         current.running = running;
         const available = current.available ?? running.reachable;
         current.status = { ...input, phase: available ? 'listening' : 'unavailable', boundPort: running.port,
           message: available ? null : 'The listener is open, but the remote service is not accepting connections. Start the service and choose Retry forward.' }; this.changed({ windowId });
       }).catch(error => {
         if (window.forwards.get(input.id) !== current) return;
-        const conflict = error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
-        current.status = { ...input, phase: conflict ? 'conflict' : 'unavailable', boundPort: null,
-          message: conflict ? 'The local port is in use. Remove this forward and choose another port, or retry when it is free.' : 'The forwarding listener could not start. Retry after checking the connection.' }; this.changed({ windowId });
+        this.forwardFailed(windowId, current, error);
       });
     }
+  }
+  private forwardFailed(windowId: number, current: WindowForward, error: unknown): void {
+    const conflict = error instanceof Error && 'code' in error && error.code === 'EADDRINUSE';
+    current.status = { ...current.status, phase: conflict ? 'conflict' : 'unavailable', boundPort: null,
+      message: conflict ? 'The local port is in use. Remove this forward and choose another port, or retry when it is free.' : 'The forwarding listener could not start. Retry after checking the connection.' };
+    this.changed({ windowId });
   }
 }

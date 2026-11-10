@@ -29,6 +29,10 @@ export class MachinesViewsDemoComponent {
   protected readonly terminalActive = signal('test');
   protected readonly terminalFailure = signal<{ code: number; cmd: string } | null>({ code: 1, cmd: 'pnpm test retry' });
   protected readonly terminalLines: readonly TerminalLine[] = [{ id: 'a', kind: 'cmd', text: '❯ pnpm test retry' }, { id: 'b', kind: 'dim', text: 'Running 24 tests in src/retry.spec.ts' }, { id: 'c', kind: 'ok', text: '✓ retries after a temporary failure' }, { id: 'd', kind: 'err', text: '× gives up after the maximum attempts' }, { id: 'e', kind: 'warn', text: 'Expected 3 attempts, received 4' }, { id: 'f', kind: 'info', text: '23 passed · 1 failed · 412ms' }];
+  protected readonly terminalFindStatus = signal('');
+  protected readonly terminalFindMatches = signal<number | null>(null);
+  private terminalQuery = '';
+  private terminalMatch = 0;
   protected readonly files = signal<readonly ChangeFile[]>([
     { id: 'retry', path: 'src/payments/retry.ts', status: 'M', add: 8, del: 3, rev: 1 },
     { id: 'tests', path: 'src/payments/retry.spec.ts', status: 'A', add: 24, del: 0, viewed: true, changedSinceViewed: true, rev: 2 },
@@ -49,6 +53,16 @@ export class MachinesViewsDemoComponent {
   private nextTab = 0;
 
   protected log(message: string): void { this.event.set(message); }
+  protected searchTerminal(event: { query: string; backwards: boolean }): void {
+    const query = event.query.toLocaleLowerCase();
+    const matches = query ? this.terminalLines.filter(line => line.text.toLocaleLowerCase().includes(query)).length : 0;
+    this.terminalMatch = query !== this.terminalQuery
+      ? event.backwards ? matches - 1 : 0
+      : (this.terminalMatch + (event.backwards ? -1 : 1) + matches) % Math.max(1, matches);
+    this.terminalQuery = query;
+    this.terminalFindMatches.set(query ? matches : null);
+    this.terminalFindStatus.set(!query ? '' : matches ? `${this.terminalMatch + 1} of ${matches}` : 'No results');
+  }
   protected pickHost(host: SshHost): void { this.hostQuery.set(host.name); this.hostPicked.set(true); this.log(`Select SSH host: ${host.name}`); }
   protected closeTerminal(id: string): void { this.terminalTabs.update(tabs => tabs.filter(tab => tab.id !== id)); this.terminalActive.set(this.terminalTabs()[0]?.id ?? ''); }
   protected newTerminal(): void { const id = `terminal-${++this.nextTab}`; this.terminalTabs.update(tabs => [...tabs, { id, title: 'Shell', cwd: '~/elevenex/tasks/retry', status: 'idle' }]); this.terminalActive.set(id); }

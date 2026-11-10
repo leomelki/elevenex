@@ -16,7 +16,7 @@ export function id(value: unknown): string {
   if (!/^[a-zA-Z0-9-]+$/.test(result)) throw new Error('Invalid resource id');
   return result;
 }
-function port(value: unknown, zero = false): number {
+export function port(value: unknown, zero = false): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < (zero ? 0 : 1) || value > 65535) throw new Error('Invalid port');
   return value;
 }

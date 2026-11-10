@@ -1,4 +1,4 @@
-const { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
+const { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -106,6 +106,9 @@ async function main() {
 
   rmSync(backendBundleRoot, { recursive: true, force: true });
   mkdirSync(backendBundleRoot, { recursive: true });
+  // Runtime-read shell adapters must travel with the single-file backend.
+  cpSync(path.join(backendRoot, 'src/user-terminal/shell-integration/scripts'),
+    path.join(backendBundleRoot, 'shell-integration/scripts'), { recursive: true });
 
   const esbuild = require(findEsbuildModule());
   await esbuild.build({
@@ -140,6 +143,13 @@ async function main() {
       createSharpStubPlugin(),
     ],
     logLevel: 'info',
+  });
+
+  // Screen parsing runs outside the backend event loop in local and SSH builds.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'dist/user-terminal/screen/terminal-screen-worker.js')],
+    outfile: path.join(backendBundleRoot, 'terminal-screen-worker.cjs'),
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22', sourcemap: true,
   });
 
   // Pi loads the mission extension in its own CLI process, outside main.cjs.

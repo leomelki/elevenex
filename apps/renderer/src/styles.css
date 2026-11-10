@@ -1,3 +1,4 @@
+@import "@xterm/xterm/css/xterm.css";
 @import '@angular/cdk/overlay-prebuilt.css';
 @import './design-system/tokens.css';
 @import './app/ui/sheet/modal-recession.css';
@@ -7,6 +8,8 @@ ex-job-brief code { font-family: var(--font-mono); font-size: var(--text-caption
 
 @font-face { font-family: 'Instrument Sans'; src: url('/fonts/instrument-sans.woff2') format('woff2'); font-weight: 400 700; font-style: normal; font-display: swap; }
 @font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
+/* Symbols-only ranges keep terminal prompt icons local without replacing body text. */
+@font-face { font-family: 'Elevenex Terminal Symbols'; src: url('/fonts/terminal-symbols-nerd-mono.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; unicode-range: U+23FB-23FE, U+2630, U+2665, U+26A1, U+276C-2771, U+2B58, U+E000-F8FF, U+F0000-FFFFD, U+100000-10FFFD; }
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }

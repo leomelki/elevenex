@@ -5,8 +5,12 @@ boundaries: they do not launch terminals, run scripts, make network requests,
 generate diffs, or access the filesystem. Outputs carry stable IDs, not positions.
 
 `ViewTabs` provides arrow/Home/End selection, Delete and middle-click close, native
-focus and animated entry/exit. Browser and Terminal reserve Command/Ctrl-T while
+focus and animated entry/exit. Set `animateEntries=false` while attaching an
+existing tab window; `TerminalView.animateTabs` forwards this policy. Browser and Terminal reserve Command/Ctrl-T while
 focused and expose `selected`, `closed` and `added`.
+The New button follows the last tab; the strip takes only the width its tabs need
+and scrolls with edge fades once it fills the row. Content marked `viewTabsNew` is
+projected directly after New; other projected actions stay right-aligned.
 
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation
@@ -26,11 +30,44 @@ Reduced motion stops the cursor pulse, tab breathing and target travel. The
 isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
 the production browser owner must supply its own page coordinates.
 
-`TerminalView` accepts `[terminalContent]` for a future terminal adapter. Its text
-preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
+`TerminalView` accepts `[terminalContent]` for the [production user-terminal adapter](../task-terminal/README.md).
+Its `[terminalActions]` slot projects owner-supplied toolbar actions beside Find; the
+owner retains menu lifecycle, capability checks and typed platform operations.
+Its text preview uses escaped `TerminalLine` objects and CDK virtualization, bounded to the
 latest 2,000 lines; any omitted history is labelled. It emits typed script,
 failure, port and stop intents. Ports are validated before emitting `portOpened`.
-Do not put the agent's tool output in this view.
+Do not put the agent's tool output in this view. `disabled`, `askDisabled` and
+`rerunDisabled` control platform actions. `searchRequested` carries query/direction
+to the real adapter; `findStatus` displays its bounded match count or “No results”.
+The optional `findMatches` count disables navigation for zero matches (null means
+unknown). When scripts are supplied, `TerminalLauncher` adds a chevron beside New that
+opens a searchable launcher: New shell, then the project's scripts with their
+commands. Its field is focused on open, so typing filters immediately; arrows
+move the active option, Enter launches, and Escape, Tab or an outside click
+closes and restores the chevron's focus. Matches are bounded to 50 rows with a
+“refine the search” note. It is a combobox dialog rather than a menu because it
+holds a text field. The Find button stays at the right edge of the tab bar. It
+opens a compact folding row with a single focus border, previous/next buttons
+and Close. The row collapses completely when closed unless the selected terminal
+is serving a local port; its service-port badge, browser action and Stop share
+one row and return when Find closes. Each `TerminalTab` may carry controlled
+`browser: TerminalBrowserFeedback` (`busy`, `error`, `url`, optional `copyBusy`
+and `copied`). The URL is visible immediately, using the tab's observed `url`
+or a loopback HTTP address for older callers. The address opens the browser;
+the separate Copy URL icon emits `portCopyRequested` without opening it. Both
+carry the service port so the owner can resolve the actual local address.
+Resolved addresses replace the initial URL. Long URLs truncate with their full
+value in the tooltip and accessible name. Opening/copying disables duplicate
+requests while leaving Stop available. The URL stays visible through pending
+and error states; failures show an alert beneath the controls. `copied` changes
+the copy icon to a check and announces success. Switching tabs never reuses
+another tab's address. The owner supplies feedback and handles platform intents;
+the view does not navigate or access the clipboard. Ordinary running commands do
+not open a Stop-only row; use Ctrl-C in the terminal to interrupt them.
+Enter/Shift-Enter navigates; Command/Ctrl-F opens or focuses
+and selects the current query. Close/Escape clears the search and restores the
+opening control's focus, including when a search action has focus. The preview
+output contract remains available.
 
 `DiffReview` accepts metadata as `ChangeFile[]` and precomputed
 `DiffFileContent[]`. Each content reply must match **fileId, rev and mode**. The
@@ -96,3 +133,13 @@ For replacement content windows, set `hasPreviousLines` to expose Previous lines
 on that file. It emits `reason: 'previous'`; the owner supplies that earlier page
 with the same file/revision/mode identity. This keeps line paging attached to the
 file while scroll-based selection moves between its neighbours.
+
+`ViewTabs` reveals the controlled selection within its own horizontal strip,
+including while a newly created tab grows in, and keeps it clear of the edge
+fades. Overflow is signalled only by those 24px fades; the scrollbar is hidden.
+Trackpads scroll natively and a vertical mouse wheel scrolls the strip
+horizontally. New stays fixed outside it. Wheel/drag browsing suspends selection
+following until selection changes, so metadata updates never pull the strip
+back. Selection jumps scroll smoothly (instant under reduced motion); growth
+tracking is immediate. Resize observers and scheduled measurements are disposed
+with the component. Revelation never scrolls an ancestor.
