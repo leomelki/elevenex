@@ -1,5 +1,15 @@
 # Desktop backend client
 
+Terminal service URLs use the named `taskTerminalOpenPort` and
+`taskTerminalCopyPort` bridge operations. Both accept only a scoped
+task/terminal/port, freshly verify the owned listener and use the window's
+managed remote forward. Copy writes the validated URL through Electron's native
+clipboard API and returns that URL without opening a browser. Browser clipboard
+permissions remain denied; there is no general renderer clipboard API. The
+display initially uses observed service metadata and updates to the resolved
+local URL after either action. No listener is started just to render the row,
+and neither action accepts an arbitrary URL from the renderer.
+
 Session chat optionally advertises `sessionMentions: true`. Its existing send
 action accepts up to eight distinct positive `sessionIds`. Main validates and
 preserves only those IDs; the backend resolves them through the existing

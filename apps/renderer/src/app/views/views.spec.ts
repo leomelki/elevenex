@@ -4,7 +4,7 @@ import { DiffFileComponent } from './diff-file.component';
 import { DiffReviewComponent } from './diff-review.component';
 import { TerminalViewComponent } from './terminal-view.component';
 import { ViewTabsComponent } from './view-tabs.component';
-import { ChangeFile, DiffFileContent } from './view.models';
+import { ChangeFile, DiffFileContent, TerminalBrowserFeedback } from './view.models';
 
 describe('Side-view interactions', () => {
   it('moves tab focus by keyboard and emits stable identities for closing', () => {
@@ -160,35 +160,44 @@ describe('Side-view interactions', () => {
     const fixture = TestBed.createComponent(TerminalViewComponent);
     const server = { id: 'web', title: 'Web', status: 'serving' as const, port: 8080 };
     const shell = { id: 'shell', title: 'Shell', status: 'idle' as const };
-    const update = (browser?: { busy: boolean; error: string; url: string }) => {
+    const update = (browser?: TerminalBrowserFeedback) => {
       fixture.componentRef.setInput('tabs', [{ ...server, browser }, shell]);
       fixture.detectChanges();
     };
-    const opened = vi.fn(), stopped = vi.fn();
+    const opened = vi.fn(), stopped = vi.fn(), copied = vi.fn();
     fixture.componentInstance.portOpened.subscribe(opened);
     fixture.componentInstance.stopRequested.subscribe(stopped);
+    fixture.componentInstance.portCopyRequested.subscribe(copied);
     update();
     const root = fixture.nativeElement as HTMLElement;
     const open = () => root.querySelector<HTMLButtonElement>('.port-open')!;
     const stop = () => root.querySelector<HTMLButtonElement>('.stop')!;
-    expect(open().textContent).toContain('Open in browser');
+    const copy = () => root.querySelector<HTMLButtonElement>('.port-copy button')!;
+    expect(open().textContent).toContain('http://127.0.0.1:8080/');
+    copy().click(); expect(copied).toHaveBeenLastCalledWith(8080);
+    expect(opened).not.toHaveBeenCalled();
     open().click(); expect(opened).toHaveBeenLastCalledWith(8080);
     update({ busy: true, error: '', url: '' });
     expect(open().disabled).toBe(true);
+    expect(copy().disabled).toBe(true);
     expect(open().getAttribute('aria-busy')).toBe('true');
     open().click(); expect(opened).toHaveBeenCalledTimes(1);
     stop().click(); expect(stopped).toHaveBeenLastCalledWith('web');
     update({ busy: false, error: 'Could not open your browser.', url: '' });
     expect(root.querySelector('[role="alert"]')?.textContent).toContain('Could not open your browser.');
-    expect(open().textContent).toContain('Try again');
+    expect(open().textContent).toContain('http://127.0.0.1:8080/');
     open().click(); expect(opened).toHaveBeenCalledTimes(2);
     update({ busy: false, error: '', url: 'http://127.0.0.1:24766/' });
     expect(root.querySelector('[role="alert"]')).toBeNull();
     expect(open().textContent).toContain('http://127.0.0.1:24766/');
     expect(open().getAttribute('aria-label')).toBe('Open http://127.0.0.1:24766/ in your browser');
-    expect(root.querySelector('.port-status')?.textContent).toContain('Browser address: http://127.0.0.1:24766/');
+    update({ busy: false, copyBusy: true, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(copy().disabled).toBe(true); expect(open().disabled).toBe(true); expect(stop().disabled).toBe(false);
+    update({ busy: false, copied: true, error: '', url: 'http://127.0.0.1:24766/' });
+    expect(copy().getAttribute('aria-label')).toBe('URL copied');
+    expect(root.querySelector('.port-status')?.textContent).toBe('URL copied');
     fixture.componentRef.setInput('disabled', true); fixture.detectChanges();
-    expect(open().disabled).toBe(true); expect(stop().disabled).toBe(true);
+    expect(open().disabled).toBe(true); expect(copy().disabled).toBe(true); expect(stop().disabled).toBe(true);
     fixture.componentRef.setInput('disabled', false); fixture.detectChanges();
     const find = root.querySelector<HTMLButtonElement>('[aria-label="Find in terminal (⌘F)"]')!;
     find.focus(); find.click(); fixture.detectChanges(); await fixture.whenStable();

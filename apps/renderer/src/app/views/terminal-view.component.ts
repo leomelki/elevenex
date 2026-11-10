@@ -32,9 +32,14 @@ export class TerminalViewComponent {
   readonly askRequested = output<TerminalFailureEvent>();
   readonly rerunRequested = output<TerminalFailureEvent>();
   readonly portOpened = output<number>();
+  readonly portCopyRequested = output<number>();
   readonly stopRequested = output<string>();
   readonly findRequested = output<void>();
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
+  protected readonly portUrl = computed(() => {
+    const tab = this.current();
+    return tab?.browser?.url || tab?.url || (tab?.port ? `http://127.0.0.1:${tab.port}/` : '');
+  });
   protected readonly findOpen = signal(false);
   protected readonly query = signal('');
   protected readonly toolbarOpen = computed(() => this.findOpen() || this.current()?.status === 'serving');
@@ -71,9 +76,14 @@ export class TerminalViewComponent {
     if (!this.disabled()) this.scriptRequested.emit(script);
   }
   protected openPort(): void {
-    if (this.disabled() || this.current()?.browser?.busy) return;
+    if (this.disabled() || this.current()?.browser?.busy || this.current()?.browser?.copyBusy) return;
     const port = this.current()?.port;
     if (port !== undefined && Number.isInteger(port) && port > 0 && port <= 65535) this.portOpened.emit(port);
+  }
+  protected copyPort(): void {
+    if (this.disabled() || this.current()?.browser?.busy || this.current()?.browser?.copyBusy) return;
+    const port = this.current()?.port;
+    if (port !== undefined && Number.isInteger(port) && port > 0 && port <= 65535) this.portCopyRequested.emit(port);
   }
   protected failureAction(kind: 'ask' | 'rerun'): void {
     const tab = this.current();

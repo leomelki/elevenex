@@ -1,4 +1,5 @@
 const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
+terminalMethods.push('taskTerminalCopyPort');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFile } = require('node:fs/promises');
@@ -65,6 +66,9 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   await bridge.workspaceRetryTask('scope', 1, 'use-existing');
   await bridge.workspaceRetryTask('scope', 1, 'snapshot');
   assert.deepEqual(calls, [['workspace:retry-task', 'scope', 1, 'use-existing'], ['workspace:retry-task', 'scope', 1, 'snapshot']]);
+  calls.length = 0;
+  await bridge.taskTerminalCopyPort('scope', { taskId: 1, terminalId: 2, port: 8080 });
+  assert.deepEqual(calls, [['task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, port: 8080 }]]);
   const received = [];
   const stop = bridge.onThemeChanged((...args) => received.push(args));
   listeners.get('theme:changed')({ sender: 'private Electron object' }, 'dark');

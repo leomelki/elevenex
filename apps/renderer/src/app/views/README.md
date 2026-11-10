@@ -51,14 +51,19 @@ opens a compact folding row with a single focus border, previous/next buttons
 and Close. The row collapses completely when closed unless the selected terminal
 is serving a local port; its service-port badge, browser action and Stop share
 one row and return when Find closes. Each `TerminalTab` may carry controlled
-`browser: TerminalBrowserFeedback` (`busy`, `error`, `url`). A successful handoff
-replaces “Open in browser” with the clickable desktop-local address, truncated
-with the full URL available in its tooltip. Opening disables duplicate requests
-while leaving Stop available. Failures show an alert beneath the same controls
-and turn the browser action into Try again. Switching tabs never reuses another
-tab's address. The owner supplies feedback and handles `portOpened`; the view
-does not navigate directly. Ordinary running commands do not open a Stop-only
-row; use Ctrl-C in the terminal to interrupt them.
+`browser: TerminalBrowserFeedback` (`busy`, `error`, `url`, optional `copyBusy`
+and `copied`). The URL is visible immediately, using the tab's observed `url`
+or a loopback HTTP address for older callers. The address opens the browser;
+the separate Copy URL icon emits `portCopyRequested` without opening it. Both
+carry the service port so the owner can resolve the actual local address.
+Resolved addresses replace the initial URL. Long URLs truncate with their full
+value in the tooltip and accessible name. Opening/copying disables duplicate
+requests while leaving Stop available. The URL stays visible through pending
+and error states; failures show an alert beneath the controls. `copied` changes
+the copy icon to a check and announces success. Switching tabs never reuses
+another tab's address. The owner supplies feedback and handles platform intents;
+the view does not navigate or access the clipboard. Ordinary running commands do
+not open a Stop-only row; use Ctrl-C in the terminal to interrupt them.
 Enter/Shift-Enter navigates; Command/Ctrl-F opens or focuses
 and selects the current query. Close/Escape clears the search and restores the
 opening control's focus, including when a search action has focus. The preview

@@ -2,6 +2,7 @@ const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTermin
 // Run with Electron after building. This exercises the real sandboxed preload
 // and app:// handler, rather than Node mocks. Not part of the headless unit suite.
 const { app, BrowserWindow, Menu, nativeTheme, nativeImage } = require('electron');
+terminalMethods.push('taskTerminalCopyPort');
 const assert = require('node:assert/strict');
 const { mkdtempSync } = require('node:fs');
 const { rm } = require('node:fs/promises');

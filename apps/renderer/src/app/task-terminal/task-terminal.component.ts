@@ -50,9 +50,12 @@ export interface TerminalQuestion {
 }
 export interface TerminalBrowserState {
   readonly terminalId: number;
+  readonly port?: number;
   readonly busy: boolean;
   readonly error: string;
   readonly url: string;
+  readonly copyBusy?: boolean;
+  readonly copied?: boolean;
 }
 
 @Component({
@@ -75,6 +78,7 @@ export class TaskTerminalComponent {
   readonly browserState = input<TerminalBrowserState | null>(null);
   readonly question = output<TerminalQuestion>();
   readonly browserRequested = output<TerminalBrowserIntent>();
+  readonly browserCopyRequested = output<TerminalBrowserIntent>();
   readonly lastClosed = output<void>();
   readonly store = inject(TaskTerminalStore);
   private readonly styles = inject(TerminalStylePolicy);
@@ -109,6 +113,9 @@ export class TaskTerminalComponent {
       const title = row.activityTitle ?? row.title;
       const detail = title === row.title ? title : `${title} · ${row.title}`;
       const browser = this.browserState();
+      const service = row.services?.find(service => service.port === row.port);
+      const host = service?.host ?? '127.0.0.1';
+      const url = row.port ? `${service?.protocol ?? row.protocol ?? 'http'}://${host.includes(':') ? `[${host}]` : host}:${row.port}${service?.path ?? '/'}` : undefined;
       return {
         id: String(row.id),
         title: row.port ? `${title} :${row.port}` : title,
@@ -122,7 +129,8 @@ export class TaskTerminalComponent {
             ? "idle"
             : row.status,
         ...(row.port ? { port: row.port } : {}),
-        ...(browser?.terminalId === row.id ? { browser } : {}),
+        ...(url ? { url } : {}),
+        ...(browser?.terminalId === row.id && (browser.port === undefined || browser.port === row.port) ? { browser } : {}),
         unread:
           row.id !== this.store.active() &&
           row.sequence > (this.store.seen().get(row.id) ?? 0),
@@ -656,11 +664,11 @@ export class TaskTerminalComponent {
       for (const entry of this.surfaces.values()) entry.surface.localEcho.setEnabled(this.prediction());
     }
   }
-  openPort(port: number): void {
+  openPort(port: number, copy = false): void {
     const target = this.selection(),
       row = this.current();
     if (target && row?.port === port)
-      this.browserRequested.emit({
+      (copy ? this.browserCopyRequested : this.browserRequested).emit({
         scopeId: target.scopeId,
         taskId: target.taskId,
         terminalId: row.id,

@@ -11,20 +11,23 @@
           @if (tab.status === 'serving') {
             <div class="toolbar-actions" role="group" aria-label="Local server">
               <span class="port" [attr.aria-label]="'Service port ' + tab.port">:{{ tab.port }}</span>
-              <button exButton class="port-open" variant="ghost" size="sm"
-                [disabled]="disabled() || !!tab.browser?.busy"
-                [attr.aria-busy]="!!tab.browser?.busy"
-                [attr.aria-label]="tab.browser?.url && !tab.browser.busy && !tab.browser.error ? 'Open ' + tab.browser.url + ' in your browser' : null"
-                [exTooltip]="tab.browser?.url || 'Open in your browser'"
-                (click)="openPort()">
-                <ex-icon name="globe" [size]="14" />
-                <span class="port-address" [class.has-url]="!!tab.browser?.url && !tab.browser.busy && !tab.browser.error">{{ tab.browser?.busy ? 'Opening…' : tab.browser?.error ? 'Try again' : tab.browser?.url || 'Open in browser' }}</span>
-              </button>
+              <div class="address-control">
+                <button exButton class="port-open" variant="ghost" size="sm"
+                  [disabled]="disabled() || !!tab.browser?.busy || !!tab.browser?.copyBusy"
+                  [attr.aria-busy]="!!tab.browser?.busy"
+                  [attr.aria-label]="'Open ' + portUrl() + ' in your browser'"
+                  [exTooltip]="'Open ' + portUrl()"
+                  (click)="openPort()">
+                  <ex-icon name="globe" [size]="14" />
+                  <span class="port-address">{{ portUrl() }}</span>
+                </button>
+                <ex-icon-button class="port-copy" [icon]="tab.browser?.copied ? 'check' : 'copy'" [label]="tab.browser?.copied ? 'URL copied' : 'Copy URL'" size="sm" [disabled]="disabled() || !!tab.browser?.busy || !!tab.browser?.copyBusy" (pressed)="copyPort()" />
+              </div>
               <span class="server-divider" aria-hidden="true"></span>
               <button exButton class="stop" variant="ghost" size="sm" [disabled]="disabled()" (click)="stopRequested.emit(tab.id)"><ex-icon name="stop" [size]="14" />Stop</button>
             </div>
-            <span class="port-status" role="status" aria-atomic="true">{{ tab.browser?.busy ? 'Opening in your browser…' : tab.browser?.url && !tab.browser.error ? 'Browser address: ' + tab.browser.url : '' }}</span>
-            @if (tab.browser?.error && !tab.browser.busy) { <p class="port-error" role="alert">{{ tab.browser.error }}</p> }
+            <span class="port-status" role="status" aria-atomic="true">{{ tab.browser?.busy ? 'Opening in your browser…' : tab.browser?.copyBusy ? 'Copying URL…' : tab.browser?.copied ? 'URL copied' : '' }}</span>
+            @if (tab.browser?.error && !tab.browser.busy && !tab.browser.copyBusy) { <p class="port-error" role="alert">{{ tab.browser.error }}</p> }
           }
         }
       </div>

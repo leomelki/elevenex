@@ -160,5 +160,8 @@ function checkTerminals(invoke: import('@elevenex/shared').Invoke) {
   void invoke('task-terminal:create', 'scope', { taskId: 1, cwd: '/tmp', shell: 'sh' });
   // @ts-expect-error Browser handoff is a port intent, never an arbitrary output-supplied URL.
   void invoke('task-terminal:open-port', 'scope', { taskId: 1, terminalId: 2, url: 'javascript:alert(1)' });
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, port: 8080 });
+  // @ts-expect-error URL resolution accepts only a scoped terminal port, never arbitrary URLs.
+  void invoke('task-terminal:copy-port', 'scope', { taskId: 1, terminalId: 2, url: 'https://example.com' });
 }
 void checkTerminals;

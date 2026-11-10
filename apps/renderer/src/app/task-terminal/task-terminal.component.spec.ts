@@ -96,6 +96,24 @@ describe('Task terminal panel lifecycle', () => {
     expect(component.tabs().every(tab => !tab.browser)).toBe(true);
   });
 
+  it('shows the observed service URL before opening and emits a separate scoped copy intent', async () => {
+    const { fixture, component, rows } = setup([{ ...terminal(1), status: 'serving', port: 8080, protocol: 'https',
+      services: [{ port: 8080, host: '::1', protocol: 'https', path: '/app/' }] }]);
+    fixture.componentRef.setInput('visible', true); await settle(fixture);
+    expect(component.tabs()[0]?.url).toBe('https://[::1]:8080/app/');
+    const open = vi.fn(), copy = vi.fn();
+    component.browserRequested.subscribe(open); component.browserCopyRequested.subscribe(copy);
+    component.openPort(8080, true);
+    expect(copy).toHaveBeenCalledExactlyOnceWith({ scopeId: 'scope', taskId: 1, terminalId: 1, port: 8080 });
+    expect(open).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('browserState', { terminalId: 1, port: 8080, busy: false, error: '', url: 'https://127.0.0.1:24567/app/' });
+    await settle(fixture);
+    rows.set(1, [{ ...terminal(1), status: 'serving', port: 9000 }]);
+    await component.store.refresh(); await settle(fixture);
+    expect(component.tabs()[0]?.browser).toBeUndefined();
+    expect(component.tabs()[0]?.url).toBe('http://127.0.0.1:9000/');
+  });
+
   it('updates activity titles and restores saved names without changing tab identity or selection', async () => {
     const row = terminal(1);
     const { fixture, component, rows } = setup([row]);

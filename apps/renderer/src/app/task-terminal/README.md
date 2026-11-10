@@ -15,10 +15,20 @@ rerun and process close remain user actions. There are no agent terminal tools o
 chat-output mirrors. Existing agent approval flows are unchanged.
 
 Browser handoff feedback is supplied on its owning `TerminalTab`, so the serving
-port, clickable desktop-local address, opening/retry state and Stop share the
-view's server row. The adapter does not add a separate address notice above the
-terminal output. `/terminal-stream` can exercise this with its isolated
-`platform.serve()` transport and controlled `browserState` preview signal.
+port, clickable service URL, Copy URL and Stop share the view's server row.
+The initial URL respects the observed protocol, host (including IPv6) and path;
+older engines default to loopback HTTP. The workspace handles separate open and
+copy intents. Both freshly validate the service and prepare any required remote
+forward. `taskTerminalCopyPort` writes the usable local URL through Electron's
+clipboard API and returns it without launching the browser. Browser clipboard
+permissions stay disabled; the operation accepts no renderer-supplied text. The
+resolved address replaces the initial machine-side URL. Only completed copies
+report success; stale task/scope replies never update the current tab. Copied
+feedback resets after two seconds and its timer is cleaned up with the workspace. The adapter does not add
+a separate address notice above the terminal output. `/terminal-stream` exercises
+this with isolated `platform.serve()`, browser/copy intent counters and controlled
+`browserState` feedback; its Copy adapter records the value without changing the
+system clipboard.
 
 `lastClosed` asks the workspace to close its side panel as soon as the last tab
 is removed, while backend cleanup continues. Failed/uncertain closes reconcile

@@ -1,6 +1,6 @@
 import { CodeSurfaces } from './code/surfaces';
 import { registerCodeIpc } from './code/ipc';
-import { app, BrowserWindow, Menu, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
+import { app, BrowserWindow, Menu, clipboard, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
 import { registerTerminalPorts } from './backend-client/terminal-ports';
 import { TerminalLifetime } from './backend-client/terminal-lifetime';
 import { TerminalPreferences } from './backend-client/terminal-preferences';
@@ -236,7 +236,7 @@ void app.whenReady().then(async () => {
     get owner() { return terminals.owner; },
     track: (endpoint, engine) => terminals.track(endpoint, engine),
   }, terminalPreferences, app.isPackaged ? undefined : diagnostic => console.warn('Terminal stream interrupted:', diagnostic));
-  const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url));
+  const unregisterTerminalPorts = registerTerminalPorts(backendClient.client, remote, trusted, url => shell.openExternal(url), url => clipboard.writeText(url));
   app.once('will-quit', () => { unregisterClient(); unregisterTerminalPorts(); });
   const unregisterRemote = registerRemoteIpc(remote, backend, trusted);
   const unregisterMachines = registerMachineIpc(machines, trusted, selection => { if (windowsReady) createWindow(selection); });

@@ -63,9 +63,13 @@ export class MachineWorkspaceComponent {
   readonly terminalBrowserError = signal('');
   readonly terminalBrowserUrl = signal('');
   readonly terminalBrowserBusy = signal(false);
+  readonly terminalCopyBusy = signal(false);
+  readonly terminalCopied = signal(false);
+  private terminalCopyTimer?: ReturnType<typeof setTimeout>;
   readonly terminalBrowserState = computed<TerminalBrowserState | null>(() => {
     const intent = this.selectedTerminalBrowser();
-    return intent ? { terminalId: intent.terminalId, busy: this.terminalBrowserBusy(), error: this.terminalBrowserError(), url: this.terminalBrowserUrl() } : null;
+    return intent ? { terminalId: intent.terminalId, port: intent.port, busy: this.terminalBrowserBusy(), error: this.terminalBrowserError(), url: this.terminalBrowserUrl(),
+      ...(this.terminalCopyBusy() ? { copyBusy: true } : {}), ...(this.terminalCopied() ? { copied: true } : {}) } : null;
   });
   private terminalBrowserOpening?: TerminalBrowserIntent;
   askTerminal(question: TerminalQuestion): void {
@@ -82,31 +86,45 @@ export class MachineWorkspaceComponent {
       if (current?.scopeId === selected.scopeId && current.taskId === selected.taskId && current.sessionId === selected.sessionId) this.focusWriting();
     });
   }
-  openTerminalPort(intent: TerminalBrowserIntent): void {
+  openTerminalPort(intent: TerminalBrowserIntent, copy = false): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId) return;
     const opening = this.terminalBrowserOpening;
     if (opening?.scopeId === intent.scopeId && opening.taskId === intent.taskId && opening.terminalId === intent.terminalId && opening.port === intent.port) return;
+    const previous = this.selectedTerminalBrowser();
+    if (previous?.terminalId !== intent.terminalId || previous.port !== intent.port) this.terminalBrowserUrl.set('');
     this.terminalBrowser.set(intent);
-    void this.launchTerminalPort();
+    void this.launchTerminalPort(copy);
   }
-  async launchTerminalPort(): Promise<void> {
+  async launchTerminalPort(copy = false): Promise<void> {
     const intent = this.selectedTerminalBrowser();
     if (!intent || this.terminalBrowserOpening === intent || this.store.offline()) return;
     this.terminalBrowserOpening = intent;
-    this.terminalBrowserBusy.set(true); this.terminalBrowserError.set(''); this.terminalBrowserUrl.set('');
+    clearTimeout(this.terminalCopyTimer);
+    this.terminalCopied.set(false);
+    this.terminalBrowserBusy.set(!copy); this.terminalCopyBusy.set(copy); this.terminalBrowserError.set('');
     const current = () => this.terminalBrowserOpening === intent && this.selectedTerminalBrowser() === intent;
     try {
-      const reply = await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port });
+      const target = { taskId: intent.taskId, terminalId: intent.terminalId, port: intent.port };
+      const reply = copy
+        ? await this.terminalBridge.taskTerminalCopyPort(intent.scopeId, target)
+        : await this.terminalBridge.taskTerminalOpenPort(intent.scopeId, target);
       if (!current()) return;
       if (!reply.ok) this.terminalBrowserError.set(reply.error.message);
-      else this.terminalBrowserUrl.set(reply.value.url ?? '');
+      else {
+        this.terminalBrowserUrl.set(reply.value.url ?? '');
+        if (copy && reply.value.url) {
+          this.terminalCopied.set(true);
+          this.terminalCopyTimer = setTimeout(() => this.terminalCopied.set(false), 2000);
+        }
+      }
     } catch {
-      if (current()) this.terminalBrowserError.set('Could not open this service. Check the terminal and connection.');
+      if (current()) this.terminalBrowserError.set(copy ? 'Could not copy the URL. Check the connection and try again.' : 'Could not open this service. Check the terminal and connection.');
     } finally {
       if (this.terminalBrowserOpening === intent) {
         this.terminalBrowserOpening = undefined;
         this.terminalBrowserBusy.set(false);
+        this.terminalCopyBusy.set(false);
       }
     }
   }
@@ -155,6 +173,7 @@ export class MachineWorkspaceComponent {
     });
     inject(DestroyRef).onDestroy(() => {
       this.terminalBrowserOpening = undefined;
+      clearTimeout(this.terminalCopyTimer);
       this.stopLaunch();
       if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
     });

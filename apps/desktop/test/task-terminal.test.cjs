@@ -103,12 +103,26 @@ test('serving port handoff uses the actual managed remote forward and cleans its
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   context.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
   const endpoint = { url: `http://127.0.0.1:${server.address().port}`, version: 'a'.repeat(40), headers: {} };
-  let forwards = [], subscriptions = 0, added = 0, retried = 0;
-  const opened = [], controller = new AbortController();
+  let forwards = [], subscriptions = 0, added = 0, retried = 0, copyFails = false;
+  const opened = [], copied = [], controller = new AbortController();
   const remote = { snapshot: () => ({ forwards }), addForward: async (_window, input, host) => { added++; assert.equal(input.remotePort, 3000); assert.equal(input.localPort, 0); assert.equal(host, '127.0.0.1'); forwards = [{ id: 'saved', remotePort: 3000, phase: 'listening', boundPort: 49321 }]; }, targetForward: async () => false, retryForward: async (_window, id) => { assert.equal(id, 'saved'); retried++; forwards = [{ id, remotePort: 3000, phase: 'listening', boundPort: 49322 }]; }, subscribe: () => { subscriptions++; return () => { subscriptions--; }; } };
   const client = { state: () => ({ scope: { id: generation, environment: { kind: 'remote', hostId: 'remote' } } }), execute: async (_window, _scope, _key, _mutation, operation) => operation(endpoint, controller.signal) };
-  const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); });
+  const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); }, url => { if (copyFails) throw new Error('Clipboard denied'); copied.push(url); });
   const handler = handlers.get('task-terminal:open-port'), event = { senderFrame: {}, sender: { id: 11 } };
+  const resolve = handlers.get('task-terminal:copy-port');
+  const resolved = await resolve(event, generation, { taskId: 1, terminalId: 2, port: 3000 });
+  assert.equal(resolved.url, 'https://127.0.0.1:49321/');
+  assert.deepEqual(opened, [], 'Resolving for Copy must not open the browser');
+  assert.deepEqual(copied, ['https://127.0.0.1:49321/']);
+  assert.equal(added, 1); assert.equal(subscriptions, 0);
+  await assert.rejects(resolve(event, generation, { taskId: 1, terminalId: 2, port: 0 }));
+  await assert.rejects(resolve(event, generation, { taskId: 1, terminalId: 2, port: 3000, url: 'https://example.com' }));
+  await assert.rejects(resolve(event, generation, { taskId: 1, terminalId: 2, port: 9999 }));
+  assert.equal(copied.length, 1, 'Invalid services must never overwrite the clipboard');
+  copyFails = true;
+  await assert.rejects(resolve(event, generation, { taskId: 1, terminalId: 2, port: 3000 }), /Clipboard denied/);
+  assert.equal(copied.length, 1); assert.equal(opened.length, 0);
+  copyFails = false;
   const openedService = await handler(event, generation, { taskId: 1, terminalId: 2, port: 3000 });
   assert.equal(openedService.url, 'https://127.0.0.1:49321/');
   assert.deepEqual(opened, ['https://127.0.0.1:49321/']); assert.equal(added, 1); assert.equal(subscriptions, 0);
@@ -220,7 +234,7 @@ test('browser handoff freshly verifies owned sockets, IPv6, path confinement and
       checked = { generation, service: { ...address, host: '127.0.0.1' } };
     },
   };
-  const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); });
+  const stop = module.registerTerminalPorts(client, remote, () => true, async url => { opened.push(url); }, () => { assert.fail('Opening must never copy'); });
   context.after(stop);
   const handler = handlers.get('task-terminal:open-port'), event = { senderFrame: {}, sender: { id: 11 } };
   const open = () => handler(event, generation, { taskId: 1, terminalId: 2, port: 4200 });

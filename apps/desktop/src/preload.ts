@@ -35,6 +35,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   codeFocus: target => invoke('code:focus', target),
   codeRelease: target => invoke('code:release', target),
   taskTerminalOpenPort: (scope, input) => invoke('task-terminal:open-port', scope, input),
+  taskTerminalCopyPort: (scope, input) => invoke('task-terminal:copy-port', scope, input),
   taskTerminalList: (scope, task) => invoke('task-terminal:list', scope, task),
   taskTerminalCreate: (scope, input) => invoke('task-terminal:create', scope, input),
   taskTerminalCommands: (scope, input) => invoke('task-terminal:commands', scope, input),

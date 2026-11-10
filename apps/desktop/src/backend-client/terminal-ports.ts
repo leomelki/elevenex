@@ -7,15 +7,16 @@ import { parseTerminalServiceAddress } from './terminal-service-address';
 import { object } from './terminal-validation';
 import type { TaskTerminalServiceAddress } from '@elevenex/shared';
 
-/** Browser handoff validates the process, then uses this window's managed SSH forward. */
+/** Resolve a usable desktop URL through the same validation/forwarding path as browser opening. */
 export function registerTerminalPorts(
   client: BackendClient,
   remote: RemoteManager,
   trusted: TrustedSender,
   open: (url: string) => Promise<void>,
+  copy: (url: string) => void,
 ): () => void {
-  return handleForWindow(
-    "task-terminal:open-port",
+  const register = (channel: 'task-terminal:open-port' | 'task-terminal:copy-port', openBrowser: boolean) => handleForWindow(
+    channel,
     trusted,
     async (window, ...args) => {
       if (
@@ -164,11 +165,15 @@ export function registerTerminalPorts(
           const host = environment.kind === 'remote' ? '127.0.0.1' : service.host;
           const authority = host.includes(':') ? `[${host}]` : host;
           const url = `${service.protocol}://${authority}:${localPort}${service.path}`;
-          await open(url);
+          if (openBrowser) await open(url);
+          else copy(url);
           return { accepted: true as const, url };
         },
         25000,
       );
     },
   );
+  const stopOpen = register('task-terminal:open-port', true);
+  const stopCopy = register('task-terminal:copy-port', false);
+  return () => { stopOpen(); stopCopy(); };
 }

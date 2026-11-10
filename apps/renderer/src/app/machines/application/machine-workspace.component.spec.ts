@@ -9,9 +9,10 @@ async function settle(fixture: ComponentFixture<MachineWorkspaceComponent>): Pro
   for (let pass = 0; pass < 40; pass++) { await Promise.resolve(); fixture.detectChanges(); }
   await fixture.whenStable();
 }
-function setup(terminalOpen?: ElevenexBridge['taskTerminalOpenPort']) {
+function setup(terminalOpen?: ElevenexBridge['taskTerminalOpenPort'], terminalCopy?: ElevenexBridge['taskTerminalCopyPort']) {
   TestBed.configureTestingModule({ providers: [ConnectedWorkspaceFixture, BackendClientService, {
-    provide: ELEVENEX_BRIDGE, useFactory: (platform: ConnectedWorkspaceFixture) => terminalOpen ? Object.assign(platform, { taskTerminalOpenPort: terminalOpen }) : platform,
+    provide: ELEVENEX_BRIDGE, useFactory: (platform: ConnectedWorkspaceFixture) => Object.assign(platform,
+      terminalOpen ? { taskTerminalOpenPort: terminalOpen } : {}, terminalCopy ? { taskTerminalCopyPort: terminalCopy } : {}),
     deps: [ConnectedWorkspaceFixture],
   }] });
   const fixture = TestBed.createComponent(MachineWorkspaceComponent);
@@ -227,9 +228,42 @@ describe('Connected workspace composition', () => {
     expect(component.terminalBrowserState()?.busy).toBe(true);
     finish({ ok: true, value: { accepted: true, url: 'http://127.0.0.1:24567/app/' } });
     await settle(fixture);
-    expect(component.terminalBrowserState()).toEqual({ terminalId: 1, busy: false, error: '', url: 'http://127.0.0.1:24567/app/' });
+    expect(component.terminalBrowserState()).toEqual({ terminalId: 1, port: 4200, busy: false, error: '', url: 'http://127.0.0.1:24567/app/' });
     component.store.selectSession({ taskId: '13', sessionId: '104' }); await settle(fixture);
     expect(component.terminalBrowserState()).toBeNull();
+  });
+
+  it('copies the resolved forwarded URL without opening the browser, with failure and retry feedback', async () => {
+    const open = vi.fn<ElevenexBridge['taskTerminalOpenPort']>();
+    const copy = vi.fn<ElevenexBridge['taskTerminalCopyPort']>(async () => ({ ok: true, value: { accepted: true, url: 'https://127.0.0.1:24567/app/' } }))
+      .mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Could not copy the URL.' } });
+    const { fixture, component } = setup(open, copy); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    const intent = { scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 };
+    component.openTerminalPort(intent, true);
+    expect(component.terminalBrowserState()?.copyBusy).toBe(true);
+    component.openTerminalPort({ ...intent }, true);
+    await settle(fixture);
+    expect(copy).toHaveBeenCalledExactlyOnceWith(selected.scopeId, { taskId: selected.taskId, terminalId: 1, port: 4200 });
+    expect(open).not.toHaveBeenCalled();
+    expect(component.terminalBrowserState()?.copied).toBeUndefined();
+    expect(component.terminalBrowserState()?.error).toContain('Could not copy');
+    component.openTerminalPort({ ...intent }, true); await settle(fixture);
+    expect(component.terminalBrowserState()).toMatchObject({ copied: true, busy: false, error: '', url: 'https://127.0.0.1:24567/app/' });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('ignores late copy feedback after switching tasks', async () => {
+    let finish!: (reply: Awaited<ReturnType<ElevenexBridge['taskTerminalCopyPort']>>) => void;
+    const resolve = vi.fn<ElevenexBridge['taskTerminalCopyPort']>(() => new Promise(done => { finish = done; }));
+    const { fixture, component } = setup(undefined, resolve); await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
+    const selected = component.store.selected()!;
+    component.openTerminalPort({ scopeId: selected.scopeId, taskId: selected.taskId, terminalId: 1, port: 4200 }, true);
+    component.store.selectSession({ taskId: '13', sessionId: '104' }); await settle(fixture);
+    finish({ ok: true, value: { accepted: true, url: 'http://127.0.0.1:24567/' } }); await settle(fixture);
+    expect(component.terminalCopied()).toBe(false); expect(component.terminalBrowserState()).toBeNull();
   });
 
 });

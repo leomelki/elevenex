@@ -8,7 +8,7 @@ import { TerminalStreamFixture } from './terminal-stream-fixture';
   imports: [TaskTerminalComponent],
   providers: [TerminalStreamFixture, { provide: ELEVENEX_BRIDGE, useExisting: TerminalStreamFixture },
     { provide: BackendClientService, useExisting: TerminalStreamFixture }],
-  template: '<ex-task-terminal [selection]="selection" [visible]="visible()" [browserState]="browserState()" (browserRequested)="openBrowser($event.terminalId)" />',
+  template: '<ex-task-terminal [selection]="selection" [visible]="visible()" [browserState]="browserState()" (browserRequested)="openBrowser($event.terminalId)" (browserCopyRequested)="copyBrowser($event.terminalId)" />',
   styles: ':host { display: flex; height: 100%; min-height: 0; padding: var(--space-2); } ex-task-terminal { flex: 1; min-width: 0; }',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -17,7 +17,14 @@ export class TerminalStreamDemoComponent {
   readonly selection = { scopeId: 'terminal-preview', taskId: 1 };
   readonly visible = signal(true);
   readonly browserState = signal<TerminalBrowserState | null>(null);
+  readonly browserOpens = signal(0);
+  readonly copiedUrl = signal('');
   openBrowser(terminalId: number): void {
+    this.browserOpens.update(count => count + 1);
     this.browserState.set({ terminalId, busy: false, error: '', url: 'http://127.0.0.1:24766/' });
+  }
+  copyBrowser(terminalId: number): void {
+    this.copiedUrl.set('http://127.0.0.1:24766/');
+    this.browserState.set({ terminalId, busy: false, error: '', url: this.copiedUrl(), copied: true });
   }
 }
