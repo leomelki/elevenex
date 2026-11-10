@@ -44,8 +44,9 @@ function resolveBundledNodeBinPath(): string | null {
 // a stripped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) because no shell rc files
 // are sourced. User-installed CLIs (tmux from Homebrew, claude/plannotator
 // from ~/.local/bin) are then unreachable. These directories cover the common
-// install locations and are prepended/appended wherever we spawn child
-// processes or resolve external binaries.
+// install locations and supplement that stripped PATH. Append them after the
+// effective inherited/login-shell PATH so they never override its ordering
+// when we spawn child processes or resolve external binaries.
 export const COMMON_BINARY_PATHS: readonly string[] = (() => {
   const paths: string[] = [];
   const bundledNodeBinPath = resolveBundledNodeBinPath();
@@ -554,19 +555,9 @@ export function findBinary(name: string): string | null {
     return binaryPathCache.get(name) ?? null;
   }
 
-  for (const dir of COMMON_BINARY_PATHS) {
-    for (const candidateName of getExecutableCandidateNames(name)) {
-      const candidate = join(dir, candidateName);
-      try {
-        accessSync(candidate, constants.X_OK);
-        binaryPathCache.set(name, candidate);
-        return candidate;
-      } catch {
-        // Try next
-      }
-    }
-  }
-
+  // Login-shell captures are projected onto process.env asynchronously.
+  // buildAugmentedPath preserves that effective PATH order and appends known
+  // install directories only as fallbacks for stripped Electron/Finder PATHs.
   for (const dir of buildAugmentedPath().split(PATH_DELIMITER)) {
     if (!dir) continue;
     for (const candidateName of getExecutableCandidateNames(name)) {

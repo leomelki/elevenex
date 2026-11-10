@@ -83,6 +83,109 @@ async function closeShellProcess(
   await Promise.resolve();
 }
 
+describe('findBinary PATH precedence', () => {
+  let executables: Set<string>;
+  let access: jest.SpyInstance;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', {
+      ...originalPlatform,
+      value: 'linux',
+    });
+    loadSystemPaths();
+    executables = new Set();
+    // Model installations without touching the host's /usr/local/bin or CLIs.
+    access = jest
+      .spyOn(jest.requireActual<typeof fs>('fs'), 'accessSync')
+      .mockImplementation((candidate) => {
+        if (!executables.has(String(candidate))) throw new Error('unavailable');
+      });
+  });
+
+  it.each(['codex', 'claude', 'pi', 'opencode', 'tmux', 'pwsh', 'powershell'])(
+    'prefers %s on PATH over /usr/local/bin',
+    (name) => {
+      const userBin = path.join(os.homedir(), '.local', 'bin');
+      const userExecutable = path.join(userBin, name);
+      executables.add(userExecutable);
+      executables.add(path.join('/usr/local/bin', name));
+      process.env.PATH = `${userBin}:/usr/local/bin`;
+
+      expect(systemPaths.findBinary(name)).toBe(userExecutable);
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(mockExecSync).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['/tools/first:/tools/second', '/tools/first'],
+    ['/tools/second:/tools/first', '/tools/second'],
+  ])('respects PATH directory order: %s', (pathValue, preferred) => {
+    process.env.PATH = pathValue;
+    executables.add(path.join('/tools/first', 'codex'));
+    executables.add(path.join('/tools/second', 'codex'));
+
+    expect(systemPaths.findBinary('codex')).toBe(path.join(preferred, 'codex'));
+    expect(access).toHaveBeenCalledWith(
+      path.join(preferred, 'codex'),
+      fs.constants.X_OK,
+    );
+  });
+
+  it.each(['', '/usr/bin:/bin:/usr/sbin:/sbin'])(
+    'uses a known install directory when PATH has no match: %s',
+    (pathValue) => {
+      process.env.PATH = pathValue;
+      const fallback = path.join(os.homedir(), '.local', 'bin', 'codex');
+      executables.add(fallback);
+
+      expect(systemPaths.findBinary('codex')).toBe(fallback);
+    },
+  );
+
+  it('returns null for a missing executable and retries misses without cache clearing', () => {
+    process.env.PATH = '/tools/bin';
+    expect(systemPaths.findBinary('codex')).toBeNull();
+    const installed = path.join('/tools/bin', 'codex');
+    executables.add(installed);
+
+    expect(systemPaths.findBinary('codex')).toBe(installed);
+  });
+
+  it('keeps successful resolutions cached until explicitly cleared', () => {
+    const first = path.join('/tools/first', 'codex');
+    const second = path.join('/tools/second', 'codex');
+    executables.add(first);
+    executables.add(second);
+    process.env.PATH = '/tools/first:/tools/second';
+    expect(systemPaths.findBinary('codex')).toBe(first);
+
+    process.env.PATH = '/tools/second:/tools/first';
+    access.mockClear();
+    expect(systemPaths.findBinary('codex')).toBe(first);
+    expect(access).not.toHaveBeenCalled();
+
+    systemPaths.clearBinaryPathCache();
+    expect(systemPaths.findBinary('codex')).toBe(second);
+  });
+
+  it('follows the projected login-shell PATH before known fallback directories', async () => {
+    process.env.PATH = '/usr/bin:/bin';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/bin'));
+    await refresh;
+    executables.add(path.join('/shell/bin', 'codex'));
+    executables.add(path.join('/usr/local/bin', 'codex'));
+
+    expect(systemPaths.findBinary('codex')).toBe(
+      path.join('/shell/bin', 'codex'),
+    );
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+});
+
 describePosix('system-paths per-cwd env cache', () => {
   let nowSpy: jest.SpyInstance<number, []>;
 
@@ -844,6 +947,78 @@ describe('system-paths Windows env handling', () => {
       command: 'C:\\Tools\\codex.exe',
       shell: false,
     });
+  });
+
+  it.each(['.EXE', '.CMD', '.BAT'])(
+    'finds Windows %s candidates before extensionless POSIX shims',
+    (extension) => {
+      process.env.Path = 'C:\\Tools';
+      delete process.env.PATH;
+      process.env.PATHEXT = '.EXE;.CMD;.BAT';
+      const executable = path.join('C:\\Tools', `codex${extension}`);
+      const shim = path.join('C:\\Tools', 'codex');
+      jest
+        .spyOn(jest.requireActual<typeof fs>('fs'), 'accessSync')
+        .mockImplementation((candidate) => {
+          if (candidate !== executable && candidate !== shim) {
+            throw new Error('unavailable');
+          }
+        });
+
+      expect(systemPaths.findBinary('codex')).toBe(executable);
+    },
+  );
+
+  it('respects Windows PATH directory order before PATHEXT priority', () => {
+    process.env.PATH = 'C:\\First;C:\\Second';
+    process.env.PATHEXT = '.EXE;.CMD;.BAT';
+    const first = path.join('C:\\First', 'codex.CMD');
+    const second = path.join('C:\\Second', 'codex.EXE');
+    jest
+      .spyOn(jest.requireActual<typeof fs>('fs'), 'accessSync')
+      .mockImplementation((candidate) => {
+        if (candidate !== first && candidate !== second) {
+          throw new Error('unavailable');
+        }
+      });
+
+    expect(systemPaths.findBinary('codex')).toBe(first);
+  });
+
+  it.each([undefined, '.BAT;.CMD;.EXE'])(
+    'uses default or configured PATHEXT order: %s',
+    (pathext) => {
+      process.env.PATH = 'C:\\Tools';
+      if (pathext === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = pathext;
+      const access = jest
+        .spyOn(jest.requireActual<typeof fs>('fs'), 'accessSync')
+        .mockImplementation(() => undefined);
+      const expected = path.join(
+        'C:\\Tools',
+        `codex${pathext ? '.BAT' : '.COM'}`,
+      );
+
+      expect(systemPaths.findBinary('codex')).toBe(expected);
+      expect(access).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('preserves explicit extensions and the bare-name fallback on Windows', () => {
+    process.env.PATH = 'C:\\Tools';
+    process.env.PATHEXT = '.CMD;.EXE';
+    const executable = path.join('C:\\Tools', 'codex.exe');
+    const bare = path.join('C:\\Tools', 'pi');
+    jest
+      .spyOn(jest.requireActual<typeof fs>('fs'), 'accessSync')
+      .mockImplementation((candidate) => {
+        if (candidate !== executable && candidate !== bare) {
+          throw new Error('unavailable');
+        }
+      });
+
+    expect(systemPaths.findBinary('codex.exe')).toBe(executable);
+    expect(systemPaths.findBinary('pi')).toBe(bare);
   });
 });
 

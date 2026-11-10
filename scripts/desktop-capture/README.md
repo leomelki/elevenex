@@ -128,6 +128,12 @@ checks must inspect the isolated child separately.
 
 ## Motion
 
+`scenarios/composer-input-motion.mjs` checks trusted multiline edits through the
+connected workspace preview. It asserts text/box alignment before, during and
+after growth, shrinkage and interrupted newlines, plus native scrolling at the
+height cap and narrow reduced-motion layouts in both themes. Run it with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
 through the connected workspace preview. It samples each real animation frame
 for excess rows, changing DOM identity and height overshoot, with repeated text,
