@@ -105,7 +105,7 @@ export class WorkerBrowserHost implements BrowserAgentHost {
         !this.snapshot.rows.some((row) => row.id === state.id && row.owned)
       )
         throw new Error(
-          'Browser control changed. Acquire a fresh page; a user stop requires Hand back.',
+          'Browser control changed. Acquire a fresh page; if explicitly blocked, ask the user to choose Allow agent.',
         );
     };
     const call = (method: string, args: unknown[] = []) => {

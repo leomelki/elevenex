@@ -112,7 +112,7 @@ export class PlaywrightBroker {
         .some((row) => row.id === owner && row.owned)
     )
       throw new Error(
-        'Page control changed. Acquire a fresh page; a user stop requires Hand back.',
+        'Page control changed. Acquire a fresh page; if explicitly blocked, ask the user to choose Allow agent.',
       );
   }
   private async connect(): Promise<void> {

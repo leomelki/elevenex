@@ -22,14 +22,13 @@ import {
   splitElementLabel,
   thumbnailFrame,
 } from "./element-geometry";
-import { ElementPinComponent } from "./element-pin.component";
 import { ElementPreviewComponent } from "./element-preview.component";
 
 const THUMB_WIDTH = 36;
 const THUMB_HEIGHT = 26;
 
 /**
- * A browser element staged with, or sent in, a message: its pin, a thumbnail
+ * A browser element staged with, or sent in, a message: a thumbnail
  * framed on the target and a readable label. Pressing it opens the snapshot in
  * an anchored popover. Capture, upload and browser authority stay with the owner.
  */
@@ -39,27 +38,29 @@ const THUMB_HEIGHT = 26;
     A11yModule,
     OverlayModule,
     IconComponent,
-    ElementPinComponent,
     ElementPreviewComponent,
   ],
   templateUrl: "./element-chip.component.html",
   styleUrl: "./element-chip.component.css",
+  host: { "[class.inline]": "inline()" },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ElementChipComponent {
   readonly file = input.required<ConversationAttachment>();
   readonly resolve = input<MarkdownAssetResolver>();
-  /** Draft chip: removable, retryable and able to insert its pin. */
+  /** Draft chip: removable, retryable and able to insert its mention. */
   readonly editing = input(false);
+  /** Compact mention within sent prose; keeps the same snapshot interaction. */
+  readonly inline = input(false);
   readonly disabled = input(false);
-  /** Whether the draft's prose refers to this pin; an unreferenced pin is hollow. */
+  /** Whether the draft's prose refers to this element; included in its accessible name. */
   readonly mentioned = input(true);
   readonly pickAvailable = input(false);
   readonly removed = output<string>();
   readonly retry = output<string>();
   readonly mention = output<void>();
   readonly repick = output<BrowserElementReference>();
-  /** Pointer or focus rests on the chip, so the owner can light up its pin in the prose. */
+  /** Pointer or focus rests on the chip, so the owner can highlight its name in the prose. */
   readonly highlighted = output<boolean>();
 
   readonly open = signal(false);
@@ -84,13 +85,12 @@ export class ElementChipComponent {
   readonly source = computed(() => elementImageSource(this.file(), this.resolve()));
   readonly frame = computed(() => {
     const element = this.element();
-    return element ? thumbnailFrame(element, THUMB_WIDTH, THUMB_HEIGHT) : null;
+    return element ? thumbnailFrame(element, this.inline() ? 28 : THUMB_WIDTH, this.inline() ? 20 : THUMB_HEIGHT) : null;
   });
   readonly failed = computed(() => this.file().status === "error");
   readonly uploading = computed(() => this.file().status === "uploading");
   readonly name = computed(() => {
     const file = this.file();
-    const pin = file.marker ? `Pin ${file.marker}, ` : "";
     const state = this.uploading()
       ? `, uploading ${file.progress ?? 0}%`
       : this.failed()
@@ -98,7 +98,7 @@ export class ElementChipComponent {
         : this.editing() && !this.mentioned()
           ? ", not referenced in your message"
           : "";
-    return `${pin}${this.element()?.label ?? file.name}${state}. Show snapshot`;
+    return `${this.element()?.label ?? file.name}${state}. Show snapshot`;
   });
 
   constructor() {

@@ -12,7 +12,8 @@ async function assertUncoveredSnapshot(capture, snapshot) {
     return {
       source: image.src,
       pinsOverImage: preview.querySelectorAll('.frame ex-element-pin').length,
-      titlePin: preview.querySelector('.title ex-element-pin')?.textContent.trim(),
+      titlePins: preview.querySelectorAll('.title ex-element-pin').length,
+      titleName: preview.querySelector('.title .name')?.textContent.trim(),
       border: parseFloat(style.borderWidth),
       stroke: parseFloat(style.outlineWidth),
       offset: parseFloat(style.outlineOffset),
@@ -23,7 +24,8 @@ async function assertUncoveredSnapshot(capture, snapshot) {
   });
   assert.equal(result.source, 'data:image/jpeg;base64,' + snapshot.jpeg, 'Preview must retain the original browser pixels');
   assert.equal(result.pinsOverImage, 0, 'The pin must not obscure the image');
-  assert.equal(result.titlePin, '1', 'Keep the pin beside the title');
+  assert.equal(result.titlePins, 0, 'Snapshot titles use names rather than numbered pins');
+  assert.equal(result.titleName, snapshot.reference.label.split(' · ').slice(1).join(' · '));
   assert.equal(result.border, 0, 'No border may paint inside the target');
   assert.ok(result.stroke > 0 && result.stroke <= 1 && result.offset >= 2, 'Keep a fine stroke clear of the target border');
   assert.equal(result.shadow, 'none', 'No halo may cover the target border');
@@ -43,6 +45,8 @@ export default async function* (capture) {
   const snapshot = JSON.parse(await readFile(new URL('../../../artifacts/element-mentions/native-snapshot.json', import.meta.url), 'utf8'));
   const second = JSON.parse(await readFile(new URL('../../../artifacts/element-mentions/runtime-snapshot.json', import.meta.url), 'utf8'));
   assert.ok(snapshot.jpeg && second.jpeg);
+  const firstName = '@“' + snapshot.reference.label.split(' · ').slice(1).join(' · ') + '”';
+  const secondName = '@“' + second.reference.label.split(' · ').slice(1).join(' · ') + '”';
   const type = text => capture.cdp('Input.insertText', { text });
   const draft = () => capture.evaluate(() => document.querySelector('ex-composer textarea').value);
 
@@ -58,7 +62,7 @@ export default async function* (capture) {
   await type('with');
   await capture.component('ex-element-mentions-demo', (component, value) => component.stage(value), second);
   await type('and match its height.');
-  assert.equal(await draft(), 'Align ❶ with ❷ and match its height.');
+  assert.equal(await draft(), `Align ${firstName} with ${secondName} and match its height.`);
   await capture.waitFor(() => [...document.querySelectorAll('ex-element-chip img')].every(image => image.complete) && document.querySelectorAll('.marker-text mark').length === 2);
 
   for (const theme of ['light', 'dark']) {
@@ -106,8 +110,8 @@ export default async function* (capture) {
     textarea.setSelectionRange(0, textarea.value.length);
   });
   await type('Make it wider.');
-  await capture.waitFor(() => document.querySelectorAll('ex-element-pin.hollow').length === 2);
-  yield { name: 'unreferenced-hollow', inspect: ['ex-element-pin.hollow'] };
+  await capture.waitFor(() => document.querySelectorAll('ex-element-chip .unreferenced').length === 2);
+  yield { name: 'unreferenced-elements', inspect: ['ex-element-chip .unreferenced'] };
   await capture.evaluate(() => document.querySelector('ex-composer textarea').setSelectionRange(5, 5));
   await capture.click('ex-composer ex-icon-button[label="Point at an element in the browser"] button');
   assert.equal(await capture.evaluate(() => document.querySelector('.pick-note') !== null), true);
@@ -129,21 +133,28 @@ export default async function* (capture) {
   await capture.waitFor(() => document.querySelector('ex-mention-menu .action'));
   yield { name: 'narrow-at-menu', inspect: ['ex-mention-menu [role=option]'] };
   await capture.press('Enter');
-  await capture.waitFor(() => document.querySelector('ex-composer textarea').value.startsWith('Align ❶ '));
+  assert.equal(await draft(), `Align ${firstName} `);
   await type('with ');
   await type('@');
   await capture.waitFor(() => document.querySelector('ex-mention-menu [role=option]'));
   await capture.press('ArrowDown');
   await capture.press('Enter');
-  await capture.waitFor(() => document.querySelector('ex-composer textarea').value.includes('❷'));
+  assert.ok((await draft()).includes(secondName));
   yield { name: 'narrow-two-pins', inspect: ['ex-element-chip', '.marker-text mark'] };
   await capture.click('ex-element-chip:nth-of-type(2) .act');
   await capture.waitFor(() => document.querySelectorAll('ex-composer ex-element-chip').length === 1);
-  assert.equal(await draft(), 'Align ❶ with ');
+  assert.equal(await draft(), `Align ${firstName} with `);
   await type('the heading.');
   await capture.click('ex-composer .send');
   await capture.waitFor(() => document.querySelector('.sent ex-element-chip img')?.complete);
-  yield { name: 'narrow-sent', inspect: ['.sent', '.sent ex-element-prose .pin'] };
+  yield { name: 'narrow-sent', inspect: ['.sent', '.sent ex-element-prose ex-element-chip'] };
+  assert.equal(await capture.evaluate(() => document.querySelectorAll('.sent ex-element-chip').length), 1, 'A mentioned snapshot must appear once');
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    await capture.viewport(760, 600);
+    yield { name: `sent-named-mention-${theme}`, selector: '.sent', inspect: ['.sent', '.sent ex-element-chip'] };
+  }
+  await capture.viewport(380, 760);
   await capture.click('.sent ex-element-chip .face');
   await capture.waitFor(() => document.querySelector('.element-popover img')?.complete);
   assert.equal(await capture.evaluate(() => document.querySelector('.element-popover footer')), null, 'Sent snapshots are read-only');

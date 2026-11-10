@@ -13,6 +13,7 @@ import { BrowserDriver, BrowserTab, BrowserTarget, BrowserViewComponent, type Br
 export class BrowserDemoComponent {
   readonly event = output<string>();
   protected readonly driver = signal<BrowserDriver>('agent');
+  protected readonly blocked = signal(false);
   protected readonly width = signal<'full' | 'phone'>('full');
   protected readonly picking = signal(false);
   protected readonly hovered = signal<BrowserTarget | undefined>(undefined);
@@ -55,7 +56,8 @@ export class BrowserDemoComponent {
     destroy.onDestroy(() => { observer?.disconnect(); stopPicking?.(); });
   }
 
-  protected selectDriver(driver: BrowserDriver): void { this.driver.set(driver); this.setPicking(false); }
+  protected selectDriver(driver: BrowserDriver): void { this.blocked.set(false); this.driver.set(driver); this.setPicking(false); }
+  protected blockAgent(): void { this.blocked.set(true); this.driver.set('you'); }
   protected showTarget(): void {
     const button = this.pay()?.nativeElement, target = button ? this.measure(button) : undefined;
     if (!target) return;

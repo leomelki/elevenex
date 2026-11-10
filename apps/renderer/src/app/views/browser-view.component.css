@@ -44,8 +44,11 @@ small { color: var(--ink-muted); font-size: var(--text-caption-size); }
 .agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-glide); }
 .cursor-enter { animation: fade-in var(--dur-fast) var(--ease-out) both; }
 .cursor-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
-.agent-cursor svg { position: relative; display: block; filter: drop-shadow(0 1px 2px var(--line-strong)); }
-.cursor-pulse { position: absolute; top: calc(-1 * var(--space-2)); left: calc(-1 * var(--space-2)); width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); animation: cursor-pulse var(--dur-deliberate) var(--ease-out) both; }
+/* The glyph's (0, 0) tip and ripple share the supplied page coordinate. */
+.cursor-glyph { position: relative; display: block; overflow: visible; translate: -2px -2px; filter: drop-shadow(0 1px 2px color-mix(in oklab, var(--ink) 24%, transparent)); }
+.cursor-arrow, .cursor-spark { fill: var(--accent); stroke: var(--surface-raised); stroke-width: 2.5; paint-order: stroke fill; }
+.cursor-facet { fill: color-mix(in oklab, var(--accent) 78%, var(--surface-raised)); }
+.cursor-pulse { position: absolute; top: 0; left: 0; translate: -50% -50%; width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); background: color-mix(in oklab, var(--accent) 10%, transparent); animation: cursor-pulse var(--dur-deliberate) var(--ease-out) both; }
 @keyframes cursor-pulse { from { transform: scale(.4); opacity: .8; } to { transform: scale(1.6); opacity: 0; } }
 /* Picking: a quiet frame and one hint, both above the page and transparent to the pointer. */
 .page.pointing { cursor: crosshair; }

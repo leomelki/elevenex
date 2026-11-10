@@ -10,7 +10,7 @@ export default async function* browserAgentPolicy(capture) {
       component.store.state.update(state => ({ ...state, agentCode: 1 }));
       component.showDialog('tools');
     });
-    await capture.waitFor(() => document.querySelector('.privacy')?.textContent.includes('Stop agent pauses access'));
+    await capture.waitFor(() => document.querySelector('.privacy')?.textContent.includes('Block agent prevents access'));
     await capture.motion.finish();
     assert.equal(await capture.evaluate(() => document.querySelector('.privacy')?.textContent.includes('observation is withheld')), false);
     yield { name: theme + '-agent-access', inspect: ['[role="dialog"]', '.privacy', '.feedback'] };

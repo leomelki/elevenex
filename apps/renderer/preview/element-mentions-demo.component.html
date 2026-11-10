@@ -1,9 +1,9 @@
 <main>
   <header>
-    <h1>Element pins</h1>
+    <h1>Element mentions</h1>
     <p>
-      Point at an element in the task browser and its pin drops where you're
-      typing: “Align ❶ with ❷”. Press a chip to see the snapshot.
+      Point at an element in the task browser to mention it by name.
+      Press a mention to inspect its snapshot.
     </p>
     <nav aria-label="Preview states">
       <button exButton size="sm" (click)="state('uploading')" [disabled]="!hasFiles()">Uploading</button>
@@ -16,7 +16,7 @@
     @if (sent().length || prompt()) {
       <article class="sent" aria-label="Sent message">
         <p><ex-element-prose [text]="prompt()" [attachments]="sent()" /></p>
-        <ex-attachments [files]="sent()" />
+        <ex-attachments [files]="sent()" [mentionedText]="prompt()" />
       </article>
     }
     @if (pickRequests()) {

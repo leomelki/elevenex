@@ -53,7 +53,7 @@ export class RuntimeBrowserTab {
         !this.cdp
       )
         throw new Error(
-          'Tab control changed. Acquire a fresh handle; a user stop requires Hand back.',
+          'Tab control changed. Acquire a fresh handle; if explicitly blocked, ask the user to choose Allow agent.',
         );
     };
     assert();
@@ -266,14 +266,16 @@ export class RuntimeBrowserTab {
   }
   agentPaused = false;
   stopAgent(): void { this.agentPaused = true; this.waiting = true; this.takeover(); }
-  takeover(needs = false, pauseAgent = true): void {
+  // Human input and requests interrupt old work; only an explicit block
+  // prevents a fresh acquisition.
+  takeover(needs = false, pauseAgent = false): void {
     this.presentationFeedback.clear();
-    this.agentPaused ||= pauseAgent && (this.driver === 'agent' || needs);
+    this.agentPaused ||= pauseAgent;
     for (const input of this.agentInputs) input.release();
     void this.input?.reset();
     void this.input?.unlockPointer();
     this.ownership++;
-    this.waiting ||= this.driver === 'agent';
+    this.waiting = this.agentPaused;
     this.driver = needs ? 'needs' : 'you';
     this.generation++;
     this.target = undefined;
@@ -300,7 +302,7 @@ export class RuntimeBrowserTab {
       this.agentSessionId !== sessionId ||
       (requireReady && !this.agentReady)
     )
-      throw new Error('Browser control changed; wait for explicit handoff');
+      throw new Error('Browser control changed. Acquire a fresh page; if explicitly blocked, ask the user to choose Allow agent.');
   }
   owns(page: Page): boolean {
     return this.page === page;

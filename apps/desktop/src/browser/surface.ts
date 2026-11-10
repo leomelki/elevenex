@@ -77,7 +77,7 @@ export class BrowserPage {
   async agentTarget(sessionId: number, active: () => boolean, goto: BrowserAgentTarget['goto'], close: () => Promise<void>, signal: AbortSignal, human?: () => boolean): Promise<BrowserAgentTarget> {
     const ownership = this.lease.ownership;
     const assert = () => {
-      if (!active() || this.destroyed || (!human && (this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId)) || (human && (!human() || this.lease.driver === 'agent')) || this.lease.ownership !== ownership) throw new Error('Tab control changed. Acquire a fresh handle; a user stop requires Hand back.');
+      if (!active() || this.destroyed || (!human && (this.lease.driver !== 'agent' || this.lease.agentSessionId !== sessionId)) || (human && (!human() || this.lease.driver === 'agent')) || this.lease.ownership !== ownership) throw new Error('Tab control changed. Acquire a fresh handle; if explicitly blocked, ask the user to choose Allow agent.');
     };
     assert();
     while (!this.hasContents || this.initializing) { assert(); await delay(25, signal); }

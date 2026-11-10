@@ -27,7 +27,10 @@ complete/cancel/pick commands. New requests open the Browser panel without
 moving keyboard focus. Requests are attached to the creating conversation;
 returning control never uses whichever session is currently selected.
 
-Action requests let the person work in the page and explicitly return control.
+Action requests let the person work in the page and confirm completion. The
+requesting agent can also reacquire the page at any time unless explicitly
+blocked; that cancels pending help tickets and selection in the linked group
+rather than marking the human work complete.
 Element requests require Select element, a non-activating click, and Confirm and
 return. The host checks ownership and document/frame identity at confirmation and
 when the agent consumes the locator. Selection values are withheld from the
@@ -106,11 +109,15 @@ Each tab has one authoritative driver and a monotonic generation. User-created
 tabs start with the user; agent-created tabs remember their session. Explicit
 `browser.page(tabId)` or legacy `browser.tabs.get(tabId)` can acquire available
 task tabs without a user handoff. Agents cannot seize another conversation's
-controlled tab or close user-created tabs. **Stop agent** is available whenever
-a tab is agent-controlled, including without step metadata. Stop and human page
-input pause the entire opener/popup group until explicit, backend-authorized
-**Hand back**. Code reset and presentation changes do not clear that pause.
-UI-only rehosting/resizing invalidates old handles but allows fresh acquisition.
+controlled tab or close user-created tabs. Ordinary page input, focus and
+navigation interrupt current agent work but allow fresh acquisition immediately,
+without a human/agent mode switch. **Block agent** explicitly pauses the entire
+opener/popup group until backend-authorized **Allow agent**. It is available in
+the activity bar while the agent works and in Browser Tools for idle tabs.
+Pending help tickets are cancelled when the agent reacquires the group. Native
+site dialogs and authentication still require normal resolution. Code reset and
+presentation changes do not clear a block. UI-only rehosting/resizing invalidates
+old handles but allows fresh acquisition.
 Native `before-input-event`/`before-mouse-event`, or the remote host's first human
 input, revokes agent authority before accepting interaction. Every awaited action
 rechecks its generation, task, visibility, viewport and navigation. Menus, motion,

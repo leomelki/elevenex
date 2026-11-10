@@ -97,8 +97,11 @@ cannot stop the currently visible stream.
 The [code-first browser MCP](browser-agent.md) allows page text, DOM/AX, images,
 diagnostics and scoped CDP on tabs owned by the authenticated conversation.
 Explicit page acquisition can claim available task tabs without a user handoff.
-Stop agent and human input revoke reads/writes and pause the linked group until
-Hand back; UI-only revocation allows fresh acquisition. Browser-wide CDP, filesystem and
+Human input revokes current reads/writes across the linked group but allows
+fresh acquisition without a handoff. Only explicit Block agent
+pauses access until Allow agent. Reacquisition cancels pending human help tickets
+without completing them; native site requests/authentication retain their normal
+resolution. UI-only revocation also allows fresh acquisition. Browser-wide CDP, filesystem and
 transport access remain excluded. Legacy mailbox replies stay metadata-only. Host-side
 validators, task/session membership, input generations, sandbox, TLS, Origin
 checks, runtime private-socket authentication, bounded queues and destination

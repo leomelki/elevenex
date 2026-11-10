@@ -88,6 +88,7 @@ export class BrowserViewComponent {
   readonly selected = output<string>();
   readonly closed = output<string>();
   readonly added = output<void>();
+  /** Explicitly block the agent. Page interaction is owned by the platform adapter. */
   readonly takeOverRequested = output<void>();
   readonly pageFocusRequested = output<void>();
   readonly handBackRequested = output<void>();
@@ -99,7 +100,7 @@ export class BrowserViewComponent {
   readonly forwardRequested = output<void>();
   readonly reloadRequested = output<void>();
   readonly moreRequested = output<void>();
-  protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent driving. Take over and focus page.' : this.driver() === 'needs' ? 'Your turn. Focus page.' : 'You are driving. Focus page.') + ' Shift+Escape returns to browser controls.');
+  protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent working. Focus page.' : this.driver() === 'needs' ? 'Action needed. Focus page.' : 'Focus page.') + ' Shift+Escape returns to browser controls.');
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
   protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: tab.icon ?? 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && this.step()?.status !== 'done' && this.step()?.status !== 'error' && tab.id === this.current()?.id })));
@@ -216,17 +217,11 @@ export class BrowserViewComponent {
   /** Labels sit above their ring unless that would put them above the page. */
   protected labelBelow(target: BrowserTarget): boolean { return this.position(target.y) < LABEL_ROOM; }
 
-  protected takeOver(): void { if (this.driver() === 'agent') this.takeOverRequested.emit(); }
-  protected previewKeydown(event: KeyboardEvent): void {
-    // Tabbing past the preview to Stop is browser-chrome navigation. Actual
-    // page key events still revoke control at the native/stream input boundary.
-    if (event.key !== 'Tab') this.takeOver();
-  }
   focusControls(): void { this.driverControl()?.nativeElement.focus({ preventScroll: true }); }
   protected focusPage(): void {
-    this.preview()?.nativeElement.focus({ preventScroll: true }); this.takeOver(); this.pageFocusRequested.emit();
+    this.preview()?.nativeElement.focus({ preventScroll: true }); this.pageFocusRequested.emit();
   }
-  protected takeOverFromBar(): void { this.takeOver(); }
+  protected takeOverFromBar(): void { this.takeOverRequested.emit(); }
   protected handBack(): void {
     // Move focus before the owning control's Fold becomes inert and hidden.
     this.driverControl()?.nativeElement.focus({ preventScroll: true });

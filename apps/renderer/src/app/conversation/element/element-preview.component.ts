@@ -16,7 +16,6 @@ import {
   splitElementLabel,
   targetInCrop,
 } from "./element-geometry";
-import { ElementPinComponent } from "./element-pin.component";
 
 /**
  * The full historical snapshot of one browser element: the crop with its target
@@ -25,7 +24,7 @@ import { ElementPinComponent } from "./element-pin.component";
  */
 @Component({
   selector: "ex-element-preview",
-  imports: [DecimalPipe, ButtonComponent, IconComponent, ElementPinComponent],
+  imports: [DecimalPipe, ButtonComponent, IconComponent],
   templateUrl: "./element-preview.component.html",
   styleUrl: "./element-preview.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -33,7 +32,7 @@ import { ElementPinComponent } from "./element-pin.component";
 export class ElementPreviewComponent {
   readonly file = input.required<ConversationAttachment>();
   readonly resolve = input<MarkdownAssetResolver>();
-  /** Shows draft actions: insert the pin, pick again, remove. */
+  /** Shows draft actions: mention in message, pick again, remove. */
   readonly editing = input(false);
   readonly disabled = input(false);
   readonly pickAvailable = input(false);

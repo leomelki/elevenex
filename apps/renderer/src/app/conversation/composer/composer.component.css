@@ -62,7 +62,7 @@ textarea {
   color: var(--ink);
   font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
 }
-/* Mirrors the textarea's text box exactly so each mark sits behind its pin. */
+/* Match the native text metrics; highlights must not change wrapping or caret geometry. */
 .marker-layer {
   position: absolute;
   inset: 0;
@@ -77,7 +77,7 @@ textarea {
   overflow-wrap: break-word;
 }
 .marker-text mark {
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-xs);
   background: var(--accent-soft);
   color: transparent;
   box-shadow: 0 0 0 1px var(--accent-soft);
@@ -85,11 +85,6 @@ textarea {
 }
 .marker-text mark.hot {
   box-shadow: 0 0 0 1.5px var(--accent);
-}
-/* A pin with no element in this message would leave the agent guessing. */
-.marker-text mark.orphan {
-  background: var(--danger-soft);
-  box-shadow: 0 0 0 2px var(--danger);
 }
 textarea.words-leaving {
   animation: placeholder-return 240ms steps(1, end);

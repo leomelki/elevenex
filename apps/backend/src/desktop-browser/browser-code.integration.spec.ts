@@ -110,7 +110,7 @@ describe('Browser code in sandboxed Chromium', () => {
     expect(resumed.error).toBeUndefined();
     expect(resumed.value).toBe('Code browser');
     const tab = [...task.tabs.values()][0];
-    tab.takeover();
+    tab.stopAgent();
     expect(
       (await run('return await state.tab.screenshot()')).error,
     ).toBeDefined();

@@ -134,9 +134,14 @@ survive browser_reset, expire after ten minutes, and never resume/replay old cod
 Ownership and failure recovery:
 Human takeover revokes reads and writes for the page and its linked opener/popup
 group; a popup cannot keep reading a human-controlled opener through JavaScript.
-Stop agent (or human page input) pauses the group until explicit Hand back.
-Acquisition of a stopped tab, a human workflow, or another conversation's
-controlled tab fails; do not poll or retry it. UI-only rehosting/resizing revokes
+Ordinary human page input interrupts current work but does not block fresh
+acquisition: use browser.page(tabId) again without asking for a handoff.
+Only explicit Block agent (formerly Stop agent) pauses access until the person
+chooses Allow agent. Reacquiring a page cancels pending human help tickets in its
+group, including active selection; cancellation never counts as completion.
+Native site requests/authentication must still be resolved normally. Acquisition
+of a blocked tab or another conversation's controlled tab fails; do not poll or
+retry it. UI-only rehosting/resizing revokes
 old handles but allows explicit fresh acquisition. Unrelated pages remain
 independent. Old handles stay revoked after later acquisition or handoff.
 Task-wide cookies/HTTP require control of all populated task

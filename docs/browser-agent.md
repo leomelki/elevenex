@@ -146,11 +146,16 @@ network. Site content is untrusted data, not agent instructions.
 Agents can list tab identities and ownership. Explicit `browser.page(tabId)`
 (or legacy `browser.tabs.get(tabId)`) acquires an available task tab and its
 page handle in one call, including user-created tabs. Internal reads and transport
-reconnection never acquire control. A tab controlled by another conversation,
-a human workflow, or a user stop cannot be acquired. **Stop agent** and human
-page input revoke reads/writes and pause the linked opener/popup group until
-explicit **Hand back**. UI-only rehosting/resizing revokes old handles without
-creating a user stop. Handles capture the ownership epoch and remain revoked
+reconnection never acquire control. A tab controlled by another conversation or
+explicitly blocked by the user cannot be acquired. Ordinary human
+page input revokes current reads/writes across the linked opener/popup group but
+allows fresh acquisition immediately; no user handoff is needed. **Block agent**
+(formerly Stop agent) pauses group access until explicit **Allow agent**.
+Reacquisition cancels pending human help tickets
+without completing them or sharing unconfirmed selections. Native site dialogs
+and authentication still require normal resolution. UI-only rehosting/resizing
+also revokes old handles without creating a block. Handles capture the ownership
+epoch and remain revoked
 even after later acquisition/handoff; explicitly acquire a fresh handle.
 User-created tabs require user
 closure. New API access is not exposed through `window.elevenex`; the renderer's

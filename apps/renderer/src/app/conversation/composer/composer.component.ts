@@ -3,10 +3,12 @@ import { elementMarker, elementMarkersIn, MAX_BROWSER_ELEMENTS } from "@elevenex
 import { SESSION_DRAG_TYPE, readSessionDrag } from '../../tasks';
 import {
   ChangeDetectionStrategy,
+  afterNextRender,
   Component,
   computed,
   DestroyRef,
   inject,
+  Injector,
   input,
   model,
   output,
@@ -44,6 +46,7 @@ import { PermissionPickerComponent } from "./permission-picker.component";
 import { AttachmentsComponent } from "../chat/attachments.component";
 import { ElementChipComponent } from "../element/element-chip.component";
 import { elementPlace } from "../element/element-geometry";
+import { displayElementMentions, elementMentionNames, elementMentionParts, encodeElementMentions } from "../element/element-mention-text";
 import { ToolsMenuComponent } from "./tools-menu.component";
 @Component({
   selector: "ex-composer",
@@ -78,6 +81,7 @@ import { ToolsMenuComponent } from "./tools-menu.component";
 })
 export class ComposerComponent implements OnChanges {
   private readonly destroy = inject(DestroyRef);
+  private readonly injector = inject(Injector);
   private readonly sendAnimations = new Set<Animation>();
   readonly wordsLeaving = signal(false);
   readonly sendButton = viewChild<unknown, ElementRef<HTMLButtonElement>>("sendButton", { read: ElementRef });
@@ -161,7 +165,7 @@ export class ComposerComponent implements OnChanges {
   );
   readonly otherFiles = computed(() => this.attachments().filter((file) => !file.element));
   readonly referencedMarkers = computed(() => new Set(elementMarkersIn(this.draft())));
-  /** The pin whose chip has pointer or focus; its markers light up in the prose. */
+  /** The element whose chip has pointer or focus; its names light up in the prose. */
   readonly hotMarker = signal<number | null>(null);
   readonly allMentionItems = computed<readonly ConversationMention[]>(() => [
     ...this.elementFiles().map((file) => ({
@@ -173,41 +177,32 @@ export class ComposerComponent implements OnChanges {
     })),
     ...this.mentionItems(),
   ]);
-  /**
-   * Paints a soft mark behind each pin character, positioned exactly by
-   * mirroring the textarea's text. Only rendered while the draft holds a pin.
-   */
+  readonly elementNames = computed(() => elementMentionNames(this.elementFiles()));
+  readonly displayDraft = computed(() => displayElementMentions(this.draft(), this.elementNames()));
+  /** Mirror the native textarea so named mentions receive a quiet highlight. */
   readonly markerHighlights = computed(() => {
-    const draft = this.draft();
-    if (!this.elementFiles().length || !elementMarkersIn(draft).length) return null;
-    const known = new Set(this.elementFiles().map((file) => file.marker));
-    const parts: { text: string; marker?: number; known?: boolean }[] = [];
-    let run = "";
-    for (const char of draft) {
-      const marker = elementMarkersIn(char)[0];
-      if (!marker) {
-        run += char;
-        continue;
-      }
-      if (run) parts.push({ text: run });
-      run = "";
-      parts.push({ text: char, marker, known: known.has(marker) });
-    }
-    // A trailing newline needs content after it to occupy a line, like the textarea.
-    parts.push({ text: run + "\u200b" });
-    return parts;
+    if (!this.referencedMarkers().size) return null;
+    return [...elementMentionParts(this.displayDraft(), this.elementNames()), { text: "\u200b" }];
   });
   readonly highlightScroll = signal(0);
-  /** Inserts a pin at the caret, spaced from neighbouring words. */
+  /** Inserts a named element reference at the native caret, spaced from neighbouring words. */
   insertElement(marker: number): void {
     const glyph = elementMarker(marker);
     if (!glyph || this.disabled() || this.sending()) return;
+    // A browser pick stages the parent's attachment before Angular passes the
+    // new input here. Wait for its label before calculating the native caret.
+    if (!this.elementNames().has(marker)) {
+      afterNextRender(() => {
+        if (this.elementNames().has(marker)) this.insertElement(marker);
+      }, { injector: this.injector });
+      return;
+    }
     const element = this.textarea()?.nativeElement;
-    const draft = this.draft();
+    const draft = this.displayDraft();
     const start = element?.selectionStart ?? draft.length;
     const end = element?.selectionEnd ?? draft.length;
-    this.replaceRange(start, end, glyph);
-    this.dropAnnouncement.set(`Pin ${marker} added to your message.`);
+    this.replaceRange(start, end, this.elementNames().get(marker) ?? glyph);
+    this.dropAnnouncement.set(`${this.elementNames().get(marker) ?? "Element"} added to your message.`);
   }
   /** Removing a chip also removes its pins, so no marker is left pointing at nothing. */
   removeElement(file: ConversationAttachment): void {
@@ -217,7 +212,7 @@ export class ComposerComponent implements OnChanges {
       const draft = this.draft().replace(new RegExp(`( ?)${glyph}( ?)`, "g"), (_, lead: string, trail: string) => (lead && trail ? " " : ""));
       this.draft.set(draft);
       const element = this.textarea()?.nativeElement;
-      if (element) element.value = draft;
+      if (element) element.value = this.displayDraft();
     }
     this.hotMarker.set(null);
     this.attachmentRemoved.emit(file.id);
@@ -234,7 +229,7 @@ export class ComposerComponent implements OnChanges {
   /** The @ menu command consumes its query, then starts a pick. */
   pickFromMentions(): void {
     const element = this.textarea()?.nativeElement;
-    const before = this.draft().slice(0, element?.selectionStart ?? 0);
+    const before = this.displayDraft().slice(0, element?.selectionStart ?? 0);
     const query = /(?:^|\s)@[^\s@]*$/.exec(before);
     if (element && query) {
       const start = before.lastIndexOf("@");
@@ -244,14 +239,14 @@ export class ComposerComponent implements OnChanges {
     this.requestElementPick();
   }
   private replaceRange(start: number, end: number, token: string, spaced = true): void {
-    const draft = this.draft();
+    const draft = this.displayDraft();
     const before = draft.slice(0, start);
     const after = draft.slice(end);
     const lead = spaced && before && !/\s$/.test(before) ? " " : "";
     const trail = spaced && !/^\s/.test(after) ? " " : "";
     const inserted = before + lead + token + trail;
     const next = inserted + after;
-    this.draft.set(next);
+    this.draft.set(encodeElementMentions(next, this.elementNames()));
     const element = this.textarea()?.nativeElement;
     if (element) {
       // Set the value before the selection: a later binding would move the caret.
@@ -302,10 +297,10 @@ export class ComposerComponent implements OnChanges {
   update(event: Event): void {
     if (!(event.target instanceof HTMLTextAreaElement)) return;
     this.wordsLeaving.set(false);
-    this.draft.set(event.target.value);
+    this.draft.set(encodeElementMentions(event.target.value, this.elementNames()));
     const before = event.target.value.slice(0, event.target.selectionStart);
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    this.mentionQuery.set(this.mentionsEnabled() ? (match?.[1] ?? null) : null);
+    this.mentionQuery.set(this.mentionsEnabled() && !match?.[1]?.startsWith('“') ? (match?.[1] ?? null) : null);
   }
   send(steer = false): void {
     const text = this.draft().trim();
@@ -360,10 +355,10 @@ export class ComposerComponent implements OnChanges {
     if (!this.mentionsEnabled() || this.disabled() || this.sending()) return;
     if (mention.kind === 'element') {
       const element = this.textarea()?.nativeElement;
-      const before = this.draft().slice(0, element?.selectionStart ?? 0);
+      const before = this.displayDraft().slice(0, element?.selectionStart ?? 0);
       const query = /(?:^|\s)@[^\s@]*$/.exec(before);
-      const start = query ? before.lastIndexOf('@') : (element?.selectionStart ?? this.draft().length);
-      this.replaceRange(start, element?.selectionEnd ?? this.draft().length, elementMarker(mention.marker ?? 0));
+      const start = query ? before.lastIndexOf('@') : (element?.selectionStart ?? this.displayDraft().length);
+      this.replaceRange(start, element?.selectionEnd ?? this.displayDraft().length, this.elementNames().get(mention.marker ?? 0) ?? "");
       this.mentionQuery.set(null);
       return;
     }
@@ -373,8 +368,8 @@ export class ComposerComponent implements OnChanges {
     }
     const element = this.textarea()?.nativeElement;
     if (element) {
-      const before = this.draft().slice(0, element.selectionStart);
-      const after = this.draft().slice(element.selectionEnd);
+      const before = this.displayDraft().slice(0, element.selectionStart);
+      const after = this.displayDraft().slice(element.selectionEnd);
       const query = /(?:^|\s)@[^\s@]*$/.exec(before);
       // Session context lives only in its controlled chip. A picker consumes its
       // active query; a drop never rewrites the draft or the selected text.
@@ -384,7 +379,7 @@ export class ComposerComponent implements OnChanges {
           : before + (before && !/\s$/.test(before) ? " " : "");
         const inserted = mention.kind === 'session' ? prefix : `${prefix}@${mention.label} `;
         const draft = inserted + after;
-        this.draft.set(draft);
+        this.draft.set(encodeElementMentions(draft, this.elementNames()));
         // Set the value before the selection: a later binding would move the caret.
         element.value = draft;
         element.setSelectionRange(inserted.length, inserted.length);

@@ -55,7 +55,7 @@
       <span class="drop-announcement" role="status">{{ dropAnnouncement() }}</span>
       <div class="field">
       @if (markerHighlights(); as parts) {
-        <div class="marker-layer" aria-hidden="true"><div class="marker-text" [style.transform]="'translateY(' + -highlightScroll() + 'px)'">@for (part of parts; track $index) {@if (part.marker) {<mark [class.hot]="hotMarker() === part.marker" [class.orphan]="!part.known">{{ part.text }}</mark>} @else {<ng-container>{{ part.text }}</ng-container>}}</div></div>
+        <div class="marker-layer" aria-hidden="true"><div class="marker-text" [style.transform]="'translateY(' + -highlightScroll() + 'px)'">@for (part of parts; track $index) {@if (part.marker) {<mark [class.hot]="hotMarker() === part.marker">{{ part.text }}</mark>} @else {<ng-container>{{ part.text }}</ng-container>}}</div></div>
       }
       <textarea
         #textarea
@@ -68,7 +68,7 @@
         rows="2"
         [disabled]="disabled()"
         [placeholder]="waitingFor() ? 'Write now, it sends when ' + waitingFor() + ' is back…' : placeholder()"
-        [value]="draft()"
+        [value]="displayDraft()"
         (input)="update($event)"
         (keydown)="onKey($event)"
         (scroll)="highlightScroll.set(textarea.scrollTop)"

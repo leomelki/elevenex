@@ -17,7 +17,7 @@
     <button #driverControl type="button" class="driver" [attr.aria-label]="driverLabel()" (click)="focusPage()" [disabled]="loading() || !pageFocusAvailable()" [hidden]="!current()" [attr.data-driver]="driver()">
       @if (driver() === 'agent') { <span class="agent-mark" aria-hidden="true">Ag</span> }
       @else { <ex-icon [name]="driver() === 'needs' ? 'hand' : 'cursor'" [size]="12" /> }
-      <ex-ease-swap [value]="driver() === 'agent' ? 'Driving' : driver() === 'needs' ? 'Your turn' : 'You'" />
+      <ex-ease-swap [value]="driver() === 'agent' ? 'Working' : driver() === 'needs' ? 'Action needed' : 'Browser'" />
     </button>
     <div class="tools">
       @if (pickerAvailable()) { <ex-icon-button #pickToggle icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="pointAndAsk()" [disabled]="!current() || controlsDisabled()" (pressed)="togglePointAndAsk()" /> }
@@ -32,7 +32,7 @@
       <button exButton variant="primary" size="sm" (click)="handBack()">I’m done</button>
     </div>
   </ex-fold>
-  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()" (pointerdown)="takeOver()" (keydown)="previewKeydown($event)">
+  <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()">
     <div #page class="page" [class.clipped]="clipPreview()" [class.pointing]="pointing()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
       @if (pointing() && hoverTarget(); as hover) {
@@ -49,7 +49,11 @@
       @if (driver() === 'agent' && (cursor() || action()) && !picked() && !pointing()) {
         <span class="agent-cursor" [style.transform]="cursorTransform()" animate.enter="cursor-enter" animate.leave="cursor-leave" aria-hidden="true">
           @for (pulse of cursorPulses(); track pulse) { <span class="cursor-pulse"></span> }
-          <svg width="20" height="20" viewBox="0 0 16 16" fill="var(--surface-raised)" stroke="var(--ink)" stroke-width="1.2" stroke-linejoin="round"><path d="M3.5 2l9 5.2-4 1.1 2.4 4.3-1.7 1-2.4-4.3-3.3 2.7z" /></svg>
+          <svg class="cursor-glyph" width="32" height="32" viewBox="-2 -2 32 32" stroke-linejoin="round" focusable="false">
+            <path class="cursor-arrow" d="M0 0l6.5 23 4-9 8.5-3z" />
+            <path class="cursor-facet" d="M0 0l10.5 14 8.5-3z" />
+            <path class="cursor-spark" d="M23 0l1.4 3.6L28 5l-3.6 1.4L23 10l-1.4-3.6L18 5l3.6-1.4z" />
+          </svg>
         </span>
       }
       @if (pickMode() === 'ask' && current() && picked(); as picked) {
@@ -70,7 +74,7 @@
         </form>
       }
     </div>
-    @if (current() && driver() === 'agent' && !pointing()) { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">Click anywhere to take over</span></span> }
+    @if (current() && driver() === 'agent' && !pointing()) { <span class="driving-frame" aria-hidden="true"><span class="takeover-hint">You can interact anytime</span></span> }
     @if (pointing()) {
       <span class="pointing-frame" animate.enter="frame-enter" animate.leave="frame-leave" aria-hidden="true"></span>
       <span class="pointing-hint" role="status" [attr.aria-busy]="pickingBusy() || !pickerReady()" animate.enter="hint-enter" animate.leave="hint-leave"><ex-icon name="target" [size]="14" /><span>{{ pickingBusy() ? 'Adding element to your message…' : !pickerReady() ? 'Preparing point mode…' : pickMode() === 'pin' ? 'Click an element to point at it in your message' : 'Click an element to ask about it' }}</span><ex-kbd>Esc</ex-kbd></span>
@@ -80,13 +84,13 @@
   <ex-fold [open]="!!current() && (driver() === 'agent' || (driver() === 'you' && agentWaiting()))">
       <div class="foot agent-step">
         <span class="agent-mark" [class.waiting]="driver() !== 'agent'" [class.failed]="driver() === 'agent' && stepStatus() === 'failed'" aria-hidden="true">@if (driver() === 'agent') { @if (step()?.status) { <ex-status-glyph [status]="stepStatus()" /> } @else { Ag } } @else { <ex-icon name="cursor" [size]="14" /> }</span>
-        <span class="step-copy" role="status" aria-atomic="true" [attr.title]="driver() === 'agent' ? step()?.text : null">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } @else { Agent driving } } @else { You’re driving; the agent waits }</span>
+        <span class="step-copy" role="status" aria-atomic="true" [attr.title]="driver() === 'agent' ? step()?.text : null">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } @else { Agent working } } @else { Agent blocked }</span>
         <span class="step-progress">
           <span class="step-dots" aria-hidden="true">@if (driver() === 'agent') { @for (dot of stepDots(); track $index) { <i [class.done]="dot === 'done'" [class.now]="dot === 'now'"></i> } }</span>
           @if (driver() === 'agent' && step()?.status) { <span class="step-status" [class.failed]="stepStatus() === 'failed'">{{ stepStatusLabel() }}</span> }
         </span>
         <span class="workflow-actions">
-          <button exButton size="sm" variant="secondary" [attr.aria-label]="driver() === 'agent' ? 'Stop browser agent' : 'Hand back browser'" (click)="driver() === 'agent' ? takeOverFromBar() : handBack()">{{ driver() === 'agent' ? 'Stop agent' : 'Hand back' }}</button>
+          <button exButton size="sm" variant="secondary" [disabled]="controlsDisabled()" [attr.aria-label]="driver() === 'agent' ? 'Block browser agent' : 'Allow browser agent'" (click)="driver() === 'agent' ? takeOverFromBar() : handBack()">{{ driver() === 'agent' ? 'Block agent' : 'Allow agent' }}</button>
           @if (errors() > 0) { <button exButton size="sm" variant="secondary" class="workflow-errors" [attr.aria-label]="'Send ' + errors() + ' error counts to agent'" (click)="sendErrorsRequested.emit()"><ex-icon name="bug" [size]="14" />{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</button> }
         </span>
       </div>

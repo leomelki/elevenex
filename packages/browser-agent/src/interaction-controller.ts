@@ -30,7 +30,8 @@ export interface InteractionHost {
   version?: string;
 }
 /** One task owns requests and the selection lifecycle, independently of code
- * worker resets. Viewer confirmation is the only path that returns control. */
+ * worker resets. Only viewer confirmation completes a request; explicit agent
+ * reacquisition cancels it rather than implying the human completed it. */
 export class BrowserInteractionController {
   private readonly store: BrowserInteractions;
   private readonly picking = new Map<string, { id: string; busy: boolean }>();
@@ -57,6 +58,14 @@ export class BrowserInteractionController {
   }
   get(id: string, sessionId?: number): BrowserHumanRequest {
     return this.store.get(id, sessionId);
+  }
+  /** The host calls this only after authorizing fresh acquisition of the group. */
+  reclaim(tabIds: readonly string[]): void {
+    for (const request of this.store.pending()) {
+      if (!tabIds.includes(request.tabId)) continue;
+      this.stopPicker(request);
+      this.store.cancel(request.id);
+    }
   }
   async execute(
     sessionId: number,

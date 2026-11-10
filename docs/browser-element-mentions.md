@@ -1,7 +1,10 @@
 # Browser element pins and visual context
 
 Pointing at a page element in the task browser stages an image-backed reference
-in the selected chat and drops its numbered pin at the caret: “Align ❶ with ❷”.
+in the selected chat and inserts a named mention at the caret: “Align @“Save” with @“Checkout””.
+Sent messages show an inline thumbnail and label; pressing one opens its snapshot.
+The native editor projects readable names onto the existing stable marker protocol;
+the numeric markers described below belong to serialization, not the visible UI.
 Nothing is sent until the person reviews the message and sends it. The UI is
 specified in [ElementPin](design-system/project/components/ElementPin/README.md);
 this document covers capture, the wire contract and recovery.

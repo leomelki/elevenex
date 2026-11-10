@@ -79,6 +79,27 @@ test('a human pick cannot finish after its original viewport is resized or hidde
   assert.equal(controller.pending[0].selection, undefined); controller.dispose();
 });
 
+test('fresh acquisition cancels pending help and its picker without completing unrelated requests', async () => {
+  const { BrowserInteractionController } = require('../../../packages/browser-agent/dist');
+  let picker = null, paused = false;
+  const tab = { documentId: 'document-1', ownership: 1, assertAgent() {}, takeOver() {}, handBack() { assert.fail('Cancellation must not imply human completion'); }, select() {},
+    picker(callback) { picker = callback; }, pause(value) { paused = value; }, target() { assert.fail('Acquisition must not inspect an unconfirmed selection'); } };
+  const controller = new BrowserInteractionController({ tab: () => tab, authorize: async () => {}, changed() {} });
+  try {
+    const selected = await controller.execute(2, { kind: 'request', tabId: 'tab-1', requestKind: 'element', message: 'Choose Save' });
+    const unrelated = await controller.execute(2, { kind: 'request', tabId: 'tab-2', requestKind: 'action', message: 'Other manual step' });
+    await controller.viewer('agent-request-pick', selected.id);
+    assert.equal(typeof picker, 'function');
+    controller.reclaim(['tab-1']);
+    assert.equal(controller.get(selected.id).status, 'cancelled');
+    assert.equal(controller.get(selected.id).selection, undefined);
+    assert.equal(picker, null);
+    assert.equal(paused, false);
+    assert.equal(controller.get(unrelated.id).status, 'pending');
+    await assert.rejects(controller.viewer('agent-request-complete', selected.id), /already resolved/);
+  } finally { controller.dispose(); }
+});
+
 test('remote ticket snapshots cannot substitute pixels from another tab', () => {
   const { browserHumanRequests } = require('../../../packages/browser-agent/dist');
   const selection = { selector: reference.selector, frames: [], tag: reference.tag, ...reference.target, documentId: reference.documentId, snapshot: { reference: { ...reference, tabId: 'other-tab' }, jpeg: '/9j/' } };

@@ -25,10 +25,13 @@ projected directly after New; other projected actions stay right-aligned.
 
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation
-or browser capability is an intent output. `driver` remains controlled: preview
-pointer/keyboard input emits `takeOverRequested` immediately while the agent
-drives, and the owner must stop that agent before accepting user input. The UI
-does not promise secret-field masking; the browser integration must enforce it.
+or browser capability is an intent output. `driver` remains controlled and
+reports current activity rather than a user/agent mode. `takeOverRequested`
+means the explicit **Block agent** action; `handBackRequested` means **Allow
+agent** (or completion of a human workflow). `agentWaiting` shows an explicit
+block. Page input and page focus never emit the block intent: the platform adapter
+interrupts current automation at its input boundary and permits fresh acquisition.
+The UI does not promise secret-field masking.
 `asked` carries the selected target, text and active tab identity. Screenshot
 capture and source resolution remain platform capabilities. The production
 [task browser adapter](../task-browser/README.md) owns the real isolated Electron
@@ -73,11 +76,13 @@ the production browser owner must supply its own page coordinates.
 monotonic `pulse` identity. The same cursor element glides between updates on
 `dur-slow`/`ease-glide`; a new pulse triggers one finite ripple. Without this
 input the existing `action` target supplies the compatible cursor position.
+The agent pointer uses a faceted accent arrow and sparkle with a contrasting
+surface outline. Its tip and click ripple align with the supplied page coordinate.
 All decoration is inert, ignores pointer input, and fades out on takeover or
 point mode. Reduced motion applies positions immediately and disables ripples.
 `step.status` optionally supplies running, waiting, done or error; the shared
 status glyph, caption and bounded step dots reflect it without moving focus.
-The Stop/Hand back control keeps its DOM identity through those updates.
+The Block agent/Allow agent control keeps its DOM identity through those updates.
 The `/browser-agent` preview shows the controls, target/cursor and completion;
 `browser-agent-feedback.mjs` captures motion, interruption and both themes.
 

@@ -32,9 +32,6 @@
   </figure>
   <div class="details">
     <h2 class="title" [id]="headingId()">
-      @if (marker(); as marker) {
-        <ex-element-pin [marker]="marker" />
-      }
       @if (label().tag) {
         <span class="tag">{{ label().tag }}</span>
       }
@@ -99,10 +96,10 @@
           size="sm"
           variant="secondary"
           [disabled]="disabled()"
-          [attr.aria-label]="'Insert pin ' + marker + ' at the cursor'"
+          [attr.aria-label]="'Mention ' + label().name + ' at the cursor'"
           (click)="mention.emit()"
         >
-          Insert <ex-element-pin [marker]="marker" />
+          <ex-icon name="at" [size]="14" />Mention in message
         </button>
       }
       @if (pickAvailable()) {

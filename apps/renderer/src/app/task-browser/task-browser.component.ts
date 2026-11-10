@@ -172,11 +172,6 @@ export class TaskBrowserComponent {
     }
   }
   shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else if (!this.detachedWindow()) this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
-  handToSelected(): void {
-    const sessionId = this.sessionId(), tabId = this.current()?.id;
-    if (sessionId && tabId) this.command({ kind: 'handoff', tabId, sessionId });
-    this.dialogOpen.set(false);
-  }
   showDialog(kind: 'tools'): void {
     this.dialog.set(kind); this.dialogOpen.set(true);
   }

@@ -19,7 +19,7 @@ test('tab input requires an agent lease; takeover invalidates every previously q
   const lease = new BrowserDriverLease('you');
   assert.throws(() => lease.assert(1));
   lease.handBack(2); const generation = lease.generation; lease.assert(generation);
-  lease.takeOver(); assert.equal(lease.waiting, true); assert.throws(() => lease.assert(generation));
+  lease.takeOver(); assert.equal(lease.waiting, false); assert.equal(lease.agentPaused, false); assert.throws(() => lease.assert(generation));
   lease.handBack(2); assert.throws(() => lease.assert(generation)); lease.assert(lease.generation, 2); assert.throws(() => lease.assert(lease.generation, 3));
   lease.takeOver(true); assert.equal(lease.driver, 'needs'); assert.throws(() => lease.assert(lease.generation));
 });
@@ -37,7 +37,18 @@ test('user Stop survives presentation revocation until explicit handoff', () => 
   lease.handBack(2);
   assert.equal(lease.agentPaused, false);
   lease.takeOver(true);
-  assert.equal(lease.agentPaused, true, 'Human workflows cannot be reclaimed');
+  assert.equal(lease.agentPaused, false, 'A human request is not an explicit user block');
+});
+test('an explicit block also protects an idle tab and survives ordinary input', () => {
+  const lease = new BrowserDriverLease('you');
+  lease.stopAgent();
+  lease.takeOver();
+  assert.equal(lease.agentPaused, true);
+  assert.equal(lease.waiting, true);
+  lease.handBack(2);
+  lease.takeOver();
+  assert.equal(lease.agentPaused, false);
+  assert.equal(lease.waiting, false);
 });
 test('navigation and tools reject privileged protocols, credentials, unknown fields and invalid coordinates', () => {
   for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'app://elevenex', 'https://user:pass@example.com', 'https://example.com/\nsecret']) assert.throws(() => browserUrl(url));

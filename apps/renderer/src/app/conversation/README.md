@@ -402,10 +402,37 @@ is open. Save/Cancel releases the hold; navigation cancels the local edit while
 preserving the original queued request. `ComposerQueue.editingChanged` supplies
 the same lifecycle for direct consumers.
 
-## Browser element pins
+## Browser element mentions
 
-The `element/` folder holds the [ElementPin](../../../../../docs/design-system/project/components/ElementPin/README.md) family, exported by this barrel. `ElementPin` is the numbered mark. `ElementChip` is the compact staged or sent reference: it frames its thumbnail on the target and opens `ElementPreview` in an anchored, focus-trapped popover. `ElementProse` draws prose markers as pins in sent messages. Supply `ConversationAttachment.element` with its `marker`.
+The `element/` family renders browser selections as **named mentions**. Supply
+`ConversationAttachment.element` and its stable `marker`. `ElementChip` shows a
+target-framed thumbnail and readable name, with no numbered badge or DOM tag.
+Its `inline` input fits sent prose. Pressing it opens the existing focus-trapped
+snapshot popover; Escape restores focus. Technical metadata remains in the
+snapshot. `ElementProse` replaces durable markers with these interactive inline
+chips and accepts the same confined `resolve` as attachments.
 
-Snapshot previews keep the pin beside the title and use a thin, translucent dashed outline outside the target so its contents and original border remain visible. Chip thumbnails use the same external outline. These are presentation layers; the uploaded crop and native image delivered to the agent contain no markers.
+`Attachments.mentionedText` omits elements already mentioned inline; elements
+without a prose reference and ordinary files stay in the attachment row. Pass the
+sent prompt so each snapshot appears once. Standalone attachment lists retain
+all cards when that input is omitted.
 
-Composer shows element attachments as chips in its context row, not as file tiles. It keeps a mirrored highlight layer behind the textarea's markers, rings a chip's markers while the chip has pointer or focus, and removes a chip's markers when the chip is removed. `insertElement(marker)` places a pin at the caret. `elementPickAvailable` adds the ⌖ bar button and the `@` menu's “Point at an element in the browser” command, both emitting `elementPickRequested`. `elementRepick` forwards a chip's Pick again. Element mentions insert their marker and never emit `mentionInserted`. `MentionMenu.actionLabel`/`action` supply the trailing command. Attachments renders sent element chips in pin order before other files. Children do not capture, upload or grant browser authority. See the [wire/lifetime contract](../../../../../docs/browser-element-mentions.md). The `/element-mentions` preview stages actual host snapshots.
+Composer retains a native textarea, selection, IME, copy/paste and undo. Its
+visible text uses named references such as `@“Save changes”`; a mirrored layer
+highlights the whole name without changing text metrics. Equal labels receive a
+small qualifier. Full known names encode to the existing single-character markers
+in `draft` and submissions. Queue previews and editors use the same names while
+preserving the serialized context when saved. Editing part of a name makes it ordinary text; the
+snapshot stays attached and can be mentioned again through `@` or its popover's
+**Mention in message** action. Removing a card removes its active prose references.
+Browser staging waits for the attachment input before placing the named reference
+and caret. `ElementPin` remains exported for existing consumers, but the current
+composer, menus, sent messages and snapshot titles do not display numbers.
+
+`elementPickAvailable` adds the target button and the `@` menu's “Point at an
+element in the browser” command; both emit `elementPickRequested`.
+`insertElement(marker)` inserts a named reference; `elementRepick` forwards Pick
+again. Element mentions never emit `mentionInserted`. Capture, upload and browser
+authority remain with the owner. Snapshot outlines stay outside target borders;
+uploaded pixels and the [wire/lifetime contract](../../../../../docs/browser-element-mentions.md)
+remain unchanged. The `/element-mentions` preview stages actual host snapshots.

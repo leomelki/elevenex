@@ -34,8 +34,11 @@ artifacts and human interaction. It does not implement another selector engine.
    group because same-origin JavaScript can follow window references independently
    of CDP. Taking over any member synchronously revokes every member. Explicit
    handoff covers the group; unrelated pages remain independent. Explicit
-   browser.page acquisition can claim available task tabs. Stop agent and human
-   input pause the group until Hand back; reset/reconnect cannot clear the pause.
+   browser.page acquisition can claim available task tabs. Human input interrupts
+   current work but allows fresh acquisition without a handoff. Only explicit
+   Block agent pauses the group; reset/reconnect cannot clear that pause. Allow
+   agent resumes access. Reacquisition cancels pending human help tickets without
+   marking them complete; native site requests/authentication still need resolution.
    Internal transport reads never acquire control. Cancellation closes the private agent
    connection, releases input and routing, and never replays code.
 
@@ -90,7 +93,9 @@ budget reference.
 
 `human.requestAction(page, { message })` and
 `human.requestElement(page, { message })` create task-owned tickets and return
-immediately. They transfer the requested tab to the human. The script does not
+immediately. They offer the requested tab to the human without locking the agent
+out: fresh acquisition cancels the ticket and active selection without marking
+the request complete. The script does not
 remain blocked on a short execution deadline. The agent can finish its turn and
 later inspect `human.result(id)` or cancel with `human.cancel(id)`.
 `browser_wait_user` waits for completion/cancellation/expiry without a running

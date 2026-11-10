@@ -5,6 +5,7 @@
     [class.uploading]="uploading()"
     [class.editing]="editing()"
     [class.open]="open()"
+    [class.unreferenced]="editing() && !mentioned()"
     cdkOverlayOrigin
     #origin="cdkOverlayOrigin"
   >
@@ -14,6 +15,7 @@
       aria-haspopup="dialog"
       [attr.aria-expanded]="open()"
       [attr.aria-label]="name()"
+      [title]="element.label + ' · Show snapshot'"
       [attr.aria-busy]="uploading()"
       [disabled]="disabled()"
       (click)="toggle()"
@@ -49,17 +51,7 @@
           <span class="progress" [style.--progress]="(file().progress ?? 0) / 100"></span>
         }
       </span>
-      @if (file().marker; as marker) {
-        <ex-element-pin
-          [marker]="marker"
-          [hollow]="editing() && !mentioned()"
-          [tone]="failed() ? 'danger' : 'accent'"
-        />
-      }
       <span class="label">
-        @if (label().tag) {
-          <span class="tag">{{ label().tag }}</span>
-        }
         <span class="name">{{ label().name }}</span>
       </span>
     </button>

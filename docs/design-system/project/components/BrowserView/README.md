@@ -1,6 +1,6 @@
 # BrowserView
 
-The Browser side view: a real browser that belongs to the task, shared by the agent and you. It has several tabs; the agent opens and drives some, you use others. Each tab has **one driver at a time**: the agent or you, never both, and the driver is always shown.
+The Browser side view: a real browser that belongs to the task, shared by the agent and you. It has several tabs; the agent opens and drives some, you use others. The activity indicator shows when the agent is working; ordinary interaction needs no human/agent mode switch.
 
 **Provide:**
 - `tabs`: `[{ id, title, url, server, by, color }]`. `by` is `'agent'` for tabs the agent opened; they carry its mark. `server` names the task's dev server serving the tab (web, api, storybook) and shows as a chip in the address bar.
@@ -11,7 +11,7 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - `cursor`: optional `{ x, y, pulse }`, an independent viewport-CSS cursor. A new
   pulse identity produces one ripple; movement retargets the current glide.
 - `action`: `{ x, y, w, h, label }`, the element it acts on, in page coordinates.
-- `agentWaiting`: you took over in the middle of the agent's work.
+- `agentWaiting`: the user explicitly blocked the agent.
 - `picking`, `onPick(on)`, `hovered` and `picked` (`{ x, y, w, h, label, file }`), `onAsk(text)`, `askLabel`, `askNote`.
 - `errors`, `errorText`, `onSendErrors`.
 - `width` (`'full'` | `'phone'`), `onWidth`.
@@ -19,13 +19,15 @@ The Browser side view: a real browser that belongs to the task, shared by the ag
 - Children: the page itself (in the app, the webview).
 
 **While the agent drives**
-- Its tab's mark breathes. The pill in the address bar says **Driving**, and the view gets a thin accent frame with "Click anywhere to take over".
+- Its tab's mark breathes. The pill in the address bar says **Working**, and the view gets a thin accent frame with "You can interact anytime".
 - A ring and a label show the element it's acting on ("Typing a test card"), and its cursor **glides** to each new target (`dur-slow`, `ease-in-out`), with a soft pulse where it clicks. It never jumps.
-- The bar under the page says what it's doing: **Step 5 of 9 · Filling the card with a test number**, with bounded step dots and current status. The text crossfades from step to step. **Stop agent** is always available, including without step metadata, and becomes **Hand back** when stopped.
-- **Your click or keystroke in the page takes over at once.** The agent stops and waits, and the bar says "You're driving; the agent waits" with **Hand back**.
+  The agent pointer is a teal faceted arrow with a small sparkle and a contrasting
+  surface outline. The arrow tip and click pulse share the exact page coordinate.
+- The bar under the page says what it's doing: **Step 5 of 9 · Filling the card with a test number**, with bounded step dots and current status. The text crossfades from step to step. **Block agent** is always available, including without step metadata, and becomes **Allow agent** when blocked.
+- **Your click or keystroke interrupts current work at once.** The agent can acquire a fresh page immediately without asking for a handoff. Only **Block agent** persistently stops access; the bar then says "Agent blocked" with **Allow agent**.
 
 **When it needs you** (a sign-in, a 2FA code, a payment form):
-- The agent stops and the pill says **Your turn**.
+- The agent stops and the pill says **Action needed**.
 - A banner opens above the page ("The agent needs you to sign in"), with **I'm done**.
 - Password, card and code fields are masked in everything the agent reads. It never sees what you type there.
 - A passkey or security-key request opens `PasskeyAsk`, a sheet over the window (never inside the page), which asks, waits for the key and explains a failure.
@@ -56,7 +58,7 @@ filesystem access, and unavailable metadata must not block asking. See the
 **Motion:** tabs grow in and close away (never pop). The pill's label crossfades as its width eases (`EaseSwap`), and the banner and the bars open and close with `Fold`. Point and ask: the frame fades in, the pill drops 8px on the glide spring, the card grows from the picked element (from 0.96 and 4px towards it, `dur-base` `ease-out`; it never bounces) and leaves quicker on `ease-in`; a growing draft keeps the card's edge by the element still. Under reduced motion, everything applies at once.
 
 - Do keep everything in the task: tabs open in its workspace's servers and come back when you reopen the task.
-- Do let the agent open tabs freely (docs, the app). It drives only the ones it opened, unless you hand one over.
-- Don't let the agent type in a tab you're using, or into a password, card or code field.
+- Do let the agent open tabs freely (docs, the app) and acquire available task tabs without a handoff.
+- Do preserve explicit agent blocks until the person allows access. Agent reacquisition cancels pending help tickets without claiming completion; native site dialogs and authentication retain their normal resolution.
 
 The desktop task browser uses `pickMode = "pin"` (Angular): the pointing pill reads "Click an element to point at it in your message", the picked ring locks in, and no question card grows; the owner stages the element in the chat as an [ElementPin](../ElementPin/README.md). The default `ask` mode keeps the card below.

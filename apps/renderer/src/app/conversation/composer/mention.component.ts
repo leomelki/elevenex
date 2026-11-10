@@ -5,15 +5,12 @@ import {
   output,
 } from "@angular/core";
 import { IconComponent, StatusGlyphComponent } from "../../ui";
-import { ElementPinComponent } from "../element/element-pin.component";
 import type { ConversationMention } from "../conversation.models";
 @Component({
   selector: "ex-mention",
-  imports: [IconComponent, StatusGlyphComponent, ElementPinComponent],
+  imports: [IconComponent, StatusGlyphComponent],
   template: `<span class="mention" [attr.data-kind]="mention().kind">
-    @if (mention().kind === "element" && mention().marker) {
-      <ex-element-pin [marker]="mention().marker!" />
-    } @else if (mention().kind === "session" && mention().status) {
+    @if (mention().kind === "session" && mention().status) {
       <ex-status-glyph [status]="mention().status || 'done'" [size]="12" />
     } @else {
       <ex-icon

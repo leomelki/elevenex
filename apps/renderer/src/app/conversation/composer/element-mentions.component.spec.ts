@@ -5,6 +5,8 @@ import { ComposerQueueComponent } from './composer-queue.component';
 import { ComposerComponent } from './composer.component';
 import { MentionMenuComponent } from './mention-menu.component';
 import type { ConversationAttachment } from '../conversation.models';
+import { AttachmentsComponent } from '../chat/attachments.component';
+import { displayElementMentions, elementMentionNames, encodeElementMentions } from '../element/element-mention-text';
 import { ElementProseComponent } from '../element/element-prose.component';
 import { thumbnailFrame } from '../element/element-geometry';
 import { chatExchanges } from '../../session-chat/session-chat-transcript';
@@ -32,16 +34,17 @@ describe('element pins in the composer', () => {
     textarea.setSelectionRange(5, 5);
     composer.insertElement(1); fixture.detectChanges();
     expect(composer.draft()).toBe('Align ❶ with the heading');
-    expect(textarea.selectionStart).toBe('Align ❶ '.length);
+    expect(textarea.value).toBe('Align @“Save” with the heading');
+    expect(textarea.selectionStart).toBe('Align @“Save” '.length);
   });
-  it('renders staged elements as chips beside the prose, with unreferenced pins hollow', () => {
+  it('renders named chips and highlights readable mentions in the native textarea', () => {
     const { fixture, composer } = mount();
     composer.draft.set('Make ❶ wider'); fixture.detectChanges();
     const chips = [...fixture.nativeElement.querySelectorAll('.context ex-element-chip')] as HTMLElement[];
     expect(chips).toHaveLength(2);
     expect(fixture.nativeElement.querySelector('ex-attachments')).toBeNull();
-    expect(chips[0]!.querySelector('ex-element-pin')!.classList.contains('hollow')).toBe(false);
-    expect(chips[1]!.querySelector('ex-element-pin')!.classList.contains('hollow')).toBe(true);
+    expect(chips[0]!.textContent).toContain('Save');
+    expect(chips[0]!.querySelector('ex-element-pin')).toBeNull();
     expect(chips[1]!.querySelector('.face')!.getAttribute('aria-label')).toContain('not referenced');
     expect(fixture.nativeElement.querySelectorAll('.marker-text mark')).toHaveLength(1);
   });
@@ -97,25 +100,37 @@ describe('mention menu command', () => {
 });
 
 describe('element pins in history', () => {
-  it('draws pins inline in sent prose and leaves unmatched markers as written', () => {
+  it('draws inspectable names inline and leaves unmatched markers as written', () => {
     const fixture = TestBed.createComponent(ElementProseComponent);
     fixture.componentRef.setInput('text', 'Align ❶ with ❸');
     fixture.componentRef.setInput('attachments', [file]);
     fixture.detectChanges();
-    const pins = fixture.nativeElement.querySelectorAll('.pin');
-    expect(pins).toHaveLength(1);
-    expect(pins[0].getAttribute('aria-label')).toBe('pin 1, button · Save');
+    const mentions = fixture.nativeElement.querySelectorAll('ex-element-chip .face');
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0].getAttribute('aria-label')).toBe('button · Save. Show snapshot');
+    expect(mentions[0].textContent).toContain('Save');
+    expect(fixture.nativeElement.querySelector('ex-element-pin')).toBeNull();
     expect(fixture.nativeElement.textContent).toContain('❸');
+  });
+  it('omits duplicate cards for inline mentions and keeps unmentioned elements and ordinary files', () => {
+    const fixture = TestBed.createComponent(AttachmentsComponent);
+    fixture.componentRef.setInput('files', [file, other, { id: 'notes', name: 'notes.txt', path: '/notes.txt', kind: 'file', status: 'ready' }]);
+    fixture.componentRef.setInput('mentionedText', 'Make ❶ wider'); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('ex-element-chip')).toHaveLength(1);
+    expect(fixture.nativeElement.textContent).toContain('Checkout');
+    expect(fixture.nativeElement.textContent).toContain('notes.txt');
+    fixture.componentRef.setInput('mentionedText', ''); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('ex-element-chip')).toHaveLength(2);
   });
   it('keeps semantic context out of the queued prose editor and retains it when saving', () => {
     const fixture = TestBed.createComponent(ComposerQueueComponent), component = fixture.componentInstance;
     const text = 'Align ❶\n\n' + serializeBrowserElements([{ reference, marker: 1, attachment: 'element.jpg', imageIndex: 1 }]) + '\n\n[element.jpg](</stored/element.jpg>)';
     const saved = vi.fn(); component.edited.subscribe(saved);
     fixture.componentRef.setInput('items', [{ id: 'queued', text }]); fixture.detectChanges();
-    expect(component.preview(text)).toBe('Align ❶');
+    expect(component.preview(text)).toBe('Align @“Save”');
     component.beginEdit({ id: 'queued', text });
-    expect(component.editText()).toBe('Align ❶');
-    component.editText.set('Make ❶ wider'); component.save('queued');
+    expect(component.editText()).toBe('Align @“Save”');
+    component.editText.set('Make @“Save” wider'); component.save('queued');
     const edited = saved.mock.calls[0]?.[0].text as string;
     expect(edited).toContain('Make ❶ wider');
     expect(edited).toContain('[element.jpg](</stored/element.jpg>)');
@@ -138,5 +153,33 @@ describe('element thumbnails', () => {
       expect(image.width / element.image.width).toBeLessThanOrEqual(1.5);
       expect(target.width).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('named element draft projection', () => {
+  it('round trips repeated, multiline, quoted and equal labels without changing durable identity', () => {
+    const names = elementMentionNames([file, { ...other, element: { ...second, label: 'button · Save' } }]);
+    const wire = 'Align ❶ with ❷\nthen ❶ again';
+    const display = displayElementMentions(wire, names);
+    expect(display).toBe('Align @“Save” with @“Save · 2”\nthen @“Save” again');
+    expect(encodeElementMentions(display, names)).toBe(wire);
+    expect(encodeElementMentions('Make @“Sav” wider', names)).toBe('Make @“Sav” wider');
+  });
+  it('keeps native selection offsets correct when inserting after an existing named mention', () => {
+    const { fixture, composer, textarea } = mount();
+    composer.draft.set('Align ❶ with @'); fixture.detectChanges();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    composer.insertMention(composer.allMentionItems()[1]!); fixture.detectChanges();
+    expect(composer.draft()).toBe('Align ❶ with ❷ ');
+    expect(textarea.value).toBe('Align @“Save” with @“Checkout” ');
+    expect(textarea.selectionStart).toBe(textarea.value.length);
+  });
+  it('submits marker identities after native input while preserving copyable labels in the editor', () => {
+    const { fixture, composer, textarea } = mount();
+    textarea.value = 'Make @“Save” wider';
+    textarea.dispatchEvent(new Event('input')); fixture.detectChanges();
+    const sent = vi.fn(); composer.submitted.subscribe(sent);
+    composer.send();
+    expect(sent.mock.calls[0]?.[0].text).toBe('Make ❶ wider');
   });
 });

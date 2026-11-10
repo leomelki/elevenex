@@ -102,11 +102,13 @@ export default async function* (capture) {
     await finish(); await capture.motion.play();
 
     await capture.click('ex-browser-demo .shop-header b');
+    assert.equal(await capture.component('ex-browser-demo', component => component.driver()), 'agent', 'Page interaction does not block the agent');
+    await capture.click('ex-browser-demo [aria-label="Block browser agent"]');
     await settled();
     assert.equal(await capture.evaluate(() => !!document.querySelector('ex-browser-demo .agent-cursor, ex-browser-demo .driving-frame, ex-browser-demo .agent.driving')), false);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-browser-demo .errors').closest('ex-fold').hasAttribute('inert')), true);
     yield { name: `${theme}-you-drive`, selector: 'ex-browser-demo' };
-    await capture.click('ex-browser-demo [aria-label="Hand back browser"]');
+    await capture.click('ex-browser-demo [aria-label="Allow browser agent"]');
     await settled();
     assert.equal(await capture.evaluate(() => document.activeElement?.matches('ex-browser-demo .driver')), true, 'Hand back retains focus in browser controls');
     aligned(await geometry());

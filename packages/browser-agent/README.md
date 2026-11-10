@@ -26,8 +26,11 @@ and [design research](../../docs/browser-agent.md).
 - `broker.ts`, `target.ts` and `cdp-policy.ts` retain first-version code helpers.
 - `host.ts` defines privileged adapters; `transport.ts` validates wire payloads.
   Optional `acquire` is called only by explicit `browser.page`/`tabs.get` code,
-  before read-only `get`. Adapters reject user stops, human workflows and foreign
-  conversation owners. Transport attachment/reconnect never acquires authority.
+  before read-only `get`. Adapters reject explicit user blocks and foreign
+  conversation owners. Ordinary human input allows fresh acquisition, which
+  cancels pending help tickets without completing them. Native site requests and
+  authentication retain their normal resolution. Transport attachment/reconnect
+  never acquires authority.
 - `presentation.ts` validates bounded progress/cursor metadata and owns each
   page's latest feedback and one coalescing timer. `playwright-presentation.ts`
   resolves visible locator geometry without causing page input. Only explicit

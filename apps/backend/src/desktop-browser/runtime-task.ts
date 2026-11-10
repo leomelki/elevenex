@@ -44,6 +44,9 @@ export class RuntimeBrowserTask {
       throw new Error(
         'Resolve related-page site requests before returning control',
       );
+    const authentication = this.webAuthn.snapshot();
+    if (authentication && members.some(page => page.documentUrl && new URL(page.documentUrl).origin === authentication.origin))
+      throw new Error('Finish authentication before allowing agent access');
     this.controlUpdating = true;
     try {
       for (const page of members) page.handoff(sessionId);
@@ -59,9 +62,9 @@ export class RuntimeBrowserTask {
       if (!this.alive || this.tabs.get(tabId) !== tab)
         throw new Error('Tab control changed while acquiring it.');
       const members = this.relatedTabs.members(tabId).map(id => this.page(id));
-      if (members.some(page => page.agentPaused || page.driver === 'needs'))
-        throw new Error('Browser agent is stopped. Wait for the user to hand control back.');
-      if (members.some(page => page.driver === 'agent' && page.agentSessionId !== sessionId))
+      if (members.some(page => page.agentPaused))
+        throw new Error('Browser agent is stopped. The user explicitly blocked access; ask them to choose Allow agent.');
+      if (members.some(page => page.driver !== 'you' && page.agentSessionId !== null && page.agentSessionId !== sessionId))
         throw new Error('This tab is controlled by another conversation.');
       return members;
     };
@@ -69,6 +72,7 @@ export class RuntimeBrowserTask {
     await this.ensure(tab);
     const members = check();
     if (members.some(page => page.driver !== 'agent')) this.handBackGroup(tab, sessionId);
+    this.interactions.reclaim(members.map(page => page.id));
   }
   private readonly codeEngine = new BrowserAgentEngine({
     playwright: true,

@@ -225,8 +225,9 @@ describe('Side-view interactions', () => {
     expect(root.textContent).not.toContain('http://127.0.0.1:24766/');
   });
 
-  it('requests immediate takeover for page input only while the agent drives', () => {
+  it('does not turn page input or page focus into an explicit agent block', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
     fixture.componentRef.setInput('driver', 'agent');
     fixture.detectChanges();
     const takeover = vi.fn();
@@ -235,11 +236,13 @@ describe('Side-view interactions', () => {
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     expect(takeover).not.toHaveBeenCalled();
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-    expect(takeover).toHaveBeenCalledTimes(1);
+    preview.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    fixture.nativeElement.querySelector('.driver').click();
+    expect(takeover).not.toHaveBeenCalled();
     fixture.componentRef.setInput('driver', 'you');
     fixture.detectChanges();
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-    expect(takeover).toHaveBeenCalledTimes(1);
+    expect(takeover).not.toHaveBeenCalled();
   });
   it('always exposes Stop while an agent controls a tab, including without step metadata', async () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
@@ -250,7 +253,7 @@ describe('Side-view interactions', () => {
     fixture.componentInstance.handBackRequested.subscribe(resumed);
     fixture.detectChanges();
     await fixture.whenStable();
-    const stop = fixture.nativeElement.querySelector('[aria-label="Stop browser agent"]') as HTMLButtonElement;
+    const stop = fixture.nativeElement.querySelector('[aria-label="Block browser agent"]') as HTMLButtonElement;
     expect(stop.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
     stop.focus(); stop.click();
     expect(stopped).toHaveBeenCalledTimes(1);
@@ -258,7 +261,7 @@ describe('Side-view interactions', () => {
     fixture.componentRef.setInput('agentWaiting', true);
     fixture.detectChanges();
     await fixture.whenStable();
-    const handBack = fixture.nativeElement.querySelector('[aria-label="Hand back browser"]') as HTMLButtonElement;
+    const handBack = fixture.nativeElement.querySelector('[aria-label="Allow browser agent"]') as HTMLButtonElement;
     expect(document.activeElement).toBe(handBack);
     handBack.click();
     expect(resumed).toHaveBeenCalledTimes(1);
@@ -287,7 +290,7 @@ describe('Side-view interactions', () => {
     fixture.componentRef.setInput('driver', 'you'); fixture.componentRef.setInput('agentWaiting', true);
     fixture.detectChanges(); await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('.agent-cursor')).toBeNull();
-    expect(fixture.nativeElement.querySelector('.step-copy').textContent).toContain('You’re driving');
+    expect(fixture.nativeElement.querySelector('.step-copy').textContent).toContain('Agent blocked');
   });
 
   it('keeps a partly scrolled target in page viewport coordinates', () => {
@@ -464,7 +467,7 @@ describe('Side-view interactions', () => {
     fixture.detectChanges();
     expect(root.querySelector('.agent-cursor, .driving-frame, .agent.driving')).toBeNull();
     expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
-    expect(root.textContent).toContain('You’re driving; the agent waits');
+    expect(root.textContent).toContain('Agent blocked');
     expect(root.querySelector('.agent-step')).toBe(workflow);
     fixture.componentRef.setInput('step', { n: 1, total: Infinity, text: 'Invalid total' });
     fixture.detectChanges();

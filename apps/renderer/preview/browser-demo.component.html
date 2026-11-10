@@ -6,8 +6,8 @@
   <button exButton size="sm" variant="secondary" (click)="completeStep()">Complete step</button>
 </div>
 <div class="browser-demo">
-  <ex-browser-view [tabs]="tabs()" [active]="active()" [driver]="driver()" [step]="step()" [action]="action()" [cursor]="cursor()" [agentWaiting]="true" [width]="width()" [picking]="picking()" [hovered]="hovered()" [picked]="picked()" askNote="Sends a screenshot and the source line" [errors]="2" errorText="· POST /charges 504 after 8s" needsTitle="The agent needs you to sign in"
-    (selected)="active.set($event)" (closed)="closeTab($event)" (added)="addTab()" (takeOverRequested)="driver.set('you')" (handBackRequested)="selectDriver('agent')" (pickingChange)="setPicking($event)" (asked)="asked($event.text)" (sendErrorsRequested)="event.emit('Send browser errors to agent')" (widthChange)="width.set($event)" (reloadRequested)="event.emit('Reload page')" (moreRequested)="event.emit('Open browser tools')">
+  <ex-browser-view [tabs]="tabs()" [active]="active()" [driver]="driver()" [step]="step()" [action]="action()" [cursor]="cursor()" [agentWaiting]="blocked()" [width]="width()" [picking]="picking()" [hovered]="hovered()" [picked]="picked()" askNote="Sends a screenshot and the source line" [errors]="2" errorText="· POST /charges 504 after 8s" needsTitle="The agent needs you to sign in"
+    (selected)="active.set($event)" (closed)="closeTab($event)" (added)="addTab()" (takeOverRequested)="blockAgent()" (handBackRequested)="selectDriver('agent')" (pickingChange)="setPicking($event)" (asked)="asked($event.text)" (sendErrorsRequested)="event.emit('Send browser errors to agent')" (widthChange)="width.set($event)" (reloadRequested)="event.emit('Reload page')" (moreRequested)="event.emit('Open browser tools')">
     <div browserPreview #checkout class="checkout" [class.pointing]="picking() && !picked()">
       <header class="shop-header" data-pick="header.shop" data-source="ShopHeader.tsx:12"><span class="shop-mark"><ex-icon name="bag" [size]="16" /></span><b>A small shop</b><span>Cart · 1</span></header>
       <div class="checkout-body">

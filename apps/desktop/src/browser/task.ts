@@ -50,10 +50,11 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.assertScope();
     const page = this.page(tabId);
     const members = this.relatedTabs.members(tabId).map(id => this.page(id));
-    if (members.some(item => item.lease.agentPaused || item.lease.driver === 'needs'))
-      throw new Error('Browser agent is stopped. Wait for the user to hand control back.');
-    if (members.some(item => item.lease.driver === 'agent' && item.lease.agentSessionId !== sessionId))
+    if (members.some(item => item.lease.agentPaused))
+      throw new Error('Browser agent is stopped. The user explicitly blocked access; ask them to choose Allow agent.');
+    if (members.some(item => item.lease.driver !== 'you' && item.lease.agentSessionId !== null && item.lease.agentSessionId !== sessionId))
       throw new Error('This tab is controlled by another conversation.');
+    this.interactions.reclaim(members.map(item => item.id));
     if (members.some(item => item.lease.driver !== 'agent')) this.handBackGroup(page, sessionId);
   }
   private readonly codeEngine = new BrowserAgentEngine({

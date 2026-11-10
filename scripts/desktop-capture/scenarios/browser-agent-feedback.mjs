@@ -49,7 +49,7 @@ export default async function* browserAgentFeedback(capture) {
       if (time === 0) assert.ok(Math.abs(point.x - 32) < 1, JSON.stringify(point));
       if (time === 100) assert.ok(point.x > 32 && point.x < destination.x + 1, JSON.stringify(point));
       if (time === 280) assert.ok(Math.abs(point.x - destination.x) < 1);
-      yield { name: `${theme}-cursor-${time}ms`, selector: 'ex-browser-demo', inspect: ['.agent-cursor', '.target', '.agent-step'], metadata: point };
+      yield { name: `${theme}-cursor-${time}ms`, selector: 'ex-browser-demo', inspect: ['.agent-cursor', '.cursor-glyph', '.cursor-arrow', '.cursor-spark', '.target', '.agent-step'], metadata: point };
     }
     // Interrupt a second glide. The next glide starts at the currently painted pose.
     await owner((component, cursor) => component.cursor.set({ ...cursor, x: 40 }), destination);
@@ -66,6 +66,12 @@ export default async function* browserAgentFeedback(capture) {
     });
     await seekPointer(120);
     assert.equal(await capture.evaluate(() => document.querySelectorAll('.cursor-pulse').length), 1);
+    const rippleAtTip = await capture.evaluate(() => {
+      const cursor = document.querySelector('.agent-cursor').getBoundingClientRect();
+      const pulse = document.querySelector('.cursor-pulse').getBoundingClientRect();
+      return Math.abs(pulse.x + pulse.width / 2 - cursor.x) < .5 && Math.abs(pulse.y + pulse.height / 2 - cursor.y) < .5;
+    });
+    assert.ok(rippleAtTip, 'Click feedback stays centred on the pointer hotspot');
     yield { name: `${theme}-click-pulse-waiting`, selector: 'ex-browser-demo', inspect: ['.cursor-pulse', '.step-status'] };
     await capture.motion.finish(); await capture.motion.play();
     for (const status of ['done', 'error']) {
@@ -85,15 +91,15 @@ export default async function* browserAgentFeedback(capture) {
     await owner(component => component.cursor.set({ x: 160, y: 180, pulse: 2 }));
     const instant = await position(); assert.equal(instant.x, 160); assert.equal(instant.y, 180);
     const fits = await capture.evaluate(() => {
-      const stop = document.querySelector('[aria-label="Stop browser agent"]').getBoundingClientRect();
+      const stop = document.querySelector('[aria-label="Block browser agent"]').getBoundingClientRect();
       return stop.left >= 0 && stop.right <= innerWidth && stop.bottom <= innerHeight;
     });
     assert.ok(fits, 'Stop remains visible in narrow layouts');
-    yield { name: `${theme}-narrow-reduced-motion`, selector: 'ex-browser-demo', inspect: ['.agent-cursor', '.agent-step', '[aria-label="Stop browser agent"]'] };
-    await capture.click('[aria-label="Stop browser agent"]'); await capture.motion.finish();
+    yield { name: `${theme}-narrow-reduced-motion`, selector: 'ex-browser-demo', inspect: ['.agent-cursor', '.agent-step', '[aria-label="Block browser agent"]'] };
+    await capture.click('[aria-label="Block browser agent"]'); await capture.motion.finish();
     await capture.waitFor(() => !document.querySelector('.agent-cursor'));
     assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-cursor')), false);
-    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Hand back browser');
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Allow browser agent');
     yield { name: `${theme}-stopped`, selector: 'ex-browser-demo' };
   }
 }

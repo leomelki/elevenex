@@ -65,7 +65,11 @@ Remote human input accepts non-nested batches of at most 32 events / 65,536 text
 code units. Clipboard remains isolated for client OS semantics. Each event checks
 task, owner, document generation and visibility again; a partial batch has an
 unknown outcome and is not retried. Even a stale human event revokes agent control
-before it is rejected for outdated coordinates. Driver generations advance on
+before it is rejected for outdated coordinates. Ordinary input allows fresh agent
+acquisition without a handoff; only explicit Block agent
+persistently pauses access until Allow agent. Reacquisition cancels pending human
+help tickets; native site requests/authentication retain their normal resolution.
+Driver generations advance on
 navigation, viewport changes and human takeover; merely pausing the display does
 not revoke agent control. Explicit Reload recovers a
 closed/crashed engine; metadata and fresh user ownership survive, queued actions do not.

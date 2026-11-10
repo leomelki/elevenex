@@ -80,7 +80,7 @@ describe('Real Playwright in the task browser', () => {
     else process.env['ELEVENEX_DATA_ROOT'] = previous;
     await rm(root, { recursive: true, force: true });
   });
-  it('acquires a user tab in one call, respects Stop through reset and resumes only after handoff', async () => {
+  it('reacquires after ordinary input but respects an explicit block through reset', async () => {
     const opened = await task.command({ kind: 'open', url: base });
     const id = opened.active!;
     const acquired = await run(`
@@ -95,10 +95,32 @@ describe('Real Playwright in the task browser', () => {
     const foreign = await task.code(3, { kind: 'code', code: `await browser.page(${JSON.stringify(id)})`, timeoutMs: 15000 }, new AbortController().signal);
     expect(foreign.error?.message).toContain('another conversation');
 
+    // Even stale human input interrupts existing work without creating a block.
+    const tab = task.tabs.get(id)!;
+    await expect(tab.userInput(tab.generation - 1, { kind: 'text', text: 'stale' })).rejects.toThrow('control changed');
+    expect(tab.driver).toBe('you');
+    expect(tab.agentPaused).toBe(false);
+    expect(tab.waiting).toBe(false);
+    expect((await run('return await state.userPage.title()')).error).toBeDefined();
+    const reacquired = await run(`state.userPage=await browser.page(${JSON.stringify(id)});return await state.userPage.title()`);
+    expect(reacquired.error).toBeUndefined();
+    expect(reacquired.value).toBe('Playwright task');
+    await task.command({ kind: 'focus', tabId: id });
+    expect((await run(`state.userPage=await browser.page(${JSON.stringify(id)})`)).error).toBeUndefined();
+    const requested = await run(`return await human.requestAction(state.userPage,{message:'Optional manual step'})`);
+    expect(requested.error).toBeUndefined();
+    const requestId = (requested.value as { id: string }).id;
+    expect(tab.driver).toBe('needs');
+    expect(tab.agentPaused).toBe(false);
+    expect((await run(`state.userPage=await browser.page(${JSON.stringify(id)})`)).error).toBeUndefined();
+    expect(task.userRequest(requestId).status).toBe('cancelled');
+
     await task.command({ kind: 'takeover', tabId: id });
     expect((await run('return await state.userPage.title()')).error).toBeDefined();
     expect((await run(`await browser.page(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
     expect((await run(`await browser.tabs.get(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
+    // More user interactions must not clear an explicit block.
+    await task.command({ kind: 'focus', tabId: id });
     await task.code(2, { kind: 'code', code: '', reset: true, timeoutMs: 15000 }, new AbortController().signal);
     expect((await run(`await browser.page(${JSON.stringify(id)})`)).error?.message).toContain('stopped');
     await task.command({ kind: 'handoff', tabId: id, sessionId: 2 });
