@@ -3,6 +3,72 @@ const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const { WebSocketServer } = require('ws');
 const { RemoteBrowserStream } = require('../dist/browser/remote-stream');
+const { BrowserFrameStream } = require('../dist/browser/frame-stream');
+
+function localStreamFixture(send = async () => undefined) {
+  const { EventEmitter } = require('node:events');
+  const debuggerApi = new EventEmitter(), commands = [], frames = [];
+  debuggerApi.isAttached = () => true;
+  debuggerApi.sendCommand = async method => { commands.push(method); return send(method); };
+  const contents = { debugger: debuggerApi, isDestroyed: () => false };
+  const stream = new BrowserFrameStream(contents, { scopeId: 'scope', taskId: 1, tabId: 'tab' }, frame => frames.push(frame));
+  const paint = () => debuggerApi.emit('message', {}, 'Page.screencastFrame', { sessionId: 1, data: '/9j/', metadata: { deviceWidth: 800, deviceHeight: 600 } });
+  return { stream, commands, frames, paint, debuggerApi };
+}
+const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test('a lost local frame receipt recovers pixels and ignores the retired credit', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = localStreamFixture();
+  try {
+    f.stream.setActive(true); await settle(); f.paint();
+    const old = f.frames[0];
+    context.mock.timers.tick(1001); await settle();
+    f.paint();
+    assert.equal(f.frames.length, 2, 'A missed acknowledgment cannot leave the display permanently stopped');
+    f.stream.acknowledge(old.streamId, old.sequence);
+    f.paint();
+    assert.equal(f.frames.length, 2, 'A late retired acknowledgment cannot release the new credit');
+    f.stream.acknowledge(f.frames[1].streamId, f.frames[1].sequence);
+    assert.equal(f.frames.length, 3);
+  } finally { f.stream.destroy(); await settle(); }
+  assert.equal(f.debuggerApi.listenerCount('message'), 0);
+  const commands = f.commands.length;
+  context.mock.timers.tick(5000); await settle();
+  assert.equal(f.commands.length, commands, 'Disposed streams own no recovery timer');
+});
+
+test('rapid local hide/show waits for the previous screencast stop before restarting', async () => {
+  let stopped;
+  const f = localStreamFixture(method => method === 'Page.stopScreencast' ? new Promise(resolve => { stopped = resolve; }) : Promise.resolve());
+  try {
+    f.stream.setActive(true); await settle();
+    f.stream.setActive(false); f.stream.setActive(true); await settle();
+    assert.deepEqual(f.commands, ['Page.startScreencast', 'Page.stopScreencast']);
+    stopped(); await settle();
+    assert.deepEqual(f.commands, ['Page.startScreencast', 'Page.stopScreencast', 'Page.startScreencast']);
+    f.paint(); assert.equal(f.frames.length, 1);
+  } finally { f.stream.destroy(); stopped?.(); await settle(); }
+});
+
+test('a transient local screencast startup failure retries while its display is active', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let fail = true;
+  const f = localStreamFixture(async method => {
+    if (method === 'Page.startScreencast' && fail) throw new Error('Temporary capture failure');
+  });
+  try {
+    f.stream.setActive(true); await settle();
+    assert.equal(f.commands.length, 1);
+    fail = false;
+    context.mock.timers.tick(100); await settle(); f.paint();
+    assert.equal(f.frames.length, 1);
+    assert.equal(f.commands.filter(method => method === 'Page.startScreencast').length, 2);
+  } finally { f.stream.destroy(); await settle(); }
+  const count = f.commands.length;
+  context.mock.timers.tick(5000); await settle();
+  assert.equal(f.commands.length, count);
+});
 
 async function fixture() {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: false });
@@ -74,6 +140,28 @@ test('rejected display reads do not report an interrupted action or invalidate o
     await assert.rejects(f.stream.request('layout', {}), /display update interrupted/);
     await assert.rejects(f.stream.request('input', {}), /action interrupted.*Inspect state/);
     assert.equal(await f.stream.request('ping'), null);
+    assert.equal(f.socket.readyState, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('a stalled frame deadline retires only that read and keeps control and state connected', async context => {
+  const f = await fixture();
+  try {
+    context.mock.timers.enable({ apis: ['setTimeout'] });
+    const requested = once(f.socket, 'message');
+    const frame = f.stream.request('frame', {}, 1000, 'panel');
+    const [body] = await requested, frameId = JSON.parse(body).id;
+    const received = once(f.socket, 'message');
+    const input = f.stream.request('input', { generation: 1 });
+    const [bytes] = await received;
+    const cancelled = once(f.socket, 'message');
+    context.mock.timers.tick(1001);
+    assert.equal(await frame, null);
+    const [cancel] = await cancelled;
+    assert.deepEqual(JSON.parse(cancel).body, frameId);
+    assert.equal(JSON.parse(cancel).method, 'cancel');
+    f.socket.send(JSON.stringify({ id: JSON.parse(bytes).id, result: { generation: 1 } }));
+    assert.deepEqual(await input, { generation: 1 });
     assert.equal(f.socket.readyState, 1);
   } finally { await f.cleanup(); }
 });

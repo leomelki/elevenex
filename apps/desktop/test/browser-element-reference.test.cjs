@@ -149,6 +149,7 @@ test('picker hover relays only bounded geometry and a tag, with no page content'
   };
   assert.deepEqual(await browserHoverAt(send, 30, 40), { tag: 'input', x: 10, y: 20, width: 100, height: 40 });
   assert.equal(await browserHoverAt(async () => ({ result: { value: { ...raw, width: Infinity } } }), 1, 2), undefined);
+  await assert.rejects(browserHoverAt(async () => ({ exceptionDetails: { text: 'Execution timed out' } }), 1, 2), /interrupted/);
 });
 
 test('stalled hover expires, bounds outstanding reads, and recovers without painting canceled sessions', async () => {
@@ -161,17 +162,42 @@ test('stalled hover expires, bounds outstanding reads, and recovers without pain
   try {
     hover.update(10, 10, () => true);
     await delay(450);
-    assert.equal(calls, 2, 'A stalled page must not accumulate inspection work');
+    assert.equal(calls, 1, 'A stalled page must not queue more inspection behind the blocked command');
     hover.reset(); hover.update(20, 20, () => true);
     pending.shift()(result);
     await delay(10);
     assert.equal(hover.value, undefined, 'A canceled session never paints into a fresh pick');
     pending.shift()(result);
-    await delay(10);
-    pending.shift()(result);
     await delay(0);
     assert.deepEqual(hover.value, result);
   } finally { hover.destroy(); for (const resolve of pending) resolve(undefined); }
+});
+
+test('picker motion is sampled at a bounded rate, idle pages are checked less, and errors back off', async context => {
+  const { BrowserPickerHover } = require('../../../packages/browser-agent/dist');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let now = 0, calls = 0, fail = false;
+  context.mock.method(performance, 'now', () => now);
+  const settle = async () => { for (let n = 0; n < 12; n++) await Promise.resolve(); };
+  const advance = async ms => { now += ms; context.mock.timers.tick(ms); await settle(); };
+  const hover = new BrowserPickerHover(async () => { calls++; if (fail) throw new Error('Busy page'); return { tag: 'div', x: 0, y: 0, width: 10, height: 10 }; }, () => {});
+  try {
+    hover.update(1, 1, () => true); await advance(1);
+    assert.equal(calls, 1);
+    for (let x = 0; x < 100; x++) hover.update(x, 1, () => true);
+    await advance(31); assert.equal(calls, 1);
+    await advance(1); assert.equal(calls, 2);
+    await advance(199); assert.equal(calls, 2, 'No 30Hz inspection while the pointer is stationary');
+    fail = true;
+    await advance(1); assert.equal(calls, 3);
+    for (let x = 0; x < 100; x++) hover.update(x, 1, () => true);
+    await advance(249); assert.equal(calls, 3, 'Pointer traffic cannot bypass busy-page backoff');
+    await advance(1); assert.equal(calls, 4);
+    await advance(499); assert.equal(calls, 4);
+    fail = false; await advance(1); assert.equal(calls, 5);
+    assert.equal(hover.value.tag, 'div');
+    hover.destroy(); await advance(5000); assert.equal(calls, 5);
+  } finally { hover.destroy(); }
 });
 
 test('slow optional source maps do not hold a captured element', async () => {

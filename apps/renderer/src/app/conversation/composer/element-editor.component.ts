@@ -162,6 +162,23 @@ export class ElementEditorComponent implements OnChanges, AfterViewInit {
     const text = event.dataTransfer?.getData('text/plain');
     if (text) { this.remember(); this.replace(this.current.start, this.current.end, text); }
   }
+  private removeMention(host: HTMLElement, id: string): void {
+    const root = this.surface()?.nativeElement;
+    if (this.disabled() || this.sending() || host.parentNode !== root) return;
+    // Resolve the clicked occurrence from the current DOM; its offset changes as
+    // prose is edited, and every occurrence shares the same attachment ID.
+    let start = 0;
+    for (let node = host.previousSibling; node; node = node.previousSibling) start += editorText(node).length;
+    const glyph = editorText(host);
+    const remaining = this.current.text.slice(0, start) + this.current.text.slice(start + glyph.length);
+    if (remaining.includes(glyph)) {
+      this.remember();
+      this.replace(start, start + glyph.length, '');
+    } else {
+      // Explicitly removing the final reference also releases its snapshot.
+      this.removed.emit(id);
+    }
+  }
   private commit(next: EditorState, type: string): void {
     if (next.text === this.current.text) { this.current = next; return; }
     const at = performance.now();
@@ -220,7 +237,7 @@ export class ElementEditorComponent implements OnChanges, AfterViewInit {
         ref = this.views()!.createComponent(ElementChipComponent);
         const host: HTMLElement = ref.location.nativeElement;
         host.setAttribute('contenteditable', 'false'); host.dataset['editorMarker'] = String(marker);
-        ref.instance.removed.subscribe(id => this.removed.emit(id));
+        ref.instance.removed.subscribe(id => this.removeMention(host, id));
         ref.instance.retry.subscribe(id => this.retry.emit(id));
         ref.instance.repick.subscribe(reference => this.repick.emit(reference));
         ref.instance.mention.subscribe(() => this.mention.emit(marker));

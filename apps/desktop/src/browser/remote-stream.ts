@@ -192,6 +192,15 @@ export class RemoteBrowserStream {
       return Promise.reject(new Error("Browser request too large"));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        // A slow display read has no action outcome. Retire only its request;
+        // closing the control socket also disconnected healthy input and state.
+        if (method === 'frame') {
+          this.pending.delete(id);
+          if (this.socket.readyState === WebSocket.OPEN)
+            this.socket.send(JSON.stringify({ id: ++this.sequence, method: 'cancel', body: id }));
+          resolve(null);
+          return;
+        }
         this.destroy();
       }, timeout);
       this.pending.set(id, { resolve, reject, timer, mutation: method === 'command' || method === 'input', ...(key ? { key } : {}) });

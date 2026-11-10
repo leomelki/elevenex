@@ -150,8 +150,10 @@ export class TaskBrowserComponent {
     const tab = this.store.state()?.tabs.find(tab => tab.id === tabId);
     if (!tab || tab.detached) { this.notice.set('That tab is closed or in another window. Choose a page and point at the element again.'); return; }
     const scope = this.scopeId(), task = this.taskId(), session = this.sessionId();
-    const selected = await this.store.command({ kind: 'select', tabId });
-    if (!selected || this.current()?.id !== tabId) return;
+    if (this.current()?.id !== tabId) {
+      const selected = await this.store.command({ kind: 'select', tabId });
+      if (!selected || this.current()?.id !== tabId) return;
+    }
     if (this.scopeId() === scope && this.taskId() === task && this.sessionId() === session) this.command({ kind: 'pick', enabled: true });
   }
   private hideSurface(): void { const scope = this.scopeId(), task = this.taskId(); if (scope && task) void this.store.bridge.taskBrowserHide?.(scope, task); }

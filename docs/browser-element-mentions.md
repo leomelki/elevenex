@@ -66,8 +66,10 @@ are withheld from the agent. Related-popup revocation remains unchanged.
 The shared package owns the marker vocabulary: `BROWSER_ELEMENT_MARKERS` (❶–❽),
 `elementMarker(n)` and `elementMarkersIn(text)`. A marker is a single character,
 so prose edits cannot produce a malformed reference. The draft assigns each new
-element the lowest number not held by another element in that draft. Removing a
-chip removes its markers from the prose. The same snapshot ID keeps its number
+element the lowest number not held by another element in that draft. Removing an
+inline mention removes only that occurrence, keeping its shared attachment while
+other occurrences remain. Explicitly removing the final occurrence or an
+unreferenced attachment releases the snapshot. The same snapshot ID keeps its number
 and upload. Send rejects a marker with no element in the message and explains how
 to repair it. An element attached but not mentioned is still sent, with its marker
 in the envelope.

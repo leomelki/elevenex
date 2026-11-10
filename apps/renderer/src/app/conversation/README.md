@@ -422,8 +422,10 @@ to the internal `ElementEditor`, preserving the writing caret and focus. Element
 mentions are real `ElementChip` views inside the editable writing line, with
 thumbnail, name, preview and Remove; referenced elements have no duplicate context
 row. If a prose reference is erased, its still-attached snapshot remains visible
-below the line and can be reused through `@` or **Mention in message**. Explicit
-Remove deletes the attachment and all its active references.
+below the line and can be reused through `@` or **Mention in message**. Inline
+Remove deletes only that occurrence, retaining the shared snapshot for other
+mentions and supporting undo/redo. Explicitly removing the final occurrence or
+an unreferenced snapshot deletes the attachment.
 
 The rich editor owns its editable DOM, atomic token views, selection and a bounded
 100-entry undo/redo history. Typing groups coalesce; Backspace/Delete removes a

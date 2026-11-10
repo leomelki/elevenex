@@ -162,9 +162,10 @@ The human picker consumes page input without activating the target. Its shared
 hover reader publishes only a tag and bounded viewport geometry to the human UI.
 Pointer motion and wheel scrolling remain live in point mode; clicks select without
 activating the page. Hover reads coalesce outside the ordered input lane and publish completed samples
-through continuous motion. Layout-based hit testing refreshes under a stationary
-pointer during scrolling. Reads expire after 200 ms with at most two underlying
-operations outstanding, and stop on exit, cancellation,
+through continuous motion, at most once per 32 ms. A stationary pointer reconciles
+layout every 200 ms. Slow/failed reads back off up to two seconds, and only one
+underlying command may remain outstanding, including after cancellation. Reads
+expire after 200 ms, and stop on exit, cancellation,
 capture, hidden presentation, navigation or control changes. Older hosts may omit
 hover metadata. Out-of-process frames may highlight their embedding element;
 the explicit selection still resolves the target inside the frame.
@@ -186,7 +187,9 @@ A manual pick stages the snapshot in the original selected session as soon as it
 is captured and drops its pin at the composer caret; nothing is sent. The browser
 runs `BrowserView` in `pin` mode, so no question card appears. `beginElementPick(tabId?)`
 arms the picker for the Composer's ⌖ button, `@` command and chip Pick again,
-on the named tab or the current page. The conversation's ElementPin chip owns the
+on the named tab or the current page. Arming and cancelling keep the current
+document and live display; selecting the current tab does not rehost it.
+The conversation's ElementPin chip owns the
 preview; selectors and geometry remain outside the textarea. Older engines
 without capture explain the limit. See the visual-element contract below.
 
@@ -447,6 +450,11 @@ sequences stay monotonic across JPEG, H.264 and fallback; each codec retains its
 own source receipts. A missing local renderer acknowledgment restarts that
 display after five seconds, with a fresh stream identity. Task pages, driver
 ownership and input are never replayed by this recovery.
+
+Local screencast start/stop operations are serialized so a late stop cannot
+freeze a newer display. A missing frame acknowledgment retires its credit and
+restarts only that display. Remote frame-read deadlines similarly retire only
+the read, keeping the control/state socket alive; input is never replayed.
 
 The host captures every damage event and reconciles missed compositor updates
 through a bounded restart of the same screencast while a reader is waiting. It

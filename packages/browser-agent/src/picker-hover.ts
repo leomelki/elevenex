@@ -13,10 +13,10 @@ export async function browserHoverAt(
 ): Promise<BrowserHover | undefined> {
   signal?.throwIfAborted();
   const reply = object(await send('Runtime.evaluate', {
-    expression: selectionFingerprintExpression(x, y), returnByValue: true, timeout: 100,
+    expression: selectionFingerprintExpression(x, y), returnByValue: true, timeout: 50, silent: true, disableBreaks: true,
   }));
   signal?.throwIfAborted();
-  if (reply['exceptionDetails']) return undefined;
+  if (reply['exceptionDetails']) throw new Error('Picker hit test interrupted');
   const value = object(reply['result'])['value'];
   if (!value || typeof value !== 'object') return undefined;
   const raw = object(value), tag = raw['tag'];
@@ -31,13 +31,17 @@ export async function browserHoverAt(
 
 /** Latest-position sampling outside ordered input. Moving the pointer must not
  * starve completed samples. Only a changed document/picker lifetime invalidates
- * a sample; the next read immediately catches up with newer motion.
- * A stalled read expires, with at most two underlying reads outstanding. */
+ * a sample. Motion is sampled at most once per 32 ms; a stationary pointer only
+ * needs occasional layout reconciliation. Slow pages back off, and a stalled
+ * command cannot accumulate more work behind it in Chromium. */
 export class BrowserPickerHover {
   private pointer?: { x: number; y: number; current: () => boolean };
   private timer?: ReturnType<typeof setTimeout>;
   private reading?: AbortController;
   private pending = 0;
+  private nextRead = 0;
+  private lastRead = 0;
+  private backoff = 0;
   private epoch = 0;
   private destroyed = false;
   value?: BrowserHover;
@@ -48,7 +52,11 @@ export class BrowserPickerHover {
   update(x: number, y: number, current: () => boolean): void {
     if (this.destroyed) return;
     this.pointer = { x, y, current };
-    this.schedule(0);
+    if (!this.backoff && !this.reading && !this.pending) {
+      this.nextRead = Math.min(this.nextRead, this.lastRead + 32);
+      clearTimeout(this.timer); this.timer = undefined;
+    }
+    this.schedule();
   }
   pause(): void { this.reset(false); }
   reset(clear = true): void {
@@ -56,6 +64,7 @@ export class BrowserPickerHover {
     this.pointer = undefined;
     clearTimeout(this.timer); this.timer = undefined;
     this.reading?.abort(); this.reading = undefined;
+    this.nextRead = 0; this.lastRead = 0; this.backoff = 0;
     if (clear) this.publish(undefined);
   }
   destroy(): void { this.destroyed = true; this.reset(); }
@@ -63,9 +72,9 @@ export class BrowserPickerHover {
     if (JSON.stringify(value) === JSON.stringify(this.value)) return;
     this.value = value; this.changed();
   }
-  private schedule(delay: number): void {
-    if (this.destroyed || this.reading || this.pending >= 2 || this.timer || !this.pointer) return;
-    this.timer = setTimeout(() => { this.timer = undefined; void this.refresh(); }, delay);
+  private schedule(): void {
+    if (this.destroyed || this.reading || this.pending || this.timer || !this.pointer) return;
+    this.timer = setTimeout(() => { this.timer = undefined; void this.refresh(); }, Math.max(0, this.nextRead - performance.now()));
   }
   private async refresh(): Promise<void> {
     const pointer = this.pointer, epoch = this.epoch;
@@ -78,8 +87,9 @@ export class BrowserPickerHover {
     // Cancellation cannot cancel a Chromium command already in progress. Count
     // those commands until they settle so a blocked page never grows a queue.
     const operation = Promise.resolve().then(() => this.read(pointer.x, pointer.y, controller.signal));
-    void operation.finally(() => { this.pending--; this.schedule(0); }).catch(() => undefined);
+    void operation.finally(() => { this.pending--; this.schedule(); }).catch(() => undefined);
     let stop: () => void = () => undefined;
+    let failed = false;
     try {
       const aborted = new Promise<undefined>(resolve => {
         stop = () => resolve(undefined);
@@ -88,11 +98,17 @@ export class BrowserPickerHover {
       const value = await Promise.race([operation, aborted]);
       if (!this.destroyed && epoch === this.epoch && pointer.current()) this.publish(value);
     } catch {
+      failed = true;
       if (!this.destroyed && epoch === this.epoch) this.publish(undefined);
     } finally {
       clearTimeout(deadline); controller.signal.removeEventListener('abort', stop);
       if (this.reading === controller) this.reading = undefined;
-      this.schedule(this.pointer === pointer ? 32 : 0);
+      if (epoch === this.epoch) {
+        this.backoff = failed || controller.signal.aborted ? Math.min(2000, Math.max(250, this.backoff * 2)) : 0;
+        this.lastRead = performance.now();
+        this.nextRead = this.lastRead + (this.backoff || (this.pointer === pointer ? 200 : 32));
+      }
+      this.schedule();
     }
   }
 }

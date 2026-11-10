@@ -14,6 +14,8 @@ There is no numbered disc or DOM tag in the sentence or attachment tray.
   caret when a browser pick arrives. Backspace/Delete removes a whole reference;
   undo/redo restores its identity and position. IME input commits when composition
   ends; copy produces readable names and paste accepts plain text only.
+  Remove deletes only that occurrence when the element is mentioned repeatedly;
+  its shared snapshot remains until the final occurrence is explicitly removed.
 - **Unreferenced attachment.** Erasing a prose reference keeps its snapshot visible
   below the writing line, with preview, retry and Remove. This preserves the
   attachment-only contract without silently sending hidden context. Choosing it
@@ -55,7 +57,8 @@ Capture, upload, lifetime and browser authority remain outside these components.
 The one-character `❶`–`❽` protocol, per-message IDs, attachment associations,
 queue and historical data remain compatible. `ElementPinComponent` is still
 exported for existing consumers; current mention surfaces use names instead.
-Removing an attachment removes all its active markers. Up to eight elements
+Removing an attachment removes all its active markers; inline Remove keeps the
+attachment while another occurrence still uses it. Up to eight elements
 are supported per message. No marker or highlight is burned into uploaded pixels.
 
 ## Motion and tokens

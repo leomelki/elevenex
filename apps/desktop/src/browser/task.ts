@@ -265,9 +265,9 @@ export class TaskBrowser implements DesktopBrowserHost {
       }, shortcut: kind => {
         if (page.displayWindow) { const view = this.detached.get(page.id); if (view) view.controlsFocus++; this.emit(); page.displayWindow.webContents.focus(); return; }
         if (kind === 'controls') { this.controlsFocus++; this.emit(); this.window.webContents.focus(); return; }
-        this.hide(); this.window.webContents.focus();
+        this.window.webContents.focus();
         if (kind === 'open') { const next = this.create('you'); this.select(next); this.emit(); }
-        else { this.picking = !this.picking; page.picking = this.picking; page.visualPicking = true; this.emit(); }
+        else void this.command({ kind: 'pick', enabled: !this.picking, visual: 1 }).catch(() => undefined);
       }, attention: (kind, message) => { this.attention = { kind, message, outside: true, tabId: page.id }; this.emit(); } }, by, sessionId, tabId);
     page.presentation = this.defaultPresentation;
     this.pages.set(page.id, page); return page;
@@ -488,7 +488,8 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (next?.url && !next.requested) await this.navigate(next, next.url);
   }
   private select(page: BrowserPage): void {
-    this.hide(); this.active = page.id; this.clearPicker();
+    if (this.active !== page.id) this.hide();
+    this.active = page.id; this.clearPicker();
   }
   private async navigate(page: BrowserPage, url: string, generation?: number): Promise<void> {
     if (this.active === page.id) this.clearPicker();

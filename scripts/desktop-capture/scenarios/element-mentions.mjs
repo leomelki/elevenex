@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+async function* repeatedMentionRemoval(capture, name) {
+  const original = await capture.component('ex-composer', component => component.draft());
+  const draft = () => capture.component('ex-composer', component => component.draft());
+  const undo = () => capture.press('z', process.platform === 'darwin' ? 4 : 2);
+  const text = 'Compare ❶ with ❷, then ❶ again.';
+  await capture.component('ex-element-editor', (component, value) => component.replace(0, component.value().length, value), text);
+  yield { name: `${name}-repeated`, inspect: ['ex-element-editor .surface', 'ex-element-chip'] };
+
+  await capture.click('ex-element-editor ex-element-chip:nth-of-type(1) button[title="Remove"]');
+  assert.equal(await draft(), 'Compare  with ❷, then ❶ again.', 'Remove only the clicked occurrence');
+  assert.equal(await capture.component('ex-element-mentions-demo', component => component.files().length), 2, 'Keep the shared snapshot');
+  assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-element-editor ex-element-chip').length), 2);
+  assert.ok(await capture.evaluate(() => document.activeElement === document.querySelector('ex-element-editor .surface')), 'Return focus to writing');
+  yield { name: `${name}-first-removed`, inspect: ['ex-element-editor .surface'] };
+  await undo();
+  assert.equal(await draft(), text);
+  await capture.press('z', (process.platform === 'darwin' ? 4 : 2) | 8);
+  assert.equal(await draft(), 'Compare  with ❷, then ❶ again.');
+  await undo();
+
+  // The same snapshot opened from a different occurrence removes that occurrence.
+  await capture.click('ex-element-editor ex-element-chip:nth-of-type(3) .face');
+  await capture.waitFor(() => document.querySelector('.element-popover footer .remove'));
+  await capture.click('.element-popover footer .remove');
+  await capture.waitFor(() => !document.querySelector('.element-popover'));
+  assert.equal(await draft(), 'Compare ❶ with ❷, then  again.');
+  assert.equal(await capture.component('ex-element-mentions-demo', component => component.files().length), 2);
+  assert.ok(await capture.evaluate(() => document.activeElement === document.querySelector('ex-element-editor .surface')));
+  yield { name: `${name}-second-removed`, inspect: ['ex-element-editor .surface'] };
+  await capture.component('ex-element-editor', (component, value) => component.replace(0, component.value().length, value), original);
+}
+
 async function assertUncoveredSnapshot(capture, snapshot) {
   const result = await capture.evaluate(() => {
     const preview = document.querySelector('.element-popover ex-element-preview');
@@ -83,6 +115,7 @@ export default async function* (capture) {
     await capture.component('ex-element-mentions-demo', component => component.state('error'));
     yield { name: `${theme}-error`, inspect: ['ex-element-chip .retry'] };
     await capture.component('ex-element-mentions-demo', component => component.state('ready'));
+    yield* repeatedMentionRemoval(capture, theme);
   }
 
   // The real editing surface keeps newlines, native IME composition and inert paste.
@@ -153,6 +186,10 @@ export default async function* (capture) {
   // Narrow, reduced motion: the @ menu reuses staged pins and offers a pick.
   await capture.reducedMotion(true);
   await capture.viewport(380, 760);
+  for (const theme of ['light', 'dark']) {
+    await capture.theme(theme);
+    yield* repeatedMentionRemoval(capture, `narrow-${theme}`);
+  }
   await capture.component('ex-element-editor', component => {
     component.setSelection({ start: 0, end: component.value().length }); component.focus();
   });

@@ -185,6 +185,59 @@ describe('named element draft projection', () => {
 });
 
 describe('inline element editing', () => {
+  it.each([0, 1, 2])('removes only occurrence %i of a repeated element and keeps its attachment', (occurrence) => {
+    const { fixture, composer, surface } = mount();
+    const removed = vi.fn(); composer.attachmentRemoved.subscribe(removed);
+    const text = '😀 ❶ first\n❷ then ❶ middle and ❶ last';
+    composer.draft.set(text); fixture.detectChanges();
+    const chips = surface.querySelectorAll<HTMLElement>('ex-element-chip[data-editor-marker="1"]');
+    chips[occurrence]!.querySelector<HTMLButtonElement>('button[title="Remove"]')!.click(); fixture.detectChanges();
+    const offset = [...text.matchAll(/❶/g)][occurrence]!.index;
+    const expected = text.slice(0, offset) + text.slice(offset + 1);
+    expect(composer.draft()).toBe(expected);
+    expect(editorText(surface)).toBe(expected);
+    expect(surface.querySelectorAll('[data-editor-marker="1"]')).toHaveLength(2);
+    expect(surface.querySelectorAll('[data-editor-marker="2"]')).toHaveLength(1);
+    expect(removed).not.toHaveBeenCalled();
+    expect(fixture.nativeElement.querySelector('.staged-elements')).toBeNull();
+    expect(document.activeElement).toBe(surface);
+  });
+  it('undoes repeated-mention removal and resolves its position again after further edits', () => {
+    const { fixture, composer, editor, surface } = mount([file]);
+    composer.draft.set('❶ first and ❶ second'); fixture.detectChanges();
+    const removeSecond = () => {
+      surface.querySelectorAll('ex-element-chip')[1]!.querySelector<HTMLButtonElement>('button[title="Remove"]')!.click(); fixture.detectChanges();
+    };
+    removeSecond();
+    expect(composer.draft()).toBe('❶ first and  second');
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('❶ first and ❶ second');
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe('❶ first and  second');
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    editor.replace(0, 0, 'Compare '); fixture.detectChanges();
+    removeSecond();
+    expect(composer.draft()).toBe('Compare ❶ first and  second');
+    const sent = vi.fn(); composer.submitted.subscribe(sent); composer.send();
+    expect(sent.mock.calls[0]?.[0].text).toBe('Compare ❶ first and  second');
+    expect(composer.attachments()).toEqual([file]);
+  });
+  it('releases the attachment only when its final inline occurrence is explicitly removed', () => {
+    const { fixture, composer, surface } = mount([file]);
+    const removed = vi.fn((id: string) => fixture.componentRef.setInput('attachments', composer.attachments().filter(file => file.id !== id)));
+    composer.attachmentRemoved.subscribe(removed);
+    composer.draft.set('❶ and ❶'); fixture.detectChanges();
+    surface.querySelector<HTMLButtonElement>('button[title="Remove"]')!.click(); fixture.detectChanges();
+    expect(composer.draft()).toBe(' and ❶');
+    expect(removed).not.toHaveBeenCalled();
+    surface.querySelector<HTMLButtonElement>('button[title="Remove"]')!.click(); fixture.detectChanges();
+    expect(composer.draft()).toBe(' and');
+    expect(removed).toHaveBeenCalledExactlyOnceWith(file.id);
+    expect(composer.attachments()).toEqual([]);
+    surface.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })); fixture.detectChanges();
+    expect(composer.draft()).toBe(' and');
+    expect(surface.querySelector('ex-element-chip')).toBeNull();
+  });
   it('deletes one atomic mention, retains its attachment below the writing line, and supports undo/redo', () => {
     const { fixture, composer, editor, surface } = mount([file]);
     composer.draft.set('Make ❶ wider'); fixture.detectChanges();

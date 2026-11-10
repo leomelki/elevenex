@@ -81,11 +81,11 @@ describe('Point at an element for the chat', () => {
     expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'pick', enabled: false });
   });
   it('does not start a re-pick on another tab after the original tab selection fails', async () => {
-    const { fixture } = setup([tab()]); await render(fixture);
+    const { fixture } = setup([tab(), tab('tab-2')]); await render(fixture);
     const command = vi.spyOn(fixture.componentInstance.store, 'command').mockResolvedValueOnce(false);
-    await fixture.componentInstance.beginElementPick('tab-1');
+    await fixture.componentInstance.beginElementPick('tab-2');
     expect(command).toHaveBeenCalledTimes(1);
-    expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-1' });
+    expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-2' });
   });
   it('picks on the current page when no tab is named, and explains when there is none', async () => {
     const empty = setup([]);
@@ -98,7 +98,7 @@ describe('Point at an element for the chat', () => {
     const { fixture } = setup([tab()]); await render(fixture);
     const command = vi.spyOn(fixture.componentInstance.store, 'command').mockResolvedValue(true);
     await fixture.componentInstance.beginElementPick();
-    expect(command).toHaveBeenCalledWith({ kind: 'select', tabId: 'tab-1' });
+    expect(command).toHaveBeenCalledExactlyOnceWith({ kind: 'pick', enabled: true });
   });
   it('explains missing capture without pretending an image was staged', async () => {
     const { fixture } = setup([tab()], undefined, element);
