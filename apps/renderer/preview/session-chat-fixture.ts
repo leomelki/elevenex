@@ -234,6 +234,7 @@ export class SessionChatFixture {
       | "running"
       | "failed"
       | "history"
+      | "panel-reflow"
       | "ready"
       | "unknown"
       | "long"
@@ -362,6 +363,11 @@ export class SessionChatFixture {
             : `Check request ${Math.floor(i / 2)}.`,
         ),
       );
+    if (mode === 'panel-reflow')
+      session.items = Array.from({ length: 30 }, (_, i) => [
+        item(`panel-prompt-${i}`, 'user', `Review section ${i}`),
+        item(`panel-reply-${i}`, 'assistant', ('A detailed response with enough prose to wrap when the side panel opens. '.repeat(30) + '\n\n').repeat(5)),
+      ]).flat();
     if (mode === "long")
       session.items[6] = {
         ...session.items[6]!,

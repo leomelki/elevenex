@@ -136,6 +136,9 @@ preview-only backend adapter. Its fixture never enters the production build.
   releases clipping after settling, and makes closed descendants inert.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
+  Width-driven wrapping follows the panel/window resize directly and cancels
+  competing height motion. The observer's delivered sizes establish the new
+  baseline; subsequent content growth at that width still animates.
 - `FlipDirective` captures painted positions before keyed children update and
   animates only elements in its own `data-flip-scope`. Nested session scopes do
   not get transformed twice. Sidebar scopes use reordering only: Fold already

@@ -47,6 +47,9 @@ export class NativePageLayout {
   private checkOverlays(rect?: DOMRect): boolean {
     let blocked = !!this.overlays.querySelector('[role="dialog"], [role="menu"], [aria-modal="true"]');
     if (!blocked && rect) for (const pane of Array.from(this.overlays.querySelectorAll('.cdk-overlay-pane')).slice(0, 32)) {
+      // Informational tooltips can overlap a page edge while their trigger
+      // retains focus. They must not disable scrolling across the whole page.
+      if (pane.childElementCount === 1 && pane.firstElementChild?.getAttribute('role') === 'tooltip') continue;
       const box = pane.getBoundingClientRect();
       if (box.width && box.height && box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top) { blocked = true; break; }
     }
@@ -54,5 +57,5 @@ export class NativePageLayout {
     if (blocked !== this.overlayBlocked) this.invalidate();
     this.overlayBlocked = blocked; return blocked;
   }
-  destroy(): void { document.removeEventListener('pointerdown', this.invalidate, true); this.observer.disconnect(); this.stopped = true; cancelAnimationFrame(this.frame); void this.hide().catch(() => undefined); }
+  destroy(): void { if (this.stopped) return; document.removeEventListener('pointerdown', this.invalidate, true); this.observer.disconnect(); this.stopped = true; cancelAnimationFrame(this.frame); void this.hide().catch(() => undefined); }
 }

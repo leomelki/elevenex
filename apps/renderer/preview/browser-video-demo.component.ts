@@ -7,7 +7,11 @@ class VideoFixture implements Pick<ElevenexBridge, 'onTaskBrowserFrame' | 'taskB
   private listener?: (frame: TaskBrowserFrame) => void;
   readonly acknowledgments: { sequence: number; decoded?: boolean }[] = [];
   readonly inputs: TaskBrowserStreamInput[] = [];
+  private interruptNext = false;
+  /** Preview-only lost input receipt, without stopping the live display. */
+  interruptNextInput(): void { this.interruptNext = true; }
   async taskBrowserInput(_scope: string, _task: number, _tab: string, generation: number, input: TaskBrowserStreamInput): Promise<number> {
+    if (this.interruptNext) { this.interruptNext = false; throw new Error('Input receipt interrupted'); }
     if (this.inputs.length >= 128) this.inputs.shift();
     this.inputs.push(input);
     return generation;

@@ -71,6 +71,9 @@ again. `BrowserSurfacesComponent` converts window bounds into the containing
 panel's transformed coordinates. Phone width, app zoom, expansion and interrupted
 motion use the existing shell/Fold motions. Inactive guests remain mounted offscreen,
 inert and without input; hidden panels also stop page audio and frame production.
+Informational tooltip panes remain transparent to gestures and do not gate page
+input, even when they overlap the viewport. Menus, dialogs and interactive overlay
+panes retain their input gates. Closing them restores the current layout lease.
 
 A remote backend hosts real sandboxed Chromium. Main owns its private transport,
 viewer lease and credentials; the renderer receives only typed state and bounded
@@ -334,7 +337,8 @@ Queue pressure or uncertain delivery requests held-state cleanup on capable
 hosts. Typing stays stopped until fresh interaction; cleanup never replays input.
 Document replacement, authority changes and unknown outcomes discard queued work.
 Following uncertain delivery, fresh state alone does not resume typing: the user must click
-the page or explicitly Focus page. Failed batches are never replayed.
+the page, make a fresh wheel gesture, or explicitly Focus page. Only that new
+gesture is delivered; failed batches and queued typing/scroll are never replayed.
 Document/viewport changes still invalidate coordinates and queued input; this is
 distinct from an ordinary video-frame delay. The bounded buffer is not an offline
 editor and does not preserve typing across document replacement or an unknown
@@ -419,6 +423,9 @@ and closes each `VideoFrame`; a failed decode sends an optional false receipt so
 main selects JPEG for that presentation. Legacy five-argument receipts and JPEG
 hosts remain compatible. The isolated `/browser-video` preview accepts externally
 encoded fixtures for native capture; it adds no production bridge/test hook.
+Codec discovery and decoded output each have a two-second deadline. Stream
+replacement, task changes and destruction cancel pending discovery too, so a
+stalled GPU capability query cannot retain the paint lane across JPEG recovery.
 
 `videoWindow: 8` optionally enables a larger bounded delivery window. Main sends
 the new start field only to hosts advertising it; older H.264 hosts retain their

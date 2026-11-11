@@ -1,10 +1,12 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import type { BackendResult, ElevenexBridge, TaskBrowserCommand, TaskBrowserState, TaskBrowserTab, TaskBrowserPlacement, TaskBrowserWindowContext } from '@elevenex/shared';
+import type { BackendResult, ElevenexBridge, TaskBrowserCommand, TaskBrowserState, TaskBrowserTab, TaskBrowserPlacement, TaskBrowserWindowContext, TaskBrowserLayout } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../src/app/backend/backend-client.service';
 import { TaskBrowserComponent } from '../src/app/task-browser';
 
 /** Preview-only transport for exercising the production start-tab owner. No network or guest. */
-export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' | 'taskBrowserHide' | 'taskBrowserCommand'> {
+export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' | 'taskBrowserHide' | 'taskBrowserCommand' | 'taskBrowserLayout'> {
+  lastLayout: TaskBrowserLayout | null = null;
+  async taskBrowserLayout(_scope: string, _task: number, input: TaskBrowserLayout): Promise<void> { this.lastLayout = input; }
   protected state: TaskBrowserState = { canDetach: true, canReorder: true, placement: 'desktop', availablePlacements: ['desktop', 'desktop-proxy', 'machine'], capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, scopeId: 'preview', taskId: 1, revision: 0, surfaceEpoch: 0, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [3000, 4310], privacy: 'content-withheld' };
   private changed?: (state: TaskBrowserState) => void;
   onTaskBrowserChanged(listener: (state: TaskBrowserState) => void) { this.changed = listener; return () => { this.changed = undefined; }; }

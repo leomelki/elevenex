@@ -134,6 +134,14 @@ trusted keyboard/IME input, both themes, narrow reduced motion and display pause
 Use `--url http://127.0.0.1:4310` against `pnpm desktop:preview`. The bridge is an
 isolated preview provider; host input/transport and profiles have native integration
 tests. This capture is not an external SSH/WAN or packaged-app test.
+It also interrupts one input receipt while retaining the picture, then checks
+that a new trusted wheel gesture resumes scrolling without a click or replay.
+
+`scenarios/browser-overlay-input.mjs` checks the real task-browser layout owner
+with CDK tooltips and dialogs on `/task-browser`: an overlapping informational
+tooltip preserves input readiness and hit testing; dialogs block input and
+restore focus/readiness on exit. It covers both themes and narrow reduced motion.
+Its preview records layout receipts without a website or browser engine.
 
 `scenarios/browser-agent-policy.mjs` checks the production browser owner on
 `/task-browser`: code-first host access wording, older-host fallback, both themes,
@@ -170,6 +178,11 @@ It checks both themes, panel width/tabs/takeover and focus restoration, native
 Enter submission, project settings, new tasks, project creation
 and handoff, error recovery, narrow layouts and reduced motion. It uses actual
 components rather than `--fixture`; its backend is controlled preview data.
+`scenarios/panel-reflow.mjs` uses the same preview with thirty longer replies.
+It checks that repeated/interrupted panel toggles do not start competing content
+height animations, and preserves drafts, end-following and keyboard focus in
+both themes, narrow layouts and reduced motion. Its report records frame timings
+as diagnostics rather than a hardware-independent FPS guarantee.
 `scenarios/new-project.mjs` focuses on project creation in both themes: nested
 Escape and focus restoration, empty/failed folder results, keyboard retry, Git
 URLs, multiple repositories, name and appearance, retained rejection/uncertain

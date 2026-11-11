@@ -13,6 +13,23 @@ function deferred<T>() {
 const text = (value: string) => ({ kind: "text" as const, text: value });
 const settle = async () => { for (let n = 0; n < 30; n++) await Promise.resolve(); };
 describe("Browser human input lane", () => {
+  it('resumes on a fresh wheel gesture after interruption without replaying queued typing or scroll', async () => {
+    const pending = deferred<number>(), dispatch = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(1);
+    const lane = new BrowserInputLane(dispatch, vi.fn());
+    const wheel = { kind: 'wheel' as const, x: 10, y: 20, deltaX: 0, deltaY: 80, modifiers: 0 };
+    try {
+      lane.authority(1, 'you', true);
+      lane.send(text('uncertain'));
+      lane.send(text('must never replay')); lane.send(wheel);
+      pending.reject(new Error('Lost receipt')); await settle();
+      lane.send({ kind: 'pointer', type: 'move', x: 10, y: 20, button: 'none', buttons: 0, clicks: 0, modifiers: 0 });
+      lane.send(text('must not resume from typing')); await settle();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      lane.send({ ...wheel, deltaY: 20 }); await settle();
+      expect(dispatch.mock.calls.map(call => call[1])).toEqual([text('uncertain'), { ...wheel, deltaY: 20 }]);
+      expect(lane.needsInteraction).toBe(false);
+    } finally { lane.destroy(); }
+  });
   it('reserves an immediate bounded unlock request while all movement receipts are stalled', async () => {
     const receipts = Array.from({ length: 4 }, () => deferred<number>());
     const dispatch = vi.fn<(generation: number, input: TaskBrowserStreamInput) => Promise<number>>();

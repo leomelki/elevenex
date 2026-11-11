@@ -115,6 +115,9 @@ export class TooltipDirective {
     });
     this.detachment = this.popup.detachments().subscribe(() => this.hide());
     const component = this.popup.attach(new ComponentPortal(TooltipComponent));
+    // CDK restores pane hit testing on attach. The tooltip is decorative, so
+    // keep its entire overlay transparent to the page below it afterward.
+    this.popup.overlayElement.style.pointerEvents = 'none';
     component.setInput("label", this.exTooltip());
     component.setInput("kbd", this.tooltipShortcut());
     this.described = this.exTooltip();

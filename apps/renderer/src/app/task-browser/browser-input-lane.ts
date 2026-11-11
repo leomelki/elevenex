@@ -78,7 +78,9 @@ export class BrowserInputLane {
       return;
     }
     if (this.uncertain) {
-      if (input.kind !== "pointer" || input.type !== "down") return;
+      // A new wheel gesture is explicit intent too. Resume only this gesture;
+      // previously queued typing/scroll is discarded and is never replayed.
+      if (input.kind !== 'wheel' && !(input.kind === 'pointer' && input.type === 'down')) return;
       this.resume();
     }
     const previous = this.queue.at(-1);

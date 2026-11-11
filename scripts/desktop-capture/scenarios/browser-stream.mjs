@@ -75,6 +75,22 @@ export default async function* (capture) {
       assert.ok(inputs.some(input => input.kind === 'key' && input.type === 'down' && input.text === 'a'), 'Native key text stays paired for cancellable browser editing');
       assert.ok(inputs.some(input => input.kind === 'composition' && input.text === 'に'));
       assert.equal(inputs.filter(input => input.kind === 'text' && input.text === '日本語').length, theme === 'light' ? 1 : 2);
+      await capture.hover('ex-browser-stream canvas');
+      const point = await capture.evaluate(() => {
+        const box = document.querySelector('ex-browser-stream canvas').getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      });
+      await capture.component('ex-browser-video-demo', component => component.fixture.interruptNextInput());
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: 40 });
+      await capture.waitFor(() => document.querySelector('ex-browser-stream [role="status"]')?.textContent.includes('Control changed'));
+      const beforeScroll = await capture.component('ex-browser-video-demo', component => component.fixture.inputs.length);
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: 80 });
+      await capture.waitFor(count => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.inputs.length > count, beforeScroll);
+      assert.equal(await capture.component('ex-browser-video-demo', component => {
+        const input = component.fixture.inputs.at(-1);
+        return input.kind === 'wheel' && input.deltaY;
+      }), 80, 'Fresh wheel input resumes without a click or replaying the failed scroll');
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-browser-stream .stream-status')), false, 'Fresh scrolling clears stale interruption feedback before another frame');
       await capture.hover('ex-browser-video-demo h1');
       assert.ok(await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]).some(input => input.kind === 'pointer-exit')), 'Leaving the streamed page clears remote hover');
       yield { name: `${theme}-h264-input`, selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };

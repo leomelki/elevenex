@@ -19,11 +19,56 @@ describe("AutoHeight box sizing", () => {
     vi.unstubAllGlobals();
   });
 
+  it('lets width-driven reflow settle without competing height animations, then animates new content', async () => {
+    let resized: (width: number, height: number) => void = () => undefined;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        resized = (width, height) => callback([{
+          target: content, contentRect: new DOMRect(0, 0, width, height),
+          borderBoxSize: [{ inlineSize: width, blockSize: height }],
+          contentBoxSize: [], devicePixelContentBoxSize: [],
+        }], this);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    let paintedHeight = 126;
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return new DOMRect(0, 0, 600, this.tagName === 'SECTION' ? paintedHeight : 100);
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600);
+    const fixture = TestBed.createComponent(HeightTestComponent);
+    const section = fixture.nativeElement.querySelector('section') as HTMLElement;
+    const content = section.firstElementChild!;
+    const cancelled = vi.fn(), animate = vi.fn(() => ({ cancel: cancelled, onfinish: null }));
+    Object.defineProperty(section, 'animate', { value: animate });
+    fixture.detectChanges(); await fixture.whenStable();
+    resized(600, 160);
+    expect(animate).toHaveBeenCalledOnce();
+    paintedHeight = 150;
+    const reads = geometry.mock.calls.length;
+    // A panel changes width continuously, including fractional CSS pixels.
+    for (const width of [590, 575.5, 560, 540]) resized(width, 220);
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(animate).toHaveBeenCalledOnce();
+    expect(geometry.mock.calls.length, 'Width reflow uses the delivered observer geometry').toBe(reads);
+    paintedHeight = 246;
+    resized(540, 280);
+    expect(animate).toHaveBeenLastCalledWith(
+      [{ height: '246px', overflow: 'clip', boxSizing: 'border-box' }, { height: '306px', overflow: 'clip', boxSizing: 'border-box' }],
+      { duration: 200, easing: 'ease-out' },
+    );
+    fixture.destroy();
+  });
+
   it('seeds each attached portal size and animates only changes within that attachment', async () => {
     let resized: (() => void) | undefined;
     vi.stubGlobal('ResizeObserver', class {
-      constructor(callback: () => void) { resized = callback; }
+      constructor(callback: ResizeObserverCallback) { resized = () => callback([], this); }
       observe(): void { /* initial observation is driven after attachment */ }
+      unobserve(): void {}
       disconnect(): void { /* no external resource in this fake */ }
     });
     vi.stubGlobal('matchMedia', () => ({ matches: false }));

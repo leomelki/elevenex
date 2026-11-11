@@ -172,7 +172,9 @@ export class BrowserStreamComponent {
       if (input.kind === 'pointer-relative' && this.pointerLock.epoch !== undefined)
         input = { ...input, pointerLockEpoch: this.pointerLock.epoch };
     }
+    const interrupted = this.inputLane.needsInteraction;
     this.inputLane.send(input);
+    if (interrupted && !this.inputLane.needsInteraction && this.hasFrame()) this.status.set('');
   }
   private async paint(): Promise<void> {
     if (this.decoding || !this.latest) return;
@@ -223,7 +225,7 @@ export class BrowserStreamComponent {
       this.hasFrame.set(true);
       this.sequence = frame.sequence;
       this.paintedEpoch = frame.displayEpoch;
-      this.status.set(this.inputLane.needsInteraction ? 'Input interrupted. Click the page or Focus page to resume.' : '');
+      this.status.set(this.inputLane.needsInteraction ? 'Input interrupted. Scroll, click the page, or Focus page to resume.' : '');
       this.updateAuthority();
     } catch {
       decoded = false;

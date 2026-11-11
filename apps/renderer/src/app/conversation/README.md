@@ -66,6 +66,13 @@ The production desktop forbids frame embedding and remote media. HTML documents 
 
 Components use the supplied design tokens, native controls, CDK overlays/focus traps and shared folds/height motion. Existing history renders without entry motion; `Message.isNew` explicitly opts a newly sent message into arrival motion. `StreamText` preserves existing chunks and animates only appended live content. Respect reduced motion throughout. Keyboard shortcuts are scoped to the composer, focused message, decision card or preset picker; there are no document-level listeners.
 
+Opening a side panel or resizing the window rewraps existing replies and the
+composer without starting content-growth animations. AutoHeight treats the new
+width as a layout baseline, avoiding repeated height animations across the loaded
+history. Actual content growth at a stable width retains its existing motion.
+`panel-reflow.mjs` exercises longer history, draft/focus retention, interrupted
+panel toggles, both themes and reduced motion through the connected preview.
+
 `ComposerSubmission.sendOrigin` is an optional, ephemeral `MessageSendOrigin`
 (left/top text coordinates and a monotonic timestamp) for direct text sends.
 Carry it to the accepted local `ChatExchange.sendOrigin`; bind it to

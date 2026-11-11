@@ -90,12 +90,14 @@ export class BrowserVideoDecoder {
   };
   private disposed = false;
   private revision = 0;
+  private support?: { cancel(): void };
   async decode(
     video: NonNullable<TaskBrowserFrame["video"]>,
   ): Promise<VideoFrame> {
     if (
       this.disposed ||
       this.pending ||
+      this.support ||
       typeof VideoDecoder === "undefined" ||
       video.data.byteLength > 3_000_000 ||
       video.codec !== "avc1.42E02A"
@@ -129,7 +131,7 @@ export class BrowserVideoDecoder {
         optimizeForLatency: true,
       };
       if (
-        !(await VideoDecoder.isConfigSupported(config)).supported ||
+        !(await this.checkSupport(config)) ||
         this.disposed || revision !== this.revision
       )
         throw new Error("Video codec unavailable");
@@ -168,8 +170,27 @@ export class BrowserVideoDecoder {
       clearTimeout(timer);
     }
   }
+  private async checkSupport(config: VideoDecoderConfig): Promise<boolean> {
+    let cancel!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancel = () => reject(new Error('Video codec unavailable'));
+    });
+    const pending = { cancel };
+    this.support = pending;
+    // A hung GPU capability query precedes decode's own deadline. Without this
+    // boundary it holds the paint lane even across stream resets and JPEG recovery.
+    const timer = setTimeout(cancel, 2000);
+    try {
+      return (await Promise.race([VideoDecoder.isConfigSupported(config), cancelled])).supported === true;
+    } finally {
+      clearTimeout(timer);
+      if (this.support === pending) this.support = undefined;
+    }
+  }
   reset(): void {
     this.revision++;
+    this.support?.cancel();
+    this.support = undefined;
     this.pending?.reject(new Error("Video decoding interrupted"));
     this.pending = undefined;
     if (this.decoder && this.decoder.state !== "closed") this.decoder.close();

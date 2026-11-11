@@ -24,7 +24,8 @@ export class AutoHeightDirective {
       let previous = this.element.isConnected
         ? this.element.offsetHeight || this.element.getBoundingClientRect().height
         : undefined;
-      this.observer = new ResizeObserver(() => {
+      let previousWidth = this.element.isConnected ? content.clientWidth : undefined;
+      this.observer = new ResizeObserver((entries) => {
         // A queued observation can outlive portal detachment or destruction.
         // Detached elements no longer inherit the motion tokens either.
         if (this.destroyRef.destroyed) return;
@@ -34,21 +35,32 @@ export class AutoHeightDirective {
           this.animation?.cancel();
           this.animation = undefined;
           previous = undefined;
+          previousWidth = undefined;
           return;
         }
+        const observed = entries.find(entry => entry.target === content);
+        const width = observed?.contentRect.width ?? content.clientWidth;
+        const widthChanged = previousWidth !== undefined && Math.abs(width - previousWidth) > .01;
+        previousWidth = width;
         const style = getComputedStyle(this.element);
+        const chrome = [style.paddingTop, style.paddingBottom, style.borderTopWidth, style.borderBottomWidth]
+          .reduce((total, value) => total + (parseFloat(value) || 0), 0);
+        const observedHeight = observed?.borderBoxSize[0]?.blockSize;
+        if (widthChanged) {
+          // Panel/window resizing already owns this reflow. Starting a height
+          // animation for every wrapped reply multiplies layout work per frame.
+          // ResizeObserver supplies the untransformed size without a layout read.
+          previous = observedHeight === undefined ? undefined : observedHeight + chrome;
+          this.animation?.cancel();
+          this.animation = undefined;
+          return;
+        }
         const painted = this.element.getBoundingClientRect().height;
         const scale = (this.element.offsetHeight ? painted / this.element.offsetHeight : 1) || 1;
         // Height belongs to the outer border box. Measuring only the inner
         // content clips padded cards and makes them jump when motion finishes.
         const next =
-          content.getBoundingClientRect().height / scale +
-          [
-            style.paddingTop,
-            style.paddingBottom,
-            style.borderTopWidth,
-            style.borderBottomWidth,
-          ].reduce((total, value) => total + (parseFloat(value) || 0), 0);
+          (observedHeight ?? content.getBoundingClientRect().height / scale) + chrome;
         const from = this.animation
           ? painted / scale
           : previous ?? next;

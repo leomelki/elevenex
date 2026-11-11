@@ -46,6 +46,25 @@ describe("Browser H.264 allocation boundary", () => {
     }
     expect(constructed).not.toHaveBeenCalled();
   });
+  it('expires a stalled codec capability check and cancels one immediately on reset', async () => {
+    vi.useFakeTimers();
+    const constructed = vi.fn();
+    class Decoder {
+      static isConfigSupported = () => new Promise(() => undefined);
+      constructor() { constructed(); }
+    }
+    vi.stubGlobal('VideoDecoder', Decoder);
+    const decoder = new BrowserVideoDecoder();
+    const video = { epoch: 'epoch', codec: 'avc1.42E02A' as const, key: true, timestamp: 0, data: sps() };
+    try {
+      const timed = expect(decoder.decode(video)).rejects.toThrow('unavailable');
+      await vi.advanceTimersByTimeAsync(2000); await timed;
+      const cancelled = expect(decoder.decode(video)).rejects.toThrow('unavailable');
+      decoder.reset(); await cancelled;
+      expect(constructed).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { decoder.destroy(); vi.useRealTimers(); }
+  });
   it('closes late frames and ignores errors from a retired decoder', async () => {
     const instances: Decoder[] = [];
     class Decoder {
@@ -62,9 +81,9 @@ describe("Browser H.264 allocation boundary", () => {
     const video = { epoch: 'old', codec: 'avc1.42E02A' as const, key: true, timestamp: 0, data: sps() };
     const old = decoder.decode(video);
     const rejected = expect(old).rejects.toThrow('interrupted');
-    await Promise.resolve(); decoder.reset(); await rejected;
+    await vi.waitFor(() => expect(instances).toHaveLength(1)); decoder.reset(); await rejected;
     const next = decoder.decode({ ...video, epoch: 'new' });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(instances).toHaveLength(2));
     const stale = { close: vi.fn() } as unknown as VideoFrame;
     instances[0]!.callbacks.output(stale);
     instances[0]!.callbacks.error(new DOMException('Retired decoder failed'));

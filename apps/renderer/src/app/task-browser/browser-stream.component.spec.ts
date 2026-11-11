@@ -280,6 +280,32 @@ it('reuses the canvas backing store and rejects a late decode after switching ta
   expect(fixture.componentInstance.hasFrame()).toBe(false);
 });
 
+it.each(['timeout', 'replacement'])('releases a stalled video capability check on %s so JPEG recovery can paint', async recovery => {
+  vi.useFakeTimers();
+  const { deliver, ack, drawImage, textarea, dispatch } = await setup();
+  class Decoder { static isConfigSupported = () => new Promise(() => undefined); }
+  vi.stubGlobal('VideoDecoder', Decoder);
+  const sps = Uint8Array.from(atob('AAABZ0LAKtoDIE35cBagQEC0oAAAAwAgAAAHkeMGVAA='), c => c.charCodeAt(0));
+  try {
+    deliver({ ...frame(2), jpeg: new Uint8Array(), video: {
+      epoch: '22222222-2222-4222-8222-222222222222', codec: 'avc1.42E02A', key: true, timestamp: 0, data: sps,
+    } });
+    await settle();
+    expect(ack).toHaveBeenCalledTimes(1);
+    if (recovery === 'timeout') {
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(ack.mock.lastCall?.at(-1)).toBe(false);
+    }
+    deliver({ ...frame(1), streamId: '33333333-3333-4333-8333-333333333333' });
+    await settle();
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    expect(ack.mock.calls.some(call => call[4] === 2 && call[5] === false)).toBe(true);
+    textarea.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'recovered' }));
+    await settle();
+    expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'text', text: 'recovered' });
+  } finally { vi.useRealTimers(); }
+});
+
 it('keeps old pixels visible but gates input until the current document epoch is painted', async () => {
   const { fixture, textarea, dispatch, deliver, drawImage } = await setup();
   fixture.componentRef.setInput('surface', { ...surface, displayEpoch: 2 });
@@ -294,6 +320,19 @@ it('keeps old pixels visible but gates input until the current document epoch is
   type(); await settle();
   expect(drawImage).toHaveBeenCalledTimes(2);
   expect(dispatch.mock.lastCall?.[4]).toEqual({ kind: 'text', text: 'a' });
+});
+
+it('clears interrupted-input feedback on a fresh scroll without needing another video frame', async () => {
+  const { fixture, canvas, deliver, dispatch } = await setup();
+  vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+  const scroll = () => canvas.dispatchEvent(new WheelEvent('wheel', { clientX: 20, clientY: 30, deltaY: 80 }));
+  dispatch.mockRejectedValueOnce(new Error('Lost input receipt'));
+  scroll(); await settle();
+  deliver(frame(2)); await settle();
+  expect(fixture.componentInstance.status()).toContain('Input interrupted');
+  scroll(); await settle();
+  expect(dispatch.mock.lastCall?.[4]).toMatchObject({ kind: 'wheel', deltaY: 80 });
+  expect(fixture.componentInstance.status()).toBe('');
 });
 
 it('pairs printable keys with native text only when the host advertises support', async () => {
