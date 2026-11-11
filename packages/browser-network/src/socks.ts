@@ -8,7 +8,7 @@ export interface BrowserSocketTarget {
 }
 /** Private, task-owned SOCKS5 connector. No HTTP bodies, TLS bytes or page logs are inspected.
  * Browsers cannot speak the binary handshake through fetch/WebSocket to impersonate a proxy client. */
-export async function browserSocks(resolve: (host: string, port: number) => Promise<BrowserSocketTarget>): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }> {
+export async function browserSocks(resolve: (host: string, port: number) => Promise<BrowserSocketTarget>, tunnel?: (client: Socket, target: BrowserSocketTarget, opened: (available: boolean) => void) => void): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }> {
   const sockets = new Set<Socket>();
   let closing = false;
   const server = createServer(client => {
@@ -60,6 +60,17 @@ export async function browserSocks(resolve: (host: string, port: number) => Prom
       phase = 'connecting'; client.pause(); client.removeListener('data', data);
       void resolve(host, port).then(target => {
         if (closing || client.destroyed) return;
+        if (tunnel) {
+          // The SSH channel owns byte credits/backpressure and socket teardown.
+          // Never open a local destination when a remote route was requested.
+          if (rest.length) client.unshift(rest);
+          tunnel(client, target, available => {
+            if (!available || closing || client.destroyed) { fail(); return; }
+            clearTimeout(deadline); phase = 'stream';
+            client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+          });
+          return;
+        }
         if (sockets.size >= 128) { fail(); return; }
         upstream = createConnection({ host: target.host, port: target.port,
           ...(target.addresses ? {

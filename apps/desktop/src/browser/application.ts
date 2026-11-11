@@ -8,6 +8,7 @@ import { requestBackendJson } from '../backend-client/transport';
 import type { RemoteManager } from '../remote/manager';
 import { handleForWindow, sendToWindow, type TrustedSender } from '../ipc';
 import { RemoteTaskBrowser } from './remote-task';
+import { MixedTaskBrowser } from './mixed-task';
 import { TaskBrowser } from './task';
 import { BrowserTaskProfiles } from './task-session';
 import { BrowserPersistence } from './persistence';
@@ -15,6 +16,8 @@ import { browserId, command, layout, record, taskId, streamInput, windowContext 
 import { BrowserAutomation } from './automation';
 import { WebAuthnBroker } from './webauthn-broker';
 import type { BrowserHost as BrowserTask, DesktopBrowserHost } from './host';
+const nativeGuests = (host: BrowserTask) => host.engine === 'desktop' ? host : host.guests;
+const localTab = (host: BrowserTask) => host.engine === 'desktop' || host.snapshot().tabs.some(tab => tab.id === host.snapshot().active && tab.execution === 'local');
 interface WindowBrowsers { readonly placements: Map<string, TaskBrowserPlacement>; readonly tasks: Map<string, BrowserTask>; readonly opening: Map<string, Promise<BrowserTask>>; readonly automation: Map<DesktopBrowserHost, BrowserAutomation>; readonly attaching: Set<string>; surfaceSnapshot: string; readonly guests: Map<number, { contents: Electron.WebContents; timer: ReturnType<typeof setTimeout> }>; cleanup(): void; selection: number; requested?: string; selected?: BrowserTask }
 
 export function registerTaskBrowser(client: BackendClient, remote: RemoteManager, root: string, trusted: TrustedSender, createBrowserWindow: () => BrowserWindow = () => { throw new Error('Browser windows are unavailable'); }) {
@@ -50,7 +53,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
         // The app can only instantiate main-issued task guests. Never accept a page
         // URL, preload, unissued partition, or renderer-selected privileges.
         if (!expected || owner!.attaching.has(expected.bootstrap) || !trusted(window.webContents.mainFrame, window.webContents) ||
-          [...owner!.tasks.values()].filter((task): task is DesktopBrowserHost => task.engine === 'desktop').some(task => task.hasContents(expected.tabId)) ||
+          [...owner!.tasks.values()].some(task => nativeGuests(task)?.hasContents(expected.tabId)) ||
           !hardenTaskGuest(preferences, params, expected.partition, expected.bootstrap)) { event.preventDefault(); return; }
         owner!.attaching.add(expected.bootstrap);
 
@@ -64,7 +67,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       const mouse=(_event:Electron.Event,input:Electron.MouseInputEvent)=>{if(input.type==='mouseDown')owner!.selected?.applicationInput(input.x/window.webContents.getZoomFactor(),input.y/window.webContents.getZoomFactor());};
       // Streamed page keys arrive in the app's textarea. Modifier keys there are
       // page input; actual app overlays gate input through the measured layout.
-      const key=(_event:Electron.Event,input:Electron.Input)=>{if(input.type==='keyDown'&&(input.control||input.meta||input.alt)&&owner!.selected?.engine==='desktop')owner!.selected.applicationInput();};
+      const key=(_event:Electron.Event,input:Electron.Input)=>{if(input.type==='keyDown'&&(input.control||input.meta||input.alt)&&owner!.selected&&localTab(owner!.selected))owner!.selected.applicationInput();};
       window.webContents.on('before-mouse-event',mouse);window.webContents.on('before-input-event',key);
       window.once('closed', detach);
       window.webContents.on('did-start-navigation', navigation);
@@ -111,8 +114,13 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
           const onFrame = (frame: import('@elevenex/shared').TaskBrowserFrame) => { if (!detached.frame(created, frame)) sendToWindow(id, 'task-browser:frame', frame); };
           // Local pages always embed natively; only a remote private host streams.
           const created: BrowserTask = placement === 'machine' && environment.kind === 'remote'
-            ? new RemoteTaskBrowser(scope, task, window, client, onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, environment.kind === 'remote', authenticator)
-            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']));
+            ? new MixedTaskBrowser(scope, task,
+              changed => new RemoteTaskBrowser(scope, task, window, client, changed, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, remote, true, authenticator),
+              changed => {
+                const local = new TaskBrowser(scope, task, window, client, remote, persistence, identity + ':local-tabs', profiles, true, changed, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']), 'embedded', { serverProxy: authorize => remote.browserProxy(id, authorize), newTab: () => { void created.command({ kind: 'new-tab' }).catch(() => undefined); } });
+                local.setPorts(reply.value.ports); return local;
+              }, onState)
+            : new TaskBrowser(scope, task, window, client, remote, persistence, placement === 'desktop' ? identity : identity + ':' + placement, profiles, placement === 'desktop-proxy' && environment.kind === 'remote', onState, () => owner.selected === created || detached.has(created), () => publishSurfaces(id), onFrame, Number(reply.value['applicationPort']), 'embedded', environment.kind === 'remote' ? { ...(placement === 'desktop-proxy' ? { serverProxy: authorize => remote.browserProxy(id, authorize) } : {}) } : undefined);
           if (created.engine === 'desktop') created.setPorts(reply.value.ports);
           let evict: [string, BrowserTask] | undefined;
           try {
@@ -143,7 +151,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
     if (owner.selected && owner.selected !== browser) owner.selected.suspend();
     if (owner.selected?.engine === 'desktop' && owner.selected !== browser && !detached.has(owner.selected)) owner.automation.get(owner.selected)?.deactivate(owner.selected);
     owner.selected = browser;
-    if (browser.engine === 'desktop') {
+    if (browser.engine === 'desktop' && current.environment.kind === 'local') {
       let automation = owner.automation.get(browser);
       if (!automation) { automation = new BrowserAutomation(id, client); owner.automation.set(browser, automation); }
       automation.select(browser);
@@ -201,7 +209,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       const scope = browserId(args[0]), task = taskId(args[1]), tab = browserId(args[2]), owner = windows.get(id), guest = owner?.guests.get(args[3]);
       const entry = detached.get(id, scope, task), browser = entry ? detached.require(id).browser : owner?.tasks.get(scope + ':' + task);
       const bootstrap = guest?.contents.getURL();
-      if (!owner || !guest || !browser || (!entry && client.state(id).scope?.id !== scope) || (entry && entry.info.tabId !== tab) || !surfaces(id).some(surface => surface.tabId === tab && surface.bootstrap === bootstrap) || browser.engine !== 'desktop' || !browser.attach(guest.contents, tab)) {
+      if (!owner || !guest || !browser || (!entry && client.state(id).scope?.id !== scope) || (entry && entry.info.tabId !== tab) || !surfaces(id).some(surface => surface.tabId === tab && surface.bootstrap === bootstrap) || !nativeGuests(browser)?.attach(guest.contents, tab)) {
         if (guest && !guest.contents.isDestroyed()) guest.contents.close({ waitForBeforeUnload: false });
         throw new Error('Browser attachment changed');
       }

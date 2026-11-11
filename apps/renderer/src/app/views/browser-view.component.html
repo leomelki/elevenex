@@ -1,5 +1,14 @@
 <section class="browser" tabindex="-1" aria-label="Task browser" (keydown)="keydown($event)">
   @if (showTabs()) { <ex-view-tabs label="Browser tabs" newLabel="New browser tab (⌘T)" [reorderable]="reorderable()" [detachable]="detachable()" [tabsBusy]="tabsBusy() || detachBusy()" (moved)="tabMoved.emit($event)" (windowRequested)="tabWindowRequested.emit($event)" [items]="tabItems()" [active]="current()?.id" (selected)="selected.emit($event)" (closed)="closed.emit($event)" (added)="added.emit()">
+    <ng-container viewTabsNew>@if (localTabsAvailable()) {
+      <button exButton variant="ghost" size="sm" [cdkMenuTriggerFor]="newTabMenu" [disabled]="tabsBusy()" aria-label="New tab options"><ex-icon name="chevron-down" [size]="12" /></button>
+      <ng-template #newTabMenu>
+        <ex-dropdown-menu label="New browser tab">
+          <button exDropdownItem [disabled]="tabsBusy()" (triggered)="added.emit()"><ex-icon name="globe" [size]="14" /><span>New remote tab<small>Runs on the server · Agent access</small></span></button>
+          <button exDropdownItem [disabled]="tabsBusy()" (triggered)="localAdded.emit()"><ex-icon name="laptop" [size]="14" /><span>New local tab<small>Runs here · Agents can’t see · Traffic via server</small></span></button>
+        </ex-dropdown-menu>
+      </ng-template>
+    }</ng-container>
     @if (detachable()) { <ex-icon-button icon="window" [label]="detachLabel()" size="sm" [disabled]="!current() || detachBusy()" (pressed)="detachRequested.emit()" /> }
   </ex-view-tabs> }
   <div class="toolbar">
@@ -14,10 +23,8 @@
         <input #address [disabled]="controlsDisabled()" aria-label="Page address" [value]="addressDraft() ?? current()?.url ?? ''" (input)="addressDraft.set(address.value)" (keydown.enter)="$event.preventDefault(); navigateAddress()" (keydown.escape)="addressDraft.set(null); address.blur()" />
       } @else { <span>{{ current()?.url ?? 'No page open' }}</span> }
     </div>
-    <button #driverControl type="button" class="driver" [attr.aria-label]="driverLabel()" (click)="focusPage()" [disabled]="loading() || !pageFocusAvailable()" [hidden]="!current()" [attr.data-driver]="driver()">
-      @if (driver() === 'agent') { <span class="agent-mark" aria-hidden="true">Ag</span> }
-      @else { <ex-icon [name]="driver() === 'needs' ? 'hand' : 'cursor'" [size]="12" /> }
-      <ex-ease-swap [value]="driver() === 'agent' ? 'Working' : driver() === 'needs' ? 'Action needed' : 'Browser'" />
+    <button #driverControl type="button" class="driver" [class.local-only]="localOnly()" [exTooltip]="locationDetails()" tooltipSide="bottom" [attr.aria-label]="locationLabel()" (click)="localOnly() ? moreRequested.emit() : focusPage()" [disabled]="!localOnly() && (loading() || !pageFocusAvailable())" [hidden]="!current()">
+      <ex-icon [name]="streaming() ? 'server' : 'laptop'" [size]="12" /><ex-ease-swap [value]="location()" />
     </button>
     <div class="tools">
       @if (pickerAvailable()) { <ex-icon-button #pickToggle icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="pointAndAsk()" [disabled]="!current() || controlsDisabled()" (pressed)="togglePointAndAsk()" /> }
@@ -25,13 +32,13 @@
       <ex-icon-button icon="more" label="More browser actions" size="sm" [disabled]="controlsDisabled()" (pressed)="moreRequested.emit()" />
     </div>
   </div>
-  <ex-fold [open]="!!current() && driver() === 'needs'">
+  @if (!localOnly()) { <ex-fold [open]="!!current() && driver() === 'needs'">
     <div class="needs" role="status">
       <ex-icon name="hand" [size]="16" />
       <span><b>{{ needsTitle() }}</b><small>{{ needsText() }}</small></span>
       <button exButton variant="primary" size="sm" (click)="handBack()">I’m done</button>
     </div>
-  </ex-fold>
+  </ex-fold> }
   <div #preview class="preview" tabindex="0" aria-label="Page preview" [class.agent-driving]="driver() === 'agent' && !pointing()" [attr.aria-busy]="loading()">
     <div #page class="page" [class.clipped]="clipPreview()" [class.pointing]="pointing()" [hidden]="!current() && !keepPreviewMounted()" [class.keeping-empty]="!current()" [attr.inert]="!current() ? '' : null" [class.phone]="width() === 'phone'">
       <ng-content select="[browserPreview]" />
@@ -81,7 +88,7 @@
     }
     @if (!current()) { <div class="empty"><ex-icon name="globe" [size]="24" /><p>Open a page for this task.</p><button exButton variant="secondary" (click)="added.emit()">New tab</button></div> }
   </div>
-  <ex-fold [open]="!!current() && (driver() === 'agent' || (driver() === 'you' && agentWaiting()))">
+  @if (!localOnly()) { <ex-fold [open]="!!current() && (driver() === 'agent' || (driver() === 'you' && agentWaiting()))">
       <div class="foot agent-step">
         <span class="agent-mark" [class.waiting]="driver() !== 'agent'" [class.failed]="driver() === 'agent' && stepStatus() === 'failed'" aria-hidden="true">@if (driver() === 'agent') { @if (step()?.status) { <ex-status-glyph [status]="stepStatus()" /> } @else { Ag } } @else { <ex-icon name="cursor" [size]="14" /> }</span>
         <span class="step-copy" role="status" aria-atomic="true" [attr.title]="driver() === 'agent' ? step()?.text : null">@if (driver() === 'agent') { @if (step(); as step) { <b>Step {{ step.n }}@if (step.total) { of {{ step.total }} }</b><span class="separator" aria-hidden="true">·</span><ex-ease-swap [value]="step.text" /> } @else { Agent working } } @else { Agent blocked }</span>
@@ -97,5 +104,5 @@
   </ex-fold>
   <ex-fold [open]="!!current() && driver() !== 'agent' && !agentWaiting() && errors() > 0">
     <div class="foot errors" role="status"><ex-icon name="bug" [size]="14" /><span><b>{{ errors() }} {{ errors() === 1 ? 'error' : 'errors' }}</b> {{ errorText() }}</span><button exButton size="sm" variant="secondary" (click)="sendErrorsRequested.emit()">Send to agent</button></div>
-  </ex-fold>
+  </ex-fold> }
 </section>

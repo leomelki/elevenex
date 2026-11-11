@@ -33,7 +33,7 @@ export class DetachedBrowserWindows {
     const window = this.createWindow(), contents = window.webContents, id = contents.id;
     const hide = () => browser.hideDetached(tabId);
     const mouse = (_event: Electron.Event, input: Electron.MouseInputEvent) => { if (input.type === 'mouseDown') browser.applicationInputDetached(tabId, input.x / window.webContents.getZoomFactor(), input.y / window.webContents.getZoomFactor()); };
-    const key = (_event: Electron.Event, input: Electron.Input) => { if (browser.engine === 'desktop' && input.type === 'keyDown' && (input.control || input.meta || input.alt)) browser.applicationInputDetached(tabId); };
+    const key = (_event: Electron.Event, input: Electron.Input) => { if ((browser.engine === 'desktop' || browser.snapshot().tabs.some(tab => tab.id === tabId && tab.execution === 'local')) && input.type === 'keyDown' && (input.control || input.meta || input.alt)) browser.applicationInputDetached(tabId); };
     const navigation = (_event: Electron.Event, _url: string, inPlace: boolean, main: boolean) => { if (main && !inPlace) hide(); };
     const closed = () => {
       this.tabs.delete(id); browser.returnTab(tabId); cleanup();

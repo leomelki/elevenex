@@ -229,6 +229,7 @@ describe('Side-view interactions', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
     fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('streaming', true);
     fixture.detectChanges();
     const takeover = vi.fn();
     fixture.componentInstance.takeOverRequested.subscribe(takeover);
@@ -238,9 +239,13 @@ describe('Side-view interactions', () => {
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
     preview.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     fixture.nativeElement.querySelector('.driver').click();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
     expect(takeover).not.toHaveBeenCalled();
     fixture.componentRef.setInput('driver', 'you');
     fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
+    fixture.componentRef.setInput('driver', 'needs'); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
     expect(takeover).not.toHaveBeenCalled();
   });

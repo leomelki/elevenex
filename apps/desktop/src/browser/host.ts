@@ -12,6 +12,8 @@ import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 
 /** Task ownership API. Electron guest adoption and MCP execution are desktop-engine capabilities. */
 export interface BrowserTaskHost {
+  /** A composed machine task may also own human-only native guests. */
+  readonly guests?: Pick<DesktopBrowserHost, 'hasContents' | 'attach'>;
   readonly scopeId: string;
   readonly taskId: number;
   readonly closed: boolean;

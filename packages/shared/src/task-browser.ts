@@ -96,6 +96,10 @@ export type TaskBrowserWorkflow =
 export const browserCursors = ['default', 'none', 'pointer', 'text', 'vertical-text', 'crosshair', 'move', 'grab', 'grabbing', 'wait', 'progress', 'help', 'not-allowed', 'no-drop', 'copy', 'alias', 'cell', 'context-menu', 'all-scroll', 'col-resize', 'row-resize', 'n-resize', 'e-resize', 's-resize', 'w-resize', 'ne-resize', 'nw-resize', 'se-resize', 'sw-resize', 'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'zoom-in', 'zoom-out'] as const;
 export type TaskBrowserCursor = typeof browserCursors[number];
 export interface TaskBrowserTab {
+  /** Main-issued engine/privacy metadata; older hosts omit these fields. */
+  readonly execution?: 'local' | 'remote';
+  readonly agentAccess?: 'unavailable';
+  readonly routing?: 'server' | 'device';
   readonly workflows?: readonly TaskBrowserWorkflow[];
   readonly cursor?: TaskBrowserCursor;
   readonly pointerLocked?: boolean;
@@ -129,6 +133,8 @@ export interface TaskBrowserTab {
   readonly hovered?: BrowserHover;
 }
 export interface TaskBrowserState {
+  /** Human-only local tabs can coexist with the task's remote browser. */
+  readonly canCreateLocalTabs?: true;
   readonly webAuthn?: true;
   readonly webAuthnRequest?: import('./browser-webauthn').BrowserWebAuthnRequest;
   /** Popup adoption, dialogs and bounded native file relay. */
@@ -185,7 +191,7 @@ export type TaskBrowserCommand =
   | { readonly kind: 'dialog-response'; readonly tabId: string; readonly requestId: string; readonly accept: boolean; readonly text: string }
   | { readonly kind: 'choose-files' | 'save-download' | 'cancel-workflow'; readonly tabId: string; readonly requestId: string }
   | { readonly kind: 'dismiss-attention' }
-  | { readonly kind: 'new-tab' }
+  | { readonly kind: 'new-tab'; readonly location?: 'local' | 'remote' }
   | { readonly kind: 'open'; readonly url: string }
   /** Move an existing tab before another, or to the end. Never replaces the tab set. */
   | { readonly kind: 'move-tab'; readonly tabId: string; readonly beforeTabId: string | null }

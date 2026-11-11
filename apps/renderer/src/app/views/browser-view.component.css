@@ -7,9 +7,8 @@
 .address:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 .address > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .server { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font-size: var(--text-overline-size); }
-.driver { border: 0; font-family: inherit; line-height: var(--text-overline-line); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: 600; transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
-.driver[data-driver="agent"] { color: var(--accent); background: var(--accent-soft); }
-.driver[data-driver="needs"] { color: var(--attention); background: var(--attention-soft); }
+.driver { border: 0; font-family: inherit; line-height: var(--text-overline-line); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: var(--text-caption-weight); transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
+ex-dropdown-menu [exDropdownItem] small { display: block; margin-top: var(--space-1); font-size: var(--text-caption-size); color: var(--ink-muted); white-space: normal; }
 .agent-mark { display: inline-grid; place-items: center; flex: none; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font: 600 8px/1 var(--font-sans); }
 .agent-mark.waiting { color: var(--ink-muted); background: transparent; }
 .needs { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); color: var(--ink); background: var(--attention-soft); }

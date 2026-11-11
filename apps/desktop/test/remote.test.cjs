@@ -480,6 +480,19 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   const absent = await first.forward(1, 0, available => serviceStatus.push(available)); assert.equal(absent.reachable, false);
   await new Promise(resolve => { const socket = connect(absent.port, '127.0.0.1'); socket.on('error', () => undefined); socket.once('close', resolve); });
   assert.deepEqual(serviceStatus, [false]); await absent.close();
+  // Exercise the uploaded bridge and its staged dependencies, rather than only
+  // a wire mock. The fixture HTTP service stands in for an explicit task port.
+  const proxy = await first.browserProxy((hostname, port) => {
+    if (hostname !== 'localhost' || port !== controlPort) throw new Error('Ungrantable destination');
+  });
+  const proxyClient = connect(proxy.port, '127.0.0.1'); proxyClient.on('error', () => undefined);
+  const { once } = require('node:events');
+  let received = once(proxyClient, 'data'); proxyClient.write(Buffer.from([5, 1, 0])); await received;
+  const destination = Buffer.alloc(16); destination.set([5, 1, 0, 3, 9]); destination.write('localhost', 5); destination.writeUInt16BE(controlPort, 14);
+  received = once(proxyClient, 'data'); proxyClient.write(destination); assert.equal((await received)[0][1], 0);
+  received = once(proxyClient, 'data'); proxyClient.write('GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
+  assert.match((await received)[0].toString(), /^HTTP\/1.1 403/);
+  proxyClient.destroy(); await proxy.close();
   await first.close();
   const warmStarted = performance.now(); const second = await connectRemote({ ...options, signal: AbortSignal.timeout(15000) });
   t.diagnostic(`Cached runtime, new daemon: ${Math.round(coldMilliseconds)} ms; warm daemon reconnect: ${Math.round(performance.now() - warmStarted)} ms (subprocess fixture, no SSH/network latency).`);

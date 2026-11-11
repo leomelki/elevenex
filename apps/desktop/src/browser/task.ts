@@ -3,7 +3,7 @@ import type { DesktopBrowserHost } from './host';
 import { BrowserAgentEngine, BrowserInteractionController, RelatedBrowserTabs, delay } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { BrowserTaskSession, type BrowserTaskProfiles } from './task-session';
-import { TaskBrowserNetwork } from './network';
+import { TaskBrowserNetwork, type BrowserServerProxy } from './network';
 import type { BrowserAgentCommand, BrowserAgentState, BrowserElement, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserState, TaskBrowserSurface, TaskBrowserStreamInput, TaskBrowserFrame } from '@elevenex/shared';
 import { shell, type BrowserWindow } from 'electron';
 import { requestBackendJson } from '../backend-client/transport';
@@ -118,6 +118,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     }, () => this.closePage(page), signal);
   }
   code(sessionId: number, command: BrowserCodeCommand, signal: AbortSignal): Promise<BrowserCodeResult> {
+    this.assertAgentAccess();
     this.assertScope(); return this.codeEngine.execute(sessionId, command, signal);
   }
   readonly engine = 'desktop';
@@ -202,8 +203,8 @@ export class TaskBrowser implements DesktopBrowserHost {
     remote: RemoteManager, private readonly persistence: BrowserPersistence,
     private readonly key: string, profiles: BrowserTaskProfiles, readonly isRemote: boolean,
     private readonly changed: (state: TaskBrowserState) => void, private readonly selected: () => boolean,
-    private readonly surfacesChanged: () => void = () => undefined, private readonly frame: (frame: TaskBrowserFrame) => void = () => undefined, private readonly applicationPort: number | null = null, private readonly defaultPresentation: 'embedded' | 'stream' = 'embedded') {
-    this.network = new TaskBrowserNetwork(isRemote, port => remote.browserForward(window.webContents.id, port), () => !this.disposed && this.client.state(this.window.webContents.id).scope?.id === this.scopeId, selected, port => port === this.applicationPort);
+    private readonly surfacesChanged: () => void = () => undefined, private readonly frame: (frame: TaskBrowserFrame) => void = () => undefined, private readonly applicationPort: number | null = null, private readonly defaultPresentation: 'embedded' | 'stream' = 'embedded', private readonly localOnly?: { readonly serverProxy?: BrowserServerProxy; readonly newTab?: () => void }) {
+    this.network = new TaskBrowserNetwork(isRemote, port => remote.browserForward(window.webContents.id, port), () => !this.disposed && this.client.state(this.window.webContents.id).scope?.id === this.scopeId, selected, port => port === this.applicationPort, localOnly?.serverProxy);
     this.profile = new BrowserTaskSession(
       key, profiles,
       session => this.network.configure(session),
@@ -233,7 +234,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.assertScope();
     if (!saved) return;
     for (const item of saved.tabs) {
-      const page = this.create(item.by ?? 'you', item.agentSessionId ?? null); page.width = item.width;
+      const page = this.create(this.localOnly ? 'you' : item.by ?? 'you', this.localOnly ? null : item.agentSessionId ?? null); page.width = item.width;
       page.lease.takeOver(false, false);
       // Restored URLs load lazily on selection. No actions, handoffs or input are replayed.
       page.url = item.url; page.documentUrl = item.url;
@@ -242,9 +243,9 @@ export class TaskBrowser implements DesktopBrowserHost {
     if (this.active) { const active = this.pages.get(this.active); if (active?.url) void this.navigate(active, active.url).catch(() => { active.error = 'Task server unavailable. Retry to reconnect.'; this.emit(); }); }
     this.emit();
   }
-  snapshot(): TaskBrowserState { return { agentCode: 1, elementSnapshots: 1, agentRequests: this.interactions.pending, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
+  snapshot(): TaskBrowserState { return { ...(this.localOnly ? {} : { agentCode: 1 as const, elementSnapshots: 1 as const }), agentRequests: this.interactions.pending, capabilities: { embedded: true, audio: true, accessibility: true, filePicker: true, downloads: true }, canDetach: true, canReorder: true, scopeId: this.scopeId, taskId: this.taskId, revision: this.revision, surfaceEpoch: this.surfaceEpoch, controlsFocus: this.controlsFocus,
     active: this.active, tabs: [...this.pages.values()].map(page => {
-      const tab = { ...page.snapshot(), detached: this.detached.has(page.id) };
+      const tab = { ...page.snapshot(), detached: this.detached.has(page.id), ...(this.localOnly ? { execution: 'local' as const, agentAccess: 'unavailable' as const, routing: this.localOnly.serverProxy ? 'server' as const : 'device' as const, driver: 'you' as const, waiting: false } : {}) };
       try { const url = new URL(tab.url); if (loopback(url) && this.ports.includes(Number(url.port || (url.protocol === 'https:' ? 443 : 80)))) return { ...tab, server: 'Task server' }; } catch { /* Empty tab. */ }
       return tab;
     }), picked: this.picked,
@@ -252,10 +253,11 @@ export class TaskBrowser implements DesktopBrowserHost {
     picking: this.picking || [...this.pages.values()].some(page => page.picking && !!page.agentPicker), pickerMessage: this.pickerMessage, feedback: this.feedback, ports: this.ports, privacy: 'content-withheld', ...(this.attention ? { attention: this.attention } : {}) }; }
   private create(by: 'you' | 'agent', sessionId: number | null = null, tabId?: string): BrowserPage {
     this.assertScope();
+    if (by === 'agent') this.assertAgentAccess();
     if (this.pages.size >= 12 && (!tabId || !this.pages.has(tabId))) throw new Error('A task can have up to 12 browser tabs. Close a tab first.');
     const page = new BrowserPage({ window: this.window, scopeId: this.scopeId, taskId: this.taskId, frame: this.frame, session: this.profile.session, partition: this.profile.partition,
       popup: (sessionId, options) => { const popup = this.create('agent', sessionId); this.relatedTabs.link(popup.id, page.id); popup.ensureAgentView(options); this.emit(); return popup.contents; },
-      resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(), authorize: async url => { await this.network.outside(browserUrl(url)); },
+      resourceUrl: url => this.network.allowed(url) ? url : null, logicalUrl: url => url, configure: () => this.profile.configure(), authorize: async url => { await this.network.authorize(browserUrl(url)); },
       authorized: () => this.selected() && this.client.state(this.window.webContents.id).scope?.id === this.scopeId,
       changed: () => this.emit(), controlChanged: () => this.synchronizeControls(), pick: element => {
         this.picked = element; this.picking = !element && page.visualPicking; page.picking = this.picking;
@@ -266,7 +268,7 @@ export class TaskBrowser implements DesktopBrowserHost {
         if (page.displayWindow) { const view = this.detached.get(page.id); if (view) view.controlsFocus++; this.emit(); page.displayWindow.webContents.focus(); return; }
         if (kind === 'controls') { this.controlsFocus++; this.emit(); this.window.webContents.focus(); return; }
         this.window.webContents.focus();
-        if (kind === 'open') { const next = this.create('you'); this.select(next); this.emit(); }
+        if (kind === 'open') { if (this.localOnly?.newTab) this.localOnly.newTab(); else { const next = this.create('you'); this.select(next); this.emit(); } }
         else void this.command({ kind: 'pick', enabled: !this.picking, visual: 1 }).catch(() => undefined);
       }, attention: (kind, message) => { this.attention = { kind, message, outside: true, tabId: page.id }; this.emit(); } }, by, sessionId, tabId);
     page.presentation = this.defaultPresentation;
@@ -274,6 +276,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
     this.assertScope();
+    if (input.kind === 'handoff' || (input.kind === 'pick' && input.enabled) || (input.kind === 'feedback' && input.enabled) || input.kind.startsWith('agent-request-')) this.assertAgentAccess();
     if (input.kind === 'agent-request-complete' || input.kind === 'agent-request-cancel' || input.kind === 'agent-request-pick') { await this.interactions.viewer(input.kind, input.requestId, input.kind === 'agent-request-pick' && input.visual === 1); return this.snapshot(); }
     if (input.kind === 'handoff') { const request = this.interactions.pending.find(request => this.relatedTabs.members(input.tabId).includes(request.tabId)); if (request) { await this.interactions.viewer('agent-request-complete', request.id); return this.snapshot(); } }
     if (input.kind === 'dialog-response' || input.kind === 'choose-files' || input.kind === 'save-download' || input.kind === 'cancel-workflow') throw new Error('This site request belongs to a streamed browser.');
@@ -339,6 +342,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     this.assertScope(); this.emit(); this.persist(); return this.snapshot();
   }
   async agent(input: BrowserAgentCommand, sessionId: number, signal?: AbortSignal): Promise<BrowserAgentState> {
+    this.assertAgentAccess();
     this.assertScope(); signal?.throwIfAborted();
     if (!this.selected()) throw new Error('Task is no longer selected');
     if (input.kind !== 'list') {
@@ -496,7 +500,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     const logical = browserUrl(url), expectedGeneration = page.lease.generation;
     page.url = logical; page.loading = true; page.error = null; this.emit();
     try {
-      await this.network.outside(logical);
+      await this.network.authorize(logical);
       await page.configureNetwork(); this.assertScope();
       if (!this.pages.has(page.id) || page.lease.generation !== expectedGeneration) throw new Error('Browser control or navigation changed');
       if (generation !== undefined) page.lease.assert(generation);
@@ -512,6 +516,7 @@ export class TaskBrowser implements DesktopBrowserHost {
   private current(): BrowserPage { if (!this.active) throw new Error('Open a browser tab first'); return this.page(this.active); }
   private page(id: string): BrowserPage { const page = this.pages.get(id); if (!page) throw new Error('Browser tab is no longer open'); return page; }
   private assertScope(): void { if (this.disposed || this.client.state(this.window.webContents.id).scope?.id !== this.scopeId) throw new Error('Browser scope changed. Reopen the task browser.'); }
+  private assertAgentAccess(): void { if (this.localOnly) throw new Error('Local tabs on a remote task are unavailable to agents. Open a remote tab to work with the agent.'); }
   private persist(): void {
     const savedPages=[...this.pages.values()].filter(page=>page.documentUrl);
     const tabs: SavedBrowser['tabs'] = savedPages.map(page => {

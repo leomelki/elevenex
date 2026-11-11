@@ -14,5 +14,5 @@
       @if (closable()) { <button class="close" type="button" [attr.aria-label]="'Close ' + item.title" [disabled]="disabled()" (click)="close(item.id)"><ex-icon name="x" [size]="11" /></button> }
     </div>
   }
-</div><button #newButton class="new" type="button" [attr.aria-label]="newLabel()" [title]="newLabel()" [disabled]="disabled()" (click)="added.emit()"><ex-icon name="plus" [size]="14" /></button><ng-content select="[viewTabsNew]" /><span class="spacer"></span><ng-content /></div>
+</div><button #newButton class="new" type="button" [attr.aria-label]="newLabel()" [title]="newLabel()" [disabled]="disabled() || tabsBusy()" (click)="added.emit()"><ex-icon name="plus" [size]="14" /></button><ng-content select="[viewTabsNew]" /><span class="spacer"></span><ng-content /></div>
 <span class="announcement" aria-live="polite">{{ announcement() }}</span>

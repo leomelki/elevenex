@@ -23,6 +23,15 @@ The New button follows the last tab; the strip takes only the width its tabs nee
 and scrolls with edge fades once it fills the row. Content marked `viewTabsNew` is
 projected directly after New; other projected actions stay right-aligned.
 
+`BrowserView.localTabsAvailable` adds a chevron beside New with remote/local
+creation intents (`added` / `localAdded`). The toolbar pill shows **Local** by
+default, **Local · Proxied** with `trafficViaServer=true`, or **Streaming** with
+`streaming=true`, independently of agent activity. Streaming takes precedence.
+`localOnly` hides agent workflow/error surfaces, explains agent exclusion in the
+location tooltip and opens `moreRequested` for details. `trafficViaServer` also supplies routing copy to its
+keyboard-accessible tooltip. The owner must also disable picking and enforce the
+privacy policy at the engine boundary. These inputs default off for older callers.
+
 `BrowserView` accepts a trusted `[browserPreview]` projection. It does not create
 iframes, webviews, or turn arbitrary URLs into privileged content. Every navigation
 or browser capability is an intent output. `driver` remains controlled and

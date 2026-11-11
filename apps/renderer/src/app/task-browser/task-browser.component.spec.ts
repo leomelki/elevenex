@@ -251,3 +251,31 @@ describe('Detached browser tab intents', () => {
     expect(bridge.taskBrowserCommand).not.toHaveBeenCalled();
   });
 });
+
+describe('Local tabs on a remote task', () => {
+  it.each(['server', 'device'] as const)('shows local routing (%s) and keeps privacy details outside the pill', async routing => {
+    const { fixture, bridge } = setup([{ ...tab(), execution: 'local', routing, agentAccess: 'unavailable', url: 'http://localhost:3000', ready: true, errors: 3 }]);
+    await render(fixture);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.local-only')?.textContent?.trim()).toBe(routing === 'server' ? 'Local · Proxied' : 'Local');
+    expect(root.querySelector('[aria-label="Point and ask (⇧⌘C)"]')).toBeNull();
+    expect(root.textContent).not.toContain('Send to agent');
+    await fixture.componentInstance.beginElementPick();
+    expect(bridge.taskBrowserCommand).not.toHaveBeenCalledWith('scope', 1, { kind: 'pick', enabled: true });
+    fixture.componentInstance.showDialog('tools'); fixture.detectChanges();
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain(routing === 'server' ? 'Web traffic and localhost connections go through the task server' : 'Web traffic uses this device');
+    expect(dialog?.textContent).not.toContain('Block agent'); expect(dialog?.textContent).not.toContain('Allow agent');
+    expect(dialog?.querySelector('.feedback')).toBeNull();
+  });
+
+  it('offers local creation only when main advertises mixed tabs', async () => {
+    const { fixture, bridge } = setup([tab()]); await render(fixture);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[aria-label="New tab options"]')).toBeNull();
+    fixture.componentInstance.store.state.update(state => state && { ...state, canCreateLocalTabs: true }); fixture.detectChanges();
+    expect(root.querySelector('[aria-label="New tab options"]')).not.toBeNull();
+    fixture.componentInstance.newTab('local');
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'new-tab', location: 'local' });
+  });
+});

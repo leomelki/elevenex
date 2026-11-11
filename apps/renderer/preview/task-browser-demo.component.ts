@@ -67,3 +67,32 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
 export class TaskBrowserDemoComponent {
   readonly context: TaskBrowserWindowContext = { projectName: 'Elevenex', taskName: 'Browser tabs', branchName: 'feat/browser', machineName: 'This Mac', stage: 'active', hue: 'ocean' };
 }
+
+/** Isolated mixed-tab data; production owns the two engines and SSH routing. */
+class RemoteTabsFixture extends StartTabFixture {
+  constructor() {
+    super();
+    this.state = { ...this.state, placement: 'machine', canCreateLocalTabs: true, agentCode: 1, capabilities: { embedded: false, audio: false, accessibility: false, filePicker: true, downloads: true } };
+  }
+  override async taskBrowserCommand(scope: string, task: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>> {
+    const current = this.state.tabs.find(tab => tab.id === this.state.active);
+    if (current?.agentAccess === 'unavailable' && (input.kind === 'handoff' || (input.kind === 'pick' && input.enabled))) return { ok: false, error: { code: 'unavailable', message: 'Agents cannot inspect local tabs.' } };
+    const reply = await super.taskBrowserCommand(scope, task, input);
+    if (!reply.ok) return reply;
+    if (input.kind === 'new-tab') this.state = { ...this.state, tabs: this.state.tabs.map(tab => tab.id === this.state.active ? { ...tab, execution: input.location === 'local' ? 'local' : 'remote', ...(input.location === 'local' ? { agentAccess: 'unavailable' as const, routing: 'server' as const } : {}) } : tab) };
+    const local = this.state.tabs.find(tab => tab.id === this.state.active)?.execution === 'local';
+    this.state = { ...this.state, capabilities: { embedded: local, audio: local, accessibility: local, filePicker: true, downloads: true } };
+    return { ok: true, value: this.state };
+  }
+}
+@Component({
+  selector: 'ex-remote-tabs-demo',
+  imports: [TaskBrowserComponent],
+  providers: [{ provide: ELEVENEX_BRIDGE, useFactory: () => new RemoteTabsFixture() }],
+  template: '<ex-task-browser scopeId="preview" [taskId]="1" [active]="true" [windowContext]="context" />',
+  styles: ':host { display: block; height: 100%; min-height: 0; padding: var(--space-4); }',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class RemoteTabsDemoComponent {
+  readonly context: TaskBrowserWindowContext = { projectName: 'Elevenex', taskName: 'Remote browser', branchName: 'feat/browser', machineName: 'Development server', stage: 'active', hue: 'ocean' };
+}

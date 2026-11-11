@@ -181,3 +181,49 @@ test('a stalled channel does not block another service on the same transport', {
   const echoed = once(other, 'data'); other.write('independent service');
   assert.equal((await echoed)[0].toString(), 'independent service');
 });
+
+test('browser destinations resolve on the server, pin answers and reject private/rebound names', async t => {
+  const dns = require('node:dns/promises');
+  const { BrowserDestinations } = require('../dist/remote/browser-destination');
+  let queries = 0, release;
+  t.mock.method(dns, 'lookup', async host => {
+    queries++;
+    if (host === 'delayed.invalid') return new Promise(resolve => { release = resolve; });
+    return host === 'public.invalid' ? [{ address: '1.1.1.1', family: 4 }] : [{ address: '1.1.1.1', family: 4 }, { address: '127.0.0.1', family: 4 }];
+  });
+  const destinations = new BrowserDestinations();
+  assert.deepEqual(await destinations.resolve('public.invalid', 443), { host: 'public.invalid', port: 443, addresses: [{ address: '1.1.1.1', family: 4 }] });
+  await assert.rejects(destinations.resolve('rebound.invalid', 443), /Private/);
+  for (const host of ['127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', '::ffff:127.0.0.1']) await assert.rejects(destinations.resolve(host, 80), /Private/);
+  assert.equal(queries, 2, 'IP literals never enter DNS');
+  const pending = destinations.resolve('delayed.invalid', 443), coalesced = destinations.resolve('delayed.invalid', 80);
+  assert.equal(queries, 3); destinations.close();
+  release([{ address: '1.1.1.1', family: 4 }]);
+  await assert.rejects(pending, /closed/); await assert.rejects(coalesced, /closed/);
+});
+
+test('SOCKS browser egress uses SSH byte channels and closes on transport loss without local fallback', { timeout: 5000 }, async t => {
+  const { browserSocks } = require('@elevenex/browser-network');
+  const toRemote = new PassThrough(), toLocal = new PassThrough();
+  const local = new Wire(toLocal, toRemote), remote = new Wire(toRemote, toLocal);
+  const clientChannels = new SocketChannels(local), serverChannels = new SocketChannels(remote);
+  const serviceSockets = new Set();
+  const service = createServer(socket => { serviceSockets.add(socket); socket.once('close', () => serviceSockets.delete(socket)); socket.on('error', () => {}); socket.pipe(socket); });
+  const port = await listen(service);
+  const destinations = [];
+  remote.on('message', frame => { if (frame.type === 'browser-open') {
+    destinations.push([frame.host, frame.port]);
+    serverChannels.acceptBrowser(frame.id, frame.host, frame.port, async () => ({ host: '127.0.0.1', port }));
+  } });
+  const proxy = await browserSocks(async (host, port) => ({ host, port }), (socket, target, opened) => clientChannels.openBrowser(socket, target.host, target.port, opened));
+  const socket = connect(proxy.port, '127.0.0.1'); socket.on('error', () => {});
+  t.after(async () => { socket.destroy(); await proxy.close(); clientChannels.dispose(); serverChannels.dispose(); local.close(); remote.close(); for (const peer of serviceSockets) peer.destroy(); await new Promise(resolve => service.close(resolve)); });
+  let data = once(socket, 'data'); socket.write(Buffer.from([5, 1, 0])); await data;
+  const host = Buffer.from('remote-dns.invalid');
+  const target = Buffer.alloc(7 + host.length); target.set([5, 1, 0, 3, host.length]); host.copy(target, 5); target.writeUInt16BE(443, target.length - 2);
+  data = once(socket, 'data'); socket.write(target); assert.equal((await data)[0][1], 0);
+  assert.deepEqual(destinations, [['remote-dns.invalid', 443]]);
+  const opaque = Buffer.from([0x16, 3, 3, 0, 5, 0, 0xff, 4, 5, 6]);
+  data = once(socket, 'data'); socket.write(opaque); assert.deepEqual((await data)[0], opaque, 'TLS bytes are tunneled without inspection');
+  const closed = once(socket, 'close'); local.close(); await closed;
+});

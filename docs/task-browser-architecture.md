@@ -15,7 +15,7 @@ current channel, viewer-independent execution, guarantees and feature roadmap.
 | Browser location | Engine | Task localhost | Display |
 | --- | --- | --- | --- |
 | Local (`desktop`) | Electron guest here | This device | Native embedding |
-| Local · task proxy (`desktop-proxy`) | Electron guest here | SSH forwarding to task machine, when remote | Native embedding |
+| Local · task proxy (`desktop-proxy`) | Electron guest here | SSH to task machine; public web egress also uses that machine | Native embedding |
 | Remote (`machine`, offered for remote tasks) | Sandboxed backend Chromium | Task machine | JPEG stream |
 
 A local task defaults to `desktop`; a remote task defaults to `machine`. Choosing
@@ -25,13 +25,25 @@ main-issued `availablePlacements`; it has no separate Direct/Stream display
 selector. Legacy presentation IPC remains supported for older consumers. The
 local backend retains its TCP transport, and private runtime pixel routes stay
 closed to TCP.
-The proxy choice forwards explicitly opened task localhost ports; public website traffic still originates on this
-device. It is not an arbitrary HTTP proxy, a VPN or a public-traffic SSH tunnel.
-The desktop engine still uses its internal policy SOCKS connector in both modes
-to enforce destination grants and DNS pinning. “Local” means no task-machine
-forwarding, not removal of that security boundary.
+Remote tasks now compose remote tabs and human-only local tabs in one strip.
+The chevron next to + creates either without replacing live pages. Local tabs use
+a distinct desktop profile and send HTTP/HTTPS/WebSocket bytes through the owned
+SSH channels. Public DNS runs on the server, answers are checked and pinned, and
+private/reserved addresses are rejected. Loopback requires an explicit task-port
+grant. Dropped SSH channels close sockets; there is no direct fallback. WebRTC
+retains the existing `disable_non_proxied_udp` policy. This is web TCP proxying,
+not a VPN or UDP tunnel. Open outside explicitly uses the system browser and its
+network/profile (task localhost still uses a separate forward).
 
-Browser Tools exposes the choice through `taskBrowserConfigure`, a named,
+Local tabs on remote tasks never participate in automation or remote browser
+profiles. Host guards reject agent code/mailbox operations, handoff, page picking
+and error sharing even if UI controls are bypassed. The toolbar pill shows Local,
+Local · Proxied or Streaming independently of agent activity. Local-tab tooltips and Browser
+Tools explain agent exclusion and routing.
+The legacy direct `desktop` placement on remote tasks remains device-routed and
+human-only; `desktop-proxy` uses the same full server routing as mixed local tabs.
+
+The legacy task-wide location API exposes the choice through `taskBrowserConfigure`, a named,
 scope-bound operation. Only empty/start tabs may be replaced; live pages, pending
 navigation and companions block it. The target host prepares before the old engine
 is revoked and destroyed; an unavailable target leaves the original host usable.
@@ -49,6 +61,10 @@ restart returns to the default; no new persistence format is introduced.
   safe persistence and native page lifecycle. `BrowserPage` owns its debugger,
   document and local frame producer. Electron cannot move an attached guest across
   windows; rehosting reloads the document with user control.
+- `MixedTaskBrowser` composes one remote host and one human-only desktop host. It
+  owns combined ordering/selection and rejects stale cross-engine panel layouts.
+  Companion layouts keep their engine-specific epochs. Only the local guest
+  capability is exposed to attachment IPC; no local automation mailbox is started.
 - `RemoteTaskBrowser` owns exactly one machine viewer identity/token, connection
   generation, persistent private channel (legacy metadata polling fallback), tab state and outside-link forwards. Companion
   windows never instantiate another task, network owner or connection.

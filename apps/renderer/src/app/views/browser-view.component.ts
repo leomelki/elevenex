@@ -2,6 +2,8 @@ import { afterRenderEffect, ChangeDetectionStrategy, Component, computed, Elemen
 import { ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, StatusGlyphComponent, type Status } from '../ui';
 import { BrowserDriver, BrowserQuestion, BrowserStep, BrowserTab, BrowserTarget, ViewTab, type ViewTabMove, type BrowserCursor } from './view.models';
 import { ViewTabsComponent } from './view-tabs.component';
+import { CdkMenuTrigger } from '@angular/cdk/menu';
+import { DropdownMenuComponent, DropdownItemComponent, TooltipDirective } from '../ui';
 
 /** Page and question-card measurements, in the page's scrolled CSS coordinates. */
 interface QuestionLayout {
@@ -27,12 +29,20 @@ const LABEL_ROOM = 24;
 /** Browser chrome. The owner supplies a trusted platform adapter through the preview slot. */
 @Component({
   selector: 'ex-browser-view',
-  imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, ViewTabsComponent, StatusGlyphComponent],
+  imports: [ButtonComponent, EaseSwapComponent, FoldComponent, IconComponent, IconButtonComponent, KbdComponent, ViewTabsComponent, StatusGlyphComponent, CdkMenuTrigger, DropdownMenuComponent, DropdownItemComponent, TooltipDirective],
   templateUrl: './browser-view.component.html',
   styleUrl: './browser-view.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class BrowserViewComponent {
+  readonly streaming = input(false);
+  readonly localTabsAvailable = input(false);
+  readonly localOnly = input(false);
+  readonly trafficViaServer = input(false);
+  readonly localAdded = output<void>();
+  protected readonly localDetails = computed(() => `Runs on this device. ${this.trafficViaServer() ? 'Web traffic goes through the task server.' : 'Web traffic uses this device.'} Agents cannot see or control this page. Sign-ins use a separate local profile.`);
+  protected readonly location = computed(() => this.streaming() ? 'Streaming' : this.trafficViaServer() ? 'Local · Proxied' : 'Local');
+  protected readonly locationDetails = computed(() => this.localOnly() ? this.localDetails() : this.streaming() ? 'Browser runs on the task server and streams to this device. Click to focus the page.' : 'Browser runs on this device. Click to focus the page.');
   readonly showTabs = input(true);
   readonly controlsDisabled = input(false);
   readonly pickerAvailable = input(true);
@@ -100,7 +110,7 @@ export class BrowserViewComponent {
   readonly forwardRequested = output<void>();
   readonly reloadRequested = output<void>();
   readonly moreRequested = output<void>();
-  protected readonly driverLabel = computed(() => (this.driver() === 'agent' ? 'Agent working. Focus page.' : this.driver() === 'needs' ? 'Action needed. Focus page.' : 'Focus page.') + ' Shift+Escape returns to browser controls.');
+  protected readonly locationLabel = computed(() => this.location() + ' browser. ' + (this.localOnly() ? 'Open browser details.' : 'Focus page. Shift+Escape returns to browser controls.'));
   protected readonly askText = signal('');
   protected readonly current = computed(() => this.tabs().find(tab => tab.id === this.active()) ?? this.tabs()[0]);
   protected readonly tabItems = computed<readonly ViewTab[]>(() => this.tabs().map(tab => ({ ...tab, icon: tab.icon ?? 'globe', agent: tab.by === 'agent', agentDriving: this.driver() === 'agent' && this.step()?.status !== 'done' && this.step()?.status !== 'error' && tab.id === this.current()?.id })));

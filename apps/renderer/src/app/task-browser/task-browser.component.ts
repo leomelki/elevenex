@@ -33,14 +33,15 @@ export class TaskBrowserComponent {
   readonly dialogOpen = signal(false);
   readonly notice = signal('');
   readonly current = this.store.current;
-  readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, icon: tab.detached ? 'window' : 'globe', tip: tab.detached ? tab.title + ' · Open in window' : tab.title, status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
+  readonly tabs = computed<readonly BrowserTab[]>(() => (this.store.state()?.tabs ?? []).map(tab => ({ id: tab.id, title: tab.title, url: tab.url, by: tab.by, server: tab.server, icon: tab.detached ? 'window' : tab.execution === 'local' ? 'laptop' : 'globe', tip: tab.title + (tab.execution === 'local' ? ' · Local · Agents can’t see' : '') + (tab.detached ? ' · Open in window' : ''), status: tab.error ? 'failed' : tab.loading ? 'running' : 'idle' })));
+  readonly localOnly = computed(() => this.current()?.agentAccess === 'unavailable');
   readonly embeddedAvailable = computed(() => this.store.state()?.capabilities?.embedded === true);
   readonly placementLocked = computed(() => this.store.pending() > 0 || (this.store.state()?.tabs.some(tab => !!tab.url || tab.loading || tab.detached) ?? true));
   readonly placements = computed(() => {
     const available = this.store.state()?.availablePlacements;
     const options = [
       { id: 'desktop', label: 'Local', detail: 'Browser runs on this device' },
-      { id: 'desktop-proxy', label: 'Local · task proxy', detail: 'Browser runs here; task localhost uses forwarding' },
+      { id: 'desktop-proxy', label: 'Local · task proxy', detail: 'Browser runs here; web traffic goes through the server' },
       { id: 'machine', label: 'Remote', detail: 'Browser runs on the task machine' },
     ] as const;
     return options.filter(option => !available || available.includes(option.id));
@@ -148,6 +149,7 @@ export class TaskBrowserComponent {
   async beginElementPick(tabId = this.current()?.id): Promise<void> {
     if (!tabId) { this.notice.set('Open a page, then point at an element.'); return; }
     const tab = this.store.state()?.tabs.find(tab => tab.id === tabId);
+    if (tab?.agentAccess === 'unavailable') { this.notice.set('Agents cannot inspect local tabs. Open a remote tab to point at an element.'); return; }
     if (!tab || tab.detached) { this.notice.set('That tab is closed or in another window. Choose a page and point at the element again.'); return; }
     const scope = this.scopeId(), task = this.taskId(), session = this.sessionId();
     if (this.current()?.id !== tabId) {
@@ -173,7 +175,7 @@ export class TaskBrowserComponent {
       else { this.command({ kind, tabId }); if (kind === 'focus') this.surfaces()?.focusPage(tabId); }
     }
   }
-  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else if (!this.detachedWindow()) this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
+  shortcut(kind: 'open' | 'pick' | 'controls'): void { if (kind === 'controls') this.browser()?.focusControls(); else if (kind === 'open') this.newTab(); else if (!this.detachedWindow() && !this.localOnly()) this.command({ kind: 'pick', enabled: !this.store.state()?.picking }); }
   showDialog(kind: 'tools'): void {
     this.dialog.set(kind); this.dialogOpen.set(true);
   }
@@ -181,7 +183,7 @@ export class TaskBrowserComponent {
     const tabId = this.current()?.id;
     if (tabId) this.command({ kind: 'navigate', tabId, url: this.normalize(value) });
   }
-  newTab(): void { if (!this.detachedWindow() && !this.store.pending()) this.command({ kind: 'new-tab' }); }
+  newTab(location?: 'local' | 'remote'): void { if (!this.detachedWindow() && !this.store.pending()) this.command({ kind: 'new-tab', ...(location ? { location } : {}) }); }
   async moveToWindow(tabId = this.current()?.id): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), context = this.windowContext();
     if (!scope || !task || !tabId || !context || this.moving() || this.detachedWindow() || this.store.state()?.canDetach === false || !this.store.state()?.tabs.some(tab => tab.id === tabId)) return;

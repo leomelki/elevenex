@@ -45,15 +45,28 @@ See [scoped Playwright and human tickets](../../../../../docs/browser-playwright
 
 ## Rendering and composition
 
-Browser Tools selects **Local**, **Local · task proxy**, or **Remote** through
-the scope-bound configuration operation. Main supplies the available locations;
-local tasks offer only Local. There is no separate display-mode choice: local
-user tabs embed natively and remote engines stream from the task machine. Local
-code-first agent tabs use app-owned sandboxed offscreen views and the existing
-stream surface, including when the panel starts hidden.
-Close tabs with loaded pages before switching; profiles are separate. The proxy
-forwards task localhost servers while public traffic stays on this device. Local
-tasks default to Local; remote tasks default to Remote.
+Remote tasks default to remote tabs. The chevron beside + offers **New remote
+tab** and **New local tab** without replacing existing pages. + and Command/Ctrl-T
+retain the remote default. Local tabs embed on this device, use a separate local
+profile and route HTTP, HTTPS and WebSocket connections through the task server.
+Their laptop icon and compact **Local · Proxied** toolbar control expose
+location without a banner. Hover/focus explains routing and agent exclusion;
+click opens Browser tools. Local pages omit handoff, picking and error-sharing
+controls, and the main host rejects those operations, agent code and mailbox
+commands. They never enter the backend browser's tab collection or profile.
+
+`canCreateLocalTabs` is a main-issued capability. The optional human `new-tab.location`
+intent is consumed in main; older strict runtimes receive the original `new-tab`
+command. Each tab carries optional `execution`, `agentAccess` and `routing`
+metadata. Native/stream capabilities describe the active engine, including in
+companion windows. Machine agent work remains independent of the local viewer.
+
+Local tasks continue to offer Local only. The legacy task-wide configuration
+operation remains supported for empty browsers, with separate profiles. Remote
+Local · task proxy now routes all supported web connections through the server;
+remote Local retains device networking. Both are unavailable to remote agents.
+Local task code-first agent tabs retain app-owned sandboxed offscreen views and
+the existing stream surface, including when the panel starts hidden.
 See [the architecture review and extension boundaries](../../../../../docs/task-browser-architecture.md).
 
 Desktop-hosted tasks use a real Electron guest `<webview>`. `EmbeddedPageComponent` creates

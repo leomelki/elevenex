@@ -10,6 +10,7 @@ import { createSocket, type Socket as OwnershipSocket } from 'node:dgram';
 import { ForwardedAgentProxy } from './agent-proxy';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wire, SocketChannels, type WireMessage } from './wire';
+import { BrowserDestinations } from './browser-destination';
 import { backendSocketPath, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
 import { ensureDaemon } from './runtime-start';
 import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
@@ -188,9 +189,11 @@ async function bridge(root: string, installation: string, version: string, port:
   const health = await ensureDaemon({ root, installation, version, port, token, lease, runtime: __filename, allowUpdate: process.argv[6] === 'update' });
   const wire = new Wire(process.stdin, process.stdout);
   const channels = new SocketChannels(wire);
+  const destinations = new BrowserDestinations();
   const socketPath = backendSocketPath(root, health);
   wire.on('message', (message: WireMessage) => {
     if (message.type === 'open') channels.accept(message.id, message.port, socketPath, message.host);
+    else if (message.type === 'browser-open') channels.acceptBrowser(message.id, message.host, message.port, (host, targetPort) => destinations.resolve(host, targetPort));
     else if (message.type === 'probe') {
       const socket = message.port === 0 ? connectSocket(socketPath) : connectSocket(message.port, message.host ?? '127.0.0.1');
       let done = false;
@@ -212,11 +215,11 @@ async function bridge(root: string, installation: string, version: string, port:
   let closing = false;
   const close = () => {
     if (closing) return; closing = true;
-    channels.dispose(); wire.close(); process.stdin.destroy(); process.stdout.end();
+    destinations.close(); channels.dispose(); wire.close(); process.stdin.destroy(); process.stdout.end();
     void queryDaemon(root, port, token, { id: lease.id, agent: null }).catch(() => undefined);
   };
   wire.once('closed', close); process.once('SIGTERM', close);
-  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: lease.agent !== null });
+  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: lease.agent !== null, browserProxy: true });
 }
 
 async function main(): Promise<void> {

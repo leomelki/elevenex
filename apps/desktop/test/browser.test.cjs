@@ -321,3 +321,86 @@ test('code mailbox keeps polling during concurrent scripts and cancels revoked I
     automation.dispose(); for (const complete of completions) complete(); await settle();
   }
 });
+
+test('local-tab intents remain human-only and reject unknown locations', () => {
+  for (const location of ['local', 'remote']) assert.deepEqual(command({ kind: 'new-tab', location }), { kind: 'new-tab', location });
+  for (const location of ['shell', 1, null, {}]) assert.throws(() => command({ kind: 'new-tab', location }));
+  assert.throws(() => agentCommand({ kind: 'open', url: 'https://example.com', location: 'local' }));
+});
+
+test('server-routed task networking grants explicit localhost without local DNS or egress', async t => {
+  const { TaskBrowserNetwork } = require('../dist/browser/network');
+  let authorize, closed = 0, paused = 0, forwards = 0, current = true;
+  const network = new TaskBrowserNetwork(true, async () => { forwards++; throw new Error('Unexpected forward'); }, () => current, () => true, port => port === 11111, async check => {
+    authorize = check;
+    return { port: 49152, close: async () => { closed++; }, disconnect: () => { paused++; } };
+  });
+  t.after(() => network.close());
+  const session = { setProxy: async config => assert.equal(config.proxyRules, 'socks5://127.0.0.1:49152'), forceReloadProxyConfig: async () => {}, resolveProxy: async () => 'SOCKS5 127.0.0.1:49152' };
+  await network.configure(session);
+  assert.doesNotThrow(() => authorize('public.invalid', 443), 'DNS stays on the server');
+  assert.throws(() => authorize('localhost', 3000));
+  await network.authorize('http://localhost:3000');
+  assert.doesNotThrow(() => authorize('localhost', 3000));
+  assert.equal(network.allowed('ws://localhost:3000/socket'), true);
+  assert.equal(network.allowed('ws://localhost:3001/socket'), false);
+  assert.throws(() => authorize('public.invalid', 11111));
+  await assert.rejects(network.authorize('http://localhost:11111'));
+  assert.equal(forwards, 0, 'Tab navigation never creates an outside-browser forward');
+  network.pause(); await Promise.resolve(); assert.equal(paused, 1);
+  current = false; assert.throws(() => authorize('public.invalid', 443));
+  network.close(); await Promise.resolve(); assert.equal(closed, 1);
+});
+
+test('mixed tabs preserve engines, selection, ordering and per-display layout authority', async () => {
+  const { MixedTaskBrowser } = require('../dist/browser/mixed-task');
+  let nextId = 0;
+  const changes = [], hosts = [];
+  const create = (engine, changed) => {
+    let state = { scopeId: 'scope', taskId: 1, revision: 0, surfaceEpoch: 7, controlsFocus: 0, tabs: [], active: null, picked: null, picking: false, pickerMessage: null, feedback: false, ports: [], privacy: 'content-withheld' };
+    const host = { engine, commands: [], layouts: [], destroyed: 0, restore: async () => {}, refresh: async () => {}, closed: false,
+      snapshot: () => state, hasContents: () => true, attach: () => true, hasDetached: () => false,
+      hide: () => { state = { ...state, surfaceEpoch: state.surfaceEpoch + 1 }; changed(); },
+      suspend: () => {}, revoke: () => {}, maintain: () => {}, surfaces: () => [], destroy: () => { host.destroyed++; },
+      position: input => host.layouts.push(input),
+      command: async input => {
+        host.commands.push(input);
+        if (input.kind === 'new-tab') { const tab = { id: engine + ++nextId, execution: engine === 'desktop' ? 'local' : 'remote', ...(engine === 'desktop' ? { agentAccess: 'unavailable', routing: 'server' } : {}) }; state = { ...state, tabs: [...state.tabs, tab], active: tab.id }; }
+        if (input.kind === 'select') state = { ...state, active: input.tabId };
+        if (input.kind === 'close') { const tabs = state.tabs.filter(tab => tab.id !== input.tabId); state = { ...state, tabs, active: tabs.at(-1)?.id ?? null }; }
+        changed(); return state;
+      },
+    };
+    hosts.push(host); return host;
+  };
+  const task = new MixedTaskBrowser('scope', 1, changed => create('machine', changed), changed => create('desktop', changed), state => changes.push(state));
+  await task.restore();
+  let state = await task.command({ kind: 'new-tab' }); const remoteId = state.active;
+  const oldEpoch = state.surfaceEpoch;
+  state = await task.command({ kind: 'new-tab', location: 'local' }); const localId = state.active;
+  assert.equal(state.tabs.length, 2); assert.equal(state.active, localId);
+  assert.equal(state.tabs.find(tab => tab.id === localId).agentAccess, 'unavailable');
+  assert.equal(hosts[0].commands.length, 1, 'Local creation never enters the machine/agent host');
+  assert.deepEqual(hosts[1].commands, [{ kind: 'new-tab' }]);
+  task.position({ surfaceEpoch: oldEpoch, sequence: 1 }); assert.equal(hosts[1].layouts.length, 0, 'Late geometry from the other engine must be discarded');
+  task.position({ surfaceEpoch: state.surfaceEpoch, sequence: 2 });
+  assert.equal(hosts[1].layouts.at(-1).surfaceEpoch, hosts[1].snapshot().surfaceEpoch);
+  state = await task.command({ kind: 'move-tab', tabId: localId, beforeTabId: remoteId });
+  assert.deepEqual(state.tabs.map(tab => tab.id), [localId, remoteId]);
+  state = await task.command({ kind: 'select', tabId: remoteId }); assert.equal(state.active, remoteId);
+  assert.equal(state.tabs.find(tab => tab.id === localId).id, localId, 'Switching never replaces a loaded engine');
+  const remoteCommand = hosts[0].command;
+  let rejectSelection;
+  hosts[0].command = () => new Promise((_resolve, reject) => { rejectSelection = reject; });
+  const delayedSelection = task.command({ kind: 'select', tabId: remoteId });
+  await task.command({ kind: 'select', tabId: localId });
+  rejectSelection(new Error('Remote selection interrupted')); await assert.rejects(delayedSelection, /interrupted/);
+  assert.equal(task.snapshot().active, localId, 'A failed old selection must not restore the wrong engine');
+  hosts[0].command = remoteCommand;
+  await task.command({ kind: 'select', tabId: remoteId });
+  state = await task.command({ kind: 'close', tabId: remoteId }); assert.equal(state.active, localId);
+  for (let i = 1; i < 12; i++) await task.command({ kind: 'new-tab', location: 'local' });
+  await assert.rejects(task.command({ kind: 'new-tab' }), /Close a tab/);
+  assert.ok(changes.every((state, i) => !i || state.revision > changes[i - 1].revision));
+  task.destroy(); task.destroy(); assert.deepEqual(hosts.map(host => host.destroyed), [1, 1]);
+});

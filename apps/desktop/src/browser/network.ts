@@ -3,13 +3,26 @@ import { isIP } from 'node:net';
 import { browserSocks, publicBrowserAddress } from '@elevenex/browser-network';
 import { browserUrl, loopback } from './validation';
 export interface BrowserForwardLease { readonly port: number; close(): Promise<void> }
+export interface BrowserProxyLease extends BrowserForwardLease { disconnect(): void }
+export type BrowserServerProxy = (authorize: (host: string, port: number) => void) => Promise<BrowserProxyLease>;
 /** Task networking keeps logical origins intact, including CORS, cookies, TLS and WebSockets. */
 export class TaskBrowserNetwork {
   private readonly forwards = new Map<number, Promise<BrowserForwardLease>>();
-  private proxy?: ReturnType<typeof browserSocks>;
+  private proxy?: Promise<BrowserProxyLease>;
+  private readonly grants = new Set<number>();
   private closed = false;
   private readonly lookups = new Map<string, Promise<string>>();
-  constructor(readonly remote: boolean, private readonly forward: (port: number) => Promise<BrowserForwardLease>, private readonly current: () => boolean, private readonly active: () => boolean, private readonly applicationPort: (port: number) => boolean = () => false) {}
+  constructor(readonly remote: boolean, private readonly forward: (port: number) => Promise<BrowserForwardLease>, private readonly current: () => boolean, private readonly active: () => boolean, private readonly applicationPort: (port: number) => boolean = () => false, private readonly serverProxy?: BrowserServerProxy) {}
+  async authorize(value: string): Promise<void> {
+    if (!this.serverProxy) { await this.outside(value); return; }
+    this.assertCurrent();
+    const url = new URL(browserUrl(value)), port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    if (this.applicationPort(port)) throw new Error('Application control ports are not browser destinations');
+    if (loopback(url)) {
+      if (this.grants.size >= 12 && !this.grants.has(port)) throw new Error('Task browser forwarding limit reached');
+      this.grants.add(port);
+    }
+  }
   async outside(value: string): Promise<string> {
     const url = new URL(browserUrl(value));
     if (!loopback(url)) return url.href;
@@ -21,7 +34,10 @@ export class TaskBrowserNetwork {
   }
   async configure(session: Session): Promise<void> {
     this.assertCurrent();
-    this.proxy ??= browserSocks(async (host, port) => {
+    this.proxy ??= this.serverProxy ? this.serverProxy((host, port) => {
+      const authority = host.includes(':') ? `[${host}]` : host;
+      if (!this.allowed(`http://${authority}:${port}`)) throw new Error('Browser destination is not authorized');
+    }) : browserSocks(async (host, port) => {
       this.assertCurrent();
       if (!this.active()) throw new Error('This task is not active');
       if (this.applicationPort(port)) throw new Error('Application control ports are not browser destinations');
@@ -54,7 +70,7 @@ export class TaskBrowserNetwork {
     if (this.applicationPort(destination)) return false;
     if (!loopback(url)) return true;
     const port = Number(url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? 443 : 80));
-    return this.forwards.has(port);
+    return this.forwards.has(port) || this.grants.has(port);
   }
   private async service(port: number, create: boolean): Promise<BrowserForwardLease> {
     this.assertCurrent();
@@ -93,6 +109,6 @@ export class TaskBrowserNetwork {
     this.closed = true;
     if (this.proxy) void this.proxy.then(proxy => proxy.close()).catch(() => undefined);
     for (const pending of this.forwards.values()) void pending.then(lease => lease.close()).catch(() => undefined);
-    this.forwards.clear(); this.lookups.clear();
+    this.forwards.clear(); this.lookups.clear(); this.grants.clear();
   }
 }

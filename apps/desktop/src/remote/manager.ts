@@ -381,6 +381,19 @@ export class RemoteManager {
   diagnostics(windowId: number) { return this.connections.get(this.hostId(this.remoteWindow(windowId)))?.logs() ?? []; }
 
   /** Ephemeral task-browser lease; never creates a saved Ports UI definition. */
+  async browserProxy(windowId: number, authorize: (host: string, port: number) => void) {
+    const window = this.remoteWindow(windowId), connection = this.connections.get(this.hostId(window));
+    const transport = connection?.currentTransport();
+    if (!transport?.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
+    const current = () => {
+      if (this.windows.get(windowId) !== window || window.intent !== 'connected' || connection?.currentTransport() !== transport) throw new Error('Remote connection changed');
+    };
+    const proxy = await transport.browserProxy((host, port) => { current(); authorize(host, port); });
+    try { current(); return proxy; }
+    catch (error) { await proxy.close(); throw error; }
+  }
+
+  /** Ephemeral task-browser lease; never creates a saved Ports UI definition. */
   async browserForward(windowId: number, port: number) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid task server port');
     const window = this.remoteWindow(windowId);

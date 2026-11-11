@@ -238,6 +238,7 @@ void (async () => {
   await require('./browser-picker-native.cjs')();
   await require('./browser-order-native.cjs')();
   await require('./browser-machine-native.cjs')();
+  await require('./browser-local-native.cjs')();
   const browserSite = await require('./browser-site.cjs')();
   window.once('closed', () => { void browserSite.close(); });
   await require('./browser-code-native.cjs')();
