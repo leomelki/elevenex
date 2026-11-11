@@ -28,7 +28,8 @@ export class SessionChatAttachments {
   constructor() {
     inject(DestroyRef).onDestroy(() => this.cancel());
   }
-  open(selection: ChatSelection): void {
+  open(selection: ChatSelection | null): void {
+    if (!selection) { this.cancel(); this.selection = null; this.entry.set(null); this.error.set(''); return; }
     if (
       this.selection?.scopeId === selection.scopeId &&
       this.selection.sessionId === selection.sessionId &&

@@ -82,7 +82,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   constructor() {
     super(); this.ready();
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
-    inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); });
+    inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); for (const finish of this.pendingSessionCreates.values()) finish('unknown'); this.pendingSessionCreates.clear(); });
     inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); });
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
@@ -176,11 +176,21 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
       id: 300 + index, taskId: 11, repoId: 1, name: `Archived investigation ${index + 1}`, status: 'archived', provider: 'codex', updatedAt: stamp,
     })));
   }
-  workspaceCreateSession = async (_scope: string, input: WorkspaceCreateSession) => {
+  private sessionCreationHeld = false;
+  private readonly pendingSessionCreates = new Map<number, (outcome: 'success' | 'failed' | 'unknown') => void>();
+  holdSessionCreation(held: boolean): void { this.sessionCreationHeld = held; }
+  finishSessionCreation(taskId: number, outcome: 'success' | 'failed' | 'unknown' = 'success'): void {
+    this.pendingSessionCreates.get(taskId)?.(outcome); this.pendingSessionCreates.delete(taskId);
+  }
+  workspaceCreateSession = async (_scope: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>> => {
     this.sentSessionCreates.push(input);
+    if (this.sessionCreationHeld) {
+      const outcome = await new Promise<'success' | 'failed' | 'unknown'>(resolve => this.pendingSessionCreates.set(input.taskId, resolve));
+      if (outcome !== 'success') return { ok: false, error: outcome === 'failed' ? { code: 'http', status: 409, message: 'The task is still preparing. Try again shortly.' } : { code: 'outcome-unknown', message: 'Lost creation reply.' } };
+    }
     const task = this.taskRows.find(task => task.id === input.taskId)!;
     const session: WorkspaceSession = { id: Math.max(0, ...this.sessionRows.map(session => session.id)) + 1, taskId: task.id, repoId: task.repoId, name: input.name ?? 'Explore the task', provider: 'codex', status: 'idle', updatedAt: stamp };
-    this.sessionRows = [...this.sessionRows, session]; return success(session);
+    this.sessionRows = [...this.sessionRows, session]; this.chat.scenario('new', session.id); return success(session);
   };
   workspaceSetStage = async (_scope: string, input: WorkspaceSetStage) => {
     this.taskRows = this.taskRows.map(task => task.id === input.taskId ? { ...task, stage: input.stage } : task); return success(this.taskRows.find(task => task.id === input.taskId)!);

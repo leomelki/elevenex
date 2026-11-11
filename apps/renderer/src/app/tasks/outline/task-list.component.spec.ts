@@ -38,6 +38,24 @@ describe('task outline ownership', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
+  it('retains a local row through confirmation while enabling only durable session actions', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const starting: TaskOutline = { id: 'task', title: 'Task', sessions: [{ id: 'local', renderId: 'local', local: true, title: 'New session', status: 'queued' }] };
+    fixture.componentRef.setInput('tasks', [starting]); fixture.componentRef.setInput('selected', 'local');
+    fixture.componentRef.setInput('allowArchive', true); fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const row = root.querySelector('ex-session-row')!;
+    const button = row.querySelector<HTMLButtonElement>('.select')!;
+    expect(button.draggable).toBe(false); expect(row.querySelector('.archive')).toBeNull();
+    fixture.componentRef.setInput('tasks', [{ ...starting, sessions: [{ id: '42', renderId: 'local', title: 'Explore the task', status: 'queued' }] }]);
+    fixture.componentRef.setInput('selected', '42'); fixture.detectChanges();
+    expect(root.querySelector('ex-session-row')).toBe(row);
+    expect(button.getAttribute('aria-current')).toBe('true'); expect(button.draggable).toBe(true);
+    expect(row.querySelector('.archive')).not.toBeNull();
+    const selected = vi.fn(); fixture.componentInstance.selectSession.subscribe(selected); button.click();
+    expect(selected).toHaveBeenCalledWith({ taskId: 'task', sessionId: '42' });
+  });
+
   it('suppresses task and sub-task creation controls while disabled', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, subtasks: [{ id: 'child', title: 'Child', sessions: [] }] }]);

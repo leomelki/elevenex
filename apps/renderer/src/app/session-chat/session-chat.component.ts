@@ -37,6 +37,7 @@ import {
   type ToolContentSource,
 } from "../conversation";
 import {
+  AutoHeightDirective,
   ButtonComponent,
   ContextMeterComponent,
   IconComponent,
@@ -46,6 +47,7 @@ import {
   SkeletonComponent,
   StatusGlyphComponent,
 } from "../ui";
+import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
 import { SessionChatContentComponent } from "./session-chat-content.component";
 import { SessionChatPresets } from "./session-chat-presets";
@@ -60,6 +62,7 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
   imports: [
+    AutoHeightDirective,
     OpensWhenBackComponent,
     SessionChatContentComponent,
     ChatComponent,
@@ -103,7 +106,13 @@ export class SessionChatComponent {
     this.contentPart.set(request.part);
     this.contentId.set(request.itemId);
   }
-  readonly selection = input.required<ChatSelection>();
+  readonly selection = input<ChatSelection | null>(null);
+  readonly creation = input<StartingSession | null>(null);
+  /** Stable through a create receipt, including one that arrives before first paint. */
+  readonly creationKey = input<string | null>(null);
+  readonly creationRetry = output<void>();
+  readonly creationCheck = output<void>();
+  readonly creationDiscard = output<void>();
   readonly archived = input(false);
   readonly active = input(true);
   readonly machineName = input('the machine');
@@ -140,7 +149,7 @@ export class SessionChatComponent {
   readonly contentPart = signal<'input' | 'text'>('text');
   readonly identity = computed(
     () =>
-      `${this.selection().scopeId}:${this.selection().taskId}:${this.selection().sessionId}`,
+      this.creationKey() ?? this.creation()?.id ?? `${this.selection()?.scopeId}:${this.selection()?.taskId}:${this.selection()?.sessionId}`,
   );
   private copyTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usageTime = signal(Date.now());
@@ -199,7 +208,7 @@ export class SessionChatComponent {
   readonly showWelcome = computed(
     () =>
       !this.archived() &&
-      !!this.store.state() &&
+      (this.store.starting() || !!this.store.state()) &&
       this.store.empty() &&
       !this.store.historical() &&
       !this.store.state()?.providerLocked &&
@@ -337,9 +346,11 @@ export class SessionChatComponent {
     effect(() => {
       const selection = this.selection();
       this.store.setActive(this.active());
-      this.store.open(selection, this.archived());
-      untracked(() => this.attachments.open(selection));
-      this.media.update(selection, this.store.items());
+      const creation = this.creation();
+      if (creation) this.store.openDraft(creation);
+      else if (selection) this.store.open(selection, this.archived());
+      untracked(() => this.attachments.open(creation ? null : selection));
+      this.media.update(creation ? null : selection, this.store.items());
     });
     effect(() => {
       this.identity();
@@ -349,6 +360,15 @@ export class SessionChatComponent {
       this.copiedCode.set(null);
     });
     effect(() => { this.store.viewRevision(); this.contentId.set(null); });
+    let focusedDraft: string | null = null;
+    afterRenderEffect(() => {
+      const key = this.creationKey() ?? this.creation()?.id;
+      if (!key) { focusedDraft = null; return; }
+      if (this.active() && focusedDraft !== key && this.composer()) {
+        focusedDraft = key;
+        untracked(() => this.focusComposer());
+      }
+    });
     let scrollIdentity = -1;
     let opening = true;
     afterRenderEffect(() => {
@@ -438,7 +458,8 @@ export class SessionChatComponent {
     }
   }
   review(turnId: string, path?: string): void {
-    this.reviewRequested.emit({ ...this.selection(), turnId, ...(path ? { path } : {}) });
+    const selection = this.selection();
+    if (selection) this.reviewRequested.emit({ ...selection, turnId, ...(path ? { path } : {}) });
   }
   openFile(path: string): void {
     this.store.notice.set(path);

@@ -235,6 +235,7 @@ export class SessionChatFixture {
       | "failed"
       | "history"
       | "ready"
+      | "new"
       | "unknown"
       | "long"
       | "long-message"
@@ -250,6 +251,7 @@ export class SessionChatFixture {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === 'new') { session.items = []; session.state = { ...session.state, providerLocked: false }; }
     if (mode === 'images') session.items = [
       item('image-prompt', 'user', 'Draw a friendly robot and show the saved image.'),
       item('image-output', 'tool_result', 'Image attachment', { media: [{ id: '0', path: 'generated-robot', caption: 'Generated robot', inline: true }] }),

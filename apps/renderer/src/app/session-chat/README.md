@@ -6,6 +6,18 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+The connected owner can supply a `creation: StartingSession` before a saved
+`selection` exists. The same chat/composer stays mounted through confirmation;
+`creationKey` retains UI identity and autofocus even if confirmation arrives before
+the first paint. `SessionChatStore.openDraft` permits typing but dispatches no
+reads, uploads, settings or prompts for a local draft. Confirmation adopts its
+signals into `SessionChatDrafts` before opening the real session. Initial hydration
+keeps the welcome visible and sending disabled. Writing that began during creation
+keeps a compact welcome when settings arrive, so preset cards do not move the
+composer; starting choices remain available through the agent picker. The owner
+handles `creationRetry`, `creationCheck` and `creationDiscard`. Failed/unconfirmed
+creates retain writing, and checking or reconnecting never replays creation.
+
 The optional `state.sessionMentions` capability enables sidebar drops and the
 @ picker. Workspace supplies at most 50 candidates from already-loaded session
 windows; drag payloads retain their backend generation. The composer owns drag

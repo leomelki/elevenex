@@ -15,7 +15,7 @@ async function settle(): Promise<void> { for (let index = 0; index < 8; index++)
 
 function setup() {
   const selected = signal<WorkspaceSelection | null>({ scopeId: 'scope', taskId: 1, sessionId: 2 });
-  const store = { offline: signal(false), selected, selectedTask: () => ({ state: 'ready', archivedAt: null }), commitPanelAvailable: signal(true), reconcileTaskBranch: vi.fn() };
+  const store = { taskSelection: selected, offline: signal(false), selected, selectedTask: () => ({ state: 'ready', archivedAt: null }), commitPanelAvailable: signal(true), reconcileTaskBranch: vi.fn() };
   const bridge = { workspaceGit: vi.fn(async () => ok(summary)), workspaceGitAction: vi.fn(async () => ok(summary)), workspaceCommitPreview: vi.fn(async (): Promise<BackendResult<WorkspaceCommitPreview>> => ({ ok: true, value: preview })) } satisfies Pick<ElevenexBridge, 'workspaceGit' | 'workspaceGitAction' | 'workspaceCommitPreview'>;
   TestBed.configureTestingModule({ providers: [WorkspaceTaskGitService, { provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: bridge }, { provide: BackendClientService, useValue: { state: signal({ revision: 1, scope: { id: 'scope', environment: { kind: 'local' } } }) } }] });
   const git = TestBed.inject(WorkspaceTaskGitService); TestBed.tick();

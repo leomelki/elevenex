@@ -28,7 +28,8 @@ export class SessionChatMedia {
     inject(DestroyRef).onDestroy(() => this.reset());
   }
 
-  update(selection: ChatSelection, items: readonly SessionChatItem[]): void {
+  update(selection: ChatSelection | null, items: readonly SessionChatItem[]): void {
+    if (!selection) { this.reset(); this.selection = undefined; return; }
     if (
       this.selection?.scopeId !== selection.scopeId ||
       this.selection.taskId !== selection.taskId ||

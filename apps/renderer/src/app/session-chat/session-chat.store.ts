@@ -19,7 +19,7 @@ import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
-import { SessionChatDrafts, type AttachmentDraft } from "./session-chat-drafts";
+import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
 import {
   chatExchanges,
   type PendingChatPrompt,
@@ -67,6 +67,10 @@ export class SessionChatStore {
   readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly fresh = signal<ReadonlySet<string>>(new Set(), { equal: (a, b) => a.size === b.size && [...a].every(id => b.has(id)) });
   readonly loading = signal(true);
+  /** A new local conversation stays on its welcome view through initial hydration. */
+  readonly starting = signal(false);
+  readonly compactStart = signal(false);
+  private startingId: string | null = null;
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
   readonly error = signal("");
@@ -157,6 +161,20 @@ export class SessionChatStore {
     });
   }
 
+  openDraft(starting: StartingSession): void {
+    if (this.startingId === starting.id && this.entry === starting.draft) { this.selectedScope.set(starting.scopeId); return; }
+    this.outbox?.setEditing(null);
+    this.remember(); this.stopRead(); this.epoch++;
+    this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
+    this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
+    this.entry = starting.draft; this.activeEntry.set(this.entry);
+    this.state.set(null); this.items.set([]); this.before.set(null); this.cursor = undefined;
+    this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
+    this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
+    this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
+    this.viewRevision.update(value => value + 1);
+  }
+
   open(selection: ChatSelection, readOnly: boolean): void {
     if (
       this.selection?.scopeId === selection.scopeId &&
@@ -171,6 +189,9 @@ export class SessionChatStore {
       }
       return;
     }
+    const startingHandoff = !!this.startingId && this.entry === this.drafts.entry(selection.scopeId, selection.sessionId);
+    this.startingId = null;
+    if (!startingHandoff) { this.starting.set(false); this.compactStart.set(false); }
     this.outbox?.setEditing(null);
     this.remember();
     const sameSession = this.selection?.taskId === selection.taskId && this.selection.sessionId === selection.sessionId;
@@ -186,7 +207,7 @@ export class SessionChatStore {
     this.readOnly.set(readOnly);
     this.pending.set(null);
     this.pendingQueue.set(null);
-    if (!recovery) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
+    if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
     const cached = this.drafts.snapshot(selection.sessionId);
     if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
@@ -253,6 +274,8 @@ export class SessionChatStore {
     this.request = undefined;
     this.loading.set(false);
     if (result.ok) {
+      if (this.starting()) this.compactStart.set(!!this.draft().trim());
+      this.starting.set(false);
       this.error.set("");
       this.accept(result.value, !!before);
       if (this.uncertain()) this.checked.set(true);
@@ -393,6 +416,7 @@ export class SessionChatStore {
 
   async submit(submission: ComposerSubmission): Promise<void> {
     if (
+      !this.selection || (!this.state() && !this.offline()) ||
       this.busy() ||
       this.readOnly() ||
       this.historical() ||
