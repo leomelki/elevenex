@@ -7,9 +7,267 @@ jest.mock('../session-title/session-title.service.js', () => ({
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAppServerClient } from './codex-app-server.js';
+import type { CodexAppServerNotification } from './codex-app-server.js';
+import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
+  it('populates and updates Activity from child events without opening agent history', async () => {
+    const { service, sessionsService, appServer, historyService } =
+      createService();
+    sessionsService.findOne.mockResolvedValue({
+      ...session,
+      codexSessionId: 'root',
+    });
+    let notify: (notification: CodexAppServerNotification) => void = () => {
+      throw new Error('Not subscribed');
+    };
+    appServer.onNotification.mockImplementation((handler) => {
+      notify = handler;
+      return () => undefined;
+    });
+    let metadataReady: (value: unknown) => void = () => {
+      throw new Error('Metadata not requested');
+    };
+    appServer.request.mockImplementation(async (method) =>
+      method === 'thread/read'
+        ? new Promise((resolve) => {
+            metadataReady = resolve;
+          })
+        : { data: [] },
+    );
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const activity = () =>
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'root',
+            item: {
+              type: 'subAgentActivity',
+              id: 'spawn',
+              kind: 'started',
+              agentThreadId: 'child',
+              agentPath: '/root/reviewer',
+              model: 'child-model',
+              reasoningEffort: 'high',
+            },
+          },
+        });
+      activity();
+      activity();
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([
+        expect.objectContaining({ label: 'reviewer' }),
+      ]);
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'child',
+          item: {
+            type: 'userMessage',
+            id: 'assignment',
+            content: [{ type: 'text', text: 'Review the live feed' }],
+          },
+        },
+      });
+      metadataReady({
+        thread: {
+          id: 'child',
+          agentNickname: 'James',
+          agentRole: 'reviewer',
+          model: 'old-model',
+        },
+      });
+      await new Promise(setImmediate);
+      const controls = { stopTask: false, stopAgent: true, inspectAgent: true };
+      const work = chatWork(await service.getRuntimeState(7), controls);
+      expect(work.running).toEqual([
+        expect.objectContaining({
+          title: 'James',
+          role: 'reviewer',
+          model: 'child-model',
+          detail: 'Review the live feed',
+        }),
+      ]);
+      const published = jest.fn();
+      service.on('event', published);
+      jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+      try {
+        jest.advanceTimersByTime(300);
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'Checking ' },
+        });
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'update ' },
+        });
+        jest.advanceTimersByTime(300);
+        notify({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'child', itemId: 'step', delta: 'ownership' },
+        });
+        expect(
+          published.mock.calls.filter(
+            ([event]) => event.type === 'subagent_lifecycle',
+          ),
+        ).toHaveLength(2);
+        expect(
+          published.mock.calls.filter(([event]) => event.type === 'run_state'),
+        ).toHaveLength(0);
+        expect(
+          chatWork(await service.getRuntimeState(7), controls).running[0]
+            .detail,
+        ).toBe('Checking update ownership');
+      } finally {
+        jest.useRealTimers();
+      }
+      // A duplicate discovery with absent metadata must preserve the loaded fields.
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'root',
+          item: {
+            type: 'subAgentActivity',
+            id: 'spawn',
+            kind: 'started',
+            agentThreadId: 'child',
+          },
+        },
+      });
+      notify({
+        method: 'item/completed',
+        params: {
+          threadId: 'child',
+          item: {
+            type: 'agentMessage',
+            id: 'step',
+            text: 'Checking update ownership',
+          },
+        },
+      });
+      expect(
+        chatWork(await service.getRuntimeState(7), controls).running[0],
+      ).toMatchObject({
+        title: 'James',
+        role: 'reviewer',
+        detail: 'Checking update ownership',
+        model: 'child-model',
+      });
+      notify({
+        method: 'thread/settings/updated',
+        params: {
+          threadId: 'child',
+          threadSettings: { model: 'new-model', effort: 'low' },
+        },
+      });
+      expect((await service.getRuntimeState(7)).subagents[0]).toMatchObject({
+        model: 'new-model',
+        reasoningEffort: 'low',
+      });
+      notify({
+        method: 'turn/completed',
+        params: { threadId: 'child', turn: { status: 'completed' } },
+      });
+      const finished = chatWork(await service.getRuntimeState(7), controls);
+      expect(finished.running).toEqual([]);
+      expect(finished.recent[0].title).toBe('James finished');
+      expect(
+        appServer.request.mock.calls.filter(
+          ([method]) => method === 'thread/read',
+        ),
+      ).toEqual([
+        ['thread/read', { threadId: 'child', includeTurns: false }, 10_000],
+      ]);
+      expect(historyService.getSubagentSnapshot).not.toHaveBeenCalledWith(
+        'child',
+        expect.anything(),
+      );
+      expect(historyService.getSubagentSnapshot).not.toHaveBeenCalledWith(
+        'child',
+        undefined,
+      );
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it.each(['replacement', 'destroy'] as const)(
+    'discards child metadata after %s',
+    async (change) => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({
+        ...session,
+        codexSessionId: 'root',
+      });
+      let notify: (notification: CodexAppServerNotification) => void = () => {
+        throw new Error('Not subscribed');
+      };
+      appServer.onNotification.mockImplementation((handler) => {
+        notify = handler;
+        return () => undefined;
+      });
+      let metadataReady: (value: unknown) => void = () => {
+        throw new Error('Not requested');
+      };
+      appServer.request.mockImplementation(async (method) =>
+        method === 'thread/read'
+          ? new Promise((resolve) => {
+              metadataReady = resolve;
+            })
+          : { data: [] },
+      );
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'foreign',
+            item: {
+              type: 'subAgentActivity',
+              id: 'foreign-spawn',
+              kind: 'started',
+              agentThreadId: 'foreign-child',
+            },
+          },
+        });
+        expect(
+          appServer.request.mock.calls.some(
+            ([method]) => method === 'thread/read',
+          ),
+        ).toBe(false);
+        notify({
+          method: 'item/completed',
+          params: {
+            threadId: 'root',
+            item: {
+              type: 'subAgentActivity',
+              id: 'spawn',
+              kind: 'started',
+              agentThreadId: 'child',
+            },
+          },
+        });
+        if (change === 'replacement') {
+          sessionsService.findOne.mockResolvedValue({
+            ...session,
+            codexSessionId: 'new-root',
+          });
+          await service.getRuntimeState(7);
+        } else service.onModuleDestroy();
+        const published = jest.fn();
+        service.on('event', published);
+        metadataReady({ thread: { id: 'child', agentNickname: 'Stale name' } });
+        await new Promise(setImmediate);
+        expect(published).not.toHaveBeenCalled();
+      } finally {
+        service.onModuleDestroy();
+      }
+    },
+  );
+
   it('publishes authoritative routing and payload updates without duplicating incoming messages', () => {
     const { service } = createService();
     const runtime = service as any;
@@ -1357,12 +1615,12 @@ describe('CodexRuntimeService', () => {
       restartIfBinaryChanged: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       prewarm: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       request: jest
-        .fn<() => Promise<unknown>>()
+        .fn<(method: string, params: unknown, timeoutMs?: number) => Promise<unknown>>()
         .mockResolvedValue({ data: [] }),
       addRef: jest.fn(),
       release: jest.fn(),
       ensureReady: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
-      onNotification: jest.fn(() => () => undefined),
+      onNotification: jest.fn<(handler: (notification: CodexAppServerNotification) => void) => () => void>(() => () => undefined),
       onRequest: jest.fn(() => () => undefined),
       respondToRequest: jest.fn(),
       rejectRequest: jest.fn(),

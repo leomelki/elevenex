@@ -85,6 +85,27 @@ export function isAgentActive(agent: ClaudeSubagentState): boolean {
   return agent.status === 'started';
 }
 
+/** Metadata is available without loading a thread's turns or reading its rollout. */
+export function subagentThreadMetadata(
+  value: unknown,
+): Partial<ClaudeSubagentState> {
+  const thread = record(value);
+  const spawn = record(
+    record(record(thread.source).subAgent ?? record(thread.source).subagent)
+      .thread_spawn,
+  );
+  const fields = {
+    displayName: textValue(thread.agentNickname ?? spawn.agent_nickname),
+    agentType: textValue(thread.agentRole ?? spawn.agent_role),
+    agentPath: textValue(thread.agentPath ?? spawn.agent_path),
+    model: textValue(thread.model),
+    reasoningEffort: textValue(thread.reasoningEffort),
+  };
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+}
+
 /** Shared by live protocol events and persisted tool calls. No untrusted path is opened here. */
 export class CodexSubagentTracker {
   readonly agents = new Map<string, ClaudeSubagentState>();
@@ -200,10 +221,11 @@ export class CodexSubagentTracker {
             ...(tool === 'spawn_agent'
               ? {
                   parentAgentId: sender === rootId ? undefined : sender,
-                  parentToolUseId: textValue(raw.id),
-                  prompt: readableText(raw.prompt),
-                  model: textValue(raw.model),
-                  reasoningEffort: textValue(raw.reasoningEffort),
+                  parentToolUseId: textValue(raw.id) ?? old?.parentToolUseId,
+                  prompt: readableText(raw.prompt) ?? old?.prompt,
+                  model: textValue(raw.model) ?? old?.model,
+                  reasoningEffort:
+                    textValue(raw.reasoningEffort) ?? old?.reasoningEffort,
                   ...(!old ? { executionStatus: 'pending' as const } : {}),
                 }
               : {}),

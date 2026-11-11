@@ -53,7 +53,15 @@ resurrect phantom work.
 Activity travels on the existing selected-session feed. Provider events wake
 that feed; elapsed labels tick locally. Lists and text are bounded, with total
 counts when rows are truncated. No new history polling or per-agent subscriptions
-are installed. Child history uses a named, scope-bound bridge operation and the
+are installed. Codex child discovery preserves native activity metadata and fills
+missing names, roles and model settings with one metadata-only `thread/read` per
+child. Reads coalesce across notifications, run at most four at a time, and reject
+replies after session replacement or cleanup. Failed reads back off until a later
+lifecycle event; no polling timer is installed. Live assignment, settings, usage
+and bounded assistant previews update the existing feed independently of the
+inspector. Preview publication is limited to four updates per second per child;
+metadata and previews do not invalidate the parent's persisted transcript.
+Child history uses a named, scope-bound bridge operation and the
 provider's ownership checks; no renderer-selected filesystem paths are accepted.
 Existing legacy API shapes remain available. Optional new DTO fields permit
 older backends and desktops to retain their behavior.

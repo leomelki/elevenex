@@ -1,8 +1,47 @@
-import { CodexSubagentTracker, executionStatus } from './codex-subagents.js';
+import {
+  CodexSubagentTracker,
+  executionStatus,
+  subagentThreadMetadata,
+} from './codex-subagents.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 
 const timestamp = '2026-10-12T10:00:00.000Z';
 describe('CodexSubagentTracker', () => {
+  it('reads metadata from current and older thread shapes without clearing absent fields', () => {
+    expect(
+      subagentThreadMetadata({
+        agentNickname: 'James',
+        agentRole: 'reviewer',
+        model: 'child-model',
+        reasoningEffort: 'high',
+      }),
+    ).toEqual({
+      displayName: 'James',
+      agentType: 'reviewer',
+      model: 'child-model',
+      reasoningEffort: 'high',
+    });
+    expect(
+      subagentThreadMetadata({
+        source: {
+          subagent: {
+            thread_spawn: {
+              agent_nickname: 'Ada',
+              agent_role: 'explorer',
+              agent_path: '/root/review',
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      displayName: 'Ada',
+      agentType: 'explorer',
+      agentPath: '/root/review',
+    });
+    expect(subagentThreadMetadata({ agentNickname: null, model: 42 })).toEqual(
+      {},
+    );
+  });
   it('bounds streaming memory across many children without truncating a retained message', () => {
     const tracker = new CodexSubagentTracker();
     const content = 'x'.repeat(512_000);
@@ -39,6 +78,24 @@ describe('CodexSubagentTracker', () => {
         prompt: 'Inspect the caching layer',
         model: 'gpt-5.4-mini',
         agentsStates: { child: { status: 'running' } },
+      },
+      timestamp,
+      'root',
+    );
+    expect(tracker.agents.get('child')).toMatchObject({
+      displayName: 'Ada',
+      agentType: 'explorer',
+      prompt: 'Inspect the caching layer',
+      parentToolUseId: 'spawn',
+      model: 'gpt-5.4-mini',
+      executionStatus: 'running',
+    });
+    tracker.collaboration(
+      {
+        tool: 'spawnAgent',
+        receiverThreadIds: ['child'],
+        prompt: null,
+        model: null,
       },
       timestamp,
       'root',
