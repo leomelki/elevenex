@@ -336,6 +336,8 @@ export class RemoteTaskBrowser implements MachineBrowserHost {
       : this.panel.surfaces();
   }
   async command(input: TaskBrowserCommand): Promise<TaskBrowserState> {
+    if (input.kind === 'recover' && !this.state?.canRecover)
+      throw new Error('Update the task machine to force reload a page.');
     await this.ensureConnection(true);
     if (this.disposed || this.reconnect || !this.selected())
       throw new Error(this.connection.message ?? 'Browser is not connected. Reconnect before trying again.');

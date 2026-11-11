@@ -81,6 +81,10 @@ Reduced motion stops the cursor pulse, tab breathing and target travel. The
 isolated `BrowserDemo` measures its sample button with an owned ResizeObserver;
 the production browser owner must supply its own page coordinates.
 
+Owners opening Browser Tools from `moreRequested` can pass `toolsOrigin()` to
+`ModalLayer.from`. This supplies the native toolbar button for motion and focus
+restoration, including platforms where mouse activation does not focus buttons.
+
 `cursor?: BrowserCursor` supplies an independent viewport-CSS position and a
 monotonic `pulse` identity. The same cursor element glides between updates on
 `dur-slow`/`ease-glide`; a new pulse triggers one finite ripple. Without this

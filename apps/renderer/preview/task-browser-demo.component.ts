@@ -26,7 +26,7 @@ export class StartTabFixture implements Pick<ElevenexBridge, 'taskBrowserRead' |
   async taskBrowserConfigure(_scope: string, _task: number, placement: TaskBrowserPlacement): Promise<BackendResult<TaskBrowserState>> {
     if (this.state.tabs.some(tab => tab.url)) return { ok: false, error: { code: 'unavailable', message: 'Close loaded tabs first.' } };
     const native = placement !== 'machine';
-    this.state = { ...this.state, placement, revision: 0, capabilities: { embedded: native, audio: native, accessibility: native, filePicker: native, downloads: native } };
+    this.state = { ...this.state, placement, canRecover: native ? undefined : true, revision: 0, capabilities: { embedded: native, audio: native, accessibility: native, filePicker: native, downloads: native } };
     return { ok: true, value: this.state };
   }
   async taskBrowserHide() { /* No guest in this preview. */ }

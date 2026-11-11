@@ -2,6 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runtimeInput, runtimeCommand, runtimeTransfer } from './runtime-validation.js';
 
+it('confines recovery to an explicit tab without accepting native transport parameters', () => {
+  const tabId = '11111111-1111-4111-8111-111111111111';
+  expect(runtimeCommand.safeParse({ kind: 'recover', tabId }).success).toBe(true);
+  expect(runtimeCommand.safeParse({ kind: 'recover', tabId: 'missing' }).success).toBe(false);
+  expect(runtimeCommand.safeParse({ kind: 'recover', tabId, method: 'Runtime.evaluate' }).success).toBe(false);
+});
+
 it('accepts forward navigation only for a valid tab with no extra fields', () => {
   const tabId = '11111111-1111-4111-8111-111111111111';
   expect(runtimeCommand.safeParse({ kind: 'forward', tabId }).success).toBe(true);

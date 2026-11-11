@@ -297,6 +297,7 @@ export class TaskBrowser implements DesktopBrowserHost {
     } else if (input.kind === 'feedback') this.feedback = input.enabled;
     else {
       const page = this.page(input.tabId);
+      if (input.kind === 'recover') throw new Error('Force reload is unavailable for this browser engine.');
       if (input.kind === 'select') { this.select(page); if (page.url && (!page.hasContents || !page.contents.getURL() || page.contents.getURL() === 'about:blank')) await this.navigate(page, page.url); }
       else if (input.kind === 'close') {
         await this.closePage(page);

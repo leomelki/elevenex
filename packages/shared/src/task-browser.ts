@@ -133,6 +133,8 @@ export interface TaskBrowserTab {
   readonly hovered?: BrowserHover;
 }
 export interface TaskBrowserState {
+  /** Explicit human recovery can replace a blocked machine page engine. */
+  readonly canRecover?: true;
   /** Human-only local tabs can coexist with the task's remote browser. */
   readonly canCreateLocalTabs?: true;
   readonly webAuthn?: true;
@@ -195,7 +197,7 @@ export type TaskBrowserCommand =
   | { readonly kind: 'open'; readonly url: string }
   /** Move an existing tab before another, or to the end. Never replaces the tab set. */
   | { readonly kind: 'move-tab'; readonly tabId: string; readonly beforeTabId: string | null }
-  | { readonly kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
+  | { readonly kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'recover' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
   | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
   | { readonly kind: 'navigate'; readonly tabId: string; readonly url: string }
   | { readonly kind: 'width'; readonly tabId: string; readonly width: 'full' | 'phone' }

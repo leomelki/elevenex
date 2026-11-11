@@ -1,6 +1,7 @@
 import { AgentDownloads } from './agent-downloads';
 import { BrowserAgentPresentation } from '@elevenex/browser-agent';
 import { nativeBrowserInput } from './native-input';
+import { nativePointerInput } from './native-pointer-input';
 import { AgentNativeInput } from './agent-input';
 import { browserHoverAt, BrowserPickerHover, resolvePickedBrowserSources, pickBrowserElement, delay, ProtocolLease, type BrowserAgentTarget } from '@elevenex/browser-agent';
 import { hardenTaskGuest } from './guest-policy';
@@ -186,6 +187,7 @@ export class BrowserPage {
   private destroyed = false;
   private crashed = false;
   private syntheticInput = false;
+  private streamFocus?: Promise<void>;
   private navigation = 0;
   private viewportRevision = 0;
   get selectionViewportId(): string { return this.viewportRevision + ":" + this.attached; }
@@ -426,6 +428,7 @@ export class BrowserPage {
     if (!this.attached) return;
     if(this.hasContents)this.contents.setAudioMuted(true);
     this.attached = false; this.disposedInput++;
+    this.streamFocus = undefined;
     this.frames?.setActive(false);
     if (this.hasContents && this.contents.debugger.isAttached()) void this.contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => undefined);
   }
@@ -449,12 +452,23 @@ export class BrowserPage {
       else return;
     }
     const contents = this.contents, revision = this.disposedInput, acceptedGeneration = this.lease.generation;
+    if (!this.inputReady) throw new Error('Browser input was interrupted before delivery');
+    if (input.kind === 'pointer' || input.kind === 'wheel') {
+      // Human input uses Chromium's native path, without CDP's visual-state
+      // fence or a per-event focus round trip through the busy page thread.
+      contents.sendInputEvent(nativePointerInput(input, contents.getZoomFactor()));
+      return;
+    }
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
-    await contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    let focus = this.streamFocus;
+    if (!focus) {
+      focus = contents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).then(() => undefined);
+      this.streamFocus = focus;
+      void focus.catch(() => { if (this.streamFocus === focus) this.streamFocus = undefined; });
+    }
+    await focus;
     if (revision !== this.disposedInput || !this.attached || !this.inputReady || acceptedGeneration !== this.lease.generation || !this.host.authorized()) throw new Error('Browser input was interrupted before delivery');
-    if (input.kind === 'pointer') await contents.debugger.sendCommand('Input.dispatchMouseEvent', { type: input.type === 'down' ? 'mousePressed' : input.type === 'up' ? 'mouseReleased' : 'mouseMoved', x: input.x, y: input.y, button: input.button, buttons: input.buttons, clickCount: input.clicks, modifiers: input.modifiers });
-    else if (input.kind === 'wheel') await contents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseWheel', x: input.x, y: input.y, deltaX: input.deltaX, deltaY: input.deltaY, modifiers: input.modifiers });
-    else if (input.kind === 'key') {
+    if (input.kind === 'key') {
       if (input.type === 'down' && input.key === 'Escape' && (input.modifiers & 8)) { this.host.shortcut('controls'); return; }
       await contents.debugger.sendCommand('Input.dispatchKeyEvent', { type: input.type === 'down' ? 'keyDown' : 'keyUp', key: input.key, code: input.code, windowsVirtualKeyCode: input.keyCode, modifiers: input.modifiers, ...(input.type === 'down' && (input.text !== undefined || input.key === 'Enter') ? { text: input.text ?? '\r' } : {}) });
     } else if (input.kind === 'composition') await contents.debugger.sendCommand('Input.imeSetComposition', { text: input.text, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });

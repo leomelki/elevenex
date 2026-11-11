@@ -77,7 +77,7 @@ export class TaskBrowserComponent {
   private readonly overlays = inject(OverlayContainer);
   private readonly surface = viewChild<ElementRef<HTMLElement>>('surface');
   private readonly surfaces = viewChild(BrowserSurfacesComponent);
-  private readonly browser = viewChild(BrowserViewComponent);
+  protected readonly browser = viewChild(BrowserViewComponent);
   private openedIdentity = '';
   private controlsIdentity = '';
   private controlsSeen = 0;
@@ -168,7 +168,7 @@ export class TaskBrowserComponent {
     const command = this.store.state()?.elementSnapshots === 1 && (input.kind === 'pick' || input.kind === 'agent-request-pick') ? { ...input, visual: 1 as const } : input;
     void this.store.command(command);
   }
-  tabCommand(kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'takeover' | 'handoff' | 'outside' | 'focus', tabId = this.current()?.id): void {
+  tabCommand(kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'recover' | 'takeover' | 'handoff' | 'outside' | 'focus', tabId = this.current()?.id): void {
     if (tabId) {
       if (kind === 'select' && this.store.state()?.tabs.find(tab => tab.id === tabId)?.detached) { void this.moveToWindow(tabId); return; }
       if (kind === 'handoff') { const sessionId = this.current()?.agentSessionId ?? this.sessionId(); if (sessionId) this.command({ kind, tabId, sessionId }); else this.notice.set('Choose a conversation before handing control to the agent.'); }
@@ -183,7 +183,7 @@ export class TaskBrowserComponent {
     const tabId = this.current()?.id;
     if (tabId) this.command({ kind: 'navigate', tabId, url: this.normalize(value) });
   }
-  newTab(location?: 'local' | 'remote'): void { if (!this.detachedWindow() && !this.store.pending()) this.command({ kind: 'new-tab', ...(location ? { location } : {}) }); }
+  newTab(location?: 'local' | 'remote'): void { if (!this.detachedWindow() && !this.store.tabsPending()) this.command({ kind: 'new-tab', ...(location ? { location } : {}) }); }
   async moveToWindow(tabId = this.current()?.id): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), context = this.windowContext();
     if (!scope || !task || !tabId || !context || this.moving() || this.detachedWindow() || this.store.state()?.canDetach === false || !this.store.state()?.tabs.some(tab => tab.id === tabId)) return;

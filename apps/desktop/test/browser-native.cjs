@@ -159,6 +159,8 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
   await call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'text',text:'Unicode 世界'});
   await until(async()=>await native.executeJavaScript('document.querySelector("input").value')==='Unicode 世界','Streamed Unicode text was not delivered');
   await native.executeJavaScript('scrollTo(0,0)');
+  await require('./browser-stream-responsiveness-native.cjs')(native,
+    input => call('taskBrowserInput', scope, 1, first, humanGeneration, input));
   await assert.rejects(()=>call('taskBrowserInput',scope,1,first,humanGeneration,{kind:'eval',code:'unsafe'}));
   clearInterval(streamHeartbeat);
   await call('taskBrowserPresentation', scope, 1, first, 'embedded');

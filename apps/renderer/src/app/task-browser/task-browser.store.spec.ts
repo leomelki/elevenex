@@ -13,7 +13,7 @@ function setup() {
   const bridge = {
     onTaskBrowserChanged: vi.fn(callback => { listener = callback; return stop; }),
     taskBrowserRead: vi.fn(() => read.promise),
-    taskBrowserCommand: vi.fn(async () => ({ ok: true, value: state('scope', 1, 4) }) as const),
+    taskBrowserCommand: vi.fn<NonNullable<ElevenexBridge['taskBrowserCommand']>>(async () => ({ ok: true, value: state('scope', 1, 4) })),
     taskBrowserHide: vi.fn(async () => undefined),
   } satisfies Pick<ElevenexBridge, 'onTaskBrowserChanged' | 'taskBrowserRead' | 'taskBrowserCommand' | 'taskBrowserHide'>;
   TestBed.configureTestingModule({ providers: [TaskBrowserStore, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
@@ -22,6 +22,31 @@ function setup() {
 }
 afterEach(() => TestBed.resetTestingModule());
 describe('Task browser ownership', () => {
+  it('keeps tab actions independent of pending page commands and scopes pending counts to the selected task', async () => {
+    const { store, bridge, read, emit } = setup();
+    store.open('scope', 1);
+    read.resolve({ ok: true, value: state('scope', 1) });
+    await read.promise; await Promise.resolve();
+    const pending = deferred<BackendResult<TaskBrowserState>>();
+    bridge.taskBrowserCommand.mockReturnValueOnce(pending.promise);
+    const reload = store.command({ kind: 'reload', tabId: 'tab' });
+    expect(store.pending()).toBe(1);
+    expect(store.tabsPending()).toBe(0);
+    const next = store.command({ kind: 'new-tab' });
+    expect(store.tabsPending()).toBe(1);
+    await next;
+    expect(store.tabsPending()).toBe(0);
+    const nextRead = deferred<BackendResult<TaskBrowserState>>();
+    bridge.taskBrowserRead.mockReturnValueOnce(nextRead.promise);
+    store.open('scope', 2); emit(state('scope', 2));
+    expect(store.tabsPending()).toBe(0);
+    const taskReadPending = store.pending();
+    pending.resolve({ ok: true, value: state('scope', 1) });
+    await reload;
+    expect(store.pending()).toBe(taskReadPending);
+    nextRead.resolve({ ok: true, value: state('scope', 2) });
+    await nextRead.promise;
+  });
   it('subscribes before reads, retains task state across same-task conversations, and rejects old revisions', async () => {
     const { store, bridge, read, emit } = setup();
     store.open('scope', 1); emit(state('scope', 1, 3));

@@ -210,6 +210,7 @@ export class RuntimeBrowserTask {
   private readonly starting = new Map<string, Promise<void>>();
   private readonly displayStarting = new Map<string, { present: () => Promise<void> }>();
   private readonly inputLanes = new Map<string, RuntimeInputLane>();
+  private readonly recoveries = new Map<string, Promise<void>>();
   private readonly controller = new AbortController();
   private readonly authorizedPorts = new Set<number>();
   private disposed = false;
@@ -280,6 +281,7 @@ export class RuntimeBrowserTask {
       videoWindow: 8,
       canDetach: true,
       canReorder: true,
+      canRecover: true,
       layoutLanes: true,
       keyText: true,
       pointerExit: true,
@@ -572,11 +574,13 @@ export class RuntimeBrowserTask {
     this.clearPicker();
     this.active = id;
     if (previous && previous !== id && !this.presentations.has(previous))
-      await this.page(previous).layout(
+      // The old tab revokes visibility synchronously and owns its native
+      // cleanup. A blocked renderer must not hold selection of another tab.
+      void this.page(previous).layout(
         this.viewport.width,
         this.viewport.height,
         false,
-      );
+      ).catch(() => undefined);
     await this.ensure(page);
     if (selection !== this.selectionRevision || !this.alive)
       throw new Error('Browser selection changed');
@@ -678,7 +682,7 @@ export class RuntimeBrowserTask {
       if (input.kind === 'dialog-response') await page.workflows.respond(input.requestId, input.accept, input.text);
       else if (input.kind === 'cancel-workflow') await page.workflows.cancel(input.requestId);
       if (input.kind === 'navigate') this.authorize(input.url);
-      if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'back', 'forward'].includes(input.kind))) this.clearPicker();
+      if (input.kind === 'close' || (page.id === this.active && ['navigate', 'reload', 'recover', 'back', 'forward'].includes(input.kind))) this.clearPicker();
       if (input.kind === 'select') await this.select(page.id);
       else if (input.kind === 'close') {
         if (this.attention?.tabId === page.id) this.attention = undefined;
@@ -706,6 +710,8 @@ export class RuntimeBrowserTask {
           await this.ensure(page);
           if (this.active === page.id) await this.select(page.id);
         } else await page.navigate(input.url);
+      } else if (input.kind === 'recover') {
+        await this.recover(page);
       } else if (input.kind === 'reload') {
         if (!page.url) return this.state();
         page.takeover();
@@ -845,6 +851,32 @@ export class RuntimeBrowserTask {
     return { generation: page.generation, revision: this.revision, ...result };
   }
   private readonly agentTabs = new Set<string>();
+  /** Human-only engine replacement. Closing the old target cancels its native
+   * work; a timed-out CDP receipt alone would leave that work alive.
+   */
+  private recover(page: RuntimeBrowserTab): Promise<void> {
+    const pending = this.recoveries.get(page.id);
+    if (pending) return pending;
+    if (!page.url) return Promise.resolve();
+    const operation = (async () => {
+      page.takeover();
+      await page.resetEngine();
+      if (!this.alive || this.tabs.get(page.id) !== page) return;
+      // A launch/navigation superseded by the reset must release its slot
+      // before preparing the replacement, without reusing the old operation.
+      await this.starting.get(page.id)?.catch(() => undefined);
+      await this.ensure(page);
+      if (!this.alive || this.tabs.get(page.id) !== page) return;
+      const view = this.presentations.get(page.id);
+      if (view) await this.layoutTab(page.id, view.width, view.height, view.visible, view.interactive, view.pixelRatio, view.colorScheme);
+      else if (this.active === page.id)
+        await this.layout(this.viewport.width, this.viewport.height, this.visible, this.interactive, this.pixelRatio, this.colorScheme);
+    })().finally(() => {
+      if (this.recoveries.get(page.id) === operation) this.recoveries.delete(page.id);
+    });
+    this.recoveries.set(page.id, operation);
+    return operation;
+  }
   private agentPending = 0;
   async agent(
     input: BrowserAgentCommand,

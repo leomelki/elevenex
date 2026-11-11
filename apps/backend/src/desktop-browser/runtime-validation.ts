@@ -36,6 +36,7 @@ export const runtimeCommand = z.union([
         'back',
         'forward',
         'reload',
+        'recover',
         'takeover',
         'outside',
         'focus',

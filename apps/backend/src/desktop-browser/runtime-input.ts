@@ -1,6 +1,7 @@
 import type { CDPSession, Page } from 'playwright-core';
 import type { TaskBrowserStreamEvent } from '@elevenex/shared';
 import { RuntimeInputLane } from './runtime-input-lane.js';
+import { RuntimeBrowserClipboard } from './runtime-clipboard.js';
 import type { RuntimePointerLock } from './runtime-pointer-lock.js';
 
 /** Page-owned human input. Cleanup is ordered after accepted writes and before new input. */
@@ -19,18 +20,19 @@ export class RuntimeBrowserInput {
   private revision = 0;
   private readonly lane = new RuntimeInputLane(16);
   private resetting?: Promise<void>;
+  private readonly clipboard: RuntimeBrowserClipboard;
   constructor(
     private readonly page: Page,
     private readonly cdp: CDPSession,
     private readonly pointerLock?: Pick<RuntimePointerLock, 'epoch' | 'assert' | 'unlock' | 'settled'>,
-  ) {}
+  ) { this.clipboard = new RuntimeBrowserClipboard(page); }
 
   async settled(): Promise<void> {
     await this.lane.settled();
     await this.pointerLock?.settled();
   }
 
-  destroy(): void { this.revision++; this.lane.destroy(); }
+  destroy(): void { this.revision++; this.clipboard.destroy(); this.lane.destroy(); }
 
   dispatch(
     input: TaskBrowserStreamEvent,
@@ -214,22 +216,7 @@ export class RuntimeBrowserInput {
       await this.edit(input.operation === 'undo' ? 'Undo' : 'Redo');
     else if (input.operation === 'selectAll') await this.edit('SelectAll');
     else if (input.operation === 'copy' || input.operation === 'cut') {
-      const frame = await this.focusedFrame();
-      current();
-      const text = await frame.evaluate(() => {
-        let active = document.activeElement;
-        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-        if (active instanceof HTMLInputElement && active.type === 'password')
-          return '';
-        if (
-          active instanceof HTMLInputElement ||
-          active instanceof HTMLTextAreaElement
-        )
-          return active.value
-            .slice(active.selectionStart ?? 0, active.selectionEnd ?? 0)
-            .slice(0, 65536);
-        return (getSelection()?.toString() ?? '').slice(0, 65536);
-      });
+      const text = await this.clipboard.read(current);
       current();
       if (input.operation === 'cut' && text)
         await this.page.keyboard.press('Backspace');
@@ -238,24 +225,4 @@ export class RuntimeBrowserInput {
     return {};
   }
 
-  private async focusedFrame() {
-    let frame = this.page.mainFrame();
-    // Focus follows nested cross-origin frames through Playwright, without
-    // exposing a frame evaluator or page content to the agent/renderer bridge.
-    for (let depth = 0; depth < 20; depth++) {
-      const element = await frame.evaluateHandle(() => {
-        let active = document.activeElement;
-        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-        return active;
-      });
-      try {
-        const next = await element.asElement()?.contentFrame();
-        if (!next) return frame;
-        frame = next;
-      } finally {
-        await element.dispose();
-      }
-    }
-    throw new Error('Focused browser frame limit reached');
-  }
 }

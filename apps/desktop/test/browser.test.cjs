@@ -8,6 +8,20 @@ const { browserUrl, command, agentCommand, layout, intersect, loopback } = requi
 const { BrowserPersistence } = require('../dist/browser/persistence');
 const id = '11111111-1111-4111-8111-111111111111';
 
+test('force recovery is a strict human command, never an agent command', () => {
+  assert.deepEqual(command({ kind: 'recover', tabId: id }), { kind: 'recover', tabId: id });
+  assert.throws(() => command({ kind: 'recover', tabId: id, code: 'unsafe' }));
+  assert.throws(() => agentCommand({ kind: 'recover', tabId: id, generation: 1 }));
+});
+
+test('older remote hosts do not acquire the optional recovery capability', () => {
+  const { remoteBrowserState } = require('../dist/browser/remote-state');
+  const state = { taskId: 1, revision: 1, surfaceEpoch: 0, controlsFocus: 0, active: null, tabs: [], picked: null, picking: false, pickerMessage: null, feedback: false, ports: [], privacy: 'content-withheld' };
+  assert.equal(remoteBrowserState(state, 'scope', 1).canRecover, undefined);
+  assert.equal(remoteBrowserState({ ...state, canRecover: true }, 'scope', 1).canRecover, true);
+  assert.equal(remoteBrowserState({ ...state, canRecover: 'true' }, 'scope', 1).canRecover, undefined);
+});
+
 test('tab moves validate stable anchors and remain unavailable to agent commands', () => {
   for (const beforeTabId of [null, id]) assert.deepEqual(command({ kind: 'move-tab', tabId: id, beforeTabId }), { kind: 'move-tab', tabId: id, beforeTabId });
   for (const beforeTabId of [undefined, 0, 'missing', [], {}]) assert.throws(() => command({ kind: 'move-tab', tabId: id, beforeTabId }));

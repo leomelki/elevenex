@@ -173,6 +173,25 @@ SSH deployment constraint. Neither transport is advertised as implemented.
 
 ## Owners and lifetimes
 
+Human recovery is an additive `canRecover: true` capability. Its `recover` command
+replaces only the selected page engine and reloads its current task location,
+without waiting for native input receipts. Stable tab identity and task profile
+survive; unsaved page changes and queued input do not. Concurrent recovery requests
+coalesce per tab. Older viewers retain ordinary Reload, and newer viewers hide
+force recovery on older hosts. Page hiding and new-tab preparation do not wait
+for the previous page's ordered native cleanup.
+
+Clipboard selection reads have a one-second deadline. An evaluator may still be
+running after that deadline, so the page retains single-flight ownership until
+it settles. Late results cannot publish clipboard data or trigger a cut. This
+does not turn a timed-out native write into a cancellable or retryable action.
+
+Desktop-local streamed mouse input uses Electron's native dispatcher, preserving
+zoom, button state and wheel direction without CDP's visual-state fence. Native
+submission does not establish page-handler completion. Keyboard/text/IME and
+machine-streamed input retain their existing delivery contracts; arbitrary
+webpage handlers still depend on the page main thread.
+
 | Owner | Owns | Ends when |
 | --- | --- | --- |
 | Runtime service | Bounded task allocation, lifecycle reconciliation, persistence | Backend shutdown |

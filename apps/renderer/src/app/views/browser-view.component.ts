@@ -150,6 +150,7 @@ export class BrowserViewComponent {
   private readonly page = viewChild<ElementRef<HTMLElement>>('page');
   private readonly pickToggle = viewChild<unknown, ElementRef<HTMLElement>>('pickToggle', { read: ElementRef });
   private readonly driverControl = viewChild<ElementRef<HTMLButtonElement>>('driverControl');
+  private readonly moreControl = viewChild<unknown, ElementRef<HTMLElement>>('moreControl', { read: ElementRef });
   private readonly preview = viewChild<ElementRef<HTMLElement>>('preview');
   private previousAskInput?: HTMLTextAreaElement;
   private returnFocus?: HTMLElement;
@@ -228,6 +229,8 @@ export class BrowserViewComponent {
   protected labelBelow(target: BrowserTarget): boolean { return this.position(target.y) < LABEL_ROOM; }
 
   focusControls(): void { this.driverControl()?.nativeElement.focus({ preventScroll: true }); }
+  /** Stable native trigger for the owning tools modal's motion and focus return. */
+  toolsOrigin(): HTMLElement | null { return this.moreControl()?.nativeElement.querySelector('button') ?? null; }
   protected focusPage(): void {
     this.preview()?.nativeElement.focus({ preventScroll: true }); this.pageFocusRequested.emit();
   }

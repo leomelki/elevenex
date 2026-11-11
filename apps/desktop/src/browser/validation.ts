@@ -88,7 +88,7 @@ export function command(value: unknown): TaskBrowserCommand {
   if (kind === 'width') { exact(raw, ['kind', 'tabId', 'width']); if (raw['width'] !== 'phone' && raw['width'] !== 'full') throw new Error('Invalid width'); return { kind, tabId, width: raw['width'] }; }
   if (kind === 'theme') { exact(raw, ['kind', 'tabId', 'theme']); if (!['light', 'dark', 'system'].includes(String(raw['theme']))) throw new Error('Invalid page theme'); return { kind, tabId, theme: raw['theme'] as 'light' | 'dark' | 'system' }; }
   if (kind === 'network') { exact(raw, ['kind', 'tabId', 'slow']); if (typeof raw['slow'] !== 'boolean') throw new Error('Invalid network setting'); return { kind, tabId, slow: raw['slow'] }; }
-  if (kind !== 'select' && kind !== 'close' && kind !== 'back' && kind !== 'forward' && kind !== 'reload' && kind !== 'takeover' && kind !== 'outside' && kind !== 'focus') throw new Error('Unsupported browser command');
+  if (kind !== 'select' && kind !== 'close' && kind !== 'back' && kind !== 'forward' && kind !== 'reload' && kind !== 'recover' && kind !== 'takeover' && kind !== 'outside' && kind !== 'focus') throw new Error('Unsupported browser command');
   exact(raw, ['kind', 'tabId']); return { kind, tabId };
 }
 export function agentCommand(value: unknown): BrowserAgentCommand {

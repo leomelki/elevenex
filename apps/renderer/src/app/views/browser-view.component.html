@@ -29,7 +29,7 @@
     <div class="tools">
       @if (pickerAvailable()) { <ex-icon-button #pickToggle icon="target" label="Point and ask (⇧⌘C)" size="sm" [active]="pointAndAsk()" [disabled]="!current() || controlsDisabled()" (pressed)="togglePointAndAsk()" /> }
       <ex-icon-button icon="phone" [label]="width() === 'phone' ? 'Full width' : 'Phone width'" size="sm" [active]="width() === 'phone'" [disabled]="!current() || controlsDisabled()" (pressed)="widthChange.emit(width() === 'phone' ? 'full' : 'phone')" />
-      <ex-icon-button icon="more" label="More browser actions" size="sm" [disabled]="controlsDisabled()" (pressed)="moreRequested.emit()" />
+      <ex-icon-button #moreControl icon="more" label="More browser actions" size="sm" [disabled]="controlsDisabled()" (pressed)="moreRequested.emit()" />
     </div>
   </div>
   @if (!localOnly()) { <ex-fold [open]="!!current() && driver() === 'needs'">

@@ -187,6 +187,7 @@ export function remoteBrowserState(
   const picked = raw['picked'] === null ? null : element(raw['picked']);
   if (picked?.snapshot && (picked.snapshot.reference.tabId !== active || ['x', 'y', 'width', 'height'].some(key => record(picked)[key] !== record(picked.snapshot?.reference.target)[key]))) invalid();
   return {
+    ...(raw['canRecover'] === true ? { canRecover: true } : {}),
     ...(raw['webAuthn'] === true ? { webAuthn: true as const } : {}),
     ...(raw['elementSnapshots'] === 1 ? { elementSnapshots: 1 } : {}),
     ...(raw['agentCode'] === 1 ? { agentCode: 1 } : {}),

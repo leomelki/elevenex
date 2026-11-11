@@ -40,6 +40,31 @@ async function render(fixture: ComponentFixture<TaskBrowserComponent>): Promise<
   });
 }
 afterEach(() => TestBed.resetTestingModule());
+describe('Browser responsiveness controls', () => {
+  it('offers explicit recovery for a loading remote page only on capable hosts', async () => {
+    const { fixture, bridge } = setup([{ ...tab(), execution: 'remote', url: 'https://example.com', loading: true }]);
+    fixture.componentRef.setInput('active', true);
+    await render(fixture);
+    fixture.componentInstance.showDialog('tools'); fixture.detectChanges();
+    const recovery = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(button => button.textContent?.trim() === 'Force reload page');
+    expect(recovery()).toBeUndefined();
+    fixture.componentInstance.store.state.update(state => state && { ...state, canRecover: true });
+    fixture.detectChanges();
+    expect(recovery()?.disabled).toBe(false);
+    recovery()?.click();
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'recover', tabId: 'tab-1' });
+  });
+  it('keeps new-tab input enabled during a slow page command', async () => {
+    const { fixture, bridge } = setup([{ ...tab(), url: 'https://example.com' }]);
+    await render(fixture);
+    fixture.componentInstance.store.pending.set(1);
+    fixture.detectChanges();
+    const add = fixture.nativeElement.querySelector('[aria-label="New browser tab (⌘T)"]') as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    add.click();
+    expect(bridge.taskBrowserCommand).toHaveBeenCalledWith('scope', 1, { kind: 'new-tab' });
+  });
+});
 describe('Point at an element for the chat', () => {
   it('renders host hover geometry only while pointing and drops it on cancellation', async () => {
     const { fixture } = setup([{ ...tab(), url: 'http://localhost:3000', ready: true }]);

@@ -30,6 +30,11 @@ export class RuntimeBrowserTab {
   private readonly agentDownloads = new Set<(download: BrowserAgentDownload) => void>();
   get agentPlaywright(): boolean { return this.driver === 'agent' && this.playwrightConnections > 0; }
   private readonly agentInputs = new Set<AgentInputState>();
+  private mediaUpdate: Promise<void> = Promise.resolve();
+  private appliedColorScheme?: 'light' | 'dark';
+  private themeRevision = 0;
+  private engineReset?: Promise<void>;
+  private engineRevision = 0;
   /** Main-only page capability. Ownership survives navigation, never a takeover. */
   async agentTarget(
     sessionId: number,
@@ -326,14 +331,18 @@ export class RuntimeBrowserTab {
     return this.active() && this.started && !this.loading && !this.viewportChanging && !this.error && !this.disposed;
   }
   async start(context: BrowserContext, adopted?: Page): Promise<void> {
+    await this.engineReset;
     this.context = context;
     if (this.disposed) return;
+    const revision = this.engineRevision;
     const page = adopted ?? await this.context.newPage();
-    if (this.disposed) {
+    if (this.disposed || revision !== this.engineRevision) {
       await page.close();
       return;
     }
     this.page = page;
+    this.mediaUpdate = Promise.resolve();
+    this.appliedColorScheme = undefined;
     this.crashed = false;
     page.on('dialog', dialog => { if (!this.agentPlaywright) this.workflows.dialog(dialog); });
     page.on('filechooser', chooser => { if (!this.agentPlaywright) this.workflows.upload(chooser); });
@@ -893,10 +902,21 @@ export class RuntimeBrowserTab {
     theme: 'system' | 'light' | 'dark',
     system: 'light' | 'dark' = 'light',
   ): Promise<void> {
-    if (this.started) await this.page!.emulateMedia({
-      colorScheme: theme === 'system' ? system : theme,
-    });
+    const previous = this.theme, revision = ++this.themeRevision;
     this.theme = theme;
+    const page = this.page, colorScheme = theme === 'system' ? system : theme;
+    if (!this.started || !page) return;
+    const operation = this.mediaUpdate.then(async () => {
+      if (this.page !== page || this.disposed || this.appliedColorScheme === colorScheme) return;
+      await page.emulateMedia({ colorScheme });
+      if (this.page === page) this.appliedColorScheme = colorScheme;
+    });
+    this.mediaUpdate = operation.catch(() => undefined);
+    try { await operation; }
+    catch (error) {
+      if (this.page === page && revision === this.themeRevision) this.theme = previous;
+      throw error;
+    }
   }
   async networkTo(slow: boolean): Promise<void> {
     if (!this.started) { this.slowNetwork = slow; return; }
@@ -929,22 +949,26 @@ export class RuntimeBrowserTab {
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
     this.stopNavigation?.(); this.stopNavigation = undefined;
-    await this.workflows.destroy();
+    const workflowCleanup = this.workflows.destroy();
     this.takeover();
     const pointerCleanup = this.pointerLock.detach();
     this.capture.detach();
     const captureCleanup = this.capture.stop();
     this.input?.destroy();
     await this.page?.close({ runBeforeUnload: false });
-    await Promise.all([pointerCleanup, captureCleanup]);
+    await Promise.all([pointerCleanup, captureCleanup, workflowCleanup]);
     await this.viewportUpdate;
     this.page = undefined;
   }
   /** Explicit human recovery; no navigation or queued action is resumed here. */
-  async resetEngine(): Promise<void> {
+  resetEngine(): Promise<void> {
+    return this.engineReset ??= this.clearEngine().finally(() => { this.engineReset = undefined; });
+  }
+  private async clearEngine(): Promise<void> {
+    this.engineRevision++;
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
-    await this.workflows.clear();
+    const workflowCleanup = this.workflows.clear();
     this.invalidateDisplay();
     this.stopNavigation?.(); this.stopNavigation = undefined;
     const page = this.page,
@@ -969,7 +993,7 @@ export class RuntimeBrowserTab {
     this.input = undefined;
     await page?.close({ runBeforeUnload: false }).catch(() => undefined);
     await cdp?.detach().catch(() => undefined);
-    await Promise.all([pointerCleanup, inputCleanup]);
+    await Promise.all([pointerCleanup, inputCleanup, workflowCleanup]);
     await this.viewportUpdate;
   }
 }

@@ -13,6 +13,18 @@ No website, guest or remote Chromium process starts until navigation. Existing
 tabs survive panel/conversation changes. Closing the last tab leaves the New tab
 action available; returning to the empty browser creates its default again.
 
+Page navigation, appearance and recovery do not disable New tab. The store tracks
+tab collection mutations separately from other pending operations, and discards
+pending counts with the selected task's lifetime. Switching remote tabs revokes
+the old presentation immediately; that page owns its remaining native cleanup.
+
+Machine hosts advertising `canRecover: true` expose **Force reload page** in
+Browser Tools. This explicit human action closes the stuck page engine, retains
+the task profile and tab ID, and loads a fresh document. Unsaved page changes are
+lost; queued input and automation are never replayed. It is independent of the
+old engine's input receipts and is unavailable on older hosts or local-only tabs.
+Ordinary Reload retains its existing behavior.
+
 Tab labels follow the page title, including live title changes, in both local and
 streamed browsers. Titles are normalized and bounded to 200 characters, with the
 location as fallback and “New tab” for an empty tab. They are human-facing only:
