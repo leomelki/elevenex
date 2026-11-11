@@ -1,0 +1,64 @@
+/* Work waiting on a decision reads as one warm card. */
+:host([data-status="waiting"]) {
+  background: var(--attention-soft);
+}
+:host([data-status="waiting"].inspectable:hover) {
+  background: color-mix(in oklab, var(--attention-soft) 82%, var(--attention));
+}
+
+/*
+ * Time and controls occupy the same cell. Controls stay in the tab order while
+ * hidden; focusing the row (or any control) reveals them.
+ */
+.end > * {
+  grid-area: 1 / 1;
+}
+.time.yields,
+.actions {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.actions {
+  display: flex;
+  gap: 2px;
+  /* Controls are taller than the title line; overlap the padding instead of growing the row. */
+  margin-block: calc(-1 * var(--space-1));
+  margin-right: calc(-1 * var(--space-1));
+  opacity: 0;
+  pointer-events: none;
+}
+:host(:hover) .actions,
+:host(:focus-within) .actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+:host(:hover) .time.yields,
+:host(:focus-within) .time.yields {
+  opacity: 0;
+}
+.stop:hover {
+  color: var(--danger);
+}
+.pending {
+  color: var(--ink);
+}
+.answer {
+  grid-area: aside;
+  justify-self: end;
+}
+
+/* Without hover, controls must be visible to be found. */
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .time.yields {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .time.yields,
+  .actions {
+    transition: none;
+  }
+}

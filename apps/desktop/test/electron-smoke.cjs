@@ -36,6 +36,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
       }
       const responses = {
         '/api/info': { backendSha: revision },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/agent': { agentId: 'child', label: 'Reviewer', status: 'waiting', prompt: '', model: null, context: null, items: [], before: null, availability: 'starting', message: 'Waiting for the first message' },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/media': { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/catalog': { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null },
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
@@ -86,18 +87,25 @@ void (async () => {
   assert.equal(prefs.sandbox, true);
   // Real app:// + sandboxed preload + native clipboard, with browser clipboard
   // permissions denied. Preserve all clipboard formats around this regression.
-  const savedClipboard = await Promise.all((await clipboard.read()).map(async item =>
-    new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
-  try {
-    for (const text of ['fix/clipboard', '  café 👩🏽‍💻\n\t代码\n', 'first\r\nsecond\r\n', '', 'large output\n'.repeat(10000)]) {
-      await window.webContents.executeJavaScript(`window.elevenex.writeClipboardText(${JSON.stringify(text)})`);
-      const copied = await clipboard.readText();
-      // Windows normalizes plain-text newlines to CRLF for native applications.
-      assert.equal(copied.replaceAll('\r\n', '\n'), text.replaceAll('\r\n', '\n'));
+  const clipboardItems = await clipboard.read();
+  if (clipboardItems.some(item => !item.types.length)) {
+    // Some native pasteboard entries have no MIME representation. Do not erase
+    // the person's clipboard when we cannot materialize and restore it losslessly.
+    console.info('Clipboard round-trip skipped: native clipboard contains a non-MIME entry. IPC checks continue.');
+  } else {
+    const savedClipboard = await Promise.all(clipboardItems.map(async item =>
+      new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type => [type, await item.getType(type)]))))));
+    try {
+      for (const text of ['fix/clipboard', '  café 👩🏽‍💻\n\t代码\n', 'first\r\nsecond\r\n', '', 'large output\n'.repeat(10000)]) {
+        await window.webContents.executeJavaScript(`window.elevenex.writeClipboardText(${JSON.stringify(text)})`);
+        const copied = await clipboard.readText();
+        // Windows normalizes plain-text newlines to CRLF for native applications.
+        assert.equal(copied.replaceAll('\r\n', '\n'), text.replaceAll('\r\n', '\n'));
+      }
+      assert.equal(await window.webContents.executeJavaScript('window.elevenex.writeClipboardText({html:"bad"}).then(()=>false,()=>true)'), true);
+    } finally {
+      await clipboard.write(savedClipboard);
     }
-    assert.equal(await window.webContents.executeJavaScript('window.elevenex.writeClipboardText({html:"bad"}).then(()=>false,()=>true)'), true);
-  } finally {
-    await clipboard.write(savedClipboard);
   }
   const bridge = await window.webContents.executeJavaScript(`(async () => ({
     node: typeof require,
@@ -108,7 +116,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -139,6 +147,9 @@ void (async () => {
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
     ok: true, value: { backendSha: revision },
   });
+  const childAgent = await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'smoke-agent' })`);
+  assert.equal(childAgent.ok, true); assert.equal(childAgent.value.status, 'waiting');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: '../escape', requestId: 'smoke-agent-invalid' }).then(() => false, () => true)`), true);
   const uploadedFile = await window.webContents.executeJavaScript(`window.elevenex.sessionChatUpload('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-upload', id: '11111111-1111-4111-8111-111111111111', name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' })`);
   assert.equal(uploadedFile.ok, true);
   assert.equal(uploadedFile.value.offset, 3);

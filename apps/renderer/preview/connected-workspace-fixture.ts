@@ -17,6 +17,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   readonly sentGitActions: WorkspaceGitAction[] = [];
   sessionChatCatalog = (_scope: string, input: import('@elevenex/shared').SessionChatCatalogRead) => this.chat.catalog(input);
   sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
+  sessionChatAgent = (_scope: string, input: import('@elevenex/shared').SessionChatAgentRead) => this.chat.agent(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
   sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => { this.sentChatActions.push(input); return this.chat.command(input); };
   sessionChatUpload = (_scope: string, input: import("@elevenex/shared").ChatAttachmentUpload) => this.chat.upload(input);

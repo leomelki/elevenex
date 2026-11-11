@@ -1,0 +1,176 @@
+:host {
+  display: inline-flex;
+  min-width: 0;
+}
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: calc(var(--control-height) - var(--space-2));
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.trigger[data-mode="running"] {
+  background: var(--running-soft);
+  color: var(--ink);
+}
+.trigger[data-mode="issue"] {
+  background: var(--attention-soft);
+  color: var(--ink);
+}
+.trigger[data-waiting="true"] {
+  background: var(--attention-soft);
+}
+.trigger:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+.trigger-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trigger-time {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: min(420px, calc(100vw - var(--space-8)));
+  max-height: min(600px, calc(100vh - 120px));
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-sans);
+  overscroll-behavior: contain;
+  transform-origin: top right;
+  animation: arrive var(--dur-base) var(--ease-glide) both;
+}
+.panel:focus {
+  outline: none;
+}
+.panel-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-1) var(--space-2);
+}
+.title {
+  margin: 0;
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+  font-weight: 600;
+}
+.title:focus {
+  outline: none;
+  box-shadow: none;
+}
+.subtitle {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.overline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  padding-inline: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-overline-size);
+  line-height: var(--text-overline-line);
+  font-weight: var(--text-overline-weight);
+  letter-spacing: var(--text-overline-tracking);
+  text-transform: uppercase;
+}
+.count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.overline.attention {
+  color: var(--attention);
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.note {
+  margin: var(--space-1) 0 0;
+  padding-inline: var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-2);
+  color: var(--ink-muted);
+  text-align: center;
+}
+.empty p {
+  margin: 0;
+  font-size: var(--text-caption-size);
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}
+@media (max-width: 500px) {
+  .panel {
+    padding-inline: var(--space-2);
+  }
+}
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}

@@ -133,58 +133,6 @@ export function chatState(
       });
     }
   }
-  const activity = ['subagents', 'tasks', 'notifications', 'hooks'].flatMap(
-    (key) =>
-      list(raw[key])
-        .slice(-12)
-        .map((value, index) => {
-          const item = record(value);
-          return {
-            id: display(
-              item.id ?? item.agentId ?? item.taskId ?? `${key}-${index}`,
-              1000,
-            ),
-            label: display(
-              item.description ??
-                item.displayName ??
-                item.title ??
-                item.subject ??
-                item.text ??
-                item.message ??
-                item.name ??
-                key,
-              2000,
-            ),
-            detail: display(
-              item.executionStatus ?? item.status ?? item.state ?? item.summary,
-              2000,
-            ),
-          };
-        }),
-  );
-  for (const key of [
-    'rateLimit',
-    'latestApiRetry',
-    'latestToolProgress',
-    'latestCompactBoundary',
-    'latestMirrorError',
-  ]) {
-    if (raw[key])
-      activity.push({
-        id: key,
-        label:
-          key === 'latestApiRetry'
-            ? 'Retrying request'
-            : key === 'latestCompactBoundary'
-              ? 'Context compacted'
-              : key === 'latestToolProgress'
-                ? 'Tool progress'
-                : key === 'rateLimit'
-                  ? 'Usage limit'
-                  : 'Transcript warning',
-        detail: display(raw[key], 2000),
-      });
-  }
   return {
     provider,
     phase: ['idle', 'running', 'waiting', 'error'].includes(
@@ -261,7 +209,6 @@ export function chatState(
           url: nullable(question.url),
         }
       : null,
-    activity: activity.slice(-32),
   };
 }
 

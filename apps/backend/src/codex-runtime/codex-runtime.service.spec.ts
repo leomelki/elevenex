@@ -466,6 +466,28 @@ describe('CodexRuntimeService', () => {
     expect(runtime.tracker(7).agents.size).toBe(0);
   });
 
+  it('stops only the selected owned child and confirms its native turn', async () => {
+    const { service, appServer, sessionsService } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    const wire = wireAppServerTurn(appServer);
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      for (const id of ['child-a', 'child-b']) wire.notificationHandler({ method: 'thread/started', params: {
+        thread: { id, source: { subAgent: { thread_spawn: { parent_thread_id: 'root' } } } },
+      } });
+      appServer.request.mockClear();
+      appServer.request.mockResolvedValueOnce({ thread: { turns: [{ id: 'child-turn', status: 'inProgress' }] } })
+        .mockResolvedValueOnce({}).mockResolvedValueOnce({ thread: { turns: [{ id: 'child-turn', status: 'interrupted' }] } });
+      await service.stopSubagent(7, 'child-a');
+      expect(appServer.request).toHaveBeenCalledWith('turn/interrupt', { threadId: 'child-a', turnId: 'child-turn' }, 5000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+      const state = await service.getRuntimeState(7);
+      expect(state.backgroundWork?.map(item => item.id)).toEqual(['subagent:child-b']);
+      await expect(service.stopSubagent(7, 'not-owned')).rejects.toThrow('no longer');
+    } finally { service.onModuleDestroy(); }
+  });
+
   it('fails cleanup until every active child turn is confirmed stopped', async () => {
     const { service, appServer } = createService();
     const runtime = service as any;

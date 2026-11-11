@@ -48,6 +48,8 @@ import {
 } from "../ui";
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
 import { SessionChatContentComponent } from "./session-chat-content.component";
+import { SessionAgentComponent } from './session-agent.component';
+import { SessionActivityComponent } from "./session-activity.component";
 import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
@@ -62,6 +64,8 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
   imports: [
     OpensWhenBackComponent,
     SessionChatContentComponent,
+    SessionActivityComponent,
+    SessionAgentComponent,
     ChatComponent,
     ComposerComponent,
     ApprovalCardComponent,
@@ -135,6 +139,15 @@ export class SessionChatComponent {
     () => this.store.error() || this.store.state()?.error || "",
   );
   readonly copiedCode = signal<string | null>(null);
+  readonly agentId = signal<string | null>(null);
+  /** The inspected agent's live Activity record, while it is still listed. */
+  readonly agentWork = computed(() => {
+    const id = this.agentId();
+    return (
+      this.store.state()?.work?.running.find((item) => item.agentId === id) ??
+      null
+    );
+  });
   readonly contentId = signal<string | null>(null);
   readonly contentSource = signal<ToolContentSource | undefined>(undefined);
   readonly contentPart = signal<'input' | 'text'>('text');
@@ -144,10 +157,14 @@ export class SessionChatComponent {
   );
   private copyTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usageTime = signal(Date.now());
+  /** Work outliving its turn keeps the session busy even after the reply ends. */
+  readonly background = computed(
+    () => !!this.store.state()?.work?.running.some(item => item.background !== false),
+  );
   readonly status = computed(() =>
     this.store.state()?.permission || this.store.state()?.question
       ? "attention"
-      : this.store.running()
+      : this.store.running() || this.background()
         ? "running"
         : this.store.state()?.phase === "error"
           ? "failed"
@@ -157,7 +174,9 @@ export class SessionChatComponent {
     this.status() === "attention"
       ? "Needs you"
       : this.status() === "running"
-        ? "Running"
+        ? this.store.running()
+          ? "Running"
+          : "Working in background"
         : this.status() === "failed"
           ? "Failed"
           : "Ready",
@@ -170,6 +189,11 @@ export class SessionChatComponent {
       this.archived() ||
       !this.store.state(),
   );
+  readonly activityDisabledReason = computed(() => this.archived() ? 'This session is archived. Activity is read only.'
+    : this.store.offline() ? 'Reconnect to control this work.'
+    : this.store.historical() ? 'Return to latest to control this work.'
+    : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
+    : this.store.busy() ? 'An action is in progress.' : '');
   readonly models = computed<readonly AgentModel[]>(() =>
     (this.store.state()?.models ?? []).map((model) => ({
       id: model.id,
@@ -348,7 +372,7 @@ export class SessionChatComponent {
       clearTimeout(this.copyTimer);
       this.copiedCode.set(null);
     });
-    effect(() => { this.store.viewRevision(); this.contentId.set(null); });
+    effect(() => { this.store.viewRevision(); this.contentId.set(null); this.agentId.set(null); });
     let scrollIdentity = -1;
     let opening = true;
     afterRenderEffect(() => {

@@ -105,6 +105,8 @@ export interface CodexActiveRunState {
 }
 
 export interface CodexRuntimeState {
+  latestApiRetry?: import('../claude-runtime/claude-runtime.types.js').ClaudeApiRetry | null;
+  activityNotifications?: import('../claude-runtime/claude-runtime.types.js').ClaudeNotification[];
   codexSessionId: string | null;
   // Cached so follow-up prompts don't re-read the session row from SQLite on
   // the critical path. Populated on the first prompt of the session.

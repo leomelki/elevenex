@@ -86,9 +86,68 @@ their default behavior. Later failures still use the runtime error/state feed. Q
 Claude's permission-backed AskUserQuestion and provider-native questions/MCP
 primitive form fields. Permission decisions target the actual pending request;
 one-shot requests omit Always allow. Model/permission choices come from runtime
-capabilities. Activity exposes reported subagents, background tasks, hooks,
-notifications, retries, limits and context usage. Archived sessions are read only
-and load persisted history without attaching a runtime.
+capabilities. Archived sessions are read only and load persisted history without
+attaching a runtime.
+
+## Background work and activity
+
+`SessionActivity` in the session bar summarizes work that outlives its turn and
+runtime events worth noticing. It reads the optional `state.work` field, which the
+backend's `desktop-chat-work` projection builds from the runtime's authoritative
+`backgroundWork` list, enriched by its task/agent records:
+
+- `running` (at most 16): live agents and background tasks with start time,
+  latest summary/tool, usage, an orphaned flag (launched by finished work) and
+  foreground/background identity, native lifecycle state, model and context occupancy,
+  plus `stoppable` only when the harness implements the stop operation and reports
+  the item stoppable. Foreground child agents are included; detached shell tasks
+  still require the authoritative runtime registry. `totalRunning` preserves the
+  count when more than 16 live rows exist.
+- `recent` (at most 12, newest first): failed or cancelled hooks, finished/failed
+  background work, retries while the affected run is active, context compaction,
+  high-priority notifications, transcript sync and plugin failures. Successful or
+  running hooks, progress ticks and quota data (owned by the agent menu) are dropped.
+
+The trigger is absent when both lists are empty. With live work it reads
+“N in background” plus the longest elapsed time, and the session status becomes
+“Working in background” after the reply ends. Otherwise warnings/failures from the
+last 30 minutes flag “N issues” until the panel is opened; older history leaves a
+quiet clock button. The CDK dialog traps and restores focus, closes on Escape or
+outside click, and stays open with an empty state if the work finishes underneath it.
+Elapsed times tick locally (1s only while work runs); no extra reads are added:
+the data rides the existing long-poll feed.
+
+The panel lists **Needs you** (work waiting on a decision), **Running** and
+**Recent**. Every row has the same shape so the list scans quickly: a status glyph,
+the title with the harness role beside it, time in one right-hand column, and one
+summary line. Only exceptions carry colour: the Needs you card and tags such as
+“Left behind” or “Starting”. Model, usage and context belong to the agent
+inspector, not the list.
+
+- `session-activity-model.ts` holds the pure presentation model: sections, the
+  per-row tag/summary/accessible status, event output rules and formatters.
+- `SessionWorkRow` (`ex-session-work-row`) and `SessionEventRow`
+  (`ex-session-event-row`) are presentational list items (`role="listitem"`) sharing
+  `session-activity-row.css`; they emit intents and own only local disclosure.
+- `SessionActivity` composes them, owns the trigger, open state and the shared
+  one-second clock, and forwards intents to the connected owner.
+
+An inspectable row opens the agent from anywhere on the row. Stop and Run in
+background share the time cell and appear on hover or keyboard focus (always
+without hover); the requested row reads “Stopping…” until the command settles.
+**Answer** appears on waiting work only while the conversation holds an approval
+or question; it closes the panel and then focuses that decision, so the CDK focus
+trap's restoration cannot win. Failure output keeps its lines in a code block
+clamped to four lines, with a local Show more/less toggle.
+
+Stop sends `{ type: 'stop-background', id }`. Main accepts only `task:`/`subagent:`
+keys; the backend rechecks that the runtime still lists the item before calling
+`stopBackgroundTask`/`stopSubagent`, so a stale row cannot stop reused work. The
+turn itself is never interrupted, and the command is never replayed. The legacy
+`activity` list is derived from the same projection (live work plus warnings) for
+older desktops; engines without `work` show no activity trigger.
+`session-activity.mjs` captures running, stop, issue, quiet and narrow
+reduced-motion states in both themes.
 
 The backend keeps at most 32 short-lived selected-session observations. It
 subscribes before hydration, then uses a pre-read cursor and idempotent changed
@@ -111,8 +170,17 @@ pretend lossless event log.
 The integration deliberately hides unavailable dictation, mention,
 fork, side-chat and queue edit/reorder controls. File links request the selected reply’s Changes
 panel; external HTTP(S) links use the existing main-process navigation policy.
-Subagent transcript navigation and richer MCP schemas remain
-separate integrations. The desktop connection layer and legacy app are unchanged.
+Richer MCP schemas remain a separate integration. Child transcripts open
+on demand through `sessionChatAgent`; pages replace the bounded history window,
+reject stale replies and cancel on close/navigation. The inspector (`SessionAgent`)
+pins the assignment above the transcript (folded when long) and drops the
+duplicate opening user message. Tool calls and their results render as the main
+thread's `ToolStep` rows; reasoning folds locally. A waiting agent points to the
+main conversation, which owns decisions. Show earlier/newer messages sit at the
+transcript's edges, Jump to latest appears only on an earlier page, and the
+footer states when the snapshot loaded; Refresh is the header's icon action. While
+the agent is still listed, its live record supplies the split title/role and the
+reported usage (tokens, tools) for the header. See [cross-harness Activity design](../../../../../docs/session-activity.md) for provider support and feature boundaries. The desktop connection layer and legacy app are unchanged.
 
 Run the standard desktop checks and the backend `desktop-chat.service.spec.ts`.
 The preview-only `SessionChatFixture` powers the connected workspace and

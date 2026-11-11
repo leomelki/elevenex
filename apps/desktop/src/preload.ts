@@ -24,6 +24,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   codeAction: (target, action) => invoke('code:action', target, action),
   codeFocus: target => invoke('code:focus', target),
   codeRelease: target => invoke('code:release', target),
+  sessionChatAgent: (scope, input) => invoke('session-chat:agent', scope, input),
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),
   sessionChatChanges: (scope, input) => invoke('session-chat:changes', scope, input),
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),

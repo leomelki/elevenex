@@ -1852,12 +1852,34 @@ export class CodexRuntimeService
     );
   }
 
-  private async interruptSubagents(sessionId: number): Promise<void> {
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const tracker = this.subagentTrackers.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    const agent = tracker?.agents.get(agentId);
+    if (!state || !agent || !isAgentActive(agent) || agentId === state.codexSessionId)
+      throw new ConflictException('This agent is no longer available to stop.');
+    await this.interruptSubagents(sessionId, agentId);
+    if (this.runtimeStates.get(sessionId) !== state || this.invalidatedSessions.has(sessionId)) return;
+    const requests = this.delegatedRequests.get(sessionId);
+    for (const store of [this.activeRuns.get(sessionId), requests]) {
+      if (!store) continue;
+      for (const [id, pending] of store.permissionRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ approved: false, message: 'Interrupted' }); store.permissionRequests.delete(id);
+      }
+      for (const [id, pending] of store.userInputRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ action: 'cancel' }); store.userInputRequests.delete(id);
+      }
+    }
+    this.refreshPendingUserInput(sessionId);
+  }
+
+  private async interruptSubagents(sessionId: number, agentId?: string): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const tracker = this.subagentTrackers.get(sessionId);
     if (!tracker) return;
     const delegated = this.delegatedRequests.get(sessionId);
-    if (delegated) this.resolvePendingCodexRequests(delegated);
-    const active = [...tracker.agents.values()].filter(isAgentActive);
+    if (delegated && !agentId) this.resolvePendingCodexRequests(delegated);
+    const active = [...tracker.agents.values()].filter(agent => isAgentActive(agent) && (!agentId || agent.agentId === agentId));
     for (let index = 0; index < active.length; index += 4) {
       await Promise.all(
         active.slice(index, index + 4).map(async (agent) => {
@@ -1894,11 +1916,14 @@ export class CodexRuntimeService
               }),
             );
           }
+          // A control finishing after teardown must not recreate runtime state.
+          if (this.subagentTrackers.get(sessionId) !== tracker || (this.sessionGenerations.get(sessionId) ?? 0) !== generation) return;
           this.publishSubagents(sessionId, [
             tracker.upsert(
               agent.agentId,
               {
                 executionStatus: finalStatus ?? 'interrupted',
+                ...(agentId && finalStatus !== 'completed' ? { stoppedByUser: true } : {}),
               },
               new Date().toISOString(),
             ),
@@ -3474,18 +3499,18 @@ export class CodexRuntimeService
       authStatus: state.authStatus,
       rateLimit: null,
       planUsage: state.planUsage,
-      notifications: [],
+      notifications: state.activityNotifications ?? [],
       hooks: [],
       recentHookEvents: [],
       tasks: [],
       taskLifecycle: [],
       subagents: [
-        ...(this.subagentTrackers.get(sessionId)?.agents.values() ?? []),
+        ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, canStop: isAgentActive(agent) })),
       ],
       backgroundWork: this.subagentBackgroundWork(sessionId),
       latestToolProgress: null,
       latestToolSummary: null,
-      latestApiRetry: null,
+      latestApiRetry: state.latestApiRetry ?? null,
       latestPluginInstall: null,
       latestMemoryRecall: null,
       latestFilesPersisted: null,
@@ -3692,6 +3717,7 @@ export class CodexRuntimeService
         }
         case 'item/started': {
           if (!matchesThread(params)) return;
+          if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
@@ -3703,6 +3729,12 @@ export class CodexRuntimeService
         }
         case 'item/completed': {
           if (!matchesThread(params)) return;
+          if (params?.item?.type === 'contextCompaction') {
+            state.activityNotifications = [...(state.activityNotifications ?? []).filter(note => note.key !== 'compaction'), {
+              key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString(),
+            }].slice(-8);
+            this.emitRunState(sessionId);
+          }
           this.receiveCodexAsyncUserInput(sessionId, params?.item);
           const item = this.translateAppServerItem(
             params?.item,
@@ -3753,9 +3785,11 @@ export class CodexRuntimeService
           //   { error: TurnError, willRetry: boolean, threadId, turnId }
           if (params?.threadId && !matchesThread(params)) return;
           if (params?.willRetry) {
-            // The server will retry the upstream call automatically; don't
-            // terminate the stream — handleCodexEvent's existing logic
-            // doesn't care about retry events here.
+            state.latestApiRetry = { attempt: (state.latestApiRetry?.attempt ?? 0) + 1,
+              maxRetries: 0, retryDelayMs: 0, errorStatus: null,
+              error: typeof params?.error?.message === 'string' ? params.error.message.slice(0, 1000) : 'Upstream request failed',
+              timestamp: new Date().toISOString() };
+            this.emitRunState(sessionId);
             return;
           }
           push({

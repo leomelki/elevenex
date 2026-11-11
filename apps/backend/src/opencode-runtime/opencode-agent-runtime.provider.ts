@@ -246,7 +246,7 @@ export class OpenCodeAgentRuntimeProvider
       const projectAuth = { ...auth, authenticated: true };
       state.authStatus = projectAuth;
     }
-    return { ...state, liveItems: [...state.liveItems] };
+    return { ...state, backgroundWork: this.backgroundWork(state), liveItems: [...state.liveItems] };
   }
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const state = await this.state(sessionId);
@@ -433,7 +433,7 @@ export class OpenCodeAgentRuntimeProvider
         .orderedMessages()
         .findLast((message) => message.role === 'assistant');
       if (latestAssistant?.role === 'assistant')
-        this.updateContextUsage(entry, latestAssistant);
+        entry.state.contextUsage = this.contextUsage(entry, latestAssistant);
       if (
         !entry.client!.selection &&
         (entry.run || statuses?.data?.[sessionID]?.type === 'busy')
@@ -497,18 +497,28 @@ export class OpenCodeAgentRuntimeProvider
       entry.state.subagents.map((agent) => [agent.agentId, agent]),
     );
     entry.state.subagents = entry.state.claudeSessionId
-      ? entry.tree.descendants(entry.state.claudeSessionId).map((child) => ({
-          agentId: child.id,
-          agentType: child.title,
-          status: statuses
-            ? statuses[child.id]?.type === 'busy'
-              ? 'started'
-              : 'stopped'
-            : (previous.get(child.id)?.status ?? 'started'),
-          timestamp: new Date(child.time.created).toISOString(),
-        }))
-      : [];
+      ? entry.tree.descendants(entry.state.claudeSessionId).map(child => {
+          const old = previous.get(child.id);
+          const active = statuses ? !!statuses[child.id] && statuses[child.id].type !== 'idle' : old?.status !== 'stopped';
+          const timestamp = old?.timestamp ?? new Date(child.time.created).toISOString();
+          return { ...old, agentId: child.id, agentType: child.title,
+            status: active ? 'started' as const : 'stopped' as const,
+            executionStatus: active ? old?.executionStatus === 'waiting' ? 'waiting' as const : 'running' as const : old?.status === 'stopped' ? old.executionStatus ?? 'completed' as const : 'completed' as const,
+            startedAt: old?.startedAt ?? timestamp,
+            timestamp: !active && old?.status !== 'stopped' ? new Date().toISOString() : timestamp,
+            ...(!active ? { completedAt: old?.completedAt ?? new Date().toISOString() } : { completedAt: undefined }),
+            canStop: active,
+          };
+        }) : [];
   }
+  private backgroundWork(state: ClaudeRuntimeStatePayload) {
+    return state.subagents.filter(agent => agent.status === 'started').map(agent => ({
+      id: `subagent:${agent.agentId}`, kind: 'subagent' as const,
+      label: agent.displayName ?? agent.agentType, detail: agent.lastAssistantMessage,
+      startedAt: agent.startedAt ?? agent.timestamp, updatedAt: agent.timestamp,
+    }));
+  }
+
   private emitHistory(entry: RuntimeEntry): void {
     this.emit('event', {
       type: 'history_snapshot',
@@ -530,15 +540,15 @@ export class OpenCodeAgentRuntimeProvider
     if (!entry.controller.signal.aborted) this.emitState(entry);
   }
 
-  private updateContextUsage(
+  private contextUsage(
     entry: RuntimeEntry,
     message: Message & { role: 'assistant' },
-  ): void {
+  ) {
     const model = entry.models.get(`${message.providerID}/${message.modelID}`);
     const tokens = message.tokens;
     const totalTokens =
       tokens.input + tokens.output + tokens.cache.read + tokens.cache.write;
-    entry.state.contextUsage = {
+    return {
       model: `${message.providerID}/${message.modelID}`,
       totalTokens,
       maxTokens: model?.limit.context ?? 0,
@@ -626,20 +636,36 @@ export class OpenCodeAgentRuntimeProvider
       }
       case 'message.updated': {
         const message = event.properties.info;
-        if (message.sessionID !== state.claudeSessionId) break;
+        if (message.sessionID !== state.claudeSessionId) {
+          const agent = state.subagents.find(agent => agent.agentId === message.sessionID);
+          if (agent && message.role === 'assistant') {
+            agent.model = `${message.providerID}/${message.modelID}`;
+            agent.contextUsage = this.contextUsage(entry, message);
+            this.emitState(entry);
+          }
+          break;
+        }
         entry.transcript.putMessage(message);
         // V1 changes primary agents through user messages, including native plan_exit.
         if (message.role === 'user' && !entry.client!.selection)
           await this.syncNativeAgent(entry, message.agent);
         if (message.role === 'assistant') {
-          this.updateContextUsage(entry, message);
+          state.contextUsage = this.contextUsage(entry, message);
           this.emitState(entry);
         }
         break;
       }
       case 'message.part.updated': {
         const part = event.properties.part;
-        if (part.sessionID !== state.claudeSessionId) break;
+        if (part.sessionID !== state.claudeSessionId) {
+          const agent = state.subagents.find(agent => agent.agentId === part.sessionID);
+          if (agent) {
+            if (part.type === 'text') agent.lastAssistantMessage = part.text.slice(0, 240);
+            else if (part.type === 'tool') agent.lastToolName = part.tool;
+            this.emitState(entry);
+          }
+          break;
+        }
         entry.transcript.putPart(part);
         this.emitPart(entry, part);
         break;
@@ -726,10 +752,17 @@ export class OpenCodeAgentRuntimeProvider
           );
           if (agent) {
             agent.status = status.type === 'idle' ? 'stopped' : 'started';
+            agent.executionStatus = status.type === 'idle' ? agent.executionStatus === 'error' ? 'error' : agent.stoppedByUser ? 'interrupted' : 'completed' : 'running';
+            if (status.type !== 'idle') agent.stoppedByUser = false;
+            agent.canStop = status.type !== 'idle';
+            agent.timestamp = new Date().toISOString();
+            if (status.type === 'idle') agent.completedAt = agent.timestamp;
+            else agent.completedAt = undefined;
             this.emitState(entry);
           }
           break;
         }
+        if (status.type !== 'retry') state.latestApiRetry = null;
         if (status.type === 'retry') {
           state.latestApiRetry = {
             attempt: status.attempt,
@@ -756,16 +789,25 @@ export class OpenCodeAgentRuntimeProvider
           );
         break;
       }
-      case 'session.error':
+      case 'session.error': {
+        const child = state.subagents.find(agent => agent.agentId === event.properties.sessionID);
+        if (child && event.properties.error?.name !== 'MessageAbortedError') {
+          child.status = 'stopped'; child.executionStatus = 'error'; child.canStop = false;
+          child.timestamp = new Date().toISOString(); child.completedAt = child.timestamp;
+          this.emitState(entry);
+          break;
+        }
         if (
           event.properties.sessionID === state.claudeSessionId &&
           event.properties.error?.name !== 'MessageAbortedError'
         )
           this.fail(entry, new Error(JSON.stringify(event.properties.error)));
         break;
+      }
       case 'session.compacted':
         if (event.properties.sessionID === state.claudeSessionId) {
           state.runtimeStatus = { status: null, compactResult: 'success' };
+          state.notifications = [...state.notifications.filter(note => note.key !== 'compaction'), { key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString() }].slice(-8);
           this.emitState(entry);
         }
         break;
@@ -820,6 +862,13 @@ export class OpenCodeAgentRuntimeProvider
   }
   private emitState(entry: RuntimeEntry): void {
     const state = entry.state;
+    for (const agent of state.subagents) {
+      if (agent.status !== 'started') continue;
+      const waiting = entry.permissions.some(request => request.sessionID === agent.agentId) || entry.questions.some(request => request.sessionID === agent.agentId);
+      if (waiting) agent.executionStatus = 'waiting';
+      else if (agent.executionStatus === 'waiting') agent.executionStatus = 'running';
+    }
+    state.backgroundWork = this.backgroundWork(state);
     state.sessionState =
       state.runPhase === 'waiting'
         ? 'requires_action'
@@ -838,7 +887,7 @@ export class OpenCodeAgentRuntimeProvider
         : state.pendingUserInputRequest
           ? 'Input needed'
           : null,
-      backgroundActive: false,
+      backgroundActive: state.backgroundWork.length > 0,
     });
     this.emit('event', {
       type: 'runtime_snapshot',
@@ -1427,6 +1476,24 @@ export class OpenCodeAgentRuntimeProvider
       });
     return commands;
   }
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const entry = this.entries.get(sessionId);
+    const agent = entry?.state.subagents.find(agent => agent.agentId === agentId);
+    if (!entry || !agent || agent.status !== 'started' || agentId === entry.state.claudeSessionId || !entry.tree.owns(entry.state.claudeSessionId, agentId))
+      throw new BadRequestException('This agent is no longer available to stop.');
+    const response = await entry.client!.session.abort({ sessionID: agentId });
+    if (response.data !== true) throw new Error('OpenCode did not confirm stopping this agent.');
+    const statuses = await entry.client!.session.status();
+    const nativeStatus = statuses.data?.[agentId]?.type;
+    if (!statuses.data || (nativeStatus && nativeStatus !== 'idle'))
+      throw new ConflictException('OpenCode has not confirmed that this agent stopped. Refresh before retrying.');
+    if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted) return;
+    agent.status = 'stopped'; agent.executionStatus = 'interrupted'; agent.stoppedByUser = true;
+    agent.canStop = false; agent.timestamp = new Date().toISOString(); agent.completedAt = agent.timestamp;
+    entry.permissions = entry.permissions.filter(request => request.sessionID !== agentId);
+    entry.questions = entry.questions.filter(request => request.sessionID !== agentId);
+    this.syncRequests(entry);
+  }
   async getSubagentHistory(sessionId: number, agentId: string) {
     const entry = await this.ensure(sessionId);
     if (
@@ -1438,7 +1505,11 @@ export class OpenCodeAgentRuntimeProvider
       );
     const messages =
       (await entry.client!.session.messages({ sessionID: agentId })).data ?? [];
+    this.syncSubagents(entry);
+    const subagent = entry.state.subagents.find(agent => agent.agentId === agentId);
+    if (!subagent) throw new BadRequestException('Agent is no longer available.');
     return {
+      subagent: { ...subagent },
       history: messages.flatMap((message) =>
         message.parts.flatMap((part) => openCodePartItems(part, message.info)),
       ),

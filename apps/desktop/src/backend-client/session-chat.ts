@@ -1,3 +1,4 @@
+import { registerChatAgents } from './session-chat-agents';
 import { registerChatAttachments } from './session-chat-attachments';
 import { registerSessionChatMedia } from './session-chat-media';
 import { parseChangesPage } from "./session-chat-changes";
@@ -20,6 +21,7 @@ export function registerSessionChatIpc(
   client: BackendClient,
   trusted: TrustedSender,
 ): () => void {
+  const agents = registerChatAgents(client, trusted);
   const attachments = registerChatAttachments(client, trusted);
   const media = registerSessionChatMedia(client, trusted);
   const scope = (value: unknown) => {
@@ -328,6 +330,7 @@ export function registerSessionChatIpc(
     },
   );
   return () => {
+    agents();
     attachments();
     media();
     changes();

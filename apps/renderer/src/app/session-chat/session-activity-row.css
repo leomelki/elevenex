@@ -1,0 +1,130 @@
+/*
+ * Shared layout for Activity rows: a status/kind glyph, a title line with the
+ * time (or controls) in one right-hand column, and an optional summary line.
+ * Used by the work and event row components so both sections align.
+ */
+:host {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "glyph title end"
+    ". sub aside";
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+:host(.inspectable:hover) {
+  background: var(--surface-sunken);
+}
+
+.glyph {
+  grid-area: glyph;
+  display: inline-flex;
+  color: var(--ink-muted);
+}
+.title-line {
+  grid-area: title;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.role {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  font-weight: 400;
+}
+.end {
+  grid-area: end;
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+.time {
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-ui-line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sub {
+  grid-area: sub;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+}
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag {
+  flex: none;
+  font-weight: 500;
+}
+.tag[data-tone="attention"] {
+  color: var(--attention);
+}
+.tag[data-tone="neutral"] {
+  color: var(--ink);
+}
+
+/*
+ * The title's button covers the row, so the whole row opens its detail.
+ * Controls that must stay independently clickable sit above it.
+ */
+.inspect {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.inspect::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+}
+.inspect:focus-visible {
+  outline: none;
+}
+.inspect:focus-visible::after {
+  box-shadow: var(--focus-ring);
+}
+.above {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :host {
+    transition: none;
+  }
+}
