@@ -78,6 +78,7 @@ import {
 } from './codex-async-questions.js';
 import {
   CodexSubagentTracker,
+  codexAgentTaskTitle,
   collaborationTool,
   executionStatus,
   isAgentActive,
@@ -832,7 +833,7 @@ export class CodexRuntimeService
             timestamp: agent.startedAt ?? agent.timestamp,
           });
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history,
           transcriptAvailable: !!snapshot || !!live?.size,
           ...(!snapshot && !live?.size
@@ -845,7 +846,7 @@ export class CodexRuntimeService
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history: [],
           transcriptAvailable: false,
           transcriptError: 'Could not read the saved agent transcript.',
@@ -3649,7 +3650,7 @@ export class CodexRuntimeService
       tasks: [],
       taskLifecycle: [],
       subagents: [
-        ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, canStop: isAgentActive(agent) })),
+        ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, taskTitle: codexAgentTaskTitle(agent), canStop: isAgentActive(agent) })),
       ],
       backgroundWork: this.subagentBackgroundWork(sessionId),
       latestToolProgress: null,

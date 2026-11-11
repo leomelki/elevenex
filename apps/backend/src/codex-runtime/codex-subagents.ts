@@ -85,6 +85,31 @@ export function isAgentActive(agent: ClaudeSubagentState): boolean {
   return agent.status === 'started';
 }
 
+/** Prefer the explicit task/path name; generic role names defer to the assignment. */
+export function codexAgentTaskTitle(
+  agent: Pick<ClaudeSubagentState, 'agentPath' | 'agentType' | 'prompt'>,
+): string | undefined {
+  const name = agent.agentPath?.split('/').filter(Boolean).at(-1);
+  // This projection runs on live state reads; never scan a whole long assignment.
+  const assignment = readableText(agent.prompt?.slice(0, 4000))
+    ?.split('\n')
+    .find((line) => line.trim())
+    ?.trim();
+  const specificName =
+    name &&
+    !['agent', 'root', agent.agentType.toLowerCase()].includes(
+      name.toLowerCase(),
+    );
+  const title =
+    specificName || !assignment
+      ? name
+          ?.replace(/[_-]+/g, ' ')
+          .replace(/^./, (letter) => letter.toUpperCase())
+      : assignment;
+  if (!title) return undefined;
+  return title.length > 120 ? title.slice(0, 119).trimEnd() + '…' : title;
+}
+
 /** Metadata is available without loading a thread's turns or reading its rollout. */
 export function subagentThreadMetadata(
   value: unknown,

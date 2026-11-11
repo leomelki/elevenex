@@ -584,9 +584,11 @@ test('background work is optional, bounded and validated, and stop targets only 
   const event = { id: 'hook:1', kind: 'hook', tone: 'danger', title: 'Hook failed', detail: 'exit 2', at: null };
   const parsed = parseChatPage({ ...page, state: { ...state, work: { running: [{ ...item, private: 'drop' }], recent: [{ ...event, raw: {} }] } } }, 1, 2);
   assert.deepEqual(parsed.state.work, { running: [item], recent: [event] });
-  const agent = { ...item, id: 'subagent:a', kind: 'agent', label: 'Review · reviewer', title: 'Review', role: 'reviewer' };
+  const agent = { ...item, id: 'subagent:a', kind: 'agent', label: 'Review · reviewer', title: 'Review', role: 'reviewer', agentName: 'James' };
   assert.deepEqual(parseChatPage({ ...page, state: { ...state, work: { running: [agent], recent: [] } } }, 1, 2).state.work.running, [agent]);
   for (const work of [
+    { running: [{ ...agent, agentName: 7 }], recent: [] },
+    { running: [{ ...agent, agentName: 'x'.repeat(161) }], recent: [] },
     { running: [{ ...agent, role: 7 }], recent: [] },
     { running: [{ ...agent, role: 'x'.repeat(121) }], recent: [] },
     { running: Array(17).fill(item), recent: [] },
@@ -793,6 +795,13 @@ test('agent transcript validation checks identity, bounds, states and reported c
     context: { tokens: 100, limit: 200, percentage: 50 }, items: [], before: null, availability: 'available', message: '', privatePath: '/hidden' };
   assert.equal(parseChatAgentPage(value, 'child').status, 'interrupted');
   assert.equal(parseChatAgentPage(value, 'child').privatePath, undefined);
+  const titled = { ...value, title: 'Review retry handling', agentName: 'James', role: 'reviewer' };
+  assert.equal(parseChatAgentPage(titled, 'child').agentName, 'James');
+  assert.equal(parseChatAgentPage(titled, 'child').title, 'Review retry handling');
+  assert.throws(() => parseChatAgentPage({ ...titled, agentName: 7 }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, agentName: 'x'.repeat(161) }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, title: 'x'.repeat(301) }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, role: 7 }, 'child'));
   for (const malformed of [{ ...value, agentId: 'other' }, { ...value, status: 'success' }, { ...value, context: { tokens: 100, limit: 0, percentage: 50 } }, { ...value, items: Array(81).fill({}) }])
     assert.throws(() => parseChatAgentPage(malformed, 'child'));
   assert.deepEqual(parseChatAction({ type: 'background-agent', id: 'child' }), { type: 'background-agent', id: 'child' });

@@ -442,6 +442,7 @@ export class SessionChatFixture {
     const active = work?.running.find(item => item.agentId === input.agentId);
     return { ok: true, value: {
       agentId: input.agentId, label: active?.label ?? 'Review concurrency boundary',
+      ...(active?.title ? { title: active.title, ...(active.agentName ? { agentName: active.agentName } : {}), ...(active.role ? { role: active.role } : {}) } : {}),
       status: active?.status ?? 'completed', prompt: 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.',
       model: active?.model ?? 'worker-model', context: active?.context ?? { tokens: 28000, limit: 128000, percentage: 22 },
       items: this.agentReply !== 'ready' ? [] : input.before ? [item('earlier-assignment', 'user', 'Inspect the payment retry handler.')] : [

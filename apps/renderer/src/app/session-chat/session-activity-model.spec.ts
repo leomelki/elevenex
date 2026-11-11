@@ -59,9 +59,7 @@ describe("session activity model", () => {
       ],
       recent: [],
     });
-    expect(sections.needsYou.map((row) => row.item.id)).toEqual([
-      "subagent:w",
-    ]);
+    expect(sections.needsYou.map((row) => row.item.id)).toEqual(["subagent:w"]);
     expect(sections.running.map((row) => row.item.id)).toEqual([
       "subagent:r",
       "task:t",
@@ -70,21 +68,39 @@ describe("session activity model", () => {
 
   it("splits a reported role from the title and falls back to the label", () => {
     expect(
+      workRowView(
+        work({
+          title: "Review retry handling",
+          agentName: "James",
+          role: "reviewer",
+        }),
+      ),
+    ).toMatchObject({
+      title: "Review retry handling",
+      identity: "James",
+    });
+    expect(
       workRowView(work({ title: "Review concurrency", role: "reviewer" })),
-    ).toMatchObject({ title: "Review concurrency", role: "reviewer" });
+    ).toMatchObject({ title: "Review concurrency", identity: "reviewer" });
     // Older engines only send the joined label; never guess by parsing it.
     expect(workRowView(work({ role: "reviewer" }))).toMatchObject({
       title: "Review concurrency · reviewer",
-      role: "",
+      identity: "",
     });
+    expect(
+      workRowView(
+        work({
+          title: "Review retry handling",
+          detail: "Review retry handling",
+        }),
+      ).summary,
+    ).toBe("");
   });
 
   it("colours only exceptions and names uncommon live states", () => {
     const running = workRowView(work({ status: "running" }));
     expect(running).toMatchObject({ glyph: "running", tag: null });
-    expect(
-      workRowView(work({ status: "waiting", detail: "" })),
-    ).toMatchObject({
+    expect(workRowView(work({ status: "waiting", detail: "" }))).toMatchObject({
       glyph: "attention",
       tag: null,
       summary: "Waiting for your decision",
@@ -120,7 +136,9 @@ describe("session activity model", () => {
       eventRowView(event({ detail: Array(6).fill("line").join("\n") })).long,
     ).toBe(true);
     expect(
-      eventRowView(event({ kind: "compaction", tone: "info", detail: "182k → 41k" })),
+      eventRowView(
+        event({ kind: "compaction", tone: "info", detail: "182k → 41k" }),
+      ),
     ).toMatchObject({ icon: "shrink", output: false });
     expect(eventRowView(event({ at: null })).at).toBeNull();
   });

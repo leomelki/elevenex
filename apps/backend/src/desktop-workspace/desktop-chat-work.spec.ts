@@ -5,6 +5,40 @@ const at = (minute: number) =>
   `2026-11-10T10:${String(minute).padStart(2, '0')}:00.000Z`;
 
 describe('desktop chat background work', () => {
+  it('leads with a delegated task title while preserving the legacy label and agent identity', () => {
+    const subagent = {
+      agentId: 'child',
+      agentType: 'reviewer',
+      displayName: 'James',
+      taskTitle: 'Review retry handling',
+      status: 'started',
+    };
+    const running = chatWork(
+      {
+        backgroundWork: [
+          {
+            id: 'subagent:child',
+            kind: 'subagent',
+            label: 'James',
+            detail: 'Checking the unique constraint',
+          },
+        ],
+        subagents: [subagent],
+      },
+      controls,
+    ).running[0];
+    expect(running).toMatchObject({
+      title: 'Review retry handling',
+      agentName: 'James',
+      role: 'reviewer',
+      label: 'James · reviewer',
+      detail: 'Checking the unique constraint',
+    });
+    expect(
+      chatWork({ subagents: [{ ...subagent, status: 'stopped' }] }, controls)
+        .recent[0].title,
+    ).toBe('Review retry handling finished');
+  });
   it('lists live work from the authoritative registry, enriched by task and agent records', () => {
     const work = chatWork(
       {

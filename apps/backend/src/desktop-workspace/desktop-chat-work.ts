@@ -12,8 +12,10 @@ export interface ChatBackgroundWork {
   kind: 'agent' | 'task';
   /** Display label; includes the role for desktops that predate `title`/`role`. */
   label: string;
-  /** The label without the role, when a role is reported separately. */
+  /** Primary task title, or the label without a separately reported role. */
   title?: string;
+  /** Agent nickname, secondary to a delegated task title when supplied. */
+  agentName?: string;
   /** Harness agent type (for example `reviewer`), when not already in the label. */
   role?: string;
   detail: string;
@@ -205,6 +207,8 @@ function running(
         line(agent?.displayName, 200) ||
         (kind === 'agent' ? 'Agent' : 'Background task');
       const context = agentContext(agent?.contextUsage);
+      const taskTitle = line(agent?.taskTitle, 120);
+      const agentName = line(agent?.displayName, 160);
       const role =
         kind === 'agent' &&
         type &&
@@ -217,6 +221,15 @@ function running(
           kind,
           label: role ? clip(`${label} · ${role}`, 240) : label,
           ...(role ? { title: label, role } : {}),
+          ...(taskTitle
+            ? {
+                title: taskTitle,
+                ...(agentName &&
+                agentName.toLowerCase() !== taskTitle.toLowerCase()
+                  ? { agentName }
+                  : {}),
+              }
+            : {}),
           detail:
             line(task?.summary) ||
             line(item.detail) ||
@@ -337,7 +350,10 @@ function finished(
       status === 'closed' ||
       status === 'unavailable';
     const label =
-      line(agent.displayName, 200) || line(agent.agentType, 200) || 'Agent';
+      line(agent.taskTitle, 120) ||
+      line(agent.displayName, 200) ||
+      line(agent.agentType, 200) ||
+      'Agent';
     events.push({
       id: clip(`finished:subagent:${id}`, 400),
       kind: 'finished',

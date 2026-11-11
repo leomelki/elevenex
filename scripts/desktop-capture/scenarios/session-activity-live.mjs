@@ -21,23 +21,32 @@ export default async function* (capture) {
       await publish({ running: [agent], recent: [], totalRunning: 1 });
       await capture.waitFor(() => !!document.querySelector('ex-session-activity .trigger'));
       // Metadata arrives while the panel and inspector are still closed.
-      const loaded = { ...agent, label: 'James · reviewer', title: 'James', role: 'reviewer', detail: 'Review the live feed', model: 'child-model' };
+      const loaded = { ...agent, label: 'James · reviewer', title: 'Review retry handling', agentName: 'James', role: 'reviewer', detail: 'Review the live feed', model: 'child-model' };
       await publish({ running: [loaded], recent: [], totalRunning: 1 });
       await capture.click('ex-session-activity .trigger');
-      await capture.waitFor(() => document.querySelector('.panel .work .title')?.textContent === 'James');
-      assert.equal(await capture.evaluate(() => document.querySelector('.panel .work .role')?.textContent), 'reviewer');
+      await capture.waitFor(() => document.querySelector('.panel .work .title')?.textContent === 'Review retry handling');
+      assert.equal(await capture.evaluate(() => document.querySelector('.panel .work .role')?.textContent), 'James');
       yield { name: `${theme}-${width}-metadata-without-inspection`, selector: '.cdk-overlay-container .panel', inspect: ['.panel', '.panel .work'] };
 
       await publish({ running: [{ ...loaded, detail: 'Checking update ownership' }], recent: [], totalRunning: 1 });
       await capture.waitFor(() => document.querySelector('.panel .work')?.textContent.includes('Checking update ownership'));
       assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-dialog')), false);
+      assert.equal(await capture.evaluate(() => document.querySelector('.panel .work .title')?.textContent), 'Review retry handling');
       yield { name: `${theme}-${width}-live-preview`, selector: '.cdk-overlay-container .panel', inspect: ['.panel .work'] };
+
+      await capture.click('.panel .work .inspect');
+      await capture.waitFor(() => document.querySelector('.agent-dialog h2')?.textContent.includes('Review retry handling'));
+      assert.equal(await capture.evaluate(() => document.querySelector('.agent-dialog h2 .role')?.textContent.trim()), 'James');
+      assert.equal(await capture.evaluate(() => document.querySelector('.agent-dialog .facts')?.textContent.includes('reviewer')), true);
+      yield { name: `${theme}-${width}-task-inspector`, selector: '.agent-dialog', inspect: ['.agent-dialog h2', '.agent-dialog .facts'] };
+      await capture.press('Escape');
+      await capture.waitFor(() => !document.querySelector('.agent-dialog'));
 
       await publish({ running: [], totalRunning: 0, recent: [{
         id: 'finished:live-reviewer', kind: 'finished', tone: 'success',
-        title: 'James finished', detail: 'The update path is verified.', at: new Date().toISOString(), agentId: agent.agentId,
+        title: 'Review retry handling finished', detail: 'The update path is verified.', at: new Date().toISOString(), agentId: agent.agentId,
       }] });
-      await capture.waitFor(() => !document.querySelector('.panel .work') && document.querySelector('.panel .event')?.textContent.includes('James finished'));
+      await capture.waitFor(() => !document.querySelector('.panel .work') && document.querySelector('.panel .event')?.textContent.includes('Review retry handling finished'));
       yield { name: `${theme}-${width}-live-completion`, selector: '.cdk-overlay-container .panel', inspect: ['.panel', '.panel .event'] };
       await capture.press('Escape');
       await capture.waitFor(() => !document.querySelector('.cdk-overlay-container .panel'));

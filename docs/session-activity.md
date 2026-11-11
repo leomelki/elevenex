@@ -25,6 +25,9 @@ routine tool receipts or successful hooks from the conversation.
   conversation holds the approval or question to focus; Activity never answers
   for the conversation.
 - Model, reported usage and context occupancy appear in the agent inspector.
+  Codex rows lead with their delegated task name, with the agent nickname secondary.
+  A missing or generic task path uses the first assignment line instead. Progress
+  never replaces the title; completed work and saved inspectors retain it.
   Missing counts remain unknown; context occupancy is distinct from cumulative
   token consumption. Engines may report `title` and `role` separately; `label`
   keeps the joined form for older desktops, and the desktop never parses it.

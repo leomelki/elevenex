@@ -64,7 +64,7 @@ export function sessionActivityWork(
             : "Review concurrency · reviewer",
         ...(provider === "opencode"
           ? {}
-          : { title: "Review concurrency", role: "reviewer" }),
+          : { title: "Review concurrency", role: "reviewer", ...(provider === 'codex' ? { agentName: 'James' } : {}) }),
         detail:
           provider === "codex"
             ? "Waiting for a decision on the retry window"

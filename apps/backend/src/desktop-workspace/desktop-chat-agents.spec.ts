@@ -17,6 +17,27 @@ const snapshot = (): AgentSubagentHistoryPayload => ({
   })),
 });
 describe('desktop child transcript', () => {
+  it('retains the task title and agent identity when opening finished work without a live row', async () => {
+    const value = snapshot();
+    value.subagent = {
+      ...value.subagent,
+      taskTitle: 'Review retry handling',
+      displayName: 'James',
+      agentType: 'reviewer',
+    };
+    expect(
+      await readChatAgent(
+        { getSubagentHistory: async () => value },
+        1,
+        'child',
+      ),
+    ).toMatchObject({
+      title: 'Review retry handling',
+      agentName: 'James',
+      role: 'reviewer',
+      label: 'James',
+    });
+  });
   it('returns bounded, non-overlapping history windows without exposing paths', async () => {
     const getSubagentHistory = jest.fn(async () => snapshot());
     const provider = { getSubagentHistory };

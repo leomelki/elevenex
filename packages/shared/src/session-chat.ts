@@ -143,8 +143,10 @@ export interface SessionChatBackgroundWork {
   readonly kind: "agent" | "task";
   /** Display label; includes the role so older desktops keep showing it. */
   readonly label: string;
-  /** The label without its role. Omitted when no separate role is reported. */
+  /** Primary task title, or the label without its role on older engines. */
   readonly title?: string;
+  /** Agent nickname, displayed secondarily when a task title is available. */
+  readonly agentName?: string;
   /** Harness agent type, such as `reviewer`. Omitted by older engines. */
   readonly role?: string;
   /** Latest summary, message or tool; empty when unreported. */
@@ -180,6 +182,9 @@ export interface SessionChatAgentRead extends SessionChatTarget {
 export interface SessionChatAgentPage {
   readonly agentId: string;
   readonly label: string;
+  readonly title?: string;
+  readonly agentName?: string;
+  readonly role?: string;
   readonly status: SessionChatWorkStatus;
   readonly prompt: string;
   readonly model: string | null;

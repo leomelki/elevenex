@@ -96,14 +96,25 @@ export class SessionAgentComponent {
   readonly before = signal<string | undefined>(undefined);
   private readonly newer = signal<readonly (string | undefined)[]>([]);
   readonly hasNewer = computed(() => this.newer().length > 0);
-  /** Prefer the live record's split title/role; the page label may join them. */
+  /** Live and saved records retain the same task title and secondary identity. */
   protected readonly heading = computed(
-    () => this.work()?.title || this.page()?.label || "Agent details",
+    () =>
+      this.work()?.title ||
+      this.page()?.title ||
+      this.page()?.label ||
+      "Agent details",
   );
-  protected readonly role = computed(() => {
+  protected readonly identity = computed(() => {
     const work = this.work();
-    return work?.title ? (work.role ?? "") : "";
+    return work?.title
+      ? (work.agentName ?? work.role ?? "")
+      : (this.page()?.agentName ?? "");
   });
+  protected readonly agentRole = computed(() =>
+    this.work()?.agentName || this.page()?.agentName
+      ? (this.work()?.role ?? this.page()?.role ?? "")
+      : "",
+  );
   protected readonly usage = computed(() => {
     const work = this.work();
     return work ? formatUsage(work) : "";
@@ -136,7 +147,9 @@ export class SessionAgentComponent {
     return (
       items
         // The pinned assignment already shows the opening prompt.
-        .filter((item) => !(item.kind === "user" && item.text.trim() === prompt))
+        .filter(
+          (item) => !(item.kind === "user" && item.text.trim() === prompt),
+        )
         .filter(
           (item) =>
             item.kind !== "tool_result" || !calls.has(item.toolId ?? item.id),
@@ -195,7 +208,10 @@ export class SessionAgentComponent {
           this.scrollEdge === "top" ? 0 : element.scrollHeight;
         // Paging disables its trigger while loading. Keep the reader's keyboard
         // focus inside the modal when that button loses focus on becoming disabled.
-        if (this.open() && element.ownerDocument.activeElement === element.ownerDocument.body)
+        if (
+          this.open() &&
+          element.ownerDocument.activeElement === element.ownerDocument.body
+        )
           element.focus({ preventScroll: true });
       }
     });
@@ -279,7 +295,6 @@ export class SessionAgentComponent {
       // Short assignments read at a glance; long ones stay folded behind their preview.
       if (before === undefined && !this.assignmentTouched)
         this.assignmentOpen.set(result.value.prompt.length <= 160);
-    }
-    else this.error.set(result.error.message);
+    } else this.error.set(result.error.message);
   }
 }

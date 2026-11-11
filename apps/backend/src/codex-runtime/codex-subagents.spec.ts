@@ -1,5 +1,6 @@
 import {
   CodexSubagentTracker,
+  codexAgentTaskTitle,
   executionStatus,
   subagentThreadMetadata,
 } from './codex-subagents.js';
@@ -7,6 +8,35 @@ import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.type
 
 const timestamp = '2026-10-12T10:00:00.000Z';
 describe('CodexSubagentTracker', () => {
+  it('keeps task titles independent of nicknames and streamed progress', () => {
+    expect(
+      codexAgentTaskTitle({
+        agentPath: '/root/review_retry_handling',
+        agentType: 'reviewer',
+        prompt: 'Inspect the retry boundary',
+      }),
+    ).toBe('Review retry handling');
+    expect(
+      codexAgentTaskTitle({
+        agentPath: '/root/reviewer',
+        agentType: 'reviewer',
+        prompt: '\nReview retry handling\nCheck concurrent requests',
+      }),
+    ).toBe('Review retry handling');
+    expect(
+      codexAgentTaskTitle({ agentType: 'agent', prompt: 'Inspect the cache' }),
+    ).toBe('Inspect the cache');
+    expect(codexAgentTaskTitle({ agentType: 'agent' })).toBeUndefined();
+    expect(
+      codexAgentTaskTitle({ agentType: 'agent', prompt: 'x'.repeat(400) }),
+    ).toHaveLength(120);
+    expect(
+      codexAgentTaskTitle({
+        agentType: 'agent',
+        prompt: 'gAAAAA' + 'a'.repeat(150),
+      }),
+    ).toBeUndefined();
+  });
   it('reads metadata from current and older thread shapes without clearing absent fields', () => {
     expect(
       subagentThreadMetadata({

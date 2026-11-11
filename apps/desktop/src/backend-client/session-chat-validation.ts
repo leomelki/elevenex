@@ -200,6 +200,9 @@ export function parseChatAgentPage(value: unknown, agentId: string): SessionChat
   if (raw["agentId"] !== agentId) throw invalid();
   return {
     agentId, label: chatText(raw["label"], 240), status: oneOf(raw["status"], agentStatuses),
+    ...(raw["title"] === undefined ? {} : { title: chatText(raw["title"], 300) }),
+    ...(raw["agentName"] === undefined ? {} : { agentName: chatText(raw["agentName"], 160) }),
+    ...(raw["role"] === undefined ? {} : { role: chatText(raw["role"], 120) }),
     prompt: chatText(raw["prompt"], 4000), model: nullable(raw["model"], 160),
     context: raw["context"] === null ? null : agentContext(raw["context"]),
     items: array(raw["items"], 80, item), before: nullable(raw["before"], 2000),
@@ -220,6 +223,7 @@ function work(value: unknown): SessionChatWork {
         kind: oneOf(item["kind"], ["agent", "task"] as const),
         label: chatText(item["label"], 300),
         ...(item["title"] === undefined ? {} : { title: chatText(item["title"], 300) }),
+        ...(item["agentName"] === undefined ? {} : { agentName: chatText(item["agentName"], 160) }),
         ...(item["role"] === undefined ? {} : { role: chatText(item["role"], 120) }),
         detail: chatText(item["detail"], 300),
         startedAt: workTime(item["startedAt"]),

@@ -453,6 +453,8 @@ export interface ClaudeSubagentState {
   canBackground?: boolean;
   canFollowUp?: boolean;
   agentPath?: string;
+  /** Stable delegated task title, separate from the agent's nickname and role. */
+  taskTitle?: string;
   agentType: string;
   status: 'started' | 'stopped';
   transcriptPath?: string;

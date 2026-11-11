@@ -62,6 +62,15 @@ export async function readChatAgent(
   return {
     agentId,
     label: display(agent.displayName || agent.agentType, 240),
+    ...(agent.taskTitle
+      ? {
+          title: display(agent.taskTitle, 120),
+          ...(agent.displayName
+            ? { agentName: display(agent.displayName, 160) }
+            : {}),
+          role: display(agent.agentType, 80),
+        }
+      : {}),
     status: agentStatus({ ...agent }),
     prompt: display(agent.prompt, 4000),
     model: agent.model ? display(agent.model, 160) : null,

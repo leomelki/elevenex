@@ -119,10 +119,16 @@ the data rides the existing long-poll feed.
 
 The panel lists **Needs you** (work waiting on a decision), **Running** and
 **Recent**. Every row has the same shape so the list scans quickly: a status glyph,
-the title with the harness role beside it, time in one right-hand column, and one
+the task title with a secondary agent identity, time in one right-hand column, and one
 summary line. Only exceptions carry colour: the Needs you card and tags such as
 “Left behind” or “Starting”. Model, usage and context belong to the agent
 inspector, not the list.
+
+Codex leads with the delegated task/path name (humanized for display), falling
+back to the assignment's first non-empty line when the path is absent or merely
+the agent role. Its nickname sits beside the title; the role stays in inspector
+facts. Titles stay fixed while progress changes, and completed work and its saved
+inspector use the same task title. Older engines retain their label/role display.
 
 - `session-activity-model.ts` holds the pure presentation model: sections, the
   per-row tag/summary/accessible status, event output rules and formatters.

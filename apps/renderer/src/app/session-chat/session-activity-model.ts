@@ -24,8 +24,8 @@ export interface ActivityTag {
 export interface WorkRowView {
   readonly item: SessionChatBackgroundWork;
   readonly title: string;
-  /** Harness agent type, shown quietly beside the title. */
-  readonly role: string;
+  /** Agent nickname, or a legacy harness role, shown quietly beside the title. */
+  readonly identity: string;
   readonly glyph: Status;
   /** Announced with the row, since the glyph is decorative. */
   readonly statusLabel: string;
@@ -100,6 +100,7 @@ export function formatUsage(item: SessionChatBackgroundWork): string {
 }
 
 export function workRowView(item: SessionChatBackgroundWork): WorkRowView {
+  const title = item.title || item.label;
   const status = item.status ?? "running";
   const described = sessionWorkStatus(status);
   // Running and waiting are carried by the glyph and the section; other live
@@ -111,15 +112,16 @@ export function workRowView(item: SessionChatBackgroundWork): WorkRowView {
       : { text: described.label, tone: "neutral" as const, hint: "" };
   return {
     item,
-    title: item.title || item.label,
-    role: item.title ? (item.role ?? "") : "",
+    title,
+    identity: item.title ? (item.agentName ?? item.role ?? "") : "",
     glyph: described.tone,
     statusLabel: item.orphaned
       ? `${described.label}, left behind`
       : described.label,
     tag,
     summary:
-      item.detail || (status === "waiting" ? "Waiting for your decision" : ""),
+      (item.detail === title ? "" : item.detail) ||
+      (status === "waiting" ? "Waiting for your decision" : ""),
     startedAt: parseTime(item.startedAt),
     inspectable: !!(item.inspectable && item.agentId),
     hasControls: item.stoppable || !!item.canBackground,

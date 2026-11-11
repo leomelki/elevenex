@@ -72,6 +72,27 @@ it("cancels obsolete child reads and rejects replies after navigation and closin
   expect(client.cancel).toHaveBeenCalledTimes(2);
 });
 
+it("keeps the task title primary and the nickname secondary when inspecting completed work", async () => {
+  const client = {
+    agent: vi.fn(async () => ({ ok: true as const, value: {
+      ...page('child'), title: 'Review retry handling', agentName: 'James', role: 'reviewer', status: 'completed' as const,
+    } })),
+    cancel: vi.fn(),
+  };
+  TestBed.configureTestingModule({ providers: [{ provide: SessionChatClient, useValue: client }] });
+  const fixture = TestBed.createComponent(SessionAgentComponent);
+  fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+  fixture.componentRef.setInput('agentId', 'child');
+  fixture.detectChanges();
+  await fixture.whenStable();
+  fixture.detectChanges();
+  const heading = document.querySelector('.agent-dialog h2');
+  expect(heading?.textContent).toContain('Review retry handling');
+  expect(heading?.querySelector('.role')?.textContent?.trim()).toBe('James');
+  expect(heading?.textContent).not.toContain('reviewer');
+  expect(document.querySelector('.agent-dialog .facts')?.textContent).toContain('reviewer');
+});
+
 it("replaces transcript pages, preserves loaded content offline and has explicit refresh", async () => {
   const client = {
     agent: vi.fn(async (_scope: string, input: SessionChatAgentRead) => ({

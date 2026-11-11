@@ -84,7 +84,8 @@ describe('CodexRuntimeService', () => {
       const work = chatWork(await service.getRuntimeState(7), controls);
       expect(work.running).toEqual([
         expect.objectContaining({
-          title: 'James',
+          title: 'Review the live feed',
+          agentName: 'James',
           role: 'reviewer',
           model: 'child-model',
           detail: 'Review the live feed',
@@ -150,7 +151,8 @@ describe('CodexRuntimeService', () => {
       expect(
         chatWork(await service.getRuntimeState(7), controls).running[0],
       ).toMatchObject({
-        title: 'James',
+        title: 'Review the live feed',
+        agentName: 'James',
         role: 'reviewer',
         detail: 'Checking update ownership',
         model: 'child-model',
@@ -172,7 +174,7 @@ describe('CodexRuntimeService', () => {
       });
       const finished = chatWork(await service.getRuntimeState(7), controls);
       expect(finished.running).toEqual([]);
-      expect(finished.recent[0].title).toBe('James finished');
+      expect(finished.recent[0].title).toBe('Review the live feed finished');
       expect(
         appServer.request.mock.calls.filter(
           ([method]) => method === 'thread/read',

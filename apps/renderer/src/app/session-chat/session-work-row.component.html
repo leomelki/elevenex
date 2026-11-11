@@ -6,18 +6,18 @@
     <button
       type="button"
       class="inspect"
-      [attr.aria-label]="'Inspect ' + view().title"
+      [attr.aria-label]="'Inspect ' + view().title + (view().identity ? ' · ' + view().identity : '')"
       (click)="inspect()"
     >
       <span class="title">{{ view().title }}</span>
-      @if (view().role) {
-        <span class="role">{{ view().role }}</span>
+      @if (view().identity) {
+        <span class="role" [exTooltip]="view().identity">{{ view().identity }}</span>
       }
     </button>
   } @else {
     <span class="title">{{ view().title }}</span>
-    @if (view().role) {
-      <span class="role">{{ view().role }}</span>
+    @if (view().identity) {
+      <span class="role" [exTooltip]="view().identity">{{ view().identity }}</span>
     }
   }
   <span class="visually-hidden">{{ view().statusLabel }}</span>

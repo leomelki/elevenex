@@ -18,13 +18,16 @@
       <div class="heading">
         <h2 [id]="titleId" tabindex="-1" cdkFocusInitial>
           {{ heading() }}
-          @if (role()) {
-            <span class="role">{{ role() }}</span>
+          @if (identity()) {
+            <span class="role">{{ identity() }}</span>
           }
         </h2>
         <div class="facts">
           @if (page(); as page) {
             <ex-status-badge [status]="state().tone" [label]="state().label" />
+            @if (agentRole()) {
+              <span class="fact">{{ agentRole() }}</span>
+            }
             @if (page.model) {
               <span class="fact">{{ page.model }}</span>
             }
