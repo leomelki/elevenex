@@ -42,7 +42,7 @@ export class BrowserViewComponent {
   readonly localAdded = output<void>();
   protected readonly localDetails = computed(() => `Runs on this device. ${this.trafficViaServer() ? 'Web traffic goes through the task server.' : 'Web traffic uses this device.'} Agents cannot see or control this page. Sign-ins use a separate local profile.`);
   protected readonly location = computed(() => this.streaming() ? 'Streaming' : this.trafficViaServer() ? 'Local · Proxied' : 'Local');
-  protected readonly locationDetails = computed(() => this.localOnly() ? this.localDetails() : this.streaming() ? 'Browser runs on the task server and streams to this device. Click to focus the page.' : 'Browser runs on this device. Click to focus the page.');
+  protected readonly locationDetails = computed(() => this.localOnly() ? this.localDetails() : this.streaming() ? 'Browser runs on the task server and streams to this device.' : 'Browser runs on this device.');
   readonly showTabs = input(true);
   readonly controlsDisabled = input(false);
   readonly pickerAvailable = input(true);
