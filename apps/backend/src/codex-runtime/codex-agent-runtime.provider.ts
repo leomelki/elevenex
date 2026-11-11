@@ -72,6 +72,10 @@ export class CodexAgentRuntimeProvider
     return this.runtimeService.getSnapshot(sessionId);
   }
 
+  stopSubagent(sessionId: number, agentId: string) {
+    return this.runtimeService.stopSubagent(sessionId, agentId);
+  }
+
   getSubagentHistory(sessionId: number, agentId: string) {
     return this.runtimeService.getSubagentHistory(sessionId, agentId);
   }

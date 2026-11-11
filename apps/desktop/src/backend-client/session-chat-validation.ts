@@ -1,5 +1,8 @@
 import { parseChangeSummary } from "./session-chat-changes";
 import type {
+  SessionChatAgentPage,
+  SessionChatAgentContext,
+  SessionChatWorkStatus,
   SessionChatAction,
   SessionChatEvent,
   SessionChatItem,
@@ -8,6 +11,9 @@ import type {
   SessionChatPlanUsage,
   SessionChatPresetDefault,
   SessionChatCatalog,
+  SessionChatBackgroundWork,
+  SessionChatWork,
+  SessionChatWorkEvent,
 } from "@elevenex/shared";
 import { chatObject, chatText, invalid } from "./session-chat-values";
 export { chatObject, chatText } from "./session-chat-values";
@@ -165,6 +171,89 @@ function mediaKind(value: unknown): "image" | "video" | "file" {
   if (value !== "image" && value !== "video" && value !== "file") throw invalid();
   return value;
 }
+const workKinds: readonly SessionChatWorkEvent["kind"][] = ["finished", "hook", "retry", "compaction", "notification", "transcript", "plugin"];
+const workTones: readonly SessionChatWorkEvent["tone"][] = ["info", "success", "warning", "danger"];
+function oneOf<T extends string>(value: unknown, values: readonly T[]): T {
+  const match = values.find((candidate) => candidate === value);
+  if (match === undefined) throw invalid();
+  return match;
+}
+function workTime(value: unknown): string | null {
+  const time = nullable(value, 100);
+  if (time !== null && !Number.isFinite(Date.parse(time))) throw invalid();
+  return time;
+}
+function workCount(value: unknown): number {
+  const count = number(value);
+  if (!Number.isSafeInteger(count)) throw invalid();
+  return count;
+}
+const agentStatuses: readonly SessionChatWorkStatus[] = ["pending", "running", "waiting", "paused", "completed", "interrupted", "stopped", "error", "closed", "unavailable"];
+function agentContext(value: unknown): SessionChatAgentContext {
+  const raw = chatObject(value);
+  const tokens = workCount(raw["tokens"]), limit = workCount(raw["limit"]);
+  if (!limit) throw invalid();
+  return { tokens, limit, percentage: number(raw["percentage"], 100) };
+}
+export function parseChatAgentPage(value: unknown, agentId: string): SessionChatAgentPage {
+  const raw = chatObject(value);
+  if (raw["agentId"] !== agentId) throw invalid();
+  return {
+    agentId, label: chatText(raw["label"], 240), status: oneOf(raw["status"], agentStatuses),
+    ...(raw["title"] === undefined ? {} : { title: chatText(raw["title"], 300) }),
+    ...(raw["agentName"] === undefined ? {} : { agentName: chatText(raw["agentName"], 160) }),
+    ...(raw["role"] === undefined ? {} : { role: chatText(raw["role"], 120) }),
+    prompt: chatText(raw["prompt"], 4000), model: nullable(raw["model"], 160),
+    context: raw["context"] === null ? null : agentContext(raw["context"]),
+    items: array(raw["items"], 80, item), before: nullable(raw["before"], 2000),
+    availability: oneOf(raw["availability"], ["available", "starting", "unavailable", "error"] as const),
+    message: chatText(raw["message"], 1000),
+  };
+}
+function work(value: unknown): SessionChatWork {
+  const raw = chatObject(value);
+  return {
+    ...(raw["totalRunning"] === undefined ? {} : { totalRunning: workCount(raw["totalRunning"]) }),
+    running: array(raw["running"], 16, (value): SessionChatBackgroundWork => {
+      const item = chatObject(value);
+      const id = chatText(item["id"], 400);
+      if (!/^(?:task|subagent):./.test(id)) throw invalid();
+      return {
+        id,
+        kind: oneOf(item["kind"], ["agent", "task"] as const),
+        label: chatText(item["label"], 300),
+        ...(item["title"] === undefined ? {} : { title: chatText(item["title"], 300) }),
+        ...(item["agentName"] === undefined ? {} : { agentName: chatText(item["agentName"], 160) }),
+        ...(item["role"] === undefined ? {} : { role: chatText(item["role"], 120) }),
+        detail: chatText(item["detail"], 300),
+        startedAt: workTime(item["startedAt"]),
+        stoppable: bool(item["stoppable"]),
+        orphaned: bool(item["orphaned"]),
+        ...(item["status"] === undefined ? {} : { status: oneOf(item["status"], agentStatuses) }),
+        ...(item["background"] === undefined ? {} : { background: bool(item["background"]) }),
+        ...(item["agentId"] === undefined ? {} : { agentId: chatText(item["agentId"], 256) }),
+        ...(item["inspectable"] === undefined ? {} : { inspectable: bool(item["inspectable"]) }),
+        ...(item["canBackground"] === undefined ? {} : { canBackground: bool(item["canBackground"]) }),
+        ...(item["model"] === undefined ? {} : { model: chatText(item["model"], 160) }),
+        ...(item["context"] === undefined ? {} : { context: agentContext(item["context"]) }),
+        ...(item["tokens"] === undefined ? {} : { tokens: workCount(item["tokens"]) }),
+        ...(item["toolUses"] === undefined ? {} : { toolUses: workCount(item["toolUses"]) }),
+      };
+    }),
+    recent: array(raw["recent"], 12, (value): SessionChatWorkEvent => {
+      const event = chatObject(value);
+      return {
+        id: chatText(event["id"], 420),
+        kind: oneOf(event["kind"], workKinds),
+        tone: oneOf(event["tone"], workTones),
+        title: chatText(event["title"], 300),
+        detail: chatText(event["detail"], 1100),
+        at: workTime(event["at"]),
+        ...(event["agentId"] === undefined ? {} : { agentId: chatText(event["agentId"], 256) }),
+      };
+    }),
+  };
+}
 function planUsage(
   value: unknown,
   provider: unknown,
@@ -262,6 +351,7 @@ function state(value: unknown): SessionChatState {
       : {
           planUsage: planUsage(raw["planUsage"], raw["provider"]),
         }),
+    ...(raw["work"] === undefined ? {} : { work: work(raw["work"]) }),
     ...(raw["providers"] === undefined
       ? {}
       : {
@@ -469,6 +559,16 @@ export function parseChatAction(value: unknown): SessionChatAction {
     case "cancel-queued":
     case "steer-queued":
       return { type, id: chatText(raw["id"]) };
+    case "background-agent": {
+      const id = chatText(raw["id"], 256);
+      if (!/^[\w-]{1,256}$/.test(id)) throw invalid();
+      return { type, id };
+    }
+    case "stop-background": {
+      const id = chatText(raw["id"], 400);
+      if (!/^(?:task|subagent):./.test(id)) throw invalid();
+      return { type, id };
+    }
     case "permission": {
       const decision = raw["decision"];
       if (

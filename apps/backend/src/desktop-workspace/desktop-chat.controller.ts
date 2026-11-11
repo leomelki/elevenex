@@ -59,6 +59,11 @@ export class DesktopChatController {
   ) {
     return this.chat.command(resourceId(task), resourceId(session), action);
   }
+  @Get('agent')
+  agent(@Param('taskId') task: string, @Param('sessionId') session: string,
+    @Query('agentId') agentId: string, @Query('before') before?: string) {
+    return this.chat.agent(resourceId(task), resourceId(session), agentId, before);
+  }
   @Get('catalog')
   catalog(
     @Param('taskId') task: string,

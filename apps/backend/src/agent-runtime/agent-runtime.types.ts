@@ -98,6 +98,10 @@ export interface AgentRuntimeEvent {
 }
 
 export interface AgentSubagentHistoryPayload {
+  subagent?: import('../claude-runtime/claude-runtime.types.js').ClaudeSubagentState;
+  transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
+  hasEarlier?: boolean;
+  transcriptError?: string;
   history: AgentTranscriptItem[];
   transcriptAvailable: boolean;
 }

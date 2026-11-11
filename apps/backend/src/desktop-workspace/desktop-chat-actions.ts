@@ -119,6 +119,42 @@ export async function executeChatAction(
       );
       break;
     }
+    case 'background-agent': {
+      const id = text(action.id, 256);
+      if (!/^[\w-]{1,256}$/.test(id)) throw new BadRequestException('Invalid agent.');
+      const raw = record(await provider.getRuntimeState(sessionId, { initialize: false }));
+      const agent = Array.isArray(raw.subagents) ? raw.subagents.map(record).find(agent => agent.agentId === id) : undefined;
+      if (agent?.status !== 'started' || agent.canBackground !== true)
+        throw new ConflictException('This agent cannot be moved to the background.');
+      await feature('backgroundSubagent').backgroundSubagent(sessionId, id);
+      break;
+    }
+    case 'stop-background': {
+      // Reconcile current runtime ownership before dispatch; finished work
+      // must never fall through to interrupting the parent conversation.
+      const id = text(action.id, 400);
+      const raw = record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      );
+      const live =
+        Array.isArray(raw.backgroundWork) &&
+        raw.backgroundWork.some((item) => record(item).id === id) ||
+        (id.startsWith('subagent:') && Array.isArray(raw.subagents) && raw.subagents.some(item => record(item).agentId === id.slice(9) && record(item).status === 'started'));
+      if (!live)
+        throw new ConflictException('This background work already finished.');
+      if (id.startsWith('task:'))
+        await feature('stopBackgroundTask').stopBackgroundTask(
+          sessionId,
+          id.slice('task:'.length),
+        );
+      else if (id.startsWith('subagent:'))
+        await feature('stopSubagent').stopSubagent(
+          sessionId,
+          id.slice('subagent:'.length),
+        );
+      else throw new BadRequestException('Unsupported background work.');
+      break;
+    }
     case 'cancel-queued':
       await provider.cancelPendingPrompt(sessionId, text(action.id));
       break;

@@ -29,6 +29,7 @@ export class ModalLayerComponent {
   private readonly overlay = inject(Overlay);
   private readonly recession = inject(ModalRecessionService);
   private overlayRef?: OverlayRef;
+  private stopKeyboard?: () => void;
   private returnFocus?: HTMLElement;
   private returnAncestor?: HTMLElement;
   private motion?: ModalMotion;
@@ -55,6 +56,16 @@ export class ModalLayerComponent {
             scrollStrategy: this.overlay.scrollStrategies.block(),
           });
           this.overlayRef.attach(portal);
+          // Participate in CDK's overlay keyboard ordering. Otherwise a retained
+          // connected popover underneath can consume Escape before this modal.
+          const keyboard = this.overlayRef.keydownEvents().subscribe(event => {
+            // Child CDK menus live in sibling overlays and own their own Escape.
+            // A control disabled by an async action can also leave focus on body.
+            const document = this.origin.ownerDocument;
+            const within = event.target instanceof Node && this.overlayRef?.overlayElement.contains(event.target);
+            if (event.key === 'Escape' && (within || event.target === document.body || event.target === document)) this.dismiss(event);
+          });
+          this.stopKeyboard = () => keyboard.unsubscribe();
           const layer = this.overlayRef.overlayElement.querySelector<HTMLElement>('.ex-modal-layer');
           if (layer) this.motion = new ModalMotion(layer, this.from());
         }
@@ -99,6 +110,8 @@ export class ModalLayerComponent {
   }
 
   private disposeOverlay(): void {
+    this.stopKeyboard?.();
+    this.stopKeyboard = undefined;
     const opener = [this.returnFocus, this.motion?.returnTarget, this.returnAncestor]
       .find(element => element?.isConnected && !element.closest('[inert]') && !element.matches(':disabled')
         && (element.tabIndex >= 0 || element.hasAttribute('tabindex')));

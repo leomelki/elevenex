@@ -239,6 +239,7 @@ export class ClaudeSessionRuntime {
 
   async setModel(model?: string): Promise<void> {
     await this.queryInstance?.setModel?.(model);
+    this.deps.options.model = model;
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {

@@ -78,12 +78,16 @@ import {
 } from './codex-async-questions.js';
 import {
   CodexSubagentTracker,
+  codexAgentTaskTitle,
   collaborationTool,
   executionStatus,
   isAgentActive,
   record,
+  readableText,
+  subagentThreadMetadata,
   textValue,
 } from './codex-subagents.js';
+import { CodexSubagentMetadataLoader } from './codex-subagent-metadata.js';
 import { codexAgentMessage } from './codex-agent-message.js';
 import type {
   ClaudeSubagentState,
@@ -221,6 +225,7 @@ export class CodexRuntimeService
   private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
   private readonly subagentTrackers = new Map<number, CodexSubagentTracker>();
+  private readonly subagentMetadata = new CodexSubagentMetadataLoader();
   private readonly subagentRestores = new Map<number, Promise<void>>();
   private readonly subagentHistoryReads = new Map<
     string,
@@ -366,6 +371,7 @@ export class CodexRuntimeService
   }
 
   onModuleDestroy(): void {
+    this.subagentMetadata.dispose();
     this.unsubscribeSubagentRequests?.();
     for (const requests of this.delegatedRequests.values())
       this.resolvePendingCodexRequests(requests);
@@ -827,7 +833,7 @@ export class CodexRuntimeService
             timestamp: agent.startedAt ?? agent.timestamp,
           });
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history,
           transcriptAvailable: !!snapshot || !!live?.size,
           ...(!snapshot && !live?.size
@@ -840,7 +846,7 @@ export class CodexRuntimeService
       } catch (error) {
         if (error instanceof NotFoundException) throw error;
         return {
-          subagent: { ...agent },
+          subagent: { ...agent, taskTitle: codexAgentTaskTitle(agent) },
           history: [],
           transcriptAvailable: false,
           transcriptError: 'Could not read the saved agent transcript.',
@@ -857,6 +863,7 @@ export class CodexRuntimeService
   private publishSubagents(
     sessionId: number,
     changed: ClaudeSubagentState[],
+    lifecycleChanged = true,
   ): void {
     for (const subagent of changed)
       this.emitEvent({
@@ -885,7 +892,9 @@ export class CodexRuntimeService
       type: 'background_work',
       payload: { sessionId, backgroundWork },
     });
-    this.emitRunState(sessionId);
+    // Metadata/preview events already wake the selected-session feed. Repeating
+    // an idle parent's run_state would invalidate and reread its durable history.
+    if (lifecycleChanged) this.emitRunState(sessionId);
   }
 
   private subagentBackgroundWork(sessionId: number) {
@@ -894,11 +903,65 @@ export class CodexRuntimeService
       .map((agent) => ({
         id: `subagent:${agent.agentId}`,
         kind: 'subagent' as const,
-        label: agent.displayName ?? agent.agentType,
+        label:
+          agent.displayName ??
+          agent.agentPath?.split('/').at(-1) ??
+          agent.agentType,
         detail: agent.lastAssistantMessage ?? agent.prompt,
         startedAt: agent.startedAt ?? agent.timestamp,
         updatedAt: agent.timestamp,
       }));
+  }
+
+  private loadSubagentMetadata(sessionId: number, agentId: string): void {
+    const tracker = this.subagentTrackers.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (!tracker || !state) return;
+    const rootId = state.codexSessionId;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    const current = () =>
+      !this.invalidatedSessions.has(sessionId) &&
+      this.subagentTrackers.get(sessionId) === tracker &&
+      this.runtimeStates.get(sessionId) === state &&
+      state.codexSessionId === rootId &&
+      (this.sessionGenerations.get(sessionId) ?? 0) === generation &&
+      tracker.agents.has(agentId);
+    this.subagentMetadata.load(tracker, agentId, current, async (current) => {
+      const reply = await this.appServer.request(
+        'thread/read',
+        {
+          threadId: agentId,
+          includeTurns: false,
+        },
+        10_000,
+      );
+      if (!current()) return;
+      const thread = record(record(reply).thread);
+      if (thread.id !== agentId)
+        throw new Error('Codex child metadata unavailable.');
+      const metadata = subagentThreadMetadata(thread);
+      const agent = tracker.agents.get(agentId)!;
+      // Fill gaps only: notifications received during the read are newer.
+      let changed = false;
+      for (const field of [
+        'displayName',
+        'agentType',
+        'agentPath',
+        'model',
+        'reasoningEffort',
+      ] as const) {
+        const value = metadata[field];
+        if (
+          value &&
+          (!agent[field] ||
+            (field === 'agentType' && agent.agentType === 'agent'))
+        ) {
+          agent[field] = value;
+          changed = true;
+        }
+      }
+      if (changed) this.publishSubagents(sessionId, [agent], false);
+    });
   }
 
   /** Usage has its own revision: transcript polling must not overwrite a newer live count. */
@@ -957,7 +1020,7 @@ export class CodexRuntimeService
         record(record(thread.source).subAgent ?? record(thread.source).subagent)
           .thread_spawn,
       );
-      const parent = textValue(spawn.parent_thread_id);
+      const parent = textValue(spawn.parent_thread_id ?? thread.parentThreadId);
       if (
         notification.method === 'thread/started' &&
         threadId &&
@@ -968,17 +1031,15 @@ export class CodexRuntimeService
           threadId,
           {
             parentAgentId: parent === rootId ? undefined : parent,
-            agentPath: textValue(thread.agentPath ?? spawn.agent_path),
-            displayName: textValue(
-              thread.agentNickname ?? spawn.agent_nickname,
-            ),
-            agentType:
-              textValue(thread.agentRole ?? spawn.agent_role) ?? 'agent',
-            executionStatus: 'pending',
+            ...subagentThreadMetadata(thread),
+            ...(!tracker.agents.has(threadId)
+              ? { executionStatus: 'pending' as const }
+              : {}),
           },
           timestamp,
         );
         this.publishSubagents(sessionId, [agent]);
+        this.loadSubagentMetadata(sessionId, threadId);
         return;
       }
       if (!threadId || (threadId !== rootId && !tracker.agents.has(threadId)))
@@ -1010,10 +1071,20 @@ export class CodexRuntimeService
                     }
                   : {}),
                 ...(status ? { executionStatus: status } : {}),
+                ...(textValue(raw.agentPath)
+                  ? { agentPath: textValue(raw.agentPath) }
+                  : {}),
+                ...(textValue(raw.model)
+                  ? { model: textValue(raw.model) }
+                  : {}),
+                ...(textValue(raw.reasoningEffort)
+                  ? { reasoningEffort: textValue(raw.reasoningEffort) }
+                  : {}),
               },
               timestamp,
             ),
           ]);
+          this.loadSubagentMetadata(sessionId, id);
         }
       }
       if (
@@ -1022,9 +1093,39 @@ export class CodexRuntimeService
       ) {
         const changed = tracker.collaboration(raw, timestamp, rootId);
         if (changed.length) this.publishSubagents(sessionId, changed);
+        for (const agent of changed)
+          this.loadSubagentMetadata(sessionId, agent.agentId);
       }
       const agent = tracker.agents.get(threadId);
       if (!agent) return;
+      if (
+        notification.method === 'turn/started' ||
+        notification.method === 'turn/completed' ||
+        notification.method === 'item/started' ||
+        notification.method === 'item/completed'
+      )
+        this.loadSubagentMetadata(sessionId, threadId);
+      if (notification.method === 'thread/settings/updated') {
+        const settings = record(params.threadSettings);
+        const model = textValue(settings.model);
+        const reasoningEffort = textValue(settings.effort);
+        if (model || reasoningEffort)
+          this.publishSubagents(
+            sessionId,
+            [
+              tracker.upsert(
+                threadId,
+                {
+                  ...(model ? { model } : {}),
+                  ...(reasoningEffort ? { reasoningEffort } : {}),
+                },
+                timestamp,
+              ),
+            ],
+            false,
+          );
+        return;
+      }
       if (notification.method === 'thread/tokenUsage/updated') {
         const usage = record(params.tokenUsage);
         if (!Object.keys(record(usage.last)).length) return;
@@ -1037,7 +1138,7 @@ export class CodexRuntimeService
           ),
           contextUsageUpdatedAt: timestamp,
         });
-        this.publishSubagents(sessionId, [agent]);
+        this.publishSubagents(sessionId, [agent], false);
         return;
       }
       if (notification.method === 'item/completed')
@@ -1086,6 +1187,28 @@ export class CodexRuntimeService
       const storeItem = (item: ClaudeTranscriptItem) =>
         tracker.storeItem(threadId, item);
       if (['item/started', 'item/completed'].includes(notification.method)) {
+        if (
+          raw.type === 'userMessage' &&
+          !agent.prompt &&
+          Array.isArray(raw.content)
+        ) {
+          const prompt = readableText(
+            raw.content
+              .map((part: unknown) => {
+                const input = record(part);
+                return input.type === 'text'
+                  ? (textValue(input.text) ?? '')
+                  : '';
+              })
+              .join('\n'),
+          );
+          if (prompt)
+            this.publishSubagents(
+              sessionId,
+              [tracker.upsert(threadId, { prompt }, timestamp)],
+              false,
+            );
+        }
         const translated = this.translateAppServerItem(
           raw,
           new Map(),
@@ -1122,13 +1245,17 @@ export class CodexRuntimeService
               timestamp,
             });
             if (translated.type === 'agent_message' && translated.text)
-              this.publishSubagents(sessionId, [
-                tracker.upsert(
-                  threadId,
-                  { lastAssistantMessage: translated.text },
-                  timestamp,
-                ),
-              ]);
+              this.publishSubagents(
+                sessionId,
+                [
+                  tracker.upsert(
+                    threadId,
+                    { lastAssistantMessage: translated.text },
+                    timestamp,
+                  ),
+                ],
+                false,
+              );
           }
         }
       } else if (
@@ -1142,6 +1269,24 @@ export class CodexRuntimeService
           content: (items.get(params.itemId)?.content ?? '') + params.delta,
           timestamp,
         });
+        // Activity needs a small live preview, not a full lifecycle payload per token.
+        const preview = items.get(params.itemId)?.content?.slice(0, 240);
+        if (
+          preview &&
+          preview !== agent.lastAssistantMessage &&
+          Date.parse(timestamp) - Date.parse(agent.timestamp) >= 250
+        )
+          this.publishSubagents(
+            sessionId,
+            [
+              tracker.upsert(
+                threadId,
+                { lastAssistantMessage: preview },
+                timestamp,
+              ),
+            ],
+            false,
+          );
       } else if (
         notification.method === 'item/commandExecution/outputDelta' &&
         typeof params.itemId === 'string' &&
@@ -1852,12 +1997,34 @@ export class CodexRuntimeService
     );
   }
 
-  private async interruptSubagents(sessionId: number): Promise<void> {
+  async stopSubagent(sessionId: number, agentId: string): Promise<void> {
+    const tracker = this.subagentTrackers.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    const agent = tracker?.agents.get(agentId);
+    if (!state || !agent || !isAgentActive(agent) || agentId === state.codexSessionId)
+      throw new ConflictException('This agent is no longer available to stop.');
+    await this.interruptSubagents(sessionId, agentId);
+    if (this.runtimeStates.get(sessionId) !== state || this.invalidatedSessions.has(sessionId)) return;
+    const requests = this.delegatedRequests.get(sessionId);
+    for (const store of [this.activeRuns.get(sessionId), requests]) {
+      if (!store) continue;
+      for (const [id, pending] of store.permissionRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ approved: false, message: 'Interrupted' }); store.permissionRequests.delete(id);
+      }
+      for (const [id, pending] of store.userInputRequests) if (pending.request.agentId === agentId) {
+        pending.resolve({ action: 'cancel' }); store.userInputRequests.delete(id);
+      }
+    }
+    this.refreshPendingUserInput(sessionId);
+  }
+
+  private async interruptSubagents(sessionId: number, agentId?: string): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const tracker = this.subagentTrackers.get(sessionId);
     if (!tracker) return;
     const delegated = this.delegatedRequests.get(sessionId);
-    if (delegated) this.resolvePendingCodexRequests(delegated);
-    const active = [...tracker.agents.values()].filter(isAgentActive);
+    if (delegated && !agentId) this.resolvePendingCodexRequests(delegated);
+    const active = [...tracker.agents.values()].filter(agent => isAgentActive(agent) && (!agentId || agent.agentId === agentId));
     for (let index = 0; index < active.length; index += 4) {
       await Promise.all(
         active.slice(index, index + 4).map(async (agent) => {
@@ -1894,11 +2061,14 @@ export class CodexRuntimeService
               }),
             );
           }
+          // A control finishing after teardown must not recreate runtime state.
+          if (this.subagentTrackers.get(sessionId) !== tracker || (this.sessionGenerations.get(sessionId) ?? 0) !== generation) return;
           this.publishSubagents(sessionId, [
             tracker.upsert(
               agent.agentId,
               {
                 executionStatus: finalStatus ?? 'interrupted',
+                ...(agentId && finalStatus !== 'completed' ? { stoppedByUser: true } : {}),
               },
               new Date().toISOString(),
             ),
@@ -3474,18 +3644,18 @@ export class CodexRuntimeService
       authStatus: state.authStatus,
       rateLimit: null,
       planUsage: state.planUsage,
-      notifications: [],
+      notifications: state.activityNotifications ?? [],
       hooks: [],
       recentHookEvents: [],
       tasks: [],
       taskLifecycle: [],
       subagents: [
-        ...(this.subagentTrackers.get(sessionId)?.agents.values() ?? []),
+        ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, taskTitle: codexAgentTaskTitle(agent), canStop: isAgentActive(agent) })),
       ],
       backgroundWork: this.subagentBackgroundWork(sessionId),
       latestToolProgress: null,
       latestToolSummary: null,
-      latestApiRetry: null,
+      latestApiRetry: state.latestApiRetry ?? null,
       latestPluginInstall: null,
       latestMemoryRecall: null,
       latestFilesPersisted: null,
@@ -3692,6 +3862,7 @@ export class CodexRuntimeService
         }
         case 'item/started': {
           if (!matchesThread(params)) return;
+          if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
@@ -3703,6 +3874,12 @@ export class CodexRuntimeService
         }
         case 'item/completed': {
           if (!matchesThread(params)) return;
+          if (params?.item?.type === 'contextCompaction') {
+            state.activityNotifications = [...(state.activityNotifications ?? []).filter(note => note.key !== 'compaction'), {
+              key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString(),
+            }].slice(-8);
+            this.emitRunState(sessionId);
+          }
           this.receiveCodexAsyncUserInput(sessionId, params?.item);
           const item = this.translateAppServerItem(
             params?.item,
@@ -3753,9 +3930,11 @@ export class CodexRuntimeService
           //   { error: TurnError, willRetry: boolean, threadId, turnId }
           if (params?.threadId && !matchesThread(params)) return;
           if (params?.willRetry) {
-            // The server will retry the upstream call automatically; don't
-            // terminate the stream — handleCodexEvent's existing logic
-            // doesn't care about retry events here.
+            state.latestApiRetry = { attempt: (state.latestApiRetry?.attempt ?? 0) + 1,
+              maxRetries: 0, retryDelayMs: 0, errorStatus: null,
+              error: typeof params?.error?.message === 'string' ? params.error.message.slice(0, 1000) : 'Upstream request failed',
+              timestamp: new Date().toISOString() };
+            this.emitRunState(sessionId);
             return;
           }
           push({

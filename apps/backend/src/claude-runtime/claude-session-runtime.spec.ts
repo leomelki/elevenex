@@ -290,6 +290,19 @@ describe('ClaudeSessionRuntime', () => {
     await runtime.close();
   });
 
+  it('starts with a model selected before the query exists', async () => {
+    const { runtime } = createRuntime();
+    await runtime.setModel('fable');
+    expect(query).not.toHaveBeenCalled();
+    await runtime.ensureStarted('prewarm');
+    expect(query).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ model: 'fable' }),
+      }),
+    );
+    await runtime.close();
+  });
+
   it('never starts a cold or exited query for live context telemetry', async () => {
     const { runtime, queries } = createRuntime();
     await expect(runtime.getContextUsage(false)).rejects.toThrow(

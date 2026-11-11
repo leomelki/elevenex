@@ -34,36 +34,6 @@ ex-chat {
 .metadata {
   white-space: nowrap;
 }
-.activity {
-  position: relative;
-}
-.activity summary {
-  cursor: pointer;
-}
-.activity-content {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  top: calc(100% + var(--space-2));
-  width: min(360px, 65vw);
-  max-height: 320px;
-  overflow: auto;
-  padding: var(--space-3);
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
-}
-.activity-content p {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  overflow-wrap: anywhere;
-}
-.activity-content strong {
-  color: var(--ink);
-  font-weight: 500;
-}
 .start { padding-bottom: var(--space-6); }
 .start-content {
   display: flex;

@@ -15,6 +15,9 @@ ex-job-brief code { font-family: var(--font-mono); font-size: var(--text-caption
 html, body { margin: 0; height: 100%; }
 body { background: var(--canvas); color: var(--ink); font-family: var(--font-sans); font-size: var(--text-ui-size); line-height: var(--text-ui-line); -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font: inherit; color: inherit; }
+/* Geist Mono's ligatures swallow the space before `--`, so `pnpm test --watch`
+   would display as `test--watch`. Code must show its exact characters. */
+code, pre, kbd, samp { font-variant-ligatures: none; }
 button { touch-action: manipulation; }
 button:disabled { cursor: default; }
 a { color: var(--accent); }
