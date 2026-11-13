@@ -27,7 +27,7 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly commitOpen = signal(false);
   protected readonly pushAfter = signal(false);
   private readonly commitTask = computed(() => {
-    const selected = this.store.selected();
+    const selected = this.store.taskSelection();
     return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null;
   }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   protected readonly commitProvider = computed<CommitFileProvider | undefined>(() => {
@@ -38,7 +38,7 @@ export class WorkspaceTaskHeaderComponent {
       if (!available) throw new Error('Update this machine’s engine to use the commit panel.');
       if (signal.aborted) throw new Error('The file check was cancelled.');
       const result = await this.git.readCommitPreview(scopeId, { taskId, ...query });
-      if (signal.aborted || this.store.selected()?.scopeId !== scopeId || this.store.selected()?.taskId !== taskId) throw new Error('The selected task changed.');
+      if (signal.aborted || this.store.taskSelection()?.scopeId !== scopeId || this.store.taskSelection()?.taskId !== taskId) throw new Error('The selected task changed.');
       return result;
     };
   });
@@ -53,7 +53,7 @@ export class WorkspaceTaskHeaderComponent {
   });
   private resetTimer?: ReturnType<typeof setTimeout>;
   private epoch = 0;
-  private readonly taskKey = computed(() => { const selected = this.store.selected(); return selected ? `${selected.scopeId}/${selected.taskId}` : ''; });
+  private readonly taskKey = computed(() => { const selected = this.store.taskSelection(); return selected ? `${selected.scopeId}/${selected.taskId}` : ''; });
   constructor() {
     effect(() => {
       this.taskKey(); this.epoch++;
@@ -65,7 +65,7 @@ export class WorkspaceTaskHeaderComponent {
   protected stage(stage: TaskStage): void { if (stage === 'closed') this.close(); else void this.store.setStage(stage); }
   protected async close(): Promise<void> {
     if (this.store.offline()) { this.store.error.set(`Close task needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return; }
-    const task = this.store.selectedTask(), selection = this.store.selected(), epoch = this.epoch;
+    const task = this.store.selectedTask(), selection = this.store.taskSelection(), epoch = this.epoch;
     if (!task || !selection || this.store.busy() || this.closeLoading()) return;
     this.closeLoading.set(true); this.closeError.set(null);
     try {

@@ -231,6 +231,8 @@ export interface ClaudeAutocompleteItem {
 
 export interface ClaudeModelOption {
   id: string;
+  /** Canonical wire ID reported by Claude for this catalog alias. */
+  resolvedModel?: string;
   displayName: string;
   description: string;
   supportsEffort?: boolean;
@@ -451,6 +453,8 @@ export interface ClaudeSubagentState {
   canBackground?: boolean;
   canFollowUp?: boolean;
   agentPath?: string;
+  /** Stable delegated task title, separate from the agent's nickname and role. */
+  taskTitle?: string;
   agentType: string;
   status: 'started' | 'stopped';
   transcriptPath?: string;

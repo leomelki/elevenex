@@ -9,7 +9,7 @@ import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrit
 export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
-import type { SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 export type * from './session-chat';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
@@ -88,6 +88,7 @@ export interface InvokeContracts {
   'task-browser:layout': { args: [scopeId: string, taskId: number, input: TaskBrowserLayout]; result: void };
   'task-browser:hide': { args: [scopeId: string, taskId: number]; result: void };
   'task-browser:deactivate': { args: [scopeId: string, taskId: number]; result: void };
+  'session-chat:agent': { args: [scopeId: string, input: SessionChatAgentRead]; result: BackendResult<SessionChatAgentPage> };
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
@@ -251,6 +252,7 @@ export interface ElevenexBridge {
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
   sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
   sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
+  sessionChatAgent(scopeId: string, input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>>;
   sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;

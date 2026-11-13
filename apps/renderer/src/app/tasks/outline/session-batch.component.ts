@@ -27,7 +27,7 @@ export class SessionBatchComponent implements OnChanges {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly destroy = inject(DestroyRef);
   private readonly media = matchMedia('(prefers-reduced-motion: reduce)');
-  protected readonly presence = new ListPresence(this.sessions, session => session.id, this.host, this.destroy);
+  protected readonly presence = new ListPresence(this.sessions, session => session.renderId ?? session.id, this.host, this.destroy);
   private animation?: Animation;
   private opening = false;
   private ready = false;

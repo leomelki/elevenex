@@ -126,6 +126,27 @@ session `active` is not an indication that an agent is running.
 
 ## Creation, failures and cleanup
 
+New sessions in ready tasks open immediately on a local welcome/composer and a
+selected sidebar row. `WorkspaceSessionCreation` owns at most ten unfinished
+creates, coalesces repeated creation in the same task, and retains writing through
+definite rejection or an unconfirmed outcome. It has no invented backend session
+ID. Local rows cannot be archived or mentioned. `selected()` continues to expose
+only durable identities; `selectedCreation()` supplies the local view and
+`taskSelection()` supplies real task context to Git and the side panels.
+
+Confirmation adopts the local draft into `SessionChatDrafts`, retains the sidebar
+row's render key and selects the saved session only if its local view is still
+selected. Navigation never cancels/replays a create or loses its accepted draft.
+Task/project navigation, scope replacement and disposal reject late selection
+changes. Same-machine recovery retains local writing, marks interrupted creation
+unconfirmed, and never resends it. Definite rejections offer explicit retry;
+unconfirmed creation offers Check sessions and explicit draft dismissal. These
+errors belong to the local session rather than disabling other workspace actions.
+As with ordinary unsent chat drafts, these local drafts live in this workspace
+window; they are not a durable disk outbox. Offline new-session requests retain
+the existing journaled waiting-session flow.
+
+
 Task creation returns a preparing task. The store keeps `pendingTask()` and
 polls that task alone with a 400ms to five-second backoff for at most five
 minutes. The backend creates the initial session; the renderer never creates a

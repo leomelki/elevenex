@@ -1,10 +1,10 @@
-<div [attr.data-session-id]="session().id" class="row" [class.has-archive]="allowArchive() || allowRestore()" [class.confirming]="confirming()">
+<div [attr.data-session-id]="session().id" class="row" [class.has-archive]="!session().local && (allowArchive() || allowRestore())" [class.confirming]="confirming()">
 <button
   class="select"
   type="button"
-  [draggable]="!confirming()"
+  [draggable]="!confirming() && !session().local"
   [class.dragging]="dragging()"
-  aria-description="Drag into a message to mention this session. You can also use the message box’s @ picker."
+  [attr.aria-description]="session().local ? 'Local draft. Session creation is not yet confirmed.' : 'Drag into a message to mention this session. You can also use the message box’s @ picker.'"
   (dragstart)="startDrag($event)"
   (dragend)="dragging.set(false)"
   [exTooltip]="session().title"
@@ -65,7 +65,7 @@
   }
 </button>
 
-@if (allowArchive() && !archived()) {
+@if (allowArchive() && !archived() && !session().local) {
   <button class="archive" type="button"
     [attr.aria-label]="confirming() ? 'Stop and archive ' + session().title + ': press again to confirm' : 'Archive ' + session().title"
     [exTooltip]="confirming() ? '' : 'Archive session'"

@@ -550,6 +550,18 @@ describe("streaming cursor ownership", () => {
 });
 
 describe("connected composer controls", () => {
+  it('requests browser picking only for a saved session', async () => {
+    const { fixture } = setup();
+    await settle(fixture);
+    const picked = vi.fn();
+    fixture.componentInstance.browserPickRequested.subscribe(picked);
+    fixture.componentInstance.pickBrowserElement('tab-1');
+    expect(picked).toHaveBeenCalledWith({ scopeId: 'scope', taskId: 1, sessionId: 2, tabId: 'tab-1' });
+    picked.mockClear();
+    fixture.componentRef.setInput('selection', null);
+    fixture.componentInstance.pickBrowserElement('tab-1');
+    expect(picked).not.toHaveBeenCalled();
+  });
   const capabilities: SessionChatState = {
     ...state,
     providerLocked: false,

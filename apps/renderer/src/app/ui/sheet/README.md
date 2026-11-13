@@ -41,7 +41,9 @@ cannot replace the element that receives focus when the modal closes.
 Reopening a retained layer also recaptures focus if inert blurred the outgoing
 control, while preserving focus already inside the destination.
 
-The portal escapes the transformed/inert background. A scoped
+The layer registers an owned CDK overlay keyboard subscription so Escape
+targets it ahead of a retained connected popover below it; disposal removes that
+subscription. The portal escapes the transformed/inert background. A scoped
 `ModalRecessionService` lease counts sheets and confirmations together. Only
 the top modal receives dismissal; lower overlays become inert until it closes.
 The service finds the nearest `ex-app-shell`, `.ex-window`, or

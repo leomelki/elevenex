@@ -44,7 +44,7 @@ export class WorkingSessionsComponent {
   private readonly injector = inject(Injector);
   private readonly batchViews = viewChildren(SessionBatchComponent);
   protected readonly closingDistance = signal(0);
-  protected readonly presence = new ListPresence(() => this.window().shown, session => session.id, this.host, inject(DestroyRef));
+  protected readonly presence = new ListPresence(() => this.window().shown, session => session.renderId ?? session.id, this.host, inject(DestroyRef));
   protected readonly batches = linkedSignal<BatchSource, readonly Batch[]>({
     source: () => ({ taskId: this.taskId(), window: this.window() }),
     computation: (source, previous) => {

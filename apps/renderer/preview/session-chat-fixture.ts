@@ -1,9 +1,12 @@
+import { sessionActivityWork } from './session-activity-fixture';
 import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
 import type {
   BackendResult,
+  SessionChatAgentRead,
+  SessionChatAgentPage,
   SessionChatChangesRead,
   SessionChatChangesPage,
   SessionChatCommand,
@@ -18,6 +21,7 @@ import type {
   SessionChatCatalog,
   SessionChatCatalogRead,
   SessionChatPresetDefault,
+  SessionChatWorkEvent,
 } from "@elevenex/shared";
 
 const savedPresets: readonly SessionChatPreset[] = [
@@ -70,6 +74,32 @@ export const previewChatState = (): SessionChatState => ({
   question: null,
   activity: [],
 });
+/** A pending question the conversation can answer; pairs with waiting delegated work. */
+const retryQuestion: NonNullable<SessionChatState["question"]> = {
+  id: "question",
+  message: "One behavior needs your decision.",
+  url: null,
+  questions: [
+    {
+      id: "retry",
+      question: "How long should a retry claim remain valid?",
+      multiple: false,
+      options: [
+        {
+          label: "24 hours",
+          detail: "Matches the provider’s retention window.",
+        },
+        {
+          label: "7 days",
+          detail: "Keeps duplicate protection for a week.",
+        },
+      ],
+    },
+  ],
+};
+/** Background work plus the events the backend keeps: finished work, failures, compaction. */
+export const previewChatWork = (now = Date.now()): NonNullable<SessionChatState["work"]> => sessionActivityWork('codex', now);
+
 const item = (
   id: string,
   kind: SessionChatItem["kind"],
@@ -236,6 +266,7 @@ export class SessionChatFixture {
       | "history"
       | "panel-reflow"
       | "ready"
+      | "new"
       | "unknown"
       | "long"
       | "long-message"
@@ -251,6 +282,7 @@ export class SessionChatFixture {
     const session = this.session(id);
     session.items = opening();
     session.state = previewChatState();
+    if (mode === 'new') { session.items = []; session.state = { ...session.state, providerLocked: false }; }
     if (mode === 'images') session.items = [
       item('image-prompt', 'user', 'Draw a friendly robot and show the saved image.'),
       item('image-output', 'tool_result', 'Image attachment', { media: [{ id: '0', path: 'generated-robot', caption: 'Generated robot', inline: true }] }),
@@ -309,28 +341,7 @@ export class SessionChatFixture {
       session.state = {
         ...session.state,
         phase: "waiting",
-        question: {
-          id: "question",
-          message: "One behavior needs your decision.",
-          url: null,
-          questions: [
-            {
-              id: "retry",
-              question: "How long should a retry claim remain valid?",
-              multiple: false,
-              options: [
-                {
-                  label: "24 hours",
-                  detail: "Matches the provider’s retention window.",
-                },
-                {
-                  label: "7 days",
-                  detail: "Keeps duplicate protection for a week.",
-                },
-              ],
-            },
-          ],
-        },
+        question: retryQuestion,
       };
     if (mode === "running") {
       session.items = session.items.slice(0, 6);
@@ -338,13 +349,7 @@ export class SessionChatFixture {
         ...session.state,
         phase: "running",
         canInterrupt: true,
-        activity: [
-          {
-            id: "reviewer",
-            label: "Review concurrency boundary",
-            detail: "Subagent running",
-          },
-        ],
+        work: previewChatWork(),
       };
     }
     if (mode === "failed")
@@ -422,6 +427,44 @@ export class SessionChatFixture {
     for (const done of [...this.waiting.values()]) done();
   }
   /** Change only provider-reported allowance while preserving drafts and transcript. */
+  /** Publishes background work and runtime events through the ordinary read feed. */
+  work(work: SessionChatState["work"], id = 101, provider?: string): void {
+    const session = this.session(id);
+    session.state = { ...session.state, work, ...(provider ? { provider } : {}) };
+    this.changed();
+  }
+  /** Provider-shaped Activity; waiting work comes with the question it waits on. */
+  activity(provider: string): void {
+    const work = sessionActivityWork(provider);
+    const session = this.session(101);
+    session.state = {
+      ...session.state,
+      question: work.running.some((item) => item.status === "waiting") ? retryQuestion : null,
+    };
+    this.work(work, 101, provider);
+  }
+  agentReply: 'ready' | 'starting' | 'unavailable' | 'error' = 'ready';
+  async agent(input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>> {
+    if (this.agentReply === 'error') return { ok: false, error: { code: 'transport', message: 'The agent transcript could not be read. Try again.' } };
+    const work = this.session(input.sessionId).state.work;
+    const active = work?.running.find(item => item.agentId === input.agentId);
+    return { ok: true, value: {
+      agentId: input.agentId, label: active?.label ?? 'Review concurrency boundary',
+      ...(active?.title ? { title: active.title, ...(active.agentName ? { agentName: active.agentName } : {}), ...(active.role ? { role: active.role } : {}) } : {}),
+      status: active?.status ?? 'completed', prompt: 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.',
+      model: active?.model ?? 'worker-model', context: active?.context ?? { tokens: 28000, limit: 128000, percentage: 22 },
+      items: this.agentReply !== 'ready' ? [] : input.before ? [item('earlier-assignment', 'user', 'Inspect the payment retry handler.')] : [
+        item('agent-assignment', 'user', 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.'),
+        item('agent-thinking', 'thinking', 'Two requests can race between the claim insert and the payment call. The unique index should make the second insert fail and fall back to reading the existing claim.'),
+        item('agent-step', 'assistant', 'The claim is created before the payment call. I am checking the unique constraint and delayed retry path.'),
+        item('agent-read', 'tool_use', '', { toolId: 'agent-read', toolName: 'Read', toolKind: 'read', input: '{"file_path":"src/payments/retry-claims.ts"}' }),
+        item('agent-result', 'tool_result', 'The claim uses a unique constraint on the idempotency key.', { toolId: 'agent-read' }),
+        item('agent-test', 'tool_use', '', { toolId: 'agent-test', toolName: 'Bash', toolKind: 'bash', input: '{"command":"pnpm test retry-claims --runInBand"}' }),
+        item('agent-test-result', 'tool_result', 'PASS src/payments/retry-claims.spec.ts\n  ✓ shares one claim across concurrent requests (41 ms)', { toolId: 'agent-test' }),
+        item('agent-answer', 'assistant', 'The transaction boundary is safe. Both requests share the original claim.\n\n```ts\nconst claim = await retries.claim(key);\n```'),
+      ], before: input.before || this.agentReply !== 'ready' ? null : 'earlier', availability: this.agentReply === 'ready' ? 'available' : this.agentReply, message: '',
+    } };
+  }
   usage(planUsage: SessionChatState["planUsage"], id = 101): void {
     const session = this.session(id);
     session.state = { ...session.state, provider: planUsage?.provider ?? session.state.provider, planUsage };
@@ -665,6 +708,27 @@ export class SessionChatFixture {
       }
     } else if (action.type === "stop")
       session.state = { ...session.state, phase: "idle", canInterrupt: false };
+    else if (action.type === "background-agent") {
+      const work = session.state.work;
+      if (work) session.state = { ...session.state, work: { ...work, running: work.running.map(item => item.agentId === action.id ? { ...item, background: true, canBackground: false } : item) } };
+    }
+    else if (action.type === "stop-background") {
+      const work = session.state.work;
+      const stopped = work?.running.find((item) => item.id === action.id);
+      if (!work || !stopped)
+        return { ok: false, error: { code: "http", status: 409, message: "This background work already finished." } };
+      const event: SessionChatWorkEvent = { id: `finished:${action.id}`, kind: "finished", tone: "info", title: `${stopped.label} stopped`, detail: "", at: new Date().toISOString() };
+      session.state = {
+        ...session.state,
+        work: {
+          running: work.running.filter((item) => item.id !== action.id),
+          recent: [
+            event,
+            ...work.recent,
+          ].slice(0, 12),
+        },
+      };
+    }
     else if (action.type === "permission")
       session.state = {
         ...session.state,

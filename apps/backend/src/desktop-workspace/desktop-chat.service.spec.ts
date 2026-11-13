@@ -40,6 +40,8 @@ describe('selected session chat', () => {
     setReasoningEffort: jest.fn(),
     setFastMode: jest.fn(),
     setSelectedModel: jest.fn(),
+    stopBackgroundTask: jest.fn(),
+    stopSubagent: jest.fn(),
   });
   const session = jest.fn();
   const started = jest.fn();
@@ -122,6 +124,39 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+
+  it('stops only background work the runtime still reports as live and projects it for the bar', async () => {
+    runtime.getRuntimeState.mockImplementation(async () => ({
+      sessionId: 2,
+      runPhase: 'idle',
+      liveItems: [],
+      backgroundWork: [
+        { id: 'task:shell', kind: 'task', label: 'pnpm test --watch', startedAt: '2026-11-10T10:00:00Z' },
+        { id: 'subagent:child', kind: 'subagent', label: 'reviewer', startedAt: '2026-11-10T10:01:00Z' },
+      ],
+      tasks: [{ taskId: 'shell', status: 'running', canStop: true }],
+      subagents: [{ agentId: 'child', agentType: 'reviewer', status: 'started', canStop: false }],
+      hooks: [{ hookId: 'h1', hookName: 'PreToolUse:Bash', hookEvent: 'PreToolUse', status: 'success', updatedAt: '2026-11-10T10:02:00Z' }],
+    }));
+    const page = await chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    expect(page?.state.work).toEqual({
+      totalRunning: 2,
+      running: [
+        expect.objectContaining({ id: 'task:shell', kind: 'task', stoppable: true }),
+        expect.objectContaining({ id: 'subagent:child', kind: 'agent', stoppable: false }),
+      ],
+      recent: [],
+    });
+    expect(page?.state.activity.map((entry) => entry.id)).toEqual(['task:shell', 'subagent:child']);
+
+    await chat.command(1, 2, { type: 'stop-background', id: 'task:shell' });
+    expect(runtime.stopBackgroundTask).toHaveBeenCalledWith(2, 'shell');
+    await chat.command(1, 2, { type: 'stop-background', id: 'subagent:child' });
+    expect(runtime.stopSubagent).toHaveBeenCalledWith(2, 'child');
+    await expect(chat.command(1, 2, { type: 'stop-background', id: 'task:gone' })).rejects.toThrow('already finished');
+    expect(runtime.stopBackgroundTask).toHaveBeenCalledTimes(1);
+    expect(runtime.interrupt).not.toHaveBeenCalled();
+  });
 
   it('delivers uploaded image bytes in the native image slot and retains file references in the prompt', async () => {
     const root = await mkdtemp(join(tmpdir(), 'chat-native-image-'));

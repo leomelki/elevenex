@@ -1,4 +1,5 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { WorkspaceSessionCreation } from './workspace-session-creation';
 import { WorkspaceSessionOutbox } from './workspace-session-outbox';
 import { WorkspaceWritingJournal } from './workspace-writing-journal';
 import { WorkspaceTaskOutbox, type WaitingTask } from './workspace-task-outbox';
@@ -95,6 +96,27 @@ export class WorkspaceStore {
   private readonly defaultBranches = signal<ReadonlyMap<string, string>>(new Map());
   readonly machine = this.machineState.asReadonly();
   readonly selected = this.chosen.asReadonly();
+  private readonly localSessionId = signal<string | null>(null);
+  private readonly sessionRenderIds = signal<ReadonlyMap<number, string>>(new Map());
+  private readonly sessionCreation = new WorkspaceSessionCreation(this.bridge, scope => this.valid(scope), (starting, session) => {
+    this.drafts?.adopt(starting.scopeId, session.id, starting.draft);
+    this.sessionRenderIds.update(ids => new Map([...ids, [session.id, starting.id] as const].slice(-400)));
+    if (!this.taskRecords().some(task => task.id === starting.taskId)) return;
+    this.sessionRecords.update(records => new Map(records).set(session.taskId, [...(records.get(session.taskId) ?? []).filter(row => row.id !== session.id).slice(-19), session]));
+    // Completing a background creation must never take selection back from navigation.
+    if (this.selectedCreation()?.id === starting.id) {
+      this.chosen.set({ scopeId: starting.scopeId, taskId: session.taskId, sessionId: session.id });
+      this.localSessionId.set(null);
+    }
+  });
+  readonly selectedCreation = computed(() => this.sessionCreation.items().find(item => item.id === this.localSessionId() && !this.closed() && this.taskRecords().some(task => task.id === item.taskId)) ?? null);
+  readonly selectedCreationKey = computed(() => this.selectedCreation()?.id ?? this.sessionRenderIds().get(this.chosen()?.sessionId ?? 0) ?? null);
+  readonly selectedSessionId = computed(() => this.selectedCreation()?.id ?? this.chosen()?.sessionId.toString() ?? null);
+  readonly chatOpen = computed(() => !!this.selectedCreation() || !!this.chosen());
+  readonly taskSelection = computed(() => {
+    const target = this.selectedCreation() ?? this.chosen();
+    return target ? { scopeId: target.scopeId, taskId: target.taskId } : null;
+  }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   readonly projects = computed<readonly Project[]>(() => {
     const activity = new Map<number, { attention: number; running: number }>();
     for (const task of this.taskRecords()) {
@@ -110,7 +132,7 @@ export class WorkspaceStore {
     return this.projectRecords().map(project => ({ id: String(project.id), ...projectFace({ name: project.name, ...project.appearance }), ...activity.get(project.id), muted: this.focused() && this.activeProject() !== String(project.id) }));
   });
   readonly selectedProject = computed(() => this.projectRecords().find(project => String(project.id) === this.activeProject()) ?? null);
-  readonly selectedTask = computed(() => this.taskRecords().find(task => task.id === this.chosen()?.taskId) ?? null);
+  readonly selectedTask = computed(() => this.taskRecords().find(task => task.id === (this.selectedCreation()?.taskId ?? this.chosen()?.taskId)) ?? null);
   readonly selectedTaskStage = computed(() => { const task = this.selectedTask(); return task ? workspaceTaskStage(task) : 'active'; });
   readonly selectedSession = computed(() => {
     const selection = this.chosen();
@@ -134,11 +156,14 @@ export class WorkspaceStore {
     project: this.projects().find(project => project.id === String(task.projectId)) ?? (task.projectName ? projectFace({ name: task.projectName }) : undefined),
     // Unknown cardinality from older runtimes keeps their existing repository hint.
     ...(task.repoName && task.projectRepositoryCount !== 1 ? { repo: task.repoName } : {}),
-    sessions: (this.sessionRecords().get(task.id) ?? []).map(session => ({ id: String(session.id), mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
+    sessions: [
+      ...(this.sessionRecords().get(task.id) ?? []).map(session => ({ id: String(session.id), renderId: this.sessionRenderIds().get(session.id), mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
+      ...this.sessionCreation.items().filter(item => item.taskId === task.id).map(item => ({ id: item.id, renderId: item.id, title: 'New session', status: 'queued' as const, local: true, fresh: true, meta: item.status === 'creating' ? 'Creating…' : item.status === 'unknown' ? 'Check creation' : 'Try again' })),
+    ],
   })));
   /** Only loaded navigation windows participate; mentioning never scans the repository. */
   readonly sessionMentionItems = computed<readonly ConversationMention[]>(() => this.tasks()
-    .flatMap(task => [...task.sessions, ...(task.archive?.sessions ?? [])].map(session => ({
+    .flatMap(task => [...task.sessions, ...(task.archive?.sessions ?? [])].filter(session => !session.local).map(session => ({
       id: session.id, kind: 'session' as const, label: session.title, status: session.status, meta: task.title,
     }))).slice(0, 50));
   readonly counts = computed<StatusCounts>(() => {
@@ -183,7 +208,7 @@ export class WorkspaceStore {
         else this.reset(next);
         if (next) {
           this.loading.set(true);
-          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask(), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
+          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
         }
       });
     });
@@ -192,7 +217,7 @@ export class WorkspaceStore {
       if (!scope || !environment || this.restoring() || this.loading() || this.busy()) return;
       this.saveView(scope, environment);
     });
-    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); clearTimeout(this.branchTimer); this.branchRevision++; this.observer?.dispose(); });
+    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); clearTimeout(this.branchTimer); this.branchRevision++; this.observer?.dispose(); });
   }
 
   private suspend(): void {
@@ -214,6 +239,7 @@ export class WorkspaceStore {
     this.suspended = false; this.capable = false; this.archives.reset();
     this.resume.reset(); this.resumeLoaded = true; this.restoring.set(true);
     this.drafts?.rebind(previous, scope);
+    this.sessionCreation.rebind(previous, scope);
     this.scopeId.set(scope);
   }
 
@@ -313,7 +339,7 @@ export class WorkspaceStore {
     this.currentTaskCursor = restored.cursor;
     await this.hydrateTasks(scope, listRevision, restored.page, restored.cursor, restored);
     if (!current() || this.error()) return;
-    this.chosen.set(restored.selection ? { scopeId: scope, ...restored.selection } : null);
+    this.chosen.set(!this.selectedCreation() && restored.selection ? { scopeId: scope, ...restored.selection } : null);
     this.pendingTask.set(restored.pendingTask ?? null);
     this.preparationPaused.set(!!restored.pendingTask);
   }
@@ -350,6 +376,7 @@ export class WorkspaceStore {
 
   async selectProject(id: string): Promise<void> {
     if (id !== 'all' && !this.projects().some(project => project.id === id)) return;
+    this.localSessionId.set(null);
     if (this.offline() && this.outageTasks) {
       this.activeProject.set(id); this.taskRecords.set(this.outageTasks.filter(task => id === 'all' || String(task.projectId) === id));
       if (!this.taskRecords().some(task => task.id === this.chosen()?.taskId)) this.chosen.set(null);
@@ -378,6 +405,7 @@ export class WorkspaceStore {
     if (!scope) return;
     this.leaveResume();
     const revision = ++this.listRevision;
+    if (!background && cursor !== this.currentTaskCursor) this.localSessionId.set(null);
     this.currentTaskCursor = cursor;
     if (!background) { this.loading.set(true); this.error.set(null); }
     const projectId = this.activeProject() === 'all' ? null : Number(this.activeProject());
@@ -429,10 +457,15 @@ export class WorkspaceStore {
   }
 
   selectSession(selection: { readonly taskId: string; readonly sessionId: string }): void {
+    const local = this.sessionCreation.items().find(item => item.id === selection.sessionId && String(item.taskId) === selection.taskId);
+    if (local && this.taskRecords().some(task => task.id === local.taskId)) {
+      this.leaveResume(); this.stopPreparation(); this.chosen.set(null); this.localSessionId.set(local.id); return;
+    }
     const scopeId = this.scopeId(), taskId = Number(selection.taskId), sessionId = Number(selection.sessionId);
     if (!scopeId || !this.taskRecords().some(task => task.id === taskId) || !this.sessionRecords().get(taskId)?.some(session => session.id === sessionId) && !this.archives.pages().get(taskId)?.sessions.some(session => session.id === sessionId)) return;
     this.leaveResume();
     this.stopPreparation();
+    this.localSessionId.set(null);
     this.chosen.set({ scopeId, taskId, sessionId });
   }
   openEmptyTask(id: string): void {
@@ -440,27 +473,39 @@ export class WorkspaceStore {
     if (!task || !scope || this.busy()) return;
     this.leaveResume();
     if (task.state === 'ready') { void this.createSession(id); return; }
-    this.stopPreparation(); this.chosen.set(null); this.pendingTask.set(task);
+    this.stopPreparation(); this.localSessionId.set(null); this.chosen.set(null); this.pendingTask.set(task);
     if (task.state !== 'failed') void this.prepareTask(scope, task.id, this.preparationRevision, Date.now(), 0);
   }
 
   async createSession(id: string): Promise<void> {
-    const scope = this.scopeId(), taskId = Number(id), revision = this.listRevision;
-    if (!scope || this.busy() || !this.taskRecords().some(task => task.id === taskId)) return;
-    this.busy.set(true);
+    const scope = this.scopeId(), taskId = Number(id);
+    const task = this.taskRecords().find(task => task.id === taskId);
+    if (!scope || this.busy() || !task || task.state !== 'ready' || task.archivedAt) return;
+    const existing = this.sessionCreation.items().find(item => item.scopeId === scope && item.taskId === taskId);
+    if (existing) { this.selectSession({ taskId: id, sessionId: existing.id }); return; }
     if (this.offline()) {
-      this.busy.set(false);
       if (this.journal && !this.journal.restored()) { this.error.set('Restoring waiting writing. Try again in a moment.'); return; }
-      const task = this.taskRecords().find(task => task.id === taskId)!;
       if (!this.sessionOutbox.enqueue(taskId, task.name)) this.error.set('Up to 10 sessions can wait in this window. Remove one first.');
       return;
     }
-    const session = await this.mutate(scope, () => this.bridge.workspaceCreateSession(scope, { taskId }));
-    if (session && revision === this.listRevision) {
-      this.sessionRecords.update(records => new Map(records).set(taskId, [...(records.get(taskId) ?? []).slice(-19), session]));
-      this.chosen.set({ scopeId: scope, taskId, sessionId: session.id });
-    }
-    if (this.scopeId() === scope) this.busy.set(false);
+    if (!this.valid(scope) || !this.capable || this.restoring() || this.mutationUncertain()) return;
+    const starting = this.sessionCreation.start(scope, taskId);
+    if (!starting) { this.error.set('Up to 10 unfinished sessions can stay open. Resolve or discard one first.'); return; }
+    this.leaveResume(); this.stopPreparation(); this.filter.set(null); this.chosen.set(null); this.localSessionId.set(starting.id);
+    await this.sessionCreation.send(starting.id);
+  }
+
+  async retrySessionCreation(): Promise<void> {
+    const starting = this.selectedCreation();
+    if (!starting || this.offline() || this.restoring() || this.busy() || this.mutationUncertain()) return;
+    await this.sessionCreation.retry(starting.id);
+  }
+  discardSessionCreation(): void {
+    const starting = this.selectedCreation();
+    if (!starting || starting.status === 'creating') return;
+    this.sessionCreation.discard(starting.id); this.localSessionId.set(null);
+    const previous = this.sessionRecords().get(starting.taskId)?.at(-1);
+    if (previous) this.chosen.set({ scopeId: starting.scopeId, taskId: starting.taskId, sessionId: previous.id });
   }
 
   async archiveSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string } }): Promise<void> {
@@ -673,7 +718,7 @@ export class WorkspaceStore {
     if (task && selectionRevision === this.listRevision) {
       if (planned) await this.mutate(scope, () => this.bridge.workspaceSetStage(scope, { taskId: task.id, stage: 'planned' }));
       this.dialogOpen.set(false); this.activeProject.set(String(task.projectId)); this.closed.set(false);
-      this.stopPreparation(); this.chosen.set(null); this.pendingTask.set(task);
+      this.stopPreparation(); this.localSessionId.set(null); this.chosen.set(null); this.pendingTask.set(task);
       this.taskRecords.update(tasks => [task, ...tasks.filter(item => item.id !== task.id)].slice(0, 20));
       const revision = this.preparationRevision;
       void this.prepareTask(scope, task.id, revision, Date.now(), 0);
@@ -733,7 +778,7 @@ export class WorkspaceStore {
         this.projectsCursor.set(page?.nextCursor ?? null);
         this.currentProjectCursor = cursor; this.projectPage.set(true);
       }
-      this.stopPreparation(); this.chosen.set(null);
+      this.stopPreparation(); this.localSessionId.set(null); this.chosen.set(null);
       this.activeProject.set(String(project.project.id)); await this.loadTasks();
       if (!this.valid(scope)) return;
       this.busy.set(false);
@@ -746,7 +791,7 @@ export class WorkspaceStore {
 
   async showClosed(closed = !this.closed()): Promise<void> {
     this.leaveResume();
-    this.stopPreparation(); this.closed.set(closed); this.chosen.set(null);
+    this.stopPreparation(); this.localSessionId.set(null); this.closed.set(closed); this.chosen.set(null);
     this.taskRecords.set([]); this.tasksCursor.set(null); this.taskPage.set(false);
     await this.loadTasks();
   }
@@ -911,6 +956,7 @@ export class WorkspaceStore {
   private valid(scope: string): boolean { return !this.disposed && this.scopeId() === scope && this.backend.state().scope?.id === scope; }
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
+    this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;
     this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
     this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.restoring.set(scope !== null);

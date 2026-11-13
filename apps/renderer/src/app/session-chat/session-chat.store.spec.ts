@@ -13,7 +13,7 @@ import {
   BackendClientService,
   ELEVENEX_BRIDGE,
 } from "../backend/backend-client.service";
-import { SessionChatDrafts } from "./session-chat-drafts";
+import { createSessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
 import { SessionChatStore } from "./session-chat.store";
 import { chatExchanges } from "./session-chat-transcript";
 const state: SessionChatState = {
@@ -160,6 +160,55 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatRead.mock.lastCall?.[1].after).toBe('cursor');
     expect(store.exchanges()[0]?.answer).toBe('Recovered output');
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+
+  it('allows local writing without reads or sends, then hands off the same draft and view to the saved session', async () => {
+    const { store, bridge } = setup(); await settle();
+    const draft = createSessionDraft();
+    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft, status: 'creating' };
+    const reads = bridge.sessionChatRead.mock.calls.length;
+    store.openDraft(starting);
+    const revision = store.viewRevision();
+    store.setDraft('Written before creation');
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(store.draft()).toBe('Written before creation'); expect(store.exchanges()).toEqual([]);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled(); expect(bridge.sessionChatRead).toHaveBeenCalledTimes(reads);
+    const read = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockImplementationOnce(() => read.promise);
+    TestBed.inject(SessionChatDrafts).adopt('scope', 20, draft);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 20 }, false);
+    expect(store.viewRevision()).toBe(revision); expect(store.starting()).toBe(true);
+    store.setDraft('Still writing during hydration');
+    read.resolve(ok(page(20))); await settle();
+    expect(store.starting()).toBe(false); expect(store.compactStart()).toBe(true);
+    expect(store.draft()).toBe('Still writing during hydration');
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith('scope', expect.objectContaining({ sessionId: 20, action: expect.objectContaining({ type: 'send', text: 'Still writing during hydration' }) }));
+  });
+
+  it('updates a retained local draft’s scope after same-machine recovery without loading or sending', async () => {
+    const { store, bridge, scope } = setup(); await settle();
+    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: createSessionDraft(), status: 'creating' };
+    store.openDraft(starting); store.setDraft('Keep writing through recovery');
+    scope.set({ revision: 2, scope: { id: 'next', environment: { kind: 'local' } } });
+    store.openDraft({ ...starting, scopeId: 'next', status: 'unknown' });
+    expect(store.offline()).toBe(false); expect(store.draft()).toBe('Keep writing through recovery');
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+
+  it('cancels the old conversation read and rejects its late reply after opening a local draft', async () => {
+    const { store, bridge } = setup(); await settle();
+    const read = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockImplementationOnce(() => read.promise);
+    const refreshing = store.refresh();
+    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: createSessionDraft(), status: 'creating' };
+    store.openDraft(starting); store.setDraft('Safe local writing');
+    read.resolve(ok(page(2, { items: [item('late', 'assistant', 'Old conversation')] }))); await refreshing;
+    expect(bridge.sessionChatCancel).toHaveBeenCalled();
+    expect(store.items()).toEqual([]); expect(store.state()).toBeNull(); expect(store.draft()).toBe('Safe local writing');
+    store.openDraft({ ...starting, status: 'failed' });
+    expect(store.draft()).toBe('Safe local writing');
   });
 
   it('reconciles a successful send quietly without replaying it when the following read fails', async () => {

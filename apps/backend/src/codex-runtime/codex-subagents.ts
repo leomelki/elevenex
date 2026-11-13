@@ -85,6 +85,52 @@ export function isAgentActive(agent: ClaudeSubagentState): boolean {
   return agent.status === 'started';
 }
 
+/** Prefer the explicit task/path name; generic role names defer to the assignment. */
+export function codexAgentTaskTitle(
+  agent: Pick<ClaudeSubagentState, 'agentPath' | 'agentType' | 'prompt'>,
+): string | undefined {
+  const name = agent.agentPath?.split('/').filter(Boolean).at(-1);
+  // This projection runs on live state reads; never scan a whole long assignment.
+  const assignment = readableText(agent.prompt?.slice(0, 4000))
+    ?.split('\n')
+    .find((line) => line.trim())
+    ?.trim();
+  const specificName =
+    name &&
+    !['agent', 'root', agent.agentType.toLowerCase()].includes(
+      name.toLowerCase(),
+    );
+  const title =
+    specificName || !assignment
+      ? name
+          ?.replace(/[_-]+/g, ' ')
+          .replace(/^./, (letter) => letter.toUpperCase())
+      : assignment;
+  if (!title) return undefined;
+  return title.length > 120 ? title.slice(0, 119).trimEnd() + '…' : title;
+}
+
+/** Metadata is available without loading a thread's turns or reading its rollout. */
+export function subagentThreadMetadata(
+  value: unknown,
+): Partial<ClaudeSubagentState> {
+  const thread = record(value);
+  const spawn = record(
+    record(record(thread.source).subAgent ?? record(thread.source).subagent)
+      .thread_spawn,
+  );
+  const fields = {
+    displayName: textValue(thread.agentNickname ?? spawn.agent_nickname),
+    agentType: textValue(thread.agentRole ?? spawn.agent_role),
+    agentPath: textValue(thread.agentPath ?? spawn.agent_path),
+    model: textValue(thread.model),
+    reasoningEffort: textValue(thread.reasoningEffort),
+  };
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+}
+
 /** Shared by live protocol events and persisted tool calls. No untrusted path is opened here. */
 export class CodexSubagentTracker {
   readonly agents = new Map<string, ClaudeSubagentState>();
@@ -200,10 +246,11 @@ export class CodexSubagentTracker {
             ...(tool === 'spawn_agent'
               ? {
                   parentAgentId: sender === rootId ? undefined : sender,
-                  parentToolUseId: textValue(raw.id),
-                  prompt: readableText(raw.prompt),
-                  model: textValue(raw.model),
-                  reasoningEffort: textValue(raw.reasoningEffort),
+                  parentToolUseId: textValue(raw.id) ?? old?.parentToolUseId,
+                  prompt: readableText(raw.prompt) ?? old?.prompt,
+                  model: textValue(raw.model) ?? old?.model,
+                  reasoningEffort:
+                    textValue(raw.reasoningEffort) ?? old?.reasoningEffort,
                   ...(!old ? { executionStatus: 'pending' as const } : {}),
                 }
               : {}),

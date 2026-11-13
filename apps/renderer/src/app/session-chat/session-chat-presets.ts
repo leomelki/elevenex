@@ -12,7 +12,7 @@ import type { ChatSelection, SessionChatStore } from "./session-chat.store";
 interface PresetOwner {
   readonly store: SessionChatStore;
   readonly client: SessionChatClient;
-  readonly selection: Signal<ChatSelection>;
+  readonly selection: Signal<ChatSelection | null>;
   readonly identity: Signal<string>;
   readonly harnesses: Signal<readonly AgentHarness[]>;
   readonly models: Signal<readonly AgentModel[]>;
@@ -131,6 +131,8 @@ export class SessionChatPresets {
       return;
     this.presetError.set("");
     this.presetSaving.set(false);
+    const selection = this.owner.selection();
+    if (!selection) return;
     const id = crypto.randomUUID();
     this.presetDraft.set({
       id,
@@ -142,7 +144,7 @@ export class SessionChatPresets {
       identity: this.owner.identity(),
       harnesses: this.owner.harnesses(),
       ...(this.owner.store.state()?.presetCatalogs
-        ? { catalogProvider: this.catalogProvider(this.owner.selection(), id) }
+        ? { catalogProvider: this.catalogProvider(selection, id) }
         : {}),
     });
     this.creatorOpen.set(true);
@@ -157,9 +159,9 @@ export class SessionChatPresets {
         !signal.aborted &&
         this.creatorOpen() &&
         this.presetDraft()?.id === draftId &&
-        this.owner.selection().scopeId === selection.scopeId &&
-        this.owner.selection().sessionId === selection.sessionId &&
-        this.owner.selection().taskId === selection.taskId;
+        this.owner.selection()?.scopeId === selection.scopeId &&
+        this.owner.selection()?.sessionId === selection.sessionId &&
+        this.owner.selection()?.taskId === selection.taskId;
       if (!current()) throw new Error("This preset draft is no longer active.");
       const requestId = crypto.randomUUID();
       const cancel = () =>

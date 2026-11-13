@@ -1,3 +1,5 @@
+import { Overlay } from '@angular/cdk/overlay';
+import { ComponentPortal } from '@angular/cdk/portal';
 import { A11yModule } from '@angular/cdk/a11y';
 import { Component, ElementRef, afterRenderEffect, input, signal, viewChild } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -7,6 +9,9 @@ import { ModalRecessionService } from './modal-recession.service';
 import { SetValueComponent } from './settings-controls.component';
 import { SheetComponent } from './sheet.component';
 import { SheetSectionDirective } from './sheet-section.directive';
+
+@Component({ template: '<button>Retained popover</button>' })
+class RetainedPopover {}
 
 @Component({ imports: [ModalLayerComponent, A11yModule], template: `
   <div data-modal-window><div class="ex-shell"><button id="return">Settings</button></div>
@@ -108,6 +113,29 @@ describe('settings surfaces', () => {
     expect(shell.hasAttribute('inert')).toBe(false);
     expect(shell.classList.contains('is-receded')).toBe(false);
     window.remove();
+  });
+
+  it('consumes Escape ahead of a retained CDK popover below the modal', async () => {
+    const fixture = TestBed.createComponent(LayersHost); fixture.detectChanges();
+    const popover = TestBed.inject(Overlay).create();
+    popover.attach(new ComponentPortal(RetainedPopover));
+    const keys = vi.fn(); const keyboard = popover.keydownEvents().subscribe(keys);
+    try {
+      fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
+      document.querySelector('#confirm')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      fixture.detectChanges(); await fixture.whenStable();
+      expect(fixture.componentInstance.sheet()).toBe(false);
+      expect(keys).not.toHaveBeenCalled();
+    } finally { keyboard.unsubscribe(); popover.dispose(); fixture.destroy(); }
+  });
+
+  it('still dismisses with Escape when an async control has left focus on body', async () => {
+    const fixture = TestBed.createComponent(LayersHost); fixture.detectChanges();
+    fixture.componentInstance.sheet.set(true); fixture.detectChanges(); await fixture.whenStable();
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.componentInstance.sheet()).toBe(false);
+    fixture.destroy();
   });
 
   it('dismisses the top confirmation with Escape and keeps the settings layer active', async () => {

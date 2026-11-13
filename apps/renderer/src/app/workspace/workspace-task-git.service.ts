@@ -26,7 +26,7 @@ export class WorkspaceTaskGitService {
     const git = this.summary();
     return git ? { files: git.files, add: git.additions, del: git.deletions, ahead: git.ahead, ...(this.busy() === 'commit' ? { busy: this.phase() === 'pushing' ? 'push' as const : 'commit' as const, busyLabel: this.phase() === 'writing' ? 'Writing the message…' : undefined } : this.busy() === 'push' ? { busy: 'push' as const } : {}) } : undefined;
   });
-  private readonly key = computed(() => { const selected = this.store.selected(), task = this.store.selectedTask(); return selected && task?.state !== 'finished' && !task?.archivedAt ? `${selected.scopeId}/${selected.taskId}` : ''; });
+  private readonly key = computed(() => { const selected = this.store.taskSelection(), task = this.store.selectedTask(); return selected && task?.state !== 'finished' && !task?.archivedAt ? `${selected.scopeId}/${selected.taskId}` : ''; });
   private revision = 0;
   private disposed = false;
   private selectionEpoch = 0;
@@ -39,9 +39,9 @@ export class WorkspaceTaskGitService {
 
   constructor() {
     let previousTask: number | undefined;
-    effect(() => { const key = this.key(); untracked(() => { const task = this.store.selected()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => { const key = this.key(); untracked(() => { const task = this.store.taskSelection()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
     effect(() => {
-      const selected = this.store.selected(), scope = this.backend.state().scope?.id;
+      const selected = this.store.taskSelection(), scope = this.backend.state().scope?.id;
       if (selected && selected.scopeId !== scope) untracked(() => {
         this.revision++; this.previewGeneration++; this.reading = false; this.loading.set(false);
         clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer);
@@ -56,7 +56,7 @@ export class WorkspaceTaskGitService {
   }
 
   async refresh(background = false): Promise<void> {
-    const selected = this.store.selected();
+    const selected = this.store.taskSelection();
     if (!selected || !this.key() || this.reading || this.busy() || !this.current(selected.scopeId, selected.taskId)) return;
     clearTimeout(this.pollTimer);
     const revision = ++this.revision;
@@ -72,7 +72,7 @@ export class WorkspaceTaskGitService {
   }
 
   async perform(input: GitCommand): Promise<boolean> {
-    const selected = this.store.selected();
+    const selected = this.store.taskSelection();
     if (this.store.offline()) { this.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return false; }
     if (!selected || this.busy() || this.uncertain() || !this.current(selected.scopeId, selected.taskId)) return false;
     const epoch = this.selectionEpoch;
@@ -155,10 +155,10 @@ export class WorkspaceTaskGitService {
       }, () => { if (this.current(scope, taskId) && epoch === this.selectionEpoch && this.busy() === 'commit') this.watchPhase(scope, taskId, epoch); });
     }, 1000);
   }
-  private current(scope: string, taskId: number): boolean { return !this.disposed && !!this.key() && this.backend.state().scope?.id === scope && this.store.selected()?.scopeId === scope && this.store.selected()?.taskId === taskId; }
+  private current(scope: string, taskId: number): boolean { return !this.disposed && !!this.key() && this.backend.state().scope?.id === scope && this.store.taskSelection()?.scopeId === scope && this.store.taskSelection()?.taskId === taskId; }
   private schedule(): void {
     clearTimeout(this.pollTimer);
-    if (this.disposed || this.document.hidden || !this.store.selected() || this.store.offline()) return;
+    if (this.disposed || this.document.hidden || !this.store.taskSelection() || this.store.offline()) return;
     this.pollTimer = setTimeout(() => { this.pollTimer = undefined; if (!this.document.hidden) void this.refresh(true); }, 5000);
   }
 }

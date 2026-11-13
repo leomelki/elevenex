@@ -1,0 +1,85 @@
+<span class="glyph" aria-hidden="true">
+  <ex-status-glyph [status]="view().glyph" [size]="14" />
+</span>
+<div class="title-line">
+  @if (view().inspectable) {
+    <button
+      type="button"
+      class="inspect"
+      [attr.aria-label]="'Inspect ' + view().title + (view().identity ? ' · ' + view().identity : '')"
+      (click)="inspect()"
+    >
+      <span class="title">{{ view().title }}</span>
+      @if (view().identity) {
+        <span class="role" [exTooltip]="view().identity">{{ view().identity }}</span>
+      }
+    </button>
+  } @else {
+    <span class="title">{{ view().title }}</span>
+    @if (view().identity) {
+      <span class="role" [exTooltip]="view().identity">{{ view().identity }}</span>
+    }
+  }
+  <span class="visually-hidden">{{ view().statusLabel }}</span>
+</div>
+<div class="end">
+  @if (pendingLabel()) {
+    <span class="time pending" role="status">{{ pendingLabel() }}</span>
+  } @else {
+    <span class="time" [class.yields]="view().hasControls">{{
+      elapsed()
+    }}</span>
+    @if (view().hasControls) {
+      <span class="actions above">
+        @if (view().item.canBackground) {
+          <ex-icon-button
+            icon="layers"
+            size="sm"
+            label="Run in background"
+            [disabled]="controlsDisabled()"
+            (pressed)="backgroundRequested.emit()"
+          />
+        }
+        @if (view().item.stoppable) {
+          <ex-icon-button
+            class="stop"
+            icon="stop"
+            size="sm"
+            [label]="'Stop ' + view().title"
+            [disabled]="controlsDisabled()"
+            (pressed)="stopRequested.emit()"
+          />
+        }
+      </span>
+    }
+  }
+</div>
+@if (view().tag || view().summary) {
+  <p class="sub">
+    @if (view().tag; as tag) {
+      @if (tag.hint) {
+        <span class="tag" [attr.data-tone]="tag.tone" [exTooltip]="tag.hint">{{
+          tag.text
+        }}</span>
+        <span class="visually-hidden">{{ tag.hint }}</span>
+      } @else {
+        <span class="tag" [attr.data-tone]="tag.tone">{{ tag.text }}</span>
+      }
+    }
+    @if (view().summary) {
+      <span class="summary" [title]="view().summary">{{ view().summary }}</span>
+    }
+  </p>
+}
+@if (answerable()) {
+  <button
+    exButton
+    variant="secondary"
+    size="sm"
+    class="answer above"
+    [attr.aria-label]="'Answer ' + view().title + ' in the conversation'"
+    (click)="answerRequested.emit()"
+  >
+    Answer
+  </button>
+}

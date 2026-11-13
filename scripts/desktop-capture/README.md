@@ -778,3 +778,11 @@ transport to check stable terminal geometry during connection notices, persisten
 paused typing across reconnects, keyboard resume/focus restoration, and retained
 failed output without resize/reconnect loops. It covers both themes and a narrow
 reduced-motion layout.
+
+`scenarios/session-creation.mjs` checks immediate local selection and keyboard
+focus, trusted typing before creation, a retained row/composer/caret and fixed
+composer position through confirmation, repeated clicks, explicit rejection retry,
+unconfirmed-write inspection without replay, completion after navigation and
+fast receipts before first paint. It covers both themes and compact reduced-motion
+layouts through the production owners with preview-controlled backend replies.
+Run sequentially with `--url http://127.0.0.1:4310/connected-workspace`.

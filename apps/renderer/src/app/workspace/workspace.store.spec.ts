@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { SessionChatDrafts } from '../session-chat/session-chat-drafts';
 import { WorkspaceStore } from './workspace.store';
 import { WorkspaceDialogsComponent } from './workspace-dialogs.component';
 import { WorkspaceNavigationComponent } from './workspace-navigation.component';
@@ -42,7 +43,7 @@ function setup(history = false) {
     workspaceDeleteProject: vi.fn(async (): Promise<BackendResult<{readonly accepted: true}>> => ok({ accepted: true })),
     workspaceRevision: vi.fn(async () => ok({ revision: 1, version: 1 as const, sessionArchive: true as const, ...(history ? { sessionArchiveHistory: true as const } : {}) })),
   } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceArchiveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
-  TestBed.configureTestingModule({ providers: [WorkspaceStore, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
+  TestBed.configureTestingModule({ providers: [WorkspaceStore, SessionChatDrafts, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
   const store = TestBed.inject(WorkspaceStore);
   store.connect({ id: 'local', name: 'This Mac', kind: 'local', conn: 'live' }, true);
   return { store, bridge, emit: (state: BackendClientState) => listener(state), async start() {
@@ -543,18 +544,66 @@ describe('WorkspaceStore', () => {
     expect(bridge.workspaceCreateTask).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves definite rejection messages and blocks uncertain mutation replay until reconciliation', async () => {
+  it('opens a local session immediately, coalesces repeated clicks and adopts its draft on confirmation', async () => {
+    const { store, bridge, start } = setup(); await start();
+    let finish!: (result: BackendResult<WorkspaceSession>) => void;
+    bridge.workspaceCreateSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const creating = store.createSession('3');
+    const starting = store.selectedCreation()!;
+    expect(starting.status).toBe('creating'); expect(store.chatOpen()).toBe(true);
+    expect(store.selected()).toBeNull(); expect(store.selectedTask()).toEqual(task); expect(store.busy()).toBe(false);
+    expect(store.taskSelection()).toEqual({ scopeId: 'scope', taskId: 3 });
+    expect(store.tasks()[0]!.sessions.at(-1)).toMatchObject({ id: starting.id, local: true, renderId: starting.id });
+    expect(store.sessionMentionItems().some(item => item.id === starting.id)).toBe(false);
+    starting.draft.text.set('Writing before the server responds');
+    await store.createSession('3'); expect(bridge.workspaceCreateSession).toHaveBeenCalledTimes(1);
+    finish(ok({ ...session, id: 6 })); await creating;
+    expect(store.selectedCreation()).toBeNull();
+    expect(store.selected()).toEqual({ scopeId: 'scope', taskId: 3, sessionId: 6 });
+    expect(store.tasks()[0]!.sessions.at(-1)).toMatchObject({ id: '6', renderId: starting.id });
+    expect(TestBed.inject(SessionChatDrafts).entry('scope', 6)).toBe(starting.draft);
+  });
+
+  it('keeps the created row and draft without taking selection back after navigation', async () => {
+    const { store, bridge, start } = setup(); await start();
+    let finish!: (result: BackendResult<WorkspaceSession>) => void;
+    bridge.workspaceCreateSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const creating = store.createSession('3'); const starting = store.selectedCreation()!;
+    starting.draft.text.set('Keep this new conversation');
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    finish(ok({ ...session, id: 6 })); await creating;
+    expect(store.selected()?.sessionId).toBe(5);
+    expect(TestBed.inject(SessionChatDrafts).entry('scope', 6).text()).toBe('Keep this new conversation');
+    expect(store.tasks()[0]!.sessions.filter(row => row.id === '6')).toHaveLength(1);
+  });
+
+  it('retains failed creation and writing for explicit retry, and never retries an uncertain create', async () => {
     const { store, bridge, start } = setup(); await start();
     bridge.workspaceCreateSession.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 409, message: 'Task is preparing.' } });
     await store.createSession('3');
-    expect(store.error()).toBe('Task is preparing.'); expect(store.mutationUncertain()).toBe(false);
+    const starting = store.selectedCreation()!; starting.draft.text.set('Keep this');
+    expect(starting.status).toBe('failed'); expect(starting.error).toBe('Task is preparing.');
+    expect(store.error()).toBeNull(); expect(store.mutationUncertain()).toBe(false);
     bridge.workspaceCreateSession.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Unknown.' } });
-    await store.createSession('3');
-    await store.createSession('3');
+    await store.retrySessionCreation();
+    expect(store.selectedCreation()?.draft).toBe(starting.draft);
+    expect(store.selectedCreation()?.status).toBe('unknown');
+    await store.createSession('3'); await store.retrySessionCreation(); await store.refresh(); await store.retrySessionCreation();
     expect(bridge.workspaceCreateSession).toHaveBeenCalledTimes(2);
-    expect(store.mutationUncertain()).toBe(true);
-    await store.refresh();
-    expect(store.mutationUncertain()).toBe(false);
+    expect(store.selectedCreation()?.draft.text()).toBe('Keep this');
+    // Ambiguity belongs to this local session, rather than disabling unrelated workspace actions.
+    expect(store.busy()).toBe(false); expect(store.mutationUncertain()).toBe(false);
+  });
+
+  it('rejects a late creation from a replaced backend without adopting its IDs or writing', async () => {
+    const { store, bridge, start, emit } = setup(); await start();
+    let finish!: (result: BackendResult<WorkspaceSession>) => void;
+    bridge.workspaceCreateSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const creating = store.createSession('3');
+    emit({ revision: 2, scope: { id: 'other', environment: { kind: 'local' } } }); TestBed.tick(); await settle();
+    finish(ok({ ...session, id: 99 })); await creating;
+    expect(store.selectedCreation()).toBeNull(); expect(store.selected()).toBeNull();
+    expect(store.tasks().flatMap(task => task.sessions).some(session => session.id === '99')).toBe(false);
   });
 
   it('searches bounded remote branch windows with separate base choices and debounces input', async () => {

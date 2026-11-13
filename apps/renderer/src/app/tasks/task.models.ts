@@ -88,6 +88,10 @@ export interface TaskSessionDisclosure {
 }
 export interface TaskSession {
   readonly id: string;
+  /** Retain the mounted row when a local creation receives its durable ID. */
+  readonly renderId?: string;
+  /** Local drafts cannot be archived, restored or used as session references. */
+  readonly local?: boolean;
   /** Backend generation owning a connected session reference. */
   readonly mentionScope?: string;
   readonly title: string;

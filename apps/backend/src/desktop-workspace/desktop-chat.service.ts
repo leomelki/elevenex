@@ -1,3 +1,4 @@
+import { readChatAgent } from './desktop-chat-agents.js';
 import { chatMedia, readChatMedia } from './desktop-chat-media.js';
 import { chatCatalog } from './desktop-chat-catalog.js';
 import { SettingsService } from '../settings/settings.service.js';
@@ -21,6 +22,7 @@ import type {
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { chatPlanUsage } from './desktop-chat-usage.js';
+import { chatWork, legacyActivity } from './desktop-chat-work.js';
 import {
   type ChatChangesCache,
   type ChatMediaCache,
@@ -96,6 +98,12 @@ export class DesktopChatService implements OnModuleDestroy {
     raw: Record<string, unknown>,
   ) {
     const provider = this.registry.getProvider(session.activeAgentProvider);
+    const work = chatWork(raw, {
+      stopTask: typeof provider.stopBackgroundTask === 'function',
+      stopAgent: typeof provider.stopSubagent === 'function',
+      inspectAgent: typeof provider.getSubagentHistory === 'function',
+      backgroundAgent: typeof provider.backgroundSubagent === 'function',
+    });
     return {
       attachments: true,
       browserElements: provider.info.capabilities.multimodalPrompts === true,
@@ -113,6 +121,8 @@ export class DesktopChatService implements OnModuleDestroy {
         session.activeAgentProvider,
         provider.info.permissionModes ?? [],
       ),
+      work,
+      activity: legacyActivity(work),
       planUsage: chatPlanUsage(raw, session.activeAgentProvider),
       providers: this.registry
         .listProviders()
@@ -195,6 +205,16 @@ export class DesktopChatService implements OnModuleDestroy {
     }
     this.feeds.set(sessionId, feed);
     return feed;
+  }
+
+  async agent(taskId: number, sessionId: number, agentId: string, before?: string) {
+    const session = await this.target(taskId, sessionId);
+    if (session.status === 'archived' || session.workspaceArchivedAt) throw new BadRequestException('Agent history requires an active session.');
+    const provider = this.registry.getProvider(session.activeAgentProvider);
+    const raw = record(await provider.getRuntimeState(sessionId, { initialize: false }));
+    if (!Array.isArray(raw.subagents) || !raw.subagents.some(item => record(item).agentId === agentId))
+      throw new BadRequestException('Agent is unavailable in this session.');
+    return readChatAgent(provider, sessionId, agentId, before);
   }
 
   async read(

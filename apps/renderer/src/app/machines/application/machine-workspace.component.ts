@@ -51,7 +51,7 @@ export class MachineWorkspaceComponent {
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
   readonly codeFile = signal<CodeFileIntent | null>(null);
-  readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.selected(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
+  readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   readonly reviewTarget = signal<ChatReviewTarget | null>(null);
   readonly selectedReview = computed(() => {
     const target = this.reviewTarget(), selected = this.store.selected();
@@ -61,9 +61,9 @@ export class MachineWorkspaceComponent {
   review(target: ChatReviewTarget): void {
     this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
   }
-  readonly terminalSelection = computed(() => { const selected = this.store.selected(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; });
+  readonly terminalSelection = computed(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; });
   private readonly chatDrafts = inject(SessionChatDrafts);
-  private terminalFocusFrame?: number;
+  private composerFocusFrame?: number;
   private readonly terminalBridge = inject(ELEVENEX_BRIDGE);
   readonly terminalBrowser = signal<TerminalBrowserIntent | null>(null);
   readonly selectedTerminalBrowser = computed(() => { const intent = this.terminalBrowser(), selected = this.store.selected(); return intent && selected?.scopeId === intent.scopeId && selected.taskId === intent.taskId ? intent : null; });
@@ -86,9 +86,9 @@ export class MachineWorkspaceComponent {
     const context = `Help me understand this terminal failure.\n\nCommand: ${question.command.slice(0, 4096)}\nExit code: ${question.code}\n\nTerminal output (last 80 lines, bounded):\n${question.output.slice(-8000)}`;
     entry.text.update(text => (text ? text + '\n\n' : '') + context);
     this.wideReview.set(false);
-    if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
-    this.terminalFocusFrame = requestAnimationFrame(() => {
-      this.terminalFocusFrame = undefined;
+    if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+    this.composerFocusFrame = requestAnimationFrame(() => {
+      this.composerFocusFrame = undefined;
       const current = this.store.selected();
       if (current?.scopeId === selected.scopeId && current.taskId === selected.taskId && current.sessionId === selected.sessionId) this.focusWriting();
     });
@@ -151,6 +151,23 @@ export class MachineWorkspaceComponent {
       if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
     });
     effect(() => this.store.connect(this.machine(), this.active() || this.preparing()));
+    let creationOrigin: string | null = null;
+    afterRenderEffect(() => {
+      const key = this.store.selectedCreationKey();
+      if (key === creationOrigin) return;
+      creationOrigin = key;
+      if (!key || !this.active()) return;
+      // New-session navigation must expose the composer when a side view covers it.
+      const compact = matchMedia('(max-width: 700px)').matches;
+      if (!this.wideReview() && !(compact && this.panelOpen())) return;
+      this.wideReview.set(false);
+      if (compact) this.panelOpen.set(false);
+      if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+      this.composerFocusFrame = requestAnimationFrame(() => {
+        this.composerFocusFrame = undefined;
+        if (this.active() && this.store.selectedCreationKey() === key) this.focusWriting();
+      });
+    });
     afterRenderEffect(onCleanup => {
       const machineId = this.preparationMachineId(), generation = this.generation();
       // Let first-use templates/styles/layout paint before starting the launch.
@@ -182,7 +199,7 @@ export class MachineWorkspaceComponent {
       this.terminalBrowserOpening = undefined;
       clearTimeout(this.terminalCopyTimer);
       this.stopLaunch();
-      if (this.terminalFocusFrame !== undefined) cancelAnimationFrame(this.terminalFocusFrame);
+      if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
     });
   }
 
@@ -234,6 +251,20 @@ export class MachineWorkspaceComponent {
     const staged = this.chat()?.stageBrowserContext(intent.text, intent.element) ?? null;
     this.taskBrowser()?.contextStaged(intent, staged);
   }
+
+  discardSessionDraft(): void {
+    const starting = this.store.selectedCreation();
+    if (!starting || starting.status === 'creating') return;
+    this.store.discardSessionCreation();
+    const selected = this.store.selected();
+    if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
+    this.composerFocusFrame = requestAnimationFrame(() => {
+      this.composerFocusFrame = undefined;
+      if (!this.active() || this.store.selected() !== selected || this.store.selectedCreation()) return;
+      if (selected) this.focusWriting();
+      else this.root.querySelector<HTMLButtonElement>(`[data-task-id="${starting.taskId}"] header .add button`)?.focus({ preventScroll: true });
+    });
+  }
   focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
   closePanel(): void { this.panelOpen.set(false); this.wideReview.set(false); }
   togglePanel(): void { if (this.panelOpen()) this.closePanel(); else this.panelOpen.set(true); }
@@ -241,8 +272,8 @@ export class MachineWorkspaceComponent {
   shortcut(event: KeyboardEvent): void {
     if (!this.active() || this.root.closest('[hidden]') || event.defaultPrevented || event.isComposing || !(event.metaKey || event.ctrlKey) || this.store.dialogOpen() || document.querySelector('.cdk-overlay-container [role="dialog"], ex-commit-panel [role="dialog"]')) return;
     const key = event.key.toLowerCase();
-    if ((key === 'n' || event.code === 'KeyN') && event.altKey && !event.shiftKey && this.store.selected() && !this.store.busy() && this.store.selectedTask()?.state === 'ready') {
-      event.preventDefault(); void this.store.createSession(String(this.store.selected()!.taskId));
+    if ((key === 'n' || event.code === 'KeyN') && event.altKey && !event.shiftKey && this.store.selectedTask() && !this.store.busy() && this.store.selectedTask()?.state === 'ready') {
+      event.preventDefault(); void this.store.createSession(String(this.store.selectedTask()!.id));
     } else if (key === 'n' && !event.shiftKey && !event.altKey && this.store.projects().length) {
       event.preventDefault(); void this.store.openNewTask();
     } else if (event.shiftKey && key === 'r' && this.store.selected()) {

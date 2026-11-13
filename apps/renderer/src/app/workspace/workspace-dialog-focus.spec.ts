@@ -36,7 +36,7 @@ describe('workspace dialog focus and native submission', () => {
 
   it('submits branch rename through a native form while Cancel stays a button', async () => {
     const selected = signal({ scopeId: 'scope', taskId: 1, sessionId: 2 });
-    const store = { offline: signal(false),
+    const store = { taskSelection: selected, selectedCreation: () => null, offline: signal(false),
       selected, selectedTask: () => ({ id: 1, projectId: 3, name: 'Task', branchName: 'work', state: 'ready' }),
       projects: () => [{ id: '3', name: 'Project' }], selectedTaskStage: () => 'active', busy: () => false,
       error: signal<string | null>(null), commitPanelAvailable: () => true,
@@ -70,8 +70,9 @@ describe('workspace dialog focus and native submission', () => {
 });
 
 for (const uncommitted of [0, 2]) it(`checks authoritative work before ${uncommitted ? 'confirming a dirty task' : 'closing a clean task directly'}`, async () => {
-  const store = { offline: signal(false),
-    selected: signal({ scopeId: 'scope', taskId: 1, sessionId: 2 }), selectedTask: () => ({ id: 1, projectId: 3, name: 'Task', state: 'ready' }),
+  const selected = signal({ scopeId: 'scope', taskId: 1, sessionId: 2 });
+  const store = { taskSelection: selected, selectedCreation: () => null, offline: signal(false),
+    selected, selectedTask: () => ({ id: 1, projectId: 3, name: 'Task', state: 'ready' }),
     projects: () => [], selectedTaskStage: () => 'active', busy: () => false, error: signal<string | null>(null), commitPanelAvailable: () => true, closeTask: vi.fn(async () => {}),
   };
   const bridge = { workspaceClosePreview: vi.fn(async () => ({ ok: true, value: { taskId: 1, sessions: 1, running: 0, unpushed: 0, uncommitted, terminals: 0, actions: 0 } })) };

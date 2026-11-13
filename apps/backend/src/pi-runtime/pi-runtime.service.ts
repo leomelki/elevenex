@@ -1,3 +1,4 @@
+import { applyPiActivity } from './pi-activity.js';
 import type { PiMcpStatus } from './pi-mcp-bridge.js';
 import { piThinkingLevels } from './pi-thinking-levels.js';
 import type { ClaudeMcpSnapshot } from '../claude-runtime/claude-runtime.types.js';
@@ -1358,10 +1359,15 @@ export class PiRuntimeService
   }
 
   private handlePiEvent(sessionId: number, event: PiSessionRuntimeEvent): void {
+    const state = this.ensureRuntimeState(sessionId);
+    state.activity ??= { retry: null, compact: null, notifications: [] };
+    if (applyPiActivity(state.activity, event)) { this.emitRunState(sessionId); return; }
     switch (event.type) {
       case 'agent_start':
+        state.activity.retry = null;
         return;
       case 'agent_end':
+        if (event.willRetry === true) return;
         this.resolveActiveRun(sessionId);
         return;
       case 'message_start':
@@ -1943,7 +1949,7 @@ export class PiRuntimeService
       runtimeStatus: null,
       authStatus: state.authStatus,
       rateLimit: null,
-      notifications: [],
+      notifications: state.activity?.notifications ?? [],
       hooks: [],
       recentHookEvents: [],
       tasks: [],
@@ -1951,13 +1957,13 @@ export class PiRuntimeService
       subagents: [],
       latestToolProgress: null,
       latestToolSummary: null,
-      latestApiRetry: null,
+      latestApiRetry: state.activity?.retry ?? null,
       latestPluginInstall: null,
       latestMemoryRecall: null,
       latestFilesPersisted: null,
       latestElicitationCompletion: null,
       latestPromptSuggestion: null,
-      latestCompactBoundary: null,
+      latestCompactBoundary: state.activity?.compact ?? null,
       latestMirrorError: null,
       warmState: this.runtimes.has(sessionId) ? 'warm' : 'cold',
       lastWarmedAt: this.runtimes.has(sessionId)

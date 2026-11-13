@@ -125,11 +125,100 @@ export interface SessionChatState {
     readonly questions: readonly SessionChatQuestion[];
     readonly url: string | null;
   } | null;
+  /**
+   * Legacy flat list kept for older desktops. Engines derive it from `work`;
+   * renderers that understand `work` ignore it.
+   */
   readonly activity: readonly {
     readonly id: string;
     readonly label: string;
     readonly detail: string;
   }[];
+  /** Background work and noteworthy runtime events. Omitted by older engines. */
+  readonly work?: SessionChatWork;
+}
+/** Live delegated agents and authoritative background tasks. */
+export interface SessionChatBackgroundWork {
+  /** Stable runtime key (`task:<id>` or `subagent:<id>`), also the stop target. */
+  readonly id: string;
+  readonly kind: "agent" | "task";
+  /** Display label; includes the role so older desktops keep showing it. */
+  readonly label: string;
+  /** Primary task title, or the label without its role on older engines. */
+  readonly title?: string;
+  /** Agent nickname, displayed secondarily when a task title is available. */
+  readonly agentName?: string;
+  /** Harness agent type, such as `reviewer`. Omitted by older engines. */
+  readonly role?: string;
+  /** Latest summary, message or tool; empty when unreported. */
+  readonly detail: string;
+  /** ISO start time; null when unreported. */
+  readonly startedAt: string | null;
+  /** The harness can stop this item without interrupting the conversation. */
+  readonly stoppable: boolean;
+  /** Launched by work that already finished, so nothing waits for its result. */
+  readonly orphaned: boolean;
+  readonly tokens?: number;
+  readonly toolUses?: number;
+  readonly status?: SessionChatWorkStatus;
+  /** False for foreground delegated agents. Omitted by older engines. */
+  readonly background?: boolean;
+  readonly agentId?: string;
+  readonly inspectable?: boolean;
+  readonly canBackground?: boolean;
+  readonly model?: string;
+  readonly context?: SessionChatAgentContext;
+}
+export type SessionChatWorkStatus = "pending" | "running" | "waiting" | "paused" | "completed" | "interrupted" | "stopped" | "error" | "closed" | "unavailable";
+export interface SessionChatAgentContext {
+  readonly tokens: number;
+  readonly limit: number;
+  readonly percentage: number;
+}
+export interface SessionChatAgentRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly agentId: string;
+  readonly before?: string;
+}
+export interface SessionChatAgentPage {
+  readonly agentId: string;
+  readonly label: string;
+  readonly title?: string;
+  readonly agentName?: string;
+  readonly role?: string;
+  readonly status: SessionChatWorkStatus;
+  readonly prompt: string;
+  readonly model: string | null;
+  readonly context: SessionChatAgentContext | null;
+  readonly items: readonly SessionChatItem[];
+  readonly before: string | null;
+  readonly availability: "available" | "starting" | "unavailable" | "error";
+  readonly message: string;
+}
+/** A bounded, already-filtered runtime event worth a person's attention. */
+export interface SessionChatWorkEvent {
+  readonly id: string;
+  readonly kind:
+    | "finished"
+    | "hook"
+    | "retry"
+    | "compaction"
+    | "notification"
+    | "transcript"
+    | "plugin";
+  readonly tone: "info" | "success" | "warning" | "danger";
+  readonly title: string;
+  readonly detail: string;
+  /** ISO time; null when unreported. */
+  readonly at: string | null;
+  readonly agentId?: string;
+}
+export interface SessionChatWork {
+  /** At most 16 live items; waiting work first, then oldest first. */
+  readonly running: readonly SessionChatBackgroundWork[];
+  /** At most 12 events, newest first. Routine successes are never included. */
+  readonly recent: readonly SessionChatWorkEvent[];
+  readonly totalRunning?: number;
 }
 export type SessionChatEvent =
   | { readonly type: "item"; readonly item: SessionChatItem }
@@ -196,6 +285,9 @@ export type SessionChatAction =
     }
   | { readonly type: "send"; readonly text: string; readonly queue: boolean; readonly sessionIds?: readonly number[] }
   | { readonly type: "stop" }
+  /** Ends one `work.running` item; the conversation and its turn continue. */
+  | { readonly type: "stop-background"; readonly id: string }
+  | { readonly type: "background-agent"; readonly id: string }
   | { readonly type: "cancel-queued" | "steer-queued"; readonly id: string }
   | { readonly type: "resume-queue" }
   | {

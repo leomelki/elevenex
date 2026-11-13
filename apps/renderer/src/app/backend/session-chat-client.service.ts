@@ -1,6 +1,8 @@
 import { Injectable, inject } from "@angular/core";
 import type {
   BackendResult,
+  SessionChatAgentRead,
+  SessionChatAgentPage,
   ChatAttachmentUpload,
   ChatAttachmentReceipt,
   SessionChatCatalog,
@@ -25,6 +27,9 @@ import {
 export class SessionChatClient {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly backend = inject(BackendClientService);
+  agent(scope: string, input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatAgent(scope, input));
+  }
   upload(scope: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>> {
     return this.invoke(scope, false, () => this.bridge.sessionChatUpload(scope, input));
   }

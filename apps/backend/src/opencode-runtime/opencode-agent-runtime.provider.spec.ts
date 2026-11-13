@@ -142,6 +142,31 @@ function fixture(nativeSessionId = '-1') {
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('lists owned child activity and stops only that child after native confirmation', async () => {
+    const f = fixture('s');
+    f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));
+    Object.assign(f.client.session, { get: jest.fn(async ({ sessionID }: { sessionID: string }) => ({ data: {
+      id: sessionID, parentID: sessionID === 'child' ? 's' : undefined, title: 'Review transaction', time: { created: 1 },
+    } })) });
+    try {
+      await f.provider.getRuntimeState(1);
+      f.send({ id: 'question', type: 'question.asked', properties: { id: 'q', sessionID: 'child', questions: [] } });
+      await tick();
+      expect((await f.provider.getRuntimeState(1)).subagents[0].executionStatus).toBe('waiting');
+      f.send({ id: 'child-step', type: 'message.part.updated', properties: { part: {
+        id: 'child-text', messageID: 'child-message', sessionID: 'child', type: 'text', text: 'Checking the unique constraint',
+      } } });
+      await tick();
+      expect((await f.provider.getRuntimeState(1)).backgroundWork).toMatchObject([{ id: 'subagent:child', detail: 'Checking the unique constraint' }]);
+      await f.provider.stopSubagent(1, 'child');
+      expect(f.client.session.abort).toHaveBeenCalledTimes(1);
+      expect(f.client.session.abort).toHaveBeenCalledWith({ sessionID: 'child' });
+      const state = await f.provider.getRuntimeState(1);
+      expect(state.backgroundWork).toEqual([]);
+      expect(state.subagents[0]).toMatchObject({ executionStatus: 'interrupted', stoppedByUser: true });
+      await expect(f.provider.stopSubagent(1, 's')).rejects.toThrow('no longer');
+    } finally { f.provider.onModuleDestroy(); }
+  });
   it('can read pre-start state without launching or pinning the harness', async () => {
     const f = fixture();
     f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));

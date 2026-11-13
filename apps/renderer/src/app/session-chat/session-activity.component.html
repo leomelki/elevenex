@@ -1,0 +1,148 @@
+@if (visible()) {
+  <button
+    type="button"
+    class="trigger"
+    [attr.data-mode]="mode()"
+    [attr.data-waiting]="waiting() > 0"
+    cdkOverlayOrigin
+    #origin="cdkOverlayOrigin"
+    aria-haspopup="dialog"
+    [attr.aria-expanded]="open()"
+    [attr.aria-label]="triggerLabel()"
+    [exTooltip]="mode() === 'quiet' ? 'Recent activity' : triggerLabel()"
+    tooltipSide="bottom"
+    (click)="toggle()"
+  >
+    @if (mode() === "quiet") {
+      <ex-icon name="clock" [size]="14" />
+    } @else {
+      <ex-status-glyph
+        [status]="glyph()"
+        [size]="12"
+      />
+      <span class="trigger-text">{{ triggerText() }}</span>
+      @if (mode() === "running" && oldestLabel() && !waiting()) {
+        <span class="trigger-time">{{ oldestLabel() }}</span>
+      }
+    }
+  </button>
+  <ng-template
+    cdkConnectedOverlay
+    [cdkConnectedOverlayOrigin]="origin"
+    [cdkConnectedOverlayOpen]="open()"
+    [cdkConnectedOverlayViewportMargin]="16"
+    [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayHasBackdrop]="true"
+    cdkConnectedOverlayBackdropClass="cdk-overlay-transparent-backdrop"
+    [cdkConnectedOverlayPositions]="[
+      {
+        originX: 'end',
+        originY: 'bottom',
+        overlayX: 'end',
+        overlayY: 'top',
+        offsetY: 6,
+      },
+      {
+        originX: 'end',
+        originY: 'top',
+        overlayX: 'end',
+        overlayY: 'bottom',
+        offsetY: -6,
+      },
+    ]"
+    (backdropClick)="close()"
+    (detach)="close()"
+    (overlayKeydown)="$event.key === 'Escape' && close()"
+  >
+    <section
+      class="panel"
+      role="dialog"
+      [attr.aria-labelledby]="titleId"
+      cdkTrapFocus
+      [cdkTrapFocusAutoCapture]="true"
+      tabindex="-1"
+    >
+      <header class="panel-head">
+        <div>
+          <h2 [id]="titleId" class="title" tabindex="-1" cdkFocusInitial>
+            Activity
+          </h2>
+          <p class="subtitle">
+            {{ provider() || "This session" }} ·
+            {{ total() ? total() + " active" : "Recent activity" }}
+          </p>
+        </div>
+        <ex-icon-button icon="x" label="Close activity" (pressed)="close()" />
+      </header>
+      @if (disabledReason()) {
+        <p class="banner" role="status">
+          <ex-icon name="lock" [size]="12" />{{ disabledReason() }}
+        </p>
+      }
+      @if (sections().needsYou.length) {
+        <h3 class="overline attention" [id]="titleId + '-needs'">
+          Needs you <span class="count">{{ waiting() }}</span>
+        </h3>
+        <div class="rows" role="list" [attr.aria-labelledby]="titleId + '-needs'">
+          @for (row of sections().needsYou; track row.item.id) {
+            <ex-session-work-row
+              [view]="row"
+              [now]="now()"
+              [controlsDisabled]="controlsDisabled()"
+              [stopping]="stopping() && requested() === row.item.id"
+              [backgrounding]="backgrounding()"
+              [decisionPending]="decisionPending()"
+              (inspectRequested)="inspect($event)"
+              (stopRequested)="stop(row)"
+              (backgroundRequested)="background(row)"
+              (answerRequested)="answer()"
+            />
+          }
+        </div>
+      }
+      @if (sections().running.length) {
+        <h3 class="overline" [id]="titleId + '-running'">
+          Running <span class="count">{{ runningTotal() }}</span>
+        </h3>
+        <div class="rows" role="list" [attr.aria-labelledby]="titleId + '-running'">
+          @for (row of sections().running; track row.item.id) {
+            <ex-session-work-row
+              [view]="row"
+              [now]="now()"
+              [controlsDisabled]="controlsDisabled()"
+              [stopping]="stopping() && requested() === row.item.id"
+              [backgrounding]="backgrounding()"
+              (inspectRequested)="inspect($event)"
+              (stopRequested)="stop(row)"
+              (backgroundRequested)="background(row)"
+            />
+          }
+        </div>
+      }
+      @if (total() > sections().needsYou.length + sections().running.length) {
+        <p class="note">
+          Showing {{ sections().needsYou.length + sections().running.length }}
+          of {{ total() }}. Work needing you appears first.
+        </p>
+      }
+      @if (recent().length) {
+        <h3 class="overline" [id]="titleId + '-recent'">Recent</h3>
+        <div class="rows" role="list" [attr.aria-labelledby]="titleId + '-recent'">
+          @for (row of recent(); track row.event.id) {
+            <ex-session-event-row
+              [view]="row"
+              [now]="now()"
+              (inspectRequested)="inspect($event)"
+            />
+          }
+        </div>
+      }
+      @if (!sections().needsYou.length && !sections().running.length && !recent().length) {
+        <div class="empty">
+          <ex-status-glyph status="done" [size]="16" />
+          <p>Nothing is running in the background.</p>
+        </div>
+      }
+    </section>
+  </ng-template>
+}

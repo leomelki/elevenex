@@ -2203,6 +2203,194 @@ describe('ClaudeRuntimeService', () => {
     expect(runtimeService.ensureRuntimeState(7).selectedModel).toBe('sonnet');
   });
 
+  it('publishes model selection before a runtime exists so subscribed pickers reconcile', async () => {
+    const changed = jest.fn();
+    service.on('event', changed);
+    const state = await service.setSelectedModel(7, 'fable');
+    expect(state.selectedModel).toBe('fable');
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'run_state',
+        payload: expect.objectContaining({
+          selectedModel: 'fable',
+          runPhase: 'idle',
+        }),
+      }),
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('changes a warm model without rebuilding the process and retains the selection on rejection', async () => {
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: 7,
+      options: {},
+      onMessage: () => undefined,
+      onFatal: () => undefined,
+      onClosed: () => undefined,
+      prewarmIdleShutdownMs: 90000,
+      postTurnIdleShutdownMs: 300000,
+    });
+    const change = jest.spyOn(runtime, 'setModel').mockResolvedValue(undefined);
+    const close = jest.spyOn(runtime, 'close');
+    service['sessionRuntimes'].set(7, runtime);
+    await service.setSelectedModel(7, 'fable');
+    change.mockRejectedValueOnce(new Error('Model unavailable'));
+    await expect(service.setSelectedModel(7, 'unknown')).rejects.toThrow(
+      'Model unavailable',
+    );
+    expect((await service.getRuntimeState(7)).selectedModel).toBe('fable');
+    expect(close).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    await service.cleanupSession(7);
+  });
+
+  it('keeps the chosen alias and its effort capabilities through init and subsequent context reads', async () => {
+    const runtime = new ClaudeSessionRuntime({
+      sessionId: 7,
+      options: {},
+      onMessage: () => undefined,
+      onFatal: () => undefined,
+      onClosed: () => undefined,
+      prewarmIdleShutdownMs: 90000,
+      postTurnIdleShutdownMs: 300000,
+    });
+    jest.spyOn(runtime, 'supportedModels').mockResolvedValue([
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: '',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'high'],
+      },
+    ]);
+    jest.spyOn(runtime, 'getContextUsage').mockResolvedValue({
+      model: 'claude-fable-5-1',
+      memoryFiles: [],
+      mcpTools: [],
+      totalTokens: 0,
+      maxTokens: 200000,
+      percentage: 0,
+      autoCompactThreshold: 0,
+      isAutoCompactEnabled: false,
+    });
+    service['sessionRuntimes'].set(7, runtime);
+    await service.setSelectedModel(7, 'fable');
+    await service['handleSdkMessage'](7, {
+      type: 'system',
+      subtype: 'init',
+      model: 'claude-fable-5-1',
+      cwd: '/tmp/project',
+      permissionMode: 'default',
+      claude_code_version: '2.1.300',
+      apiKeySource: 'oauth',
+      tools: [],
+      slash_commands: [],
+      skills: [],
+      agents: [],
+      mcp_servers: [],
+      plugins: [],
+      output_style: 'default',
+      uuid: 'init-fable',
+      session_id: 'claude-session-1',
+    });
+    await service['refreshRuntimeMetadata'](7, {
+      force: true,
+      reason: 'sdk_activity',
+    });
+    let state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBe('fable');
+    expect(
+      state.availableModels.find((model) => model.id === state.selectedModel),
+    ).toMatchObject({
+      displayName: 'Fable',
+      reasoningEfforts: ['low', 'high'],
+    });
+    // An empty optional discovery response cannot erase the working catalog.
+    jest.mocked(runtime.supportedModels).mockResolvedValue([]);
+    await service['refreshRuntimeMetadata'](7, { force: true });
+    state = await service.getRuntimeState(7);
+    expect(state.availableModels[0].displayName).toBe('Fable');
+    await service.cleanupSession(7);
+  });
+
+  it.each([false, true])(
+    'ignores model-control receipts live and on reload (blocks=%s)',
+    async (blocks) => {
+      const text =
+        '<local-command-stdout>Set model to `fable (claude-fable-5-1)`</local-command-stdout>';
+      const content = blocks ? [{ type: 'text' as const, text }] : text;
+      const runtime = new ClaudeSessionRuntime({
+        sessionId: 7,
+        options: {},
+        onMessage: () => undefined,
+        onFatal: () => undefined,
+        onClosed: () => undefined,
+        prewarmIdleShutdownMs: 90000,
+        postTurnIdleShutdownMs: 300000,
+      });
+      service['sessionRuntimes'].set(7, runtime);
+      // A completed background task leaves a legitimate resume grace window.
+      service['ensureRuntimeState'](7).lastBackgroundWorkFinishedAtMs =
+        Date.now();
+      await service['handleSdkMessage'](7, {
+        type: 'user',
+        uuid: 'model-receipt',
+        session_id: 'claude-session-1',
+        parent_tool_use_id: null,
+        message: { role: 'user', content },
+      });
+      await service['handleSdkMessage'](7, {
+        type: 'system',
+        subtype: 'local_command_output',
+        uuid: 'model-output',
+        session_id: 'claude-session-1',
+        content: 'Set model to fable',
+      });
+      await service['handleSdkMessage'](7, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        uuid: 'model-running',
+        session_id: 'claude-session-1',
+        state: 'running',
+      });
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
+        liveItems: [],
+        backgroundRunActive: false,
+      });
+      const history = await service.normalizeTranscriptRecordsForSession(7, [
+        {
+          type: 'user',
+          uuid: 'prompt',
+          message: {
+            role: 'user',
+            content: 'Set model to fable in the settings',
+          },
+        },
+        {
+          type: 'user',
+          uuid: 'model-receipt',
+          message: { role: 'user', content },
+        },
+        {
+          type: 'assistant',
+          uuid: 'reply',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'A real answer' }],
+          },
+        },
+      ]);
+      expect(history.map((item) => item.content)).toEqual([
+        'Set model to fable in the settings',
+        'A real answer',
+      ]);
+      await service.cleanupSession(7);
+    },
+  );
+
   it('does not apply old-model context after a model change during a refresh', async () => {
     const runtimeService = service as any;
     let resolveUsage!: (usage: unknown) => void;
@@ -2338,6 +2526,7 @@ describe('ClaudeRuntimeService', () => {
       supportedModels: jest.fn().mockResolvedValue([
         {
           value: 'sonnet',
+          resolvedModel: 'claude-sonnet-4-6',
           displayName: 'Sonnet',
           description: '',
           supportsEffort: true,
@@ -2353,7 +2542,7 @@ describe('ClaudeRuntimeService', () => {
     (service as any).sessionRuntimes.set(7, runtime);
     await (service as any).refreshRuntimeMetadata(7);
     const state = await service.getRuntimeState(7);
-    expect(state.selectedModel).toBe('claude-sonnet-4-6');
+    expect(state.selectedModel).toBe('sonnet');
     expect(state.availableModels[0]).toMatchObject({
       id: 'sonnet',
       supportsEffort: true,

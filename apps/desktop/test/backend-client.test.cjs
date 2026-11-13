@@ -575,6 +575,35 @@ test('harness selection requires a known action shape and an expected current pr
 });
 
 
+test('background work is optional, bounded and validated, and stop targets only live-work keys', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'claude', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).state.work, undefined);
+  const item = { id: 'task:shell', kind: 'task', label: 'pnpm test', detail: '', startedAt: '2026-11-10T10:00:00Z', stoppable: true, orphaned: false, tokens: 10, toolUses: 2 };
+  const event = { id: 'hook:1', kind: 'hook', tone: 'danger', title: 'Hook failed', detail: 'exit 2', at: null };
+  const parsed = parseChatPage({ ...page, state: { ...state, work: { running: [{ ...item, private: 'drop' }], recent: [{ ...event, raw: {} }] } } }, 1, 2);
+  assert.deepEqual(parsed.state.work, { running: [item], recent: [event] });
+  const agent = { ...item, id: 'subagent:a', kind: 'agent', label: 'Review · reviewer', title: 'Review', role: 'reviewer', agentName: 'James' };
+  assert.deepEqual(parseChatPage({ ...page, state: { ...state, work: { running: [agent], recent: [] } } }, 1, 2).state.work.running, [agent]);
+  for (const work of [
+    { running: [{ ...agent, agentName: 7 }], recent: [] },
+    { running: [{ ...agent, agentName: 'x'.repeat(161) }], recent: [] },
+    { running: [{ ...agent, role: 7 }], recent: [] },
+    { running: [{ ...agent, role: 'x'.repeat(121) }], recent: [] },
+    { running: Array(17).fill(item), recent: [] },
+    { running: [], recent: Array(13).fill(event) },
+    { running: [{ ...item, id: 'shell' }], recent: [] },
+    { running: [{ ...item, kind: 'process' }], recent: [] },
+    { running: [{ ...item, startedAt: 'yesterday' }], recent: [] },
+    { running: [{ ...item, stoppable: 'yes' }], recent: [] },
+    { running: [], recent: [{ ...event, tone: 'loud' }] },
+    { running: [], recent: [{ ...event, detail: 'x'.repeat(1101) }] },
+  ]) assert.throws(() => parseChatPage({ ...page, state: { ...state, work } }, 1, 2));
+  assert.deepEqual(parseChatAction({ type: 'stop-background', id: 'subagent:a', extra: 1 }), { type: 'stop-background', id: 'subagent:a' });
+  for (const id of ['', 'task:', 'shell', 'task:' + 'x'.repeat(400), 5]) assert.throws(() => parseChatAction({ type: 'stop-background', id }));
+});
+
 test('composer capability metadata is optional, bounded and validated before crossing the bridge', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: 'gpt', models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
@@ -776,4 +805,51 @@ test('persistent channels have scope-owned cancellation without a request deadli
   assert.equal(signal.aborted, true);
   assert.equal((await pending).error.code, 'stale-scope');
   client.dispose();
+});
+
+test('agent transcript validation checks identity, bounds, states and reported context', () => {
+  const { parseChatAgentPage, parseChatAction } = require('../dist/backend-client/session-chat-validation');
+  const value = { agentId: 'child', label: 'Reviewer', status: 'interrupted', prompt: '', model: null,
+    context: { tokens: 100, limit: 200, percentage: 50 }, items: [], before: null, availability: 'available', message: '', privatePath: '/hidden' };
+  assert.equal(parseChatAgentPage(value, 'child').status, 'interrupted');
+  assert.equal(parseChatAgentPage(value, 'child').privatePath, undefined);
+  const titled = { ...value, title: 'Review retry handling', agentName: 'James', role: 'reviewer' };
+  assert.equal(parseChatAgentPage(titled, 'child').agentName, 'James');
+  assert.equal(parseChatAgentPage(titled, 'child').title, 'Review retry handling');
+  assert.throws(() => parseChatAgentPage({ ...titled, agentName: 7 }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, agentName: 'x'.repeat(161) }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, title: 'x'.repeat(301) }, 'child'));
+  assert.throws(() => parseChatAgentPage({ ...titled, role: 7 }, 'child'));
+  for (const malformed of [{ ...value, agentId: 'other' }, { ...value, status: 'success' }, { ...value, context: { tokens: 100, limit: 0, percentage: 50 } }, { ...value, items: Array(81).fill({}) }])
+    assert.throws(() => parseChatAgentPage(malformed, 'child'));
+  assert.deepEqual(parseChatAction({ type: 'background-agent', id: 'child' }), { type: 'background-agent', id: 'child' });
+  assert.throws(() => parseChatAction({ type: 'background-agent', id: '../other' }));
+});
+
+test('named child history adapter confines reads to a trusted window and expected scope', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises'), vm = require('node:vm');
+  let calls = 0;
+  const reply = { agentId: 'child', label: 'Reviewer', status: 'running', prompt: '', model: null, context: null,
+    items: [], before: null, availability: 'starting', message: '' };
+  const url = await server(context, (request, response) => {
+    calls++; assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/agent?agentId=child');
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => {}); context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, adapter = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat-agents'), 'utf8'), {
+    exports: adapter, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/' + name.slice(2)),
+  });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = adapter.registerChatAgents(client, (candidate, contents) => candidate === frame && contents === sender); context.after(stop);
+  const read = input => handlers.get('session-chat:agent')(event, scope, { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'read', ...input });
+  assert.equal((await read()).ok, true); assert.equal(calls, 1);
+  assert.throws(() => read({ agentId: '../other' }));
+  assert.throws(() => read({ before: '../path' }));
+  assert.throws(() => handlers.get('session-chat:agent')({ senderFrame: {}, sender }, scope, {}));
+  const stale = await handlers.get('session-chat:agent')(event, 'b'.repeat(36), { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'read' });
+  assert.equal(stale.error.code, 'stale-scope'); assert.equal(calls, 1);
+  stop(); assert.equal(handlers.size, 0);
 });

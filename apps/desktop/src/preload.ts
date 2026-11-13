@@ -64,6 +64,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   taskTerminalResize: (scope, input) => invoke('task-terminal:resize', scope, input),
   taskTerminalAction: (scope, input) => invoke('task-terminal:action', scope, input),
   taskTerminalClose: (scope, input) => invoke('task-terminal:close', scope, input),
+  sessionChatAgent: (scope, input) => invoke('session-chat:agent', scope, input),
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),
   sessionChatChanges: (scope, input) => invoke('session-chat:changes', scope, input),
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),

@@ -13,7 +13,7 @@ afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
 
 it('keeps failed commits open, retains their provider across session changes, and closes only after success', async () => {
   const selected = signal({ scopeId: 'scope', taskId: 1, sessionId: 2 });
-  const store = { offline: () => false, selected, selectedTask: () => ({ id: 1, name: 'Task', state: 'ready' }), projects: () => [], selectedTaskStage: () => 'active', busy: () => false, commitPanelAvailable: () => true };
+  const store = { taskSelection: selected, selectedCreation: () => null, offline: () => false, selected, selectedTask: () => ({ id: 1, name: 'Task', state: 'ready' }), projects: () => [], selectedTaskStage: () => 'active', busy: () => false, commitPanelAvailable: () => true };
   const error = signal<string | null>(null), busy = signal<string | null>(null);
   let complete!: (saved: boolean) => void;
   const git = {

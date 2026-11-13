@@ -118,6 +118,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
       }
       const responses = {
         '/api/info': { backendSha: revision },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/agent': { agentId: 'child', label: 'Reviewer', status: 'waiting', prompt: '', model: null, context: null, items: [], before: null, availability: 'starting', message: 'Waiting for the first message' },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/media': { itemId: 'image', mediaId: '0', source: 'data:image/png;base64,iVBORw0KGgo=' },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/catalog': { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null },
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
@@ -209,7 +210,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -249,6 +250,9 @@ void (async () => {
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
     ok: true, value: { backendSha: revision },
   });
+  const childAgent = await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'smoke-agent' })`);
+  assert.equal(childAgent.ok, true); assert.equal(childAgent.value.status, 'waiting');
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.sessionChatAgent('${firstScope.scope.id}', { taskId: 1, sessionId: 2, agentId: '../escape', requestId: 'smoke-agent-invalid' }).then(() => false, () => true)`), true);
   const uploadedFile = await window.webContents.executeJavaScript(`window.elevenex.sessionChatUpload('${firstScope.scope.id}', { taskId: 1, sessionId: 2, requestId: 'smoke-upload', id: '11111111-1111-4111-8111-111111111111', name: 'notes.txt', size: 3, offset: 0, data: 'YWJj' })`);
   assert.equal(uploadedFile.ok, true);
   assert.equal(uploadedFile.value.offset, 3);

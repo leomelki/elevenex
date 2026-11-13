@@ -21,23 +21,26 @@
         [tokens]="context.tokens + ' of ' + context.limit"
       />
     }
-    @if (state.activity.length) {
-      <details class="activity">
-        <summary>
-          Activity <span>{{ state.activity.length }}</span>
-        </summary>
-        <div class="activity-content">
-          @for (item of state.activity; track $index) {
-            <p>
-              <strong>{{ item.label }}</strong
-              ><span>{{ item.detail }}</span>
-            </p>
-          }
-        </div>
-      </details>
+    @if (state.work; as work) {
+      <!-- Keyed by conversation so seen issues and an open panel never carry across sessions. -->
+      @for (key of [identity()]; track key) {
+        <ex-session-activity
+          [work]="work"
+          [provider]="providerLabel()"
+          [disabledReason]="activityDisabledReason()"
+          [backgrounding]="store.busy() === 'background-agent'"
+          (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
+          (inspectRequested)="agentId.set($event)"
+          [stopDisabled]="blocked() || store.offline() || store.historical()"
+          [stopping]="store.busy() === 'stop-background'"
+          (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
+          [decisionPending]="!!state.permission || !!state.question"
+          (answerRequested)="focusDecision()"
+        />
+      }
     }
   } @else {
-    <span class="metadata">Connecting to conversation…</span>
+    <span class="metadata">{{ store.starting() ? 'New session' : 'Connecting to conversation…' }}</span>
   }
   @if (archived()) {
     <span class="metadata">Archived · Read only</span>
@@ -84,7 +87,7 @@
   </div>
   <div chatContent>
     @if (store.offline() && !store.state()) { <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" /> }
-    @if (store.loading() && !store.exchanges().length) {
+    @if (store.loading() && !store.starting() && !store.exchanges().length) {
       <ex-skeleton variant="message" [count]="3" />
     }
     @if (store.state()?.permission; as request) {
@@ -149,9 +152,13 @@
   </div>
   <div chatComposer>
     @if (showWelcome()) {
-      <section class="start">
+      <section class="start" exAutoHeight><div class="start-content">
         <h1>What should we work on?</h1>
-        @if (store.state()?.presets !== undefined) {
+        @if (store.starting()) {
+          <p role="status">{{ creation()?.status === 'creating' ? 'Creating session… You can start writing.' : creation() ? 'Your draft stays here while you finish creating the session.' : 'Getting your agent ready… You can keep writing.' }}</p>
+        } @else if (store.compactStart()) {
+          <p role="status">Your session is ready. Send when you’re ready.</p>
+        } @else if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
             @if (presetFlow.defaultPreset() && presetFlow.presets().length) {
               <ex-dropdown
@@ -195,9 +202,22 @@
         } @else {
           <p>Choose an agent below, then send your first message.</p>
         }
-      </section>
+      </div></section>
     }
 
+    @if (creation(); as starting) {
+      @if (starting.status !== 'creating') {
+      <div class="creation-feedback creation-error" role="alert">
+        <span>{{ starting.error }} Your draft is kept here.</span>
+        @if (starting.status === 'failed') {
+          <button exButton variant="ghost" size="sm" [disabled]="store.offline()" (click)="creationRetry.emit(); focusComposer()">Try again</button>
+        } @else if (starting.status === 'unknown') {
+          <button exButton variant="ghost" size="sm" [disabled]="store.offline()" (click)="creationCheck.emit()">Check sessions</button>
+        }
+        <button exButton variant="ghost" size="sm" (click)="creationDiscard.emit(); focusComposer()">Discard draft</button>
+      </div>
+      }
+    }
     @if (message() && !store.offline()) {
       <div class="feedback error" role="alert">
         <span>{{ message() }}</span
@@ -263,9 +283,9 @@
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
       [disabled]="archived() || store.historical()"
-      [sending]="!!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [sending]="!!creation() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
-      [waitingFor]="store.offline() ? machineName() : undefined"
+      [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
       [waiting]="store.waitingMessages()"
       (waitingRemoved)="store.outbox?.remove($event); focusComposer()"
       (waitingEdited)="store.outbox?.edit($event.id, $event.text); focusComposer()"
@@ -310,7 +330,7 @@
       (attachmentRetry)="attachments.retry($event); focusComposer()"
       [showDictation]="false"
       [mentionsEnabled]="!!store.state()?.sessionMentions || !!store.state()?.browserElements"
-      [sessionMentionScope]="selection().scopeId"
+      [sessionMentionScope]="selection()?.scopeId"
       [mentionItems]="mentionItems()"
       [context]="store.mentions()"
       (mentionInserted)="store.addMention($event)"
@@ -338,12 +358,12 @@
     </ex-composer>
   </div>
 </ex-chat>
-@if (contentId(); as id) {
+@if (contentId() && selection(); as selected) {
   <ex-session-chat-content
     [unreachable]="store.offline() ? machineName() : undefined"
     (reconnectRequested)="reconnectRequested.emit()"
-    [selection]="selection()"
-    [itemId]="id"
+    [selection]="selected"
+    [itemId]="contentId()!"
     [source]="contentSource()"
     (closed)="contentId.set(null)"
     [part]="contentPart()"
@@ -392,3 +412,13 @@
     </div>
   }
 </ex-presence>
+
+@if (selection(); as selected) {
+  @if (agentId(); as id) {
+    @for (key of [identity() + ':' + id]; track key) {
+      <ex-session-agent [selection]="selected" [agentId]="id" [work]="agentWork()" [unreachable]="store.offline()"
+        [copiedCode]="copiedCode()" (copyRequested)="copy($event, true)" (linkRequested)="openLink($event)"
+        (closed)="agentId.set(null)" />
+    }
+  }
+}

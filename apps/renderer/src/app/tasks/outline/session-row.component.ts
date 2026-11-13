@@ -37,7 +37,7 @@ export class SessionRowComponent implements OnChanges {
   protected readonly confirming = signal(false);
   protected readonly dragging = signal(false);
   protected startDrag(event: DragEvent): void {
-    if (!event.dataTransfer || this.confirming()) { event.preventDefault(); return; }
+    if (!event.dataTransfer || this.confirming() || this.session().local) { event.preventDefault(); return; }
     writeSessionDrag(event.dataTransfer, this.session());
     this.dragging.set(true);
   }
