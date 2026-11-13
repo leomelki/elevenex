@@ -1,12 +1,18 @@
 import { installRuntimeBrowser } from './runtime-install.js';
-import { chromium, type BrowserContext, type BrowserContextOptions, type Page } from 'playwright-core';
+import {
+  type BrowserContext,
+  type BrowserContextOptions,
+  type Page,
+} from 'playwright-core';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { installDownloadPolicy } from './runtime-download-policy.js';
-import { join, sep } from 'node:path';
-import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { join } from 'node:path';
+import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { prepareWebAuthnExtension } from './runtime-webauthn-extension.js';
+import { launchRuntimeBrowser, browserLaunchOptions } from './runtime-launch.js';
+import { browserStartError } from './runtime-start-error.js';
 
 export function privateBrowserLoggingEnabled(
   environment: NodeJS.ProcessEnv,
@@ -39,6 +45,7 @@ const unsafeLoggingAtLoad = privateBrowserLoggingEnabled(process.env);
 /** At most four sandboxed Chromium profiles, each owned by one task over a private pipe. */
 @Injectable()
 export class RuntimeBrowserPool implements OnModuleDestroy {
+  private readonly logger = new Logger(RuntimeBrowserPool.name);
   private readonly windowAnchors = new WeakSet<Page>();
   isWindowAnchor(page: Page): boolean { return this.windowAnchors.has(page) && !page.isClosed(); }
   private readonly applicationPorts = new Set<number>();
@@ -72,7 +79,17 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     if (this.disposed) throw new Error('Browser runtime stopped');
     if (this.contexts.has(identity) || this.pending.has(identity)) throw new Error('Browser profile is already open');
     if (this.contexts.size + this.pending.size >= 4) throw new Error('Browser profile limit reached');
-    const opening = this.launch(identity, contextOptions).finally(() => this.pending.delete(identity));
+    const opening = this.launch(identity, contextOptions)
+      .catch((error) => {
+        if (this.disposed) throw new Error('Browser runtime stopped');
+        const failure = browserStartError(error);
+        this.logger.warn(
+          `Browser startup failed: ${failure.reason}. ${failure.message}`,
+        );
+        if (failure.setupCommand) this.logger.warn(`Browser host recovery: ${failure.setupCommand}`);
+        throw failure;
+      })
+      .finally(() => this.pending.delete(identity));
     this.pending.set(identity, opening);
     return opening;
   }
@@ -80,86 +97,76 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
     // Install into application data, never a repository or a user browser profile.
     await mkdir(this.cache, { recursive: true, mode: 0o700 });
     if (this.disposed) throw new Error('Browser runtime stopped');
-    const parts = chromium.executablePath().split(sep),
-      index = parts.findIndex((part) => /^chromium-[0-9]+$/.test(part));
-    if (index < 0)
-      throw new Error('Browser distribution is not supported on this host');
-    const executablePath = join(this.cache, ...parts.slice(index));
-    const profile = join(getElevenexDataRoot(), 'task-browser-profiles', identity);
+    const profile = join(
+      getElevenexDataRoot(),
+      'task-browser-profiles',
+      identity,
+    );
     await mkdir(profile, { recursive: true, mode: 0o700 });
-    const extension = await (this.extension ??= prepareWebAuthnExtension(this.cache));
+    const extension = await (this.extension ??= prepareWebAuthnExtension(
+      this.cache,
+    ).catch((error) => {
+      this.extension = undefined;
+      throw error;
+    }));
     const downloadsPath = await mkdtemp(join(tmpdir(), 'elevenex-downloads-'));
     const options = {
       downloadsPath,
       ...contextOptions,
-      executablePath,
-      headless: true,
-      chromiumSandbox: true,
-      // The Nest application owns shutdown; Playwright must not replace its process signals.
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-      timeout: 30000,
-      ignoreDefaultArgs: ['--disable-extensions'],
-      args: [
-        '--disable-extensions-except=' + extension,
-        '--load-extension=' + extension,
-        '--proxy-bypass-list=<-loopback>',
-        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-      ],
+      ...browserLaunchOptions(extension),
     };
     let context: BrowserContext;
     try {
-      context = await chromium.launchPersistentContext(profile, options);
-    } catch {
-      try {
-        context = await chromium.launchPersistentContext(profile, {
-          ...options,
-          executablePath: undefined,
-          channel: 'chrome',
-        });
-      } catch {
-        try { await this.install(); }
-        catch (error) { await rm(downloadsPath, { recursive: true, force: true }); throw error; }
-        if (this.disposed) { await rm(downloadsPath, { recursive: true, force: true }); throw new Error('Browser runtime stopped'); }
-        try {
-          context = await chromium.launchPersistentContext(profile, options);
-        } catch {
-          await rm(downloadsPath, { recursive: true, force: true });
-          throw new Error(
-            'This host cannot start sandboxed Chromium. Its browser system libraries or OS sandbox need setup. No sandbox bypass is used.',
-          );
-        }
-      }
-    }
-    if (contextOptions.acceptDownloads) {
-      try { await installDownloadPolicy(context, downloadsPath); }
-      catch (error) { await context.close(); await rm(downloadsPath, { recursive: true, force: true }); throw error; }
+      context = await launchRuntimeBrowser(
+        this.cache,
+        profile,
+        options,
+        () => this.install(),
+        this.lifetime.signal,
+      );
+    } catch (error) {
+      await rm(downloadsPath, { recursive: true, force: true });
+      throw error;
     }
     context.once('close', () => {
-      const operation = rm(downloadsPath, { recursive: true, force: true }).catch(() => undefined);
+      const operation = rm(downloadsPath, {
+        recursive: true,
+        force: true,
+      }).catch(() => undefined);
       this.cleanup.add(operation);
       void operation.finally(() => this.cleanup.delete(operation));
     });
-    if (this.disposed) {
-      await context.close();
-      throw new Error('Browser runtime stopped');
+    try {
+      if (this.disposed) throw new Error('Browser runtime stopped');
+      if (contextOptions.acceptDownloads)
+        await installDownloadPolicy(context, downloadsPath);
+      const initialPages = context.pages();
+      // macOS headless Chrome loses native pointer-lock eligibility if its last
+      // window is closed. Keep one inert tab in the task-owned context so later
+      // page creation/closure never tears down that native window. DOM focus
+      // emulation cannot replace this platform precondition.
+      const anchor =
+        process.platform === 'darwin'
+          ? (initialPages.find((page) => page.url() === 'about:blank') ??
+            (await context.newPage()))
+          : undefined;
+      if (anchor) this.windowAnchors.add(anchor);
+      await Promise.all(
+        initialPages
+          .filter((page) => page !== anchor)
+          .map((page) => page.close()),
+      );
+      this.contexts.set(identity, context);
+      context.once('close', () => {
+        if (this.contexts.get(identity) === context)
+          this.contexts.delete(identity);
+      });
+      return context;
+    } catch (error) {
+      await context.close().catch(() => undefined);
+      await rm(downloadsPath, { recursive: true, force: true });
+      throw error;
     }
-    const initialPages = context.pages();
-    // macOS headless Chrome loses native pointer-lock eligibility if its last
-    // window is closed. Keep one inert tab in the task-owned context so later
-    // page creation/closure never tears down that native window. DOM focus
-    // emulation cannot replace this platform precondition.
-    const anchor = process.platform === 'darwin'
-      ? initialPages.find(page => page.url() === 'about:blank') ?? await context.newPage()
-      : undefined;
-    if (anchor) this.windowAnchors.add(anchor);
-    await Promise.all(initialPages.filter(page => page !== anchor).map(page => page.close()));
-    this.contexts.set(identity, context);
-    context.once('close', () => {
-      if (this.contexts.get(identity) === context) this.contexts.delete(identity);
-    });
-    return context;
   }
   private install(): Promise<void> {
     return this.installation ??= installRuntimeBrowser(this.cache, this.lifetime.signal)

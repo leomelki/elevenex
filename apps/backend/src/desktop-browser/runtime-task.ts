@@ -1,5 +1,6 @@
 import { RuntimeWorkflowBudget } from './runtime-workflows.js';
 import type { BrowserContext, Page } from 'playwright-core';
+import { RuntimeBrowserStartError } from './runtime-start-error.js';
 import { BrowserAgentEngine, BrowserInteractionController, RelatedBrowserTabs } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
 import { RuntimeBrowserNetwork } from './runtime-network.js';
@@ -484,10 +485,13 @@ export class RuntimeBrowserTask {
     this.displayStarting.set(page.id, entry);
     void this.ensure(page).then(async () => {
       if (this.alive && this.tabs.get(page.id) === page) await entry.present();
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (!this.alive || this.tabs.get(page.id) !== page) return;
       page.loading = false;
-      page.error = 'The browser could not start. Check the host setup, then Reload to retry.';
+      page.error =
+        error instanceof RuntimeBrowserStartError
+          ? error.message
+          : 'The browser could not start. Check the host setup, then Reload to retry.';
       this.revision++;
     }).finally(() => this.displayStarting.delete(page.id));
   }

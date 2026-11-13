@@ -171,6 +171,96 @@ Putting WebRTC inside the same TCP SSH tunnel preserves its blocking behavior.
 WebTransport also requires a new QUIC/UDP listener and does not solve the current
 SSH deployment constraint. Neither transport is advertised as implemented.
 
+## Browser host provisioning and startup failures
+
+The backend ships an independent `browser-setup.cjs` beside `main.cjs`; it does
+not start Nest, agents, the database or a listener. Source checkouts use the same
+implementation through `pnpm browser:setup` after `pnpm backend:build`.
+
+Run it on the **browser backend machine**, as the backend's normal user, with
+that backend's data directory. Setup downloads the locked Playwright Chromium
+when absent, then verifies a disposable sandboxed browser can render and capture
+a page using the same security/extension launch options as task browsers. Linux
+also needs fontconfig and a usable system font. `--check` performs verification
+without installing a browser or system packages. Both modes leave task profiles
+and live browsers alone.
+
+```sh
+# Source checkout (set ELEVENEX_DATA_ROOT when the backend uses an isolated root).
+pnpm backend:build
+pnpm browser:setup
+pnpm browser:setup --check
+
+# Installed remote runtime; substitute its active runtime and data paths.
+/absolute/runtime/backend/node/bin/node /absolute/runtime/backend/browser-setup.cjs \
+  --data-root /absolute/backend/data
+```
+
+The backend prints a correctly quoted recovery command containing its actual Node
+executable, shipped helper and data directory. On Windows it uses PowerShell
+syntax; Electron-as-Node is retained when applicable. Browser errors remain within
+the existing 400-character desktop contract. If a complete command will not fit,
+the message directs the user to the backend log, which retains the entire command.
+Commands are never truncated or interpolated into subprocess shells.
+
+### Explicit Linux system provisioning
+
+When libraries, fonts or AppArmor permission are missing, setup prints a separate
+administrator command. Run that command deliberately, then repeat `--check` as
+the backend user. Its `--system` mode requires an explicit `--data-root` because
+sudo can reset the environment. It never downloads or executes Chromium as root,
+changes task data ownership, or claims that a root-run browser is ready.
+
+On apt-based distributions it selects available original/t64 package names and
+installs only missing packages from a small Chromium library/font set. GTK, Xvfb
+and a display server are not required. Other distributions receive package-manager
+guidance instead of an attempted apt installation. Packages remain host-managed
+and receive normal distribution security updates; no private copies of shared
+libraries or replacement libc are installed.
+
+If Ubuntu's AppArmor user-namespace restriction is enabled, system setup installs
+an attachment for the **exact canonical managed Chromium executable**, with a
+stable path-derived profile name. It grants `userns` while retaining Chromium's
+own sandbox. There is no home-directory-wide wildcard or global sysctl change.
+Unsafe policy metacharacters in paths are rejected; ordinary spaces and Unicode
+paths are supported. Policy files are compiled before atomic publication, loaded
+explicitly, and rolled back on load failure. Symlinks and administrator-owned
+files are refused. Local administrator additions belong in
+`/etc/apparmor.d/local/<profile-name>`. A new Chromium executable path requires
+setup again; policies for other versions/installations are left alone.
+
+### Diagnosis and compatibility
+
+Browser downloads do not include Linux shared libraries. After a launch failure,
+the actual executable's bounded `--version` probe determines whether its loader
+is missing libraries; only then is bounded `ldd` output consulted. A working
+loader is not rejected because `ldd` alone disagrees (for example with nix-ld).
+Only validated, bounded library names and fixed diagnostics reach viewers; raw
+Chromium argv, proxy information, page output and task profile paths do not.
+
+Root, AppArmor and other OS/container sandbox restrictions are distinct errors.
+The sandbox is never disabled automatically or through a setup flag. Seccomp,
+user-namespace and container restrictions beyond the scoped AppArmor permission
+remain administrator decisions. `--system` completion means provisioning finished;
+only a successful normal-user rendering check establishes browser readiness.
+
+Startup prefers the app-owned distribution, then an existing Playwright cache
+(respecting `PLAYWRIGHT_BROWSERS_PATH`), then the existing system Chrome fallback.
+It downloads only when neither Chromium distribution exists. Reload retries
+explicitly after a host repair. Full Chromium remains necessary for Elevenex's
+extension-backed WebAuthn; the existing system Chrome fallback retains platform
+and enterprise-policy limitations. Do not substitute a headless-shell binary
+without verifying those features. Basic fonts do not guarantee coverage for every
+language; install additional distribution fonts as needed.
+
+Use [Playwright's supported platforms](https://playwright.dev/docs/intro#system-requirements)
+and [container guidance](https://playwright.dev/docs/docker#recommended-docker-configuration).
+Older releases and other distributions are best effort. A newer libc requirement
+calls for a supported OS/image, not replacing host libc or pinning an obsolete
+browser. The provisioning/diagnosis separation follows
+[T3 Code's host setup](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/cli/browser.ts),
+with exact-path policy attachments and actual sandboxed rendering verification.
+
 ## Owners and lifetimes
 
 Human recovery is an additive `canRecover: true` capability. Its `recover` command

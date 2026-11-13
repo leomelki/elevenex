@@ -317,6 +317,7 @@ async function main() {
     path.join(backendBundleRoot, "main.cjs"),
     path.join(stageBackendRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(stageBackendRoot, "browser-setup.cjs"));
   copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(stageBackendRoot, "terminal-screen-worker.cjs"));
   copyRequiredPath(
     path.join(backendBundleRoot, "pi-agent-extension.mjs"),

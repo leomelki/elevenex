@@ -22,7 +22,7 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = [
     'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/backend/package.json', 'apps/desktop/package.json',
-    'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/drizzle/migration.sql',
+    'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/bundle/browser-setup.cjs', 'apps/backend/drizzle/migration.sql',
     'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json',
     'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/stage-electron-backend.js',
     'scripts/rebuild-electron-backend-natives.js', 'scripts/archive-electron-backend.js',
@@ -61,6 +61,7 @@ for (const architecture of ['arm64', 'x64']) {
       assert.ok(args.includes(`LINUX_BUILD_IMAGE=quay.io/pypa/manylinux_2_28_${architecture === 'x64' ? 'x86_64' : 'aarch64'}`));
       assert.ok(args.includes(`DEVELOPMENT_VERSION=${version}`));
       assert.equal(await readFile(join(cwd, 'runtime/apps/backend/bundle/main.cjs'), 'utf8'), 'apps/backend/bundle/main.cjs');
+      assert.equal(await readFile(join(cwd, 'runtime/apps/backend/bundle/browser-setup.cjs'), 'utf8'), 'apps/backend/bundle/browser-setup.cjs');
       const lockfile = await readFile(join(cwd, 'manifests/pnpm-lock.yaml'), 'utf8');
       assert.ok(lockfile.includes("      'better-sqlite3':\n        specifier: 1.0.0\n        version: 1.2.3\n"));
       assert.ok(!lockfile.includes('unused-agent-cli'));

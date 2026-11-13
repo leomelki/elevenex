@@ -783,6 +783,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
     path.join(backendBundleRoot, "main.cjs"),
     path.join(targetRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(targetRoot, "browser-setup.cjs"));
   copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(targetRoot, "terminal-screen-worker.cjs"));
   copyRequiredPath(
     path.join(backendBundleRoot, "shell-integration"),

@@ -5,6 +5,7 @@ import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { RuntimeBrowserService } from './runtime-browser.service.js';
 import { runtimeCommand } from './runtime-validation.js';
 import { RuntimeBrowserPool } from './runtime-browser-pool.js';
+import { RuntimeBrowserStartError } from './runtime-start-error.js';
 describe('Runtime browser retention and viewer authority', () => {
   let root: string,
     previous: string | undefined,
@@ -19,6 +20,50 @@ describe('Runtime browser retention and viewer authority', () => {
     await rm(root, { recursive: true, force: true });
     if (previous === undefined) delete process.env['ELEVENEX_DATA_ROOT'];
     else process.env['ELEVENEX_DATA_ROOT'] = previous;
+  });
+  it('publishes actionable startup diagnostics for restored viewers and retries only on Reload', async () => {
+    const pool = new RuntimeBrowserPool();
+    const failure = new RuntimeBrowserStartError('dependencies');
+    const acquire = jest.spyOn(pool, 'acquire').mockRejectedValue(failure);
+    const service = new RuntimeBrowserService(pool, store);
+    let unsubscribe: () => void = () => undefined;
+    try {
+      const view = await service.connect(1, 'viewer', 'a'.repeat(64));
+      const task = service.viewer(1, view.token);
+      task.restore({
+        active: 0,
+        tabs: [
+          {
+            url: 'https://example.com/',
+            width: 'full',
+            by: 'you',
+            agentSessionId: null,
+          },
+        ],
+      });
+      const tabId = task.state().active!;
+      const failed = new Promise<void>((resolve) => {
+        unsubscribe = task.subscribe(() => {
+          if (task.state().tabs[0]?.error) resolve();
+        });
+      });
+      await task.layout(800, 600, true, true);
+      await failed;
+      expect(task.state().tabs[0]).toMatchObject({
+        error: failure.message,
+        loading: false,
+      });
+      await task.layout(800, 600, true, true);
+      expect(acquire).toHaveBeenCalledTimes(1);
+      await expect(task.command({ kind: 'reload', tabId })).rejects.toBe(
+        failure,
+      );
+      expect(acquire).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      await service.onModuleDestroy();
+      await pool.onModuleDestroy();
+    }
   });
   it('opens and selects bounded start tabs without starting Chromium', async () => {
     expect(runtimeCommand.parse({ kind: 'new-tab' })).toEqual({
