@@ -119,6 +119,14 @@ bundled Node and native modules. Alpine/musl and Windows SSH servers need a
 different runtime/bootstrap and are rejected. Home paths longer than the Unix
 socket limit require a shorter remote home. No administrator access is required.
 
+Repository operations use the remote machine's Git and its existing authentication
+and configuration. Current, maintained Git is the primary performance and
+correctness target; Git 2.25 has inexpensive, tested fallbacks for basic discovery
+and task setup. Modern installations retain newer command forms and native
+reftable handling. Discovery resolves physical paths without requiring
+`rev-parse --path-format`; version probes are cached and stay out of status reads.
+See [the Git support and tuning policy](../backend/src/config/README.md#git-versions-and-performance).
+
 Use a modern OpenSSH client (9+). macOS is the validated client host. Linux uses
 the same POSIX launcher. Windows client support uses installed OpenSSH and a
 small credential-free .NET askpass executable compiled with built-in Windows

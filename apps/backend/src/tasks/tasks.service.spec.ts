@@ -39,6 +39,9 @@ import { TaskSetup } from './task.types.js';
 import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 
+// Terminals are injected stubs in this suite; loading a native PTY is unnecessary.
+jest.mock('node-pty', () => ({ spawn: jest.fn() }));
+
 jest.setTimeout(60000);
 
 describe('conciseFailureMessage', () => {
@@ -102,7 +105,8 @@ describe('Task lifecycle with real Git and migrations', () => {
     repoPath = join(root, 'repo');
     await mkdir(repoPath);
     const git = worktreeSimpleGit(repoPath);
-    await git.raw(['init', '--initial-branch=main']);
+    await git.raw(['init']);
+    await git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     await git.addConfig('user.name', 'Task tests');
     await git.addConfig('user.email', 'tasks@example.test');
     await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
@@ -538,7 +542,8 @@ describe('Task lifecycle with real Git and migrations', () => {
     await rm(task.path, { recursive: true, force: true });
     await mkdir(task.path);
     const replacement = worktreeSimpleGit(task.path);
-    await replacement.raw(['init', '--initial-branch=unrelated']);
+    await replacement.raw(['init']);
+    await replacement.raw(['symbolic-ref', 'HEAD', 'refs/heads/unrelated']);
     await replacement.addConfig('user.name', 'Task tests');
     await replacement.addConfig('user.email', 'tasks@example.test');
     await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);
@@ -1296,7 +1301,8 @@ describe('Task lifecycle with real Git and migrations', () => {
         targetPath = task.path;
         expectedBranch = 'unrelated';
         const replacement = worktreeSimpleGit(targetPath);
-        await replacement.raw(['init', '--initial-branch=unrelated']);
+        await replacement.raw(['init']);
+        await replacement.raw(['symbolic-ref', 'HEAD', 'refs/heads/unrelated']);
         await replacement.addConfig('user.name', 'Task tests');
         await replacement.addConfig('user.email', 'tasks@example.test');
         await replacement.raw(['commit', '--allow-empty', '-m', 'Replacement']);

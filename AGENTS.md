@@ -44,6 +44,14 @@ The project must support repositories with thousands of files and folders, hundr
 - Preserve backward compatibility for the active legacy app, desktop releases, remote runtimes, and supported API/MCP consumers. Prefer additive contracts, bounded endpoints, optional capabilities and staged migrations; keep existing callers' defaults, response shapes and semantics working.
 - If a breaking change would be useful, ask the developer whether it is allowed before implementing it, unless that specific break is already authorized. Explain the benefit, affected consumers, migration plan and compatible alternative. Continue independent compatible work while awaiting the decision.
 
+### Git versions and performance
+
+- Prioritize correctness and performance on current, maintained Git releases. Older Git compatibility must not force modern installations onto slower algorithms, disable supported repository features, or require conversion to older storage formats.
+- Keep inexpensive, explicitly selected legacy fallbacks. Git 2.25 is a best-effort compatibility target for basic discovery and task operations, not a requirement that every new feature work on that version. Prefer clear upgrade guidance when a capability has no safe, reasonably small fallback.
+- Read [the backend Git policy](apps/backend/src/config/README.md#git-versions-and-performance) before adding Git probes, tuning, caching, or version-specific commands. Cache/coalesce capability checks for the effective toolchain; never add version probes to polling or every subprocess.
+- Preserve repository configuration and modern Git optimizations. Do not automatically rewrite Git settings, migrate refs/index formats, start maintenance/monitor daemons, or force checkout parallelism. Benchmark proposed defaults on disposable repositories and account for shared worktrees and concurrent agents.
+- Validate relevant behavior with real modern Git and the legacy fallback where available. Modern-only tests must actually execute modern commands/storage, rather than passing through mocks or silently switching to the host's older Git.
+
 ## New desktop foundation
 
 ### Ownership and dependency direction

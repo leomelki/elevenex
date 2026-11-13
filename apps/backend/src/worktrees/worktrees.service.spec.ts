@@ -3,13 +3,15 @@ import { BadRequestException } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync } from 'node:child_process';
 import { WorktreesService } from './worktrees.service.js';
+import { execFileAsync } from '../terminal/async-process.js';
 
 describe('WorktreesService', () => {
   let service: WorktreesService;
   let tmpDir: string;
   let mainRepoPath: string;
+  const git = async (...args: string[]) =>
+    (await execFileAsync('git', args, { cwd: mainRepoPath })).stdout;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -26,18 +28,19 @@ describe('WorktreesService', () => {
     fs.mkdirSync(mainRepoPath);
     // Pin the initial branch: the suite asserts on "main", which is only the
     // default where init.defaultBranch is configured.
-    execSync('git init -b main', { cwd: mainRepoPath });
-    execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
-    execSync('git config user.name "Test User"', { cwd: mainRepoPath });
+    await git('init');
+    await git('symbolic-ref', 'HEAD', 'refs/heads/main');
+    await git('config', 'user.email', 'test@test.com');
+    await git('config', 'user.name', 'Test User');
 
     // Create initial commit
     fs.writeFileSync(path.join(mainRepoPath, 'file.txt'), 'initial');
-    execSync('git add .', { cwd: mainRepoPath });
-    execSync('git commit -m "initial commit"', { cwd: mainRepoPath });
+    await git('add', '.');
+    await git('commit', '-m', 'initial commit');
 
     // Create a feature branch
-    execSync('git checkout -b feature-branch', { cwd: mainRepoPath });
-    execSync('git checkout main', { cwd: mainRepoPath });
+    await git('checkout', '-b', 'feature-branch');
+    await git('checkout', 'main');
   });
 
   afterEach(() => {
@@ -45,11 +48,38 @@ describe('WorktreesService', () => {
   });
 
   describe('listWorktrees', () => {
+    (process.env.ELEVENEX_TEST_MODERN_GIT === '1' ? it : it.skip)(
+      'preserves newline paths and multiline lock reasons with modern Git',
+      async () => {
+        const worktreePath = path.join(tmpDir, 'worktree\nwith newline');
+        await git('worktree', 'add', worktreePath, 'feature-branch');
+        await git(
+          'worktree',
+          'lock',
+          '--reason',
+          'first line\nsecond line',
+          worktreePath,
+        );
+        expect(
+          (await service.listWorktrees(mainRepoPath)).find(
+            (entry) => entry.path === worktreePath,
+          ),
+        ).toMatchObject({
+          branch: 'feature-branch',
+          isLocked: true,
+          lockReason: 'first line\nsecond line',
+        });
+      },
+    );
     it('omits a manually deleted worktree even while Git retains its registration', async () => {
       const worktreePath = path.join(tmpDir, 'deleted-wt');
-      await service.createWorktree(mainRepoPath, 'feature-branch', worktreePath);
+      await service.createWorktree(
+        mainRepoPath,
+        'feature-branch',
+        worktreePath,
+      );
       await fs.promises.rm(worktreePath, { recursive: true, force: true });
-      const registered = execSync('git worktree list --porcelain', { cwd: mainRepoPath, encoding: 'utf8' });
+      const registered = await git('worktree', 'list', '--porcelain');
       expect(registered).toContain('deleted-wt');
 
       const worktrees = await service.listWorktrees(mainRepoPath);
@@ -72,9 +102,7 @@ describe('WorktreesService', () => {
 
     it('should list additional worktrees', async () => {
       const worktreePath = path.join(tmpDir, 'feature-wt');
-      execSync(`git worktree add "${worktreePath}" feature-branch`, {
-        cwd: mainRepoPath,
-      });
+      await git('worktree', 'add', worktreePath, 'feature-branch');
 
       const worktrees = await service.listWorktrees(mainRepoPath);
 
@@ -137,17 +165,15 @@ describe('WorktreesService', () => {
 
       expect(result.branch).toBe('brand-new');
       // The new branch should now exist as a local ref.
-      const branches = execSync('git branch --list brand-new', {
-        cwd: mainRepoPath,
-      }).toString();
+      const branches = await git('branch', '--list', 'brand-new');
       expect(branches).toContain('brand-new');
     });
 
     it('should create a new branch from an explicit start point', async () => {
       // Add a second commit on main so HEAD and the start point differ.
       fs.writeFileSync(path.join(mainRepoPath, 'file.txt'), 'second');
-      execSync('git add .', { cwd: mainRepoPath });
-      execSync('git commit -m "second commit"', { cwd: mainRepoPath });
+      await git('add', '.');
+      await git('commit', '-m', 'second commit');
 
       const result = await service.createWorktree(
         mainRepoPath,
@@ -158,16 +184,8 @@ describe('WorktreesService', () => {
 
       expect(result.branch).toBe('from-feature');
       // The new branch should point at feature-branch's tip, not main's.
-      const featureSha = execSync('git rev-parse feature-branch', {
-        cwd: mainRepoPath,
-      })
-        .toString()
-        .trim();
-      const newSha = execSync('git rev-parse from-feature', {
-        cwd: mainRepoPath,
-      })
-        .toString()
-        .trim();
+      const featureSha = (await git('rev-parse', 'feature-branch')).trim();
+      const newSha = (await git('rev-parse', 'from-feature')).trim();
       expect(newSha).toBe(featureSha);
     });
 
@@ -185,9 +203,7 @@ describe('WorktreesService', () => {
   describe('removeWorktree', () => {
     it('should remove worktree successfully', async () => {
       const worktreePath = path.join(tmpDir, 'feature-wt');
-      execSync(`git worktree add "${worktreePath}" feature-branch`, {
-        cwd: mainRepoPath,
-      });
+      await git('worktree', 'add', worktreePath, 'feature-branch');
 
       // Get realpath before removal (since the path won't exist after)
       const realWorktreePath = fs.realpathSync(worktreePath);
@@ -222,9 +238,7 @@ describe('WorktreesService', () => {
   describe('moveWorktree', () => {
     it('should move worktree to a new path', async () => {
       const worktreePath = path.join(tmpDir, 'feature-wt');
-      execSync(`git worktree add "${worktreePath}" feature-branch`, {
-        cwd: mainRepoPath,
-      });
+      await git('worktree', 'add', worktreePath, 'feature-branch');
       const newPath = path.join(tmpDir, 'renamed-wt');
 
       await service.moveWorktree(mainRepoPath, worktreePath, newPath);
@@ -245,9 +259,7 @@ describe('WorktreesService', () => {
 
     it('should create missing parent directories of the destination', async () => {
       const worktreePath = path.join(tmpDir, 'feature-wt');
-      execSync(`git worktree add "${worktreePath}" feature-branch`, {
-        cwd: mainRepoPath,
-      });
+      await git('worktree', 'add', worktreePath, 'feature-branch');
       // `git worktree move` alone fails with ENOENT here: unlike
       // `worktree add`, it does not create leading directories.
       const newPath = path.join(tmpDir, '.worktrees', 'main-repo', 'renamed');
