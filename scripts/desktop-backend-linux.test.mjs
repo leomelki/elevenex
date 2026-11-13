@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture } from './desktop-backend-linux.mjs';
+import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture, linuxRuntimeNodeVersion } from './desktop-backend-linux.mjs';
 
 const version = 'a'.repeat(40);
 
@@ -24,7 +24,7 @@ async function fixture(t) {
     'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/backend/package.json', 'apps/desktop/package.json',
     'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/drizzle/migration.sql',
     'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json',
-    'scripts/desktop-backend-runtime.mjs', 'scripts/stage-electron-backend.js',
+    'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/stage-electron-backend.js',
     'scripts/rebuild-electron-backend-natives.js', 'scripts/archive-electron-backend.js',
     'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile',
     // Neither installed dependencies, unrelated sources nor secrets belong in the context.
@@ -57,6 +57,8 @@ for (const architecture of ['arm64', 'x64']) {
       assert.equal(command, 'docker');
       assert.equal(args[args.indexOf('--platform') + 1], `linux/${architecture === 'x64' ? 'amd64' : 'arm64'}`);
       assert.ok(args.includes('PNPM_VERSION=8.15.4'));
+      assert.ok(args.includes(`NODE_VERSION=${linuxRuntimeNodeVersion}`));
+      assert.ok(args.includes(`LINUX_BUILD_IMAGE=quay.io/pypa/manylinux_2_28_${architecture === 'x64' ? 'x86_64' : 'aarch64'}`));
       assert.ok(args.includes(`DEVELOPMENT_VERSION=${version}`));
       assert.equal(await readFile(join(cwd, 'runtime/apps/backend/bundle/main.cjs'), 'utf8'), 'apps/backend/bundle/main.cjs');
       const lockfile = await readFile(join(cwd, 'manifests/pnpm-lock.yaml'), 'utf8');

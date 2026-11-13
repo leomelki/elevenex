@@ -192,6 +192,8 @@ try {
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-backend-linux.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-backend-smoke.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-backend-compatibility.test.mjs']);
       await run(null, ['--test', 'test/backend-archive.test.cjs'], desktop);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);

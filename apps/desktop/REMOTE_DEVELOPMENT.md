@@ -159,6 +159,24 @@ backend setting use it. Main validates the source revision, target, archive hash
 and safe extraction before transferring it; packaged launches ignore the setting.
 Custom builds skip server/client release downloads entirely.
 
+POSIX runtime assembly also boots the final pruned backend with bundled Node,
+an isolated temporary home/database and the private remote socket. It must serve
+`/api/info` at the exact build revision within 30 seconds before an archive is
+published. Linux cross-builds run this check inside the target container. The
+probe cleans up its process group and temporary data on success, failure or
+cancellation; it does not exercise the destination server's configuration.
+
+Linux standalone archives, including release builds, use the same portable
+container builder automatically. It bundles Node 24.22.3 independently of the
+client's Node major and compiles SQLite/PTY in manylinux 2.28 (AlmaLinux 8).
+The final ELF files must not require newer symbols than GLIBC 2.28,
+GLIBCXX 3.4.25 or CXXABI 1.3.11. This prevents newer build hosts from silently
+raising the server baseline (Bookworm-built PTYs can require GLIBC 2.34).
+Changing the builder changes the development fingerprint, so the normal explicit
+connect/retry installs the corrected archive without deleting remote data.
+The SSH host needs neither a compiler nor a separately installed Node. Optional
+browser downloads have their own OS requirements; Alpine/musl is not covered.
+
 The current build supports the launcher's OS and architecture. A different
 remote target gets an explicit compatibility error. There is no implicit cross
 compilation or copying of macOS native binaries to Linux. Local development still

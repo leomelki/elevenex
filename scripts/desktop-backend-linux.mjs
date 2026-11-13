@@ -1,6 +1,10 @@
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+// Keep SSH runtime compatibility independent of the developer's Node major.
+// Node 24's official Linux binaries target glibc 2.28 on x64 and arm64.
+export const linuxRuntimeNodeVersion = '24.22.3';
+
 /** --linux selects the SSH backend target, never the local Electron platform. */
 export function developmentLinuxArchitecture(args) {
   if (args.length === 0) return undefined;
@@ -55,7 +59,8 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
     if (!/^pnpm@\d+\.\d+\.\d+$/.test(packageManager)) throw new Error('Expected an exact pnpm version in packageManager');
     for (const file of [
       'apps/backend/bundle', 'apps/backend/drizzle', 'apps/backend/bin', 'apps/frontend/proxy.conf.json',
-      'scripts/desktop-backend-runtime.mjs',
+      'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs',
+      'scripts/desktop-backend-linux.mjs',
       'scripts/stage-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
       // Runtime assembly uses this utility for both core and browser backends.
       // Playwright does not imply that legacy VS Code assets exist in the checkout.
@@ -67,10 +72,12 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
     console.log(`Building the SSH Linux ${architecture} runtime with Docker (dependencies are cached)…`);
     try {
       await runCommand('docker', ['buildx', 'build', '--progress', 'plain', '--platform', `linux/${architecture === 'x64' ? 'amd64' : architecture}`,
-        '--build-arg', `NODE_VERSION=${process.versions.node}`, '--build-arg', `PNPM_VERSION=${packageManager.slice(5)}`,
+        '--build-arg', `NODE_VERSION=${linuxRuntimeNodeVersion}`,
+        '--build-arg', `LINUX_BUILD_IMAGE=quay.io/pypa/manylinux_2_28_${architecture === 'x64' ? 'x86_64' : 'aarch64'}`,
+        '--build-arg', `PNPM_VERSION=${packageManager.slice(5)}`,
         '--build-arg', `DEVELOPMENT_VERSION=${version}`, '--output', 'type=local,dest=output', '.'], context);
     } catch (error) {
-      throw new Error(`Linux development runtime build failed. Ensure Docker Desktop or OrbStack is running with Linux ${architecture} support; see Docker output above.`, { cause: error });
+      throw new Error(`Linux runtime build failed. Ensure Docker with Buildx (Docker Desktop or OrbStack on macOS) is running with Linux ${architecture} support; see Docker output above.`, { cause: error });
     }
     const archiveName = `elevenex-backend-linux-${architecture}.tar.gz`;
     const output = join(root, 'dist-runtime');

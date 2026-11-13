@@ -92,15 +92,23 @@ runtime inputs enter the isolated build context; the Mac's installed dependencie
 are left alone. The explicit Linux build must succeed before Electron opens.
 The first build requires internet access and can take several minutes. The builder
 uses the [official Node image on ECR Public](https://gallery.ecr.aws/docker/library/node)
-with the same Node version as the launcher, and the repository's pinned pnpm.
+for portable Node 24.22.3, the repository's pinned pnpm, and the
+[manylinux 2.28 build environment](https://github.com/pypa/manylinux#manylinux_2_28-almalinux-8-based)
+for native dependencies. The server runtime does not inherit the launcher's Node
+major or the build host's newer libc requirements.
 
 Add/select your Linux server through the normal SSH machine flow. It receives
 the development archive automatically; no manual server build or release upload
 is needed. `--linux --arm64` is equivalent; use `--linux --x64` for a Linux x64
 server. These flags select the SSH runtime, not the desktop app's platform.
-The server needs a compatible glibc-based Linux distribution (the build uses
-Debian Bookworm), rather than Alpine/musl. The container validates native runtime
-dependencies; a real server connection still requires testing on the target.
+The core server runtime targets glibc 2.28 and libstdc++ 6.0.25 or newer on Linux
+x64/ARM64, including Ubuntu 20.04. Alpine/musl needs a separate runtime and is
+not supported by these archives. Native SQLite and PTY modules are compiled
+inside the compatibility environment. An ELF audit rejects newer GLIBC,
+GLIBCXX or CXXABI requirements anywhere in the final runtime, and a complete
+backend startup check verifies the exact revision before publication. Optional
+browser capabilities retain their browser distribution's OS requirements.
+No compiler, Node installation or libc upgrade is required on the SSH server.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
