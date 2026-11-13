@@ -126,8 +126,12 @@ export interface CodexRuntimeState {
   asyncUserInputRequests: Map<string, ClaudeUserInputRequest>;
   lastError: string | null;
   selectedModel: string | null;
+  /** Distinguish a user pin from an automatically discovered default. */
+  modelExplicitlySelected?: boolean;
   reasoningEffort: string | null;
   fastMode: boolean;
+  /** Apply a preset only after discovery confirms its model supports Fast. */
+  pendingFastModeDefault?: boolean;
   selectedPermissionMode: CodexPermissionMode | null;
   planMode: boolean;
   availableModels: ClaudeModelOption[];

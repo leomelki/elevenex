@@ -6,20 +6,28 @@
     type="button"
     class="gap-1.5 text-muted-foreground"
     [zDisabled]="catalog.isRefreshing(provider()) || refreshing()"
-    [attr.aria-busy]="refreshing()"
+    [attr.aria-busy]="busy()"
     title="Reload available models from your installed agents"
     (click)="refresh($event)"
   >
-    <ng-icon name="lucideRefreshCw" size="12" [class.animate-spin]="refreshing()" />
-    {{ refreshing() ? 'Refreshing…' : 'Refresh models' }}
+    <ng-icon
+      name="lucideRefreshCw"
+      size="12"
+      [class.animate-spin]="busy()"
+      class="motion-reduce:animate-none"
+    />
+    {{ busy() ? 'Checking models…' : 'Refresh models' }}
   </button>
-  @if (message()) {
+  @if (status()) {
     <span
       role="status"
       class="max-w-64 text-right text-xs"
-      [class.text-destructive]="failed()"
-      [class.text-muted-foreground]="!failed()"
-      >{{ message() }}</span
-    >
+      [class.text-destructive]="!!unavailableReason() || !!catalog.error()"
+      [class.text-muted-foreground]="!unavailableReason() && !catalog.error()"
+      >{{ status() }}
+      @if (provider() === 'codex' && (unavailableReason() || catalog.error())) {
+        <span class="block mt-1 text-muted-foreground">We’ll keep checking automatically.</span>
+      }
+    </span>
   }
 </div>

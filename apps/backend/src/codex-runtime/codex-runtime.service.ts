@@ -69,6 +69,10 @@ import {
   CodexAppServerNotification,
   CodexAppServerRequest,
 } from './codex-app-server.js';
+import {
+  CodexModelCatalogRetry,
+  CODEX_MODEL_CATALOG_TTL_MS,
+} from './codex-model-catalog-retry.js';
 import { CodexAuthService } from './codex-auth.service.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import {
@@ -99,51 +103,13 @@ import type {
   CodexSessionSnapshotPayload,
 } from './codex-runtime.types.js';
 
-const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const CODEX_STOP_UNCONFIRMED_MESSAGE =
   'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.';
-const CODEX_MODEL_REFRESH_TTL_MS = 10 * 60 * 1000;
-const CODEX_MODEL_REFRESH_RETRY_MS = 30_000;
+const CODEX_MODEL_REFRESH_TTL_MS = CODEX_MODEL_CATALOG_TTL_MS;
+const CODEX_MODEL_REFRESH_RETRY_MS = 3_000;
 const CODEX_MODEL_LIST_TIMEOUT_MS = 8_000;
-const CODEX_MODEL_REFRESH_IDLE_DELAY_MS = 10_000;
 const CODEX_PREWARM_COOLDOWN_MS = 30_000;
 const CODEX_PLAN_USAGE_TTL_MS = 60_000;
-const CODEX_MODELS: ClaudeModelOption[] = [
-  {
-    id: 'gpt-5.5',
-    displayName: 'GPT-5.5',
-    description:
-      'Frontier model for complex coding, research, and real-world work.',
-    supportsEffort: true,
-    supportsFastMode: true,
-  },
-  {
-    id: 'gpt-5.4',
-    displayName: 'GPT-5.4',
-    description: 'Strong model for everyday coding.',
-    supportsEffort: true,
-    supportsFastMode: true,
-  },
-  {
-    id: 'gpt-5.4-mini',
-    displayName: 'GPT-5.4-Mini',
-    description:
-      'Small, fast, and cost-efficient model for simpler coding tasks.',
-    supportsEffort: true,
-  },
-  {
-    id: 'gpt-5.3-codex',
-    displayName: 'GPT-5.3 Codex',
-    description: 'Coding-optimized model.',
-    supportsEffort: true,
-  },
-  {
-    id: 'gpt-5.2',
-    displayName: 'GPT-5.2',
-    description: 'Optimized for professional work and long-running agents.',
-    supportsEffort: true,
-  },
-];
 interface CodexAppServerModel {
   id?: unknown;
   model?: unknown;
@@ -236,15 +202,18 @@ export class CodexRuntimeService
   private readonly resolvedDelegatedRequests = new Set<string>();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
-  private codexModels: ClaudeModelOption[] = [...CODEX_MODELS];
-  private codexDefaultModel = DEFAULT_CODEX_MODEL;
+  private codexModels: ClaudeModelOption[] = [];
+  private codexDefaultModel: string | null = null;
   private lastModelRefreshAt = 0;
   private lastModelRefreshAttemptAt = 0;
   private modelRefreshInFlight: Promise<void> | null = null;
+  private modelRefreshRevision = 0;
   private modelRefreshError: string | null = null;
   private forcedModelRefresh: Promise<void> | null = null;
-  private modelRefreshTimer: NodeJS.Timeout | null = null;
-  private modelCatalogInterval: NodeJS.Timeout | null = null;
+  private modelCatalogDestroyed = false;
+  private readonly modelCatalogRetry = new CodexModelCatalogRetry(() => {
+    void this.refreshModelCatalogIfStale();
+  });
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   private codexPlanUsage: AgentPlanUsage | null = null;
@@ -276,7 +245,7 @@ export class CodexRuntimeService
   ): Promise<AgentProviderModelCatalogPayload> {
     await (refresh
       ? this.forceRefreshModelCatalog()
-      : this.refreshModelCatalogIfStale());
+      : this.refreshModelCatalogIfStale(false, true));
     const models = [...this.codexModels];
     // Codex reports supported efforts per model; the provider-wide list is the
     // union so the picker still offers everything reachable by some model.
@@ -297,15 +266,7 @@ export class CodexRuntimeService
   }
 
   onModuleInit(): void {
-    // Warm the model catalog in the background at startup so it's ready
-    // before any session even opens, instead of waiting for the first
-    // getRuntimeState() call to schedule a refresh (and its idle delay).
-    void this.refreshModelCatalogIfStale();
-    this.modelCatalogInterval = setInterval(() => {
-      if (this.activeRuns.size > 0) return;
-      void this.refreshModelCatalogIfStale();
-    }, CODEX_MODEL_REFRESH_TTL_MS);
-    this.modelCatalogInterval.unref?.();
+    this.modelCatalogRetry.start();
     this.unsubscribePlanUsageNotifications = this.appServer.onNotification(
       (notification) => {
         this.handleSubagentNotification(notification);
@@ -374,14 +335,9 @@ export class CodexRuntimeService
     this.backgroundRefs.clear();
     this.unsubscribePlanUsageNotifications?.();
     this.unsubscribePlanUsageNotifications = null;
-    if (this.modelCatalogInterval) {
-      clearInterval(this.modelCatalogInterval);
-      this.modelCatalogInterval = null;
-    }
-    if (this.modelRefreshTimer) {
-      clearTimeout(this.modelRefreshTimer);
-      this.modelRefreshTimer = null;
-    }
+    this.modelCatalogDestroyed = true;
+    this.modelRefreshRevision++;
+    this.modelCatalogRetry.stop();
   }
 
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -488,7 +444,7 @@ export class CodexRuntimeService
     if (state.authStatus?.authMethod === 'oauth') {
       void this.refreshCodexPlanUsage();
     }
-    this.scheduleModelCatalogRefresh();
+    void this.refreshModelCatalogIfStale();
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
@@ -1401,6 +1357,8 @@ export class CodexRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
     state.selectedModel = model;
+    state.modelExplicitlySelected = Boolean(model);
+    state.pendingFastModeDefault = false;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -1495,6 +1453,7 @@ export class CodexRuntimeService
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
     state.fastMode = enabled;
+    state.pendingFastModeDefault = false;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
         ...state.sessionMetadata,
@@ -2740,7 +2699,7 @@ export class CodexRuntimeService
     const authStatus = state.authStatus;
     const metadata: CodexRuntimeSessionMetadata = {
       cwd,
-      model: state.selectedModel ?? this.codexDefaultModel,
+      model: state.selectedModel ?? this.codexDefaultModel ?? 'unknown',
       permissionMode: state.selectedPermissionMode ?? 'default',
       codexVersion: authStatus?.version ?? 'unknown',
       authMethod: authStatus?.authMethod ?? 'unknown',
@@ -2854,8 +2813,9 @@ export class CodexRuntimeService
       return existing;
     }
     const availableModels = [...this.codexModels];
+    const defaults = this.settingsService.getAgentProviderDefaults('codex');
     const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('codex'),
+      defaults,
       availableModels,
       this.codexDefaultModel,
     );
@@ -2875,10 +2835,12 @@ export class CodexRuntimeService
       asyncUserInputRequests: new Map(),
       lastError: null,
       selectedModel: startup.selectedModel,
+      modelExplicitlySelected: Boolean(defaults.model),
       reasoningEffort: startup.reasoningEffort,
+      pendingFastModeDefault:
+        availableModels.length === 0 && defaults.fastMode === true,
       fastMode:
-        this.settingsService.getAgentProviderDefaults('codex').fastMode ===
-          true &&
+        defaults.fastMode === true &&
         availableModels.find((model) => model.id === startup.selectedModel)
           ?.supportsFastMode === true,
       selectedPermissionMode: 'auto',
@@ -3223,54 +3185,56 @@ export class CodexRuntimeService
     }
   }
 
-  private scheduleModelCatalogRefresh(): void {
-    if (this.modelRefreshTimer) {
-      return;
-    }
-    this.modelRefreshTimer = setTimeout(() => {
-      this.modelRefreshTimer = null;
-      if (this.activeRuns.size > 0) {
-        this.scheduleModelCatalogRefresh();
-        return;
-      }
-      void this.refreshModelCatalogIfStale();
-    }, CODEX_MODEL_REFRESH_IDLE_DELAY_MS);
-    this.modelRefreshTimer.unref?.();
-  }
-
   private forceRefreshModelCatalog(): Promise<void> {
     if (this.forcedModelRefresh) return this.forcedModelRefresh;
-    // A background request may be querying the old shared app-server. An
-    // explicit reload must follow it with a probe of the current installation.
-    this.forcedModelRefresh = (async () => {
-      await this.modelRefreshInFlight;
-      await this.refreshModelCatalogIfStale(true);
-    })().finally(() => {
-      this.forcedModelRefresh = null;
-    });
+    // Probe the current installation immediately, even if the old server is
+    // slow. Revision checks prevent that older response undoing this reload.
+    this.forcedModelRefresh = this.refreshModelCatalogIfStale(true).finally(
+      () => {
+        this.forcedModelRefresh = null;
+      },
+    );
     return this.forcedModelRefresh;
   }
 
-  private refreshModelCatalogIfStale(force = false): Promise<void> {
+  private refreshModelCatalogIfStale(
+    force = false,
+    foreground = false,
+  ): Promise<void> {
+    if (this.modelCatalogDestroyed) return Promise.resolve();
     const now = Date.now();
-    if (!force && now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS) {
+    if (!force && this.forcedModelRefresh) return this.forcedModelRefresh;
+    if (
+      !force &&
+      !this.modelRefreshError &&
+      this.lastModelRefreshAt > 0 &&
+      now - this.lastModelRefreshAt < CODEX_MODEL_REFRESH_TTL_MS
+    ) {
       return Promise.resolve();
     }
-    if (this.modelRefreshInFlight) {
+    if (!force && this.modelRefreshInFlight) {
       return this.modelRefreshInFlight;
+    }
+    if (!force && !foreground && this.modelCatalogRetry.waiting) {
+      return Promise.resolve();
     }
     // Avoid repeatedly holding up catalog requests when Codex is unavailable,
     // while retrying much sooner than the normal successful-refresh TTL.
     if (
       !force &&
+      this.lastModelRefreshAttemptAt > 0 &&
       now - this.lastModelRefreshAttemptAt < CODEX_MODEL_REFRESH_RETRY_MS
     ) {
       return Promise.resolve();
     }
 
+    this.modelCatalogRetry.attemptStarted();
     this.lastModelRefreshAttemptAt = now;
-    this.modelRefreshInFlight = this.refreshModelCatalog(force)
+    const revision = ++this.modelRefreshRevision;
+    if (force) this.modelRefreshInFlight = null;
+    const request = this.refreshModelCatalog(force, revision)
       .then(async (refreshed) => {
+        if (revision !== this.modelRefreshRevision) return;
         if (refreshed) {
           this.lastModelRefreshAt = Date.now();
           this.modelRefreshError = null;
@@ -3281,6 +3245,7 @@ export class CodexRuntimeService
         }
       })
       .catch((error) => {
+        if (revision !== this.modelRefreshRevision) return;
         this.modelRefreshError =
           'Could not refresh Codex models. Check that its CLI is installed and signed in.';
         this.logger.debug(
@@ -3290,12 +3255,20 @@ export class CodexRuntimeService
         );
       })
       .finally(() => {
-        this.modelRefreshInFlight = null;
+        if (this.modelRefreshInFlight === request)
+          this.modelRefreshInFlight = null;
+        if (revision === this.modelRefreshRevision) {
+          this.modelCatalogRetry.settled(this.modelRefreshError === null);
+        }
       });
-    return this.modelRefreshInFlight;
+    if (!force) this.modelRefreshInFlight = request;
+    return request;
   }
 
-  private async refreshModelCatalog(force = false): Promise<boolean> {
+  private async refreshModelCatalog(
+    force = false,
+    revision = this.modelRefreshRevision,
+  ): Promise<boolean> {
     // A separate probe sees the newly installed CLI even while the shared
     // app-server is busy streaming turns from the previous version.
     const probe = force ? new CodexAppServerClient() : this.appServer;
@@ -3305,7 +3278,7 @@ export class CodexRuntimeService
     } finally {
       if (force) probe.onModuleDestroy();
     }
-    if (!models.length) {
+    if (revision !== this.modelRefreshRevision || !models.length) {
       return false;
     }
     const previousDefault = this.codexDefaultModel;
@@ -3324,7 +3297,7 @@ export class CodexRuntimeService
       state.availableModels = [...this.codexModels];
       if (
         !configuredModel &&
-        (!force || !state.selectedModel) &&
+        !state.modelExplicitlySelected &&
         (!state.selectedModel || state.selectedModel === previousDefault)
       ) {
         state.selectedModel = this.codexDefaultModel;
@@ -3337,10 +3310,21 @@ export class CodexRuntimeService
           {
             id: state.selectedModel,
             displayName: state.selectedModel,
-            description: 'Custom Codex model.',
+            description:
+              'Selected earlier; Codex is not offering this model right now.',
             supportsEffort: true,
           },
         ];
+      }
+      if (state.pendingFastModeDefault) {
+        const selected = this.codexModels.find(
+          (model) =>
+            model.id === (state.selectedModel ?? this.codexDefaultModel),
+        );
+        if (selected) {
+          state.fastMode = selected.supportsFastMode === true;
+          state.pendingFastModeDefault = false;
+        }
       }
       this.emitRunState(sessionId);
     }
@@ -3414,8 +3398,8 @@ export class CodexRuntimeService
 
   private resolveCodexDefaultModel(
     models: CodexAppServerModel[],
-    previousDefault: string,
-  ): string {
+    previousDefault: string | null,
+  ): string | null {
     const remoteDefault = this.codexModels.find((model) =>
       models.some(
         (source) =>
@@ -3425,13 +3409,10 @@ export class CodexRuntimeService
     if (remoteDefault) {
       return remoteDefault;
     }
-    if (this.codexModels.some((model) => model.id === DEFAULT_CODEX_MODEL)) {
-      return DEFAULT_CODEX_MODEL;
-    }
     if (this.codexModels.some((model) => model.id === previousDefault)) {
       return previousDefault;
     }
-    return this.codexModels[0]?.id ?? DEFAULT_CODEX_MODEL;
+    return this.codexModels[0]?.id ?? null;
   }
 
   private modelId(model: CodexAppServerModel): string {
@@ -3552,7 +3533,8 @@ export class CodexRuntimeService
     const messageText = new Map<string, string>();
     const reasoningText = new Map<string, string>();
     const planText = new Map<string, string>();
-    let contextModel = state.selectedModel ?? this.codexDefaultModel;
+    let contextModel =
+      state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
     let lastUsage: Usage = {
       input_tokens: 0,
       cached_input_tokens: 0,
@@ -3855,6 +3837,16 @@ export class CodexRuntimeService
     signal.addEventListener('abort', onAbort);
 
     try {
+      // Discover before selecting a default: an invented model can be rejected
+      // by ChatGPT accounts even when the CLI itself is working.
+      await this.refreshModelCatalogIfStale();
+      if (signal.aborted) return;
+      if (!this.codexModels.length) {
+        throw new BadRequestException(
+          this.modelRefreshError ??
+            'Codex models are not available yet. Refresh models and retry.',
+        );
+      }
       await this.appServer.ensureReady();
       if (signal.aborted) return;
       const session = await this.sessionsService.findOne(sessionId);
@@ -3974,7 +3966,7 @@ export class CodexRuntimeService
       // checkout switch. Revalidate ownership immediately before execution.
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (signal.aborted || activeRun?.interruptRequested) return;
-      contextModel = state.selectedModel ?? this.codexDefaultModel;
+      contextModel = state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
       turnStartSent = true;
       const turnStart = await this.appServer.request<CodexTurnStartResult>(
         'turn/start',

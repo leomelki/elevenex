@@ -16,8 +16,25 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
    - Codex sandbox and approval settings derived from the app permission mode.
 5. The Codex model picker fetches the account's current catalog from Codex
    app-server's `model/list` RPC, caches it, and refreshes it periodically.
-   Elevenex only uses its built-in catalog as a fallback when that RPC is
-   unavailable, so prompt submission still works.
+   Discovery starts at backend startup and immediately when a session opens.
+   Elevenex never seeds this list or its default with hard-coded model IDs.
+   Background discovery continues without a connected window or open picker:
+   failures retry after 15, 30, 60, 120, then 300 seconds, remaining capped at
+   five minutes until recovery. Successful reads reset backoff and refresh
+   every ten minutes. Foreground reads bypass background backoff, coalesce
+   in-flight work, and retain a three-second minimum between failed probes.
+   The frontend also reconciles failed reads in the background. An open picker
+   checks immediately and retries every three seconds; closing it restores
+   slower recovery. Dropdown projection stays mounted when closed, so the
+   owner supplies actual overlay visibility. Injector/application teardown
+   stops scheduled work, and backend changes discard stale responses.
+   Model and default choices stay absent until Codex reports models, including
+   preset and dictation settings. Saving a Codex preset or submitting a prompt
+   requires discovered data. Saved preferences are retained without advertising
+   them as available models. Previously discovered lists survive transient
+   failures with explicit retry feedback. Scoped HTTP reads are bounded so a
+   stalled connection cannot stop recovery indefinitely. Explicit refresh
+   rechecks the installed CLI; late older replies cannot undo newer results.
 6. Image attachments are staged as temporary local image files and sent through
    Codex app-server `localImage` inputs.
 7. Codex app-server stream events are converted into the same transcript item shape

@@ -27,7 +27,46 @@ describe('AgentModelCatalogService', () => {
   afterEach(() => {
     http.verify();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     delete window.__ELEVENEX_RUNTIME__;
+  });
+
+  it('keeps recovering while closed, accelerates visible pickers, and resets backoff on success', async () => {
+    vi.useFakeTimers();
+    const unavailable = { ...catalog(''), models: [], unavailableReason: 'Install Codex.' };
+    const initial = service.load('codex');
+    http.expectOne('/api/agent-providers/codex/models').flush([unavailable]);
+    await initial;
+    // A picker is not required for background recovery.
+    for (const delay of [15_000, 30_000]) {
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      http.expectNone('/api/agent-providers/codex/models');
+      await vi.advanceTimersByTimeAsync(1);
+      http.expectOne('/api/agent-providers/codex/models').flush([unavailable]);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    // Opening checks immediately, bypassing the longer browser backoff.
+    const close = service.watch('codex');
+    http.expectOne('/api/agent-providers/codex/models').flush([unavailable]);
+    await vi.advanceTimersByTimeAsync(3_001);
+    http.expectOne('/api/agent-providers/codex/models').flush([catalog('current-model')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(service.catalogs()[0].models[0].id).toBe('current-model');
+    close();
+    await vi.advanceTimersByTimeAsync(600_000);
+    http.expectNone('/api/agent-providers/codex/models');
+  });
+
+  it('cleans up background recovery when its owning injector is destroyed', async () => {
+    vi.useFakeTimers();
+    const initial = service.load('codex');
+    http
+      .expectOne('/api/agent-providers/codex/models')
+      .flush([{ ...catalog(''), models: [], unavailableReason: 'Missing CLI' }]);
+    await initial;
+    TestBed.resetTestingModule();
+    await vi.advanceTimersByTimeAsync(600_000);
+    http.expectNone('/api/agent-providers/codex/models');
   });
 
   it('coalesces reads and revalidates the catalog after a minute', async () => {
@@ -43,6 +82,23 @@ describe('AgentModelCatalogService', () => {
     http.expectOne('/api/agent-providers/models').flush([catalog('new')]);
     await second;
     expect(service.catalogs()[0].models[0].id).toBe('new');
+  });
+
+  it('retries unavailable catalogs after three seconds instead of caching failure for a minute', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    const first = service.load('codex');
+    http
+      .expectOne('/api/agent-providers/codex/models')
+      .flush([{ ...catalog(''), models: [], unavailableReason: 'Install Codex and sign in.' }]);
+    await first;
+    await service.load('codex');
+    http.expectNone('/api/agent-providers/codex/models');
+    now.mockReturnValue(4_001);
+    const recovered = service.load('codex');
+    http.expectOne('/api/agent-providers/codex/models').flush([catalog('account-model')]);
+    await recovered;
+    expect(service.catalogs()[0].models[0].id).toBe('account-model');
+    expect(service.catalogs()[0].unavailableReason).toBeUndefined();
   });
 
   it('loads only the requested provider while an unrelated provider is pending', async () => {
@@ -83,6 +139,20 @@ describe('AgentModelCatalogService', () => {
     older.flush([catalog('old', 'claude'), catalog('codex')]);
     await all;
     expect(service.catalogs().map((item) => item.models[0].id)).toEqual(['fresh', 'codex']);
+  });
+
+  it('does not replace recovered models with an older request failure', async () => {
+    const older = service.load('codex');
+    const failed = http.expectOne('/api/agent-providers/codex/models');
+    const refreshed = service.refresh('codex');
+    await Promise.resolve();
+    http.expectOne('/api/agent-providers/codex/models/refresh').flush([catalog('recovered')]);
+    await refreshed;
+    const rejected = expect(older).rejects.toBeDefined();
+    failed.flush('unavailable', { status: 503, statusText: 'Unavailable' });
+    await rejected;
+    expect(service.catalogs()[0].models[0].id).toBe('recovered');
+    expect(service.error()).toBeNull();
   });
 
   it('queues a full reload after provider reloads instead of racing them', async () => {

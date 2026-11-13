@@ -99,15 +99,28 @@
       <div role="group" aria-label="Model">
         <div class="mb-1 flex items-start justify-between gap-2 px-2">
           <span class="pt-1 text-xs font-medium text-muted-foreground">Model</span>
-          <app-model-catalog-refresh [provider]="currentProvider()" />
+          <app-model-catalog-refresh [provider]="currentProvider()" [active]="modelMenuOpen()" />
         </div>
+        @if (selectedModelUnavailable()) {
+          <p role="status" class="mb-2 px-2 text-xs text-warning">
+            This saved model is not in Codex’s current list. Choose Agent default or an available
+            model.
+          </p>
+        }
         <div class="max-h-32 overflow-y-auto">
-          <cw-setting-option
-            label="Agent default"
-            description="Use this agent's default model"
-            [selected]="!selectedModel()"
-            (picked)="pickModel('')"
-          />
+          @if (codexModelsReady()) {
+            <cw-setting-option
+              label="Agent default"
+              description="Use this agent's default model"
+              [selected]="!selectedModel()"
+              (picked)="pickModel('')"
+            />
+          } @else {
+            <p class="px-2 py-2 text-xs text-muted-foreground">
+              Codex hasn’t reported any models yet. Models and defaults will appear here once it
+              connects.
+            </p>
+          }
           @for (m of pickerModels(); track m.id) {
             <cw-setting-option
               [label]="m.displayName"

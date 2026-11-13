@@ -46,8 +46,7 @@ export function toModelOption(
 ): OptionSelectItem {
   const isProviderDefault =
     model.isProviderDefault === true ||
-    (!!catalog?.providerDefaultModelId &&
-      model.id === catalog.providerDefaultModelId);
+    (!!catalog?.providerDefaultModelId && model.id === catalog.providerDefaultModelId);
 
   return {
     value: model.id,
@@ -57,11 +56,13 @@ export function toModelOption(
   };
 }
 
-/** `AGENT_DEFAULT_OPTION` followed by the catalog's models, pin included. */
+/** Codex needs discovered data before offering models/defaults; saved IDs stay in settings. */
 export function agentModelOptions(
   catalog: AgentProviderModelCatalog | null,
   selectedModel: string,
+  provider = catalog?.provider,
 ): OptionSelectItem[] {
+  if (provider === 'codex' && !catalog?.models.length) return [];
   return [
     AGENT_DEFAULT_OPTION,
     ...withPinnedModel(catalog?.models ?? [], selectedModel).map((model) =>
