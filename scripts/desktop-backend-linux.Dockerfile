@@ -13,8 +13,9 @@ RUN node /usr/local/lib/node_modules/npm/bin/npm-cli.js install --global pnpm@${
 COPY manifests/ ./
 # The context retains the exact source lock entries for runtime externals.
 # The root postinstall builds UI assets, supplied from the Mac instead.
+# pnpm 8 bundles node-gyp 9, whose gyp imports distutils (removed in Python 3.12).
 RUN pnpm --filter elevenex-backend install --prod --frozen-lockfile --ignore-scripts \
-    && npm_config_python=/opt/python/cp312-cp312/bin/python3 npm_config_build_from_source=true pnpm --filter elevenex-backend... rebuild better-sqlite3 node-pty \
+    && npm_config_python=/opt/python/cp311-cp311/bin/python3 npm_config_build_from_source=true pnpm --filter elevenex-backend... rebuild better-sqlite3 node-pty \
     && pnpm --filter elevenex-backend... rebuild ffmpeg-static onnxruntime-node \
     && rm -rf /root/.local/share/pnpm/store /root/.cache/node-gyp
 COPY runtime/ ./
