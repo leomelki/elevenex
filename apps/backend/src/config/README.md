@@ -4,6 +4,9 @@
 binary discovery and environment assembly. `ShellEnvService` warms the global
 capture at startup; HTTP activity schedules throttled refreshes. Captures retain
 the existing concurrency, output, deadline and process-group cleanup limits.
+Cold captures start with a minimal PATH and the user's HOME so login shells
+load user startup files and version managers even in SSH-launched runtimes.
+Other backend exports are excluded from this initial capture environment.
 
 Global refreshes replace the previous shell-owned projection instead of merging
 indefinitely into `process.env`. Launch-time settings and later application

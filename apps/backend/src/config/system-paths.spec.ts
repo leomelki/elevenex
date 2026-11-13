@@ -807,6 +807,45 @@ describePosix('system-paths bounded shell refreshes', () => {
     expect(process.kill).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, '/configured/home'])(
+    'supplies HOME to global and cold worktree shells (inherited HOME=%s)',
+    async (home) => {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+      process.env.ELEVENEX_TEST_APPLICATION_EXPORT = 'application-only';
+      const environments: NodeJS.ProcessEnv[] = [];
+      mockSpawn.mockImplementation(
+        (
+          _command: string,
+          _args: string[],
+          options: { env: NodeJS.ProcessEnv },
+        ) => {
+          environments.push(options.env);
+          return createShellProcess();
+        },
+      );
+
+      const global = systemPaths.refreshLoginShellEnv(true);
+      systemPaths.buildAugmentedEnv({}, '/repo/cold-home');
+
+      expect(mockSpawn).toHaveBeenCalledTimes(2);
+      for (const environment of environments) {
+        expect(Object.keys(environment).sort()).toEqual([
+          'HOME',
+          'PATH',
+          'PS1',
+        ]);
+        expect(environment.HOME).toBe(os.homedir());
+        expect(environment.PATH).toBeTruthy();
+        expect(environment.PS1).toBe('');
+      }
+
+      await closeShellProcess(children[0], envOutput('/global/bin'));
+      await closeShellProcess(children[1], envOutput('/local/bin'));
+      await global;
+    },
+  );
+
   it('preserves the user shell and captured user exports in cwd baselines', async () => {
     process.env.SHELL = '/custom/user-shell';
     mockSpawn.mockImplementation(() => createShellProcess());

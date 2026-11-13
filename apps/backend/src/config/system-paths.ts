@@ -162,9 +162,9 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 
 // Baseline env to spawn a login shell with.
 //
-// - Global load (no cwd): minimal boot path so the captured env is "pure" rc-
-//   file output, untainted by whatever `process.env` the backend inherited
-//   (systemd, launchd, Finder/DMG, …).
+// - Global load (no cwd): minimal boot path plus HOME so the shell can find
+//   user startup files, without inheriting application exports from the
+//   backend (systemd, launchd, Finder/DMG, …).
 // - Per-cwd load: inherit the global cache's env so the worktree-local shell
 //   starts from the same baseline as the user's interactive session. This is
 //   what makes the system general: anything an rc file sets up — version
@@ -173,7 +173,9 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 //   worktree's chpwd hooks layer cwd-specific overrides on top.
 function getShellBaselineEnv(forCwdLoad: boolean): NodeJS.ProcessEnv {
   if (!forCwdLoad || !_shellEnvCache) {
-    return { PATH: getMinimalBootPath(), PS1: '' };
+    // Bash does not populate HOME when spawned with a replacement environment.
+    // Without it, login startup skips ~/.profile and user version managers.
+    return { HOME: homedir(), PATH: getMinimalBootPath(), PS1: '' };
   }
   const baseline: NodeJS.ProcessEnv = { PS1: '' };
   for (const [key, value] of Object.entries(_shellEnvCache)) {
