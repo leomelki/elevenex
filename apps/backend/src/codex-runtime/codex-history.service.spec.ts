@@ -1237,6 +1237,7 @@ describe('CodexHistoryService', () => {
 
       await expect(service.getHistory('modern-thread')).resolves.toEqual([
         expect.objectContaining({
+          id: 'user-1',
           kind: 'user',
           content: 'visible user prompt',
           sourceMessageId: 'codex-record:2',

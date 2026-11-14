@@ -91,7 +91,12 @@ Older engines omit the capability and retain their original send contract.
   rendered as text, including HTML returned by tools.
 
 The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Desktop Codex
+providers, with its existing prompt/queue/steer/stop semantics. Codex
+projects native user-message receipts into the live transcript, including prompts
+dispatched from the queue or steered into an active turn. Live and saved native
+receipts share the provider item ID; rewind/fork retain their saved record anchors.
+Duplicate start/completion events do not add another turn or reload history.
+Desktop Codex
 sends request acknowledgement once the runtime owns the turn, without keeping
 HTTP open until generation finishes; existing completion-waiting callers retain
 their default behavior. Later failures still use the runtime error/state feed. Questions include

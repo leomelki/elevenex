@@ -743,13 +743,28 @@ export class SessionChatFixture {
         phase: "idle",
         canInterrupt: false,
       };
-    else if (action.type === "cancel-queued" || action.type === "steer-queued")
+    else if (action.type === "cancel-queued")
       session.state = {
         ...session.state,
         queue: session.state.queue.filter((item) => item.id !== action.id),
       };
-    else if (action.type === "resume-queue")
+    else if (action.type === "steer-queued" || action.type === "resume-queue") {
+      const next = action.type === "steer-queued"
+        ? session.state.queue.find(item => item.id === action.id)
+        : session.state.phase === "idle" ? session.state.queue[0] : undefined;
       session.state = { ...session.state, queuePaused: false };
+      if (next) {
+        const timestamp = new Date().toISOString();
+        session.items.push(
+          item(`sent-${this.version}`, "user", next.text, { timestamp }),
+          item(`reply-${this.version}`, "assistant", "Applying the queued guidance.", { timestamp }),
+        );
+        session.state = {
+          ...session.state, phase: "running", canInterrupt: true,
+          queue: session.state.queue.filter(item => item.id !== next.id),
+        };
+      }
+    }
     else if (action.type === "plan")
       session.state = { ...session.state, plan: action.enabled };
     else if (action.type === "model")

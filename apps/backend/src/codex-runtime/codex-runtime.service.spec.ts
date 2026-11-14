@@ -4,6 +4,10 @@ import { jest } from '@jest/globals';
 jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: class SessionTitleService {},
 }));
+// This unit suite supplies a session fake; loading its native PTY graph is unnecessary.
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
 import { CodexAppServerClient } from './codex-app-server.js';
@@ -1860,6 +1864,112 @@ describe('CodexRuntimeService', () => {
       resolvedAt: '2026-09-30T08:00:05.000Z',
     });
     expect(await service.getHistory(7)).toEqual([]);
+  });
+
+  it.each(['automatic', 'resume', 'steer'] as const)(
+    'publishes queued user receipts during %s dispatch without reloading history',
+    async dispatch => {
+      const { service, appServer, historyService } = createService();
+      const wire = wireAppServerTurn(appServer);
+      const events: unknown[] = [];
+      service.on('event', event => events.push(event));
+      const initial = service.submitPrompt(7, 'Initial prompt');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await service.submitPrompt(7, 'Repeated follow-up');
+      await service.submitPrompt(7, 'Repeated follow-up');
+      const queued = (await service.getRuntimeState(7)).pendingPrompts;
+      expect(queued).toHaveLength(2);
+      let activeTurnId = 'turn-1';
+      if (dispatch === 'steer') {
+        await service.steerPendingPrompt(7, queued[0].id);
+      } else {
+        if (dispatch === 'resume') {
+          appServer.request.mockImplementation(async method => method === 'thread/read'
+            ? { thread: { turns: [{ id: 'turn-1', status: 'interrupted' }] } } : {});
+          await service.interrupt(7);
+        }
+        else wire.notificationHandler({
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+        });
+        await initial;
+        appServer.request.mockImplementation(async method => method === 'turn/start'
+          ? { turn: { id: 'turn-2' } } : { thread: { id: 'thread-1' } });
+        if (dispatch === 'resume') await service.resumePendingPrompts(7);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        activeTurnId = 'turn-2';
+      }
+      const notify = (method: string, id: string, type: string, text: string, threadId = 'thread-1', turnId = activeTurnId) =>
+        wire.notificationHandler({ method, params: {
+          threadId, turnId, item: { id, type, content: [{ type: 'text', text }], text },
+        } });
+      // Concurrent sessions and an earlier turn cannot inject their messages.
+      notify('item/completed', 'foreign', 'userMessage', 'Wrong session', 'other-thread');
+      notify('item/completed', 'stale', 'userMessage', 'Wrong turn', 'thread-1', 'old-turn');
+      notify(dispatch === 'steer' ? 'item/started' : 'item/completed', 'native-queued-1', 'userMessage', 'Repeated follow-up');
+      notify('item/completed', 'answer', 'agentMessage', 'Working on the follow-up');
+      notify('item/completed', 'native-queued-1', 'userMessage', 'Repeated follow-up');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const state = await service.getRuntimeState(7);
+      expect(state.liveItems.map(item => item.id)).toEqual(['native-queued-1', 'answer']);
+      expect(state.liveItems[0]).toMatchObject({ kind: 'user', content: 'Repeated follow-up' });
+      expect(state.pendingPrompts).toEqual([queued[1]]);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'message_start', payload: expect.objectContaining({
+          sessionId: 7, item: expect.objectContaining({ id: 'native-queued-1', kind: 'user' }),
+        }),
+      }));
+      expect(historyService.getHistory).not.toHaveBeenCalled();
+      await service.clearPendingPrompts(7);
+      wire.notificationHandler({ method: 'turn/completed', params: {
+        threadId: 'thread-1', turn: { id: activeTurnId, status: 'completed' },
+      } });
+      await initial;
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
+  );
+
+  it.each(['active', 'new'] as const)('keeps async answers out of user turns when answering in an %s turn', async mode => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const initial = service.submitPrompt(7, 'Initial prompt');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1', item: asyncQuestionItem,
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const request = (await service.getRuntimeState(7)).pendingUserInputRequest!;
+    const complete = () => wire.notificationHandler({ method: 'turn/completed', params: {
+      threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' },
+    } });
+    if (mode === 'new') { complete(); await initial; }
+    const answering = service.answerUserInput(7, request.requestId, 'accept', {
+      'question-1': 'Complete', 'question-2': 'Keep existing APIs',
+    });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const text = 'Which approach?\nAnswer: Complete\n\nAny constraints?\nAnswer: Keep existing APIs';
+    for (const method of ['item/started', 'item/completed']) wire.notificationHandler({ method, params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'native-answer', content: [{ type: 'text', text }] },
+    } });
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'ordinary', content: [{ type: 'text', text: 'Answer: This is an ordinary follow-up' }] },
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((await service.getRuntimeState(7)).liveItems.filter(item => item.kind === 'user').map(item => item.id)).toEqual(['ordinary']);
+    complete();
+    await Promise.all([initial, answering]);
+    const repeated = service.submitPrompt(7, text);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    wire.notificationHandler({ method: 'item/completed', params: {
+      threadId: 'thread-1', turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'later-prompt', content: [{ type: 'text', text }] },
+    } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect((await service.getRuntimeState(7)).liveItems.filter(item => item.kind === 'user').map(item => item.id)).toEqual(['later-prompt']);
+    complete();
+    await repeated;
   });
 
   it('steers a queued prompt into the active Codex turn', async () => {

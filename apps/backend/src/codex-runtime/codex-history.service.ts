@@ -1,4 +1,5 @@
 import { codexImageResult } from './codex-image-result.js';
+import { stripCodexWorktreeContext } from './codex-user-message.js';
 import {
   BadRequestException,
   Inject,
@@ -636,7 +637,9 @@ export class CodexHistoryService {
             continue;
           }
           items.push({
-            id: `codex-history:${index}:user`,
+            // Native receipts and saved items must share identity when merged.
+            // Keep record anchors for rewind/fork and old-format fallbacks.
+            id: textValue(asRecord(asRecord(record.payload)?.item)?.id) ?? `codex-history:${index}:user`,
             kind: 'user',
             content,
             sourceMessageId: this.recordAnchorId(index),
@@ -958,7 +961,7 @@ export class CodexHistoryService {
       payload?.type === 'user_message' &&
       (!payload.kind || payload.kind === 'plain')
     ) {
-      return this.stripInjectedWorktreeContext(
+      return stripCodexWorktreeContext(
         stringValue(payload.message) ?? '',
       );
     }
@@ -970,7 +973,7 @@ export class CodexHistoryService {
     ) {
       return '';
     }
-    return this.stripInjectedWorktreeContext(
+    return stripCodexWorktreeContext(
       this.contentToText(completedItem.content),
     );
   }
@@ -1100,21 +1103,6 @@ export class CodexHistoryService {
       return '';
     }
     return typeof value === 'object' ? JSON.stringify(value) : String(value);
-  }
-
-  private stripInjectedWorktreeContext(text: string): string {
-    const trimmed = text.trimStart();
-    const openTag = '<elevenex-worktree-context>';
-    const closeTag = '</elevenex-worktree-context>';
-    if (!trimmed.startsWith(openTag)) {
-      return text;
-    }
-    const closingIndex = trimmed.indexOf(closeTag);
-    if (closingIndex === -1) {
-      return text;
-    }
-    const afterClose = trimmed.slice(closingIndex + closeTag.length);
-    return afterClose.replace(/^\s+/, '');
   }
 
   private async findSessionFile(sessionId: string): Promise<string | null> {

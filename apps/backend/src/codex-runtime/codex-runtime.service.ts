@@ -1,4 +1,5 @@
 import { codexImageResult } from './codex-image-result.js';
+import { codexUserMessage } from './codex-user-message.js';
 import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
@@ -102,6 +103,12 @@ import type {
   CodexRuntimeStatePayload,
   CodexSessionSnapshotPayload,
 } from './codex-runtime.types.js';
+
+// The SDK event union omits user receipts exposed by the app-server.
+type CodexTurnEvent = ThreadEvent | {
+  type: 'user.message';
+  message: { id: string; text: string };
+};
 
 const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 const CODEX_STOP_UNCONFIRMED_MESSAGE =
@@ -1396,6 +1403,7 @@ export class CodexRuntimeService
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.asyncUserInputRequests.clear();
+    state.asyncAnswerPrompts.clear();
     state.lastError = null;
     state.contextUsage = null;
     this.emitRunState(sessionId);
@@ -1899,6 +1907,7 @@ export class CodexRuntimeService
         // Capture failure must not strand the run or unblock automatic dispatch.
         const run = this.activeRuns.get(sessionId);
         this.activeRuns.delete(sessionId);
+        state.asyncAnswerPrompts.clear();
         run?.resolveTurnReady();
         run?.resolveCompletion();
         if (stagedImageDir) {
@@ -2419,6 +2428,7 @@ export class CodexRuntimeService
           publishAnswer();
           return;
         }
+        state.asyncAnswerPrompts.add(prompt);
         const activeRun = this.activeRuns.get(sessionId);
         if (activeRun && !activeRun.interruptRequested) {
           await Promise.race([
@@ -2444,6 +2454,7 @@ export class CodexRuntimeService
         }
         publishAnswer();
       } catch (error) {
+        state.asyncAnswerPrompts.delete(prompt);
         state.asyncUserInputRequests.set(requestId, asyncRequest);
         this.refreshPendingUserInput(sessionId);
         throw error;
@@ -2483,9 +2494,25 @@ export class CodexRuntimeService
   private handleCodexEvent(
     sessionId: number,
     state: CodexRuntimeState,
-    event: ThreadEvent,
+    event: CodexTurnEvent,
     cwd: string,
   ): void {
+    if (event.type === 'user.message') {
+      const existing = state.liveItems.find(item => item.id === event.message.id);
+      if (existing?.content === event.message.text) return;
+      // Explicitly submitted answers remain tool receipts, including when an
+      // answer starts a new turn whose live items no longer contain the call.
+      if (state.asyncAnswerPrompts.has(event.message.text)) return;
+      const timestamp = existing?.timestamp ?? new Date().toISOString();
+      this.upsertLiveItem(sessionId, {
+        id: event.message.id,
+        kind: 'user',
+        content: event.message.text,
+        timestamp,
+        receivedAt: timestamp,
+      }, 'message_start', true);
+      return;
+    }
     if (event.type === 'thread.started') {
       // captureCodexSessionId persists the id to the DB; we don't want to
       // hold up event streaming for it, so fire-and-forget.
@@ -2940,6 +2967,7 @@ export class CodexRuntimeService
     state.sessionState = 'idle';
     state.canInterrupt = false;
     state.liveItems = [];
+    state.asyncAnswerPrompts.clear();
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
@@ -2958,6 +2986,7 @@ export class CodexRuntimeService
       state.queuePaused = state.pendingPrompts.length > 0;
     }
     state.liveItems = [];
+    state.asyncAnswerPrompts.clear();
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest =
       state.asyncUserInputRequests.values().next().value ?? null;
@@ -3043,6 +3072,7 @@ export class CodexRuntimeService
       pendingPermissionRequest: null,
       pendingUserInputRequest: null,
       asyncUserInputRequests: new Map(),
+      asyncAnswerPrompts: new Set(),
       lastError: null,
       selectedModel: startup.selectedModel,
       reasoningEffort: startup.reasoningEffort,
@@ -3702,9 +3732,9 @@ export class CodexRuntimeService
       { type: 'text'; text: string } | { type: 'localImage'; path: string }
     >,
     signal: AbortSignal,
-  ): AsyncGenerator<ThreadEvent> {
+  ): AsyncGenerator<CodexTurnEvent> {
     this.appServer.addRef();
-    const queue: ThreadEvent[] = [];
+    const queue: CodexTurnEvent[] = [];
     let waker: (() => void) | null = null;
     const wake = (): void => {
       if (waker) {
@@ -3713,7 +3743,7 @@ export class CodexRuntimeService
         fn();
       }
     };
-    const push = (event: ThreadEvent): void => {
+    const push = (event: CodexTurnEvent): void => {
       queue.push(event);
       wake();
     };
@@ -3863,6 +3893,8 @@ export class CodexRuntimeService
         case 'item/started': {
           if (!matchesThread(params)) return;
           if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
+          const message = codexUserMessage(params?.item);
+          if (message) { push({ type: 'user.message', message }); return; }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,
@@ -3881,6 +3913,8 @@ export class CodexRuntimeService
             this.emitRunState(sessionId);
           }
           this.receiveCodexAsyncUserInput(sessionId, params?.item);
+          const message = codexUserMessage(params?.item);
+          if (message) { push({ type: 'user.message', message }); return; }
           const item = this.translateAppServerItem(
             params?.item,
             messageText,

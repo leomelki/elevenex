@@ -126,6 +126,8 @@ export interface CodexRuntimeState {
   pendingUserInputRequest: ClaudeUserInputRequest | null;
   /** Native async questions outlive the turn that emitted them. */
   asyncUserInputRequests: Map<string, ClaudeUserInputRequest>;
+  /** Submitted question answers remain tool receipts, not ordinary user turns. */
+  asyncAnswerPrompts: Set<string>;
   lastError: string | null;
   selectedModel: string | null;
   reasoningEffort: string | null;
