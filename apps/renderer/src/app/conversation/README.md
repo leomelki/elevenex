@@ -46,6 +46,17 @@ range subscriptions are released with the rail. The `/conversation` preview has
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
+Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
+`historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity
+emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
+evicts the opposite edge and increments `historyRevision` in the same update.
+Rows expose stable `data-chat-anchor` identities so the first visible row retains
+its offset after either operation. One in-flight request and a four-page automatic
+fill budget prevent loops on short/collapsed content; wheel, pointer and keyboard
+input renew that budget. History failures retain readable content and offer a
+focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
+before moving to the bottom. No history navigation buttons are needed.
+
 `ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts
 `"instant"` for opening history before paint. Reduced motion always jumps directly.
 The connected session owner jumps once after each selected session has loaded;

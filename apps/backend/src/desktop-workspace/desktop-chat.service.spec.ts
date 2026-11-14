@@ -123,6 +123,21 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+  it('serves exclusive forward pages without changing legacy tails or feed projections', async () => {
+    history = Array.from({ length: 1000 }, (_, i) => item(String(i)));
+    const signal = new AbortController().signal;
+    const forward = await chat.read(1, 2, undefined, undefined, signal, '39');
+    expect(forward).toMatchObject({ reset: false, next: '119', events: [] });
+    expect(forward!.items[0]!.id).toBe('40'); expect(forward!.items).toHaveLength(80);
+    const tail = await chat.read(1, 2, undefined, undefined, signal);
+    expect(tail!.next).toBeNull(); expect(tail!.items.at(-1)!.id).toBe('999');
+    await expect(chat.read(1, 2, undefined, '20', signal, '39')).rejects.toThrow('Invalid conversation cursor');
+    await expect(chat.read(1, 2, undefined, undefined, signal, 'missing')).rejects.toThrow('History cursor expired');
+    status = 'archived';
+    const archived = await chat.read(1, 2, undefined, undefined, signal, '39');
+    expect(archived!.items[0]!.id).toBe('40'); expect(archived!.next).toBe('119');
+  });
+
 
   it('stops only background work the runtime still reports as live and projects it for the bar', async () => {
     runtime.getRuntimeState.mockImplementation(async () => ({

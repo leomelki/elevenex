@@ -222,11 +222,14 @@ export class DesktopChatService implements OnModuleDestroy {
     after: string | undefined,
     before: string | undefined,
     signal: AbortSignal,
+    following?: string,
   ) {
     const session = await this.target(taskId, sessionId);
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
-      (before !== undefined && (before.length > 1000 || !before))
+      (before !== undefined && (typeof before !== 'string' || before.length > 1000 || !before)) ||
+      (following !== undefined && (typeof following !== 'string' || following.length > 1000 || !following)) ||
+      (following !== undefined && (after !== undefined || before !== undefined))
     )
       throw new BadRequestException('Invalid conversation cursor.');
     if (session.status === 'archived' || session.workspaceArchivedAt) {
@@ -235,6 +238,9 @@ export class DesktopChatService implements OnModuleDestroy {
         await provider.getHistory(sessionId),
         [],
         before,
+        undefined,
+        undefined,
+        following,
       );
       if (!window)
         throw new BadRequestException(
@@ -258,7 +264,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const cursor = () => `${feed.id}:${feed.revision}:${feed.historyRevision}`;
     if (feed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
-    if (after === cursor() && !before && !signal.aborted)
+    if (after === cursor() && !before && !following && !signal.aborted)
       await new Promise<void>((resolve) => {
         const done = () => {
           clearTimeout(timer);
@@ -276,13 +282,13 @@ export class DesktopChatService implements OnModuleDestroy {
     const revision = cursor();
     const prior = after?.split(':');
     const reset =
-      !before &&
+      !before && !following &&
       (!prior ||
         prior[0] !== feed.id ||
         Number(prior[1]) > feed.revision ||
         Number(prior[2]) !== feed.historyRevision);
     const historyPromise =
-      reset || before
+      reset || before || following
         ? (feed.history ??= feed.provider.getHistory(sessionId).finally(() => {
             feed.history = undefined;
           }))
@@ -302,7 +308,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache);
+    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
@@ -314,7 +320,7 @@ export class DesktopChatService implements OnModuleDestroy {
         old = feed.projections.get(item.id);
       const version =
         old?.json === json ? old.revision : Number(revision.split(':')[1]);
-      if (!before) feed.projections.set(item.id, { json, revision: version });
+      if (!before && !following) feed.projections.set(item.id, { json, revision: version });
       return !prior || version > Number(prior[1])
         ? [{ type: 'item' as const, item }]
         : [];
@@ -328,9 +334,10 @@ export class DesktopChatService implements OnModuleDestroy {
       sessionId,
       cursor: revision,
       reset,
-      items: reset || before ? items : [],
-      events: reset || before ? [] : events,
+      items: reset || before || following ? items : [],
+      events: reset || before || following ? [] : events,
       before: window.before,
+      next: window.next,
       state: this.state(session, raw),
     };
   }

@@ -219,6 +219,7 @@ export function chatWindow(
   before?: string,
   changesCache?: ChatChangesCache,
   mediaCache?: ChatMediaCache,
+  following?: string,
 ) {
   const historyEnd = before
     ? history.findIndex((item) => item.id === before)
@@ -229,26 +230,41 @@ export function chatWindow(
   if (before && historyEnd < 0 && liveEnd < 0) return null;
   const candidates = new Map<string, AgentTranscriptItem>();
   const hEnd = historyEnd < 0 ? history.length : historyEnd;
-  for (const item of history.slice(Math.max(0, hEnd - 160), hEnd))
-    candidates.set(item.id, item);
-  if (!before || liveEnd >= 0)
-    for (const item of live.slice(Math.max(0, liveEnd - 160), liveEnd))
+  if (following) {
+    const hStart = history.findIndex(item => item.id === following);
+    const lStart = live.findIndex(item => item.id === following);
+    if (hStart < 0 && lStart < 0) return null;
+    // Copy only the next bounded candidates, even for million-item histories.
+    if (hStart >= 0)
+      for (const item of history.slice(hStart + 1, hStart + 161)) candidates.set(item.id, item);
+    if (lStart >= 0 || hStart >= 0)
+      for (const item of live.slice(Math.max(0, lStart + 1), Math.max(0, lStart + 1) + 160)) {
+        if (lStart >= 0 || hStart + 161 >= history.length || candidates.has(item.id))
+          candidates.set(item.id, item);
+      }
+  } else {
+    for (const item of history.slice(Math.max(0, hEnd - 160), hEnd))
       candidates.set(item.id, item);
-  else
-    for (const item of live)
-      if (candidates.has(item.id)) candidates.set(item.id, item);
+    if (!before || liveEnd >= 0)
+      for (const item of live.slice(Math.max(0, liveEnd - 160), liveEnd))
+        candidates.set(item.id, item);
+    else
+      for (const item of live)
+        if (candidates.has(item.id)) candidates.set(item.id, item);
+  }
   const all = [...candidates.values()],
     items: ReturnType<typeof chatItem>[] = [];
   const calls = new Map(all.filter(item => item.kind === 'tool_use').map(item => [item.toolUseId ?? item.id, item]));
   let bytes = 0,
-    start = all.length;
-  while (start > 0 && items.length < 80) {
-    const raw = all[start - 1];
+    start = following ? 0 : all.length;
+  while ((following ? start < all.length : start > 0) && items.length < 80) {
+    const rawIndex = following ? start : start - 1;
+    const raw = all[rawIndex];
     const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
     if (raw.turnChanges) {
-      let turnStart = start - 2;
+      let turnStart = rawIndex - 1;
       while (turnStart >= 0 && all[turnStart].kind !== 'user') turnStart--;
-      item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), start - 1).filter(value => value.kind === 'tool_result').map(result => {
+      item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), rawIndex).filter(value => value.kind === 'tool_result').map(result => {
         const call = calls.get(result.toolUseId ?? result.id);
         return call ? chatItem(result, call, changesCache, mediaCache).changes : undefined;
       }));
@@ -256,12 +272,13 @@ export function chatWindow(
     const size = Buffer.byteLength(JSON.stringify(item));
     if (bytes + size > 512 * 1024) break;
     bytes += size;
-    start--;
-    items.unshift(item);
+    if (following) { start++; items.push(item); }
+    else { start--; items.unshift(item); }
   }
   return {
     items,
     before:
-      start > 0 || hEnd > 160 || liveEnd > 160 ? (items[0]?.id ?? null) : null,
+      following || start > 0 || hEnd > 160 || liveEnd > 160 ? (items[0]?.id ?? null) : null,
+    next: before || (following && start < all.length) ? (items.at(-1)?.id ?? null) : null,
   };
 }

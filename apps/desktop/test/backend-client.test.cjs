@@ -561,6 +561,11 @@ test('harness selection requires a known action shape and an expected current pr
   for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
   const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  assert.equal(parseChatPage({ ...page, next: 'forward' }, 1, 2).next, 'forward');
+  assert.equal(parseChatPage({ ...page, next: null }, 1, 2).next, null);
+  assert.equal(parseChatPage(page, 1, 2).next, undefined);
+  assert.throws(() => parseChatPage({ ...page, next: 7 }, 1, 2));
+
   const message = { id: 'u', kind: 'user', text: 'Compare', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
   const mentions = [{ sessionId: 12, title: 'Other work', snapshot: 'must not cross IPC', path: '/private/export.md' }];
   assert.deepEqual(parseChatPage({ ...page, items: [{ ...message, mentions }] }, 1, 2).items[0].mentions, [{ sessionId: 12, title: 'Other work' }]);

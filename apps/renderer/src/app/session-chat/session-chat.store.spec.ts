@@ -560,25 +560,66 @@ describe("session chat ownership", () => {
         .filter((exchange) => exchange.prompt === "Change direction"),
     ).toHaveLength(1);
   });
-  it("replaces historical windows, pauses live reads, and retains drafts when returning to latest", async () => {
-    const { store, bridge } = setup();
-    await settle();
-    bridge.sessionChatRead.mockResolvedValueOnce(
-      ok(page(2, { before: "old", items: [item("latest", "user", "Latest")] })),
-    );
-    await store.refresh();
-    store.setDraft("A draft");
-    bridge.sessionChatRead.mockResolvedValueOnce(
-      ok(page(2, { items: [item("earlier", "user", "Earlier")] })),
-    );
+  it("stitches older pages into the chat without pausing live state or losing the draft", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "latest", next: null, items: [item("latest", "user", "Latest")] })));
+    await store.refresh(); store.setDraft("A draft");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { next: "earlier", items: [item("earlier", "user", "Earlier")] })));
     await store.older();
-    expect(store.items()[0]?.id).toBe("earlier");
+    expect(store.items().map(item => item.id)).toEqual(["earlier", "latest"]);
     const calls = bridge.sessionChatRead.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
-    expect(store.draft()).toBe("A draft");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, next: null, state: { ...state, phase: "running" } })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
+    expect(store.state()?.phase).toBe("running"); expect(store.draft()).toBe("A draft");
+  });
+  it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
+    const { store, bridge } = setup(); await settle();
+    const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
+      const from = input.following ? Number(input.following) + 1 : Math.max(0, Number(input.before ?? history.length) - 80);
+      const end = Math.min(history.length, from + 80);
+      return ok(page(2, { items: history.slice(from, end), before: from ? String(from) : null, next: end < history.length ? String(end - 1) : null }));
+    });
     await store.refresh();
-    expect(store.historical()).toBe(false);
+    for (let i = 0; i < 40; i++) {
+      await store.older();
+      expect(store.items().length).toBeLessThanOrEqual(320);
+      expect(store.items().every((item, i, items) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
+    }
+    expect(store.historical()).toBe(true);
+    const pinned = store.items();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-80), next: null, state: { ...state, phase: "running" } })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items()).toBe(pinned); expect(store.state()?.phase).toBe("running");
+    while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
+    expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
+  });
+  it("reconciles the live tail before sending from history and never dispatches a duplicate send", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "320", next: null, items: Array.from({ length: 320 }, (_, i) => item(String(i + 320), "user", `Message ${i}`)) })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item("earlier", "user", "Earlier")], next: "earlier" })));
+    await store.older(); expect(store.historical()).toBe(true);
+    store.setDraft("Reply from history");
+    const read = deferred<BackendResult<SessionChatPage>>(); bridge.sessionChatRead.mockReturnValueOnce(read.promise);
+    const sending = store.submit({ text: store.draft(), intent: "send", context: [] });
+    await store.submit({ text: store.draft(), intent: "send", context: [] });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    read.resolve(ok(page(2, { next: null, items: [item("latest", "user", "Current live tail")] })));
+    await sending; expect(bridge.sessionChatCommand).toHaveBeenCalledOnce();
+  });
+  it("keeps a failed history read retryable and rejects a history reply after navigation", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "latest", next: null, items: [item("latest", "user", "Latest")] })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: "transport", message: "Try again" } });
+    await store.older(); expect(store.historyError()).toBe("Try again"); expect(store.items()[0]?.id).toBe("latest");
+    const pending = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(pending.promise);
+    const read = store.older(); store.open({ scopeId: "scope", taskId: 1, sessionId: 3 }, false);
+    pending.resolve(ok(page(2, { items: [item("old", "user", "Old session")] }))); await read; await settle();
+    expect(store.items().some(item => item.id === "old")).toBe(false); expect(store.historyLoading()).toBe(false);
   });
   it("changes an unstarted harness without losing the draft or accepting an old provider reply", async () => {
     const { store, bridge } = setup();
@@ -988,5 +1029,5 @@ it('keeps an earlier-history window on screen instead of jumping to latest after
   const calls = bridge.sessionChatRead.mock.calls.length, view = store.viewRevision();
   TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered'); scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
   store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();
-  expect(store.historical()).toBe(true); expect(store.items()[0]?.id).toBe('older'); expect(store.viewRevision()).toBe(view); expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
+  expect(store.items()[0]?.id).toBe('older'); expect(store.viewRevision()).toBe(view); expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
 });

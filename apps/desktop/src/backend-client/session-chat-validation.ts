@@ -462,6 +462,7 @@ export function parseChatPage(
     cursor: chatText(raw["cursor"], 200),
     reset: bool(raw["reset"]),
     before: nullable(raw["before"]),
+    ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
     items: array(raw["items"], 80, item),
     events: array(raw["events"], 80, (value): SessionChatEvent => {
