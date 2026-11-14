@@ -6,6 +6,7 @@ import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
 import {
   assertSubprocessEnvironment,
+  shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
 
@@ -448,6 +449,8 @@ function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
       next[key] = value;
     }
   }
+  const shellAgent = shellConfiguredSshAgentSocket(baseline, shellEnv);
+  if (shellAgent !== undefined) next.SSH_AUTH_SOCK = shellAgent;
 
   shellProjection.apply(process.env, baseline, ensureUtf8Locale(next));
 }
@@ -869,6 +872,8 @@ function mergeAugmentedEnv(
 ): NodeJS.ProcessEnv {
   const pathKey = getPathEnvKey(base);
   const merged = { ...shellEnv, ...base };
+  const shellAgent = shellConfiguredSshAgentSocket(base, shellEnv);
+  if (shellAgent !== undefined) merged.SSH_AUTH_SOCK = shellAgent;
   // `base` (the backend's own launch-time env) must not clobber PWD once we've
   // resolved a specific target cwd — otherwise every spawned terminal inherits
   // the backend process's stale PWD instead of the worktree it's opening.

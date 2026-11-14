@@ -20,6 +20,16 @@ overrides keep priority. Shell-added exports removed from a later capture are
 removed from the projection; changed exports update. Failed captures retain the
 last good cache and projection.
 
+The new desktop's remote daemon supplies a stable forwarded-agent socket as its
+default `SSH_AUTH_SOCK`. A remote account that explicitly selects another agent
+in its shell startup files takes precedence over that managed default, so Git
+and agent processes use the same configured identity as interactive terminals.
+This exception recognizes only the daemon's `agent.sock` beside its data
+directory; explicit launcher/application agent choices and local/legacy runtime
+precedence are preserved. If a later successful capture removes the shell agent,
+projection restores the managed proxy. No agent sockets are scanned, no keys are
+copied, and authentication/signing requests are never retried with other agents.
+
 FNM's [shell initialization](https://github.com/Schniz/fnm/blob/master/src/commands/env.rs)
 creates a unique `fnm_multishells/<id>/bin` directory per POSIX shell
 (`fnm_multishells/<id>` on Windows). Exact PATH deduplication cannot prevent these

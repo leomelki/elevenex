@@ -250,6 +250,11 @@ lease refreshed by bridge health checks and removed on disconnect/expiry; it
 is not permanently captured by the daemon. After all clients disconnect,
 operations that need a client-provided agent must wait for a new client whose
 SSH configuration or remote account environment supplies a socket.
+An account's explicit `SSH_AUTH_SOCK` in its shell startup files takes precedence
+over the managed proxy in backend subprocess environments. This keeps agents and
+Git aligned with the account's interactive terminal configuration; accounts
+without that setting retain the stable forwarded-agent proxy. Explicit
+launcher/application sockets and local/legacy runtime precedence are preserved.
 The stable agent proxy tries another live lease if an agent socket has died,
 before consuming any authentication/signing bytes. It never retries a signing
 request after connecting. Revoking one lease closes only that lease's clients;

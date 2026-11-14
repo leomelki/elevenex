@@ -310,6 +310,66 @@ describePosix('system-paths per-cwd env cache', () => {
 });
 
 describePosix('global shell environment replacement', () => {
+  it('uses the remote account shell agent for agents and restores the desktop proxy when removed', async () => {
+    const proxy = '/runtime/desktop/agent.sock';
+    process.env.ELEVENEX_BACKEND_MODE = 'remote';
+    process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
+    process.env.SSH_AUTH_SOCK = proxy;
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.buildAugmentedEnvAsync();
+    await closeShellProcess(
+      children[0],
+      `${envOutput('/shell/bin')}SSH_AUTH_SOCK=/account/agent.sock\n`,
+    );
+    expect((await first).SSH_AUTH_SOCK).toBe('/account/agent.sock');
+    expect(process.env.SSH_AUTH_SOCK).toBe('/account/agent.sock');
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
+      '/account/agent.sock',
+    );
+    // Callers with an explicit base still get the shell account agent rather
+    // than the app's managed default. Other explicit sockets keep precedence.
+    expect(
+      systemPaths.buildAugmentedEnv({ ...process.env, SSH_AUTH_SOCK: proxy })
+        .SSH_AUTH_SOCK,
+    ).toBe('/account/agent.sock');
+    expect(
+      systemPaths.buildAugmentedEnv({
+        ...process.env,
+        SSH_AUTH_SOCK: '/explicit/agent.sock',
+      }).SSH_AUTH_SOCK,
+    ).toBe('/explicit/agent.sock');
+
+    const removed = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[1], envOutput('/shell/bin'));
+    await removed;
+    expect(process.env.SSH_AUTH_SOCK).toBe(proxy);
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(proxy);
+  });
+
+  it('keeps later application overrides when refreshing a remote shell agent', async () => {
+    process.env.ELEVENEX_BACKEND_MODE = 'remote';
+    process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
+    process.env.SSH_AUTH_SOCK = '/runtime/desktop/agent.sock';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[0],
+      `${envOutput('/shell/bin')}SSH_AUTH_SOCK=/account/agent.sock\n`,
+    );
+    await first;
+    process.env.SSH_AUTH_SOCK = '/application/agent.sock';
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[1],
+      `${envOutput('/shell/bin')}SSH_AUTH_SOCK=/changed/agent.sock\n`,
+    );
+    await refresh;
+    expect(process.env.SSH_AUTH_SOCK).toBe('/application/agent.sock');
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
+      '/application/agent.sock',
+    );
+  });
+
   it('repairs an inherited PATH with thousands of FNM multishells before projecting or launching children', async () => {
     const bins = Array.from(
       { length: 6500 },
