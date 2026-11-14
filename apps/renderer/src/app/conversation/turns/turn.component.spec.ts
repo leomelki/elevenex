@@ -153,10 +153,8 @@ describe("turn work disclosure", () => {
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(fixture.componentInstance.steps().filter(step => step.kind !== 'say' && step.kind !== 'note')).toHaveLength(0);
-    expect(host.querySelector(".work")?.textContent).toContain('Earlier messages');
+    expect(host.querySelector(".work-row")).toBeNull();
     expect(host.querySelector('ex-tool-step')).toBeNull();
-    host.querySelector<HTMLButtonElement>('.work')!.click();
-    fixture.detectChanges();
     expect(host.querySelector('.prose')?.textContent).toContain('Checking the details.');
     expect(host.querySelector('.answer')?.textContent).toContain('Hi.');
     fixture.destroy();

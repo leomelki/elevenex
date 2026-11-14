@@ -1,6 +1,9 @@
 import type { SessionChatItem } from "@elevenex/shared";
 
 export type TimelineScene =
+  | "active-ten"
+  | "active-eleven"
+  | "sections"
   | "before-message"
   | "after-message"
   | "two-reads"
@@ -73,6 +76,46 @@ export function sessionTimelineItems(
     "assistant",
     "I’ll trace how a retry claims its key, then check concurrent requests.",
   );
+  if (scene === "active-ten" || scene === "active-eleven")
+    return [
+      user,
+      intro,
+      ...Array.from({ length: scene === "active-ten" ? 10 : 11 }, (_, n) =>
+        call(`check-${n}`),
+      ).flat(),
+    ];
+  if (scene === "sections")
+    return [
+      user,
+      intro,
+      ...call("retry", "read"),
+      ...call("claim", "read"),
+      ...call("baseline"),
+      item(
+        "timeline-progress",
+        "assistant",
+        "The retry key was claimed too late. I’ll move the claim before the provider call.",
+      ),
+      item("edit", "tool_use", "", {
+        toolId: "edit",
+        toolName: "Edit",
+        toolKind: "edit",
+        input: JSON.stringify({
+          file_path: "src/payments/retry.ts",
+          old_string: "await provider();",
+          new_string: "await claim();\nawait provider();",
+        }),
+      }),
+      item("edit-result", "tool_result", "Updated src/payments/retry.ts", {
+        toolId: "edit",
+      }),
+      ...call("regression"),
+      item(
+        "timeline-next",
+        "assistant",
+        "The claim now happens first. Concurrent requests share the original result, and the regression checks pass.",
+      ),
+    ];
   if (
     scene === "before-message" ||
     scene === "after-message" ||

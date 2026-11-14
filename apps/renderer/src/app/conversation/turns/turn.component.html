@@ -15,7 +15,10 @@
           class="work"
           [disabled]="!showWork()"
           [attr.aria-expanded]="expanded()"
-          (click)="toggled.set(!expanded())"
+          [attr.aria-label]="
+            expanded() ? 'Collapse all activity' : 'Expand all activity'
+          "
+          (click)="toggleWork()"
         >
           <span class="work-label" [class.failed]="status() === 'failed'">{{
             header.label

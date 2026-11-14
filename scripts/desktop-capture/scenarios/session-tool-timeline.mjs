@@ -32,7 +32,7 @@ async function* timelineFrames(capture, name, times, inspect) {
   });
 }
 
-/** Public chat rendering, stable provider receipts and trusted disclosure input. */
+/** Message boundaries, section-local compaction and retained tool inspection. */
 export default async function* (capture) {
   await capture.evaluate(() => {
     location.href = "/connected-workspace";
@@ -67,6 +67,7 @@ export default async function* (capture) {
   };
   const row = (id) => `[data-work-step="${id}"]`;
   const head = (id) => row(id) + " ex-tool-step .head";
+  const summary = (id) => row(id) + " .group";
   const scroll = async (selector) => {
     await capture.evaluate(
       (s) => document.querySelector(s).scrollIntoView({ block: "center" }),
@@ -92,28 +93,32 @@ export default async function* (capture) {
     await capture.theme(theme);
     await capture.viewport(1440, 960);
     await scene("before-message");
-    await capture.waitFor(() =>
-      document.querySelector('[data-work-step="concurrency"]'),
+    await finish();
+    assert.equal(await shown("concurrency"), true);
+    await scene("after-message");
+    await finish();
+    assert.equal(await shown("concurrency"), false);
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).textContent,
+        summary("concurrency"),
+      ),
+      /Ran 1 command/,
     );
+    yield {
+      name: theme + "-new-message-closes-activity",
+      inspect: ["ex-turn", summary("concurrency")],
+    };
+
+    await scene("before-message");
     await finish();
     await scroll(head("concurrency"));
-    await capture.evaluate(
-      (s) => document.querySelector(s).focus(),
-      head("concurrency"),
-    );
-    await capture.press("Enter");
+    await capture.click(head("concurrency"));
     await finish();
     await capture.evaluate((s) => {
       document.querySelector(s).dataset.inspected = "retained";
     }, head("concurrency"));
-    yield {
-      name: theme + "-inspected-tool",
-      inspect: ["ex-turn", head("concurrency")],
-    };
     await scene("after-message");
-    await capture.waitFor(() =>
-      document.querySelector(".answer")?.textContent.includes("focused checks"),
-    );
     await finish();
     assert.equal(
       await capture.evaluate(
@@ -125,199 +130,164 @@ export default async function* (capture) {
       ),
       true,
     );
-    assert.equal(
-      await capture.evaluate(
-        () => document.querySelectorAll("ex-turn ex-work-timeline").length,
-      ),
-      1,
-    );
+    assert.equal(await shown("concurrency"), true);
     yield {
-      name: theme + "-new-message-keeps-inspection",
+      name: theme + "-new-message-retains-inspection",
       inspect: ["ex-turn", head("concurrency")],
     };
 
-    await scene("two-reads");
-    await capture.waitFor(() =>
-      document.querySelector('[data-work-step="retry"]'),
-    );
+    await scene("sections");
     await finish();
-    await scroll(head("retry"));
-    await capture.click(head("retry"));
-    await finish();
-    await capture.evaluate((s) => {
-      document.querySelector(s).focus();
-      document.querySelector(s).dataset.inspected = "retained";
-    }, head("retry"));
-    await scene("three-reads");
-    await capture.waitFor(() =>
-      document
-        .querySelector("ex-work-timeline .group")
-        ?.textContent.includes("Read 3 files"),
-    );
-    assert.equal(
-      await capture.evaluate(
-        (s) =>
-          document.activeElement === document.querySelector(s) &&
-          document.querySelector(s).dataset.inspected === "retained",
-        head("retry"),
+    assert.equal(await shown("retry"), false);
+    assert.equal(await shown("edit"), false);
+    const labels = await capture.evaluate(() =>
+      [...document.querySelectorAll(".group-fold:not([inert]) .group")].map(
+        (e) => e.textContent.trim(),
       ),
-      true,
     );
+    assert.equal(labels.length, 2);
+    assert.match(labels[0], /Read 2 files · Ran 1 command/);
+    assert.match(labels[1], /Ran 1 command · 1 edit/);
+    yield {
+      name: theme + "-message-section-summaries",
+      inspect: ["ex-turn", summary("retry"), summary("edit")],
+    };
+    await scroll(summary("retry"));
+    await capture.click(summary("retry"));
     yield* timelineFrames(
       capture,
-      theme + "-group-forms",
-      [0, 80, 160, 280],
-      ["ex-turn", "ex-work-timeline .group", head("retry")],
+      theme + "-section-reveal",
+      [0, 100, 200, 320],
+      [summary("retry"), row("retry")],
     );
     await finish();
-    await scroll("ex-work-timeline .group");
-    await capture.click("ex-work-timeline .group");
+    assert.equal(await shown("retry"), true);
+    assert.equal(await shown("edit"), false);
+    await scroll(summary("retry"));
+    await capture.press("Enter");
     await finish();
     assert.equal(await shown("retry"), false);
     assert.equal(
       await capture.evaluate(
-        () =>
-          document.activeElement ===
-          document.querySelector("ex-work-timeline .group"),
+        (s) => document.activeElement === document.querySelector(s),
+        summary("retry"),
       ),
       true,
     );
     await capture.press("Enter");
+    await capture.press("Enter");
+    await capture.press("Enter");
     await finish();
     assert.equal(await shown("retry"), true);
+    yield {
+      name: theme + "-interrupted-section-toggle",
+      inspect: [summary("retry"), row("retry")],
+    };
+    await capture.press("Enter");
+    await finish();
+
+    await scroll("ex-turn .work");
+    await capture.click("ex-turn .work");
+    await finish();
+    await capture.click("ex-turn .work");
+    await finish();
+    assert.equal(await shown("retry"), true);
+    assert.equal(await shown("edit"), true);
+    yield { name: theme + "-expand-all-activity", inspect: ["ex-turn"] };
+    await scroll("ex-turn .work");
+    await capture.click("ex-turn .work");
+    await finish();
+    assert.equal(await shown("retry"), false);
+    assert.equal(await shown("edit"), false);
+    await capture.component("ex-turn", (c) => c.toggled.set(null));
+
+    await scene("active-ten");
+    await finish();
+    assert.equal(await shown("check-0"), true);
+    yield { name: theme + "-ten-active-steps", inspect: ["ex-turn"] };
+    await scene("active-eleven");
+    await finish();
+    assert.equal(await shown("check-0"), false);
+    assert.equal(await shown("check-5"), false);
+    assert.equal(await shown("check-6"), true);
+    assert.equal(await shown("check-10"), true);
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).textContent,
+        summary("check-0"),
+      ),
+      /Ran 6 commands/,
+    );
+    yield {
+      name: theme + "-active-section-five-recent",
+      inspect: ["ex-turn", summary("check-0")],
+    };
 
     await scene("busy");
-    await capture.waitFor(() =>
-      document.querySelector('[data-work-step="watch"]'),
-    );
     await finish();
     assert.equal(await shown("watch"), true);
     assert.equal(await shown("database"), true);
     assert.equal(await shown("check-0"), false);
-    await scroll("ex-work-timeline .earlier");
-    const counts = await capture.evaluate(() => ({
-      controls: document.querySelectorAll("ex-work-timeline .earlier").length,
-      text: document
-        .querySelector("ex-work-timeline .earlier")
-        .textContent.trim(),
-    }));
-    assert.equal(counts.controls, 1);
-    assert.match(counts.text, /4 earlier steps/);
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).textContent,
+        summary("watch"),
+      ),
+      /Ran 8 commands/,
+    );
     yield {
       name: theme + "-running-and-failed-stay-visible",
       inspect: ["ex-turn", row("watch"), row("database")],
     };
-    await capture.click("ex-work-timeline .earlier");
-    yield* timelineFrames(
-      capture,
-      theme + "-reveal-earlier",
-      [0, 100, 200, 320],
-      ["ex-work-timeline .earlier", row("check-0"), row("check-7")],
-    );
-    await finish();
-    assert.equal(await shown("check-0"), true);
-    assert.equal(
-      await capture.evaluate(
-        () =>
-          document.activeElement ===
-          document.querySelector("ex-work-timeline .earlier"),
-      ),
-      true,
-    );
-    assert.match(
-      await capture.evaluate(
-        () => document.querySelector("ex-work-timeline .earlier").textContent,
-      ),
-      /Show fewer steps/,
-    );
-    await scroll("ex-work-timeline .earlier");
-    await capture.press("Enter");
-    await finish();
-    assert.equal(await shown("check-0"), false);
-    assert.equal(
-      await capture.evaluate(
-        () =>
-          document.activeElement ===
-          document.querySelector("ex-work-timeline .earlier"),
-      ),
-      true,
-    );
-    await capture.click("ex-work-timeline .earlier");
-    await capture.click("ex-work-timeline .earlier");
-    await capture.click("ex-work-timeline .earlier");
-    await finish();
-    assert.equal(await shown("check-0"), true);
-    assert.equal(
-      await capture.evaluate(
-        () => document.querySelectorAll("ex-work-timeline .earlier").length,
-      ),
-      1,
-    );
-    yield {
-      name: theme + "-interrupted-disclosure",
-      inspect: ["ex-work-timeline .earlier", row("check-0")],
-    };
-    await capture.click("ex-work-timeline .earlier");
-    await finish();
 
     await scene("long");
-    await capture.waitFor(() =>
-      document.querySelector('[data-work-step="check-19"]'),
-    );
-    await capture.component("ex-turn", (c) => c.toggled.set(true));
     await finish();
-    await scroll("ex-work-timeline .earlier");
     const before = await capture.rect("ex-turn");
     await scene("finished");
-    await capture.waitFor(() =>
-      document.querySelector(".work-label")?.textContent.includes("Worked"),
-    );
     await finish();
     const after = await capture.rect("ex-turn");
-    assert.equal(await shown("check-0"), false);
-    assert.equal(await shown("check-19"), true);
+    assert.equal(await shown("check-19"), false);
     assert.ok(
       Math.abs(after.height - before.height) < 50,
       JSON.stringify({ before, after }),
     );
     yield {
-      name: theme + "-completion-keeps-recent-window",
-      inspect: ["ex-turn", "ex-work-timeline .earlier"],
+      name: theme + "-completion-preserves-messages",
+      inspect: ["ex-turn"],
       metadata: { before, after },
     };
 
     await capture.viewport(1000, 760);
     await capture.reducedMotion(true);
-    await scene("busy");
-    await capture.waitFor(() =>
-      document.querySelector('[data-work-step="watch"]'),
-    );
-    await capture.component("ex-turn", (c) => c.toggled.set(null));
+    await scene("sections");
     await finish();
-    await scroll(row("watch"));
-    assert.equal(await shown("watch"), true);
-    assert.equal(await shown("database"), true);
+    await scroll(summary("edit"));
     assert.equal(
       await capture.evaluate(() => {
         const bounds = document
           .querySelector("ex-work-timeline")
           .getBoundingClientRect();
-        return [
-          ...document.querySelectorAll("ex-work-timeline ex-tool-step .head"),
-        ].every((head) => {
-          const rect = head.getBoundingClientRect();
-          return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
-        });
+        return [...document.querySelectorAll("ex-work-timeline .group")].every(
+          (e) => {
+            const r = e.getBoundingClientRect();
+            return r.left >= bounds.left - 1 && r.right <= bounds.right + 1;
+          },
+        );
       }),
       true,
     );
     yield {
       name: theme + "-narrow-reduced-motion",
-      inspect: ["ex-turn", "ex-work-timeline .earlier"],
+      inspect: ["ex-turn", summary("edit")],
+    };
+    await capture.viewport(700, 760);
+    await finish();
+    yield {
+      name: theme + "-compact-section-summaries",
+      inspect: ["ex-turn", summary("edit")],
     };
     await capture.reducedMotion(false);
   }
-
   await capture.viewport(1440, 960);
   await capture.component("ex-connected-workspace-demo", (c) =>
     c.fixture.chat.scenario("long"),
@@ -326,6 +296,9 @@ export default async function* (capture) {
     document.querySelector('[data-work-step="test"]'),
   );
   await capture.component("ex-turn", (c) => c.toggled.set(true));
+  await finish();
+  await scroll(summary("test"));
+  await capture.click(summary("test"));
   await finish();
   await scroll(head("test"));
   await capture.click(head("test"));
@@ -340,20 +313,44 @@ export default async function* (capture) {
       ?.textContent.includes("Verified concurrent request"),
   );
   await finish();
-  assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('role')), 'dialog');
+  assert.equal(
+    await capture.evaluate(() => document.activeElement?.getAttribute("role")),
+    "dialog",
+  );
   yield {
     name: "full-output-reader",
     inspect: ['[role="dialog"][aria-label="Full transcript content"]'],
   };
   await capture.evaluate(() => {
-    const pre = document.querySelector('pre[aria-label="Original tool output"]');
+    const pre = document.querySelector(
+      'pre[aria-label="Original tool output"]',
+    );
     pre.scrollTop = pre.scrollHeight;
   });
-  await capture.click('[role="dialog"][aria-label="Full transcript content"] footer button:last-child');
-  await capture.waitFor(() => document.querySelector('[role="dialog"][aria-label="Full transcript content"] footer span')?.textContent.includes('16001'));
-  assert.equal(await capture.evaluate(() => document.querySelector('pre[aria-label="Original tool output"]').scrollTop), 0);
-  yield { name: 'next-output-page-starts-at-top', inspect: ['[role="dialog"][aria-label="Full transcript content"]'] };
-  const input = '[role="radiogroup"][aria-label="Tool content"] button:last-child';
+  await capture.click(
+    '[role="dialog"][aria-label="Full transcript content"] footer button:last-child',
+  );
+  await capture.waitFor(() =>
+    document
+      .querySelector(
+        '[role="dialog"][aria-label="Full transcript content"] footer span',
+      )
+      ?.textContent.includes("16001"),
+  );
+  assert.equal(
+    await capture.evaluate(
+      () =>
+        document.querySelector('pre[aria-label="Original tool output"]')
+          .scrollTop,
+    ),
+    0,
+  );
+  yield {
+    name: "next-output-page-starts-at-top",
+    inspect: ['[role="dialog"][aria-label="Full transcript content"]'],
+  };
+  const input =
+    '[role="radiogroup"][aria-label="Tool content"] button:last-child';
   await capture.click(input);
   await capture.waitFor(() =>
     document
