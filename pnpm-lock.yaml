@@ -524,60 +524,6 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  vscode-filesystem-provider:
-    devDependencies:
-      '@types/mocha':
-        specifier: ^10.0.0
-        version: 10.0.10
-      '@types/vscode':
-        specifier: ^1.85.0
-        version: 1.116.0
-      '@vscode/test-electron':
-        specifier: ^2.3.0
-        version: 2.5.2
-      mocha:
-        specifier: ^10.2.0
-        version: 10.8.2
-      ts-loader:
-        specifier: ^9.5.0
-        version: 9.5.7(typescript@5.9.3)(webpack@5.106.2)
-      typescript:
-        specifier: ^5.0.0
-        version: 5.9.3
-      webpack:
-        specifier: ^5.90.0
-        version: 5.106.2(webpack-cli@5.1.4)
-      webpack-cli:
-        specifier: ^5.1.0
-        version: 5.1.4(webpack@5.106.2)
-
-  vscode-scm-extension:
-    devDependencies:
-      '@types/mocha':
-        specifier: ^10.0.0
-        version: 10.0.10
-      '@types/vscode':
-        specifier: ^1.85.0
-        version: 1.116.0
-      '@vscode/test-electron':
-        specifier: ^2.3.0
-        version: 2.5.2
-      mocha:
-        specifier: ^10.2.0
-        version: 10.8.2
-      ts-loader:
-        specifier: ^9.5.0
-        version: 9.5.7(typescript@5.9.3)(webpack@5.106.2)
-      typescript:
-        specifier: ^5.0.0
-        version: 5.9.3
-      webpack:
-        specifier: ^5.90.0
-        version: 5.106.2(webpack-cli@5.1.4)
-      webpack-cli:
-        specifier: ^5.1.0
-        version: 5.1.4(webpack@5.106.2)
-
   packages/browser-network:
     devDependencies:
       '@types/node':
