@@ -1,83 +1,81 @@
 @let block = view();
-<section class="tool-block" [attr.aria-label]="block.title || null">
+<section
+  class="tool-block"
+  [class.change-block]="block.kind === 'diff' || block.kind === 'patch'"
+  [attr.aria-label]="block.title || null"
+>
   @if (block.title) {
-    <h4>{{ block.title }}</h4>
+    @if (block.kind === "diff" || block.kind === "patch") {
+      <header class="change-heading">
+        <ex-icon name="file" [size]="12" />
+        <h4 [title]="block.title"><bdi dir="ltr">{{ block.title }}</bdi></h4>
+      </header>
+    } @else {
+      <h4>{{ block.title }}</h4>
+    }
   }
-  @switch (block.kind) {
-    @case ("fields") {
-      <dl class="fields">
-        @for (field of block.fields; track $index) {
-          <div>
-            <dt>{{ field.label }}</dt>
-            <dd>{{ field.value }}</dd>
-          </div>
-        }
-      </dl>
-    }
-    @case ("code") {
-      <pre
-        tabindex="0"
-        [attr.aria-label]="block.title || 'Code'"
-      ><code>{{ block.text }}</code></pre>
-    }
-    @case ("text") {
-      <p class="tool-text">{{ block.text }}</p>
-    }
-    @case ("diff") {
-      <div
-        class="diff"
-        tabindex="0"
-        [attr.aria-label]="block.title || 'Proposed change'"
-      >
-        @for (line of block.removed; track $index) {
-          <div class="diff-line removed">
-            <span class="sign">−</span><code>{{ line || " " }}</code>
-          </div>
-        }
-        @for (line of block.added; track $index) {
-          <div class="diff-line added">
-            <span class="sign">+</span><code>{{ line || " " }}</code>
-          </div>
-        }
-      </div>
-    }
-    @case ("patch") {
-      <div
-        class="diff patch"
-        tabindex="0"
-        [attr.aria-label]="block.title || 'Patch'"
-      >
-        @for (line of block.lines; track $index) {
-          <div
-            class="diff-line"
-            [class.added]="line.tone === 'added'"
-            [class.removed]="line.tone === 'removed'"
-            [class.context]="line.tone === 'context'"
-          >
-            <code>{{ line.text || " " }}</code>
-          </div>
-        }
-      </div>
-    }
-    @case ("list") {
-      <ul class="tool-rows">
-        @for (row of block.items; track $index) {
-          <li>
-            @if (row.status) {
-              <ex-status-glyph
-                [status]="row.status === 'pending' ? 'queued' : row.status"
-                [size]="14"
-              />
-            }
+  @if (block.kind === "diff" || block.kind === "patch") {
+    <div
+      class="diff"
+      [class.patch]="block.kind === 'patch'"
+      tabindex="0"
+      [attr.aria-label]="block.title || (block.kind === 'patch' ? 'Patch' : 'Proposed change')"
+    >
+      @for (line of block.lines; track $index) {
+        <div
+          class="diff-line"
+          [class.added]="line.tone === 'added'"
+          [class.removed]="line.tone === 'removed'"
+          [class.context]="line.metadata"
+        >
+          @if (!line.metadata) {
+            <span class="sign">{{ line.sign }}</span>
+          }
+          <code>@for (token of line.tokens; track $index) {<span [attr.data-token]="token.kind">{{ token.text }}</span>}</code>
+        </div>
+      }
+    </div>
+  } @else {
+    @switch (block.kind) {
+      @case ("fields") {
+        <dl class="fields">
+          @for (field of block.fields; track $index) {
             <div>
-              <span class="row-label">{{ row.label }}</span>
-              @if (row.detail) {
-                <span class="row-detail">{{ row.detail }}</span>
-              }
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value }}</dd>
             </div>
-          </li>
-        }
-      </ul>
+          }
+        </dl>
+      }
+      @case ("code") {
+        <pre
+          tabindex="0"
+          [attr.aria-label]="block.title || 'Code'"
+        ><code>{{ block.text }}</code></pre>
+      }
+      @case ("text") {
+        <p class="tool-text">{{ block.text }}</p>
+      }
+      @case ("list") {
+        <ul class="tool-rows">
+          @for (row of block.items; track $index) {
+            <li>
+              @if (row.status) {
+                <ex-status-glyph
+                  [status]="row.status === 'pending' ? 'queued' : row.status"
+                  [size]="14"
+                />
+              }
+              <div>
+                <span class="row-label">{{ row.label }}</span>
+                @if (row.detail) {
+                  <span class="row-detail">{{ row.detail }}</span>
+                }
+              </div>
+            </li>
+          }
+        </ul>
+      }
     }
   }
 </section>
