@@ -5,6 +5,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -133,6 +134,10 @@ describe('TaskGitService checkout inspection with real Git', () => {
   it('saves index caches only when asked to persist them', async () => {
     const index = join(root, '.git', 'index');
     const initial = await readFile(index);
+    // Require a tracked stat-cache refresh even if commit already populated
+    // the untracked cache. A clean status need not otherwise rewrite the index.
+    const timestamp = new Date('2000-01-01T00:00:00Z');
+    await utimes(join(root, 'top.txt'), timestamp, timestamp);
     expect(await service.status(root)).toMatchObject({
       dirty: false,
       branch: 'main',
