@@ -103,6 +103,40 @@ function setup() {
   return { store, bridge, scope };
 }
 
+it('coalesces seen writes and rejects late acknowledgments across completions and selection changes', async () => {
+  const { store, bridge } = setup(); await settle();
+  const first = '2026-11-14T12:00:00.000Z', next = '2026-11-14T12:01:00.000Z';
+  store.state.set({ ...state, unseenCompletionAt: first });
+  const pending = deferred<BackendResult<{ readonly accepted: true }>>();
+  bridge.sessionChatCommand.mockImplementationOnce(() => pending.promise);
+  const seen = store.markSeen(); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.state.set({ ...state, unseenCompletionAt: next });
+  pending.resolve(ok({ accepted: true })); await seen;
+  expect(store.state()?.unseenCompletionAt).toBe(next);
+  store.historical.set(true); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.historical.set(false); store.setActive(false); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.setActive(true);
+  const old = deferred<BackendResult<{ readonly accepted: true }>>();
+  bridge.sessionChatCommand.mockImplementationOnce(() => old.promise);
+  const late = store.markSeen();
+  store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+  store.state.set({ ...state, unseenCompletionAt: next });
+  old.resolve(ok({ accepted: true })); await late;
+  expect(store.state()?.unseenCompletionAt).toBe(next);
+});
+
+it('retains unseen state after a failed acknowledgment and supports older engines without the field', async () => {
+  const { store, bridge } = setup(); await settle();
+  await store.markSeen(); expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  const at = '2026-11-14T12:00:00.000Z'; store.state.set({ ...state, unseenCompletionAt: at });
+  bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Offline' } });
+  await store.markSeen(); expect(store.state()?.unseenCompletionAt).toBe(at);
+  await store.markSeen(); expect(store.state()?.unseenCompletionAt).toBeNull();
+});
+
 it('retains conversation inputs on idle heartbeats and keeps transient poll failures quiet', async () => {
   const { store, bridge } = setup(); await settle();
   bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('prompt', 'user', 'Keep this conversation')] })));

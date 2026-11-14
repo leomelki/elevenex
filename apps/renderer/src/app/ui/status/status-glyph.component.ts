@@ -42,9 +42,17 @@ export class StatusGlyphComponent {
       )
         return;
       const style = getComputedStyle(this.element);
+      // Unseen replies are a quiet reading cue, with no burst or spin.
+      if (status === 'review' || (previous === 'review' && status === 'done')) {
+        this.play(this.element.querySelector('.glyph'), [{ opacity: 0 }, { opacity: 1 }], {
+          duration: parseFloat(style.getPropertyValue('--dur-fast')),
+          easing: style.getPropertyValue('--ease-out').trim(),
+        });
+        return;
+      }
       if (
         previous === "running" &&
-        (status === "done" || status === "review")
+        status === "done"
       ) {
         this.play(
           this.element.querySelector(".burst"),

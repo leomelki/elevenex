@@ -31,6 +31,7 @@ const savedPresets: readonly SessionChatPreset[] = [
 ];
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
+  unseenCompletionAt: null,
   attachments: true,
   sessionMentions: true,
   presets: savedPresets,
@@ -265,6 +266,16 @@ export class SessionChatFixture {
       this.sessions.set(id, session);
     }
     return session;
+  }
+  /** Durable completion marker and final content through the real read path. */
+  unseenCompletionAt(id: number): string | null {
+    return this.session(id).state.unseenCompletionAt ?? null;
+  }
+  completeUnseen(id: number, at: string): void {
+    const session = this.session(id);
+    session.items = [...session.items, item(`finished-${at}`, 'assistant', 'The agent has finished working. This reply has not been viewed yet.')];
+    session.state = { ...session.state, unseenCompletionAt: at, phase: 'idle', canInterrupt: false, permission: null, question: null, work: undefined };
+    this.changed(); this.resetVersion = this.version;
   }
   scenario(
     mode:
@@ -586,6 +597,12 @@ export class SessionChatFixture {
     }
     const session = this.session(input.sessionId),
       action = input.action;
+    if (action.type === 'mark-seen') {
+      if (session.state.unseenCompletionAt === action.completionAt) {
+        session.state = { ...session.state, unseenCompletionAt: null }; this.changed();
+      }
+      return { ok: true, value: { accepted: true } };
+    }
     let defaultChange: SessionChatCommandReply['defaultChange'];
     if (action.type === 'preset-default-restore') {
       if (action.expectedRevision !== this.defaultSnapshot().revision)

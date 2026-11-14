@@ -157,6 +157,37 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('releases seen-view foreground listeners on teardown', async () => {
+    const windowAdded = vi.spyOn(window, 'addEventListener');
+    const documentAdded = vi.spyOn(document, 'addEventListener');
+    const windowRemoved = vi.spyOn(window, 'removeEventListener');
+    const documentRemoved = vi.spyOn(document, 'removeEventListener');
+    const { fixture } = setup(); await settle(fixture);
+    const foreground = windowAdded.mock.calls.find(([type, listener]) => type === 'focus' &&
+      documentAdded.mock.calls.some(([event, handler]) => event === 'visibilitychange' && handler === listener))?.[1];
+    expect(foreground).toBeDefined(); fixture.destroy();
+    expect(windowRemoved).toHaveBeenCalledWith('focus', foreground);
+    expect(windowRemoved).toHaveBeenCalledWith('blur', foreground);
+    expect(documentRemoved).toHaveBeenCalledWith('visibilitychange', foreground);
+  });
+  it('acknowledges a loaded reply only in the foreground, at the latest content, and outside inert layers', async () => {
+    let focused = false;
+    vi.spyOn(document, 'hasFocus').mockImplementation(() => focused);
+    const at = '2026-11-14T12:00:00.000Z';
+    const { fixture, root, bridge, complete } = setup([item('answer', 'assistant', 'Finished working.')], { ...state, unseenCompletionAt: at });
+    await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    root.setAttribute('inert', '');
+    focused = true; window.dispatchEvent(new Event('focus')); await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    const scroll = fixture.componentInstance.chat()!.scroll()!;
+    scroll.atEnd.set(false); root.removeAttribute('inert'); await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    scroll.atEnd.set(true); await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledExactlyOnceWith('scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: at } });
+    complete(); await settle(fixture);
+    expect(fixture.componentInstance.store.state()?.unseenCompletionAt).toBeNull();
+  });
   it('copies reply and code text through the native bridge and reports native failures', async () => {
     const text = '  café 👩🏽‍💻\n\t代码\r\n';
     const { fixture, root, bridge } = setup([item('answer', 'assistant', text)]);

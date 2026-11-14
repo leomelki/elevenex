@@ -546,6 +546,10 @@ test('conversation cancellation is scoped to its owning window and request, and 
 
 test('conversation replies validate resource identity, bounded fields and supported action unions', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const completionAt = '2026-11-14T12:00:00.000Z';
+  assert.deepEqual(parseChatAction({ type: 'mark-seen', completionAt, private: 'drop' }), { type: 'mark-seen', completionAt });
+  for (const at of [undefined, null, '', 42, 'yesterday', '2026-99-99T00:00:00.000Z', 'x'.repeat(100)])
+    assert.throws(() => parseChatAction({ type: 'mark-seen', completionAt: at }));
   assert.deepEqual(parseChatAction({ type: 'send', text: 'hello', queue: true, private: 'drop' }), { type: 'send', text: 'hello', queue: true });
   assert.deepEqual(parseChatAction({ type: 'send', text: 'compare', queue: false, sessionIds: [12, 13] }), { type: 'send', text: 'compare', queue: false, sessionIds: [12, 13] });
   for (const sessionIds of [[0], [-1], [1.2], ['12'], [12, 12], Array.from({ length: 9 }, (_, i) => i + 1)])
@@ -561,6 +565,12 @@ test('harness selection requires a known action shape and an expected current pr
   for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
   const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const completionAt = '2026-11-14T12:00:00.000Z';
+  assert.equal(parseChatPage(page, 1, 2).state.unseenCompletionAt, undefined);
+  for (const unseenCompletionAt of [completionAt, null])
+    assert.equal(parseChatPage({ ...page, state: { ...state, unseenCompletionAt } }, 1, 2).state.unseenCompletionAt, unseenCompletionAt);
+  for (const unseenCompletionAt of ['', 1, 'bad', 'x'.repeat(100)])
+    assert.throws(() => parseChatPage({ ...page, state: { ...state, unseenCompletionAt } }, 1, 2));
   assert.equal(parseChatPage({ ...page, next: 'forward' }, 1, 2).next, 'forward');
   assert.equal(parseChatPage({ ...page, next: null }, 1, 2).next, null);
   assert.equal(parseChatPage(page, 1, 2).next, undefined);

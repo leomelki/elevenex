@@ -2,6 +2,17 @@ import { TestBed } from "@angular/core/testing";
 import { StatusGlyphComponent } from "./status-glyph.component";
 
 describe("Status glyph changes", () => {
+  it('renders an unseen reply as a small, named dot and only fades on completion', async () => {
+    const fixture = TestBed.createComponent(StatusGlyphComponent);
+    fixture.componentRef.setInput('status', 'running'); fixture.detectChanges(); await fixture.whenStable();
+    fixture.componentRef.setInput('status', 'review'); fixture.detectChanges(); await fixture.whenStable();
+    const svg = fixture.nativeElement.querySelector('svg');
+    expect(svg.getAttribute('aria-label')).toBe('New reply');
+    expect(svg.querySelector('circle[fill="currentColor"]').getAttribute('r')).toBe('2.5');
+    expect(svg.querySelector('path')).toBeNull();
+    expect(animate).toHaveBeenCalledOnce();
+    expect(animate).toHaveBeenCalledWith([{ opacity: 0 }, { opacity: 1 }], expect.any(Object));
+  });
   const originalAnimate = Object.getOwnPropertyDescriptor(
     Element.prototype,
     "animate",

@@ -61,6 +61,7 @@ export class SessionChatStore {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private request: string | undefined;
   private disposed = false;
+  private seenRequest: string | undefined;
   private readonly commands = new Map<string, string>();
   // Replies cross IPC with new object identities even on an idle heartbeat.
   // Keep unchanged inputs stable so polling does not rebuild the conversation.
@@ -143,6 +144,25 @@ export class SessionChatStore {
     });
   });
   readonly empty = computed(() => !this.exchanges().length && !this.running());
+
+  /** Called only after the focused view has rendered its latest content. */
+  async markSeen(): Promise<void> {
+    const selection = this.selection, at = this.state()?.unseenCompletionAt;
+    if (!selection || !at || this.disposed || this.offline() || !this.active() || this.loading() || this.historical() || this.next()) return;
+    const epoch = this.epoch, key = `${selection.scopeId}:${selection.sessionId}:${at}`;
+    if (this.seenRequest === key) return;
+    this.seenRequest = key;
+    try {
+      const result = await this.client.command(selection.scopeId, {
+        taskId: selection.taskId, sessionId: selection.sessionId,
+        action: { type: 'mark-seen', completionAt: at },
+      });
+      if (result.ok && !this.disposed && this.epoch === epoch && this.state()?.unseenCompletionAt === at)
+        this.state.update(state => state ? { ...state, unseenCompletionAt: null } : state);
+    } finally {
+      if (this.seenRequest === key) this.seenRequest = undefined;
+    }
+  }
 
   constructor() {
     let wasPaused: boolean | undefined;

@@ -517,6 +517,12 @@ questions, keyboard sending, editable drafts while streaming, navigation retenti
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
 
+`scenarios/session-unseen-reply.mjs` verifies the quiet New reply dot, keyboard
+opening and automatic acknowledgment through the production chat owner. It
+checks stable row geometry, preservation while reading earlier content, and
+clearing on return to latest, in both themes and narrow reduced-motion layouts.
+Run against the connected workspace preview URL.
+
 `scenarios/background-refresh.mjs` samples real frames during delayed background
 navigation and Git reads, transient failures and recovery. It checks retained
 chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and

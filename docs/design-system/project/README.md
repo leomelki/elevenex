@@ -23,7 +23,7 @@ Elevenex is an agent-first workspace: people start tasks, agents work in them, a
 - Sentence case everywhere: buttons, tabs, menus, titles. Overlines (`overline`) are the only uppercase text.
 - Lead buttons with a verb, one or two words: “New session”, “Commit”, “Push”, “Fork from here”, “Approve”.
 - Name sessions by intent (“Reproduce flake locally”), never “Session 3”. Agents propose names; people can rename.
-- Status words are fixed: Running, Needs you, Review, Done, Failed, Queued.
+- Status words are fixed: Running, Needs you, New reply, Done, Failed, Queued.
 - Numbers over adjectives: “6 of 50 failed”, “+214 −38”, “2 to push”.
 
 ## Visual foundations
@@ -51,14 +51,14 @@ Separate with layers and gutters first, `line` hairlines second, and never with 
 | --- | --- | --- | --- |
 | Needs you | `attention` | diamond with a bang | blocked on a question, a permission or a decision |
 | Running | `running` (= `accent`) | spinning ring | an agent is working |
-| Review | `review` | half-filled circle | finished, with changes to look at |
-| Done | `done` (= `ink-muted`) | check circle | finished, nothing to review |
+| New reply | `accent` | small solid dot | finished a turn you have not viewed; clears when the latest chat is visible |
+| Done | `done` (= `ink-muted`) | check circle | finished, latest reply viewed |
 | Failed | `danger` | filled cross | stopped on an error |
 | Queued | `ink-muted` | dashed circle | waiting to start |
 
 - Every status shows its glyph (`StatusGlyph`); color is never the only signal. Badges add the word.
 - Loudness follows urgency: only *needs you* tints a whole row (`attention-soft`) and puts a count on a project tile. *Done* is deliberately quiet.
-- Order is fixed wherever states are listed or counted: needs you, running, review, done.
+- Order is fixed wherever states are listed or counted: needs you, running, new reply, done.
 - Diffs use `diff-add` and `diff-del` with their `-soft` line grounds, always with + and − signs; the changed words inside a changed line sit on `diff-add-strong` / `diff-del-strong`. Code in the changes view is colored with the small `code-*` palette (keyword, string, number, function, comment), checked at 4.5:1 on every surface and diff ground.
 
 ### Task stages and links

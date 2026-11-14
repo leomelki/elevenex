@@ -18,7 +18,7 @@
   [style.padding-left.px]="8 + depth() * 16"
   (click)="activated.emit(session().id)"
 >
-  @if (archived()) { <ex-icon name="archive" [size]="14" /> } @else { <ex-status-glyph [status]="session().status" [size]="14" /> }
+  @if (archived()) { <ex-icon name="archive" [size]="14" /> } @else { <ex-status-glyph [status]="session().status" [size]="14" [exTooltip]="session().status === 'review' ? 'New reply · open chat to view' : ''" /> }
   @if (kindIcon(); as icon) {
     <span
       class="kind"
