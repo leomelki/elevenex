@@ -1,6 +1,6 @@
 import { accessSync, constants } from 'fs';
-import { homedir } from 'os';
-import { basename, extname, join } from 'path';
+import { homedir, userInfo } from 'os';
+import { basename, extname, isAbsolute, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
@@ -70,6 +70,7 @@ export const COMMON_BINARY_PATHS: readonly string[] = (() => {
 // rc files print at startup (compinit warnings, "Last login: …", banners,
 // version-check notices, …).
 const ENV_BOUNDARY = '>>>ELEVENEX_ENV_BOUNDARY<<<';
+const ENV_END_BOUNDARY = '>>>ELEVENEX_ENV_END<<<';
 
 const REFRESH_THROTTLE_MS = 60_000;
 const SHELL_TIMEOUT_MS = 5_000;
@@ -82,7 +83,10 @@ const SHELL_REFRESH_CONCURRENCY = 2;
 let _shellEnvCache: NodeJS.ProcessEnv | null = null;
 const shellProjection = new ShellEnvironmentProjection();
 let _lastRefreshAt = 0;
-const binaryPathCache = new Map<string, string>();
+const binaryPathCache = new Map<
+  string,
+  { searchPath: string; extensions: string | undefined; binary: string }
+>();
 
 // Per-cwd login-shell env cache. Some users wire version managers (nvm/fnm/
 // rbenv/…) into their rc files via `chpwd` hooks that read `.nvmrc`/`.tool-
@@ -159,13 +163,15 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
   'PS2',
   'PS3',
   'PS4',
+  'FNM_MULTISHELL_PATH',
+  'NVM_BIN',
+  'NVM_INC',
 ]);
 
 // Baseline env to spawn a login shell with.
 //
-// - Global load (no cwd): minimal boot path plus HOME so the shell can find
-//   user startup files, without inheriting application exports from the
-//   backend (systemd, launchd, Finder/DMG, …).
+// - Global load (no cwd): preserve launch/application inputs, remove our old
+//   projection and transient shell state, and start PATH from a clean baseline.
 // - Per-cwd load: inherit the global cache's env so the worktree-local shell
 //   starts from the same baseline as the user's interactive session. This is
 //   what makes the system general: anything an rc file sets up — version
@@ -173,26 +179,35 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 //   project exports, locale, custom env — flows into per-cwd loads, and the
 //   worktree's chpwd hooks layer cwd-specific overrides on top.
 function getShellBaselineEnv(forCwdLoad: boolean): NodeJS.ProcessEnv {
-  if (!forCwdLoad || !_shellEnvCache) {
-    // Bash does not populate HOME when spawned with a replacement environment.
-    // Without it, login startup skips ~/.profile and user version managers.
-    return { HOME: homedir(), PATH: getMinimalBootPath(), PS1: '' };
-  }
-  const baseline: NodeJS.ProcessEnv = { PS1: '' };
-  for (const [key, value] of Object.entries(_shellEnvCache)) {
-    if (PER_SHELL_INSTANCE_KEYS.has(key)) continue;
-    if (typeof value === 'string') baseline[key] = value;
-  }
-  if (typeof baseline.PATH !== 'string') {
-    baseline.PATH = getMinimalBootPath();
-  }
+  // Shells do not reliably reconstruct HOME (bash leaves it unset). Version
+  // managers and native CLI installers use it in rc files, especially when
+  // SSH starts the backend with a minimal PATH. Preserve arbitrary startup
+  // inputs (HOME, XDG, NVM_DIR, company bootstrap settings), not our previous
+  // shell's growing projection or transient version-manager state.
+  const inherited = shellProjection.baseline(process.env);
+  const baseline: NodeJS.ProcessEnv = {
+    ...(forCwdLoad ? _shellEnvCache : {}),
+    ...inherited,
+    HOME: inherited.HOME || homedir(),
+    SHELL: getUserShell(inherited),
+    PATH: (forCwdLoad && _shellEnvCache?.PATH) || getMinimalBootPath(),
+  };
+  for (const key of PER_SHELL_INSTANCE_KEYS) delete baseline[key];
+  baseline.PS1 = '';
   return baseline;
 }
 
-function getUserShell(): string {
-  // Prefer SHELL (set by login). Fallback to /bin/sh, which exists on every
-  // POSIX system — zsh isn't installed on most Linux servers.
-  return process.env.SHELL || '/bin/sh';
+function getUserShell(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.SHELL?.trim()) return env.SHELL.trim();
+  // Finder and service/SSH launchers may omit SHELL. The account record still
+  // identifies its login shell; sh would skip bash/zsh startup configuration.
+  try {
+    const shell = userInfo().shell;
+    if (shell) return shell;
+  } catch {
+    // Containers and restricted accounts may not have a passwd record.
+  }
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh';
 }
 
 function parseEnvOutput(raw: string): NodeJS.ProcessEnv {
@@ -201,15 +216,20 @@ function parseEnvOutput(raw: string): NodeJS.ProcessEnv {
   // never reached our capture command; rc-file chatter is not an environment.
   const idx = raw.indexOf(ENV_BOUNDARY);
   if (idx === -1) return {};
-  const envText = raw.slice(idx + ENV_BOUNDARY.length);
+  const start = idx + ENV_BOUNDARY.length;
+  // Login shells can print from logout hooks too. A NUL-prefixed end marker
+  // cannot occur inside an environment value, so isolate the complete dump.
+  const end = raw.indexOf(`\0${ENV_END_BOUNDARY}`, start);
+  if (end === -1) return {};
+  const envText = raw.slice(start, end + 1);
 
   const parsed: NodeJS.ProcessEnv = {};
-  for (const line of envText.split('\n')) {
+  for (const line of envText.split('\0')) {
     const eq = line.indexOf('=');
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
-    // Reject keys that aren't valid shell identifiers — guards against
-    // multi-line values (continuation lines) being parsed as new entries.
+    // Values can contain newlines and '='. NUL is the only unambiguous entry
+    // separator; reject malformed keys without modifying valid values.
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     parsed[key] = line.slice(eq + 1);
   }
@@ -231,7 +251,8 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
     let settled = false;
     let child: ReturnType<typeof spawn> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const shell = getUserShell();
+    const env = getShellBaselineEnv(cwd !== undefined);
+    const shell = env.SHELL ?? getUserShell();
     const startedAt = Date.now();
     const finish = (err?: Error) => {
       if (settled) return;
@@ -308,14 +329,20 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       chunks.push(data);
     };
     try {
+      assertSubprocessEnvironment(env);
       // Interactive + login sources version-manager hooks in rc files.
       child = spawn(
         shell,
-        ['-i', '-l', '-c', `printf '%s' '${ENV_BOUNDARY}'; env`],
+        [
+          '-i',
+          '-l',
+          '-c',
+          `printf '%s' '${ENV_BOUNDARY}'; /usr/bin/env -0 && printf '%s' '${ENV_END_BOUNDARY}'`,
+        ],
         {
-          env: getShellBaselineEnv(cwd !== undefined),
+          env,
           stdio: ['ignore', 'pipe', 'ignore'],
-          cwd,
+          cwd: cwd ?? env.HOME,
           detached: true,
         },
       );
@@ -556,20 +583,40 @@ export function clearBinaryPathCache(): void {
 }
 
 export function findBinary(name: string): string | null {
-  if (binaryPathCache.has(name)) {
-    return binaryPathCache.get(name) ?? null;
+  const searchPath = buildAugmentedPath();
+  const extensions = IS_WINDOWS ? process.env.PATHEXT : undefined;
+  const cached = binaryPathCache.get(name);
+  if (cached?.searchPath === searchPath && cached.extensions === extensions) {
+    try {
+      // FNM shell links and upgraded/uninstalled CLIs can disappear even
+      // before the next environment refresh. Never pin a dead executable.
+      accessSync(cached.binary, constants.X_OK);
+      return cached.binary;
+    } catch {
+      binaryPathCache.delete(name);
+    }
   }
 
   // Login-shell captures are projected onto process.env asynchronously.
   // buildAugmentedPath preserves that effective PATH order and appends known
   // install directories only as fallbacks for stripped Electron/Finder PATHs.
-  for (const dir of buildAugmentedPath().split(PATH_DELIMITER)) {
-    if (!dir) continue;
+  const explicitPath =
+    isAbsolute(name) ||
+    name.includes('/') ||
+    (IS_WINDOWS && name.includes('\\'));
+  const directories = explicitPath
+    ? ['']
+    : searchPath.split(PATH_DELIMITER).filter(Boolean);
+  for (const dir of directories) {
     for (const candidateName of getExecutableCandidateNames(name)) {
-      const candidate = join(dir, candidateName);
+      const candidate = dir ? join(dir, candidateName) : candidateName;
       try {
         accessSync(candidate, constants.X_OK);
-        binaryPathCache.set(name, candidate);
+        binaryPathCache.set(name, {
+          searchPath,
+          extensions,
+          binary: candidate,
+        });
         return candidate;
       } catch {
         // Try next
@@ -768,7 +815,7 @@ export function stripInheritedTmuxEnv(
 }
 
 // Default interactive shell for a brand-new user terminal. POSIX systems honour
-// $SHELL (set by login), with zsh on macOS and portable sh elsewhere.
+// $SHELL (set by login), then the account's login shell, then a platform fallback.
 // Windows has no $SHELL and no /bin/zsh — prefer PowerShell (pwsh if installed, else Windows PowerShell),
 // then cmd.exe as a last resort.
 export function getDefaultUserShell(): string {
@@ -781,10 +828,7 @@ export function getDefaultUserShell(): string {
       'powershell.exe'
     );
   }
-  return (
-    process.env.SHELL ||
-    (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
-  );
+  return getUserShell();
 }
 
 // Map a persisted shell to one that can actually run on this platform. User
@@ -871,7 +915,9 @@ function mergeAugmentedEnv(
   shellEnv: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const pathKey = getPathEnvKey(base);
-  const merged = { ...shellEnv, ...base };
+  // A default/copy of process.env includes our global shell projection. It is
+  // not a caller override: worktree exports and unsets must supersede it.
+  const merged = { ...shellEnv, ...shellProjection.baseline(base) };
   const shellAgent = shellConfiguredSshAgentSocket(base, shellEnv);
   if (shellAgent !== undefined) merged.SSH_AUTH_SOCK = shellAgent;
   // `base` (the backend's own launch-time env) must not clobber PWD once we've

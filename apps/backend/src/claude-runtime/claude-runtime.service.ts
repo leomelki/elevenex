@@ -2647,8 +2647,7 @@ export class ClaudeRuntimeService
           model: state.selectedModel ?? 'default',
           permissionMode: state.selectedPermissionMode ?? 'default',
           warmState: runtime.warmState,
-          claudeBinary:
-            this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude',
+          claudeBinary: this.resolveClaudeBinary(),
           historyItems: state.lastHistoryItemCount,
           historySource: state.lastHistorySource,
           historyAgeMs:
@@ -6288,8 +6287,8 @@ export class ClaudeRuntimeService
     // Always use the independently installed Claude Code CLI. Passing the
     // command name even when PATH resolution fails prevents the Agent SDK from
     // silently falling back to its bundled optional executable.
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = this.resolveClaudeBinary();
     const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
     const options: Options & {
       fastMode?: boolean;
@@ -6389,7 +6388,7 @@ export class ClaudeRuntimeService
         ...buildManagedPlannotatorEnv(
           sessionId,
           this.wrapperScriptPath,
-          await buildAugmentedEnvAsync(process.env, worktreePath),
+          environment,
         ),
         ELEVENEX_AGENT_TOKEN: mcpAgentToken,
       },
@@ -6444,8 +6443,8 @@ export class ClaudeRuntimeService
     serverName: string,
     abortController: AbortController,
   ): Promise<Options> {
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = this.resolveClaudeBinary();
 
     return {
       abortController,
@@ -6477,7 +6476,7 @@ export class ClaudeRuntimeService
       env: buildManagedPlannotatorEnv(
         sessionId,
         this.wrapperScriptPath,
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        environment,
       ),
     };
   }
@@ -6516,15 +6515,27 @@ export class ClaudeRuntimeService
       : null;
   }
 
+  private resolveClaudeBinary(): string {
+    const current = this.resolveClaudeCliOverride();
+    // Shell warm-up can finish after construction. Re-resolve for each new
+    // process so PATH/configuration changes do not pin the startup selection.
+    if (
+      current?.path !== this.claudeCliOverride?.path ||
+      current?.configured !== this.claudeCliOverride?.configured
+    )
+      this.claudeCliOverride = current;
+    return current?.path ?? 'claude';
+  }
+
   private async refreshClaudeCliOverrideVersion(): Promise<void> {
-    if (!this.claudeCliOverride) {
+    const selected = this.claudeCliOverride;
+    if (!selected) {
       return;
     }
-    const version = await this.readClaudeCliVersion(
-      this.claudeCliOverride.path,
-    );
+    const version = await this.readClaudeCliVersion(selected.path);
+    if (this.claudeCliOverride !== selected) return;
     this.claudeCliOverride = {
-      ...this.claudeCliOverride,
+      ...selected,
       version,
     };
     this.logClaudeRuntimeConfiguration();
@@ -6993,8 +7004,8 @@ export class ClaudeRuntimeService
    */
   private async buildEphemeralModelQueryOptions(): Promise<Options> {
     const cwd = tmpdir();
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, cwd);
+    const pathToClaudeCodeExecutable = this.resolveClaudeBinary();
     const denyTool: CanUseTool = () =>
       Promise.resolve({
         behavior: 'deny',
@@ -7009,7 +7020,7 @@ export class ClaudeRuntimeService
       canUseTool: denyTool,
       onElicitation: declineElicitation,
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-      env: await buildAugmentedEnvAsync(process.env, cwd),
+      env: environment,
     };
   }
 

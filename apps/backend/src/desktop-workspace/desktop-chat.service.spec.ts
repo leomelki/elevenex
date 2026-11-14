@@ -645,6 +645,25 @@ describe('selected session chat', () => {
     );
     expect(runtime.submitPrompt).not.toHaveBeenCalled();
   });
+  it('allows choosing Claude after Codex fails before creating a native conversation', async () => {
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({
+      runPhase: 'error',
+      canInterrupt: false,
+      lastError: 'spawn codex ENOENT',
+      pendingPrompts: [],
+    });
+    await chat.command(1, 2, {
+      type: 'provider',
+      provider: 'claude',
+      expectedProvider: 'codex',
+    });
+    expect(updateProvider).toHaveBeenCalledWith(2, 'claude');
+    expect(runtime.getRuntimeState).toHaveBeenCalledWith(2, {
+      initialize: false,
+    });
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
   it('does not move queued prompts or a starting turn to another harness', async () => {
     started.mockReturnValue(false);
     runtime.getRuntimeState.mockResolvedValueOnce({

@@ -101,7 +101,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (child && !child.killed) child.kill('SIGTERM');
   }
 
-  get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
+  get isRunning(): boolean {
+    return !!this.child && this.child.exitCode === null;
+  }
 
   onModuleDestroy(): void {
     this.shuttingDown = true;
@@ -324,7 +326,13 @@ export class CodexAppServerClient implements OnModuleDestroy {
       // from a previously-killed instance shouldn't disrupt the new one.
       if (this.child !== child) return;
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
-      this.tearDown(error);
+      this.tearDown(
+        'code' in error && error.code === 'ENOENT'
+          ? new Error(
+              `${error.message}. Codex must be installed on the backend machine (the remote host for SSH). Check its PATH or set ELEVENEX_CODEX_BIN to its executable path, then refresh the agent models.`,
+            )
+          : error,
+      );
     });
 
     child.once('exit', (code, signal) => {

@@ -10,7 +10,11 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { buildAugmentedEnv, buildSpawnCommand } from '../config/system-paths.js';
+import {
+  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
+  buildSpawnCommand,
+} from '../config/system-paths.js';
 import { resolveCodexBinary } from './codex-binary.js';
 import type {
   CodexAuthStatus,
@@ -133,10 +137,11 @@ export class CodexAuthService extends EventEmitter {
     if (this.active) {
       await this.killActive();
     }
+    const env = await buildAugmentedEnvAsync();
     const codexBin = resolveCodexBinary();
     try {
       await execFile(codexBin, ['--version'], {
-        env: buildAugmentedEnv(),
+        env,
         timeout: 5000,
       });
     } catch {
@@ -407,12 +412,13 @@ export class CodexAuthService extends EventEmitter {
       return this.versionInFlight;
     }
     const inflight = (async () => {
-      const codexBin = resolveCodexBinary();
       try {
+        const env = await buildAugmentedEnvAsync();
+        const codexBin = resolveCodexBinary();
         const { command, shell } = buildSpawnCommand(codexBin);
         const { stdout } = await execFile(command, ['--version'], {
           encoding: 'utf-8',
-          env: buildAugmentedEnv(),
+          env,
           timeout: 5000,
           shell,
         });

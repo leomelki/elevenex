@@ -7,6 +7,13 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+// These unit tests inject session/terminal fakes and do not need native PTYs.
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
+jest.mock('../terminal/terminal.service.js', () => ({
+  TerminalService: class TerminalService {},
+}));
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
@@ -1550,6 +1557,37 @@ describe('ClaudeRuntimeService', () => {
     expect((query as jest.Mock).mock.calls[0][0].options).toHaveProperty(
       'pathToClaudeCodeExecutable',
     );
+  });
+
+  it('resolves new Claude processes after environment warm-up instead of keeping the constructor selection', async () => {
+    const paths = jest.requireActual<
+      typeof import('../config/system-paths.js')
+    >('../config/system-paths.js');
+    let environmentReady = false;
+    const environment = jest
+      .spyOn(paths, 'buildAugmentedEnvAsync')
+      .mockImplementation(() => {
+        environmentReady = true;
+        return Promise.resolve({ PATH: '/updated/bin' });
+      });
+    const lookup = jest.spyOn(paths, 'findBinary').mockImplementation(() => {
+      expect(environmentReady).toBe(true);
+      return '/updated/bin/claude';
+    });
+    jest.mocked(query).mockImplementation(() => {
+      throw new Error('Fixture stops before contacting Claude');
+    });
+    try {
+      await service.prewarmSession(7);
+      expect(
+        jest.mocked(query).mock.calls.at(-1)?.[0].options
+          ?.pathToClaudeCodeExecutable,
+      ).toBe('/updated/bin/claude');
+    } finally {
+      await service.cleanupSession(7);
+      environment.mockRestore();
+      lookup.mockRestore();
+    }
   });
 
   it('accepts a fresh prompt after a finished task reactivates its conversation', async () => {
