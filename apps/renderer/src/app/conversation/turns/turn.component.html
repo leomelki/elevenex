@@ -23,38 +23,7 @@
           <span class="work-label" [class.failed]="status() === 'failed'">{{
             header.label
           }}</span>
-          @if (header.live) {
-            <span
-              >{{ stepCount() }}
-              {{ stepCount() === 1 ? "step" : "steps" }}</span
-            >
-          }
-          @if (facts().length) {
-            <span #factsRegion class="facts" [class.clipped]="factsClipped()">
-              @for (fact of facts(); track fact.kind; let i = $index) {
-                <span
-                  class="work-item fact"
-                  [class.failure]="fact.tone === 'danger'"
-                  [class.ok]="fact.tone === 'ok'"
-                  [style.--fact-index]="i"
-                >
-                  <ex-icon [name]="fact.icon" [size]="12" />
-                  {{ fact.label }}
-                  @if (fact.diff; as diff) {
-                    <span class="diff">
-                      @if (diff.add) {
-                        <span class="add">+{{ diff.add }}</span>
-                      }
-                      @if (diff.del) {
-                        <span class="del">−{{ diff.del }}</span>
-                      }
-                    </span>
-                  }
-                </span>
-              }
-            </span>
-          }
-          <span class="work-item chevron" [style.--fact-index]="facts().length">
+          <span class="chevron">
             <ex-icon name="chevron-right" [size]="12" />
           </span>
         </button>

@@ -9,6 +9,12 @@ export default async function* (capture) {
     await capture.settle();
     await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running'));
   };
+  const scroll = async selector => {
+    await capture.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center' }), selector);
+    if (await capture.evaluate(() => !!document.querySelector('.reminder-top button')))
+      await capture.click('.reminder-top button');
+    await finish();
+  };
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
     await capture.viewport(1440, 960);
@@ -25,36 +31,36 @@ export default async function* (capture) {
     });
     assert.deepEqual(order, { preceding: true, following: true });
     assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-turn .answer .caret').length), 0);
-    yield { name: theme + '-message-before-running-tool', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline', 'ex-turn .facts'] };
+    yield { name: theme + '-message-before-running-tool', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline', 'ex-turn .summary-facts'] };
+    await scroll('[data-work-step="test"] ex-tool-step .head');
     if (await capture.evaluate(() => document.querySelector('[data-work-step="test"] ex-tool-step .head').getAttribute('aria-expanded') !== 'true'))
       await capture.click('[data-work-step="test"] ex-tool-step .head');
     await finish();
     assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn ex-tool-step .head')].at(-1)?.getAttribute('aria-expanded')), 'true');
     yield { name: theme + '-tool-input-expanded', inspect: ['ex-turn ex-tool-step pre'] };
+    await scroll('ex-turn .work');
     await capture.click('ex-turn .work');
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work').getAttribute('aria-expanded')), 'false');
     assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn ex-tool-step')].filter(t => !t.querySelector('section.running')).every(t => !!t.closest('ex-fold[inert]'))), true);
+    await scroll('ex-turn .work');
     await capture.click('ex-turn .work');
     await finish();
     yield { name: theme + '-work-reopened', inspect: ['ex-turn .answer', 'ex-turn ex-work-timeline'] };
 
     await scenario('ready');
     await capture.waitFor(() => document.querySelector('ex-turn .answer')?.textContent.includes('All'));
+    await scroll('ex-turn .work');
     await capture.click('ex-turn .work');
     await finish();
     await capture.click('ex-composer textarea');
     await finish();
-    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-turn .fact')).opacity), '0');
-    await capture.hover('ex-turn .work-label');
-    await finish();
-    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-turn .fact')).opacity), '1');
-    assert.match(await capture.evaluate(() => document.querySelector('ex-turn .facts').textContent), /Ran 1 command/);
-    yield { name: theme + '-hover-summary', inspect: ['ex-turn .work', 'ex-turn .facts'] };
-    await capture.hover('ex-composer textarea');
+    const summary = '[data-work-step="test"] .group';
+    assert.match(await capture.evaluate(s => document.querySelector(s).getAttribute('aria-label'), summary), /1 command/);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work').textContent.includes('command')), false);
+    yield { name: theme + '-section-summary', inspect: ['ex-turn .work', summary] };
     await capture.evaluate(() => document.querySelector('ex-turn .work').focus());
     await finish();
-    assert.equal(await capture.evaluate(() => getComputedStyle(document.querySelector('ex-turn .fact')).opacity), '1');
     await capture.press('Enter');
     await finish();
     yield { name: theme + '-keyboard-expanded-history', inspect: ['ex-turn .work', 'ex-turn ex-work-timeline'] };

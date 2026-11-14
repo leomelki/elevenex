@@ -8,7 +8,7 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; commentary stays visible after completion. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
-- `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section shows up to ten steps, then retains the latest five and summarizes older work. Commentary, running/unknown tools, unresolved failures and inspected work stay visible. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+- `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section shows up to ten steps, then retains the latest five and summarizes older work. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
@@ -173,11 +173,19 @@ instance as earlier commentary. File/link/page/copy intents work in both places.
 The timeline retains every step’s component in its original keyed list. Nonempty
 messages delimit activity sections; empty streaming replies do not close work.
 A new message or completion folds settled work in the preceding section into a
-summary at that location (“Read 5 files · Ran 3 commands · 2 edits”). Counts
+summary at that location (“5 reads · 3 commands · 2 edits”), with a shared icon
+for each category. Counts
 represent observed operations; shell commands never imply file reads or edits.
-Running/unknown tools and unresolved failures remain visible outside the summary.
+Completed failed calls fold into the same summary. A red status glyph and text
+(“1 failed”) remain visible in its button, including for a failure-only section.
+Failure counts are a subset of category totals; totals count attempts, not
+successes. Expected/recovered failures do not contribute to the failure marker;
+later success alone never clears it. Running/unknown tools remain visible.
 Each section opens independently and retains that choice through streaming and
-completion. The work line explicitly expands or collapses all activity sections. Inspected results and focused controls remain mounted and visible.
+completion. The work line shows status/time and expands or collapses all sections;
+category totals live in the sections instead of repeating in the heading.
+Live counts use the shared Ticker, with still initial history and reduced motion.
+Inspected results and focused controls remain mounted and visible.
 Explicit section collapse releases its inspection pins; focusing a summary alone
 does not open it. Commentary stays visible even when the turn’s work is closed.
 `maxVisible` is the active section’s recent-step count (default 5); compaction

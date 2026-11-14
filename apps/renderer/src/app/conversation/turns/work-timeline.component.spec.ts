@@ -71,7 +71,7 @@ describe("message-delimited work sections", () => {
     expect(group(host, "command-0")).toBeNull();
     expect(visible(host, "command-0")).toBe(true);
     update(exchange([...steps, tool("command-10")]));
-    expect(group(host, "command-0")?.textContent).toContain("Ran 6 commands");
+    expect(group(host, "command-0")?.textContent).toContain("6 commands");
     expect(visible(host, "command-5")).toBe(false);
     expect(visible(host, "command-6")).toBe(true);
     expect(visible(host, "command-10")).toBe(true);
@@ -90,8 +90,8 @@ describe("message-delimited work sections", () => {
         { answer: "Done.", status: "done" },
       ),
     );
-    expect(group(host, "read")?.textContent).toContain(
-      "Read 1 file · Ran 1 command",
+    expect(group(host, "read")?.getAttribute("aria-label")).toContain(
+      "1 read · 1 command",
     );
     expect(group(host, "edit")?.textContent).toContain("1 edit");
     expect(visible(host, "read")).toBe(false);
@@ -126,7 +126,7 @@ describe("message-delimited work sections", () => {
         answerId: "latest",
       }),
     );
-    expect(group(host, "first")?.textContent).toContain("Ran 1 command");
+    expect(group(host, "first")?.textContent).toContain("1 command");
     expect(visible(host, "first")).toBe(false);
     expect(visible(host, "second")).toBe(true);
     expect(group(host, "second")).toBeNull();
@@ -151,7 +151,7 @@ describe("message-delimited work sections", () => {
   });
 
   it.each(["live", "done", "failed", "stopped"] as const)(
-    "keeps running, unknown and unresolved failures visible in a %s turn",
+    "folds failed calls into the section while keeping unfinished work visible in a %s turn",
     (status) => {
       const { host } = setup(
         exchange(
@@ -164,12 +164,90 @@ describe("message-delimited work sections", () => {
           { answer: "Another update.", status },
         ),
       );
-      for (const id of ["running", "failed", "unknown"])
+      for (const id of ["running", "unknown"])
         expect(visible(host, id)).toBe(true);
       expect(visible(host, "done")).toBe(false);
-      expect(group(host, "running")?.textContent).toContain("Ran 1 command");
+      expect(visible(host, "failed")).toBe(false);
+      expect(group(host, "running")?.getAttribute("aria-label")).toContain(
+        "1 failed · 2 commands",
+      );
     },
   );
+
+  it("keeps a failure-only summary visible and exposes error details through the same keyboard disclosure", async () => {
+    const failed = tool("failed", {
+      status: "failed",
+      output: "Database unavailable",
+    });
+    const { host, fixture, update } = setup(
+      exchange([failed], { answer: "The database check failed." }),
+    );
+    const control = group(host, "failed")!;
+    expect(control.getAttribute("aria-label")).toContain(
+      "1 failed · 1 command",
+    );
+    expect(control.querySelector(".failure ex-status-glyph")).not.toBeNull();
+    expect(visible(host, "failed")).toBe(false);
+    control.focus();
+    control.click();
+    await settle(fixture);
+    const button = head(host, "failed");
+    button.click();
+    button.focus();
+    await settle(fixture);
+    expect(host.querySelector("pre")?.textContent).toContain(
+      "Database unavailable",
+    );
+    update(
+      exchange([failed], {
+        status: "done",
+        answer: "The database check failed.",
+      }),
+    );
+    await settle(fixture);
+    expect(head(host, "failed")).toBe(button);
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    control.focus();
+    control.click();
+    await settle(fixture);
+    expect(visible(host, "failed")).toBe(false);
+    expect(document.activeElement).toBe(control);
+    expect(control.querySelector(".failure")?.textContent).toContain(
+      "1 failed",
+    );
+  });
+
+  it("retains a failure marker through later success and clears it only after explicit recovery", () => {
+    const failed = tool("failed", { status: "failed" });
+    const { host, update } = setup(exchange([failed], { answer: "Checking." }));
+    update(
+      exchange([failed, tool("success")], { answer: "Another check passed." }),
+    );
+    expect(
+      group(host, "failed")?.querySelector(".failure")?.textContent,
+    ).toContain("1 failed");
+    update(
+      exchange([{ ...failed, recovered: true }, tool("success")], {
+        answer: "Recovered.",
+      }),
+    );
+    expect(group(host, "failed")?.querySelector(".failure")).toBeNull();
+    expect(visible(host, "failed")).toBe(false);
+  });
+
+  it("includes an older failed attempt in active-section compaction", () => {
+    const steps = [
+      tool("failed", { status: "failed" }),
+      ...Array.from({ length: 10 }, (_, n) => tool(`command-${n}`)),
+    ];
+    const { host } = setup(exchange(steps));
+    expect(visible(host, "failed")).toBe(false);
+    expect(visible(host, "command-9")).toBe(true);
+    expect(group(host, "failed")?.getAttribute("aria-label")).toContain(
+      "1 failed · 6 commands",
+    );
+  });
 
   it("retains an inspected tool and focus through new messages, completion, and explicit section collapse", async () => {
     const first = exchange([tool("command")], {

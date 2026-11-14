@@ -103,7 +103,7 @@ export default async function* (capture) {
         (s) => document.querySelector(s).textContent,
         summary("concurrency"),
       ),
-      /Ran 1 command/,
+      /1 command/,
     );
     yield {
       name: theme + "-new-message-closes-activity",
@@ -142,12 +142,12 @@ export default async function* (capture) {
     assert.equal(await shown("edit"), false);
     const labels = await capture.evaluate(() =>
       [...document.querySelectorAll(".group-fold:not([inert]) .group")].map(
-        (e) => e.textContent.trim(),
+        (e) => e.getAttribute("aria-label"),
       ),
     );
     assert.equal(labels.length, 2);
-    assert.match(labels[0], /Read 2 files · Ran 1 command/);
-    assert.match(labels[1], /Ran 1 command · 1 edit/);
+    assert.match(labels[0], /2 reads · 1 command/);
+    assert.match(labels[1], /1 command · 1 edit/);
     yield {
       name: theme + "-message-section-summaries",
       inspect: ["ex-turn", summary("retry"), summary("edit")],
@@ -216,7 +216,7 @@ export default async function* (capture) {
         (s) => document.querySelector(s).textContent,
         summary("check-0"),
       ),
-      /Ran 6 commands/,
+      /6 commands/,
     );
     yield {
       name: theme + "-active-section-five-recent",
@@ -226,19 +226,98 @@ export default async function* (capture) {
     await scene("busy");
     await finish();
     assert.equal(await shown("watch"), true);
-    assert.equal(await shown("database"), true);
+    assert.equal(await shown("database"), false);
     assert.equal(await shown("check-0"), false);
     assert.match(
       await capture.evaluate(
         (s) => document.querySelector(s).textContent,
         summary("watch"),
       ),
-      /Ran 8 commands/,
+      /9 commands/,
     );
     yield {
-      name: theme + "-running-and-failed-stay-visible",
+      name: theme + "-failure-merged-running-visible",
       inspect: ["ex-turn", row("watch"), row("database")],
     };
+
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).getAttribute("aria-label"),
+        summary("watch"),
+      ),
+      /1 failed · 9 commands/,
+    );
+    await capture.evaluate((s) => {
+      document.querySelector(s).dataset.retained = "summary";
+    }, summary("watch"));
+    await scroll(summary("watch"));
+    await capture.evaluate(
+      (s) => document.querySelector(s).focus(),
+      summary("watch"),
+    );
+    await scene("busy-receipt");
+    await finish();
+    assert.equal(await shown("watch"), false);
+    assert.equal(
+      await capture.evaluate(
+        (s) =>
+          document.activeElement === document.querySelector(s) &&
+          document.querySelector(s).dataset.retained === "summary",
+        summary("watch"),
+      ),
+      true,
+    );
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).getAttribute("aria-label"),
+        summary("watch"),
+      ),
+      /2 failed · 10 commands/,
+    );
+    yield {
+      name: theme + "-second-failure-updates-summary",
+      inspect: ["ex-turn", summary("watch")],
+    };
+    await scene("failure-only");
+    await finish();
+    assert.equal(await shown("database"), false);
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).getAttribute("aria-label"),
+        summary("database"),
+      ),
+      /1 failed · 1 command/,
+    );
+    await scroll(summary("database"));
+    yield {
+      name: theme + "-failure-only-summary",
+      inspect: [summary("database")],
+    };
+    await capture.click(summary("database"));
+    await finish();
+    await scroll(head("database"));
+    await capture.click(head("database"));
+    await finish();
+    assert.equal(await shown("database"), true);
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).textContent,
+        row("database"),
+      ),
+      /database is unavailable/,
+    );
+    yield { name: theme + "-failed-call-details", inspect: [row("database")] };
+    await scroll(summary("database"));
+    await capture.click(summary("database"));
+    await finish();
+    assert.equal(await shown("database"), false);
+    assert.equal(
+      await capture.evaluate(
+        (s) => document.activeElement === document.querySelector(s),
+        summary("database"),
+      ),
+      true,
+    );
 
     await scene("long");
     await finish();
@@ -259,22 +338,31 @@ export default async function* (capture) {
 
     await capture.viewport(1000, 760);
     await capture.reducedMotion(true);
-    await scene("sections");
+    await scene("failed-sections");
     await finish();
-    await scroll(summary("edit"));
+    await scroll(summary("retry"));
     assert.equal(
       await capture.evaluate(() => {
         const bounds = document
           .querySelector("ex-work-timeline")
           .getBoundingClientRect();
-        return [...document.querySelectorAll("ex-work-timeline .group")].every(
-          (e) => {
-            const r = e.getBoundingClientRect();
-            return r.left >= bounds.left - 1 && r.right <= bounds.right + 1;
-          },
-        );
+        return [
+          ...document.querySelectorAll(
+            "ex-work-timeline .group, ex-work-timeline .summary-fact",
+          ),
+        ].every((e) => {
+          const r = e.getBoundingClientRect();
+          return r.left >= bounds.left - 1 && r.right <= bounds.right + 1;
+        });
       }),
       true,
+    );
+    assert.match(
+      await capture.evaluate(
+        (s) => document.querySelector(s).getAttribute("aria-label"),
+        summary("retry"),
+      ),
+      /1 failed · 2 reads · 1 command/,
     );
     yield {
       name: theme + "-narrow-reduced-motion",

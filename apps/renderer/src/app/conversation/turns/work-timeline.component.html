@@ -21,14 +21,27 @@
                 "
                 (click)="toggleGroup(group.id)"
               >
-                <ex-icon name="layers" [size]="14" /><span>{{
-                  group.label
-                }}</span>
                 <ex-icon
+                  class="disclosure"
                   name="chevron-right"
                   [size]="12"
                   [class.turned]="groupOpen(row)"
                 />
+                <span class="summary-facts">
+                  @for (fact of group.facts; track fact.kind) {
+                    <span class="summary-fact" [class.failure]="fact.danger">
+                      @if (fact.danger) {
+                        <ex-status-glyph status="failed" [size]="12" />
+                      } @else {
+                        <ex-icon [name]="fact.icon" [size]="12" />
+                      }
+                      <span
+                        ><ex-ticker [value]="fact.count" />
+                        {{ fact.noun }}</span
+                      >
+                    </span>
+                  }
+                </span>
               </button>
             }
           }

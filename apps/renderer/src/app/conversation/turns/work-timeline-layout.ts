@@ -1,24 +1,28 @@
 import type { WorkStep } from "../conversation.models";
 import { isProse } from "./work-summary";
 
+interface SectionFact {
+  readonly kind: WorkStep["kind"] | "failure";
+  readonly count: number;
+  readonly noun: string;
+  readonly icon: string;
+  readonly danger?: boolean;
+}
 export interface WorkSection {
   readonly id: string;
   readonly items: readonly WorkStep[];
   readonly folded: ReadonlySet<string>;
   readonly label: string;
+  readonly facts: readonly SectionFact[];
 }
 export interface WorkTimelineRow {
   readonly step: WorkStep;
   readonly section?: WorkSection;
 }
 
-/** Unfinished work and unresolved failures must never disappear into a summary. */
-export function needsAttention(step: WorkStep): boolean {
-  return (
-    step.status === "running" ||
-    step.status === "unknown" ||
-    (step.status === "failed" && !step.recovered && !step.expected)
-  );
+/** Work without a completion receipt stays in its chronological row. */
+export function isUnfinishedWork(step: WorkStep): boolean {
+  return step.status === "running" || step.status === "unknown";
 }
 
 /**
@@ -49,12 +53,14 @@ export function workTimelineRows(
         : items.length > limit * 2
           ? items.slice(0, -limit)
           : [];
-    const folded = candidates.filter((step) => !needsAttention(step));
+    const folded = candidates.filter((step) => !isUnfinishedWork(step));
+    const facts = sectionSummary(folded);
     const section: WorkSection = {
       id: items[0]!.id,
       items,
       folded: new Set(folded.map((step) => step.id)),
-      label: sectionSummary(folded),
+      label: facts.map((fact) => `${fact.count} ${fact.noun}`).join(" · "),
+      facts,
     };
     rows.push(
       ...pending.map((step) => (isProse(step) ? { step } : { step, section })),
@@ -75,30 +81,53 @@ export function workTimelineRows(
 }
 
 /** Counts describe observed tool operations, never inferred shell side effects. */
-function sectionSummary(steps: readonly WorkStep[]): string {
+function sectionSummary(steps: readonly WorkStep[]): readonly SectionFact[] {
   const counts = new Map<WorkStep["kind"], number>();
-  for (const step of steps)
+  let failures = 0;
+  for (const step of steps) {
     counts.set(step.kind, (counts.get(step.kind) ?? 0) + 1);
-  const labels: string[] = [];
-  const add = (count: number, singular: string, plural = singular + "s") => {
-    if (count) labels.push(`${count} ${count === 1 ? singular : plural}`);
+    if (step.status === "failed" && !step.recovered && !step.expected)
+      failures++;
+  }
+  const facts: SectionFact[] = [];
+  if (failures)
+    facts.push({
+      kind: "failure",
+      count: failures,
+      noun: "failed",
+      icon: "x",
+      danger: true,
+    });
+  const add = (
+    kind: WorkStep["kind"],
+    icon: string,
+    singular: string,
+    plural = singular + "s",
+    count = counts.get(kind) ?? 0,
+  ) => {
+    if (count)
+      facts.push({
+        kind,
+        count,
+        noun: count === 1 ? singular : plural,
+        icon,
+      });
   };
-  const count = (kind: WorkStep["kind"]) => counts.get(kind) ?? 0;
-  if (count("read"))
-    labels.push(
-      `Read ${count("read")} ${count("read") === 1 ? "file" : "files"}`,
-    );
-  if (count("run"))
-    labels.push(
-      `Ran ${count("run")} ${count("run") === 1 ? "command" : "commands"}`,
-    );
-  add(count("edit") + count("create"), "edit");
-  add(count("search"), "search", "searches");
-  add(count("list"), "folder listing");
-  add(count("test"), "test run");
-  add(count("web"), "web request");
-  add(count("tool"), "tool call");
-  add(count("ask"), "question");
-  add(count("think"), "thought");
-  return labels.join(" · ");
+  add("read", "file", "read");
+  add("run", "terminal", "command");
+  add(
+    "edit",
+    "changes",
+    "edit",
+    "edits",
+    (counts.get("edit") ?? 0) + (counts.get("create") ?? 0),
+  );
+  add("search", "search", "search", "searches");
+  add("list", "folder", "listing");
+  add("test", "terminal", "test run");
+  add("web", "globe", "web request");
+  add("tool", "plug", "tool call");
+  add("ask", "chat", "question");
+  add("think", "bulb", "thought");
+  return facts;
 }
