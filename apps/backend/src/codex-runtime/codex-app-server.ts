@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildSpawnCommand,
 } from '../config/system-paths.js';
 import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
@@ -173,12 +173,19 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
+    // Startup model discovery runs in onModuleInit, before ShellEnvService's
+    // bootstrap hook. Wait for the coalesced shell capture before resolving
+    // the CLI or spawning it with PATH, tool homes and credentials.
+    const env = await buildAugmentedEnvAsync();
+    if (this.shuttingDown) {
+      throw new Error('codex app-server client is shutting down');
+    }
     const binary = resolveCodexBinary();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    this.spawnChild(binary);
+    this.spawnChild(binary, env);
     this.binaryIdentity = identity;
     try {
       await this.sendRequest<unknown>(
@@ -283,11 +290,11 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
   }
 
-  private spawnChild(codexBin: string): void {
+  private spawnChild(codexBin: string, env: NodeJS.ProcessEnv): void {
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const { command, shell } = buildSpawnCommand(codexBin);
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
-      env: buildAugmentedEnv(),
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell,
     });

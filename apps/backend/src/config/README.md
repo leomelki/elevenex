@@ -8,6 +8,12 @@ Cold captures start with a minimal PATH and the user's HOME so login shells
 load user startup files and version managers even in SSH-launched runtimes.
 Other backend exports are excluded from this initial capture environment.
 
+Codex app-server startup awaits `buildAugmentedEnvAsync()` before resolving the
+CLI and spawning it. Model discovery begins during module initialization, before
+`ShellEnvService`'s application-bootstrap hook; it must join the bounded,
+coalesced shell capture rather than start with an incomplete environment. Warm
+app-server requests reuse the initialized process without another capture.
+
 Global refreshes replace the previous shell-owned projection instead of merging
 indefinitely into `process.env`. Launch-time settings and later application
 overrides keep priority. Shell-added exports removed from a later capture are
