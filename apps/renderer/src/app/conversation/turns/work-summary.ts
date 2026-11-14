@@ -117,9 +117,11 @@ export function summarizeWork(
 }
 export function formatDuration(seconds: number): string {
   const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
-  return value >= 60
-    ? `${Math.floor(value / 60)}m ${value % 60}s`
-    : `${value}s`;
+  return value >= 3600
+    ? `${Math.floor(value / 3600)}h ${Math.floor((value % 3600) / 60)}m`
+    : value >= 60
+      ? `${Math.floor(value / 60)}m ${value % 60}s`
+      : `${value}s`;
 }
 export function isProse(step: WorkStep): boolean {
   return step.kind === "say" || step.kind === "note";

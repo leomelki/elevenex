@@ -136,8 +136,14 @@ controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A
 `ChatExchange.isNew` opts only fresh prompts into motion; `overflow` entries emit
 `contentRequested` to the bounded original-content reader. Empty prompts support
 partial history windows without inventing user text. `Turn` forwards the action
-allowlist and retry capability, including keyboard shortcuts. Unknown duration
-shows Worked/Working without an invented zero-second measurement. Finished turns
+allowlist and retry capability, including keyboard shortcuts. The work heading
+pairs a prominent verb with a muted, tabular time: `Worked for 2m 14s`,
+`Stopped after 12s` or `Failed after 12s`. `duration` supplies a settled turn's
+length; a live turn given `startedAt` (epoch ms) ticks `Working for …` once a
+second until it settles, and otherwise shows `elapsed`. The session adapter
+measures from the prompt to the turn's last activity, so a history window that
+starts mid-turn has no duration. Unknown or sub-second duration shows
+Worked/Working without an invented zero-second measurement. Finished turns
 with no activity or earlier commentary omit the work header so the answer appears directly; live turns retain their status and
 Stop control before the first step.
 Turn spacing lives inside each folding section so closed work and live-step

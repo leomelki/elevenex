@@ -89,6 +89,13 @@ footer {
   font-weight: 600;
   color: var(--ink);
 }
+.work-time {
+  /* Nested in the label so verb and time read and wrap as one phrase. */
+  font-weight: 400;
+  color: var(--ink-muted);
+  /* Ticking digits keep their width so the chevron and Stop never shift. */
+  font-variant-numeric: tabular-nums;
+}
 .work:hover .work-label {
   text-decoration: underline;
   text-underline-offset: 3px;

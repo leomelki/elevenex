@@ -100,6 +100,8 @@ const retryQuestion: NonNullable<SessionChatState["question"]> = {
 /** Background work plus the events the backend keeps: finished work, failures, compaction. */
 export const previewChatWork = (now = Date.now()): NonNullable<SessionChatState["work"]> => sessionActivityWork('codex', now);
 
+// Seeded history shares one stamp; runtime receipts use the current time so
+// live turns count from a realistic start, as backend receipts do.
 const item = (
   id: string,
   kind: SessionChatItem["kind"],
@@ -162,6 +164,8 @@ const opening = () => [
     "answer",
     "assistant",
     "The retry path now claims the idempotency key **before** calling the payment provider. Concurrent requests share the original result.\n\n- Preserved retry behavior after transient errors.\n- Added coverage for simultaneous and delayed requests.\n- All **12 tests pass**.\n\n```ts\nconst claim = await retries.claim(key);\nif (!claim.created) return claim.result;\n```",
+    // A later receipt lets the settled turn show a realistic "Worked for" time.
+    { timestamp: "2026-10-28T10:22:14.000Z" },
   ),
 ];
 /** Harness-shaped fixtures stay outside the production import graph. */
@@ -233,7 +237,7 @@ export class SessionChatFixture {
   }
   /** Incoming reply growth without a local submission or transcript reset. */
   appendAssistant(text: string, id = 101): void {
-    this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text));
+    this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text, { timestamp: new Date().toISOString() }));
     this.changed();
   }
   constructor(destroy: DestroyRef) {
@@ -666,10 +670,10 @@ export class SessionChatFixture {
       else {
         const refs = [...action.text.matchAll(/^\[([^\]]+)\]\(<([^>]+)>\)/gm)].map((match, index) => ({ id: String(index), path: match[2]!, caption: match[1]!, inline: false, kind: /\.(png|jpe?g|gif|webp)$/i.test(match[2]!) ? 'image' as const : /\.(mp4|webm|mov)$/i.test(match[2]!) ? 'video' as const : 'file' as const }));
         const mentions = action.sessionIds?.map(sessionId => ({ sessionId, title: sessionId === 102 ? 'Review the race condition' : `Session ${sessionId}` }));
-        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs, mentions });
+        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs, mentions, timestamp: new Date().toISOString() });
         const delayed = this.delayedReceipts;
         if (!delayed) session.items.push(receipt);
-        session.items.push(item(`reply-${this.version}`, "assistant", ""));
+        session.items.push(item(`reply-${this.version}`, "assistant", "", { timestamp: new Date().toISOString() }));
         session.state = {
           ...session.state,
           phase: "running",
