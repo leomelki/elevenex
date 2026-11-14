@@ -328,7 +328,7 @@ platform integrations intentionally left to future application owners.
 | Exit behavior | Departing Presence content, toasts, and view tabs are inert and hidden from assistive technology while retained for animation. |
 | Tabs and search | Closing tabs preserves focus; arrow navigation skips closing DOM. Terminal Find focuses/restores correctly and clears its hidden filter. |
 | Control design | Token focus rings, Kbd typography, disabled/hover/press behavior, selected-tab label motion, shared Plan/Code control, and Browser driver label swaps are consistent. |
-| Status glyphs | Running-to-done/review completion plays once; existing history stays still. |
+| Status glyphs | Running-to-done completion plays once; existing history stays still. The compatible `review` state is a steady 5px accent dot labeled New reply, cleared when the latest chat is viewed, with a quiet fade and no burst. |
 | Machines | Command/Control+Enter emits new-window intent, machine icons use their assigned hue, picked SSH hosts ignore suggestion keys, and launches respect destination focus and changes to reduced motion. |
 | Shell composition | Workbench forwards wider-review state, Escape, and closed-task intent. Reduced-motion routing uses the existing CSS rules instead of generating intentional View Transition errors. |
 

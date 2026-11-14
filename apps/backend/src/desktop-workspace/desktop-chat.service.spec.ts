@@ -51,6 +51,45 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('does not pair a new completion marker with an older in-flight history read', async () => {
+    let finish!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));
+    const old = chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    await settle();
+    const at = '2026-11-14T12:00:00.000Z';
+    session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'codex', hasUnreviewedCompletion: true, lastCompletionAt: at });
+    module.get(SessionsService).emit('session-completion-changed', { sessionId: 2, hasUnreviewedCompletion: true });
+    history = [item('new-final', 'New final reply')];
+    const current = await chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    expect(current!.state.unseenCompletionAt).toBe(at);
+    expect(current!.items.some(item => item.text === 'New final reply')).toBe(true);
+    finish([]); await old;
+  });
+  it('confines seen acknowledgments to the task and completion, without starting a runtime', async () => {
+    const sessions = module.get(SessionsService);
+    const at = '2026-11-14T12:00:00.000Z';
+    await expect(chat.command(9, 2, { type: 'mark-seen', completionAt: at })).rejects.toThrow('does not belong');
+    for (const completionAt of [undefined, null, '', 'yesterday', 'x'.repeat(100)])
+      await expect(chat.command(1, 2, { type: 'mark-seen', completionAt })).rejects.toThrow('Invalid completion');
+    await expect(chat.command(1, 2, { type: 'mark-seen', completionAt: at })).resolves.toEqual({ accepted: true });
+    expect(sessions.markCompletionReviewed).toHaveBeenCalledWith(2, at);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
+  it('wakes a selected feed on completion changes and releases its listener', async () => {
+    const sessions = module.get(SessionsService);
+    const at = '2026-11-14T12:00:00.000Z';
+    const first = await chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    expect(sessions.listenerCount('session-completion-changed')).toBe(1);
+    const pending = chat.read(1, 2, first!.cursor, undefined, new AbortController().signal);
+    await settle();
+    session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'codex', hasUnreviewedCompletion: true, lastCompletionAt: at });
+    sessions.emit('session-completion-changed', { sessionId: 2, hasUnreviewedCompletion: true });
+    expect((await pending)!.state.unseenCompletionAt).toBe(at);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+    chat.onModuleDestroy();
+    expect(sessions.listenerCount('session-completion-changed')).toBe(0);
+  });
   it('only serves image references belonging to the requested task and transcript item', async () => {
     history = [{ ...item('image'), providerToolResult: [{ type: 'output_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] }];
     await expect(chat.media(1, 2, 'image', '0')).resolves.toMatchObject({ itemId: 'image', mediaId: '0' });
@@ -98,13 +137,14 @@ describe('selected session chat', () => {
         },
         {
           provide: SessionsService,
-          useValue: {
+          useValue: Object.assign(new EventEmitter(), {
             findOne: session,
+            markCompletionReviewed: jest.fn(),
             hasStartedAgentRuntime: started,
             updateActiveAgentProvider: updateProvider,
             assertSessionWorkspaceLinked: jest.fn(),
             reactivateRuntime: jest.fn(),
-          },
+          }),
         },
         {
           provide: AgentRuntimeRegistryService,

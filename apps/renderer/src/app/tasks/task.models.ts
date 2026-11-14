@@ -209,7 +209,7 @@ export const TASK_STAGE_LABELS: Readonly<Record<TaskStage, string>> = {
 export const SUMMARY_LABELS: Readonly<Record<SummaryStatus, string>> = {
   attention: 'Needs you',
   running: 'Running',
-  review: 'Review',
+  review: 'New reply',
   done: 'Done',
 };
 

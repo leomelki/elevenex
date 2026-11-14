@@ -1,4 +1,5 @@
 import { OpensWhenBackComponent } from '../machines';
+import { DOCUMENT } from '@angular/common';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import {
@@ -97,6 +98,10 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
+  private readonly document = inject(DOCUMENT);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private readonly foreground = signal(this.document.hasFocus() && !this.document.hidden);
+  private readonly visibilityRevision = signal(0);
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
@@ -364,6 +369,24 @@ export class SessionChatComponent {
     if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.drop(event);
   }
   constructor() {
+    const view = this.document.defaultView;
+    const foreground = () => this.foreground.set(this.document.hasFocus() && !this.document.hidden);
+    view?.addEventListener('focus', foreground);
+    view?.addEventListener('blur', foreground);
+    this.document.addEventListener('visibilitychange', foreground);
+    inject(DestroyRef).onDestroy(() => {
+      view?.removeEventListener('focus', foreground);
+      view?.removeEventListener('blur', foreground);
+      this.document.removeEventListener('visibilitychange', foreground);
+    });
+    afterRenderEffect(cleanup => {
+      // Shell takeovers and modal layers retain the chat under inert ancestors.
+      // Observe only those ancestors, never the streamed transcript subtree.
+      const observer = new MutationObserver(() => this.visibilityRevision.update(value => value + 1));
+      for (let parent: HTMLElement | null = this.element; parent; parent = parent.parentElement)
+        observer.observe(parent, { attributes: true, attributeFilter: ['inert', 'hidden'] });
+      cleanup(() => observer.disconnect());
+    });
     effect(() => {
       const selection = this.selection();
       this.store.setActive(this.active());
@@ -404,6 +427,14 @@ export class SessionChatComponent {
       opening = false;
       // Hydrated history must be positioned before paint, without scroll animation.
       untracked(() => scroll.scrollToEnd("instant"));
+    });
+    afterRenderEffect(() => {
+      this.visibilityRevision();
+      const at = this.store.state()?.unseenCompletionAt;
+      const ready = !this.store.loading() && !this.store.historical() && !this.store.next();
+      const atEnd = this.chat()?.scroll()?.atEnd();
+      if (at && ready && atEnd && this.active() && this.foreground() && !this.element.closest('[inert], [hidden]'))
+        untracked(() => { void this.store.markSeen(); });
     });
     effect((cleanup) => {
       if (!this.store.state()?.planUsage) return;

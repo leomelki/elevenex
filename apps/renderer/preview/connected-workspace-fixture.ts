@@ -19,7 +19,15 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   sessionChatChanges = (_scope: string, input: import('@elevenex/shared').SessionChatChangesRead) => this.chat.changes(input);
   sessionChatAgent = (_scope: string, input: import('@elevenex/shared').SessionChatAgentRead) => this.chat.agent(input);
   sessionChatRead = (_scope: string, input: import('@elevenex/shared').SessionChatRead) => this.chat.read(input);
-  sessionChatCommand = (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => { this.sentChatActions.push(input); return this.chat.command(input); };
+  sessionChatCommand = async (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => {
+    this.sentChatActions.push(input);
+    const result = await this.chat.command(input);
+    if (result.ok && input.action.type === 'mark-seen' && !this.chat.unseenCompletionAt(input.sessionId)) {
+      this.sessionRows = this.sessionRows.map(row => row.id === input.sessionId ? { ...row, status: 'done' } : row);
+      this.navigationRevision++;
+    }
+    return result;
+  };
   sessionChatUpload = (_scope: string, input: import("@elevenex/shared").ChatAttachmentUpload) => this.chat.upload(input);
   sessionChatMedia = (_scope: string, input: import('@elevenex/shared').SessionChatMediaRead) => this.chat.media(input);
   sessionChatContent = (_scope: string, input: import('@elevenex/shared').SessionChatContentRead) => this.chat.content(input);
@@ -40,6 +48,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     { id: 104, taskId: 13, repoId: 2, name: 'Keyboard path through checkout', provider: 'codex', status: 'idle', updatedAt: stamp },
   ];
   private failReads = false;
+  private navigationRevision = 0;
+  completeUnseen(sessionId: number, at: string): void {
+    this.chat.completeUnseen(sessionId, at);
+    this.sessionRows = this.sessionRows.map(row => row.id === sessionId ? { ...row, status: 'review' } : row);
+    this.navigationRevision++;
+  }
   private taskSetupFailure: boolean | 'worktree-limit' = false;
   private sidebarRepositoryCount = 1;
   /** Bounded sidebar edge cases, isolated from the production import graph. */
@@ -89,7 +103,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: 0, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));

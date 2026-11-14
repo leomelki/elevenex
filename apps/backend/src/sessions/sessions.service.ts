@@ -834,17 +834,24 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(session);
   }
 
-  async markCompletionReviewed(id: number) {
+  async markCompletionReviewed(id: number, expectedCompletionAt?: string) {
     const rows = await this.db
       .update(schema.sessions)
       .set({
         hasUnreviewedCompletion: false,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(schema.sessions.id, id))
+      .where(and(
+        eq(schema.sessions.id, id),
+        expectedCompletionAt === undefined ? undefined : eq(schema.sessions.lastCompletionAt, expectedCompletionAt),
+        expectedCompletionAt === undefined ? undefined : eq(schema.sessions.hasUnreviewedCompletion, true),
+      ))
       .returning();
 
     if (rows.length === 0) {
+      // A delayed viewer must never acknowledge a newer completion. Legacy
+      // callers that omit the version retain their unconditional behavior.
+      if (expectedCompletionAt !== undefined) return this.findOne(id);
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 

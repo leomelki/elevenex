@@ -6,6 +6,16 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+Unseen completions use the optional `state.unseenCompletionAt` version. After
+latest content renders at the end of the conversation in a focused, visible,
+active window, the owner sends `mark-seen` through the existing command bridge.
+Inert/hidden chat ancestors, older history and background windows keep the marker.
+The component releases its focus/visibility listeners and ancestor observer on
+destruction. No notification, approval or file-review action is required.
+The store coalesces acknowledgments and rejects replies for an old scope,
+selection or completion. Failed writes retain the marker; they never enter the
+prompt outbox. Older engines omit the field and receive no new command.
+
 The connected owner can supply a `creation: StartingSession` before a saved
 `selection` exists. The same chat/composer stays mounted through confirmation;
 `creationKey` retains UI identity and autofocus even if confirmation arrives before

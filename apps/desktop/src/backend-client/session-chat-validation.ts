@@ -34,6 +34,11 @@ function number(value: unknown, max = Number.MAX_SAFE_INTEGER): number {
 function nullable(value: unknown, max = 1000): string | null {
   return value === null ? null : chatText(value, max);
 }
+function completionAt(value: unknown): string {
+  const at = chatText(value, 24);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at))) throw invalid();
+  return at;
+}
 function array<T>(
   value: unknown,
   max: number,
@@ -321,6 +326,9 @@ function state(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["unseenCompletionAt"] === undefined ? {} : {
+      unseenCompletionAt: raw["unseenCompletionAt"] === null ? null : completionAt(raw["unseenCompletionAt"]),
+    }),
     ...(raw["attachments"] === undefined ? {} : { attachments: bool(raw["attachments"]) }),
     ...(raw["sessionMentions"] === undefined ? {} : { sessionMentions: bool(raw["sessionMentions"]) }),
     ...(raw["presetCatalogs"] === undefined
@@ -484,6 +492,8 @@ export function parseChatAction(value: unknown): SessionChatAction {
   const raw = chatObject(value),
     type = raw["type"];
   switch (type) {
+    case "mark-seen":
+      return { type, completionAt: completionAt(raw["completionAt"]) };
     case "preset-default":
       return {
         type,

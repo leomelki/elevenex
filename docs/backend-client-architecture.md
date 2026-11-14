@@ -301,6 +301,16 @@ client integration does not authorize data loss or destructive migrations.
 
 ## Validation and current limits
 
+Chat state optionally supplies `unseenCompletionAt` (an ISO completion version).
+Its presence advertises support for the additive `mark-seen` chat command.
+Main validates both forms; the backend checks task/session membership and clears
+only a still-unseen matching completion in one conditional database update.
+Legacy `mark-reviewed` callers retain unconditional behavior. Repeated or stale
+acknowledgments are harmless and do not emit navigation invalidations. A successful
+change invalidates bounded sidebar windows and wakes selected chat feeds across
+windows, without reloading transcript history. New completions also invalidate
+the feed's history version so persisted final output is included.
+
 Session chat optionally includes bounded `planUsage` on its existing state
 reply. The backend projects subscription-only Codex/Claude OAuth snapshots;
 main validates the provider identity, status, dates, up to eight unique windows

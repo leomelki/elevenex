@@ -69,6 +69,8 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Present on engines supporting mark-seen; null means no unseen completion. */
+  readonly unseenCompletionAt?: string | null;
   /** Explicit send can resolve at most eight session identities into context. */
   readonly sessionMentions?: boolean;
   readonly attachments?: boolean;
@@ -251,6 +253,7 @@ export interface SessionChatCommandReply {
   };
 }
 export type SessionChatAction =
+  | { readonly type: "mark-seen"; readonly completionAt: string }
   | {
       readonly type: "preset-default";
       readonly id: string;

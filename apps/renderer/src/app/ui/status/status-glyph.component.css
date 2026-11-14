@@ -24,7 +24,7 @@ svg {
   color: var(--attention);
 }
 [data-status="review"] {
-  color: var(--review);
+  color: var(--accent);
 }
 [data-status="failed"] {
   color: var(--danger);

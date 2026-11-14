@@ -8,7 +8,7 @@ export type Status =
 export const STATUS_LABELS: Readonly<Record<Status, string>> = {
   running: "Running",
   attention: "Needs you",
-  review: "Review",
+  review: "New reply",
   done: "Done",
   failed: "Failed",
   queued: "Queued",
