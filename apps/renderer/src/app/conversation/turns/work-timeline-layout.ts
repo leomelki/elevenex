@@ -14,6 +14,8 @@ export interface WorkSection {
   readonly folded: ReadonlySet<string>;
   readonly label: string;
   readonly facts: readonly SectionFact[];
+  /** Only older steps are folded; the latest window stays visible below. */
+  readonly earlier: boolean;
 }
 export interface WorkTimelineRow {
   readonly step: WorkStep;
@@ -47,12 +49,12 @@ export function workTimelineRows(
       pending = [];
       return;
     }
-    const candidates =
-      closed || !expanded
-        ? items
-        : items.length > limit * 2
-          ? items.slice(0, -limit)
-          : [];
+    const whole = closed || !expanded;
+    const candidates = whole
+      ? items
+      : items.length > limit * 2
+        ? items.slice(0, -limit)
+        : [];
     const folded = candidates.filter((step) => !isUnfinishedWork(step));
     const facts = sectionSummary(folded);
     const section: WorkSection = {
@@ -61,6 +63,7 @@ export function workTimelineRows(
       folded: new Set(folded.map((step) => step.id)),
       label: facts.map((fact) => `${fact.count} ${fact.noun}`).join(" · "),
       facts,
+      earlier: !whole && candidates.length > 0,
     };
     rows.push(
       ...pending.map((step) => (isProse(step) ? { step } : { step, section })),

@@ -189,10 +189,14 @@ Inspected results and focused controls remain mounted and visible.
 Explicit section collapse releases its inspection pins; focusing a summary alone
 does not open it. Commentary stays visible even when the turn’s work is closed.
 `maxVisible` is the active section’s recent-step count (default 5); compaction
-starts above twice that count, leaving short active sections intact. A new
+starts above twice that count, leaving short active sections intact. That
+partial summary leads with “Earlier” (accessible name “Show earlier activity: …”)
+so the visible recent window is not mistaken for its contents. A new
 message starts a fresh budget. Closed folds are inert immediately and retain
 disclosure state through exit and reopening. History is still on mount; appended
-rows grow before their ink appears. Fold and AutoHeight own reversible height
+rows grow before their ink appears. When a message closes a section, the step
+and its summary share one row and one `dur-slow` curve, so the row keeps its
+height and the swap crossfades. Fold and AutoHeight own reversible height
 transitions and reduced-motion behavior.
 
 
