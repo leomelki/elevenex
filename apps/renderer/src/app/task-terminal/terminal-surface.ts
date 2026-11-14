@@ -81,6 +81,12 @@ export class TerminalSurface {
       { final: 't' },
     ]) this.disposers.push(this.terminal.parser.registerCsiHandler(id, () => this.serverProtocol));
     this.disposers.push(this.terminal.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, () => this.serverProtocol));
+    // Headless xterm has no theme and ignores OSC color queries. Its CPR lets
+    // termenv fall back immediately; a later view color reply would reach gh's
+    // prompt as keyboard input. Consume query sequences, retaining color sets.
+    for (const id of [4, 10, 11, 12]) {
+      this.disposers.push(this.terminal.parser.registerOscHandler(id, data => this.serverProtocol && data.split(';').includes('?')));
+    }
     this.terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey &&
           (event.key === 'ArrowUp' || event.key === 'ArrowDown') && this.navigateCommand(event.key === 'ArrowUp')) {

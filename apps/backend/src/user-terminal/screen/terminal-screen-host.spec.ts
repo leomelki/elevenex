@@ -6,6 +6,18 @@ import { TerminalParserTail } from './terminal-parser-tail.js';
 const worker = join(__dirname, '../../../dist/user-terminal/screen/terminal-screen-worker.js');
 const write = (terminal: Terminal, data: string) => new Promise<void>(resolve => terminal.write(data, resolve));
 describe('Isolated authoritative terminal screen', () => {
+  it('answers the termenv color / cursor probe with only CPR because headless screens have no theme', async () => {
+    const host = new TerminalScreenHost(worker), replies: string[] = [];
+    try {
+      host.open(1, 80, 24, { pause: () => {}, resume: () => {}, reply: data => replies.push(data) });
+      const probe = '\x1b]11;?\x1b\\\x1b[6n';
+      host.write(1, probe, probe.length);
+      await host.snapshot(1);
+      // termenv treats CPR as the sentinel for an unsupported color query.
+      // A view must not subsequently inject its own color report into stdin.
+      expect(replies).toEqual(['\x1b[1;1R']);
+    } finally { host.dispose(); }
+  });
   it('restores color, alternate-screen state, cursor and a fragmented control sequence', async () => {
     const host = new TerminalScreenHost(worker), replies: string[] = [];
     const terminal = new Terminal({ cols: 40, rows: 8, allowProposedApi: true });
