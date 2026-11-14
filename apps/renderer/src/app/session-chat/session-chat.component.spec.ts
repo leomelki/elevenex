@@ -374,7 +374,7 @@ describe("connected chat reply rendering", () => {
     expect(tools[1]?.querySelector('.verb')?.textContent).toBe('Attempted to edit');
     expect(tools[1]?.querySelector('[aria-label="Completion unknown"]')).not.toBeNull();
     expect(tools[1]?.querySelector('ex-status-glyph')).toBeNull();
-    expect(root.querySelector('ex-turn .facts')?.textContent).not.toContain('edit');
+    expect(root.querySelector('ex-turn .summary-facts')?.textContent).not.toContain('edit');
   });
 
   it("renders the designed outcome after the answer and routes Review and a file chip to their reply", async () => {
@@ -441,7 +441,7 @@ describe("connected chat reply rendering", () => {
       const answer = turn.querySelector(".answer")!;
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+      expect(turn.querySelector(".work-row")?.textContent).not.toContain("command");
       expect(turn.querySelectorAll(".caret")).toHaveLength(0);
       const head = tool.querySelector<HTMLButtonElement>(".head")!;
       expect(head.getAttribute("aria-expanded")).toBe("false");
@@ -453,6 +453,7 @@ describe("connected chat reply rendering", () => {
       await settle(fixture);
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
       expect(tool.closest("ex-fold[inert]")).not.toBeNull();
+      expect(turn.querySelector(".group")?.getAttribute("aria-label")).toContain("1 command");
       expect(answer.closest("[inert]")).toBeNull();
     });
   }

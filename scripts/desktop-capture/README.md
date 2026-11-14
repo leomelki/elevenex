@@ -747,8 +747,9 @@ only; they do not establish page accessibility or agent observation permission.
 
 `scenarios/session-tool-timeline.mjs` covers the single chronological work
 timeline: message-delimited activity summaries, section-local recent-step budgets,
-inspection through new replies, independent keyboard disclosures, running and
-failure visibility, stable completion,
+inspection through new replies, independent keyboard disclosures, category icons
+with short labels, merged failure counts (including failure-only sections and
+running-to-failed receipts), error detail expansion, running visibility, stable completion,
 paired original input/output, keyboard focus, scoped motion frames, both themes
 and narrow reduced-motion layouts. Run against the connected component preview
 with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped

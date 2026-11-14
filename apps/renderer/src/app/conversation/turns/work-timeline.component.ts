@@ -12,7 +12,13 @@ import {
   output,
   signal,
 } from "@angular/core";
-import { AutoHeightDirective, FoldComponent, IconComponent } from "../../ui";
+import {
+  AutoHeightDirective,
+  FoldComponent,
+  IconComponent,
+  StatusGlyphComponent,
+  TickerComponent,
+} from "../../ui";
 import type { WorkStep } from "../conversation.models";
 import type { ToolContentRequest } from "../tool-presentation";
 import { MarkdownComponent } from "../markdown/markdown.component";
@@ -20,7 +26,7 @@ import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { NowLineComponent } from "./now-line.component";
 import { ToolStepComponent } from "./tool-step.component";
 import {
-  needsAttention,
+  isUnfinishedWork,
   workTimelineRows,
   type WorkTimelineRow,
 } from "./work-timeline-layout";
@@ -33,6 +39,8 @@ import { formatDuration, isProse, stepIcon, stepVerb } from "./work-summary";
     AutoHeightDirective,
     FoldComponent,
     IconComponent,
+    StatusGlyphComponent,
+    TickerComponent,
     MarkdownComponent,
     NowLineComponent,
     ToolStepComponent,
@@ -149,7 +157,7 @@ export class WorkTimelineComponent implements OnChanges {
   protected visible(row: WorkTimelineRow): boolean {
     if (
       isProse(row.step) ||
-      needsAttention(row.step) ||
+      isUnfinishedWork(row.step) ||
       this.pinned().has(row.step.id)
     )
       return true;

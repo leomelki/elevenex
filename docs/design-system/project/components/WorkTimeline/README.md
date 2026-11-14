@@ -3,7 +3,7 @@
 The chronological story of a turn: agent prose interleaved with compact tool
 activity. Nonempty agent messages delimit sections. When the next message
 arrives, the preceding section folds into an expandable summary where it
-happened: “Read 5 files · Ran 3 commands · 2 edits”. Prose remains visible in
+happened: “5 reads · 3 commands · 2 edits”, with an icon per category. Prose remains visible in
 completed history, so the summary explains the work between messages.
 
 **Provide:** readonly `steps`, `live`, `expanded`, `maxVisible` (default 5 recent
@@ -15,10 +15,14 @@ Empty streaming replies do not close a section. Completion closes trailing work.
 Each summary opens independently. Its native button retains identity and keyboard
 focus through expansion, collapse and new messages, with `aria-expanded` and an
 accessible Show/Hide activity name. Counts describe tool operations; commands do
-not imply file reads or edits. Summaries wrap on narrow layouts.
+not imply file reads or edits. Category labels stay readable alongside their icons
+and wrap as complete items on narrow layouts.
 
-Running/unknown tools, unresolved failures, inspected results and focused content
-stay visible. Explicit collapse releases a section’s inspection pins. Later
+Failed calls fold into the summary with a red shared status glyph and explicit
+“1 failed” count. This count is a subset of the activity totals, which count
+attempts rather than successes. Failure-only sections still show an expandable
+summary. Expected/recovered failures do not contribute to the failure marker.
+Running/unknown tools, inspected results and focused content stay visible. Explicit collapse releases a section’s inspection pins. Later
 success never implies recovery: supply `recovered` or `expected` explicitly.
 
 **Motion:** flat keyed rows retain the tool and Markdown instances, including

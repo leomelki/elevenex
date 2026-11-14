@@ -3,7 +3,6 @@ import {
   Component,
   ElementRef,
   type OnChanges,
-  afterRenderEffect,
   computed,
   inject,
   input,
@@ -21,7 +20,7 @@ import type {
 import { WorkTimelineComponent } from "./work-timeline.component";
 import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
-import { formatDuration, isProse, summarizeWork } from "./work-summary";
+import { formatDuration, isProse } from "./work-summary";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import type { ToolContentRequest } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
@@ -140,15 +139,6 @@ export class TurnComponent implements OnChanges {
     readonly label: string;
     readonly live: boolean;
   } | null>(null);
-  readonly facts = computed(() =>
-    summarizeWork(
-      this.steps().filter((step) => step.status !== "running"),
-      this.files(),
-      this.filesTotal() ?? this.files().length,
-    ),
-  );
-  protected readonly factsElement =
-    viewChild<ElementRef<HTMLElement>>("factsRegion");
   private readonly timeline = viewChild(WorkTimelineComponent);
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
@@ -157,21 +147,6 @@ export class TurnComponent implements OnChanges {
     "workRegion",
     { read: ElementRef },
   );
-  protected readonly factsClipped = signal(false);
-  constructor() {
-    afterRenderEffect((cleanup) => {
-      const element = this.factsElement()?.nativeElement;
-      this.facts();
-      if (!element) return;
-      const measure = () =>
-        this.factsClipped.set(element.scrollWidth > element.clientWidth + 1);
-      measure();
-      if (typeof ResizeObserver === "undefined") return;
-      const observer = new ResizeObserver(measure);
-      observer.observe(element);
-      cleanup(() => observer.disconnect());
-    });
-  }
   ngOnChanges(): void {
     if (!this.initialized) {
       this.initialized = true;

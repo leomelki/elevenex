@@ -4,6 +4,9 @@ export type TimelineScene =
   | "active-ten"
   | "active-eleven"
   | "sections"
+  | "failed-sections"
+  | "failure-only"
+  | "busy-receipt"
   | "before-message"
   | "after-message"
   | "two-reads"
@@ -84,13 +87,28 @@ export function sessionTimelineItems(
         call(`check-${n}`),
       ).flat(),
     ];
-  if (scene === "sections")
+  if (scene === "failure-only")
+    return [
+      user,
+      intro,
+      ...call("database", "bash", "failed"),
+      item(
+        "timeline-next",
+        "assistant",
+        "The database check could not run because its fixture is unavailable.",
+      ),
+    ];
+  if (scene === "sections" || scene === "failed-sections")
     return [
       user,
       intro,
       ...call("retry", "read"),
       ...call("claim", "read"),
-      ...call("baseline"),
+      ...call(
+        "baseline",
+        "bash",
+        scene === "failed-sections" ? "failed" : "done",
+      ),
       item(
         "timeline-progress",
         "assistant",
@@ -143,11 +161,11 @@ export function sessionTimelineItems(
       ...call("claim", "read"),
       ...(scene === "three-reads" ? call("provider", "read") : []),
     ];
-  if (scene === "busy")
+  if (scene === "busy" || scene === "busy-receipt")
     return [
       user,
       intro,
-      ...call("watch", "bash", "running"),
+      ...call("watch", "bash", scene === "busy" ? "running" : "failed"),
       ...call("database", "bash", "failed"),
       ...Array.from({ length: 8 }, (_, n) => call(`check-${n}`)).flatMap(
         (items) => items,
@@ -155,7 +173,9 @@ export function sessionTimelineItems(
       item(
         "timeline-next",
         "assistant",
-        "The provider checks pass. The watcher is still running; the database check needs a local fixture.",
+        scene === "busy"
+          ? "The provider checks pass. The watcher is still running; the database check needs a local fixture."
+          : "The watcher also stopped because the database fixture is unavailable. The provider checks still pass.",
       ),
     ];
   return [

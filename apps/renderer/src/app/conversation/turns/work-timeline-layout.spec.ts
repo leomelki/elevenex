@@ -3,7 +3,7 @@ import type { WorkStep } from "../conversation.models";
 import { workTimelineRows } from "./work-timeline-layout";
 
 describe("activity summary evidence", () => {
-  it("counts observed operations without inferring shell effects or hiding unresolved failures", () => {
+  it("counts observed operations without inferring shell effects and includes failed attempts", () => {
     const steps: readonly WorkStep[] = [
       { id: "read", kind: "read" },
       { id: "command", kind: "run", detail: "cat file; echo changed > file" },
@@ -18,7 +18,7 @@ describe("activity summary evidence", () => {
     ];
     const section = workTimelineRows(steps)[0]!.section!;
     expect(section.label).toBe(
-      "Read 1 file · Ran 1 command · 2 edits · 1 search · 1 test run",
+      "1 failed · 1 read · 2 commands · 2 edits · 1 search · 1 test run",
     );
     expect([...section.folded]).toEqual([
       "read",
@@ -27,10 +27,11 @@ describe("activity summary evidence", () => {
       "create",
       "search",
       "test",
+      "failed",
     ]);
   });
 
-  it("only folds failures explicitly marked recovered or expected", () => {
+  it("counts only unresolved failures as failed while folding all completed attempts", () => {
     const steps: readonly WorkStep[] = [
       { id: "repro", kind: "test", status: "failed", expected: true },
       { id: "fixed", kind: "run", status: "failed", recovered: true },
@@ -40,7 +41,13 @@ describe("activity summary evidence", () => {
     expect([...workTimelineRows(steps)[0]!.section!.folded]).toEqual([
       "repro",
       "fixed",
+      "failure",
       "success",
+    ]);
+    expect(
+      workTimelineRows(steps)[0]!.section!.facts.filter((fact) => fact.danger),
+    ).toEqual([
+      { kind: "failure", count: 1, noun: "failed", icon: "x", danger: true },
     ]);
   });
 

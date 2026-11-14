@@ -54,11 +54,26 @@ li {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
 }
-.group span {
+.summary-facts {
+  display: flex;
+  flex-wrap: wrap;
   min-width: 0;
-  overflow-wrap: anywhere;
+  gap: var(--space-1) var(--space-3);
 }
-.group > ex-icon {
+.summary-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.summary-fact.failure {
+  color: var(--danger);
+}
+.summary-fact ex-icon,
+.summary-fact ex-status-glyph,
+.disclosure {
   flex: none;
 }
 .prose.has-text,
@@ -73,9 +88,7 @@ li {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-.group ex-icon:last-child {
-  flex: none;
-  margin-left: auto;
+.disclosure {
   transition: transform var(--dur-base) var(--ease-in-out);
 }
 .turned {
@@ -116,7 +129,7 @@ li {
   .step-enter > .row-clip {
     animation: none;
   }
-  .group ex-icon:last-child {
+  .disclosure {
     transition: none;
   }
 }
