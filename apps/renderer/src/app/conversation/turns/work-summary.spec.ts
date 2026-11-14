@@ -25,6 +25,7 @@ describe("work timeline grouping", () => {
   });
   it("formats durations without negative or nonfinite values", () => {
     expect(formatDuration(252.8)).toBe("4m 12s");
+    expect(formatDuration(3_900)).toBe("1h 5m");
     expect(formatDuration(-5)).toBe("0s");
     expect(formatDuration(Number.NaN)).toBe("0s");
   });

@@ -232,8 +232,11 @@ export interface ChatExchange {
   /** Identity of the latest assistant message, retained when it becomes commentary. */
   readonly answerId?: string;
   readonly answer: string;
+  /** Settled turn length in seconds, from the prompt to its last activity. */
   readonly duration?: number;
   readonly elapsed?: number;
+  /** Epoch ms when the turn began; a live turn counts its own elapsed time from it. */
+  readonly startedAt?: number;
   readonly files?: readonly ChangedFile[];
   readonly filesTotal?: number;
   readonly error?: string;

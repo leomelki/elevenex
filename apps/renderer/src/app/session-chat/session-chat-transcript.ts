@@ -41,6 +41,10 @@ function withPendingPrompt(
     ...items.filter((item) => !pending.knownIds.has(item.id)),
   ];
 }
+function epoch(timestamp: string): number | undefined {
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : undefined;
+}
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
   items: readonly SessionChatItem[],
@@ -54,6 +58,8 @@ export function chatExchanges(
     mentions?: ChatExchange['mentions'];
     attachments?: ChatExchange["attachments"];
     time: string;
+    /** Epoch ms of the prompt; unknown for history that starts mid-turn. */
+    startedAt?: number;
     items: SessionChatItem[];
   }[] = [];
   for (const item of pending ? withPendingPrompt(items, pending) : items) {
@@ -67,6 +73,7 @@ export function chatExchanges(
           hour: "2-digit",
           minute: "2-digit",
         }),
+        startedAt: epoch(item.timestamp),
         items: [],
       });
     else {
@@ -215,6 +222,14 @@ export function chatExchanges(
     );
     const files = captured?.files ?? [...reported.values()];
     const filesTotal = captured?.total ?? files.length;
+    const endedAt = group.items.reduce<number | undefined>((latest, item) => {
+      const at = epoch(item.timestamp);
+      return at === undefined || (latest !== undefined && latest >= at) ? latest : at;
+    }, undefined);
+    const duration =
+      !live && group.startedAt !== undefined && endedAt !== undefined
+        ? Math.max(0, (endedAt - group.startedAt) / 1000)
+        : undefined;
     const answer = group.items.slice(finalStart, finalEnd).map(item => item.text).join("\n\n");
     const attachments = group.items.filter(item => !item.error).flatMap(item => item.media ?? [])
       .filter(media => media.inline && !answer.includes(`](${media.path})`));
@@ -246,6 +261,8 @@ export function chatExchanges(
           ? "failed"
           : "done",
       steps,
+      duration,
+      startedAt: group.startedAt,
       files,
       filesTotal,
       answerBeforeStepId:

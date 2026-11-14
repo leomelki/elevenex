@@ -835,6 +835,20 @@ describe("session chat ownership", () => {
   });
 });
 describe("provider-neutral transcript presentation", () => {
+  it("measures settled turns from the prompt to their last activity and lets live turns count", () => {
+    const at = (time: string) => ({ timestamp: `2026-10-28T12:${time}Z` });
+    const items = [
+      item("u1", "user", "Fix it", at("00:00")),
+      item("a1", "assistant", "Done", at("02:14")),
+      item("u2", "user", "Again", at("03:00")),
+      item("t2", "tool_use", "", { ...at("03:05"), toolKind: "bash" }),
+    ];
+    const [settled, live] = chatExchanges(items, { ...state, phase: "running" }, new Set());
+    expect(settled).toMatchObject({ status: "done", duration: 134 });
+    expect(live).toMatchObject({ status: "live", duration: undefined, startedAt: Date.parse("2026-10-28T12:03:00Z") });
+    const [partial] = chatExchanges([item("a0", "assistant", "Earlier", at("01:00"))], state, new Set());
+    expect(partial?.duration).toBeUndefined();
+  });
   it('pairs a result with the call identity when a provider omits its separate tool ID', () => {
     const [exchange] = chatExchanges([
       item('user', 'user', 'Check it'),

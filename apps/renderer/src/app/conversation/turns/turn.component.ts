@@ -4,8 +4,10 @@ import {
   ElementRef,
   type OnChanges,
   computed,
+  effect,
   inject,
   input,
+  linkedSignal,
   output,
   signal,
   viewChild,
@@ -108,19 +110,32 @@ export class TurnComponent implements OnChanges {
       this.toggled() ??
       (this.status() === "live" || this.open() || this.inspecting()),
   );
+  /** Epoch ms when a live turn began; it then counts its own elapsed time. */
+  readonly startedAt = input<number>();
+  private readonly now = signal(Date.now());
+  private readonly liveSeconds = computed(() => {
+    const start = this.startedAt();
+    const counted =
+      start === undefined ? 0 : Math.max(0, (this.now() - start) / 1000);
+    return Math.max(this.elapsed(), counted);
+  });
+  /** The verb stays prominent; the time reads as quieter, secondary detail. */
   readonly workLabel = computed(() => {
-    const seconds = this.status() === "live" ? this.elapsed() : this.duration();
-    const label =
-      this.status() === "live"
-        ? "Working"
-        : this.status() === "stopped"
-          ? "Stopped"
-          : this.status() === "failed"
-            ? "Failed"
-            : "Worked";
-    return seconds > 0
-      ? `${label}${this.status() === "stopped" || this.status() === "failed" ? " after" : ""} ${formatDuration(seconds)}`
-      : label;
+    const status = this.status();
+    const live = status === "live";
+    const seconds = live ? this.liveSeconds() : this.duration();
+    const verb = live
+      ? "Working"
+      : status === "stopped"
+        ? "Stopped"
+        : status === "failed"
+          ? "Failed"
+          : "Worked";
+    const time =
+      seconds >= 1
+        ? `${status === "stopped" || status === "failed" ? "after" : "for"} ${formatDuration(seconds)}`
+        : "";
+    return { verb, time };
   });
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
@@ -135,10 +150,27 @@ export class TurnComponent implements OnChanges {
   );
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
-  protected readonly workHeader = signal<{
-    readonly label: string;
-    readonly live: boolean;
-  } | null>(null);
+  protected readonly workHeader = linkedSignal<
+    {
+      readonly show: boolean;
+      readonly verb: string;
+      readonly time: string;
+      readonly live: boolean;
+    },
+    {
+      readonly verb: string;
+      readonly time: string;
+      readonly live: boolean;
+    } | null
+  >({
+    source: () => ({
+      show: this.showWork(),
+      ...this.workLabel(),
+      live: this.status() === "live",
+    }),
+    computation: ({ show, verb, time, live }, previous) =>
+      show ? { verb, time, live } : (previous?.value ?? null),
+  });
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -146,16 +178,20 @@ export class TurnComponent implements OnChanges {
     "workRegion",
     { read: ElementRef },
   );
+  constructor() {
+    // Only a live turn with a known start ticks; settled turns stay still.
+    effect((onCleanup) => {
+      if (this.status() !== "live" || this.startedAt() === undefined) return;
+      this.now.set(Date.now());
+      const timer = setInterval(() => this.now.set(Date.now()), 1000);
+      onCleanup(() => clearInterval(timer));
+    });
+  }
+
   ngOnChanges(): void {
     if (!this.initialized) {
       this.initialized = true;
       this.arriving.set(this.isNew());
-    }
-    if (this.showWork()) {
-      this.workHeader.set({
-        label: this.workLabel(),
-        live: this.status() === "live",
-      });
     }
     const focused = this.host.nativeElement.ownerDocument.activeElement;
     if (

@@ -171,7 +171,7 @@ describe("turn work disclosure", () => {
       fixture.componentInstance.steps.set([step]);
       fixture.detectChanges();
       const work = host.querySelector<HTMLButtonElement>(".work")!;
-      expect(work.textContent).toContain("Worked 12s");
+      expect(work.textContent).toContain("Worked for 12s");
       expect(work.getAttribute("aria-expanded")).toBe("false");
       work.click();
       fixture.detectChanges();
@@ -286,6 +286,33 @@ describe("turn evidence", () => {
     fixture.destroy();
     host.remove();
   });
+  it("counts a live turn from its start and settles on the supplied duration", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-28T12:00:42Z") });
+    try {
+      const fixture = TestBed.createComponent(TurnComponent);
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("startedAt", Date.parse("2026-10-28T12:00:00Z"));
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const work = () => host.querySelector(".work")?.textContent?.replace(/\s+/g, " ").trim();
+      expect(work()).toBe("Working for 42s");
+      vi.advanceTimersByTime(20_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Working for 1m 2s");
+      expect(host.querySelector(".work-time")).not.toBeNull();
+      fixture.componentRef.setInput("steps", [{ id: "run", kind: "run", status: "done" }]);
+      fixture.componentRef.setInput("status", "stopped");
+      fixture.componentRef.setInput("duration", 63);
+      fixture.detectChanges();
+      vi.advanceTimersByTime(5_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Stopped after 1m 3s");
+      fixture.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps the work line focused on duration and preserves changed files in the outcome", () => {
     const fixture = TestBed.createComponent(TurnComponent);
     fixture.componentRef.setInput("status", "live");
@@ -294,13 +321,13 @@ describe("turn evidence", () => {
     fixture.componentRef.setInput("files", [{ path: "turn.css", add: 83, del: 12 }]);
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
-    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Working 12s");
+    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Working for 12s");
     expect(host.querySelector(".work-row")?.textContent).toContain("Stop");
     expect(host.querySelector(".facts")).toBeNull();
     fixture.componentRef.setInput("status", "done");
     fixture.componentRef.setInput("duration", 12);
     fixture.detectChanges();
-    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Worked 12s");
+    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Worked for 12s");
     expect(host.querySelector("ex-outcome-bar")?.textContent).toContain("turn.css");
     fixture.destroy();
   });
