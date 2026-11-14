@@ -45,6 +45,13 @@ function epoch(timestamp: string): number | undefined {
   const value = Date.parse(timestamp);
   return Number.isFinite(value) ? value : undefined;
 }
+/** Inline media belongs to the message that produced it. */
+function messageText(item: SessionChatItem): string {
+  const images = item.error ? [] : (item.media ?? []).filter(media =>
+    media.inline && !item.text.includes(`](${media.path})`) && !item.text.includes(`](<${media.path}>)`));
+  return [item.text, ...images.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)]
+    .filter(Boolean).join("\n\n");
+}
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
   items: readonly SessionChatItem[],
@@ -109,7 +116,7 @@ export function chatExchanges(
       const item = group.items[index];
       if (!item) continue;
       if (!lastActivity && item.kind !== "system") lastActivity = item;
-      if (item.kind === "assistant" && item.text.trim()) {
+      if (item.kind === "assistant" && messageText(item).trim()) {
         finalEnd = index + 1;
         break;
       }
@@ -182,7 +189,7 @@ export function chatExchanges(
                   : item.kind === "error" || item.kind === "tool_result"
                     ? "tool"
                     : "note",
-            text: item.text,
+            text: messageText(item),
             detail:
               item.kind === "error"
                 ? item.text
@@ -230,9 +237,7 @@ export function chatExchanges(
       !live && group.startedAt !== undefined && endedAt !== undefined
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
-    const answer = group.items.slice(finalStart, finalEnd).map(item => item.text).join("\n\n");
-    const attachments = group.items.filter(item => !item.error).flatMap(item => item.media ?? [])
-      .filter(media => media.inline && !answer.includes(`](${media.path})`));
+    const answer = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
     return {
       overflow: group.items
         // Tool evidence belongs in the work timeline, not below the answer.
@@ -270,7 +275,7 @@ export function chatExchanges(
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
       answerId: finalEnd > 0 ? group.items[finalStart]?.id : undefined,
-      answer: [answer, ...attachments.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)].filter(Boolean).join("\n\n"),
+      answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
       author:
         state?.providers?.find((provider) => provider.id === state.provider)
