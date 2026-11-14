@@ -10,7 +10,8 @@
     (click)="toggle()"
   >
     <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
-    ><code [title]="detail()">{{ detail() }}</code
+    ><code [class.truncate-start]="detailTruncation() === 'start'" [title]="detail()"
+      ><bdi dir="ltr">{{ detail() }}</bdi></code
     ><span class="grow"></span><span class="meta">{{ meta() }}</span>
     @if (status() === "unknown") {
       <span role="img" aria-label="Completion unknown"

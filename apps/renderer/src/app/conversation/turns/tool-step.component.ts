@@ -30,6 +30,7 @@ export class ToolStepComponent implements OnChanges {
   readonly icon = input("terminal");
   readonly verb = input("Ran");
   readonly detail = input.required<string>();
+  readonly detailTruncation = input<"start" | "end">("end");
   readonly status = input<"running" | "done" | "failed" | "unknown">("done");
   readonly meta = input("");
   readonly output = input("");

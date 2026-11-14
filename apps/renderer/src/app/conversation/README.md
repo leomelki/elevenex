@@ -23,6 +23,11 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `SideThread` is reusable panel content. When hosted in an overlay, set `trapFocus` to true and own dismissal through `closed`; the CDK restores focus to its originating element. The host owns popover placement. Promote is an intent, never a hidden fork operation.
 - `JobBriefComponent` renders the supplied opening brief of a git-helper session. Inputs are `title`, `time`, and `id`; project the brief as text with inline `code`. It never inserts messages in sessions or starts a helper. The owner supplies what happened, what judgement is needed, and when to stop.
 
+`ToolStep.detailTruncation` defaults to `"end"`. `WorkTimeline` uses `"start"`
+for read tools so long paths retain their filename and trailing folders. The
+full detail remains in the text and hover title; truncation follows the
+available row width.
+
 ## Scrolling and performance
 
 `TurnNav` shows the right-edge message selector from the first turn, regardless

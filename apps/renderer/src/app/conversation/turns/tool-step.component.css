@@ -48,6 +48,10 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+code.truncate-start {
+  direction: rtl;
+  text-align: left;
+}
 .grow {
   flex: 1;
 }
