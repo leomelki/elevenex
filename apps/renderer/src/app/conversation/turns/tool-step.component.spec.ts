@@ -54,8 +54,10 @@ describe("tool evidence", () => {
         (code) => code.textContent,
       ),
     ).toEqual(["--- a/literal.ts", "+++ b/literal.ts", "@@ -1 +1 @@"]);
-    expect(host.querySelector(".removed code")?.textContent).toBe("---old");
-    expect(host.querySelector(".added code")?.textContent).toBe("+++new");
+    expect(host.querySelector(".removed code")?.textContent).toBe("--old");
+    expect(host.querySelector(".added code")?.textContent).toBe("++new");
+    expect(host.querySelector(".removed .sign")?.textContent).toBe("−");
+    expect(host.querySelector(".added .sign")?.textContent).toBe("+");
     expect(host.querySelectorAll(".diff-line")).toHaveLength(5);
     fixture.destroy();
   });

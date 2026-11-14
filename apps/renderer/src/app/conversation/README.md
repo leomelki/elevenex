@@ -355,6 +355,12 @@ these components never fetch URLs or load returned images. The supplying adapter
 owns parsing and limits. Closed Fold content remains inert, and running-to-result
 updates retain the tool disclosure. The `/connected-workspace` tools preview and
 `session-tools.mjs` capture scenario exercise every normalized family.
+Patch and replacement evidence uses compact file headers with leading path
+truncation, aligned change-marker gutters and the shared inert JavaScript/TypeScript
+syntax lexer. Unified file headers and hunk ranges stay neutral. Patch markers
+are separate from source text, preserving indentation, literal leading signs,
+blank lines and horizontal scrolling; the complete received payload remains in
+Original data. Gutters stay visible while scrolling long lines sideways.
 `WorkStep.status='unknown'` means no completion receipt was received: it uses a
 neutral clock, stays outside activity summaries and completed-work facts, and does
 not imply failure or success. Tools retain focus and disclosure through results,
