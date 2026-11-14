@@ -65,6 +65,17 @@ afterEach(() => {
 });
 
 describe("message-delimited work sections", () => {
+  it("keeps the last actual message when a settled receipt has no separate answer", async () => {
+    const { host, fixture, update } = setup(exchange([
+      say("intro"), tool("command"), say("last"),
+    ]));
+    update(exchange([say("intro"), tool("command"), say("last")], { status: "done" }));
+    await settle(fixture);
+    expect(host.querySelector('[data-work-step="intro"] .step-fold')?.hasAttribute("inert")).toBe(true);
+    expect(host.querySelector('[data-work-step="last"] .step-fold')?.hasAttribute("inert")).toBe(false);
+    expect(visible(host, "command")).toBe(false);
+  });
+
   it("keeps up to ten active tools visible, then keeps five recent tools in that section", () => {
     const steps = Array.from({ length: 10 }, (_, n) => tool(`command-${n}`));
     const { host, update } = setup(exchange(steps));
@@ -82,7 +93,7 @@ describe("message-delimited work sections", () => {
     expect(visible(host, "command-10")).toBe(true);
   });
 
-  it("collapses each section where it occurred, keeping every message visible in completed history", () => {
+  it("collapses each section where it occurred, hiding earlier messages in completed history", () => {
     const { host } = setup(
       exchange(
         [
@@ -95,11 +106,10 @@ describe("message-delimited work sections", () => {
         { answer: "Done.", status: "done" },
       ),
     );
-    expect(group(host, "read")?.getAttribute("aria-label")).toContain(
-      "1 read · 1 command",
-    );
-    expect(group(host, "edit")?.textContent).toContain("1 edit");
-    expect(group(host, "edit")?.textContent).not.toContain("Earlier");
+    expect(group(host, "read")).toBeNull();
+    expect(group(host, "edit")).toBeNull();
+    for (const id of ["intro", "progress"])
+      expect(host.querySelector(`[data-work-step="${id}"] .step-fold`)?.hasAttribute("inert")).toBe(true);
     expect(visible(host, "read")).toBe(false);
     expect(visible(host, "edit")).toBe(false);
     const text = [...host.querySelectorAll(".prose, .answer")].map((e) =>
@@ -171,12 +181,12 @@ describe("message-delimited work sections", () => {
         ),
       );
       for (const id of ["running", "unknown"])
-        expect(visible(host, id)).toBe(true);
+        expect(visible(host, id)).toBe(status === "live");
       expect(visible(host, "done")).toBe(false);
       expect(visible(host, "failed")).toBe(false);
-      expect(group(host, "running")?.getAttribute("aria-label")).toContain(
-        "1 failed · 2 commands",
-      );
+      if (status === "live")
+        expect(group(host, "running")?.getAttribute("aria-label")).toContain("1 failed · 2 commands");
+      else expect(group(host, "running")).toBeNull();
     },
   );
 
@@ -320,7 +330,7 @@ describe("message-delimited work sections", () => {
     expect(host.querySelectorAll("ex-work-timeline")).toHaveLength(1);
   });
 
-  it("expands all sections from the work line and collapses tools while retaining every message", async () => {
+  it("reveals messages and section summaries without expanding tool disclosures", async () => {
     const { host, fixture } = setup(
       exchange([say("intro"), tool("first"), say("progress"), tool("last")], {
         status: "done",
@@ -330,8 +340,14 @@ describe("message-delimited work sections", () => {
     const work = host.querySelector<HTMLButtonElement>(".work")!;
     work.click();
     await settle(fixture);
+    expect(visible(host, "first")).toBe(false);
+    expect(visible(host, "last")).toBe(false);
+    expect(group(host, "first")).not.toBeNull();
+    expect(host.querySelector('[data-work-step="intro"] .step-fold')?.hasAttribute("inert")).toBe(false);
+    group(host, "first")!.click();
+    await settle(fixture);
     expect(visible(host, "first")).toBe(true);
-    expect(visible(host, "last")).toBe(true);
+    expect(head(host, "first").getAttribute("aria-expanded")).toBe("false");
     work.click();
     await settle(fixture);
     expect(visible(host, "first")).toBe(false);

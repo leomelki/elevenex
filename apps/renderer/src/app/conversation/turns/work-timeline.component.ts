@@ -4,7 +4,6 @@ import {
   Component,
   ElementRef,
   type OnChanges,
-  type SimpleChanges,
   type TemplateRef,
   computed,
   inject,
@@ -99,6 +98,18 @@ export class WorkTimelineComponent implements OnChanges {
       this.expanded(),
     ),
   );
+  private readonly lastMessageId = computed(() => {
+    const steps = this.ordered();
+    for (let index = steps.length - 1; index >= 0; index--) {
+      const step = steps[index]!;
+      if (step.kind === "say" && (
+        step.text?.trim() ||
+        (step.id === this.replyId() && this.answer() === undefined && this.answerTemplate())
+      ))
+        return step.id;
+    }
+    return undefined;
+  });
   private readonly pinned = computed(
     () =>
       new Set([
@@ -112,12 +123,7 @@ export class WorkTimelineComponent implements OnChanges {
     stepVerb(step, step.status === "running");
   readonly duration = formatDuration;
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes["expanded"]?.previousValue === true && !this.expanded()) {
-      this.openGroups.set(new Set());
-      this.inspected.set(new Set());
-      this.reportInspection();
-    }
+  ngOnChanges(): void {
     const steps = this.ordered();
     const previousLastIndex = steps.findIndex(
       (step) => step.id === this.previousLast,
@@ -155,6 +161,12 @@ export class WorkTimelineComponent implements OnChanges {
       this.reportInspection();
   }
   protected visible(row: WorkTimelineRow): boolean {
+    // The outer disclosure owns settled activity, including messages and
+    // unfinished receipts. Inner tool and section disclosures stay independent.
+    if (!this.live() && !this.expanded())
+      return row.step.id === this.lastMessageId();
+    if (!this.expanded() && !isProse(row.step) && !isUnfinishedWork(row.step))
+      return false;
     if (
       isProse(row.step) ||
       isUnfinishedWork(row.step) ||
@@ -166,6 +178,7 @@ export class WorkTimelineComponent implements OnChanges {
   }
   protected groupVisible(row: WorkTimelineRow): boolean {
     return (
+      (this.live() || this.expanded()) &&
       !!row.section &&
       row.section.id === row.step.id &&
       row.section.folded.size > 0
@@ -190,18 +203,6 @@ export class WorkTimelineComponent implements OnChanges {
         (current) => new Set([...current].filter((key) => !ids.has(key))),
       );
     }
-    this.reportInspection();
-  }
-  /** The turn's work line is an explicit request to reveal or fold every section. */
-  setAllOpen(open: boolean): void {
-    this.openGroups.set(
-      open
-        ? new Set(
-            this.rows().flatMap((row) => (row.section ? [row.section.id] : [])),
-          )
-        : new Set(),
-    );
-    if (!open) this.inspected.set(new Set());
     this.reportInspection();
   }
   protected toolExpanded(id: string, expanded: boolean): void {
