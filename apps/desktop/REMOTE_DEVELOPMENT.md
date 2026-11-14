@@ -159,10 +159,20 @@ backend setting use it. Main validates the source revision, target, archive hash
 and safe extraction before transferring it; packaged launches ignore the setting.
 Custom builds skip server/client release downloads entirely.
 
-The current build supports the launcher's OS and architecture. A different
-remote target gets an explicit compatibility error. There is no implicit cross
-compilation or copying of macOS native binaries to Linux. Local development still
-works if archive assembly is unavailable; the terminal reports why.
+By default the archive matches the launcher's OS and architecture. On a Mac,
+`pnpm desktop:dev --linux` explicitly builds a Linux ARM64 archive with Docker;
+add `--x64` for Linux x64. The Linux builder uses Debian Bullseye's glibc 2.31
+baseline and builds `node-pty` from source, so terminal support also loads on
+Ubuntu 20.04. Portable Node is copied from the matching official Node image;
+macOS native binaries never enter the Linux archive. Native validation runs on
+that baseline before publishing the archive. An explicit Linux build must
+succeed before Electron opens. Local development still works if default
+host-platform archive assembly is unavailable; the terminal reports why.
+
+After changing the builder, restart the development launcher to produce a new
+revision and archive, then Retry the SSH machine. Its authenticated handoff uses
+the new installation while retaining remote data. Do not upgrade the server's
+system libc or overwrite an existing immutable runtime to repair an old archive.
 
 Dirty and untracked backend sources contribute to the development revision;
 the generated revision file itself does not. Development runtime caches, daemon

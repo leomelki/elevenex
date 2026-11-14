@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture } from './desktop-backend-linux.mjs';
 
 const version = 'a'.repeat(40);
@@ -123,4 +126,47 @@ test('an unsupported or incomplete source lockfile fails before Docker runs', as
     await assert.rejects(buildLinuxDevelopmentRuntime(root, version, 'arm64', () => assert.fail('Docker must not run')), /lockfile format|Missing locked runtime dependency/);
     assert.deepEqual(await readdir(join(root, 'apps/desktop/.stage')), []);
   }
+});
+
+// Opt in on a Linux target after `pnpm backend:bundle`. Unlike context fixtures,
+// this exercises the actual Dockerfile, lockfile, native loader and terminal.
+test('a real Linux archive loads SQLite and opens a terminal on the target host', {
+  skip: process.env.ELEVENEX_TEST_LINUX_RUNTIME !== '1', timeout: 600_000,
+}, async t => {
+  assert.equal(process.platform, 'linux', 'Run this regression on the Linux SSH target');
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const run = promisify(execFile);
+  const directory = await mkdtemp(join(tmpdir(), 'ex-linux-native-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const archive = await buildLinuxDevelopmentRuntime(root, version, process.arch, async (command, args, cwd) => {
+    const build = run(command, args, { cwd, maxBuffer: 32 * 1024 * 1024, timeout: 540_000 });
+    build.child.stdout.pipe(process.stdout);
+    build.child.stderr.pipe(process.stderr);
+    const result = await build;
+    await mkdir(join(root, 'artifacts'), { recursive: true });
+    await writeFile(join(root, 'artifacts/ssh-linux-runtime-build.log'), result.stdout + result.stderr);
+  });
+  await run('tar', ['-xzf', archive, '-C', directory]);
+  const backend = join(directory, 'backend');
+  const script = `
+    const assert = require('node:assert/strict');
+    const Database = require('./node_modules/better-sqlite3');
+    const db = new Database(':memory:');
+    assert.equal(db.prepare('select 1 as ok').get().ok, 1); db.close();
+    const pty = require('./node_modules/node-pty');
+    const terminal = pty.spawn('/bin/sh', ['-c', 'printf native-terminal-ready'], {
+      name: 'xterm', cols: 80, rows: 24, cwd: process.cwd(), env: process.env,
+    });
+    let output = '';
+    const timeout = setTimeout(() => { terminal.kill(); throw Error('PTY stalled'); }, 5000);
+    terminal.onData(chunk => { output += chunk; });
+    terminal.onExit(({exitCode}) => {
+      clearTimeout(timeout); assert.equal(exitCode, 0);
+      assert.match(output, /native-terminal-ready/);
+      console.log('SQLite and PTY passed on glibc ' + process.report.getReport().header.glibcVersionRuntime);
+    });
+  `;
+  const result = await run(join(backend, 'node/bin/node'), ['-e', script], { cwd: backend, timeout: 10_000 });
+  assert.match(result.stdout, /SQLite and PTY passed/);
+  t.diagnostic(result.stdout.trim());
 });

@@ -95,9 +95,23 @@ Add/select your Linux server through the normal SSH machine flow. It receives
 the development archive automatically; no manual server build or release upload
 is needed. `--linux --arm64` is equivalent; use `--linux --x64` for a Linux x64
 server. These flags select the SSH runtime, not the desktop app's platform.
-The server needs a compatible glibc-based Linux distribution (the build uses
-Debian Bookworm), rather than Alpine/musl. The container validates native runtime
-dependencies; a real server connection still requires testing on the target.
+The Linux development builder compiles terminal support from source on Debian
+Bullseye (glibc 2.31), using the launcher's portable Node version. This keeps the
+archive compatible with Ubuntu 20.04 servers; compiling on Bookworm would require
+newer glibc even when bundled Node itself works. The container validates native
+runtime dependencies. Alpine/musl needs a different runtime, and a real server
+connection still requires testing on the target.
+
+On a Linux target with Docker access, run the native archive regression after
+`pnpm backend:bundle`:
+
+```sh
+ELEVENEX_TEST_LINUX_RUNTIME=1 node --test scripts/desktop-backend-linux.test.mjs
+```
+
+It builds the actual archive, then uses bundled Node to query SQLite and open a
+PTY on the host. Run it on glibc 2.31 when checking the oldest supported
+development target; the ordinary test suite skips this Docker integration test.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
