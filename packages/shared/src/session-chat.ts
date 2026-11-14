@@ -7,6 +7,8 @@ export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
   readonly after?: string;
   readonly before?: string;
+  /** Exclusive item cursor for continuing toward the live end of history. */
+  readonly following?: string;
 }
 /** Display metadata from a durable session-context snapshot; never includes its contents or path. */
 export interface SessionChatMention {
@@ -231,6 +233,8 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly items: readonly SessionChatItem[];
   readonly events: readonly SessionChatEvent[];
   readonly before: string | null;
+  /** Omitted by older engines. Null means this page reaches the live end. */
+  readonly next?: string | null;
   readonly state: SessionChatState;
 }
 export interface SessionChatPresetDefault {

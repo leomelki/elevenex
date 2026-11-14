@@ -33,6 +33,7 @@ export class DesktopChatController {
     @Param('sessionId') session: string,
     @Query('after') after: string | undefined,
     @Query('before') before: string | undefined,
+    @Query('following') following: string | undefined,
     @Res() response: Response,
   ) {
     const abort = new AbortController();
@@ -45,6 +46,7 @@ export class DesktopChatController {
         after,
         before,
         abort.signal,
+        following,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

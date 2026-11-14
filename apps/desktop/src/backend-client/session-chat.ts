@@ -46,6 +46,10 @@ export function registerSessionChatIpc(
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
         query.set("before", chatText(raw["before"]));
+      if (raw["following"] !== undefined)
+        query.set("following", chatText(raw["following"], 1000));
+      if (raw["following"] !== undefined && (raw["after"] !== undefined || raw["before"] !== undefined))
+        throw new Error("Choose one conversation cursor.");
       return client.execute(
         window,
         scopeId,

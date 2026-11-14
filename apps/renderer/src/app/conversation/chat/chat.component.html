@@ -1,5 +1,8 @@
 <div class="conversation">
-  <ex-chat-scroll (activeExchange)="active.set($event)">
+  <ex-chat-scroll (activeExchange)="active.set($event)"
+    [historyBefore]="historyBefore()" [historyAfter]="historyAfter()"
+    [historyLoading]="historyLoading()" [historyError]="historyError()" [historyRevision]="historyRevision()"
+    (historyRequested)="historyRequested.emit($event)" (latestRequested)="latestRequested.emit()">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
       @if (
@@ -8,6 +11,7 @@
         exchange.mentions?.length
       ) {
         <ex-message
+          [attr.data-chat-anchor]="exchange.id + ':prompt'"
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
@@ -39,6 +43,7 @@
         </ex-message>
       }
       <ex-turn
+        [attr.data-chat-anchor]="exchange.id + ':reply'"
         [reach]="reach()"
         [isNew]="exchange.isNew || false"
         [status]="exchange.status"

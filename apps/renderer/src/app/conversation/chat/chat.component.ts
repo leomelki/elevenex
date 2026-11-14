@@ -41,6 +41,13 @@ import { ElementProseComponent } from '../element/element-prose.component';
 })
 export class ChatComponent {
   readonly centerComposer = input(false);
+  readonly historyBefore = input(false);
+  readonly historyAfter = input(false);
+  readonly historyLoading = input(false);
+  readonly historyError = input("");
+  readonly historyRevision = input(0);
+  readonly historyRequested = output<"before" | "following">();
+  readonly latestRequested = output<void>();
   readonly exchanges = input<readonly ChatExchange[]>([]);
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
   readonly reach = input<{ readonly machine: string; readonly since: number }>();

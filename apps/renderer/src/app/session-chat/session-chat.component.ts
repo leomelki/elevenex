@@ -244,7 +244,6 @@ export class SessionChatComponent {
   );
   readonly activityDisabledReason = computed(() => this.archived() ? 'This session is archived. Activity is read only.'
     : this.store.offline() ? 'Reconnect to control this work.'
-    : this.store.historical() ? 'Return to latest to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
   readonly models = computed<readonly AgentModel[]>(() => {
@@ -280,7 +279,6 @@ export class SessionChatComponent {
       !this.archived() &&
       (this.store.starting() || !!this.store.state()) &&
       this.store.empty() &&
-      !this.store.historical() &&
       !this.store.state()?.providerLocked &&
       !this.store.state()?.permission &&
       !this.store.state()?.question,
@@ -337,7 +335,6 @@ export class SessionChatComponent {
       !current ||
       this.blocked() ||
       this.modelCatalog.loading() ||
-      this.store.historical() ||
       this.store.loading()
     )
       return;
@@ -475,6 +472,10 @@ export class SessionChatComponent {
       clearTimeout(this.copyTimer);
       this.presetFlow.dispose();
     });
+  }
+  async latest(): Promise<void> {
+    await this.store.refresh();
+    this.chat()?.scroll()?.scrollToEnd("instant");
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();

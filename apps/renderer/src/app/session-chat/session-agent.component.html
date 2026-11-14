@@ -129,30 +129,22 @@
       </p>
     }
 
-    <div
+    <ex-chat-scroll
       #transcript
       class="transcript"
-      tabindex="0"
-      aria-label="Agent transcript"
-      [attr.aria-busy]="busy()"
+      [reminder]="false"
+      [historyBefore]="!!page()?.before && !unreachable()"
+      [historyAfter]="hasNewer() && !unreachable()"
+      [historyLoading]="busy()"
+      [historyError]="error()"
+      [historyRevision]="windowRevision()"
+      (historyRequested)="$event === 'before' ? earlier() : later()"
+      (latestRequested)="latest()"
     >
       @if (busy() && !page()) {
         <ex-skeleton variant="rows" [count]="5" />
       }
       @if (page(); as page) {
-        @if (page.before) {
-          <button
-            exButton
-            variant="ghost"
-            size="sm"
-            class="page-link"
-            [disabled]="busy() || unreachable()"
-            (click)="earlier()"
-          >
-            <ex-icon name="expand-up" [size]="14" />
-            Show earlier messages
-          </button>
-        }
         @if (!rows().length) {
           <div class="empty" role="status">
             <ex-status-glyph
@@ -179,7 +171,7 @@
         }
         <ol class="entries">
           @for (row of rows(); track row.item.id) {
-            <li [attr.data-kind]="row.item.kind">
+            <li [attr.data-kind]="row.item.kind" [attr.data-chat-anchor]="row.item.id">
               @switch (row.item.kind) {
                 @case ("tool_use") {
                   <ex-tool-step
@@ -267,44 +259,17 @@
             </li>
           }
         </ol>
-        @if (hasNewer()) {
-          <button
-            exButton
-            variant="ghost"
-            size="sm"
-            class="page-link"
-            [disabled]="busy() || unreachable()"
-            (click)="later()"
-          >
-            <ex-icon name="expand-down" [size]="14" />
-            Show newer messages
-          </button>
-        }
       }
-    </div>
+    </ex-chat-scroll>
 
     <footer>
       <span class="snapshot" role="status">
         @if (busy()) {
           Loading…
-        } @else if (hasNewer()) {
-          Viewing earlier messages
         } @else if (loadedAt()) {
-          Latest messages · loaded {{ loadedAt() }}
+          Loaded {{ loadedAt() }}
         }
       </span>
-      @if (hasNewer()) {
-        <button
-          exButton
-          variant="secondary"
-          size="sm"
-          [disabled]="busy() || unreachable()"
-          (click)="latest()"
-        >
-          <ex-icon name="arrow-down" [size]="14" />
-          Jump to latest
-        </button>
-      }
     </footer>
   </section>
 </ex-modal-layer>

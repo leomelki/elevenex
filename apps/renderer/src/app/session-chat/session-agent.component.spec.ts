@@ -93,7 +93,7 @@ it("keeps the task title primary and the nickname secondary when inspecting comp
   expect(document.querySelector('.agent-dialog .facts')?.textContent).toContain('reviewer');
 });
 
-it("replaces transcript pages, preserves loaded content offline and has explicit refresh", async () => {
+it("stitches transcript pages, preserves loaded content offline and has explicit refresh", async () => {
   const client = {
     agent: vi.fn(async (_scope: string, input: SessionChatAgentRead) => ({
       ok: true as const,
@@ -122,7 +122,7 @@ it("replaces transcript pages, preserves loaded content offline and has explicit
   fixture.detectChanges();
   await fixture.whenStable();
   expect(fixture.componentInstance.page()?.message).toBe("Earlier messages");
-  expect(fixture.componentInstance.hasNewer()).toBe(true);
+  expect(fixture.componentInstance.hasNewer()).toBe(false);
   fixture.componentRef.setInput("unreachable", true);
   fixture.detectChanges();
   expect(fixture.componentInstance.page()?.message).toBe("Earlier messages");
@@ -190,4 +190,33 @@ it("shows the assignment once, pairs tool results with their calls and says wher
   expect(dialog.querySelector(".assignment")?.textContent).toContain("Check the retry boundary.");
   expect(dialog.textContent).toContain("Answer it in the main conversation.");
   expect(dialog.querySelector("footer button")).toBeNull();
+});
+
+it('keeps agent scrolling contiguous with at most 320 retained items and reloads evicted pages', async () => {
+  const history: SessionChatItem[] = Array.from({ length: 4000 }, (_, i) => ({
+    id: String(i), kind: 'assistant', text: `Message ${i}`, timestamp: '',
+    toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false,
+  }));
+  const client = {
+    agent: vi.fn(async (_scope: string, input: SessionChatAgentRead) => {
+      const end = Number(input.before ?? history.length), start = Math.max(0, end - 80);
+      return { ok: true as const, value: { ...page('child'), items: history.slice(start, end), before: start ? String(start) : null } };
+    }),
+    cancel: vi.fn(),
+  };
+  TestBed.configureTestingModule({ providers: [{ provide: SessionChatClient, useValue: client }] });
+  const fixture = TestBed.createComponent(SessionAgentComponent);
+  fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+  fixture.componentRef.setInput('agentId', 'child'); fixture.detectChanges(); await fixture.whenStable();
+  const owner = fixture.componentInstance;
+  for (let i = 0; i < 12; i++) {
+    owner.earlier(); fixture.detectChanges(); await fixture.whenStable();
+    const items = owner.page()!.items;
+    expect(items.length).toBeLessThanOrEqual(320);
+    expect(items.every((item, i) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
+  }
+  expect(owner.hasNewer()).toBe(true);
+  while (owner.hasNewer()) { owner.later(); fixture.detectChanges(); await fixture.whenStable(); }
+  expect(owner.page()!.items.at(-1)?.id).toBe('3999');
+  expect(owner.page()!.items.length).toBeLessThanOrEqual(320);
 });

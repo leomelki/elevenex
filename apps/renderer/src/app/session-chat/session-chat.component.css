@@ -60,18 +60,6 @@ ex-chat {
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
 }
-.history-controls {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  color: var(--ink-muted);
-  font-size: var(--text-caption-size);
-}
-.history-controls:empty {
-  display: none;
-}
 .feedback {
   display: flex;
   align-items: center;

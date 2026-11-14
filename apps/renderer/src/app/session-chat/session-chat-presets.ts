@@ -123,7 +123,6 @@ export class SessionChatPresets {
       this.disposed ||
       !value ||
       this.owner.blocked() ||
-      this.owner.store.historical() ||
       this.owner.store.state()?.providerLocked !== false ||
       this.owner.store.state()?.presets === undefined ||
       this.presets().length >= 24

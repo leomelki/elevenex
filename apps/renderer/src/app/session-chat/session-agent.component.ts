@@ -2,7 +2,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
-  ElementRef,
   afterRenderEffect,
   computed,
   effect,
@@ -19,6 +18,7 @@ import type {
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import {
+  ChatScrollComponent,
   MarkdownComponent,
   ToolStepComponent,
   stepIcon,
@@ -58,10 +58,11 @@ const clock = new Intl.DateTimeFormat(undefined, {
 });
 const LIVE = new Set(["pending", "running", "waiting"]);
 
-/** On-demand child history. Each page replaces the bounded window; reads never send prompts. */
+/** On-demand child history, stitched into a bounded scrolling window. */
 @Component({
   selector: "ex-session-agent",
   imports: [
+    ChatScrollComponent,
     MarkdownComponent,
     ToolStepComponent,
     ButtonComponent,
@@ -93,7 +94,6 @@ export class SessionAgentComponent {
   readonly busy = signal(false);
   readonly error = signal("");
   readonly notice = signal("");
-  readonly before = signal<string | undefined>(undefined);
   private readonly newer = signal<readonly (string | undefined)[]>([]);
   readonly hasNewer = computed(() => this.newer().length > 0);
   /** Live and saved records retain the same task title and secondary identity. */
@@ -186,33 +186,27 @@ export class SessionAgentComponent {
   });
   private readonly client = inject(SessionChatClient);
   private readonly transcript =
-    viewChild<ElementRef<HTMLElement>>("transcript");
+    viewChild<ChatScrollComponent>("transcript");
   private request: { scope: string; id: string } | undefined;
-  /** Older pages continue upward from what was read; newer pages continue downward. */
-  private scrollEdge: "top" | "bottom" = "bottom";
+  /** Refresh alone resets position; adjacent pages preserve the visible row. */
+  private resetScroll = true;
+  readonly windowRevision = signal(0);
+  private pages: { cursor: string | undefined; page: SessionChatAgentPage }[] = [];
   private generation = 0;
   constructor() {
     effect(() => {
       void this.load(
         this.selection(),
         this.agentId(),
-        this.before(),
+        undefined,
         this.unreachable(),
       );
     });
     afterRenderEffect(() => {
       this.page();
-      const element = this.transcript()?.nativeElement;
-      if (element) {
-        element.scrollTop =
-          this.scrollEdge === "top" ? 0 : element.scrollHeight;
-        // Paging disables its trigger while loading. Keep the reader's keyboard
-        // focus inside the modal when that button loses focus on becoming disabled.
-        if (
-          this.open() &&
-          element.ownerDocument.activeElement === element.ownerDocument.body
-        )
-          element.focus({ preventScroll: true });
+      if (this.resetScroll && this.page()) {
+        this.transcript()?.scrollToEnd("instant");
+        this.resetScroll = false;
       }
     });
     inject(DestroyRef).onDestroy(() => this.cancel());
@@ -234,7 +228,7 @@ export class SessionAgentComponent {
     void this.load(
       this.selection(),
       this.agentId(),
-      this.before(),
+      undefined,
       this.unreachable(),
     );
   }
@@ -247,27 +241,20 @@ export class SessionAgentComponent {
   }
   earlier(): void {
     const cursor = this.page()?.before;
-    if (!cursor || this.busy()) return;
-    this.scrollEdge = "bottom";
-    this.newer.update((values) => [...values.slice(-79), this.before()]);
-    this.before.set(cursor);
+    if (!cursor || this.busy() || this.unreachable()) return;
+    void this.load(this.selection(), this.agentId(), cursor, false, "before");
   }
   later(): void {
-    if (!this.newer().length || this.busy()) return;
-    this.scrollEdge = "top";
-    this.before.set(this.newer().at(-1));
-    this.newer.update((values) => values.slice(0, -1));
+    if (!this.newer().length || this.busy() || this.unreachable()) return;
+    void this.load(this.selection(), this.agentId(), this.newer().at(-1), false, "following");
   }
-  latest(): void {
-    this.scrollEdge = "bottom";
-    this.before.set(undefined);
-    this.newer.set([]);
-  }
+  latest(): void { this.refresh(); }
   private async load(
     target: ChatSelection,
     agentId: string,
     before: string | undefined,
     unreachable: boolean,
+    direction?: "before" | "following",
   ): Promise<void> {
     this.cancel();
     if (!this.open() || unreachable) {
@@ -290,7 +277,27 @@ export class SessionAgentComponent {
     this.request = undefined;
     this.busy.set(false);
     if (result.ok) {
-      this.page.set(result.value);
+      if (!direction) {
+        this.pages = [{ cursor: before, page: result.value }];
+        this.newer.set([]);
+        this.resetScroll = true;
+      } else if (direction === "before") {
+        this.pages.unshift({ cursor: before, page: result.value });
+        while (this.pages.length > 4) {
+          const removed = this.pages.pop()!;
+          this.newer.update(cursors => [...cursors, removed.cursor]);
+        }
+      } else {
+        this.pages.push({ cursor: before, page: result.value });
+        this.newer.update(cursors => cursors.slice(0, -1));
+        while (this.pages.length > 4)
+          this.pages.shift();
+      }
+      const items = [...new Map(this.pages.flatMap(value => value.page.items).map(item => [item.id, item])).values()];
+      this.page.set({ ...result.value, items, before: this.pages[0]?.page.before ?? null });
+      const retained = new Set(items.map(item => item.id));
+      this.reasoningOpen.update(ids => new Set([...ids].filter(id => retained.has(id))));
+      if (direction) this.windowRevision.update(value => value + 1);
       this.loadedAt.set(clock.format(Date.now()));
       // Short assignments read at a glance; long ones stay folded behind their preview.
       if (before === undefined && !this.assignmentTouched)

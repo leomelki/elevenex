@@ -184,19 +184,13 @@ h2:focus {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: var(--space-2) var(--space-6) var(--space-4);
+  height: auto;
   border-top: 1px solid var(--line);
   overscroll-behavior: contain;
 }
 .transcript:focus-visible {
   outline: 2px solid transparent;
   box-shadow: inset var(--focus-ring);
-}
-.page-link {
-  align-self: center;
-  margin: var(--space-2) 0;
-  color: var(--ink-muted);
 }
 .entries {
   display: flex;
@@ -339,7 +333,6 @@ footer {
   .banner {
     margin-inline: var(--space-3);
   }
-  .transcript,
   footer {
     padding-inline: var(--space-3);
   }
