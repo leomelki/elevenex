@@ -201,10 +201,32 @@ export default async function* (capture) {
     assert.equal(await shown("edit"), false);
     await capture.component("ex-turn", (c) => c.toggled.set(null));
 
-    await scene("active-ten");
+    await scene("active-five");
     await finish();
     assert.equal(await shown("check-0"), true);
-    yield { name: theme + "-ten-active-steps", inspect: ["ex-turn"] };
+    assert.equal(
+      await capture.evaluate(
+        (s) => document.querySelector(s).closest(".group-fold").hasAttribute("inert"),
+        summary("check-0"),
+      ),
+      true,
+    );
+    yield { name: theme + "-five-active-steps", inspect: ["ex-turn"] };
+    await scene("active-six");
+    await finish();
+    assert.equal(await shown("check-0"), false);
+    for (let n = 1; n <= 5; n++) assert.equal(await shown(`check-${n}`), true);
+    assert.equal(
+      await capture.evaluate(
+        (s) => document.querySelector(s).getAttribute("aria-label"),
+        summary("check-0"),
+      ),
+      "Show earlier activity: 1 command",
+    );
+    yield {
+      name: theme + "-first-earlier-command",
+      inspect: ["ex-turn", summary("check-0")],
+    };
     await scene("active-eleven");
     await finish();
     assert.equal(await shown("check-0"), false);

@@ -76,21 +76,21 @@ describe("message-delimited work sections", () => {
     expect(visible(host, "command")).toBe(false);
   });
 
-  it("keeps up to ten active tools visible, then keeps five recent tools in that section", () => {
-    const steps = Array.from({ length: 10 }, (_, n) => tool(`command-${n}`));
-    const { host, update } = setup(exchange(steps));
+  it("starts Earlier with one tool beyond the five recent tools and grows it one call at a time", () => {
+    const steps = Array.from({ length: 11 }, (_, n) => tool(`command-${n}`));
+    const { host, update } = setup(exchange(steps.slice(0, 5)));
     expect(group(host, "command-0")).toBeNull();
     expect(visible(host, "command-0")).toBe(true);
-    update(exchange([...steps, tool("command-10")]));
-    expect(group(host, "command-0")?.textContent).toContain("6 commands");
-    // The visible recent window is not the summary's contents: say so.
-    expect(group(host, "command-0")?.textContent).toContain("Earlier");
-    expect(group(host, "command-0")?.getAttribute("aria-label")).toBe(
-      "Show earlier activity: 6 commands",
-    );
-    expect(visible(host, "command-5")).toBe(false);
-    expect(visible(host, "command-6")).toBe(true);
-    expect(visible(host, "command-10")).toBe(true);
+    for (let count = 6; count <= steps.length; count++) {
+      update(exchange(steps.slice(0, count)));
+      const earlier = count - 5;
+      expect(group(host, "command-0")?.textContent).toContain("Earlier");
+      expect(group(host, "command-0")?.getAttribute("aria-label")).toBe(
+        `Show earlier activity: ${earlier} ${earlier === 1 ? "command" : "commands"}`,
+      );
+      for (let index = 0; index < count; index++)
+        expect(visible(host, `command-${index}`)).toBe(index >= earlier);
+    }
   });
 
   it("collapses each section where it occurred, hiding earlier messages in completed history", () => {
