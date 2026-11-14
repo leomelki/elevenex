@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ChildProcess, spawn } from 'child_process';
 import { createInterface } from 'readline';
 import {
-  buildAugmentedEnv,
+  buildAugmentedEnvAsync,
   buildSpawnCommand,
 } from '../config/system-paths.js';
 import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
@@ -101,7 +101,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (child && !child.killed) child.kill('SIGTERM');
   }
 
-  get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
+  get isRunning(): boolean {
+    return !!this.child && this.child.exitCode === null;
+  }
 
   onModuleDestroy(): void {
     this.shuttingDown = true;
@@ -173,12 +175,13 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
+    const env = await buildAugmentedEnvAsync();
     const binary = resolveCodexBinary();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    this.spawnChild(binary);
+    this.spawnChild(binary, env);
     this.binaryIdentity = identity;
     try {
       await this.sendRequest<unknown>(
@@ -283,11 +286,11 @@ export class CodexAppServerClient implements OnModuleDestroy {
     });
   }
 
-  private spawnChild(codexBin: string): void {
+  private spawnChild(codexBin: string, env: NodeJS.ProcessEnv): void {
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const { command, shell } = buildSpawnCommand(codexBin);
     const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
-      env: buildAugmentedEnv(),
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell,
     });
@@ -317,7 +320,13 @@ export class CodexAppServerClient implements OnModuleDestroy {
       // from a previously-killed instance shouldn't disrupt the new one.
       if (this.child !== child) return;
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
-      this.tearDown(error);
+      this.tearDown(
+        'code' in error && error.code === 'ENOENT'
+          ? new Error(
+              `${error.message}. Codex must be installed on the backend machine (the remote host for SSH). Check its PATH or set ELEVENEX_CODEX_BIN to its executable path, then refresh the agent models.`,
+            )
+          : error,
+      );
     });
 
     child.once('exit', (code, signal) => {

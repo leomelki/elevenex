@@ -11,6 +11,30 @@ overrides keep priority. Shell-added exports removed from a later capture are
 removed from the projection; changed exports update. Failed captures retain the
 last good cache and projection.
 
+Capture baselines retain the launch/application environment, including arbitrary
+startup inputs such as `HOME`, `ZDOTDIR`, XDG directories and `NVM_DIR`. They
+remove our previous shell projection and transient state (`PWD`, prompts,
+`FNM_MULTISHELL_PATH`, `NVM_BIN`, `NVM_INC`) and rebuild the startup PATH. This
+keeps custom bootstrap settings without accumulating previous shell exports.
+Explicit launch/application settings also take priority in worktree startup.
+With no `SHELL`, use the account's login shell before the platform fallback.
+Global captures start at home;
+worktree captures start in the requested directory. Captures use NUL-delimited
+`/usr/bin/env -0` output so multiline values remain intact instead of becoming
+spurious variables. This is supported by GNU env and [macOS env](https://github.com/apple-oss-distributions/shell_cmds/blob/main/env/env.c).
+
+Only explicit launch/application values override worktree exports; values from
+our global shell projection do not override worktree changes or unsets. Binary
+lookups follow current PATH/PATHEXT and recheck cached executables for removed
+version-manager links. New Codex/Claude processes resolve their binary after
+environment warm-up; already running agents retain their process and environment.
+
+In SSH mode, agent CLIs and their authentication belong to the remote
+backend host. A CLI installed on the desktop Mac is not available to the remote
+backend. Install the desired CLI there, or configure `ELEVENEX_CODEX_BIN` /
+`ELEVENEX_CLAUDE_BIN` in the backend's environment for a custom executable path.
+Refresh the agent models after changing the installation or shell configuration.
+
 FNM's [shell initialization](https://github.com/Schniz/fnm/blob/master/src/commands/env.rs)
 creates a unique `fnm_multishells/<id>/bin` directory per POSIX shell
 (`fnm_multishells/<id>` on Windows). Exact PATH deduplication cannot prevent these
