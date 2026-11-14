@@ -864,6 +864,20 @@ describe("session chat ownership", () => {
   });
 });
 describe("provider-neutral transcript presentation", () => {
+  it("keeps inline images with their source commentary instead of appending them to the answer", () => {
+    const [exchange] = chatExchanges([
+      item("u", "user", "Check it"),
+      item("image", "assistant", "First capture", { media: [
+        { id: "image-1", path: "/tmp/capture.png", caption: "Capture", inline: true },
+      ] }),
+      item("tool", "tool_use", "", { toolId: "check", toolName: "bash" }),
+      item("final", "assistant", "Done"),
+    ], null, new Set());
+    expect(exchange?.answer).toBe("Done");
+    expect(exchange?.steps.find(step => step.id === "image")?.text)
+      .toBe("First capture\n\n![Capture](/tmp/capture.png)");
+  });
+
   it("measures settled turns from the prompt to their last activity and lets live turns count", () => {
     const at = (time: string) => ({ timestamp: `2026-10-28T12:${time}Z` });
     const items = [
