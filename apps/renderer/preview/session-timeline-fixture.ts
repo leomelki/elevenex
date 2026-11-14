@@ -1,7 +1,8 @@
 import type { SessionChatItem } from "@elevenex/shared";
 
 export type TimelineScene =
-  | "active-ten"
+  | "active-five"
+  | "active-six"
   | "active-eleven"
   | "sections"
   | "failed-sections"
@@ -79,12 +80,17 @@ export function sessionTimelineItems(
     "assistant",
     "I’ll trace how a retry claims its key, then check concurrent requests.",
   );
-  if (scene === "active-ten" || scene === "active-eleven")
+  if (
+    scene === "active-five" ||
+    scene === "active-six" ||
+    scene === "active-eleven"
+  )
     return [
       user,
       intro,
-      ...Array.from({ length: scene === "active-ten" ? 10 : 11 }, (_, n) =>
-        call(`check-${n}`),
+      ...Array.from(
+        { length: scene === "active-five" ? 5 : scene === "active-six" ? 6 : 11 },
+        (_, n) => call(`check-${n}`),
       ).flat(),
     ];
   if (scene === "failure-only")

@@ -52,7 +52,7 @@ export function workTimelineRows(
     const whole = closed || !expanded;
     const candidates = whole
       ? items
-      : items.length > limit * 2
+      : items.length > limit
         ? items.slice(0, -limit)
         : [];
     const folded = candidates.filter((step) => !isUnfinishedWork(step));
