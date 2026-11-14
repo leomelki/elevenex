@@ -97,10 +97,10 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   let resolve!: (value: BackendResult<SessionChatCommandReply>) => void;
   const bridge = {
     writeClipboardText: vi.fn<(text: string) => Promise<void>>(async () => undefined),
-    sessionChatCatalog: vi.fn(async () => ({
+    sessionChatCatalog: vi.fn(async (_scope: string, input: { provider: string }) => ({
       ok: true as const,
       value: {
-        provider: "claude", label: "Claude Code",
+        provider: input.provider, label: input.provider,
         models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: ["low", "high"], supportsFastMode: false }],
         model: "sonnet", reasoning: "high", fast: false,
         reasoningAvailable: true, fastAvailable: false, error: null,
@@ -550,6 +550,18 @@ describe("streaming cursor ownership", () => {
 });
 
 describe("connected composer controls", () => {
+  it('requests browser picking only for a saved session', async () => {
+    const { fixture } = setup();
+    await settle(fixture);
+    const picked = vi.fn();
+    fixture.componentInstance.browserPickRequested.subscribe(picked);
+    fixture.componentInstance.pickBrowserElement('tab-1');
+    expect(picked).toHaveBeenCalledWith({ scopeId: 'scope', taskId: 1, sessionId: 2, tabId: 'tab-1' });
+    picked.mockClear();
+    fixture.componentRef.setInput('selection', null);
+    fixture.componentInstance.pickBrowserElement('tab-1');
+    expect(picked).not.toHaveBeenCalled();
+  });
   const capabilities: SessionChatState = {
     ...state,
     providerLocked: false,
@@ -773,6 +785,23 @@ describe("connected composer controls", () => {
     expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(0);
     expect(document.querySelector(".agent-settings")?.textContent).toContain("No models reported yet");
   });
+  for (const provider of ['codex', 'claude', 'pi', 'opencode']) {
+    it(`loads ${provider} models before its first conversation and refreshes without sending`, async () => {
+      const { fixture, root, bridge } = setup([], { ...state, provider, presetCatalogs: true });
+      await settle(fixture);
+      expect(bridge.sessionChatCatalog).toHaveBeenCalledTimes(1);
+      expect(bridge.sessionChatCatalog).toHaveBeenCalledWith('scope', expect.objectContaining({ provider, taskId: 1, sessionId: 2 }));
+      root.querySelector<HTMLButtonElement>('ex-agent-picker > button')!.click();
+      await settle(fixture);
+      expect(document.querySelector('.agent-settings [role="option"]')?.textContent).toContain('Sonnet');
+      expect(document.querySelector('.agent-settings')?.textContent).not.toContain('No models reported yet');
+      const refresh = Array.from(document.querySelectorAll<HTMLButtonElement>('.agent-settings button')).find(button => button.textContent?.includes('Refresh models'))!;
+      refresh.click();
+      await settle(fixture);
+      expect(bridge.sessionChatCatalog).toHaveBeenLastCalledWith('scope', expect.objectContaining({ provider, refresh: true }));
+      expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    });
+  }
   it("submits only the changed agent setting and retains a draft during reconciliation", async () => {
     const { fixture, bridge, complete } = setup([], capabilities);
     await settle(fixture);

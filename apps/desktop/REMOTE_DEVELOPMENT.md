@@ -119,6 +119,14 @@ bundled Node and native modules. Alpine/musl and Windows SSH servers need a
 different runtime/bootstrap and are rejected. Home paths longer than the Unix
 socket limit require a shorter remote home. No administrator access is required.
 
+Repository operations use the remote machine's Git and its existing authentication
+and configuration. Current, maintained Git is the primary performance and
+correctness target; Git 2.25 has inexpensive, tested fallbacks for basic discovery
+and task setup. Modern installations retain newer command forms and native
+reftable handling. Discovery resolves physical paths without requiring
+`rev-parse --path-format`; version probes are cached and stay out of status reads.
+See [the Git support and tuning policy](../backend/src/config/README.md#git-versions-and-performance).
+
 Use a modern OpenSSH client (9+). macOS is the validated client host. Linux uses
 the same POSIX launcher. Windows client support uses installed OpenSSH and a
 small credential-free .NET askpass executable compiled with built-in Windows
@@ -158,6 +166,24 @@ its local development backend. Only unpackaged launches with the development
 backend setting use it. Main validates the source revision, target, archive hash
 and safe extraction before transferring it; packaged launches ignore the setting.
 Custom builds skip server/client release downloads entirely.
+
+POSIX runtime assembly also boots the final pruned backend with bundled Node,
+an isolated temporary home/database and the private remote socket. It must serve
+`/api/info` at the exact build revision within 30 seconds before an archive is
+published. Linux cross-builds run this check inside the target container. The
+probe cleans up its process group and temporary data on success, failure or
+cancellation; it does not exercise the destination server's configuration.
+
+Linux standalone archives, including release builds, use the same portable
+container builder automatically. It bundles Node 24.22.3 independently of the
+client's Node major and compiles SQLite/PTY in manylinux 2.28 (AlmaLinux 8).
+The final ELF files must not require newer symbols than GLIBC 2.28,
+GLIBCXX 3.4.25 or CXXABI 1.3.11. This prevents newer build hosts from silently
+raising the server baseline (Bookworm-built PTYs can require GLIBC 2.34).
+Changing the builder changes the development fingerprint, so the normal explicit
+connect/retry installs the corrected archive without deleting remote data.
+The SSH host needs neither a compiler nor a separately installed Node. Optional
+browser downloads have their own OS requirements; Alpine/musl is not covered.
 
 The current build supports the launcher's OS and architecture. A different
 remote target gets an explicit compatibility error. There is no implicit cross
@@ -224,6 +250,11 @@ lease refreshed by bridge health checks and removed on disconnect/expiry; it
 is not permanently captured by the daemon. After all clients disconnect,
 operations that need a client-provided agent must wait for a new client whose
 SSH configuration or remote account environment supplies a socket.
+An account's explicit `SSH_AUTH_SOCK` in its shell startup files takes precedence
+over the managed proxy in backend subprocess environments. This keeps agents and
+Git aligned with the account's interactive terminal configuration; accounts
+without that setting retain the stable forwarded-agent proxy. Explicit
+launcher/application sockets and local/legacy runtime precedence are preserved.
 The stable agent proxy tries another live lease if an agent socket has died,
 before consuming any authentication/signing bytes. It never retries a signing
 request after connecting. Revoking one lease closes only that lease's clients;

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture } from './desktop-backend-linux.mjs';
+import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture, linuxRuntimeNodeVersion } from './desktop-backend-linux.mjs';
 
 const version = 'a'.repeat(40);
 
@@ -22,9 +22,9 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = [
     'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/backend/package.json', 'apps/desktop/package.json',
-    'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/drizzle/migration.sql',
+    'packages/shared/package.json', 'e2e/package.json', 'apps/backend/bundle/main.cjs', 'apps/backend/bundle/browser-setup.cjs', 'apps/backend/drizzle/migration.sql',
     'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json',
-    'scripts/desktop-backend-runtime.mjs', 'scripts/stage-electron-backend.js',
+    'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/stage-electron-backend.js',
     'scripts/rebuild-electron-backend-natives.js', 'scripts/archive-electron-backend.js',
     'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile',
     // Neither installed dependencies, unrelated sources nor secrets belong in the context.
@@ -39,10 +39,10 @@ async function fixture(t) {
   }
   await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@8.15.4' }));
   await writeFile(join(root, 'apps/backend/package.json'), JSON.stringify({ name: 'elevenex-backend', dependencies: Object.fromEntries(
-    ['playwright-core', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
+    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
   ) }));
   await writeFile(join(root, 'pnpm-lock.yaml'), `lockfileVersion: '6.0'\nimporters:\n  apps/backend:\n    dependencies:\n${
-    ['playwright-core', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
+    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
   }  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n`);
   return root;
 }
@@ -57,8 +57,11 @@ for (const architecture of ['arm64', 'x64']) {
       assert.equal(command, 'docker');
       assert.equal(args[args.indexOf('--platform') + 1], `linux/${architecture === 'x64' ? 'amd64' : 'arm64'}`);
       assert.ok(args.includes('PNPM_VERSION=8.15.4'));
+      assert.ok(args.includes(`NODE_VERSION=${linuxRuntimeNodeVersion}`));
+      assert.ok(args.includes(`LINUX_BUILD_IMAGE=quay.io/pypa/manylinux_2_28_${architecture === 'x64' ? 'x86_64' : 'aarch64'}`));
       assert.ok(args.includes(`DEVELOPMENT_VERSION=${version}`));
       assert.equal(await readFile(join(cwd, 'runtime/apps/backend/bundle/main.cjs'), 'utf8'), 'apps/backend/bundle/main.cjs');
+      assert.equal(await readFile(join(cwd, 'runtime/apps/backend/bundle/browser-setup.cjs'), 'utf8'), 'apps/backend/bundle/browser-setup.cjs');
       const lockfile = await readFile(join(cwd, 'manifests/pnpm-lock.yaml'), 'utf8');
       assert.ok(lockfile.includes("      'better-sqlite3':\n        specifier: 1.0.0\n        version: 1.2.3\n"));
       assert.ok(!lockfile.includes('unused-agent-cli'));
@@ -66,6 +69,7 @@ for (const architecture of ['arm64', 'x64']) {
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
       assert.equal(backend.dependencies['playwright-core'], '1.0.0');
+      assert.equal(backend.dependencies['@playwright/test'], '1.0.0');
       assert.equal(backend.dependencies['ffmpeg-static'], '1.0.0');
       assert.equal(backend.dependencies['unused-agent-cli'], undefined);
       assert.equal(await readFile(join(cwd, 'runtime/scripts/runtime-stage-utils.js'), 'utf8'), 'scripts/runtime-stage-utils.js');

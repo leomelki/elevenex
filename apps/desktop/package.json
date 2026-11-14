@@ -33,6 +33,9 @@
     "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
   },
   "dependencies": {
-    "ws": "8.22.1"
+    "@elevenex/browser-network": "workspace:*",
+    "ws": "8.22.1",
+    "@elevenex/browser-inspection": "workspace:*",
+    "@elevenex/browser-agent": "workspace:*"
   }
 }

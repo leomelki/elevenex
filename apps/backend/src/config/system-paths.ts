@@ -6,6 +6,7 @@ import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
 import {
   assertSubprocessEnvironment,
+  shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
 
@@ -162,9 +163,9 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 
 // Baseline env to spawn a login shell with.
 //
-// - Global load (no cwd): minimal boot path so the captured env is "pure" rc-
-//   file output, untainted by whatever `process.env` the backend inherited
-//   (systemd, launchd, Finder/DMG, …).
+// - Global load (no cwd): minimal boot path plus HOME so the shell can find
+//   user startup files, without inheriting application exports from the
+//   backend (systemd, launchd, Finder/DMG, …).
 // - Per-cwd load: inherit the global cache's env so the worktree-local shell
 //   starts from the same baseline as the user's interactive session. This is
 //   what makes the system general: anything an rc file sets up — version
@@ -173,7 +174,9 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 //   worktree's chpwd hooks layer cwd-specific overrides on top.
 function getShellBaselineEnv(forCwdLoad: boolean): NodeJS.ProcessEnv {
   if (!forCwdLoad || !_shellEnvCache) {
-    return { PATH: getMinimalBootPath(), PS1: '' };
+    // Bash does not populate HOME when spawned with a replacement environment.
+    // Without it, login startup skips ~/.profile and user version managers.
+    return { HOME: homedir(), PATH: getMinimalBootPath(), PS1: '' };
   }
   const baseline: NodeJS.ProcessEnv = { PS1: '' };
   for (const [key, value] of Object.entries(_shellEnvCache)) {
@@ -446,6 +449,8 @@ function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
       next[key] = value;
     }
   }
+  const shellAgent = shellConfiguredSshAgentSocket(baseline, shellEnv);
+  if (shellAgent !== undefined) next.SSH_AUTH_SOCK = shellAgent;
 
   shellProjection.apply(process.env, baseline, ensureUtf8Locale(next));
 }
@@ -867,6 +872,8 @@ function mergeAugmentedEnv(
 ): NodeJS.ProcessEnv {
   const pathKey = getPathEnvKey(base);
   const merged = { ...shellEnv, ...base };
+  const shellAgent = shellConfiguredSshAgentSocket(base, shellEnv);
+  if (shellAgent !== undefined) merged.SSH_AUTH_SOCK = shellAgent;
   // `base` (the backend's own launch-time env) must not clobber PWD once we've
   // resolved a specific target cwd — otherwise every spawned terminal inherits
   // the backend process's stale PWD instead of the worktree it's opening.

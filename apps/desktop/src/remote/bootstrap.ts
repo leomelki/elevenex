@@ -11,12 +11,15 @@ import { archiveFor, type PrepareRemoteArchive } from './archives';
 import type { Ask } from './askpass';
 import { Wire, SocketChannels, type WireMessage } from './wire';
 import { createServer, type Server } from 'node:net';
+import { browserSocks, browserLoopbackHost } from '@elevenex/browser-network';
 
 export interface RemoteTransport {
   readonly instance: string;
   readonly exited: Promise<void>;
   /** A reserved port value of zero addresses the private backend socket. */
   forward(port: number, localPort: number, onServiceChanged?: (available: boolean) => void, targetHost?: string): Promise<{ port: number; reachable: boolean; authorization: string | null; close(): Promise<void> }>;
+  /** Optional for injected/older transports. Never falls back to device egress. */
+  browserProxy?(authorize: (host: string, port: number) => void): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }>;
   health(signal: AbortSignal): Promise<{ ready: boolean; instance: string }>;
   close(): Promise<void>;
 }
@@ -139,6 +142,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
     const hello = await greeting;
     const channels = new SocketChannels(channel);
     const servers = new Map<Server, Set<import('node:net').Socket>>();
+    const browserProxies = new Set<Awaited<ReturnType<typeof browserSocks>>>();
     let closing = false;
     let sequence = 0;
     const health = (healthSignal: AbortSignal) => new Promise<{ ready: boolean; instance: string }>((resolve, reject) => {
@@ -205,10 +209,28 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
       return { port: address.port, authorization, reachable, close };
     };
     return { instance: hello.instance, exited: ssh.exited, health, forward,
+      browserProxy: async (authorize: (host: string, port: number) => void) => {
+        if (closing || !hello.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
+        const proxy = await browserSocks(async (host, port) => {
+          if (closing) throw new Error('Remote transport closed');
+          authorize(host, port);
+          return { host, port };
+        }, (socket, target, opened) => {
+          if (closing) { socket.destroy(); return; }
+          if (browserLoopbackHost(target.host)) {
+            const host = target.host === '::' || target.host === '::1' ? '::1' : '127.0.0.1';
+            channels.open(socket, target.port, opened, host);
+          } else channels.openBrowser(socket, target.host, target.port, opened);
+        });
+        if (closing) { await proxy.close(); throw new Error('Remote transport closed'); }
+        browserProxies.add(proxy);
+        return { port: proxy.port, disconnect: () => proxy.disconnect(), close: async () => { browserProxies.delete(proxy); await proxy.close(); } };
+      },
       close: async () => {
         closing = true; cancellation.abort(); channels.dispose(); channel.close();
         for (const sockets of servers.values()) for (const socket of sockets) socket.destroy();
         await ssh.stop();
+        await Promise.all([...browserProxies].map(proxy => proxy.close())); browserProxies.clear();
         await Promise.all([...servers.keys()].map(server => new Promise<void>(resolve => server.close(() => resolve())))); servers.clear();
       },
     };

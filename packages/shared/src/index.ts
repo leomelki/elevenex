@@ -1,5 +1,9 @@
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
+import type { TaskBrowserPlacement, TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
+export type * from './task-browser';
+export type * from './browser-webauthn';
+export { browserCursors } from './task-browser';
 import type { TaskTerminalCommandsRead, TaskTerminalCommands, TaskTerminalTarget, TaskTerminal, TaskTerminalList, TaskTerminalRead, TaskTerminalOutput, TaskTerminalCreate, TaskTerminalInput, TaskTerminalResize, TaskTerminalAction } from './task-terminal';
 import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrite, TaskTerminalStreamEvent, TaskTerminalSize, TaskTerminalPreferences } from './task-terminal';
 export type * from './task-terminal';
@@ -69,6 +73,21 @@ export interface InvokeContracts {
   'task-terminal:action': { args: [scopeId: string, input: TaskTerminalAction]; result: BackendResult<{ readonly accepted: true }> };
   'task-terminal:close': { args: [scopeId: string, input: TaskTerminalTarget]; result: BackendResult<{ readonly accepted: true }> };
 
+  'task-browser:detach': { args: [scopeId: string, taskId: number, tabId: string, context: TaskBrowserWindowContext]; result: void };
+  'task-browser:return': { args: [scopeId: string, taskId: number, tabId: string]; result: void };
+  'task-browser:window': { args: []; result: TaskBrowserWindowInfo | null };
+  'task-browser:window-action': { args: [action: 'return' | 'reveal']; result: void };
+  'task-browser:attach': { args: [scopeId: string, taskId: number, tabId: string, contentsId: number]; result: void };
+  'task-browser:surfaces': { args: []; result: readonly TaskBrowserSurface[] };
+  'task-browser:presentation': { args: [scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream']; result: void };
+  'task-browser:frame-ack': { args: [scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number, decoded?: boolean]; result: void };
+  'task-browser:input': { args: [scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput]; result: number };
+  'task-browser:configure': { args: [scopeId: string, taskId: number, placement: TaskBrowserPlacement]; result: BackendResult<TaskBrowserState> };
+  'task-browser:read': { args: [scopeId: string, taskId: number]; result: BackendResult<TaskBrowserState> };
+  'task-browser:command': { args: [scopeId: string, taskId: number, input: TaskBrowserCommand]; result: BackendResult<TaskBrowserState> };
+  'task-browser:layout': { args: [scopeId: string, taskId: number, input: TaskBrowserLayout]; result: void };
+  'task-browser:hide': { args: [scopeId: string, taskId: number]; result: void };
+  'task-browser:deactivate': { args: [scopeId: string, taskId: number]; result: void };
   'session-chat:agent': { args: [scopeId: string, input: SessionChatAgentRead]; result: BackendResult<SessionChatAgentPage> };
   'session-chat:upload': { args: [scopeId: string, input: ChatAttachmentUpload]; result: BackendResult<ChatAttachmentReceipt> };
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
@@ -149,6 +168,11 @@ export interface EventContracts {
   'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
+  'task-browser:window-changed': TaskBrowserWindowInfo;
+  'task-browser:reveal-task': { readonly scopeId: string; readonly taskId: number };
+  'task-browser:changed': TaskBrowserState;
+  'task-browser:surfaces-changed': readonly TaskBrowserSurface[];
+  'task-browser:frame': TaskBrowserFrame;
   'machines:changed': MachineState;
   'theme:changed': Theme;
   'backend:changed': BackendStatus;
@@ -201,6 +225,26 @@ export interface ElevenexBridge {
   taskTerminalAction(scopeId: string, input: TaskTerminalAction): Promise<BackendResult<{ readonly accepted: true }>>;
   taskTerminalClose(scopeId: string, input: TaskTerminalTarget): Promise<BackendResult<{ readonly accepted: true }>>;
 
+  taskBrowserDetach?(scopeId: string, taskId: number, tabId: string, context: TaskBrowserWindowContext): Promise<void>;
+  taskBrowserReturn?(scopeId: string, taskId: number, tabId: string): Promise<void>;
+  taskBrowserWindow?(): Promise<TaskBrowserWindowInfo | null>;
+  taskBrowserWindowAction?(action: 'return' | 'reveal'): Promise<void>;
+  onTaskBrowserWindowChanged?(listener: (info: TaskBrowserWindowInfo) => void): () => void;
+  onTaskBrowserRevealTask?(listener: (target: { readonly scopeId: string; readonly taskId: number }) => void): () => void;
+  taskBrowserAttach?(scopeId: string, taskId: number, tabId: string, contentsId: number): Promise<void>;
+  taskBrowserSurfaces?(): Promise<readonly TaskBrowserSurface[]>;
+  taskBrowserPresentation?(scopeId: string, taskId: number, tabId: string, presentation: 'embedded' | 'stream'): Promise<void>;
+  taskBrowserFrameAck?(scopeId: string, taskId: number, tabId: string, streamId: string, sequence: number, decoded?: boolean): Promise<void>;
+  taskBrowserInput?(scopeId: string, taskId: number, tabId: string, generation: number, input: TaskBrowserStreamInput): Promise<number>;
+  onTaskBrowserSurfacesChanged?(listener: (surfaces: readonly TaskBrowserSurface[]) => void): () => void;
+  onTaskBrowserFrame?(listener: (frame: TaskBrowserFrame) => void): () => void;
+  taskBrowserConfigure?(scopeId: string, taskId: number, placement: TaskBrowserPlacement): Promise<BackendResult<TaskBrowserState>>;
+  taskBrowserRead(scopeId: string, taskId: number): Promise<BackendResult<TaskBrowserState>>;
+  taskBrowserCommand(scopeId: string, taskId: number, input: TaskBrowserCommand): Promise<BackendResult<TaskBrowserState>>;
+  taskBrowserLayout(scopeId: string, taskId: number, input: TaskBrowserLayout): Promise<void>;
+  taskBrowserHide(scopeId: string, taskId: number): Promise<void>;
+  taskBrowserDeactivate(scopeId: string, taskId: number): Promise<void>;
+  onTaskBrowserChanged(listener: (state: TaskBrowserState) => void): () => void;
   sessionChatUpload(scopeId: string, input: ChatAttachmentUpload): Promise<BackendResult<ChatAttachmentReceipt>>;
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;
@@ -281,3 +325,8 @@ export interface ElevenexBridge {
   remoteDiagnostics(): Promise<readonly RemoteDiagnostic[]>;
   onEnvironmentChanged(listener: (status: EnvironmentSnapshot) => void): () => void;
 }
+
+export type { BrowserCodeCommand, BrowserCodeResult, BrowserCodeImage } from './browser-code.js';
+export type { BrowserHumanCommand, BrowserHumanRequest, BrowserHumanElement } from './browser-human.js';
+export * from './browser-element-reference.js';
+export * from './browser-presentation.js';

@@ -1,6 +1,8 @@
+import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
+import { SessionChatModels } from './session-chat-models';
 import {
   afterRenderEffect,
   ChangeDetectionStrategy,
@@ -124,8 +126,27 @@ export class SessionChatComponent {
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
+  /** Without a tab, the browser picks on its current page. */
+  readonly browserPickRequested = output<ChatSelection & { readonly tabId?: string }>();
+  pickBrowserElement(tabId?: string): void {
+    const selection = this.selection();
+    if (selection && !this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...selection, ...(tabId ? { tabId } : {}) });
+  }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
+  private readonly catalogTarget = computed(() => {
+    const selection = this.selection();
+    const state = this.store.state();
+    return selection && state?.presetCatalogs && this.active() && !this.store.offline() && !this.archived()
+      ? `${selection.scopeId}/${selection.taskId}/${selection.sessionId}/${state.provider}` : null;
+  });
+  refreshModels(): void {
+    const selection = this.selection();
+    const provider = this.store.state()?.provider;
+    if (this.catalogTarget() && selection && provider && !this.store.busy() && !this.store.historical())
+      void this.modelCatalog.load(selection, provider, true);
+  }
   readonly media = inject(SessionChatMedia);
   readonly attachments = inject(SessionChatAttachments);
   readonly permissionEvidence = computed(() => {
@@ -136,6 +157,29 @@ export class SessionChatComponent {
       input: request.input, error: false, truncated: false,
     }) : null;
   });
+  /**
+   * Browser context is staged for review; it never submits a prompt. An element
+   * drops its pin at the caret, so pointing reads like part of the sentence.
+   * Returns the pin (0 for text-only context), or null when nothing was staged.
+   */
+  stageBrowserContext(text: string, element?: BrowserElementSnapshot): number | null {
+    if (this.store.readOnly() || this.store.historical() || this.store.busy() || this.store.uncertain()) { this.attachments.error.set('This conversation cannot add context right now. Finish the pending action or choose an active conversation.'); return null; }
+    let marker = 0;
+    if (element) {
+      if (!this.store.state()?.browserElements) { this.attachments.error.set('This engine or harness cannot send element images. Update it or choose a harness with image support.'); return null; }
+      const staged = this.attachments.addElement(element);
+      if (!staged) return null;
+      marker = staged;
+    }
+    if (text.trim()) {
+      const previous = this.store.draft();
+      this.store.setDraft((previous ? previous + '\n\n' : '') + text);
+    }
+    const composer = this.composer();
+    if (marker && composer && !elementMarkersIn(composer.draft()).includes(marker)) composer.insertElement(marker);
+    else composer?.focusEditor();
+    return marker;
+  }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(
@@ -203,14 +247,16 @@ export class SessionChatComponent {
     : this.store.historical() ? 'Return to latest to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
-  readonly models = computed<readonly AgentModel[]>(() =>
-    (this.store.state()?.models ?? []).map((model) => ({
+  readonly models = computed<readonly AgentModel[]>(() => {
+    const state = this.store.state();
+    const models = state?.models.length ? state.models : this.modelCatalog.value()?.models ?? [];
+    return models.map((model) => ({
       id: model.id,
       label: model.label,
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
-    })),
-  );
+    }));
+  });
   readonly providers = computed(() => this.store.state()?.providers ?? []);
   readonly harnesses = computed<readonly AgentHarness[]>(() => {
     const state = this.store.state();
@@ -277,7 +323,7 @@ export class SessionChatComponent {
     return (
       !!state?.controls?.fast &&
       (state.fast === true ||
-        state.models.find((model) => model.id === state.model)
+        this.models().find((model) => model.id === state.model)
           ?.supportsFastMode === true)
     );
   });
@@ -290,6 +336,7 @@ export class SessionChatComponent {
     if (
       !current ||
       this.blocked() ||
+      this.modelCatalog.loading() ||
       this.store.historical() ||
       this.store.loading()
     )
@@ -367,6 +414,15 @@ export class SessionChatComponent {
     if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.drop(event);
   }
   constructor() {
+    effect((cleanup) => {
+      const target = this.catalogTarget();
+      untracked(() => {
+        const selection = this.selection();
+        const provider = this.store.state()?.provider;
+        if (target && selection && provider) void this.modelCatalog.load(selection, provider);
+      });
+      cleanup(() => this.modelCatalog.reset());
+    });
     effect(() => {
       const selection = this.selection();
       this.store.setActive(this.active());
@@ -425,7 +481,7 @@ export class SessionChatComponent {
     this.requestElement()?.nativeElement.focus({ preventScroll: true });
   }
   focusComposer(): void {
-    this.composer()?.textarea()?.nativeElement.focus();
+    this.composer()?.focusEditor();
   }
   queueAction(type: "steer-queued" | "cancel-queued", id: string): void {
     this.focusComposer();

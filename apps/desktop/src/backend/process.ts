@@ -33,9 +33,15 @@ async function freePort(): Promise<number> {
 
 function environment(installation: InstalledBackend, root: string, port: number, codeAccess: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  // Host-admin video preferences are validated by the backend. Keep this list
+  // narrow: endpoint/data overrides and Node/Electron injection remain stripped.
+  const videoKeys = new Set(['ELEVENEX_BROWSER_FFMPEG', 'ELEVENEX_BROWSER_VIDEO_ENCODER',
+    'ELEVENEX_BROWSER_VIDEO_DEVICE', 'ELEVENEX_BROWSER_VIDEO_MAX_FPS',
+    'ELEVENEX_BROWSER_VIDEO_MAX_WIDTH', 'ELEVENEX_BROWSER_VIDEO_MAX_HEIGHT',
+    'ELEVENEX_BROWSER_VIDEO_MAX_BITRATE', 'ELEVENEX_BROWSER_VIDEO_CPU_THREADS']);
   // Do not inherit Electron or Node injection/debug flags into downloaded code.
   for (const key of Object.keys(env)) {
-    if (key.startsWith('ELEVENEX_') || key.startsWith('ELECTRON_') || key === 'NODE_OPTIONS' || key === 'NODE_PATH') delete env[key];
+    if ((key.startsWith('ELEVENEX_') && !videoKeys.has(key)) || key.startsWith('ELECTRON_') || key === 'NODE_OPTIONS' || key === 'NODE_PATH') delete env[key];
   }
   return {
     ...env, NODE_ENV: 'production', DB_PATH: join(root, 'data/elevenex.db'),

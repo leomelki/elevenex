@@ -50,10 +50,16 @@ function run(entry, args, cwd = root) {
 
 async function compileMain() {
   await generateDesktopIcons(root);
+  await run(tsc, ['-p', join(root, 'packages/browser-network/tsconfig.json')]);
   await run(tsc, ['-p', join(shared, 'tsconfig.json')]);
+  await run(tsc, ['-p', join(root, 'packages/browser-inspection/tsconfig.json')]);
+  await run(tsc, ['-p', join(root, 'packages/browser-agent/tsconfig.json')]);
+  await run(join(root, 'packages/browser-agent/build-worker.mjs'), []);
   await run(tsc, ['-p', join(desktop, 'tsconfig.json')]);
   await stageBackendRelease(root);
   await stageCodeAssets(root);
+  // The WebAuthn sheet is a main-owned document styled with the design tokens.
+  await copyFile(join(root, 'docs/design-system/project/tokens.css'), join(desktop, 'dist/browser/tokens.css'));
 }
 
 async function syncTokens() {
@@ -145,7 +151,7 @@ async function dev(args) {
     }
   };
   startElectron();
-  const watchers = [join(desktop, 'src'), join(shared, 'src')].map((path) => watch(path, { recursive: true }, () => {
+  const watchers = [join(desktop, 'src'), join(shared, 'src'), join(root, 'packages/browser-network/src'), join(root, 'packages/browser-inspection/src'), join(root, 'packages/browser-agent/src')].map((path) => watch(path, { recursive: true }, () => {
     dirty = true;
     clearTimeout(timer);
     timer = setTimeout(() => void rebuild(), 150);
@@ -182,17 +188,20 @@ try {
     case 'test':
       await compileMain();
       await run(null, ['--test', 'test/application-identity.test.cjs'], desktop);
-      await run(null, ['--test', 'test/preload.test.cjs', 'test/code-security.test.cjs', 'test/code-transfers.test.cjs', 'test/code-frame-router.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/code-compact-layout.test.cjs', 'test/code-files-focus.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/task-terminal.test.cjs', 'test/terminal-stream.test.cjs', 'test/terminal-forwards.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
+      await run(null, ['--test', 'test/preload.test.cjs', 'test/browser.test.cjs', 'test/native-pointer-input.test.cjs', 'test/browser-element-reference.test.cjs', 'test/browser-source.test.cjs', 'test/browser-framework-source.test.cjs', 'test/browser-files.test.cjs', 'test/browser-webauthn.test.cjs', 'test/browser-presentation.test.cjs', 'test/browser-stream.test.cjs', 'test/code-security.test.cjs', 'test/code-transfers.test.cjs', 'test/code-frame-router.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/code-compact-layout.test.cjs', 'test/code-files-focus.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/task-terminal.test.cjs', 'test/terminal-stream.test.cjs', 'test/terminal-forwards.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-backend-linux.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-backend-smoke.test.mjs']);
+      await run(null, ['--test', 'scripts/desktop-backend-compatibility.test.mjs']);
+      await run(null, ['--test', 'test/backend-archive.test.cjs'], desktop);
       // ng test transpiles TypeScript; tsc also checks the negative IPC type cases.
       await run(tsc, ['-p', join(renderer, 'tsconfig.spec.json'), '--noEmit']);
       await run(ng, ['test', '--watch=false'], renderer);
       break;
     case 'lint':
       await run(join(dirname(desktopRequire.resolve('eslint/package.json')), 'bin/eslint.js'), [
-        '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', '--max-warnings', '0',
+        '--config', 'apps/desktop/eslint.config.mjs', 'apps/desktop/src', 'apps/renderer/src', 'packages/shared/src', 'packages/browser-network/src', 'packages/browser-inspection/src', 'packages/browser-agent/src', '--max-warnings', '0',
         'scripts/desktop-shell.mjs', 'scripts/desktop-icons.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-icons.test.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.test.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;

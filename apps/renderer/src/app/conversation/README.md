@@ -12,9 +12,10 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
-- Session drops emit the same `mentionInserted` intent as the @ picker. Supply `sessionMentionScope` for connected references, bounded `mentionItems` for keyboard discovery and controlled `context`; handle `contextRemoved` in the owner. Session references live only in their controlled context chips. Drops preserve the draft and its selection; choosing a session from the @ picker consumes the active query without inserting a text copy. Both restore textarea focus and never submit or navigate. Removing the chip removes the session reference; ordinary message text stays independent. Duplicate session IDs and more than eight references are refused. Disabled/sending states reject drops. Cancellation/exit releases the indicator; drop transitions and chip entry respect reduced motion. Long chip labels truncate while retaining their full accessible removal name.
+- Session drops emit the same `mentionInserted` intent as the @ picker. Supply `sessionMentionScope` for connected references, bounded `mentionItems` for keyboard discovery and controlled `context`; handle `contextRemoved` in the owner. Session references live only in their controlled context chips. Drops preserve the draft and its selection; choosing a session from the @ picker consumes the active query without inserting a text copy. Both restore editor focus and never submit or navigate. Removing the chip removes the session reference; ordinary message text stays independent. Duplicate session IDs and more than eight references are refused. Disabled/sending states reject drops. Cancellation/exit releases the indicator; drop transitions and chip entry respect reduced motion. Long chip labels truncate while retaining their full accessible removal name.
 - `AgentPicker.openPicker()` opens from a feature-owned action; `closePicker()` synchronously restores its opener before handing off to a modal such as PresetCreator.
 - `AgentPicker` consumes supported harness/model/thinking capabilities, never inventing provider options. A session locks its harness by default. Unsupported thinking levels remain disabled.
+- `Composer` and `AgentPicker` accept `modelsRefreshAvailable` and `modelsError`, and emit `modelsRefreshRequested`. The owner supplies catalog loading through `settingsBusy` / `busy`, performs the scoped read, and retains authoritative choices during refresh. The menu owns no transport; refresh stays inside the open surface and preserves its focus.
 - `QuestionCard` owns unfinished answers and navigation. Listed single choices answer immediately; multiple questions emit one answer map only when complete. Custom answers remain selected as they are edited. Pass `answers` to render a resolved result. `ApprovalCard` remains controlled and emits the exact resolution intent.
 - `Chat.centerComposer` centers its existing composer region for an empty session, preserving the composer instance, draft and focus when the first turn starts. Keep it false when decisions or history need to be visible.
 - `PresetPicker` accepts stable optional `AgentConfig.id` identities, display-only `modelLabel`/`harnessLabel`, controlled `value`, `disabled` and `compact`. `AgentConfig.default` adds a quiet Default label, independently of the selected ring. Without IDs it retains name/model selection compatibility. Option+1–9 uses physical digit keys so macOS Option characters work; selection stays within the supplied window. The owner supplies at most six starting choices. The grid retains its card columns with one choice or an incomplete last row; selected Custom uses the same raised accent ring as saved choices. Hover preserves selection, and keyboard focus remains visible on both selected and dashed choices. New cards enter after first paint, and the grid height eases through the shared AutoHeight owner.
@@ -65,6 +66,13 @@ The production desktop forbids frame embedding and remote media. HTML documents 
 ## Motion and accessibility
 
 Components use the supplied design tokens, native controls, CDK overlays/focus traps and shared folds/height motion. Existing history renders without entry motion; `Message.isNew` explicitly opts a newly sent message into arrival motion. `StreamText` preserves existing chunks and animates only appended live content. Respect reduced motion throughout. Keyboard shortcuts are scoped to the composer, focused message, decision card or preset picker; there are no document-level listeners.
+
+Opening a side panel or resizing the window rewraps existing replies and the
+composer without starting content-growth animations. AutoHeight treats the new
+width as a layout baseline, avoiding repeated height animations across the loaded
+history. Actual content growth at a stable width retains its existing motion.
+`panel-reflow.mjs` exercises longer history, draft/focus retention, interrupted
+panel toggles, both themes and reduced motion through the connected preview.
 
 `ComposerSubmission.sendOrigin` is an optional, ephemeral `MessageSendOrigin`
 (left/top text coordinates and a monotonic timestamp) for direct text sends.
@@ -401,3 +409,51 @@ Forward `waitingEditing` to the outbox owner to hold first dispatch while an edi
 is open. Save/Cancel releases the hold; navigation cancels the local edit while
 preserving the original queued request. `ComposerQueue.editingChanged` supplies
 the same lifecycle for direct consumers.
+
+## Browser element mentions
+
+The `element/` family renders browser selections as **named mentions**. Supply
+`ConversationAttachment.element` and its stable `marker`. `ElementChip` shows a
+target-framed thumbnail and readable name, with no numbered badge or DOM tag.
+Its `inline` input fits sent prose. Pressing it opens the existing focus-trapped
+snapshot popover; Escape restores focus. Technical metadata remains in the
+snapshot. `ElementProse` replaces durable markers with these interactive inline
+chips and accepts the same confined `resolve` as attachments.
+
+`Attachments.mentionedText` omits elements already mentioned inline; elements
+without a prose reference and ordinary files stay in the attachment row. Pass the
+sent prompt so each snapshot appears once. Standalone attachment lists retain
+all cards when that input is omitted.
+
+Composer uses a native textarea for ordinary drafts. Staging an element switches
+to the internal `ElementEditor`, preserving the writing caret and focus. Element
+mentions are real `ElementChip` views inside the editable writing line, with
+thumbnail, name, preview and Remove; referenced elements have no duplicate context
+row. If a prose reference is erased, its still-attached snapshot remains visible
+below the line and can be reused through `@` or **Mention in message**. Inline
+Remove deletes only that occurrence, retaining the shared snapshot for other
+mentions and supporting undo/redo. Explicitly removing the final occurrence or
+an unreferenced snapshot deletes the attachment.
+
+The rich editor owns its editable DOM, atomic token views, selection and a bounded
+100-entry undo/redo history. Typing groups coalesce; Backspace/Delete removes a
+whole mention. IME composition stays native until commit. Paste/drop admits plain
+text only, with known copied names mapped back to the existing marker protocol;
+pasted HTML never creates DOM or controls. Upload/config updates retain text nodes,
+focused chip controls and popovers. A replacement draft resets undo and cancels
+unfinished composition. The composer stays in rich mode after its last element
+is removed so editing focus remains stable. It emits the same canonical `draft`
+and submissions as before; queue previews/editors retain readable names.
+
+Integrating owners should call `Composer.focusEditor()` to focus either editor.
+The `textarea()` query remains available for ordinary drafts only. The internal
+editor handles selection in canonical marker offsets, never thumbnail-label text
+lengths. Capture, upload, lifecycle and the backend protocol remain with the owner.
+
+`elementPickAvailable` adds the target button and the `@` menu's “Point at an
+element in the browser” command; both emit `elementPickRequested`.
+`insertElement(marker)` inserts a named reference; `elementRepick` forwards Pick
+again. Element mentions never emit `mentionInserted`. Capture, upload and browser
+authority remain with the owner. Snapshot outlines stay outside target borders;
+uploaded pixels and the [wire/lifetime contract](../../../../../docs/browser-element-mentions.md)
+remain unchanged. The `/element-mentions` preview stages actual host snapshots.

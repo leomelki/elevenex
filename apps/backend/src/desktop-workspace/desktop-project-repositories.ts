@@ -3,6 +3,7 @@ import { mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { execFileAsync } from '../terminal/async-process.js';
+import { readGitCapabilities } from '../config/git-capabilities.js';
 
 /** Only network Git transports; never Git's executable helpers or local paths. */
 export function cloneRepositoryName(value: string): string | null {
@@ -130,7 +131,18 @@ export async function prepareProjectRepositories(
       entry.initialize &&
       !(await stat(join(entry.path, '.git')).catch(() => null))
     ) {
-      await git(['init', '--initial-branch=main'], entry.path, signal);
+      const capabilities = await readGitCapabilities(entry.path, process.env);
+      signal.throwIfAborted();
+      if (capabilities.initialBranch) {
+        await git(['init', '--initial-branch=main'], entry.path, signal);
+      } else {
+        await git(['init'], entry.path, signal);
+        await git(
+          ['symbolic-ref', 'HEAD', 'refs/heads/main'],
+          entry.path,
+          signal,
+        );
+      }
       // An empty root commit enables isolated task workspaces without committing the person's files.
       await git(
         [

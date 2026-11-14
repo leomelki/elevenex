@@ -148,7 +148,7 @@ function item(value: unknown): SessionChatItem {
   return {
     id: chatText(raw["id"]),
     kind,
-    text: chatText(raw["text"], 16100),
+    text: chatText(raw["text"], 64000),
     timestamp: chatText(raw["timestamp"]),
     toolId: nullable(raw["toolId"]),
     toolName: nullable(raw["toolName"]),
@@ -321,6 +321,7 @@ function state(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(raw["browserElements"] === undefined ? {} : { browserElements: bool(raw["browserElements"]) }),
     ...(raw["attachments"] === undefined ? {} : { attachments: bool(raw["attachments"]) }),
     ...(raw["sessionMentions"] === undefined ? {} : { sessionMentions: bool(raw["sessionMentions"]) }),
     ...(raw["presetCatalogs"] === undefined
@@ -408,7 +409,7 @@ function state(value: unknown): SessionChatState {
     },
     queue: array(raw["queue"], 50, (value) => {
       const q = chatObject(value);
-      return { id: chatText(q["id"]), text: chatText(q["text"], 16100) };
+      return { id: chatText(q["id"]), text: chatText(q["text"], 64000) };
     }),
     queuePaused: bool(raw["queuePaused"]),
     permission: permission && {

@@ -106,16 +106,24 @@
       @if (busy()) {
         <ex-skeleton [count]="3" />
       } @else {
-        <p class="empty">
+        <p class="empty" role="status">
           {{
             query()
               ? "No model matches “" + query() + "”"
-              : "No models reported yet"
+              : modelsError() || "No models reported yet"
           }}
         </p>
       }
     }
   </div>
+  @if (modelsError() && models().length) {
+    <p class="empty" role="status">{{ modelsError() }}</p>
+  }
+  @if (modelsRefreshAvailable()) {
+    <button exButton variant="ghost" size="sm"
+      [disabled]="disabled() || busy()"
+      (click)="modelsRefreshRequested.emit()">Refresh models</button>
+  }
   @if (levels().length > 1 || fastAvailable()) {
     <div class="tune">
       @if (levels().length > 1) {

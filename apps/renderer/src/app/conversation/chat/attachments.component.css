@@ -108,3 +108,10 @@ ex-markdown-media {
   width: fit-content;
   max-width: 100%;
 }
+
+.elements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}

@@ -151,6 +151,7 @@ export class PiRuntimeService
     refresh = false,
   ): Promise<AgentProviderModelCatalogPayload> {
     if (refresh) await this.refreshGlobalModels('manual', true);
+    else if (!this.modelsCache?.length) await this.refreshGlobalModels('cold_on_read');
     else this.refreshGlobalModelsIfStale();
     const models = this.modelsCache ? [...this.modelsCache] : [];
     return {

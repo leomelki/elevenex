@@ -12,6 +12,9 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
+import { RuntimeBrowserController } from './desktop-browser/runtime-browser.controller.js';
+import { RuntimeBrowserStream } from './desktop-browser/runtime-stream.js';
+
 import { TerminalGateway } from './terminal/terminal.gateway.js';
 import { UserTerminalGateway } from './user-terminal/user-terminal.gateway.js';
 import { ActionsGateway } from './actions/actions.gateway.js';
@@ -26,6 +29,7 @@ import { ServerConnectionGateway } from './server-connection/server-connection.g
 import { ClaudeRuntimeService } from './claude-runtime/claude-runtime.service.js';
 import { RuntimeControlService } from './runtime-control/runtime-control.service.js';
 import { ElevenexMcpHttpTransport } from './mcp/transport/elevenex-mcp-http.transport.js';
+import { McpAgentEndpointService } from './mcp/transport/mcp-agent-endpoint.service.js';
 import { AgentChannelGateway } from './mcp/human-channel/agent-channel.gateway.js';
 import { DesktopPortForwardingGateway } from './mcp/port-forwarding/desktop-port-forwarding.gateway.js';
 import { CookieProxyService } from './plannotator/cookie-proxy.service.js';
@@ -70,6 +74,8 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+  // The application, rather than a browser library, owns child-process shutdown.
+  app.enableShutdownHooks(['SIGINT', 'SIGTERM']);
   app.setGlobalPrefix('api');
 
   // A user-requested restart (Settings → Backend) exits with a code the
@@ -230,6 +236,8 @@ async function bootstrap() {
   // MaxListenersExceededWarning on stderr that ends up masking real errors.
   httpServer.setMaxListeners(0);
 
+  app.get(RuntimeBrowserStream).attachToServer(httpServer, app.get(RuntimeBrowserController));
+
   const terminalGateway = app.get(TerminalGateway);
   terminalGateway.attachToServer(httpServer);
 
@@ -267,6 +275,7 @@ async function bootstrap() {
   agentChannelGateway.attachToServer(httpServer);
   app.get(DesktopPortForwardingGateway).attachToServer(httpServer);
 
+  await app.get(McpAgentEndpointService).prepare();
   await app.init();
 
   const edgeProxyServer = createEdgeProxyServer({

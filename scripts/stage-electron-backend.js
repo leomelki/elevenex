@@ -24,6 +24,9 @@ const stageBaseRoot =
 const stageBackendRoot = path.join(stageBaseRoot, "backend");
 const backendPackageJson = require(path.join(backendRoot, "package.json"));
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  "playwright-core",
+  "@playwright/test",
+  "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
   "@vscode/ripgrep",
@@ -158,7 +161,7 @@ function copyDependencyTree(packageName, searchPaths) {
 
 function resolveInstalledPackagePath(
   packageName,
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   const packageParts = packageName.split("/");
   for (const searchPath of searchPaths) {
@@ -274,7 +277,7 @@ function stageBundledNodeRuntime() {
 function stageNativePackageTree(
   packageName,
   seen = new Set(),
-  searchPaths = [backendRoot, repoRoot],
+  searchPaths = [backendRoot, path.join(repoRoot, "packages/browser-agent"), repoRoot],
 ) {
   if (seen.has(packageName)) {
     return;
@@ -314,6 +317,7 @@ async function main() {
     path.join(backendBundleRoot, "main.cjs"),
     path.join(stageBackendRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(stageBackendRoot, "browser-setup.cjs"));
   copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(stageBackendRoot, "terminal-screen-worker.cjs"));
   copyRequiredPath(
     path.join(backendBundleRoot, "pi-agent-extension.mjs"),

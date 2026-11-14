@@ -138,8 +138,11 @@ test('first run: onboarding through to a live session in the sidebar', async ({ 
     page.locator('.sidebar-label--branch', { hasText: taskBranch }),
     'task branch label visible in sidebar',
   ).toBeVisible();
-  // Expand the task explicitly to reveal its auto-created session.
-  await taskRow.getByRole('button', { name: `Expand ${TASK_NAME}`, exact: true }).click();
+  // New tasks can already be expanded by navigation refresh. Selecting the
+  // task opens it in either state; the chevron would toggle an open task shut.
+  const taskButton = taskRow.getByRole('button', { name: TASK_NAME, exact: true });
+  await taskButton.click();
+  await expect(taskButton).toHaveAttribute('aria-expanded', 'true');
   await expect(
     page.locator('[data-session-row-id]').first(),
     'session visible in sidebar',

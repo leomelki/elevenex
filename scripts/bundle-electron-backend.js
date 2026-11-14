@@ -7,6 +7,9 @@ const backendDistEntry = path.join(backendRoot, 'dist', 'main.js');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
+  'playwright-core',
+  '@playwright/test',
+  'ffmpeg-static',
   'better-sqlite3',
   'node-pty',
   '@vscode/ripgrep',
@@ -143,6 +146,15 @@ async function main() {
       createSharpStubPlugin(),
     ],
     logLevel: 'info',
+  });
+
+  // Standalone administrative entry: loading it must not start the backend or
+  // import native agent/database/PTY dependencies.
+  await esbuild.build({
+    entryPoints: [path.join(backendRoot, 'dist/browser-host/cli.js')],
+    outfile: path.join(backendBundleRoot, 'browser-setup.cjs'),
+    bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+    external: ['playwright-core'], sourcemap: true,
   });
 
   // Screen parsing runs outside the backend event loop in local and SSH builds.

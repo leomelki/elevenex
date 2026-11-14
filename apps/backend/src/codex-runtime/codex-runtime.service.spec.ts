@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { SESSION_TOOL_INSTRUCTIONS } from '../mcp/session-tool-context.js';
 import { jest } from '@jest/globals';
 
@@ -901,9 +902,7 @@ describe('CodexRuntimeService', () => {
     const { service, historyService, sessionsService, hooksService } =
       createService();
     const runtime = service as any;
-    jest
-      .spyOn(runtime, 'scheduleModelCatalogRefresh')
-      .mockImplementation(() => undefined);
+
     jest
       .spyOn(runtime, 'refreshCodexPlanUsage')
       .mockImplementation(async () => undefined);
@@ -983,6 +982,8 @@ describe('CodexRuntimeService', () => {
       release = resolve;
     });
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') {
         entered();
@@ -1052,9 +1053,7 @@ describe('CodexRuntimeService', () => {
     });
     const state = runtime.ensureRuntimeState(7, 'thread-1');
     state.cachedWorktreePath = '/tmp/project';
-    jest
-      .spyOn(runtime, 'scheduleModelCatalogRefresh')
-      .mockImplementation(() => undefined);
+
     const wire = wireAppServerTurn(appServer);
     let rejectRead!: (error: Error) => void;
     const read = new Promise((_, reject) => {
@@ -1067,6 +1066,8 @@ describe('CodexRuntimeService', () => {
     let confirmed = false;
     let turns = 0;
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'turn/start') return { turn: { id: `turn-${++turns}` } };
       if (method === 'thread/read') {
         if (confirmed)
@@ -1379,6 +1380,27 @@ describe('CodexRuntimeService', () => {
     expect(state).toMatchObject({ pendingPrompts: [], runPhase: 'idle' });
   });
 
+  it('keeps element context text beside native localImage inputs containing the actual bytes', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const prompt = 'Align ❶. Image 1 is element-one.jpg; image 2 is element-two.jpg.';
+    const images = [{ mediaType: 'image/jpeg' as const, data: '/9j/one=' }, { mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }];
+    await service.submitPrompt(7, prompt, undefined, images, { waitForCompletion: false });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    for (let attempt = 0; attempt < 100 && !wire.turnStartParams; attempt++) await new Promise<void>(resolve => setTimeout(resolve, 10));
+    const params = wire.turnStartParams;
+    if (!params || typeof params !== 'object' || !('input' in params) || !Array.isArray(params.input)) throw new Error('Missing native turn input');
+    expect(params.input[0]).toEqual({ type: 'text', text: prompt });
+    for (let index = 0; index < images.length; index++) {
+      const input: unknown = params.input[index + 1];
+      if (!input || typeof input !== 'object' || !('path' in input) || typeof input.path !== 'string') throw new Error('Missing native image input');
+      expect(input).toMatchObject({ type: 'localImage' });
+      expect(await readFile(input.path)).toEqual(Buffer.from(images[index]!.data, 'base64'));
+    }
+    wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+    await new Promise<void>(resolve => setImmediate(resolve));
+  });
+
   it('acknowledges desktop sends while retaining the running turn and streaming lifecycle', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
@@ -1452,6 +1474,9 @@ describe('CodexRuntimeService', () => {
       new Error('Restore this task’s branch'),
     );
     appServer.request.mockResolvedValue({ thread: { id: 'thread-1' } });
+    appServer.request.mockResolvedValueOnce({
+      data: [{ id: 'gpt-test', isDefault: true }],
+    });
     await service.submitPrompt(7, 'Continue');
     expect(
       appServer.request.mock.calls.some(([method]) => method === 'turn/start'),
@@ -1688,6 +1713,8 @@ describe('CodexRuntimeService', () => {
     });
     appServer.request.mockImplementation(
       async (method: string, params: unknown) => {
+        if (method === 'model/list')
+          return { data: [{ id: 'gpt-test', isDefault: true }] };
         if (method === 'thread/start') {
           return { thread: { id: 'thread-1' } };
         }
@@ -2239,6 +2266,8 @@ describe('CodexRuntimeService', () => {
       });
     };
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/resume') {
         if (starts) stale(); // Previous turn completes while the new run resumes.
         return {};
@@ -2311,6 +2340,8 @@ describe('CodexRuntimeService', () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);
     appServer.request.mockImplementation(async (method: string) => {
+      if (method === 'model/list')
+        return { data: [{ id: 'gpt-test', isDefault: true }] };
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') {
         wire.notificationHandler({
@@ -2395,13 +2426,16 @@ describe('CodexRuntimeService', () => {
       state.cachedWorktreePath = '/tmp/project';
       wireAppServerTurn(appServer);
       appServer.request.mockRejectedValue(new Error(message));
+      appServer.request.mockResolvedValueOnce({
+        data: [{ id: 'gpt-test', isDefault: true }],
+      });
       await service.submitPrompt(7, 'retry this thread');
       expect(state).toMatchObject({
         codexSessionId: 'thread-1',
         runPhase: 'error',
         lastError: message,
       });
-      expect(appServer.request).toHaveBeenCalledTimes(1);
+      expect(appServer.request).toHaveBeenCalledTimes(2);
       expect(appServer.request).toHaveBeenCalledWith(
         'thread/resume',
         expect.objectContaining({ threadId: 'thread-1' }),
@@ -2422,6 +2456,8 @@ describe('CodexRuntimeService', () => {
       state.cachedWorktreePath = '/tmp/project';
       const wire = wireAppServerTurn(appServer);
       appServer.request.mockImplementation(async (method: string) => {
+        if (method === 'model/list')
+          return { data: [{ id: 'gpt-test', isDefault: true }] };
         if (method === 'thread/resume') throw new Error(message);
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
         if (method === 'turn/start') return { turn: { id: 'turn-1' } };
@@ -3018,6 +3054,170 @@ describe('CodexRuntimeService', () => {
     expect((service as any).rewindingSessions.size).toBe(0);
   });
 
+  it('discovers models at module startup before any catalog read or prompt', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      expect((await service.getRuntimeState(7)).availableModels).toEqual([
+        expect.objectContaining({ id: 'gpt-test' }),
+      ]);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'gpt-test' }) }),
+      }));
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('waits for startup discovery when a prompt arrives before the catalog', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    let discovered!: (value: unknown) => void;
+    appServer.request.mockReturnValueOnce(new Promise(resolve => { discovered = resolve; }));
+    service.onModuleInit();
+    try {
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toBeNull();
+      discovered({ data: [{ id: 'account-model', isDefault: true }] });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'account-model' }) }),
+      }));
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('retries in the background and lets a foreground read bypass the backoff', async () => {
+    jest.useFakeTimers();
+    const { service, appServer } = createService();
+    appServer.request.mockRejectedValue(new Error('Codex not installed'));
+    try {
+      service.onModuleInit();
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(3_001);
+      // Opening the picker checks sooner than the background's 15 seconds.
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(30_000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+      service.onModuleDestroy();
+      await jest.advanceTimersByTimeAsync(600_000);
+      expect(appServer.request).toHaveBeenCalledTimes(3);
+    } finally {
+      service.onModuleDestroy();
+      jest.useRealTimers();
+    }
+  });
+
+  it('lets a new prompt rediscover Codex during background failure backoff', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    appServer.request.mockRejectedValueOnce(new Error('CLI temporarily unavailable'));
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      now.mockReturnValue(103_001);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(2);
+      expect(turn.turnStartParams).not.toBeNull();
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      now.mockRestore();
+      service.onModuleDestroy();
+    }
+  });
+
+  it('does not send a saved default without any discovered Codex models', async () => {
+    const { service, appServer } = createService({ model: 'saved-model', reasoningEffort: null });
+    appServer.request.mockRejectedValue(new Error('Codex not installed'));
+    await service.submitPrompt(7, 'hello');
+    expect(appServer.request.mock.calls.some((call: unknown[]) => call[0] === 'turn/start')).toBe(false);
+  });
+
+  it('never advertises guessed models when Codex cannot be discovered', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockRejectedValue(new Error('spawn codex ENOENT'));
+    const catalog = await service.getModelCatalog();
+    expect(catalog.models).toEqual([]);
+    expect(catalog.providerDefaultModelId).toBeNull();
+    expect(catalog.unavailableReason).toContain('installed and signed in');
+    const state = await service.getRuntimeState(7);
+    expect(state.selectedModel).toBeNull();
+    expect(state.availableModels).toEqual([]);
+    await service.submitPrompt(7, 'hello');
+    expect(
+      appServer.request.mock.calls.some(
+        (call: unknown[]) => call[0] === 'turn/start',
+      ),
+    ).toBe(false);
+    expect((await service.getRuntimeState(7)).lastError).toContain(
+      'installed and signed in',
+    );
+  });
+
+  it('coalesces failed discovery and retries after three seconds', async () => {
+    const { service, appServer } = createService();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    try {
+      appServer.request.mockRejectedValueOnce(new Error('not installed'));
+      await Promise.all([service.getModelCatalog(), service.getModelCatalog()]);
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(102_999);
+      await service.getModelCatalog();
+      expect(appServer.request).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(103_001);
+      appServer.request.mockResolvedValueOnce({
+        data: [{ id: 'account-model', isDefault: true }],
+      });
+      const catalog = await service.getModelCatalog();
+      expect(catalog.providerDefaultModelId).toBe('account-model');
+      expect(catalog.unavailableReason).toBeNull();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('replaces an implicit default on forced discovery and preserves a user pin', async () => {
+    const { service, appServer } = createService();
+    appServer.request.mockResolvedValueOnce({
+      data: [{ id: 'old', isDefault: true }],
+    });
+    await service.getModelCatalog();
+    await service.getRuntimeState(7);
+    await service.getRuntimeState(8);
+    await service.setSelectedModel(8, 'old');
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({ data: [{ id: 'current', isDefault: true }] });
+    try {
+      await service.getModelCatalog(true);
+      expect((await service.getRuntimeState(7)).selectedModel).toBe('current');
+      const pinned = await service.getRuntimeState(8);
+      expect(pinned.selectedModel).toBe('old');
+      expect(
+        pinned.availableModels.find((model) => model.id === 'old')?.description,
+      ).toContain('not offering');
+    } finally {
+      probe.mockRestore();
+    }
+  });
+
   it('lists models through the shared app-server client', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({
@@ -3072,6 +3272,33 @@ describe('CodexRuntimeService', () => {
     expect(catalog.reasoningEfforts).toEqual(['low', 'xhigh', 'ultra', 'custom-middle']);
   });
 
+  it('refreshes immediately while an older discovery is slow and discards its late response', async () => {
+    const { service, appServer } = createService();
+    let finish!: (result: unknown) => void;
+    appServer.request.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const older = service.getModelCatalog();
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({ data: [{ id: 'current-model', isDefault: true }] });
+    try {
+      const refreshed = await service.getModelCatalog(true);
+      expect(refreshed.models.map((model) => model.id)).toEqual([
+        'current-model',
+      ]);
+      finish({ data: [{ id: 'stale-model', isDefault: true }] });
+      await older;
+      expect(
+        (await service.getModelCatalog()).models.map((model) => model.id),
+      ).toEqual(['current-model']);
+    } finally {
+      probe.mockRestore();
+    }
+  });
+
   it('probes the updated CLI even with a fresh cache and defers replacement of the shared server', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({ data: [{ id: 'old-model' }] });
@@ -3095,16 +3322,55 @@ describe('CodexRuntimeService', () => {
     }
   });
 
-  it('starts new sessions with the default preset fast mode', () => {
-    const { service } = createService({
+  it('starts new sessions with the default preset fast mode after discovery', async () => {
+    const { service, appServer } = createService({
       model: 'gpt-5.5',
       reasoningEffort: 'low',
       fastMode: true,
     });
+    appServer.request.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'gpt-5.5',
+          additionalSpeedTiers: ['fast'],
+          supportedReasoningEfforts: ['low'],
+        },
+      ],
+    });
+    await service.getModelCatalog();
     const state = (service as any).ensureRuntimeState(7, null);
     expect(state.selectedModel).toBe('gpt-5.5');
     expect(state.reasoningEffort).toBe('low');
     expect(state.fastMode).toBe(true);
+  });
+
+  it('applies preset Fast after cold discovery without overriding a user change', async () => {
+    const { service, appServer } = createService({
+      model: 'account-model',
+      reasoningEffort: null,
+      fastMode: true,
+    });
+    await service.getRuntimeState(7);
+    await service.getRuntimeState(8);
+    await service.setFastMode(8, false);
+    const probe = jest
+      .spyOn(CodexAppServerClient.prototype, 'request')
+      .mockResolvedValue({
+        data: [
+          {
+            id: 'account-model',
+            isDefault: true,
+            additionalSpeedTiers: ['fast'],
+          },
+        ],
+      });
+    try {
+      await service.getModelCatalog(true);
+      expect((await service.getRuntimeState(7)).fastMode).toBe(true);
+      expect((await service.getRuntimeState(8)).fastMode).toBe(false);
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it('does not enable preset fast mode for a model without support', () => {
@@ -3116,7 +3382,7 @@ describe('CodexRuntimeService', () => {
     expect((service as any).ensureRuntimeState(7, null).fastMode).toBe(false);
   });
 
-  it('does not treat remote Codex model list order as the default', async () => {
+  it('uses a reported model when Codex does not flag a default', async () => {
     const { service, appServer } = createService();
     appServer.request.mockResolvedValueOnce({
       data: [
@@ -3128,7 +3394,7 @@ describe('CodexRuntimeService', () => {
     await (service as any).refreshModelCatalog();
 
     const state = await service.getRuntimeState(7);
-    expect(state.selectedModel).toBe('gpt-5.5');
+    expect(state.selectedModel).toBe('gpt-5.3-codex');
   });
 
   it('honors an explicit remote Codex default model flag', async () => {

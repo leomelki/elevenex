@@ -45,6 +45,10 @@ const TARGETS = [
   },
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = [
+  // Externalized browser driver, including its managed Chromium installer assets.
+  "playwright-core",
+  "@playwright/test",
+  "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
   "@openai/codex-sdk",
@@ -152,8 +156,8 @@ function shouldBuildNativeDependenciesOnHost(target) {
 
 function buildRuntimePackageJson(target) {
   const onlyBuiltDependencies = shouldBuildNativeDependenciesOnHost(target)
-    ? ["better-sqlite3", "node-pty"]
-    : [];
+    ? ["better-sqlite3", "node-pty", "ffmpeg-static"]
+    : ["ffmpeg-static"];
 
   return {
     name: "elevenex-remote-runtime",
@@ -779,6 +783,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
     path.join(backendBundleRoot, "main.cjs"),
     path.join(targetRoot, "main.cjs"),
   );
+  copyRequiredPath(path.join(backendBundleRoot, "browser-setup.cjs"), path.join(targetRoot, "browser-setup.cjs"));
   copyRequiredPath(path.join(backendBundleRoot, "terminal-screen-worker.cjs"), path.join(targetRoot, "terminal-screen-worker.cjs"));
   copyRequiredPath(
     path.join(backendBundleRoot, "shell-integration"),

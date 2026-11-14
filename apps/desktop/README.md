@@ -19,7 +19,10 @@ tasks and sessions through scope-bound named bridge operations. It includes
 project creation/settings, task creation/preparation/recovery, task stages, safe
 git operations and close/reopen flows. Selected sessions render streaming chat
 with tool activity, decisions, queue controls and retained drafts. Completed
-replies expose their changed files and a paginated Changes review; Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. The other side views provide their frames. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
+replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with agent acquisition and explicit user Block agent/Allow agent controls;
+see [code-first browser automation](../../docs/browser-agent.md) and
+[the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
+Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The backend gains additive `desktop-workspace` routes;
 the existing app's routes and defaults remain available. A versioned capability
@@ -89,15 +92,23 @@ runtime inputs enter the isolated build context; the Mac's installed dependencie
 are left alone. The explicit Linux build must succeed before Electron opens.
 The first build requires internet access and can take several minutes. The builder
 uses the [official Node image on ECR Public](https://gallery.ecr.aws/docker/library/node)
-with the same Node version as the launcher, and the repository's pinned pnpm.
+for portable Node 24.22.3, the repository's pinned pnpm, and the
+[manylinux 2.28 build environment](https://github.com/pypa/manylinux#manylinux_2_28-almalinux-8-based)
+for native dependencies. The server runtime does not inherit the launcher's Node
+major or the build host's newer libc requirements.
 
 Add/select your Linux server through the normal SSH machine flow. It receives
 the development archive automatically; no manual server build or release upload
 is needed. `--linux --arm64` is equivalent; use `--linux --x64` for a Linux x64
 server. These flags select the SSH runtime, not the desktop app's platform.
-The server needs a compatible glibc-based Linux distribution (the build uses
-Debian Bookworm), rather than Alpine/musl. The container validates native runtime
-dependencies; a real server connection still requires testing on the target.
+The core server runtime targets glibc 2.28 and libstdc++ 6.0.25 or newer on Linux
+x64/ARM64, including Ubuntu 20.04. Alpine/musl needs a separate runtime and is
+not supported by these archives. Native SQLite and PTY modules are compiled
+inside the compatibility environment. An ELF audit rejects newer GLIBC,
+GLIBCXX or CXXABI requirements anywhere in the final runtime, and a complete
+backend startup check verifies the exact revision before publication. Optional
+browser capabilities retain their browser distribution's OS requirements.
+No compiler, Node installation or libc upgrade is required on the SSH server.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
@@ -107,6 +118,11 @@ background recovery never replaces another revision. Daemons predating handoff
 need one manual stop as described in the remote guide. Production remote data is untouched.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
+
+SSH backends keep application APIs on their private Unix socket and give agent
+MCP clients a separate, authenticated loopback endpoint. Each backend publishes
+its own address to its agent providers; it does not rely on a server at port
+11111. This listener exposes only MCP, including the task-scoped browser tools.
 
 If the engine fails to start, open the machine card's **… → View error details…**
 to read and select the diagnostic output. Startup failures include bounded tails
@@ -368,6 +384,13 @@ pnpm desktop:capture scripts/desktop-capture/scenarios/check.mjs --fixture
 
 ## Add an IPC channel
 
+After browser main/preload changes, run the native `test/electron-smoke.cjs` with
+the installed Electron after building. `test/browser-remote-input-native.cjs` is
+a separate native regression for streamed modifier keys through the actual browser
+registration and sandboxed preload, with jittered isolated-host replies. Run them
+sequentially and unset inherited `ELECTRON_RUN_AS_NODE`. Neither is a packaged-app
+or external SSH/WAN test.
+
 1. Add its argument tuple and serializable result to `InvokeContracts` in
    `packages/shared/src/index.ts` (or a payload to `EventContracts` for events).
 2. Add a named method to `ElevenexBridge` and implement it in `preload.ts` using
@@ -429,3 +452,20 @@ the sending window's selected machine and a main-issued configuration identity,
 so offline persistence needs no live backend scope. Backend dispatch still uses
 its ordinary current-scope and resource validation. Task creation reconciliation
 uses the additive, capability-gated `workspaceTaskRequest` read.
+
+## Task browser surfaces
+
+Local task pages use main-authorized sandboxed Electron guests, with no preload
+or Node privileges. Trusted Angular overlays compose above the stable guest DOM.
+Remote task backends own sandboxed Chromium and provide bounded JPEG display and
+typed human input over their managed private IPC/SSH transport. Pages never
+receive the app bridge or credentials; app CSP stays unchanged.
+See [the feature guide](../renderer/src/app/task-browser/README.md) for driver,
+privacy, persistent task profile, network, resource and capability policies, and
+[the host guide](../backend/src/desktop-browser/README.md) for installation/transport.
+
+Task browser site data survives conversation changes, task eviction and app
+restarts in Chromium-owned task profiles. Navigation keeps pages visible while
+loading. Run `node apps/desktop/test/browser-profile-native.cjs` from the repository
+root after building to check cookies, localStorage, IndexedDB and cache storage
+across two isolated Electron launches.

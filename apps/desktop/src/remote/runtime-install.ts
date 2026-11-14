@@ -8,8 +8,15 @@ import { shellQuote } from './ssh';
 /** All script substitutions are application-owned revisions, source and nonces. */
 export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<string> {
   if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
-  const modules = ['wire', 'runtime', 'runtime-control', 'runtime-start', 'runtime-handoff', 'agent-proxy', 'host', 'process-tree'];
-  const sources = await Promise.all(modules.map(name => readFile(join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`), 'utf8')));
+  // The uploaded bridge needs only the pure address validator, not the SOCKS
+  // server. Keep the compressed bootstrap below Windows' command-line limit.
+  const modules = ['wire', 'runtime', 'runtime-control', 'runtime-start', 'runtime-handoff', 'agent-proxy', 'host', 'process-tree', 'browser-destination', 'node_modules/@elevenex/browser-network/dist/public-address'];
+  const sources = await Promise.all(modules.map(name => {
+    const path = name.startsWith('node_modules/')
+      ? require.resolve('@elevenex/browser-network/dist/public-address')
+      : join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`);
+    return readFile(path, 'utf8');
+  }));
   const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
   const installerFiles = ['backend/download', 'backend/archive', 'backend/release', 'remote/server-install'];
   const installerSources = await Promise.all(installerFiles.map(name => readFile(join(__dirname, `../${name}.js`), 'utf8')));
@@ -64,7 +71,7 @@ ${installerSources.map((source, index) => `cat > "$stage/installer/${installerFi
   stage=''
 fi
 client="$root/clients/${clientId}"
-mkdir -p "$client"
+mkdir -p "$client/node_modules/@elevenex/browser-network/dist"
 ${sources.map((source, index) => `cat > "$client/${modules[index]}.${nonce}.tmp" <<'EX11_SOURCE_${nonce}'\n${source}\nEX11_SOURCE_${nonce}\nmv "$client/${modules[index]}.${nonce}.tmp" "$client/${modules[index]}.js"`).join('\n')}
 printf 'EX11:${nonce}:runtime:start\\n'
 "$cache/backend/node/bin/node" --version >/dev/null 2>&1 || fail COMPATIBILITY 'The cached Node executable is incompatible or damaged; check OS and libc support'

@@ -1,3 +1,4 @@
+import { MAX_BROWSER_ELEMENTS, type BrowserElementSnapshot } from '@elevenex/shared';
 import {
   DestroyRef,
   Injectable,
@@ -58,7 +59,24 @@ export class SessionChatAttachments {
       ),
     );
   }
-  add(files: readonly File[]): void {
+  /**
+   * Stages a picked element and returns its pin: the lowest number free in this
+   * draft, so a removed pin is never silently reassigned while its text remains.
+   * The same snapshot added twice keeps its pin and upload.
+   */
+  addElement(snapshot: BrowserElementSnapshot): number | null {
+    if (!this.entry() || !this.selection) { this.error.set('Open an active conversation before adding the snapshot.'); return null; }
+    if (!snapshot.jpeg) { this.error.set(snapshot.error || 'Snapshot unavailable. Point at the element again.'); return null; }
+    const existing = this.files().find(file => file.element?.id === snapshot.reference.id);
+    if (existing?.marker) return existing.marker;
+    const used = new Set(this.files().map(file => file.marker));
+    const marker = Array.from({ length: MAX_BROWSER_ELEMENTS }, (_, index) => index + 1).find(n => !used.has(n));
+    if (!marker) { this.error.set(`Point at up to ${MAX_BROWSER_ELEMENTS} elements in one message.`); return null; }
+    const bytes = Uint8Array.from(atob(snapshot.jpeg), char => char.charCodeAt(0));
+    this.add([new File([bytes], `element-${snapshot.reference.id}.jpg`, { type: 'image/jpeg' })], { snapshot, marker });
+    return this.files().find(file => file.element?.id === snapshot.reference.id)?.marker ?? null;
+  }
+  add(files: readonly File[], element?: { readonly snapshot: BrowserElementSnapshot; readonly marker: number }): void {
     const entry = this.entry(),
       selection = this.selection;
     if (!entry || !selection) return;
@@ -98,6 +116,7 @@ export class SessionChatAttachments {
       size += file.size;
       if (kind === "image") imageSize += file.size;
       accepted.push({
+        ...(element ? { element: element.snapshot.reference, marker: element.marker } : {}),
         id: crypto.randomUUID(),
         path: "",
         name: file.name,

@@ -59,9 +59,11 @@ export class CodexAuthService extends EventEmitter {
   }
 
   async getFastStatus(): Promise<CodexAuthStatus> {
-    const authFile = await this.readAuthFile();
-    this.refreshStatusInBackground();
-    return this.buildStatus(this.cachedVersionValue(), authFile);
+    // A cold cache means detection is pending, not that Codex is missing.
+    // readVersion coalesces the first check and caches subsequent reads.
+    const status = await this.getStatus();
+    this.emit('status', status);
+    return status;
   }
 
   refreshStatusInBackground(): void {
@@ -395,11 +397,6 @@ export class CodexAuthService extends EventEmitter {
     this.refreshStatusInBackground();
   }
 
-  private cachedVersionValue(): string | null {
-    const cached = this.versionCache;
-    return cached && cached.expiresAt > Date.now() ? cached.value : null;
-  }
-
   private async readVersion(): Promise<string | null> {
     const now = Date.now();
     const cached = this.versionCache;
@@ -428,8 +425,8 @@ export class CodexAuthService extends EventEmitter {
     try {
       const value = await inflight;
       // Successful reads cache for an hour; failed reads (binary missing or
-      // PATH not yet warm) cache for only 10s so retries aren't blocked.
-      const ttlMs = value ? 60 * 60 * 1000 : 10 * 1000;
+      // PATH not yet warm) cache for only 3s so retries aren't blocked.
+      const ttlMs = value ? 60 * 60 * 1000 : 3 * 1000;
       this.versionCache = { value, expiresAt: Date.now() + ttlMs };
       return value;
     } finally {

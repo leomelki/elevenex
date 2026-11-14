@@ -1,9 +1,11 @@
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
+import type { TaskBrowserWindowContext } from '@elevenex/shared';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { TaskBrowserComponent, type BrowserComposerIntent } from '../../task-browser';
 import { TaskTerminalComponent, type TerminalQuestion, type TerminalBrowserState } from '../../task-terminal';
 import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
 import type { TerminalBrowserIntent } from '@elevenex/shared';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal } from '@angular/core';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
 import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent } from '../../ui';
@@ -21,7 +23,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [CodePanelComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -40,6 +42,11 @@ export class MachineWorkspaceComponent {
   readonly store = inject(WorkspaceStore);
   readonly outbox = inject(SessionChatOutbox);
   readonly writingJournal = inject(WorkspaceWritingJournal);
+  readonly browserWindowContext = computed<TaskBrowserWindowContext | null>(() => {
+    const task = this.store.selectedTask(); if (!task) return null;
+    const project = this.store.projects().find(project => project.id === String(task.projectId));
+    return { taskName: task.name, projectName: task.projectName ?? project?.name ?? '', branchName: task.branchName, stage: this.store.selectedTaskStage(), hue: project?.hue ?? 'steel', machineName: this.machine().name };
+  });
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
@@ -227,6 +234,22 @@ export class MachineWorkspaceComponent {
     for (const flight of this.flights) flight.cancel();
     for (const dispose of this.disposers) dispose();
     this.flights = []; this.disposers = []; this.source = null; this.launch.set('idle'); this.setupStarted.set(false);
+  }
+
+  private readonly taskBrowser = viewChild(TaskBrowserComponent);
+  pickBrowserElement(request: { scopeId: string; taskId: number; sessionId: number; tabId?: string }): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== request.scopeId || selected.taskId !== request.taskId || selected.sessionId !== request.sessionId) return;
+    this.browserAttention();
+    void this.taskBrowser()?.beginElementPick(request.tabId);
+  }
+  private readonly chat = viewChild(SessionChatComponent);
+  browserAttention(): void { this.store.selectPanel('browser'); this.panelOpen.set(true); }
+  browserContext(intent: BrowserComposerIntent): void {
+    const selected = this.store.selected();
+    if (!selected || selected.scopeId !== intent.scopeId || selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId) return;
+    const staged = this.chat()?.stageBrowserContext(intent.text, intent.element) ?? null;
+    this.taskBrowser()?.contextStaged(intent, staged);
   }
 
   discardSessionDraft(): void {

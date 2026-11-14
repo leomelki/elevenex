@@ -106,6 +106,7 @@ export class DesktopChatService implements OnModuleDestroy {
     });
     return {
       attachments: true,
+      browserElements: provider.info.capabilities.multimodalPrompts === true,
       sessionMentions: true,
       presetCatalogs: true,
       presets: chatPresets(this.settings, this.registry),

@@ -1,4 +1,4 @@
-import { readFile, stat, lstat } from 'node:fs/promises';
+import { readFile, realpath, stat, lstat } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import {
@@ -7,6 +7,8 @@ import {
   gitRepositoryKey,
 } from './git-read-scheduler.js';
 import { GitByteLru, GitCacheBudget, copyCacheString } from './git-cache.js';
+import { worktreeSimpleGit } from '../config/system-paths.js';
+import { clearReftableState, readReftableState } from './git-reftable-state.js';
 
 const VERIFY_MS = 1_500;
 const MAX_ENTRIES = 1_000;
@@ -90,16 +92,17 @@ export function readRepositoryIdentity(
     retain(identities, key, cached);
     return cached;
   }
-  const pending = git
-    .raw([
-      'rev-parse',
-      '--path-format=absolute',
-      '--show-toplevel',
-      '--git-dir',
-      '--git-common-dir',
-    ])
-    .then((output) => {
-      const [repoRoot, gitDir, commonDir] = output.trimEnd().split('\n');
+  const pending = Promise.all([
+    git.raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir']),
+    realpath(key),
+  ])
+    .then(([output, physicalPath]) => {
+      // Git before 2.31 lacks --path-format. These paths are absolute or
+      // relative to the physical cwd, so normalize without another process.
+      const [repoRoot, gitDir, commonDir] = output
+        .trimEnd()
+        .split('\n')
+        .map((value) => (value ? path.resolve(physicalPath, value) : ''));
       if (!repoRoot || !gitDir || !commonDir)
         throw new Error('Cannot resolve repository identity');
       if (identities.get(key) === pending)
@@ -197,7 +200,23 @@ export async function readGitDirectoryHead(
     await readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => ''),
   );
   const commonDir = common ? path.resolve(gitDir, common) : gitDir;
-  return readRef({ repoRoot: worktreePath, gitDir, commonDir }, 'HEAD');
+  const head = await readFile(path.join(gitDir, 'HEAD'), 'utf8').catch(
+    () => '',
+  );
+  if (head.trim() === 'ref: refs/heads/.invalid')
+    return (
+      await readReftableState(worktreeSimpleGit(worktreePath), {
+        repoRoot: worktreePath,
+        gitDir,
+        commonDir,
+      })
+    ).headSha;
+  if (head.startsWith('ref: '))
+    return readRef(
+      { repoRoot: worktreePath, gitDir, commonDir },
+      head.trim().slice(5),
+    );
+  return /^[a-f0-9]{40,64}$/.test(head.trim()) ? head.trim() : null;
 }
 
 /** Fixed-path reads only. HEAD/index belong to the worktree; refs/objects to commonDir. */
@@ -213,6 +232,23 @@ export function readLocalRefSnapshot(
     const readHead = () => readFile(path.join(identity.gitDir, 'HEAD'), 'utf8');
     for (let attempt = 0; attempt < 3; attempt++) {
       const head = (await readHead()).trim();
+      if (head === 'ref: refs/heads/.invalid') {
+        const [state, indexVersion] = await Promise.all([
+          readReftableState(git, identity),
+          readPathVersion(path.join(identity.gitDir, 'index')),
+        ]);
+        return {
+          ...identity,
+          ...state,
+          indexVersion,
+          resolveRef: (ref: string) =>
+            state.resolveRef(
+              ref === 'HEAD' || ref.startsWith('refs/')
+                ? ref
+                : `refs/remotes/${ref}`,
+            ),
+        };
+      }
       const branchRef = head.startsWith('ref: ') ? head.slice(5) : null;
       let headSha = branchRef
         ? await readRef(identity, branchRef)
@@ -287,6 +323,7 @@ export function readLocalRefSnapshot(
 
 export function clearLocalRefState(worktreePath?: string): void {
   if (!worktreePath) {
+    clearReftableState();
     identities.clear();
     snapshots.clear();
     verifications.clear();
@@ -294,6 +331,7 @@ export function clearLocalRefState(worktreePath?: string): void {
     return;
   }
   const key = path.resolve(worktreePath);
+  clearReftableState(key);
   identities.delete(key);
   snapshots.delete(key);
   verifications.delete(key);
@@ -308,7 +346,21 @@ export async function readOriginHead(
       'utf8',
     ).catch(() => '')
   ).trim();
-  return text.startsWith('ref: refs/remotes/')
-    ? text.slice('ref: refs/remotes/'.length)
-    : null;
+  if (text.startsWith('ref: refs/remotes/'))
+    return text.slice('ref: refs/remotes/'.length);
+  if (
+    await stat(path.join(identity.commonDir, 'reftable', 'tables.list')).catch(
+      () => null,
+    )
+  ) {
+    const ref = (
+      await worktreeSimpleGit(identity.repoRoot)
+        .raw(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])
+        .catch(() => '')
+    ).trim();
+    return ref.startsWith('refs/remotes/')
+      ? ref.slice('refs/remotes/'.length)
+      : null;
+  }
+  return null;
 }

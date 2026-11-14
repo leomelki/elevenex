@@ -159,8 +159,10 @@ model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
 the sidebar. Session pages supply authoritative activity for the visible window.
 
-The side views expose supplied-data boundaries. Terminal now connects real
-user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
+Browser uses narrow task-owned local guest and remote streaming adapters; see the
+[production browser guide](../apps/renderer/src/app/task-browser/README.md) for
+its mailbox, forwarding, ownership, bounded resources and conservative privacy
+policy. Terminal connects real user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
 replacement persistence framework. Selected sessions compose the
 [connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
@@ -408,6 +410,12 @@ bounded main-owned network-interface/online-state observation resume that stop;
 authentication and host-trust failures always require a person. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
 
+Remote Browser viewer routes require the managed private IPC transport and a
+rotated exclusive viewer lease; they are unavailable on the legacy TCP API. Main
+owns credentials, frame transport and narrowly typed input. The renderer does
+not fetch remote frames or expose pixels to MCP. Disconnect invalidates driver
+generations and queued work; metadata reconciliation never replays an action.
+See [the browser host](../apps/backend/src/desktop-browser/README.md).
 ## User terminal slice
 
 Terminal replies optionally carry `portDiscovery` and at most 16 `services`.
@@ -482,3 +490,5 @@ expire on engine shutdown/startup. Existing clients may omit the owner and retai
 engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
 termination; opening an empty Terminal pane creates a fresh shell through the
 existing explicit opening flow. There is no shutdown channel in the preload.
+
+The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.
