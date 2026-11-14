@@ -103,6 +103,9 @@ export class ComposerComponent implements OnChanges {
   readonly agentLocked = input(true);
   readonly settingsDisabled = input(false);
   readonly settingsBusy = input(false);
+  readonly modelsRefreshAvailable = input(false);
+  readonly modelsError = input('');
+  readonly modelsRefreshRequested = output<void>();
   readonly modeAvailable = input(true);
   readonly showFork = input(true);
   readonly showSavePreset = input(true);

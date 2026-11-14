@@ -4,6 +4,23 @@ describe('Codex background model discovery', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  it('permits discovery immediately at startup and schedules only after settlement', () => {
+    const allowed: boolean[] = [];
+    const retry = new CodexModelCatalogRetry(() => {
+      allowed.push(!retry.waiting);
+      retry.attemptStarted();
+    });
+    retry.start();
+    retry.start();
+    expect(allowed).toEqual([true]);
+    expect(jest.getTimerCount()).toBe(0);
+    retry.settled(true);
+    expect(retry.waiting).toBe(true);
+    jest.advanceTimersByTime(600_000);
+    expect(allowed).toEqual([true, true]);
+    retry.stop();
+  });
+
   it('keeps retrying without a window, backing off to five minutes', () => {
     const refresh = jest.fn();
     const retry = new CodexModelCatalogRetry(refresh);

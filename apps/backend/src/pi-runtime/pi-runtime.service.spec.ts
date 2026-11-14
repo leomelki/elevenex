@@ -324,6 +324,30 @@ describe('PiRuntimeService lifecycle', () => {
     delete process.env.PI_RUNTIME_IDLE_CAP;
   });
 
+  it('waits for the first catalog instead of returning an empty list while discovery runs', async () => {
+    const { service } = createService();
+    const response = createDeferred<{ models: { provider: string; id: string; name: string }[] }>();
+    const start = jest.spyOn(PiSessionRuntime.prototype, 'start').mockResolvedValue(undefined);
+    const send = jest.spyOn(PiSessionRuntime.prototype, 'send').mockReturnValue(response.promise);
+    const stop = jest.spyOn(PiSessionRuntime.prototype, 'stop').mockResolvedValue(undefined);
+    try {
+      let settled = false;
+      const first = service.getModelCatalog().then(catalog => { settled = true; return catalog; });
+      const second = service.getModelCatalog();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      response.resolve({ models: [{ provider: 'local', id: 'available', name: 'Available' }] });
+      const catalogs = await Promise.all([first, second]);
+      expect(catalogs.map(catalog => catalog.models[0].id)).toEqual(['local/available', 'local/available']);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      start.mockRestore(); send.mockRestore(); stop.mockRestore();
+      await service.onModuleDestroy();
+    }
+  });
+
   it('queues one fresh CLI probe after an automatic probe for concurrent reloads', async () => {
     const { service } = createService();
     const runtimeService = service as any;

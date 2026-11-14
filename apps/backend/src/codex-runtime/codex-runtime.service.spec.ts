@@ -3054,6 +3054,51 @@ describe('CodexRuntimeService', () => {
     expect((service as any).rewindingSessions.size).toBe(0);
   });
 
+  it('discovers models at module startup before any catalog read or prompt', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      expect((await service.getRuntimeState(7)).availableModels).toEqual([
+        expect.objectContaining({ id: 'gpt-test' }),
+      ]);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'gpt-test' }) }),
+      }));
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('waits for startup discovery when a prompt arrives before the catalog', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    let discovered!: (value: unknown) => void;
+    appServer.request.mockReturnValueOnce(new Promise(resolve => { discovered = resolve; }));
+    service.onModuleInit();
+    try {
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toBeNull();
+      discovered({ data: [{ id: 'account-model', isDefault: true }] });
+      await new Promise(setImmediate);
+      expect(turn.turnStartParams).toEqual(expect.objectContaining({
+        collaborationMode: expect.objectContaining({ settings: expect.objectContaining({ model: 'account-model' }) }),
+      }));
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(1);
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
   it('retries in the background and lets a foreground read bypass the backoff', async () => {
     jest.useFakeTimers();
     const { service, appServer } = createService();
@@ -3074,6 +3119,27 @@ describe('CodexRuntimeService', () => {
     } finally {
       service.onModuleDestroy();
       jest.useRealTimers();
+    }
+  });
+
+  it('lets a new prompt rediscover Codex during background failure backoff', async () => {
+    const { service, appServer } = createService();
+    const turn = wireAppServerTurn(appServer);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+    appServer.request.mockRejectedValueOnce(new Error('CLI temporarily unavailable'));
+    service.onModuleInit();
+    try {
+      await new Promise(setImmediate);
+      now.mockReturnValue(103_001);
+      await service.submitPrompt(7, 'hello', undefined, undefined, { waitForCompletion: false });
+      await new Promise(setImmediate);
+      expect(appServer.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(2);
+      expect(turn.turnStartParams).not.toBeNull();
+      turn.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise(setImmediate);
+    } finally {
+      now.mockRestore();
+      service.onModuleDestroy();
     }
   });
 

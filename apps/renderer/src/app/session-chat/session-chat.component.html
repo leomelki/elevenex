@@ -300,7 +300,10 @@
       [settingsDisabled]="
         store.offline() || store.waitingPending() || !!store.uncertain() || !store.state() || store.historical()
       "
-      [settingsBusy]="!!store.busy() || store.loading()"
+      [settingsBusy]="!!store.busy() || store.loading() || modelCatalog.loading()"
+      [modelsRefreshAvailable]="!!store.state()?.presetCatalogs"
+      [modelsError]="modelCatalog.error()"
+      (modelsRefreshRequested)="refreshModels()"
       [showFork]="false"
       [showSavePreset]="
         store.state()?.presets !== undefined &&

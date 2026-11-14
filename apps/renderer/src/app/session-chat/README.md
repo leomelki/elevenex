@@ -287,6 +287,13 @@ without guessing its identity or thinking support. All changes use authoritative
 state with busy/error handling, retain the draft, and reject archived/historical
 edits. Harness changes retain the agent menu and its focus while the new catalog
 loads; settings and sending stay blocked until the new provider is confirmed.
+Engines advertising `presetCatalogs` also supply the selected harness's model
+list independently of a running conversation. One scoped catalog read starts
+when that session/harness becomes active; live runtime model capabilities take
+precedence, with the catalog filling a cold runtime's empty list. Discovery
+shows loading and retryable errors, and the agent menu's Refresh models action
+requests a fresh provider probe. Selection, machine changes and teardown cancel
+the read and discard late replies. This never submits or replays a prompt.
 Escape or an outside click dismisses the menu and restores its opener.
 Queue removal/steering restores composer focus before a row disappears.
 Enter sends or queues, Alt Enter steers, Shift Enter inserts a newline, Shift Tab
@@ -295,8 +302,9 @@ toggles mode, Cmd/Ctrl J opens agent settings and Cmd/Ctrl . stops a running age
 Optional `controls`, `fast` and model capability fields are additive for older
 engines. Thinking and fast changes use validated actions on the existing named,
 scoped command bridge. The backend checks the selected model before delegating,
-and advertises only installed provider operations. No extra catalogs, provider
-hydration or repository reads are added. Missing capability metadata hides the
+and advertises only installed provider operations. Catalog discovery probes only
+the selected provider, without starting its conversation or reading repositories.
+Missing capability metadata hides the
 new controls. Mentions, dictation and preset/fork integrations
 remain hidden until their corresponding platform operations are available.
 
@@ -304,6 +312,9 @@ remain hidden until their corresponding platform operations are available.
 permissions, multiline input, queue/remove/steer/stop, retained uncertain drafts,
 container-responsive layout and reduced motion in both themes. `session-harness`
 verifies changing harness inside the popover and locking after the first prompt.
+`session-model-discovery.mjs` covers a cold runtime, discovery loading/failure,
+explicit refresh, recovery without sending, retained drafts and restored focus
+in both themes, including a narrow layout with reduced motion.
 
 The agent menu follows the standalone ZIP’s fixed-column form and usage block.
 Live context/token values come from the selected session. Optional `planUsage`

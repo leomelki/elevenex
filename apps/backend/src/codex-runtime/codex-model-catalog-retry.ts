@@ -7,6 +7,7 @@ export class CodexModelCatalogRetry {
   private timer: NodeJS.Timeout | null = null;
   private nextAttemptAt = 0;
   private retryIndex = 0;
+  private attempting = false;
 
   constructor(private readonly refresh: () => void) {}
 
@@ -17,16 +18,20 @@ export class CodexModelCatalogRetry {
   start(): void {
     if (this.active) return;
     this.active = true;
-    // A warm first read may be a cache hit, but still needs a future refresh.
-    this.settled(true);
+    // Discovery consults `waiting`; the initial attempt must run before its
+    // completion schedules the next attempt, or a cold cache waits a full TTL.
     this.refresh();
+    // A warm cache can satisfy discovery without starting an asynchronous probe.
+    if (!this.attempting && !this.timer) this.settled(true);
   }
 
   attemptStarted(): void {
+    this.attempting = true;
     this.clearTimer();
   }
 
   settled(succeeded: boolean): void {
+    this.attempting = false;
     const delay = succeeded
       ? CODEX_MODEL_CATALOG_TTL_MS
       : RETRY_DELAYS_MS[this.retryIndex];

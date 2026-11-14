@@ -4018,7 +4018,7 @@ export class CodexRuntimeService
     try {
       // Discover before selecting a default: an invented model can be rejected
       // by ChatGPT accounts even when the CLI itself is working.
-      await this.refreshModelCatalogIfStale();
+      await this.refreshModelCatalogIfStale(false, true);
       if (signal.aborted) return;
       if (!this.codexModels.length) {
         throw new BadRequestException(

@@ -62,6 +62,9 @@ export class AgentMenuComponent {
   readonly disabled = input(false);
   /** An update is applying: choices stay focusable but take no input. */
   readonly busy = input(false);
+  readonly modelsRefreshAvailable = input(false);
+  readonly modelsError = input('');
+  readonly modelsRefreshRequested = output<void>();
   readonly showFork = input(true);
   readonly showSavePreset = input(true);
   readonly reasoningAvailable = input(true);

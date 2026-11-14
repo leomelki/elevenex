@@ -64,6 +64,9 @@ export class AgentPickerComponent {
   readonly locked = input(true);
   readonly disabled = input(false);
   readonly busy = input(false);
+  readonly modelsRefreshAvailable = input(false);
+  readonly modelsError = input('');
+  readonly modelsRefreshRequested = output<void>();
   readonly showFork = input(true);
   readonly showSavePreset = input(true);
   readonly reasoningAvailable = input(true);
@@ -87,6 +90,8 @@ export class AgentPickerComponent {
       harnesses: this.harnesses(),
       locked: this.locked(),
       busy: this.busy(),
+      modelsRefreshAvailable: this.modelsRefreshAvailable(),
+      modelsError: this.modelsError(),
       showFork: this.showFork(),
       showSavePreset: this.showSavePreset(),
       reasoningAvailable: this.reasoningAvailable(),
