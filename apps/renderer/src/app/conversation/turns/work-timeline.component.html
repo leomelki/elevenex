@@ -16,7 +16,8 @@
                 class="group"
                 [attr.aria-expanded]="groupOpen(row)"
                 [attr.aria-label]="
-                  (groupOpen(row) ? 'Hide activity: ' : 'Show activity: ') +
+                  (groupOpen(row) ? 'Hide ' : 'Show ') +
+                  (group.earlier ? 'earlier activity: ' : 'activity: ') +
                   group.label
                 "
                 (click)="toggleGroup(group.id)"
@@ -27,6 +28,9 @@
                   [size]="12"
                   [class.turned]="groupOpen(row)"
                 />
+                @if (group.earlier) {
+                  <span class="summary-lead">Earlier</span>
+                }
                 <span class="summary-facts">
                   @for (fact of group.facts; track fact.kind) {
                     <span class="summary-fact" [class.failure]="fact.danger">

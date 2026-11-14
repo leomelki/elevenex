@@ -72,6 +72,11 @@ describe("message-delimited work sections", () => {
     expect(visible(host, "command-0")).toBe(true);
     update(exchange([...steps, tool("command-10")]));
     expect(group(host, "command-0")?.textContent).toContain("6 commands");
+    // The visible recent window is not the summary's contents: say so.
+    expect(group(host, "command-0")?.textContent).toContain("Earlier");
+    expect(group(host, "command-0")?.getAttribute("aria-label")).toBe(
+      "Show earlier activity: 6 commands",
+    );
     expect(visible(host, "command-5")).toBe(false);
     expect(visible(host, "command-6")).toBe(true);
     expect(visible(host, "command-10")).toBe(true);
@@ -94,6 +99,7 @@ describe("message-delimited work sections", () => {
       "1 read · 1 command",
     );
     expect(group(host, "edit")?.textContent).toContain("1 edit");
+    expect(group(host, "edit")?.textContent).not.toContain("Earlier");
     expect(visible(host, "read")).toBe(false);
     expect(visible(host, "edit")).toBe(false);
     const text = [...host.querySelectorAll(".prose, .answer")].map((e) =>

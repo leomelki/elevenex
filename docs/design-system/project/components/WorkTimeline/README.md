@@ -9,7 +9,8 @@ completed history, so the summary explains the work between messages.
 **Provide:** readonly `steps`, `live`, `expanded`, `maxVisible` (default 5 recent
 steps in the active section), and optional `answer`, `answerId` and
 `answerBeforeStepId`. Active sections remain fully visible until they exceed
-twice `maxVisible`, then summarize older steps and retain the latest window.
+twice `maxVisible`, then summarize older steps under an “Earlier” lead and
+retain the latest window.
 Empty streaming replies do not close a section. Completion closes trailing work.
 
 Each summary opens independently. Its native button retains identity and keyboard
@@ -28,5 +29,6 @@ success never implies recovery: supply `recovered` or `expected` explicitly.
 **Motion:** flat keyed rows retain the tool and Markdown instances, including
 open output and copy controls. Fold controls visibility in place, with immediate
 inertness for closed content. New rows grow before their ink appears; saved
-history stays still. AutoHeight owns output/reasoning growth. All transitions
+history stays still. A closing section's step and summary swap in the same row
+on one shared curve, so its height holds and the swap crossfades. AutoHeight owns output/reasoning growth. All transitions
 are interruptible and respect reduced motion.

@@ -54,6 +54,11 @@ li {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
 }
+.summary-lead {
+  flex: none;
+  color: var(--ink);
+  font-weight: 500;
+}
 .summary-facts {
   display: flex;
   flex-wrap: wrap;
@@ -89,7 +94,18 @@ li {
   box-shadow: var(--focus-ring);
 }
 .disclosure {
-  transition: transform var(--dur-base) var(--ease-in-out);
+  /* Same travel as the turn's work chevron, so every disclosure turns alike. */
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+/*
+ * A closing section swaps its step for the summary in the same row. Fold
+ * normally closes faster than it opens; matching both curves here keeps the
+ * row's height steady, so the swap reads as a crossfade and nothing below
+ * bounces (it previously dipped ~10px mid-swap).
+ */
+ex-fold.group-fold,
+ex-fold.step-fold {
+  transition-duration: var(--dur-slow);
 }
 .turned {
   transform: rotate(90deg);
