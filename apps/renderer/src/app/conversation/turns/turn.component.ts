@@ -131,7 +131,7 @@ export class TurnComponent implements OnChanges {
       : this.steps().filter((step) => step.kind === "say"),
   );
   protected readonly showWork = computed(
-    () => this.status() === "live" || this.stepCount() > 0,
+    () => this.status() === "live" || this.timelineSteps().length > 0,
   );
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
@@ -139,7 +139,6 @@ export class TurnComponent implements OnChanges {
     readonly label: string;
     readonly live: boolean;
   } | null>(null);
-  private readonly timeline = viewChild(WorkTimelineComponent);
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -183,7 +182,6 @@ export class TurnComponent implements OnChanges {
   protected toggleWork(): void {
     const open = !this.expanded();
     this.toggled.set(open);
-    this.timeline()?.setAllOpen(open);
   }
 
   protected arrivalFinished(event: AnimationEvent): void {

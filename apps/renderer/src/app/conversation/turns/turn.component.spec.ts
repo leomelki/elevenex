@@ -144,7 +144,7 @@ describe("turn work disclosure", () => {
     other.remove();
   });
 
-  it("does not count commentary and completion notes as work", () => {
+  it("keeps earlier commentary behind Worked without counting it as a tool", () => {
     const fixture = TestBed.createComponent(ReplyHostComponent);
     fixture.componentInstance.steps.set([
       { id: "say", kind: "say", text: "Checking the details." },
@@ -153,8 +153,9 @@ describe("turn work disclosure", () => {
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(fixture.componentInstance.steps().filter(step => step.kind !== 'say' && step.kind !== 'note')).toHaveLength(0);
-    expect(host.querySelector(".work-row")).toBeNull();
+    expect(host.querySelector(".work-row")?.textContent).toContain("Worked");
     expect(host.querySelector('ex-tool-step')).toBeNull();
+    expect(host.querySelector('.prose')?.closest("ex-fold")?.hasAttribute("inert")).toBe(true);
     expect(host.querySelector('.prose')?.textContent).toContain('Checking the details.');
     expect(host.querySelector('.answer')?.textContent).toContain('Hi.');
     fixture.destroy();
