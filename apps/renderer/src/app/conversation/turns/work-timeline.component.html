@@ -96,6 +96,7 @@
                     [icon]="icon(step)"
                     [verb]="verb(step)"
                     [detail]="step.title || step.detail || ''"
+                    [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
                     [status]="
                       step.recovered || step.expected
                         ? 'done'
