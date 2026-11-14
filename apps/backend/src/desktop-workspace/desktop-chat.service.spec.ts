@@ -13,6 +13,10 @@ import { DesktopChatService } from './desktop-chat.service.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import { chatState, display } from './desktop-chat-projection.js';
 
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
+
 const item = (id: string, text = id): AgentTranscriptItem => ({
   id,
   kind: 'assistant',
@@ -408,6 +412,22 @@ describe('selected session chat', () => {
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
+  });
+  it('streams dequeued user receipts once and retains their identity through saved history', async () => {
+    history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];
+    const initial = (await read())!;
+    const receipt: AgentTranscriptItem = { ...item('native-user', 'Queued follow-up'), kind: 'user' };
+    live = [receipt, item('follow-up-answer')];
+    emit('message_start');
+    const update = (await read(initial.cursor))!;
+    expect(update.reset).toBe(false);
+    expect(update.events.map(event => event.type === 'item' && event.item.id)).toEqual(['native-user', 'follow-up-answer']);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    history = [...history, ...live];
+    emit('history_snapshot');
+    const saved = (await read(update.cursor))!;
+    expect(saved.items.map(item => item.id)).toEqual(['initial', 'initial-answer', 'native-user', 'follow-up-answer']);
+    expect(saved.items.filter(item => item.kind === 'user')).toHaveLength(2);
   });
   it('keeps a pre-read cursor so events during hydration are reconciled without losing or duplicating text', async () => {
     runtime.getRuntimeState.mockImplementationOnce(async () => {

@@ -903,6 +903,34 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
     expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
   });
+  it.each(['automatic', 'steer'] as const)('shows a dequeued prompt and its answer on %s dispatch without a local send', async dispatch => {
+    const { store, bridge } = setup();
+    await settle();
+    const initial = [item('u1', 'user', 'Initial prompt'), item('a1', 'assistant', 'Initial answer')];
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: initial,
+      state: { ...state, phase: 'running', queue: [{ id: 'q1', text: 'Same follow-up' }, { id: 'q2', text: 'Same follow-up' }] },
+    })));
+    await store.refresh();
+    const receipt = item('native-user', 'user', 'Same follow-up');
+    const answer = item('a2', 'assistant', 'New answer');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false,
+      events: [{ type: 'item', item: receipt }, { type: 'item', item: answer }],
+      state: { ...state, phase: 'running', queue: [{ id: 'q2', text: 'Same follow-up' }] },
+    })));
+    if (dispatch === 'steer') await store.perform({ type: 'steer-queued', id: 'q1' });
+    else await vi.advanceTimersByTimeAsync(80);
+    await settle();
+    expect(store.exchanges().map(exchange => [exchange.id, exchange.prompt, exchange.answer])).toEqual([
+      ['u1', 'Initial prompt', 'Initial answer'], ['native-user', 'Same follow-up', 'New answer'],
+    ]);
+    expect(store.queue().map(item => item.id)).toEqual(['q2']);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [...initial, receipt, answer] })));
+    await store.refresh();
+    expect(store.exchanges().filter(exchange => exchange.prompt === 'Same follow-up')).toHaveLength(1);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(dispatch === 'steer' ? 1 : 0);
+  });
 });
 describe("provider-neutral transcript presentation", () => {
   it("keeps inline images with their source commentary instead of appending them to the answer", () => {
