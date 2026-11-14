@@ -746,8 +746,9 @@ misrepresents its size. App layout/AX diagnostics still inspect the trusted app
 only; they do not establish page accessibility or agent observation permission.
 
 `scenarios/session-tool-timeline.mjs` covers the single chronological work
-timeline: inspection through new replies and discovery grouping, persistent
-Earlier/Show fewer controls, running and failure visibility, stable completion,
+timeline: message-delimited activity summaries, section-local recent-step budgets,
+inspection through new replies, independent keyboard disclosures, running and
+failure visibility, stable completion,
 paired original input/output, keyboard focus, scoped motion frames, both themes
 and narrow reduced-motion layouts. Run against the connected component preview
 with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped

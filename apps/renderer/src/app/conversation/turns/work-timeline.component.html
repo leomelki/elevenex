@@ -1,22 +1,4 @@
 <ol>
-  <li class="earlier-row">
-    <ex-fold [open]="showEarlier()">
-      <button
-        type="button"
-        class="earlier"
-        [attr.aria-expanded]="earlierOpen()"
-        [attr.aria-disabled]="!earlierOpen() && !hiddenCount() ? 'true' : null"
-        (click)="toggleEarlier()"
-      >
-        <ex-icon
-          name="chevron-right"
-          [size]="12"
-          [class.turned]="earlierOpen()"
-        />
-        <ex-ease-swap [value]="earlierLabel()" />
-      </button>
-    </ex-fold>
-  </li>
   @for (row of rows(); track row.step.id) {
     @let step = row.step;
     <li
@@ -27,15 +9,19 @@
     >
       <div class="row-clip">
         <ex-fold class="group-fold" [open]="groupVisible(row)">
-          @if (row.group; as group) {
+          @if (row.section; as group) {
             @if (group.id === step.id) {
               <button
                 type="button"
                 class="group"
                 [attr.aria-expanded]="groupOpen(row)"
+                [attr.aria-label]="
+                  (groupOpen(row) ? 'Hide activity: ' : 'Show activity: ') +
+                  group.label
+                "
                 (click)="toggleGroup(group.id)"
               >
-                <ex-icon name="file" [size]="14" /><span>{{
+                <ex-icon name="layers" [size]="14" /><span>{{
                   group.label
                 }}</span>
                 <ex-icon
@@ -51,6 +37,7 @@
           @if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"
+              [class.has-text]="!!step.text?.trim()"
               [class.prose]="step.id !== replyId()"
               exAutoHeight
             >

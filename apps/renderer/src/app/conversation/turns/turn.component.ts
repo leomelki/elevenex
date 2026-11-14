@@ -73,7 +73,7 @@ export class TurnComponent implements OnChanges {
   readonly filesTotal = input<number>();
   readonly error = input("");
   readonly open = input(false);
-  readonly maxVisible = input(4);
+  readonly maxVisible = input(5);
   readonly author = input("Agent");
   readonly mark = input("EX");
   readonly harness = input<string>();
@@ -110,8 +110,6 @@ export class TurnComponent implements OnChanges {
       (this.status() === "live" || this.open() || this.inspecting()),
   );
   readonly workLabel = computed(() => {
-    if (this.status() === "done" && !this.stepCount() && this.hasCommentary())
-      return "Earlier messages";
     const seconds = this.status() === "live" ? this.elapsed() : this.duration();
     const label =
       this.status() === "live"
@@ -128,17 +126,13 @@ export class TurnComponent implements OnChanges {
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
   );
-  private readonly hasCommentary = computed(() =>
-    this.steps().some((step) => step.kind === "say" && !!step.text?.trim()),
-  );
   protected readonly timelineSteps = computed(() =>
     this.stepCount()
       ? this.steps()
       : this.steps().filter((step) => step.kind === "say"),
   );
   protected readonly showWork = computed(
-    () =>
-      this.status() === "live" || this.stepCount() > 0 || this.hasCommentary(),
+    () => this.status() === "live" || this.stepCount() > 0,
   );
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
@@ -155,6 +149,7 @@ export class TurnComponent implements OnChanges {
   );
   protected readonly factsElement =
     viewChild<ElementRef<HTMLElement>>("factsRegion");
+  private readonly timeline = viewChild(WorkTimelineComponent);
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -208,6 +203,12 @@ export class TurnComponent implements OnChanges {
         this.workButton()?.nativeElement.focus({ preventScroll: true });
       }
     }
+  }
+
+  protected toggleWork(): void {
+    const open = !this.expanded();
+    this.toggled.set(open);
+    this.timeline()?.setAllOpen(open);
   }
 
   protected arrivalFinished(event: AnimationEvent): void {
