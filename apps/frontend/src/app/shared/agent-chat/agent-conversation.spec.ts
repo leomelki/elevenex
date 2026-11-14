@@ -12,6 +12,16 @@ function item(
 }
 
 describe('AgentConversation', () => {
+  it('stops marking retained tool calls live when a run completes', () => {
+    const chat = new AgentConversation();
+    chat.runPhase.set('running');
+    chat.live.set([{ ...item('call', 'tool_use'), toolUseId: 'tool' }]);
+    expect(chat.liveToolUseIds().has('tool')).toBe(true);
+    chat.apply({ type: 'complete', payload: { sessionId: 7 } });
+    expect(chat.liveToolUseIds().size).toBe(0);
+    expect(chat.items()).toHaveLength(1);
+  });
+
   it.each([undefined, true, false])('handles completion for isBlocking=%s', (isBlocking) => {
     const chat = new AgentConversation();
     const request = {
