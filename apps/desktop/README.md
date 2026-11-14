@@ -110,6 +110,17 @@ backend startup check verifies the exact revision before publication. Optional
 browser capabilities retain their browser distribution's OS requirements.
 No compiler, Node installation or libc upgrade is required on the SSH server.
 
+On a Linux target with Docker access, run the native archive regression after
+`pnpm backend:bundle`:
+
+```sh
+ELEVENEX_TEST_LINUX_RUNTIME=1 node --test scripts/desktop-backend-linux.test.mjs
+```
+
+It builds the actual archive, then uses bundled Node to query SQLite and open a
+PTY on the host. Run it on glibc 2.28 when checking the oldest supported target;
+the ordinary test suite skips this Docker integration test.
+
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
 Explicitly opening/retrying a server replaces a daemon from a different build
