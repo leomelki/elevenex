@@ -104,7 +104,74 @@ footer {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
+.facts {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  gap: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.facts.clipped {
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+.work-item {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-1)));
+}
+:host:hover .work-item,
+:host:focus-within .work-item,
+:host.expanded .work-item {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .work-item {
+    /* Leave together on a shorter curve; the entry spring must not bounce out. */
+    transition:
+      opacity var(--dur-fast) var(--ease-in),
+      transform var(--dur-fast) var(--ease-in);
+  }
+  :host:hover .work-item,
+  :host:focus-within .work-item,
+  :host.expanded .work-item {
+    transition:
+      opacity var(--dur-fast) var(--ease-out),
+      transform var(--dur-base) var(--ease-spring);
+    transition-delay: calc(var(--fact-index) * 35ms);
+  }
+}
+.work-item.failure {
+  opacity: 1;
+  transform: none;
+}
+.fact {
+  gap: var(--space-1);
+}
+.fact.ok ex-icon {
+  color: var(--accent);
+}
+.diff {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.add {
+  color: var(--diff-add);
+}
+.del {
+  color: var(--diff-del);
+}
 .chevron {
+  flex: none;
   margin-left: calc(-1 * var(--space-1));
 }
 .chevron ex-icon {
@@ -113,6 +180,7 @@ footer {
 :host.expanded .chevron ex-icon {
   transform: rotate(90deg);
 }
+.failure,
 .failed {
   color: var(--danger);
 }
@@ -163,7 +231,8 @@ footer ex-turn-acts {
   }
 }
 @media (hover: none) {
-  footer ex-turn-acts {
+  footer ex-turn-acts,
+  .work-item {
     opacity: 1;
     transform: none;
   }
@@ -182,6 +251,9 @@ footer ex-turn-acts {
   .chevron ex-icon,
   footer ex-turn-acts {
     transition: none;
+  }
+  .work-item {
+    transform: none;
   }
 }
 
