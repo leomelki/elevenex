@@ -18,6 +18,7 @@ import { TaskGitService } from '../tasks/task-git.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { workspaceBody } from './desktop-workspace.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 export interface WorkspaceGitInput {
   type?: unknown;
@@ -38,6 +39,7 @@ export class DesktopWorkspaceGitService {
     private readonly taskGit: TaskGitService,
     private readonly tasks: TasksService,
     private readonly projects: ProjectsService,
+    private readonly settings: SettingsService,
     @Optional() private readonly activity?: DesktopWorkspaceActivityService,
   ) {}
   private async readyTask(id: number) {
@@ -160,11 +162,33 @@ export class DesktopWorkspaceGitService {
         );
       if (input.type === 'commit') {
         try {
+          // Desktop commits have no active session provider. Use the same
+          // explicit-default / last-used preference as session startup.
+          const message = input.message as string;
+          const provider = message.trim()
+            ? undefined
+            : this.settings.getInitialAgentProvider(
+                (await this.settings.findOne()).defaultAgentProvider,
+              );
           if (selection) {
             const status = await this.git.getStatusSummary(current.path);
             if (await commitRevision(current.path, status) !== input.revision) throw new ConflictException({ code: 'commit-changes-moved', message: 'The changes have moved on. Review the files before committing.' });
-            await commitSnapshot(current.path, this.git, status, selection, input.message as string, phase => this.phases.set(id, phase));
-          } else await this.git.commit(current.path, { message: input.message as string, includeUnstaged: true });
+            await commitSnapshot(
+              current.path,
+              this.git,
+              status,
+              selection,
+              message,
+              (phase) => this.phases.set(id, phase),
+              provider,
+            );
+          } else {
+            await this.git.commit(current.path, {
+              message,
+              includeUnstaged: true,
+              ...(provider ? { provider } : {}),
+            });
+          }
           if (input.push) {
             this.phases.set(id, 'pushing');
             try {

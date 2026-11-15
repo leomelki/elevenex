@@ -32,6 +32,7 @@ import { scheduledReadGit } from './git-read-scheduler.js';
 import { readWorktreeTextStats } from './git-file-stats.js';
 import type { WorktreeStatusFingerprintSnapshot } from './git-worktree-fingerprint.js';
 import { registerWorktreeCache } from './git-worktree-cache-lifecycle.js';
+import { readCommitMessageDiff } from './git-commit-message-diff.js';
 
 const SAFE_REF_PATTERN = /^[a-zA-Z0-9\/_.-]+$/;
 const MAX_COMMIT_MESSAGE_DIFF_CHARS = 24_000;
@@ -577,7 +578,11 @@ export class GitService {
       }
 
       const [diff, log, conventionDocs] = await Promise.all([
-        indexFile ? git.diff(['--cached']) : this.getDiff(worktreePath, { staged: true }),
+        readCommitMessageDiff(
+          worktreePath,
+          MAX_COMMIT_MESSAGE_DIFF_CHARS,
+          indexFile,
+        ),
         this.getLog(worktreePath, MAX_COMMIT_MESSAGE_LOG_ENTRIES),
         this.readCommitConventionDocs(worktreePath),
       ]);
@@ -1356,7 +1361,10 @@ export class GitService {
       attempt += 1
     ) {
       const result = await generate(retryHint);
-      lastRawText = result?.text ?? '';
+      // A null result means startup, authentication, timeout or transport failed.
+      // A JSON correction prompt cannot repair it; avoid restarting the provider.
+      if (!result) return null;
+      lastRawText = result.text;
       const suggestion = this.parseCommitSuggestion(lastRawText, source);
       if (suggestion) {
         return suggestion;

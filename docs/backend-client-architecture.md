@@ -357,6 +357,16 @@ file rows, 20 running-session names and scalar totals. Filtering searches every
 changed file on the backend. A task-owned 4 MiB metadata cache reuses unchanged
 snapshots across filters/pages; its lifetime ends with the backend service.
 
+Desktop commits with a blank message use the same provider preference as session
+startup: explicit configured defaults take priority, otherwise the last-used
+provider is selected. Model selection remains with the text-generation service's
+provider defaults. Manual messages require no provider. Direct Git API/MCP callers
+continue to supply their own provider for generation. Provider failures are not
+retried automatically or replaced with heuristic messages; malformed AI output
+can be corrected within a limit of three generation attempts. Staged diff context
+is read as a bounded prefix with a deadline, without external diff drivers or
+text conversion.
+
 Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
 server-observed changed paths. Likely secret paths require explicit inclusion.
 The commit revision includes HEAD, changed paths and staged blob IDs/modes.
