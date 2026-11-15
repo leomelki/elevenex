@@ -3539,6 +3539,33 @@ describe('CodexRuntimeService', () => {
     await iterator.next();
   });
 
+  it('passes the socket-mode MCP endpoint to Codex threads', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const { service, appServer } = createService();
+    wireAppServerTurn(appServer);
+    try {
+      const iterator = await startAppServerTurn(service, 'default');
+      expect(appServer.request).toHaveBeenCalledWith(
+        'thread/start',
+        expect.objectContaining({
+          config: {
+            'mcp_servers.elevenex': expect.objectContaining({
+              url: 'http://127.0.0.1:43210/api/mcp',
+              http_headers: { Authorization: 'Bearer evx_codex_test' },
+            }),
+          },
+        }),
+      );
+      await iterator.return(undefined);
+    } finally {
+      environment.restore();
+    }
+  });
+
   it('selects native Codex default mode for implementation turns', async () => {
     const { service, appServer, mcpAgentTokens } = createService();
     const wire = wireAppServerTurn(appServer);

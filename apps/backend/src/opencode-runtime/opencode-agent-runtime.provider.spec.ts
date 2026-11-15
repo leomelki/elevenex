@@ -409,6 +409,33 @@ describe('OpenCode runtime lifecycle', () => {
     }
   });
 
+  it('passes the socket-mode MCP endpoint to OpenCode', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const f = fixture('s');
+    try {
+      await f.provider.getHistory(1);
+      expect(OpenCodeServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: {
+            mcp: {
+              elevenex: expect.objectContaining({
+                url: 'http://127.0.0.1:43210/api/mcp',
+                headers: { Authorization: 'Bearer evx_opencode_test' },
+              }),
+            },
+          },
+        }),
+      );
+    } finally {
+      f.provider.onModuleDestroy();
+      environment.restore();
+    }
+  });
+
   it('connects coding sessions to Elevenex and adds current-session instructions', async () => {
     const f = fixture('s');
     try {

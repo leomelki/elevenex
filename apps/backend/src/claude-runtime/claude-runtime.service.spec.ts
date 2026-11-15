@@ -1519,6 +1519,11 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('uses the independently installed Claude CLI when submitting prompts', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),
       getContextUsage: jest.fn().mockResolvedValue({
@@ -1536,12 +1541,24 @@ describe('ClaudeRuntimeService', () => {
       [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
-    await service.submitPrompt(7, 'Stream this');
-
-    expect(query).toHaveBeenCalledTimes(1);
-    expect((query as jest.Mock).mock.calls[0][0].options).toHaveProperty(
-      'pathToClaudeCodeExecutable',
-    );
+    try {
+      await service.submitPrompt(7, 'Stream this');
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(jest.mocked(query).mock.calls[0][0].options).toHaveProperty(
+        'pathToClaudeCodeExecutable',
+      );
+      expect(jest.mocked(query).mock.calls[0][0].options).toMatchObject({
+        mcpServers: {
+          elevenex: {
+            url: 'http://127.0.0.1:43210/api/mcp',
+            headers: { Authorization: 'Bearer evx_claude_test' },
+          },
+        },
+      });
+    } finally {
+      await service.cleanupSession(7);
+      environment.restore();
+    }
   });
 
   it('resolves new Claude processes after environment warm-up instead of keeping the constructor selection', async () => {

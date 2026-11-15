@@ -3,7 +3,7 @@ import { join } from 'path';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { getElevenexProxyPort } from '../config/ports.js';
+import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
@@ -90,10 +90,7 @@ export class ElevenexAgentService implements OnModuleInit {
 
   /** The URL the inner Claude process uses to reach the MCP server. */
   get mcpUrl(): string {
-    return (
-      process.env.ELEVENEX_MCP_URL?.trim() ||
-      `http://127.0.0.1:${getElevenexProxyPort()}/api/mcp`
-    );
+    return elevenexMcpUrl();
   }
 
   async onModuleInit(): Promise<void> {
