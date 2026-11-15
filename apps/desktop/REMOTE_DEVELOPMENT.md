@@ -367,6 +367,19 @@ an end-to-end `/api/info` response at the exact expected revision. Neither a liv
 SSH process nor an open listener qualifies. Health checks also run immediately
 after native resume/unlock notifications. Timeouts bound SSH authentication,
 setup stages, downloads, bridge requests and application health.
+
+End-to-end health probes allow 15 seconds for the bridge reply and `/api/info`
+together. Once connected, failed probes get a 60-second grace period measured
+from the first failed probe's start, using a monotonic clock. Probes remain
+serial and bounded. During that grace the last verified connection, backend
+scope and forwards stay in place so TCP/SSH can recover from packet loss;
+successful end-to-end health resets the grace without advancing the generation.
+Individual application requests retain their own deadlines and mutations are
+never replayed. SSH exit, an explicit not-ready reply, a changed daemon instance
+or a revision mismatch bypass the grace. Disconnect and shutdown cancel active
+probes immediately. Diagnostics record delayed health and recovery on the same
+transport; a persistent stall enters the normal reconnect backoff after the grace.
+
 Intentional pause/disconnect publishes the owning window's state before socket
 cleanup or settings writes finish. That window reports no authenticated transport
 and its saved forwards report `stopped`; another window sharing the host can

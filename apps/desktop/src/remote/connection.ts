@@ -16,6 +16,8 @@ export interface ConnectionOptions {
   readonly changed: () => void;
   readonly random?: () => number;
   readonly healthInterval?: number;
+  readonly healthTimeout?: number;
+  readonly healthGrace?: number;
   readonly backoff?: number;
   readonly retryWindow?: number;
   readonly now?: () => number;
@@ -191,6 +193,7 @@ export class RemoteConnection {
         // Prove the entire path and exact application revision, independently
         // of SSH, a daemon greeting, or a successfully bound forwarding socket.
         const ready = await this.check(transport, url, release.version, setupSignal);
+        if (!ready.ready || ready.instance !== transport.instance) throw failure('application', 'unavailable', 'The remote application is not ready. Reconnecting to check it again.', 'retry', true);
         if (timer) { clearTimeout(timer); timer = undefined; }
         this.interactiveOwner = undefined;
         this.requestedInteractiveOwner = undefined;
@@ -198,20 +201,7 @@ export class RemoteConnection {
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
           generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined });
-        const connectedAt = Date.now();
-        const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
-        void transportLost.catch(() => undefined);
-        while (!signal.aborted) {
-          this.wakeup = new AbortController();
-          await Promise.race([
-            delay(this.options.healthInterval ?? 5000, undefined, { signal: AbortSignal.any([signal, this.wakeup.signal]) }).catch(() => undefined),
-            transportLost,
-          ]);
-          signal.throwIfAborted();
-          const current = await this.check(transport, url, release.version, signal);
-          if (current.instance !== this.status.instanceId) throw failure('application', 'unavailable', 'The remote runtime restarted. Reconnect and reconcile the selected task and session.', 'retry', true);
-          if (Date.now() - connectedAt > 60_000) attempt = 0;
-        }
+        await this.monitor(transport, url, release.version, signal, () => { attempt = 0; });
       } catch (error) {
         if (signal.aborted) break;
         const problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
@@ -242,11 +232,55 @@ export class RemoteConnection {
     }
   }
 
-  private async check(transport: RemoteTransport, url: string, version: string, signal: AbortSignal): Promise<{ ready: boolean; instance: string }> {
-    const healthSignal = AbortSignal.any([signal, AbortSignal.timeout(4000)]);
+  /** A slow network is not proof that SSH died. Preserve scopes and forwards
+   * during a bounded stall, without replaying any application operations. */
+  private async monitor(transport: RemoteTransport, url: string, version: string, signal: AbortSignal, stable: () => void): Promise<void> {
+    const lost = new AbortController();
+    const monitoring = AbortSignal.any([signal, lost.signal]);
+    void transport.exited.then(() => lost.abort(failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true)));
+    const connectedAt = performance.now();
+    let unresponsiveSince: number | undefined;
+    let lastFailure: unknown;
+    const grace = this.options.healthGrace ?? 60_000;
+    try {
+      while (true) {
+        const remaining = unresponsiveSince === undefined ? Infinity : grace - (performance.now() - unresponsiveSince);
+        if (remaining <= 0) throw lastFailure;
+        this.wakeup = new AbortController();
+        await delay(Math.min(this.options.healthInterval ?? 5000, remaining), undefined, { signal: AbortSignal.any([monitoring, this.wakeup.signal]) }).catch(() => undefined);
+        monitoring.throwIfAborted();
+        const started = performance.now();
+        const budget = unresponsiveSince === undefined ? grace : grace - (started - unresponsiveSince);
+        if (budget <= 0 && unresponsiveSince !== undefined) throw lastFailure;
+        let current: { ready: boolean; instance: string };
+        try {
+          current = await this.check(transport, url, version, monitoring, Math.max(1, Math.ceil(Math.min(this.options.healthTimeout ?? 15_000, budget))));
+        } catch (error) {
+          monitoring.throwIfAborted();
+          if (!asFailure(error, 'application').transient) throw error;
+          if (unresponsiveSince === undefined) this.log('application', 'health-delayed', 'Remote health checks are delayed. Keeping the existing SSH transport during the network grace period.');
+          unresponsiveSince ??= started;
+          lastFailure = error;
+          continue;
+        }
+        monitoring.throwIfAborted();
+        if (current.instance !== this.status.instanceId) throw failure('application', 'unavailable', 'The remote runtime restarted. Reconnect and reconcile the selected task and session.', 'retry', true);
+        if (!current.ready) throw failure('application', 'unavailable', 'The remote application is not ready. Reconnecting to check it again.', 'retry', true);
+        if (unresponsiveSince !== undefined) this.log('application', 'health-restored', 'Remote health checks recovered on the existing SSH transport.');
+        unresponsiveSince = undefined;
+        if (performance.now() - connectedAt > 60_000) stable();
+      }
+    } finally { lost.abort(); }
+  }
+
+  private async check(transport: RemoteTransport, url: string, version: string, signal: AbortSignal, timeout = this.options.healthTimeout ?? 15_000): Promise<{ ready: boolean; instance: string }> {
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), timeout);
+    timer.unref();
+    const healthSignal = AbortSignal.any([signal, deadline.signal]);
     try {
       const health = await transport.health(healthSignal);
-      if (!health.ready) throw new Error('Application unavailable');
+      if (!health.ready || health.instance !== transport.instance) return health;
       const response = await fetch(`${url}/api/info`, { signal: healthSignal, redirect: 'error', headers: this.backendHeaders() });
       if (!response.ok) { await response.body?.cancel(); throw new Error('Application unavailable'); }
       const info: unknown = JSON.parse((await boundedBody(response, 4096)).toString('utf8'));
@@ -255,6 +289,6 @@ export class RemoteConnection {
     } catch (error) {
       if (error instanceof Error && 'failure' in error) throw error;
       throw failure('application', 'unavailable', 'The remote application is not responding through the SSH transport. Reconnecting to check it again.', 'retry', true);
-    }
+    } finally { clearTimeout(timer); deadline.abort(); }
   }
 }
