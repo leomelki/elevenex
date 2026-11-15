@@ -6,6 +6,8 @@ import {
   type ClaudeSessionActivity,
 } from '../claude-hooks/claude-hooks.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 import {
   DesktopWorkspaceActivityService,
   type WorkspaceSessionActivity,
@@ -17,7 +19,7 @@ const session = (
 ): WorkspaceSessionActivity => ({
   id,
   activeAgentProvider: 'claude',
-  status: 'active',
+  status: 'created',
   hasUnreviewedCompletion: false,
   lastCompletionAt: null,
   ...patch,
@@ -27,6 +29,8 @@ describe('bounded workspace sidebar activity', () => {
   let service: DesktopWorkspaceActivityService;
   let navigation: NavigationEventsService;
   const snapshots = new Map<number, ClaudeSessionActivity>();
+  const sessions = new EventEmitter();
+  const codex = Object.assign(new EventEmitter(), { info: { id: 'codex' } });
   const provider = Object.assign(new EventEmitter(), {
     info: { id: 'claude' },
     getRuntimeState: jest.fn(),
@@ -51,6 +55,7 @@ describe('bounded workspace sidebar activity', () => {
     snapshots.clear();
     provider.removeAllListeners();
     hooks.removeAllListeners();
+    sessions.removeAllListeners(); codex.removeAllListeners();
     provider.getRuntimeState.mockClear();
     provider.getHistory.mockClear();
     provider.getSnapshot.mockClear();
@@ -61,11 +66,12 @@ describe('bounded workspace sidebar activity', () => {
         {
           provide: AgentRuntimeRegistryService,
           useValue: {
-            listProviders: () => [provider.info],
-            getProvider: () => provider,
+            listProviders: () => [provider.info, codex.info],
+            getProvider: (id: string) => id === 'codex' ? codex : provider,
           },
         },
         { provide: ClaudeHooksService, useValue: hooks },
+        { provide: SessionsService, useValue: sessions },
       ],
     }).compile();
     await module.init();
@@ -73,6 +79,49 @@ describe('bounded workspace sidebar activity', () => {
     navigation = module.get(NavigationEventsService);
   });
   afterEach(async () => module.close());
+  it('recovers old inactive conversations without completion stamps or history hydration', () => {
+    for (const identity of [{ claudeSessionId: 'old' }, { codexSessionId: 'old' }, { piSessionPath: '/old.jsonl' }, { opencodeSessionId: 'old' }]) {
+      expect(service.status(session(1, identity))).toBe('done');
+      expect(service.status(session(1, { ...identity, hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-15T00:00:00.000Z' }))).toBe('review');
+    }
+    expect(service.status(session(2, { status: 'active' }))).toBe('done');
+    expect(service.status(session(3))).toBe('queued');
+    expect(service.status(session(4, { hasUnreviewedCompletion: true, lastCompletionAt: null }))).toBe('done');
+    expect(provider.getHistory).not.toHaveBeenCalled();
+    expect(provider.getRuntimeState).not.toHaveBeenCalled();
+  });
+  it('uses the inferred provider for legacy live sessions', () => {
+    codex.emit('event', { type: 'run_state', payload: { sessionId: 1, runPhase: 'running' } });
+    expect(service.status(session(1, { codexSessionId: 'old' }))).toBe('running');
+    expect(service.status(session(1, { activeAgentProvider: 'pi', codexSessionId: 'old' }))).toBe('done');
+    hooks.emit('status-changed', { sessionId: 1, provider: 'claude' });
+    expect(service.status(session(1, { codexSessionId: 'old' }))).toBe('running');
+    hooks.emit('status-changed', { sessionId: 1, provider: 'codex' });
+    expect(service.status(session(1, { codexSessionId: 'old' }))).toBe('done');
+  });
+  it('keeps live work through thousands of quiet session snapshots without repeated invalidations', () => {
+    emit(1, { runPhase: 'running' });
+    const revision = navigation.revision;
+    for (let id = 2; id <= 5000; id++) emit(id, { runPhase: 'idle', canInterrupt: false });
+    expect(service.status(session(1, { status: 'active' }))).toBe('running');
+    expect(navigation.revision).toBe(revision);
+    expect(provider.getHistory).not.toHaveBeenCalled();
+    expect(provider.getRuntimeState).not.toHaveBeenCalled();
+  });
+  it('clears stale activity on teardown and lifecycle changes without hiding live work', () => {
+    emit(1, { runPhase: 'running' });
+    snapshots.set(1, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: true });
+    hooks.emit('status-changed', { sessionId: 1 });
+    expect(service.status(session(1, { status: 'active' }))).toBe('running');
+    snapshots.delete(1); hooks.emit('status-changed', { sessionId: 1 });
+    expect(service.status(session(1, { status: 'active' }))).toBe('done');
+    emit(2, { runPhase: 'idle', pendingPrompts: [{ id: 'old-queue' }] });
+    sessions.emit('session-status-changed', { sessionId: 2, status: 'archived' });
+    expect(service.status(session(2, { status: 'active' }))).toBe('done');
+    snapshots.set(2, { activityStatus: 'running', actionKind: null, actionLabel: null, backgroundActive: true });
+    expect(service.status(session(2, { status: 'stopped' }))).toBe('done');
+    expect(service.status(session(2, { status: 'archived', hasUnreviewedCompletion: true }))).toBe('archived');
+  });
   it('reports nonselected running and needs-input sessions without reading provider histories or hydrating runtimes', () => {
     snapshots.set(1, {
       activityStatus: 'running',
@@ -141,5 +190,7 @@ describe('bounded workspace sidebar activity', () => {
     await module.close();
     expect(provider.listenerCount('event')).toBe(0);
     expect(hooks.listenerCount('status-changed')).toBe(0);
+    expect(codex.listenerCount('event')).toBe(0);
+    expect(sessions.listenerCount('session-status-changed')).toBe(0);
   });
 });

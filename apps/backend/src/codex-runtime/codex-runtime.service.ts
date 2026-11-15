@@ -112,7 +112,7 @@ import type {
 type CodexTurnEvent = ThreadEvent | {
   type: 'user.message';
   message: { id: string; text: string };
-};
+} | { type: 'turn.interrupted' };
 
 const CODEX_STOP_UNCONFIRMED_MESSAGE =
   'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.';
@@ -451,7 +451,7 @@ export class CodexRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     await this.refreshAuthStatusFast(state, sessionId);
     if (state.authStatus?.authMethod === 'oauth') {
@@ -1788,7 +1788,7 @@ export class CodexRuntimeService
     const turnReadyPromise = new Promise<void>((resolve) => {
       resolveTurnReady = resolve;
     });
-    this.activeRuns.set(sessionId, {
+    const activeRun: CodexActiveRunState = {
       threadId: state.codexSessionId,
       turnId: null,
       turnReadyPromise,
@@ -1800,14 +1800,19 @@ export class CodexRuntimeService
       startedAtMs: Date.now(),
       permissionRequests: new Map(),
       userInputRequests: new Map(),
-    });
+    };
+    this.activeRuns.set(sessionId, activeRun);
+    const ownsSession = () => !this.invalidatedSessions.has(sessionId) &&
+      generation === (this.sessionGenerations.get(sessionId) ?? 0) && this.runtimeStates.get(sessionId) === state;
 
     onAccepted?.();
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
+    let completed = false;
+    let interrupted = false;
     try {
       changeCapture = await this.turnChanges?.begin(sessionId, 'codex', resolvedWorktreePath);
-      if (abortController.signal.aborted || this.activeRuns.get(sessionId)?.interruptRequested) return;
+      if (!ownsSession() || abortController.signal.aborted || activeRun.interruptRequested) return;
       const built = await this.buildCodexInput(trimmedPrompt, validatedImages);
       stagedImageDir = built.tempDir;
       const turnInput: Array<
@@ -1825,20 +1830,27 @@ export class CodexRuntimeService
         turnInput,
         abortController.signal,
       )) {
-        if (this.invalidatedSessions.has(sessionId)) {
+        if (!ownsSession() || this.activeRuns.get(sessionId) !== activeRun) {
           break;
         }
         const run = this.activeRuns.get(sessionId);
         if (run?.interruptRequested) {
           break;
         }
+        if (event.type === 'turn.interrupted') { interrupted = true; continue; }
+        if (event.type === 'turn.completed') completed = true;
         // Synchronous event handler — no awaits on the hot path. The one
         // historically-async branch (persisting the codex session id) is now
         // fire-and-forget so it can't stall delta delivery.
         this.handleCodexEvent(sessionId, state, event, resolvedWorktreePath);
       }
-      this.finishRun(sessionId);
+      if (!ownsSession()) return;
+      if (interrupted || abortController.signal.aborted || activeRun.interruptRequested)
+        this.finalizeInterruptedRun(sessionId);
+      else
+        this.finishRun(sessionId);
     } catch (error) {
+      if (!ownsSession()) return;
       const run = this.activeRuns.get(sessionId);
       if (run?.interruptRequested || abortController.signal.aborted) {
         this.finalizeInterruptedRun(sessionId);
@@ -1859,21 +1871,35 @@ export class CodexRuntimeService
           changeCapture,
           state.codexSessionId,
         );
-        if (changes && !this.invalidatedSessions.has(sessionId))
+        if (changes && ownsSession() && this.activeRuns.get(sessionId) === activeRun)
           this.pushItem(sessionId, changes);
+        // Persist after final transcript/change evidence is available. Rewind,
+        // interruption, cleanup and a stream without completion are not replies.
+        if (
+          completed && !interrupted && !state.lastError &&
+          !abortController.signal.aborted && !activeRun.interruptRequested &&
+          this.activeRuns.get(sessionId) === activeRun && ownsSession()
+        ) {
+          try {
+            await this.sessionsService.markCompletionUnreviewed(sessionId, 'completed');
+          } catch (error) {
+            this.logger.warn(`Failed to record Codex completion for session ${sessionId}: ${String(error)}`);
+          }
+        }
         changesFinished = true;
       } finally {
         // Capture failure must not strand the run or unblock automatic dispatch.
-        const run = this.activeRuns.get(sessionId);
-        this.activeRuns.delete(sessionId);
+        const run = activeRun;
+        if (this.activeRuns.get(sessionId) === run) this.activeRuns.delete(sessionId);
         state.asyncAnswerPrompts.clear();
-        run?.resolveTurnReady();
-        run?.resolveCompletion();
+        run.resolveTurnReady();
+        run.resolveCompletion();
         if (stagedImageDir) {
           void rm(stagedImageDir, { recursive: true, force: true });
         }
         if (
           changesFinished &&
+          ownsSession() &&
           !state.lastError &&
           !state.queuePaused &&
           state.pendingPrompts.length > 0
@@ -3075,7 +3101,7 @@ export class CodexRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state, sessionId),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     this.emitEvent({
       type: 'run_state',
@@ -3865,6 +3891,8 @@ export class CodexRuntimeService
                 message: params?.turn?.error?.message ?? 'Codex turn failed',
               },
             });
+          } else if (turnStatus === 'interrupted') {
+            push({ type: 'turn.interrupted' });
           } else {
             push({ type: 'turn.completed', usage: lastUsage });
           }

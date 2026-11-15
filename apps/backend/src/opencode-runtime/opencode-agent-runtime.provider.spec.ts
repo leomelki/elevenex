@@ -16,6 +16,7 @@ import type { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.servi
 import type { ClaudeRuntimeEvent } from '../claude-runtime/claude-runtime.types.js';
 
 jest.mock('./opencode-server.js', () => ({ OpenCodeServer: jest.fn() }));
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
   let resolve!: (value: T) => void;

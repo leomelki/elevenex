@@ -523,6 +523,11 @@ checks stable row geometry, preservation while reading earlier content, and
 clearing on return to latest, in both themes and narrow reduced-motion layouts.
 Run against the connected workspace preview URL.
 
+`scenarios/session-status-recovery.mjs` covers legacy idle/active conversations,
+genuinely new sessions, unseen replies and live work together. It verifies
+refresh/reopening, keyboard viewing, stable settled row positions and both themes
+with narrow reduced-motion layouts against the connected workspace preview.
+
 `scenarios/background-refresh.mjs` samples real frames during delayed background
 navigation and Git reads, transient failures and recovery. It checks retained
 chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and
