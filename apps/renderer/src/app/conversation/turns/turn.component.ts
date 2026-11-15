@@ -3,6 +3,7 @@ import {
   Component,
   ElementRef,
   type OnChanges,
+  afterRenderEffect,
   computed,
   effect,
   inject,
@@ -22,7 +23,7 @@ import type {
 import { WorkTimelineComponent } from "./work-timeline.component";
 import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
-import { formatDuration, isProse } from "./work-summary";
+import { formatDuration, isProse, summarizeWork } from "./work-summary";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import type { ToolContentRequest } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
@@ -148,6 +149,18 @@ export class TurnComponent implements OnChanges {
   protected readonly showWork = computed(
     () => this.status() === "live" || this.timelineSteps().length > 0,
   );
+  protected readonly facts = computed(() =>
+    this.status() === "live"
+      ? []
+      : summarizeWork(
+          this.steps().filter((step) => step.status !== "running"),
+          this.files(),
+          this.filesTotal() ?? this.files().length,
+        ),
+  );
+  private readonly factsElement =
+    viewChild<ElementRef<HTMLElement>>("factsRegion");
+  protected readonly factsClipped = signal(false);
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
   protected readonly workHeader = linkedSignal<
@@ -179,6 +192,18 @@ export class TurnComponent implements OnChanges {
     { read: ElementRef },
   );
   constructor() {
+    afterRenderEffect((onCleanup) => {
+      const element = this.factsElement()?.nativeElement;
+      this.facts();
+      if (!element) return;
+      const measure = () =>
+        this.factsClipped.set(element.scrollWidth > element.clientWidth + 1);
+      measure();
+      if (typeof ResizeObserver === "undefined") return;
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      onCleanup(() => observer.disconnect());
+    });
     // Only a live turn with a known start ticks; settled turns stay still.
     effect((onCleanup) => {
       if (this.status() !== "live" || this.startedAt() === undefined) return;

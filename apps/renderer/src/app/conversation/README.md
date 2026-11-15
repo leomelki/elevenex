@@ -204,7 +204,14 @@ successes. Expected/recovered failures do not contribute to the failure marker;
 later success alone never clears it. Running/unknown tools remain visible.
 Each section opens independently and retains that choice through streaming and
 completion. The work line shows status/time and expands or collapses all sections;
-category totals live in the sections instead of repeating in the heading.
+category totals remain available in the section summaries.
+Settled turns also reveal up to four work facts beside the duration on turn
+hover, keyboard focus or expansion (for example, Edited 2 files · Ran 3 commands).
+They enter with a short stagger and spring, and fade/slide out together on a
+shorter curve; reduced motion removes movement and touch keeps them visible.
+Unrecovered failure facts stay visible. Narrow headings clip the facts with a
+trailing fade while retaining the duration and disclosure. Counts exclude
+running/unknown tools; partial file windows omit aggregate line counts.
 Live counts use the shared Ticker, with still initial history and reduced motion.
 Inspected results and focused controls remain mounted and visible.
 Explicit section collapse releases its inspection pins; focusing a summary alone

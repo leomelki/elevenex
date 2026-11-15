@@ -294,7 +294,7 @@ describe("turn evidence", () => {
       fixture.componentRef.setInput("startedAt", Date.parse("2026-10-28T12:00:00Z"));
       fixture.detectChanges();
       const host: HTMLElement = fixture.nativeElement;
-      const work = () => host.querySelector(".work")?.textContent?.replace(/\s+/g, " ").trim();
+      const work = () => host.querySelector(".work-label")?.textContent?.replace(/\s+/g, " ").trim();
       expect(work()).toBe("Working for 42s");
       vi.advanceTimersByTime(20_000);
       fixture.detectChanges();
@@ -313,11 +313,16 @@ describe("turn evidence", () => {
       vi.useRealTimers();
     }
   });
-  it("keeps the work line focused on duration and preserves changed files in the outcome", () => {
+  it("restores completed-work facts beside the duration while keeping live work concise", () => {
     const fixture = TestBed.createComponent(TurnComponent);
     fixture.componentRef.setInput("status", "live");
     fixture.componentRef.setInput("elapsed", 12);
-    fixture.componentRef.setInput("steps", [{ id: "run", kind: "run", status: "done" }]);
+    fixture.componentRef.setInput("steps", [
+      { id: "run", kind: "run", status: "done" },
+      { id: "read", kind: "read", status: "done" },
+      { id: "unknown", kind: "read", status: "unknown" },
+      { id: "running", kind: "run", status: "running" },
+    ]);
     fixture.componentRef.setInput("files", [{ path: "turn.css", add: 83, del: 12 }]);
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
@@ -327,8 +332,23 @@ describe("turn evidence", () => {
     fixture.componentRef.setInput("status", "done");
     fixture.componentRef.setInput("duration", 12);
     fixture.detectChanges();
-    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Worked for 12s");
+    expect(host.querySelector(".work-label")?.textContent?.trim()).toBe("Worked for 12s");
+    expect(Array.from(host.querySelectorAll(".fact"), fact =>
+      fact.textContent?.replace(/\s+/g, " ").trim(),
+    )).toEqual(["Edited 1 file +83−12", "Ran 1 command", "Read 1 file"]);
+    const work = host.querySelector<HTMLButtonElement>(".work")!;
+    expect(work.getAttribute("aria-expanded")).toBe("false");
+    work.click();
+    fixture.detectChanges();
+    expect(work.getAttribute("aria-expanded")).toBe("true");
     expect(host.querySelector("ex-outcome-bar")?.textContent).toContain("turn.css");
+    fixture.componentRef.setInput("filesTotal", 8);
+    fixture.detectChanges();
+    expect(host.querySelector(".fact")?.textContent).toContain("Edited 8 files");
+    expect(host.querySelector(".fact .diff")).toBeNull();
+    fixture.componentRef.setInput("status", "live");
+    fixture.detectChanges();
+    expect(host.querySelector(".facts")).toBeNull();
     fixture.destroy();
   });
   it("keeps overlapping running tools before later commentary in the timeline", () => {

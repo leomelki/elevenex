@@ -472,7 +472,11 @@ describe("connected chat reply rendering", () => {
       const answer = turn.querySelector(".answer")!;
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(turn.querySelector(".work-row")?.textContent).not.toContain("command");
+      if (phase === "idle") {
+        expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+      } else {
+        expect(turn.querySelector(".facts")).toBeNull();
+      }
       expect(turn.querySelectorAll(".caret")).toHaveLength(0);
       const head = tool.querySelector<HTMLButtonElement>(".head")!;
       expect(head.getAttribute("aria-expanded")).toBe("false");
