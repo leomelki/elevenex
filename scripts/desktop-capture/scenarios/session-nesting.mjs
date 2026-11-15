@@ -13,16 +13,24 @@ export default async function* (capture) {
     await capture.theme(theme); await capture.viewport(1440,960);
     await owner(component => component.store.selectSession({taskId:'11',sessionId:'102'}));
     await finish();
+    await capture.hover('[data-task-id="11"] [data-session-id="102"] .select');
+    await capture.waitFor(() => document.querySelector('ex-tooltip')?.textContent?.includes('Review the race condition'));
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-tooltip').closest('.cdk-overlay-pane').style.pointerEvents), 'none');
     const items = await capture.evaluate(() => {
       const transfer = new window.DataTransfer();
       document.querySelector('[data-task-id="11"] [data-session-id="102"] .select').dispatchEvent(new window.DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:transfer}));
       return [...transfer.types].map(mimeType=>({mimeType,data:transfer.getData(mimeType)}));
     });
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-tooltip')), null);
+    await capture.hover('[data-task-id="11"] [data-session-id="101"] .select');
     const target = await capture.evaluate(() => { const rect = document.querySelector('[data-task-id="11"] [data-session-id="101"]').getBoundingClientRect(); return {x:rect.x+rect.width/2,y:rect.y+rect.height/2}; });
     const data = {items,dragOperationsMask:17};
     await capture.cdp('Input.dispatchDragEvent',{type:'dragEnter',...target,data});
     await capture.cdp('Input.dispatchDragEvent',{type:'dragOver',...target,data});
     await capture.waitFor(()=>document.querySelector('.drop-active'));
+    // Wait past the hover delay while positioned over the destination.
+    await capture.evaluate(() => new Promise(resolve => window.setTimeout(resolve, 450)));
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-tooltip')), null);
     yield {name:`${theme}-drop-target`,inspect:['ex-workspace-navigation','.drop-active','.drop-hint']};
     await capture.cdp('Input.dispatchDragEvent',{type:'drop',...target,data});
     await capture.waitFor(()=>document.querySelector('.children [data-session-id="102"]'));

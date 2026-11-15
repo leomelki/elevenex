@@ -161,6 +161,10 @@ preview-only backend adapter. Its fixture never enters the production build.
   status changes; changing reduced motion cancels those effects immediately.
   Keep continuous motion off inner SVG paths, and avoid blanket layer hints
   across repository-sized lists.
+- Tooltips are pointer-transparent, close when dragging begins, and stay suppressed
+  until drop, drag cancellation or window blur. Delayed hover tooltips are cancelled
+  too; a fresh hover/focus restores ordinary behavior after the drag. Shared drag
+  listeners belong to the renderer injector and are released on destruction.
 - Menus/popovers use CDK overlay/focus facilities. Native buttons retain native
   disabled, keyboard and form semantics. The button primitive is used as
   `<button exButton variant="primary">…</button>`; icon actions require a label.

@@ -1,4 +1,5 @@
 import { AriaDescriber } from "@angular/cdk/a11y";
+import { DOCUMENT } from "@angular/common";
 import { Overlay, OverlayRef } from "@angular/cdk/overlay";
 import { ComponentPortal } from "@angular/cdk/portal";
 import {
@@ -16,7 +17,31 @@ import { TooltipComponent } from "./tooltip.component";
 @Injectable({ providedIn: "root" })
 export class TooltipTiming {
   lastClosed = 0;
+  dragging = false;
   private active?: () => void;
+
+  constructor() {
+    const document = inject(DOCUMENT);
+    const end = () => { this.dragging = false; };
+    const start = (event: Event) => {
+      this.dragging = true;
+      this.active?.();
+      // A cancelled dragstart has no matching native dragend.
+      if (event.type === "dragstart") queueMicrotask(() => { if (event.defaultPrevented) end(); });
+    };
+    const starts = ["dragstart", "dragover"] as const;
+    const ends = ["dragend", "drop", "pointerdown"] as const;
+    // One set of listeners per renderer, including drops after the source row unmounts.
+    for (const type of starts) document.addEventListener(type, start, true);
+    for (const type of ends) document.addEventListener(type, end, true);
+    document.defaultView?.addEventListener("blur", end);
+    inject(DestroyRef).onDestroy(() => {
+      for (const type of starts) document.removeEventListener(type, start, true);
+      for (const type of ends) document.removeEventListener(type, end, true);
+      document.defaultView?.removeEventListener("blur", end);
+      this.active?.();
+    });
+  }
 
   activate(close: () => void): void {
     this.active?.();
@@ -61,13 +86,15 @@ export class TooltipDirective {
 
   protected schedule(focused: boolean): void {
     this.hide();
-    if (!this.exTooltip()) return;
+    if (!this.exTooltip() || this.timing.dragging) return;
+    this.timing.activate(this.closeActive);
     const delay =
       focused || Date.now() - this.timing.lastClosed < 600 ? 0 : 400;
     this.timer = setTimeout(() => this.show(), delay);
   }
 
   private show(): void {
+    if (!this.exTooltip() || this.timing.dragging) return;
     // Hovering another control replaces a tooltip retained by keyboard focus.
     this.timing.activate(this.closeActive);
     const top = this.tooltipSide() === "top";
@@ -115,6 +142,8 @@ export class TooltipDirective {
     });
     this.detachment = this.popup.detachments().subscribe(() => this.hide());
     const component = this.popup.attach(new ComponentPortal(TooltipComponent));
+    // Attach resets the pane's pointer events; the entire overlay must pass input through.
+    this.popup.overlayElement.style.pointerEvents = "none";
     component.setInput("label", this.exTooltip());
     component.setInput("kbd", this.tooltipShortcut());
     this.described = this.exTooltip();
