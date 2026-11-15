@@ -49,6 +49,17 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   ];
   private failReads = false;
   private navigationRevision = 0;
+  private childReadsHeld = false;
+  private childReadsFailed = false;
+  private readonly pendingChildReads = new Set<() => void>();
+  setChildReads(mode: 'ready' | 'held' | 'failed'): void {
+    this.childReadsHeld = mode === 'held'; this.childReadsFailed = mode === 'failed';
+    if (!this.childReadsHeld) { for (const finish of this.pendingChildReads) finish(); this.pendingChildReads.clear(); }
+  }
+  manyChildren(): void {
+    this.sessionRows = this.sessionRows.filter(row => row.id < 400).concat(Array.from({length:45},(_,index)=>({id:400+index,taskId:11,repoId:1,parentSessionId:101,name:`Child investigation ${index + 1}`,provider:'codex',status:'done',updatedAt:stamp})));
+    this.navigationRevision++;
+  }
   /** Older engine activity replies alongside real queued/live/unseen states. */
   legacySessionActivity(): void {
     this.taskRows = this.taskRows.filter(task => task.id === 11);
@@ -112,12 +123,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     super(); this.ready();
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); for (const finish of this.pendingSessionCreates.values()) finish('unknown'); this.pendingSessionCreates.clear(); });
-    inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); });
+    inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); this.setChildReads('ready'); });
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));
@@ -132,9 +143,13 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     return success(page(this.taskRows.filter(task => (query.projectId === null || task.projectId === query.projectId) && (query.state === 'finished' ? task.state === 'finished' : task.state !== 'finished')).map(task => this.navigationTask(task))));
   };
   override workspaceSessions = async (_scope: string, query: WorkspaceSessionQuery) => {
-    const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || session.id < Number(query.cursor))).sort((a,b) => b.id - a.id);
+    if (typeof query.parentSessionId === 'number') {
+      if (this.childReadsHeld) await new Promise<void>(resolve => this.pendingChildReads.add(resolve));
+      if (this.childReadsFailed) return { ok: false as const, error: { code: 'transport' as const, message: 'Could not load child sessions. Try again.' } };
+    }
+    const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.parentSessionId === undefined || (session.parentSessionId ?? null) === query.parentSessionId) && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || session.id < Number(query.cursor))).sort((a,b) => b.id - a.id);
     const limit = query.limit ?? 20;
-    return success({ items: rows.slice(0,limit).reverse(), nextCursor: rows.length > limit ? String(rows[limit - 1]!.id) : null });
+    return success({ items: rows.slice(0,limit).reverse().map(session => ({ ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length })), nextCursor: rows.length > limit ? String(rows[limit - 1]!.id) : null });
   };
   workspaceTask = async (_scope: string, id: number) => success(this.navigationTask(this.taskRows.find(task => task.id === id)!));
   workspaceRetryTask = async (scope: string, id: number, recovery?: WorkspaceTaskRecovery) => {
@@ -187,8 +202,16 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     return success(task);
   };
   workspaceArchiveSession = async (_scope: string, input: WorkspaceArchiveSession) => {
-    this.sessionRows = this.sessionRows.map(session => session.taskId === input.taskId && session.id === input.sessionId ? { ...session, status: 'archived' } : session);
+    this.sessionRows = this.sessionRows.map(session => session.taskId === input.taskId && session.id === input.sessionId ? { ...session, status: 'archived' } : session.parentSessionId === input.sessionId ? { ...session, parentSessionId: null } : session);
     return success({ accepted: true as const });
+  };
+  workspaceMoveSession = async (_scope: string, input: import('@elevenex/shared').WorkspaceMoveSession) => {
+    const source = this.sessionRows.find(row => row.id === input.sessionId && row.taskId === input.taskId);
+    if (!source) throw new Error('Unknown session');
+    const moved = { ...source, parentSessionId: input.parentSessionId };
+    this.sessionRows = this.sessionRows.map(row => row.id === source.id ? moved : row);
+    this.navigationRevision++;
+    return success(moved);
   };
   workspaceRestoreSession = async (_scope: string, input: WorkspaceRestoreSession) => {
     const session = this.sessionRows.find(session => session.taskId === input.taskId && session.id === input.sessionId);

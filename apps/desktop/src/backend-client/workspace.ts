@@ -208,7 +208,13 @@ function session(value: unknown): WorkspaceSession {
     status: text(raw['status'], 64),
     provider: text(raw['provider'], 64),
     updatedAt: text(raw['updatedAt'], 64),
+    ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? null : id(raw['parentSessionId']) }),
+    ...(raw['childCount'] === undefined ? {} : { childCount: nonnegativeCount(raw['childCount']) }),
   };
+}
+function nonnegativeCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
+  return value;
 }
 export function parseWorkspacePage<T>(
   value: unknown,
@@ -361,11 +367,12 @@ export function registerWorkspaceIpc(
           revision < 0
         )
           throw invalidResponse();
+        if (response['sessionNesting'] !== undefined && response['sessionNesting'] !== true) throw invalidResponse();
         if (response['sessionArchiveHistory'] !== undefined && response['sessionArchiveHistory'] !== true) throw invalidResponse();
         if (response['sessionArchive'] !== undefined && response['sessionArchive'] !== true) throw invalidResponse();
         if (response['taskRequests'] !== undefined && response['taskRequests'] !== true) throw invalidResponse();
         if (response['commitPanel'] !== undefined && response['commitPanel'] !== true) throw invalidResponse();
-        return { revision, version: 1 as const, ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
+        return { revision, version: 1 as const, ...(response['sessionNesting'] === true ? { sessionNesting: true as const } : {}), ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
       });
     }),
   );
@@ -545,10 +552,10 @@ export function registerWorkspaceIpc(
     return read(
       window,
       scope,
-      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
+      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
       (value) => {
         const result = parseWorkspacePage(value, session);
-        if (result.items.some((session) => session.taskId !== taskId || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
+        if (result.items.some((session) => session.taskId !== taskId || (typeof raw['parentSessionId'] === 'number' && session.parentSessionId !== raw['parentSessionId']) || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
           throw invalidResponse();
         return result;
       },
@@ -685,6 +692,16 @@ export function registerWorkspaceIpc(
   register('workspace:archive-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
     return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']) }, accepted);
+  });
+  register('workspace:move-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    const parentSessionId = raw['parentSessionId'] === null ? null : id(raw['parentSessionId']);
+    if (parentSessionId === sessionId) throw invalidResponse();
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/parent`, { parentSessionId }, value => {
+      const moved = session(value);
+      if (moved.id !== sessionId || moved.taskId !== taskId || moved.parentSessionId !== parentSessionId) throw invalidResponse();
+      return moved;
+    });
   });
   register('workspace:restore-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);

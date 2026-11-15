@@ -1,4 +1,4 @@
-import { integer, text, sqliteTable, index } from 'drizzle-orm/sqlite-core';
+import { integer, text, sqliteTable, index, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
 import { sessionFolders } from './session-folders.schema.js';
@@ -14,6 +14,10 @@ export const sessions = sqliteTable(
       onDelete: 'set null',
     }),
     folderId: integer('folder_id').references(() => sessionFolders.id, {
+      onDelete: 'set null',
+    }),
+    // Sidebar organization, independent of transcript fork provenance.
+    parentSessionId: integer('parent_session_id').references((): AnySQLiteColumn => sessions.id, {
       onDelete: 'set null',
     }),
     branchName: text('branch_name').notNull(),
@@ -79,6 +83,7 @@ export const sessions = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => [
+    index('sessions_parent_idx').on(table.parentSessionId, table.workspaceId, table.status, table.id),
     index('sessions_repo_activity_idx').on(
       table.repoId,
       table.surface,

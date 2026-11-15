@@ -1,0 +1,20 @@
+:host { display: block; min-width: 0; }
+.branch { position: relative; border-radius: var(--radius-sm); }
+.branch-row { display: flex; align-items: center; min-width: 0; }
+ex-session-row { flex: 1; min-width: 0; }
+.disclosure, .disclosure-space { flex: none; width: 16px; }
+.disclosure, .move-menu { display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs); color: var(--ink-muted); background: transparent; cursor: pointer; }
+.disclosure { height: 24px; }
+.disclosure ex-icon { transition: transform var(--dur-base) var(--ease-out); }
+.disclosure .closed { transform: rotate(-90deg); }
+.move-menu { flex: none; width: 22px; height: 22px; opacity: 0; }
+.branch-row:hover > .move-menu, .branch-row:focus-within > .move-menu, .move-menu[aria-expanded="true"] { opacity: 1; }
+.disclosure:hover, .move-menu:hover { color: var(--ink); background: var(--surface-sunken); }
+.disclosure:focus-visible, .move-menu:focus-visible, .children button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.children { margin-left: var(--space-4); border-left: 1px solid var(--line); padding-left: var(--space-1); }
+.children p, .earlier { margin: 0; padding: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
+.children button { border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.children button:disabled { opacity: .5; cursor: default; }
+.drop-active > .branch-row { background: var(--accent-soft); outline: 1px solid var(--accent); border-radius: var(--radius-sm); }
+.drop-hint { position: absolute; z-index: 1; top: 100%; right: var(--space-2); max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-size: var(--text-caption-size); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .disclosure ex-icon { transition: none; } }

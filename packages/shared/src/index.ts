@@ -10,7 +10,7 @@ export type * from './session-chat';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
-import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
+import type { WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
 import type { EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteDiagnostic, RemoteForwardInput, RemoteHost, RemoteHostInput } from './remote';
@@ -104,7 +104,7 @@ export interface InvokeContracts {
   'workspace:delete-project': { args: [scopeId: string, projectId: number]; result: BackendResult<{ readonly accepted: true }> };
   'workspace:waiting-read': { args: [expected: EnvironmentSelection]; result: WaitingWritingSnapshot };
   'workspace:waiting-save': { args: [expected: EnvironmentSelection, identity: string, input: WaitingWriting]; result: void };
-  'workspace:revision': { args: [scopeId: string]; result: BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }> };
+  'workspace:revision': { args: [scopeId: string]; result: BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }> };
   'workspace:projects': { args: [scopeId: string, input: WorkspacePageQuery]; result: BackendResult<WorkspacePage<WorkspaceProject>> };
   'workspace:project-name-availability': { args: [scopeId: string, name: string]; result: BackendResult<{ readonly available: boolean }> };
   'workspace:project': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceProjectDetail> };
@@ -115,6 +115,7 @@ export interface InvokeContracts {
   'workspace:create-project': { args: [scopeId: string, input: WorkspaceCreateProject]; result: BackendResult<WorkspaceProjectDetail> };
   'workspace:create-task': { args: [scopeId: string, input: WorkspaceCreateTask]; result: BackendResult<WorkspaceTask> };
   'workspace:archive-session': { args: [scopeId: string, input: WorkspaceArchiveSession]; result: BackendResult<{ readonly accepted: true }> };
+  'workspace:move-session': { args: [scopeId: string, input: WorkspaceMoveSession]; result: BackendResult<WorkspaceSession> };
   'workspace:restore-session': { args: [scopeId: string, input: WorkspaceRestoreSession]; result: BackendResult<WorkspaceSession> };
   'workspace:create-session': { args: [scopeId: string, input: WorkspaceCreateSession]; result: BackendResult<WorkspaceSession> };
   'workspace:rename-task': { args: [scopeId: string, input: WorkspaceRenameTask]; result: BackendResult<WorkspaceTask> };
@@ -239,7 +240,7 @@ export interface ElevenexBridge {
   workspaceDeleteProject(scopeId: string, projectId: number): Promise<BackendResult<{ readonly accepted: true }>>;
   workspaceWaitingRead(expected: EnvironmentSelection): Promise<WaitingWritingSnapshot>;
   workspaceWaitingSave(expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void>;
-  workspaceRevision(scopeId: string): Promise<BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }>>;
+  workspaceRevision(scopeId: string): Promise<BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }>>;
   workspaceProjects(scopeId: string, input: WorkspacePageQuery): Promise<BackendResult<WorkspacePage<WorkspaceProject>>>;
   workspaceProjectNameAvailability(scopeId: string, name: string): Promise<BackendResult<{ readonly available: boolean }>>;
   workspaceProject(scopeId: string, input: number): Promise<BackendResult<WorkspaceProjectDetail>>;
@@ -250,6 +251,7 @@ export interface ElevenexBridge {
   workspaceCreateProject(scopeId: string, input: WorkspaceCreateProject): Promise<BackendResult<WorkspaceProjectDetail>>;
   workspaceCreateTask(scopeId: string, input: WorkspaceCreateTask): Promise<BackendResult<WorkspaceTask>>;
   workspaceArchiveSession(scopeId: string, input: WorkspaceArchiveSession): Promise<BackendResult<{ readonly accepted: true }>>;
+  workspaceMoveSession(scopeId: string, input: WorkspaceMoveSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRestoreSession(scopeId: string, input: WorkspaceRestoreSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceCreateSession(scopeId: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRenameTask(scopeId: string, input: WorkspaceRenameTask): Promise<BackendResult<WorkspaceTask>>;

@@ -18,6 +18,7 @@ const calls = [
   ['workspaceCreateProject', 'workspace:create-project', [scope, { name: 'Example', path: '/example' }]],
   ['workspaceCreateTask', 'workspace:create-task', [scope, { repoId: 1, name: 'Task', requestId: 'create-1' }]],
   ['workspaceArchiveSession', 'workspace:archive-session', [scope, {taskId:1,sessionId:2,confirmStop:false}]],
+  ['workspaceMoveSession', 'workspace:move-session', [scope, {taskId:1,sessionId:2,parentSessionId:null}]],
   ['workspaceRestoreSession', 'workspace:restore-session', [scope, {taskId:1,sessionId:2}]],
   ['workspaceCreateSession', 'workspace:create-session', [scope, { taskId: 1 }]],
   ['workspaceRenameTask', 'workspace:rename-task', [scope, { taskId: 1, name: 'Renamed' }]],

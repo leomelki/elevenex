@@ -2,6 +2,7 @@ import {
   prepareProjectRepositories,
   type ProjectRepositorySetup,
 } from './desktop-project-repositories.js';
+import { moveSession, sessionChildCount } from './session-hierarchy.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
 import { inactiveSessionStatus } from './desktop-session-status.js';
@@ -203,6 +204,7 @@ export class DesktopWorkspaceService {
         inactiveSessionStatus(row),
       provider: sessionAgentProvider(row),
       updatedAt: row.updatedAt,
+      parentSessionId: row.parentSessionId,
     };
   }
   async listProjects(query: PageQuery) {
@@ -322,19 +324,24 @@ export class DesktopWorkspaceService {
       projectRepositoryCount: repositories.count,
     };
   }
-  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string }) {
+  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string; parentSessionId?: string }) {
     if (query.order !== undefined && query.order !== 'latest') throw new BadRequestException('Invalid session order.');
     if (query.state !== undefined && query.state !== 'normal' && query.state !== 'archived') throw new BadRequestException('Invalid session state.');
+    const parentId = query.parentSessionId === undefined ? undefined : query.parentSessionId === 'root' ? null : resourceId(query.parentSessionId);
     const latest = query.order === 'latest';
     const task = await this.tasks.record(taskId);
     const { limit, cursor } = bounds(query);
     const rows = await this.db
-      .select()
+      .select({ session: schema.sessions, childCount: sessionChildCount })
       .from(schema.sessions)
       .where(
         and(
           eq(schema.sessions.workspaceId, taskId),
           eq(schema.sessions.surface, 'session'),
+          parentId === undefined ? undefined : eq(schema.sessions.isTemporary, false),
+          parentId === undefined ? undefined : parentId === null
+            ? sql`(${schema.sessions.parentSessionId} is null or not exists (select 1 from sessions parent where parent.id = ${schema.sessions.parentSessionId} and parent.status != 'archived'))`
+            : eq(schema.sessions.parentSessionId, parentId),
           query.state === 'archived' ? eq(schema.sessions.status, 'archived')
             : query.state === 'normal' || !task.archivedAt ? ne(schema.sessions.status, 'archived') : undefined,
           latest ? lt(schema.sessions.id, query.cursor === undefined ? Number.MAX_SAFE_INTEGER : cursor) : gt(schema.sessions.id, cursor),
@@ -342,7 +349,7 @@ export class DesktopWorkspaceService {
       )
       .orderBy(latest ? desc(schema.sessions.id) : asc(schema.sessions.id))
       .limit(limit + 1);
-    const result = page(rows.map(row => this.sessionView(row, taskId)), limit);
+    const result = page(rows.map(row => ({ ...this.sessionView(row.session, taskId), childCount: row.childCount })), limit);
     return latest ? { ...result, items: result.items.reverse() } : result;
   }
   async projectNameAvailability(value: unknown) {
@@ -547,12 +554,19 @@ export class DesktopWorkspaceService {
     if (!session) throw new BadRequestException('Session does not belong to this task.');
     return session;
   }
+  async moveSession(taskId: number, sessionId: number, parentSessionId: unknown) {
+    await this.activeTaskSession(taskId, sessionId);
+    const moved = moveSession(this.db, taskId, sessionId, parentSessionId === null ? null : resourceId(parentSessionId));
+    return this.sessionView(moved, taskId);
+  }
   async archiveSession(taskId: number, sessionId: number, confirmStop: unknown) {
     if (typeof confirmStop !== 'boolean') throw new BadRequestException('A stop confirmation is required.');
     const session = await this.activeTaskSession(taskId, sessionId);
     if (this.sessionView(session, taskId).status === 'running' && !confirmStop)
       throw new BadRequestException('This session is running. Stop and archive to confirm.');
     await this.sessions.archiveAndStop(sessionId, true);
+    // Grouping never makes archive recursive; children remain visible at task level.
+    await this.db.update(schema.sessions).set({ parentSessionId: null }).where(eq(schema.sessions.parentSessionId, sessionId));
     // Desktop row archives return on task reopen, just like archives made at close.
     // This does not change the legacy standalone session-archive semantics.
     await this.db.update(schema.sessions).set({ archivedByTask: true }).where(eq(schema.sessions.id, sessionId));

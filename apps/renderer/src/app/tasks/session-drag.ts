@@ -13,7 +13,7 @@ export function writeSessionDrag(transfer: DataTransfer, session: TaskSession): 
     id: session.id, title: session.title,
     ...(session.mentionScope ? { scopeId: session.mentionScope } : {}),
   };
-  transfer.effectAllowed = 'copy';
+  transfer.effectAllowed = 'copyMove';
   transfer.setData(SESSION_DRAG_TYPE, JSON.stringify(reference));
 }
 

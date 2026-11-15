@@ -2,7 +2,9 @@ import { afterNextRender, ChangeDetectionStrategy, Component, computed, DestroyR
 import { EaseSwapComponent, FoldComponent, IconComponent, TickerComponent } from '../../ui';
 import { ListPresence } from '../../ui/motion/list-presence';
 import type { TaskSession, TaskSessionDisclosure } from '../task.models';
-import { SessionRowComponent } from './session-row.component';
+import { SessionBranchComponent } from './session-branch.component';
+import { readSessionDrag } from '../session-drag';
+import type { SessionMoveIntent } from '../task.models';
 import { SessionBatchComponent } from './session-batch.component';
 import { sessionWindow } from './session-window';
 
@@ -20,10 +22,11 @@ interface BatchSource {
 /** Owns disclosure and placement, independently from the task/sub-task outline. */
 @Component({
   selector: 'ex-working-sessions',
-  imports: [EaseSwapComponent, FoldComponent, IconComponent, TickerComponent, SessionRowComponent, SessionBatchComponent],
+  imports: [EaseSwapComponent, FoldComponent, IconComponent, TickerComponent, SessionBranchComponent, SessionBatchComponent],
   templateUrl: './working-sessions.component.html',
   styleUrl: './working-sessions.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(dragstart)': 'startDrag($event)', '(dragend)': 'dragSource.set(null)' },
 })
 export class WorkingSessionsComponent {
   readonly taskId = input.required<string>();
@@ -33,10 +36,22 @@ export class WorkingSessionsComponent {
   readonly cap = input(5);
   readonly capStep = input(5);
   readonly allowArchive = input(false);
+  readonly allowNesting = input(false);
+  readonly moveRequested = output<SessionMoveIntent>();
+  readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
+  protected readonly dragSource = signal<TaskSession | null>(null);
+  protected startDrag(event: DragEvent): void {
+    const reference = event.dataTransfer ? readSessionDrag(event.dataTransfer, this.sessions().find(session => session.mentionScope)?.mentionScope) : null;
+    this.dragSource.set(reference ? this.sessions().find(session => session.id === reference.id) ?? null : null);
+  }
+  protected readonly roots = computed(() => {
+    const ids = new Set(this.sessions().map(session => session.id));
+    return this.sessions().filter(session => !session.parentId || !ids.has(session.parentId));
+  });
   readonly disclosure = model<TaskSessionDisclosure | null>(null);
   readonly activated = output<string>();
   readonly archiveRequested = output<TaskSession>();
-  protected readonly window = computed(() => sessionWindow(this.sessions(), this.cap(), this.selected(), this.filtered(), this.disclosure()?.taskId === this.taskId() ? this.disclosure() : null));
+  protected readonly window = computed(() => sessionWindow(this.roots(), this.cap(), this.sessions().find(session => session.id === this.selected())?.parentId ?? this.selected(), this.filtered(), this.disclosure()?.taskId === this.taskId() ? this.disclosure() : null));
   protected readonly hidden = computed(() => this.window().hidden.size);
   protected readonly step = computed(() => Number.isFinite(this.capStep()) ? Math.max(1, Math.floor(this.capStep())) : 5);
   protected readonly next = computed(() => Math.min(this.step(), this.hidden()));

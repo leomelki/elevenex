@@ -138,6 +138,20 @@ describe('DesktopWorkspaceService', () => {
     await expect(service.archiveSession(taskId,session.id,true)).rejects.toThrow('not ready');
   });
 
+  it('pages roots independently from children and promotes children when their parent is archived', async () => {
+    await database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId));
+    const [parent, child, other] = await database.db.insert(schema.sessions).values(['Plan','Implement','Review'].map(name => ({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task',name}))).returning();
+    await service.moveSession(taskId, child.id, parent.id);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([parent.id,other.id]);
+    const children = await service.listSessions(taskId,{parentSessionId:String(parent.id),limit:'1',order:'latest'});
+    expect(children.items.map(row=>row.id)).toEqual([child.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items[0].childCount).toBe(1);
+    await service.archiveSession(taskId,parent.id,false);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([child.id,other.id]);
+    expect((await service.listSessions(taskId,{})).items.find(row=>row.id===child.id)?.parentSessionId).toBeNull();
+    await expect(service.listSessions(taskId,{parentSessionId:'invalid'})).rejects.toThrow();
+  });
+
   it('requires authoritative running confirmation and reports cleanup failures', async () => {
     const [session] = await database.db.insert(schema.sessions).values({repoId, workspaceId:taskId, branchName:'build', worktreePath:'/repo/task', name:'Running'}).returning();
     activityStatus.mockReturnValue('running');
@@ -257,8 +271,10 @@ describe('DesktopWorkspaceService', () => {
     expect(first.items).toHaveLength(1);
     expect(JSON.stringify(first)).not.toContain('private-token');
     expect(Object.keys(first.items[0]).sort()).toEqual([
+      'childCount',
       'id',
       'name',
+      'parentSessionId',
       'provider',
       'repoId',
       'status',

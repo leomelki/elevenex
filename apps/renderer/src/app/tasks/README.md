@@ -274,3 +274,24 @@ seven seconds or the next action. `TaskHeader.unreachable` forwards the value.
 `NewTask.waitingFor` names the offline machine, and `[taskWaiting]` projects the
 owner's local waiting drafts above the form. Platform dispatch and exact request
 identity reconciliation belong to the workspace owner.
+
+## Session grouping
+
+The connected desktop uses two sidebar levels: root sessions and child sessions.
+`TaskSession.parentId` describes organization; fork `kind` still describes transcript
+provenance. `childCount` is authoritative for a root; the owner supplies only the
+current bounded child window with `childrenLoading`, `childrenError` and
+`moreChildren`. TaskList/TaskGroup accept `allowNesting` and emit
+`moveSessionRequested({taskId, sessionId, parentSessionId})` and
+`sessionChildrenRequested({taskId, sessionId, earlier?})`.
+
+Drag a leaf onto another root in the same task to nest it. The highlighted target
+explains the move; dragging into a composer still copies a mention. Each row's
+Move menu provides the keyboard alternative and “Move to task level”. A populated
+group must release its children before becoming a child itself. Disclosure never
+selects the parent; selected children reveal their group, and closed children are
+inert. Existing caps count root groups. Filtering retains loaded matching children
+with their parent context. Menus offer at most 20 roots from the loaded window.
+
+`session-nesting.mjs` exercises the connected preview with native drops, keyboard
+moves, both themes and narrow reduced-motion layouts.
