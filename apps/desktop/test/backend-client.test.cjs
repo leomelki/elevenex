@@ -474,6 +474,19 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
     assert.equal(result.ok, false); assert.match(result.error.message, new RegExp(expected));
     assert.doesNotMatch(result.error.message, /private backend/);
   }
+  for (const [code, expected] of [
+    ['git-push-authentication', 'SSH key'],
+    ['git-push-behind', 'newer commits'],
+    ['git-push-failed', 'pre-push hooks'],
+    ['unknown-push-code', 'conflicts with the current workspace'],
+  ]) {
+    reply = { code, message: 'private Git output https://user:secret@example.test/repo' };
+    const result = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'push' });
+    assert.equal(result.ok, false);
+    assert.match(result.error.message, new RegExp(expected));
+    assert.doesNotMatch(result.error.message, /private Git|secret|example\.test/);
+    assert.deepEqual(requests.at(-1).body, { type: 'push' });
+  }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });
 

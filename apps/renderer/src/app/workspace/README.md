@@ -134,6 +134,11 @@ starting runtimes or scanning all sessions at startup.
   Unknown git state is not presented as “Up to date”. Commit and branch rename
   require explicit drafts; push is non-force and sync uses the backend's safe
   fast-forward behavior. PR and merge commands are excluded from this slice.
+  Failed pushes retain local commits and show fixed guidance for authentication,
+  a remote branch with newer commits, or other Git failures. Raw Git output stays
+  on the backend; SSH authentication uses the connected machine's credentials or
+  forwarded local agent, so a locked/unavailable agent requires attention before
+  retrying Push.
 
 ## Creation, failures and cleanup
 

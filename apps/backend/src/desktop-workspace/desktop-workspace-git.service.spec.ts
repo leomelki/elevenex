@@ -362,6 +362,23 @@ describe('desktop workspace git boundary', () => {
       service.action(taskId, { type: 'push' }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
+  it.each([
+    ['git@github.com: Permission denied (publickey).', false, 'git-push-authentication'],
+    ['Permission denied (publickey,password).', false, 'git-push-authentication'],
+    ['fatal: Authentication failed for https://user:secret@example.test/repo', false, 'git-push-authentication'],
+    ["fatal: could not read Username for 'https://example.test': terminal prompts disabled", false, 'git-push-authentication'],
+    ['HTTP Basic: Access denied', false, 'git-push-authentication'],
+    ['! [rejected] task -> task (fetch first)', true, 'git-push-behind'],
+    ['Could not resolve host: example.test', false, 'git-push-failed'],
+    ['No git remote is configured for this repository.', false, 'git-push-failed'],
+    ['pre-push hook declined https://user:secret@example.test/repo', false, 'git-push-failed'],
+  ])('reports a safe push failure for %s', async (message, nonFastForward, code) => {
+    push.mockResolvedValueOnce({ pushed: false, message, nonFastForward });
+    await expect(service.action(taskId, { type: 'push' })).rejects.toMatchObject({ response: { code } });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(await git(checkout, 'symbolic-ref', '--short', 'HEAD')).toBe('task');
+  });
   it('fast-forwards from upstream and preserves divergent local history when sync cannot fast-forward', async () => {
     await writeFile(join(repository, 'remote-change'), 'remote');
     await git(repository, 'add', '--all');

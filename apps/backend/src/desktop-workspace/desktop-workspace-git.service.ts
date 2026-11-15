@@ -202,10 +202,19 @@ export class DesktopWorkspaceGitService {
       }
       if (input.type === 'push') {
         const result = await this.git.push(current.path);
-        if (!result.pushed)
-          throw new ConflictException(
-            'Push was rejected. Fetch and review the remote branch before trying again.',
-          );
+        if (!result.pushed) {
+          // Keep raw Git diagnostics (which may contain credential URLs) on the
+          // backend. The desktop maps these codes to fixed, actionable text.
+          const authenticationFailed = /permission denied \(publickey(?:,[^)]*)?\)|authentication failed|could not read (?:username|password)|terminal prompts disabled|HTTP Basic: Access denied/i.test(result.message);
+          throw new ConflictException({
+            code: authenticationFailed ? 'git-push-authentication' : result.nonFastForward ? 'git-push-behind' : 'git-push-failed',
+            message: authenticationFailed
+              ? 'Git authentication failed. Check credentials on the connected machine and SSH agent forwarding.'
+              : result.nonFastForward
+                ? 'Push was rejected. Fetch and review the remote branch before trying again.'
+                : 'Push failed. Check the remote, network connection, repository permissions and pre-push hooks.',
+          });
+        }
       }
       if (input.type === 'sync') {
         const upstream = (
