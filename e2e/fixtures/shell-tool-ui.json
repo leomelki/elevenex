@@ -1,0 +1,342 @@
+{
+  "sessionId": 761,
+  "responses": {
+    "/api/sessions/761": {
+      "id": 761,
+      "repoId": 1,
+      "projectId": 1,
+      "branchName": "master",
+      "worktreePath": "/workspace/elevenex",
+      "name": "Shell command results",
+      "surface": "session",
+      "status": "active",
+      "activeAgentProvider": "claude",
+      "claudeSessionId": "claude-recorded-preview",
+      "codexSessionId": "-1",
+      "hasInjectedWorktreeContext": true,
+      "hasUnreviewedCompletion": false,
+      "lastCompletionAt": null,
+      "lastCompletionKind": null,
+      "lastStateChangeAt": null,
+      "createdAt": "2026-10-12T16:00:00.000Z",
+      "updatedAt": "2026-10-12T16:01:00.000Z"
+    },
+    "/api/sessions/761/agents/claude/history": [
+      {
+        "id": "user",
+        "kind": "user",
+        "content": "Run the checks and inspect the workspace.",
+        "timestamp": "2026-11-15T08:00:00Z"
+      },
+      {
+        "id": "tests",
+        "kind": "tool_use",
+        "toolUseId": "tests",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "pnpm --dir apps/frontend test --watch=false",
+          "description": "Run frontend regression tests",
+          "cwd": "/workspace/elevenex"
+        },
+        "timestamp": "2026-11-15T08:00:01Z"
+      },
+      {
+        "id": "tests-result",
+        "kind": "tool_result",
+        "toolUseId": "tests",
+        "content": " \u2713 shell-tool-format.spec.ts (7 tests)\n \u2713 shell-tool-call.component.spec.ts (7 tests)\n\n Test Files  2 passed (2)\n      Tests  14 passed (14)\n",
+        "isError": false,
+        "providerToolResult": {
+          "exitCode": 0,
+          "durationMs": 2350
+        },
+        "timestamp": "2026-11-15T08:00:05Z"
+      },
+      {
+        "id": "status",
+        "kind": "tool_use",
+        "toolUseId": "status",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "git status --short",
+          "description": "",
+          "cwd": "/workspace/elevenex"
+        },
+        "timestamp": "2026-11-15T08:00:01Z"
+      },
+      {
+        "id": "status-result",
+        "kind": "tool_result",
+        "toolUseId": "status",
+        "content": " M apps/frontend/src/app/shared/agent-chat/tools/claude-tool-call.component.html\n?? apps/frontend/src/app/shared/agent-chat/tools/shell-tool-call.component.ts\n",
+        "isError": false,
+        "providerToolResult": {
+          "exitCode": 0
+        },
+        "timestamp": "2026-11-15T08:00:05Z"
+      },
+      {
+        "id": "lint",
+        "kind": "tool_use",
+        "toolUseId": "lint",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "pnpm lint\npnpm typecheck",
+          "description": "Check lint and types",
+          "cwd": "/workspace/elevenex"
+        },
+        "timestamp": "2026-11-15T08:00:01Z"
+      },
+      {
+        "id": "lint-result",
+        "kind": "tool_result",
+        "toolUseId": "lint",
+        "content": "src/config.ts:18:7 - error TS2322\nType \"string\" is not assignable to type \"number\".\n\nFound 1 error.\n",
+        "isError": true,
+        "providerToolResult": {
+          "exitCode": 2,
+          "durationMs": 1810
+        },
+        "timestamp": "2026-11-15T08:00:05Z"
+      },
+      {
+        "id": "empty",
+        "kind": "tool_use",
+        "toolUseId": "empty",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "git diff --check",
+          "description": "Check whitespace",
+          "cwd": "/workspace/elevenex"
+        },
+        "timestamp": "2026-11-15T08:00:01Z"
+      },
+      {
+        "id": "empty-result",
+        "kind": "tool_result",
+        "toolUseId": "empty",
+        "content": "",
+        "isError": false,
+        "providerToolResult": {
+          "exitCode": 0
+        },
+        "timestamp": "2026-11-15T08:00:05Z"
+      },
+      {
+        "id": "history",
+        "kind": "tool_use",
+        "toolUseId": "history",
+        "toolName": "Bash",
+        "toolInput": {
+          "command": "pnpm --dir apps/backend test --runInBand",
+          "description": "Inspect a large test run",
+          "cwd": "/workspace/elevenex"
+        },
+        "timestamp": "2026-11-15T08:00:01Z"
+      },
+      {
+        "id": "history-result",
+        "kind": "tool_result",
+        "toolUseId": "history",
+        "content": "PASS packages/workspace/scenario-0001.spec.ts\nPASS packages/workspace/scenario-0002.spec.ts\nPASS packages/workspace/scenario-0003.spec.ts\nPASS packages/workspace/scenario-0004.spec.ts\nPASS packages/workspace/scenario-0005.spec.ts\nPASS packages/workspace/scenario-0006.spec.ts\nPASS packages/workspace/scenario-0007.spec.ts\nPASS packages/workspace/scenario-0008.spec.ts\nPASS packages/workspace/scenario-0009.spec.ts\nPASS packages/workspace/scenario-0010.spec.ts\nPASS packages/workspace/scenario-0011.spec.ts\nPASS packages/workspace/scenario-0012.spec.ts\nPASS packages/workspace/scenario-0013.spec.ts\nPASS packages/workspace/scenario-0014.spec.ts\nPASS packages/workspace/scenario-0015.spec.ts\nPASS packages/workspace/scenario-0016.spec.ts\nPASS packages/workspace/scenario-0017.spec.ts\nPASS packages/workspace/scenario-0018.spec.ts\nPASS packages/workspace/scenario-0019.spec.ts\nPASS packages/workspace/scenario-0020.spec.ts\nPASS packages/workspace/scenario-0021.spec.ts\nPASS packages/workspace/scenario-0022.spec.ts\nPASS packages/workspace/scenario-0023.spec.ts\nPASS packages/workspace/scenario-0024.spec.ts\nPASS packages/workspace/scenario-0025.spec.ts\nPASS packages/workspace/scenario-0026.spec.ts\nPASS packages/workspace/scenario-0027.spec.ts\nPASS packages/workspace/scenario-0028.spec.ts\nPASS packages/workspace/scenario-0029.spec.ts\nPASS packages/workspace/scenario-0030.spec.ts\nPASS packages/workspace/scenario-0031.spec.ts\nPASS packages/workspace/scenario-0032.spec.ts\nPASS packages/workspace/scenario-0033.spec.ts\nPASS packages/workspace/scenario-0034.spec.ts\nPASS packages/workspace/scenario-0035.spec.ts\nPASS packages/workspace/scenario-0036.spec.ts\nPASS packages/workspace/scenario-0037.spec.ts\nPASS packages/workspace/scenario-0038.spec.ts\nPASS packages/workspace/scenario-0039.spec.ts\nPASS packages/workspace/scenario-0040.spec.ts\nPASS packages/workspace/scenario-0041.spec.ts\nPASS packages/workspace/scenario-0042.spec.ts\nPASS packages/workspace/scenario-0043.spec.ts\nPASS packages/workspace/scenario-0044.spec.ts\nPASS packages/workspace/scenario-0045.spec.ts\nPASS packages/workspace/scenario-0046.spec.ts\nPASS packages/workspace/scenario-0047.spec.ts\nPASS packages/workspace/scenario-0048.spec.ts\nPASS packages/workspace/scenario-0049.spec.ts\nPASS packages/workspace/scenario-0050.spec.ts\nPASS packages/workspace/scenario-0051.spec.ts\nPASS packages/workspace/scenario-0052.spec.ts\nPASS packages/workspace/scenario-0053.spec.ts\nPASS packages/workspace/scenario-0054.spec.ts\nPASS packages/workspace/scenario-0055.spec.ts\nPASS packages/workspace/scenario-0056.spec.ts\nPASS packages/workspace/scenario-0057.spec.ts\nPASS packages/workspace/scenario-0058.spec.ts\nPASS packages/workspace/scenario-0059.spec.ts\nPASS packages/workspace/scenario-0060.spec.ts\nPASS packages/workspace/scenario-0061.spec.ts\nPASS packages/workspace/scenario-0062.spec.ts\nPASS packages/workspace/scenario-0063.spec.ts\nPASS packages/workspace/scenario-0064.spec.ts\nPASS packages/workspace/scenario-0065.spec.ts\nPASS packages/workspace/scenario-0066.spec.ts\nPASS packages/workspace/scenario-0067.spec.ts\nPASS packages/workspace/scenario-0068.spec.ts\nPASS packages/workspace/scenario-0069.spec.ts\nPASS packages/workspace/scenario-0070.spec.ts\nPASS packages/workspace/scenario-0071.spec.ts\nPASS packages/workspace/scenario-0072.spec.ts\nPASS packages/workspace/scenario-0073.spec.ts\nPASS packages/workspace/scenario-0074.spec.ts\nPASS packages/workspace/scenario-0075.spec.ts\nPASS packages/workspace/scenario-0076.spec.ts\nPASS packages/workspace/scenario-0077.spec.ts\nPASS packages/workspace/scenario-0078.spec.ts\nPASS packages/workspace/scenario-0079.spec.ts\nPASS packages/workspace/scenario-0080.spec.ts\nPASS packages/workspace/scenario-0081.spec.ts\nPASS packages/workspace/scenario-0082.spec.ts\nPASS packages/workspace/scenario-0083.spec.ts\nPASS packages/workspace/scenario-0084.spec.ts\nPASS packages/workspace/scenario-0085.spec.ts\nPASS packages/workspace/scenario-0086.spec.ts\nPASS packages/workspace/scenario-0087.spec.ts\nPASS packages/workspace/scenario-0088.spec.ts\nPASS packages/workspace/scenario-0089.spec.ts\nPASS packages/workspace/scenario-0090.spec.ts\nPASS packages/workspace/scenario-0091.spec.ts\nPASS packages/workspace/scenario-0092.spec.ts\nPASS packages/workspace/scenario-0093.spec.ts\nPASS packages/workspace/scenario-0094.spec.ts\nPASS packages/workspace/scenario-0095.spec.ts\nPASS packages/workspace/scenario-0096.spec.ts\nPASS packages/workspace/scenario-0097.spec.ts\nPASS packages/workspace/scenario-0098.spec.ts\nPASS packages/workspace/scenario-0099.spec.ts\nPASS packages/workspace/scenario-0100.spec.ts\nPASS packages/workspace/scenario-0101.spec.ts\nPASS packages/workspace/scenario-0102.spec.ts\nPASS packages/workspace/scenario-0103.spec.ts\nPASS packages/workspace/scenario-0104.spec.ts\nPASS packages/workspace/scenario-0105.spec.ts\nPASS packages/workspace/scenario-0106.spec.ts\nPASS packages/workspace/scenario-0107.spec.ts\nPASS packages/workspace/scenario-0108.spec.ts\nPASS packages/workspace/scenario-0109.spec.ts\nPASS packages/workspace/scenario-0110.spec.ts\nPASS packages/workspace/scenario-0111.spec.ts\nPASS packages/workspace/scenario-0112.spec.ts\nPASS packages/workspace/scenario-0113.spec.ts\nPASS packages/workspace/scenario-0114.spec.ts\nPASS packages/workspace/scenario-0115.spec.ts\nPASS packages/workspace/scenario-0116.spec.ts\nPASS packages/workspace/scenario-0117.spec.ts\nPASS packages/workspace/scenario-0118.spec.ts\nPASS packages/workspace/scenario-0119.spec.ts\nPASS packages/workspace/scenario-0120.spec.ts\nPASS packages/workspace/scenario-0121.spec.ts\nPASS packages/workspace/scenario-0122.spec.ts\nPASS packages/workspace/scenario-0123.spec.ts\nPASS packages/workspace/scenario-0124.spec.ts\nPASS packages/workspace/scenario-0125.spec.ts\nPASS packages/workspace/scenario-0126.spec.ts\nPASS packages/workspace/scenario-0127.spec.ts\nPASS packages/workspace/scenario-0128.spec.ts\nPASS packages/workspace/scenario-0129.spec.ts\nPASS packages/workspace/scenario-0130.spec.ts\nPASS packages/workspace/scenario-0131.spec.ts\nPASS packages/workspace/scenario-0132.spec.ts\nPASS packages/workspace/scenario-0133.spec.ts\nPASS packages/workspace/scenario-0134.spec.ts\nPASS packages/workspace/scenario-0135.spec.ts\nPASS packages/workspace/scenario-0136.spec.ts\nPASS packages/workspace/scenario-0137.spec.ts\nPASS packages/workspace/scenario-0138.spec.ts\nPASS packages/workspace/scenario-0139.spec.ts\nPASS packages/workspace/scenario-0140.spec.ts\nPASS packages/workspace/scenario-0141.spec.ts\nPASS packages/workspace/scenario-0142.spec.ts\nPASS packages/workspace/scenario-0143.spec.ts\nPASS packages/workspace/scenario-0144.spec.ts\nPASS packages/workspace/scenario-0145.spec.ts\nPASS packages/workspace/scenario-0146.spec.ts\nPASS packages/workspace/scenario-0147.spec.ts\nPASS packages/workspace/scenario-0148.spec.ts\nPASS packages/workspace/scenario-0149.spec.ts\nPASS packages/workspace/scenario-0150.spec.ts\nPASS packages/workspace/scenario-0151.spec.ts\nPASS packages/workspace/scenario-0152.spec.ts\nPASS packages/workspace/scenario-0153.spec.ts\nPASS packages/workspace/scenario-0154.spec.ts\nPASS packages/workspace/scenario-0155.spec.ts\nPASS packages/workspace/scenario-0156.spec.ts\nPASS packages/workspace/scenario-0157.spec.ts\nPASS packages/workspace/scenario-0158.spec.ts\nPASS packages/workspace/scenario-0159.spec.ts\nPASS packages/workspace/scenario-0160.spec.ts\nPASS packages/workspace/scenario-0161.spec.ts\nPASS packages/workspace/scenario-0162.spec.ts\nPASS packages/workspace/scenario-0163.spec.ts\nPASS packages/workspace/scenario-0164.spec.ts\nPASS packages/workspace/scenario-0165.spec.ts\nPASS packages/workspace/scenario-0166.spec.ts\nPASS packages/workspace/scenario-0167.spec.ts\nPASS packages/workspace/scenario-0168.spec.ts\nPASS packages/workspace/scenario-0169.spec.ts\nPASS packages/workspace/scenario-0170.spec.ts\nPASS packages/workspace/scenario-0171.spec.ts\nPASS packages/workspace/scenario-0172.spec.ts\nPASS packages/workspace/scenario-0173.spec.ts\nPASS packages/workspace/scenario-0174.spec.ts\nPASS packages/workspace/scenario-0175.spec.ts\nPASS packages/workspace/scenario-0176.spec.ts\nPASS packages/workspace/scenario-0177.spec.ts\nPASS packages/workspace/scenario-0178.spec.ts\nPASS packages/workspace/scenario-0179.spec.ts\nPASS packages/workspace/scenario-0180.spec.ts\nPASS packages/workspace/scenario-0181.spec.ts\nPASS packages/workspace/scenario-0182.spec.ts\nPASS packages/workspace/scenario-0183.spec.ts\nPASS packages/workspace/scenario-0184.spec.ts\nPASS packages/workspace/scenario-0185.spec.ts\nPASS packages/workspace/scenario-0186.spec.ts\nPASS packages/workspace/scenario-0187.spec.ts\nPASS packages/workspace/scenario-0188.spec.ts\nPASS packages/workspace/scenario-0189.spec.ts\nPASS packages/workspace/scenario-0190.spec.ts\nPASS packages/workspace/scenario-0191.spec.ts\nPASS packages/workspace/scenario-0192.spec.ts\nPASS packages/workspace/scenario-0193.spec.ts\nPASS packages/workspace/scenario-0194.spec.ts\nPASS packages/workspace/scenario-0195.spec.ts\nPASS packages/workspace/scenario-0196.spec.ts\nPASS packages/workspace/scenario-0197.spec.ts\nPASS packages/workspace/scenario-0198.spec.ts\nPASS packages/workspace/scenario-0199.spec.ts\nPASS packages/workspace/scenario-0200.spec.ts\nPASS packages/workspace/scenario-0201.spec.ts\nPASS packages/workspace/scenario-0202.spec.ts\nPASS packages/workspace/scenario-0203.spec.ts\nPASS packages/workspace/scenario-0204.spec.ts\nPASS packages/workspace/scenario-0205.spec.ts\nPASS packages/workspace/scenario-0206.spec.ts\nPASS packages/workspace/scenario-0207.spec.ts\nPASS packages/workspace/scenario-0208.spec.ts\nPASS packages/workspace/scenario-0209.spec.ts\nPASS packages/workspace/scenario-0210.spec.ts\nPASS packages/workspace/scenario-0211.spec.ts\nPASS packages/workspace/scenario-0212.spec.ts\nPASS packages/workspace/scenario-0213.spec.ts\nPASS packages/workspace/scenario-0214.spec.ts\nPASS packages/workspace/scenario-0215.spec.ts\nPASS packages/workspace/scenario-0216.spec.ts\nPASS packages/workspace/scenario-0217.spec.ts\nPASS packages/workspace/scenario-0218.spec.ts\nPASS packages/workspace/scenario-0219.spec.ts\nPASS packages/workspace/scenario-0220.spec.ts\nPASS packages/workspace/scenario-0221.spec.ts\nPASS packages/workspace/scenario-0222.spec.ts\nPASS packages/workspace/scenario-0223.spec.ts\nPASS packages/workspace/scenario-0224.spec.ts\nPASS packages/workspace/scenario-0225.spec.ts\nPASS packages/workspace/scenario-0226.spec.ts\nPASS packages/workspace/scenario-0227.spec.ts\nPASS packages/workspace/scenario-0228.spec.ts\nPASS packages/workspace/scenario-0229.spec.ts\nPASS packages/workspace/scenario-0230.spec.ts\nPASS packages/workspace/scenario-0231.spec.ts\nPASS packages/workspace/scenario-0232.spec.ts\nPASS packages/workspace/scenario-0233.spec.ts\nPASS packages/workspace/scenario-0234.spec.ts\nPASS packages/workspace/scenario-0235.spec.ts\nPASS packages/workspace/scenario-0236.spec.ts\nPASS packages/workspace/scenario-0237.spec.ts\nPASS packages/workspace/scenario-0238.spec.ts\nPASS packages/workspace/scenario-0239.spec.ts\nPASS packages/workspace/scenario-0240.spec.ts\nPASS packages/workspace/scenario-0241.spec.ts\nPASS packages/workspace/scenario-0242.spec.ts\nPASS packages/workspace/scenario-0243.spec.ts\nPASS packages/workspace/scenario-0244.spec.ts\nPASS packages/workspace/scenario-0245.spec.ts\nPASS packages/workspace/scenario-0246.spec.ts\nPASS packages/workspace/scenario-0247.spec.ts\nPASS packages/workspace/scenario-0248.spec.ts\nPASS packages/workspace/scenario-0249.spec.ts\nPASS packages/workspace/scenario-0250.spec.ts\nPASS packages/workspace/scenario-0251.spec.ts\nPASS packages/workspace/scenario-0252.spec.ts\nPASS packages/workspace/scenario-0253.spec.ts\nPASS packages/workspace/scenario-0254.spec.ts\nPASS packages/workspace/scenario-0255.spec.ts\nPASS packages/workspace/scenario-0256.spec.ts\nPASS packages/workspace/scenario-0257.spec.ts\nPASS packages/workspace/scenario-0258.spec.ts\nPASS packages/workspace/scenario-0259.spec.ts\nPASS packages/workspace/scenario-0260.spec.ts\nPASS packages/workspace/scenario-0261.spec.ts\nPASS packages/workspace/scenario-0262.spec.ts\nPASS packages/workspace/scenario-0263.spec.ts\nPASS packages/workspace/scenario-0264.spec.ts\nPASS packages/workspace/scenario-0265.spec.ts\nPASS packages/workspace/scenario-0266.spec.ts\nPASS packages/workspace/scenario-0267.spec.ts\nPASS packages/workspace/scenario-0268.spec.ts\nPASS packages/workspace/scenario-0269.spec.ts\nPASS packages/workspace/scenario-0270.spec.ts\nPASS packages/workspace/scenario-0271.spec.ts\nPASS packages/workspace/scenario-0272.spec.ts\nPASS packages/workspace/scenario-0273.spec.ts\nPASS packages/workspace/scenario-0274.spec.ts\nPASS packages/workspace/scenario-0275.spec.ts\nPASS packages/workspace/scenario-0276.spec.ts\nPASS packages/workspace/scenario-0277.spec.ts\nPASS packages/workspace/scenario-0278.spec.ts\nPASS packages/workspace/scenario-0279.spec.ts\nPASS packages/workspace/scenario-0280.spec.ts\nPASS packages/workspace/scenario-0281.spec.ts\nPASS packages/workspace/scenario-0282.spec.ts\nPASS packages/workspace/scenario-0283.spec.ts\nPASS packages/workspace/scenario-0284.spec.ts\nPASS packages/workspace/scenario-0285.spec.ts\nPASS packages/workspace/scenario-0286.spec.ts\nPASS packages/workspace/scenario-0287.spec.ts\nPASS packages/workspace/scenario-0288.spec.ts\nPASS packages/workspace/scenario-0289.spec.ts\nPASS packages/workspace/scenario-0290.spec.ts\nPASS packages/workspace/scenario-0291.spec.ts\nPASS packages/workspace/scenario-0292.spec.ts\nPASS packages/workspace/scenario-0293.spec.ts\nPASS packages/workspace/scenario-0294.spec.ts\nPASS packages/workspace/scenario-0295.spec.ts\nPASS packages/workspace/scenario-0296.spec.ts\nPASS packages/workspace/scenario-0297.spec.ts\nPASS packages/workspace/scenario-0298.spec.ts\nPASS packages/workspace/scenario-0299.spec.ts\nPASS packages/workspace/scenario-0300.spec.ts\nPASS packages/workspace/scenario-0301.spec.ts\nPASS packages/workspace/scenario-0302.spec.ts\nPASS packages/workspace/scenario-0303.spec.ts\nPASS packages/workspace/scenario-0304.spec.ts\nPASS packages/workspace/scenario-0305.spec.ts\nPASS packages/workspace/scenario-0306.spec.ts\nPASS packages/workspace/scenario-0307.spec.ts\nPASS packages/workspace/scenario-0308.spec.ts\nPASS packages/workspace/scenario-0309.spec.ts\nPASS packages/workspace/scenario-0310.spec.ts\nPASS packages/workspace/scenario-0311.spec.ts\nPASS packages/workspace/scenario-0312.spec.ts\nPASS packages/workspace/scenario-0313.spec.ts\nPASS packages/workspace/scenario-0314.spec.ts\nPASS packages/workspace/scenario-0315.spec.ts\nPASS packages/workspace/scenario-0316.spec.ts\nPASS packages/workspace/scenario-0317.spec.ts\nPASS packages/workspace/scenario-0318.spec.ts\nPASS packages/workspace/scenario-0319.spec.ts\nPASS packages/workspace/scenario-0320.spec.ts\nPASS packages/workspace/scenario-0321.spec.ts\nPASS packages/workspace/scenario-0322.spec.ts\nPASS packages/workspace/scenario-0323.spec.ts\nPASS packages/workspace/scenario-0324.spec.ts\nPASS packages/workspace/scenario-0325.spec.ts\nPASS packages/workspace/scenario-0326.spec.ts\nPASS packages/workspace/scenario-0327.spec.ts\nPASS packages/workspace/scenario-0328.spec.ts\nPASS packages/workspace/scenario-0329.spec.ts\nPASS packages/workspace/scenario-0330.spec.ts\nPASS packages/workspace/scenario-0331.spec.ts\nPASS packages/workspace/scenario-0332.spec.ts\nPASS packages/workspace/scenario-0333.spec.ts\nPASS packages/workspace/scenario-0334.spec.ts\nPASS packages/workspace/scenario-0335.spec.ts\nPASS packages/workspace/scenario-0336.spec.ts\nPASS packages/workspace/scenario-0337.spec.ts\nPASS packages/workspace/scenario-0338.spec.ts\nPASS packages/workspace/scenario-0339.spec.ts\nPASS packages/workspace/scenario-0340.spec.ts\nPASS packages/workspace/scenario-0341.spec.ts\nPASS packages/workspace/scenario-0342.spec.ts\nPASS packages/workspace/scenario-0343.spec.ts\nPASS packages/workspace/scenario-0344.spec.ts\nPASS packages/workspace/scenario-0345.spec.ts\nPASS packages/workspace/scenario-0346.spec.ts\nPASS packages/workspace/scenario-0347.spec.ts\nPASS packages/workspace/scenario-0348.spec.ts\nPASS packages/workspace/scenario-0349.spec.ts\nPASS packages/workspace/scenario-0350.spec.ts\nPASS packages/workspace/scenario-0351.spec.ts\nPASS packages/workspace/scenario-0352.spec.ts\nPASS packages/workspace/scenario-0353.spec.ts\nPASS packages/workspace/scenario-0354.spec.ts\nPASS packages/workspace/scenario-0355.spec.ts\nPASS packages/workspace/scenario-0356.spec.ts\nPASS packages/workspace/scenario-0357.spec.ts\nPASS packages/workspace/scenario-0358.spec.ts\nPASS packages/workspace/scenario-0359.spec.ts\nPASS packages/workspace/scenario-0360.spec.ts\nPASS packages/workspace/scenario-0361.spec.ts\nPASS packages/workspace/scenario-0362.spec.ts\nPASS packages/workspace/scenario-0363.spec.ts\nPASS packages/workspace/scenario-0364.spec.ts\nPASS packages/workspace/scenario-0365.spec.ts\nPASS packages/workspace/scenario-0366.spec.ts\nPASS packages/workspace/scenario-0367.spec.ts\nPASS packages/workspace/scenario-0368.spec.ts\nPASS packages/workspace/scenario-0369.spec.ts\nPASS packages/workspace/scenario-0370.spec.ts\nPASS packages/workspace/scenario-0371.spec.ts\nPASS packages/workspace/scenario-0372.spec.ts\nPASS packages/workspace/scenario-0373.spec.ts\nPASS packages/workspace/scenario-0374.spec.ts\nPASS packages/workspace/scenario-0375.spec.ts\nPASS packages/workspace/scenario-0376.spec.ts\nPASS packages/workspace/scenario-0377.spec.ts\nPASS packages/workspace/scenario-0378.spec.ts\nPASS packages/workspace/scenario-0379.spec.ts\nPASS packages/workspace/scenario-0380.spec.ts\nPASS packages/workspace/scenario-0381.spec.ts\nPASS packages/workspace/scenario-0382.spec.ts\nPASS packages/workspace/scenario-0383.spec.ts\nPASS packages/workspace/scenario-0384.spec.ts\nPASS packages/workspace/scenario-0385.spec.ts\nPASS packages/workspace/scenario-0386.spec.ts\nPASS packages/workspace/scenario-0387.spec.ts\nPASS packages/workspace/scenario-0388.spec.ts\nPASS packages/workspace/scenario-0389.spec.ts\nPASS packages/workspace/scenario-0390.spec.ts\nPASS packages/workspace/scenario-0391.spec.ts\nPASS packages/workspace/scenario-0392.spec.ts\nPASS packages/workspace/scenario-0393.spec.ts\nPASS packages/workspace/scenario-0394.spec.ts\nPASS packages/workspace/scenario-0395.spec.ts\nPASS packages/workspace/scenario-0396.spec.ts\nPASS packages/workspace/scenario-0397.spec.ts\nPASS packages/workspace/scenario-0398.spec.ts\nPASS packages/workspace/scenario-0399.spec.ts\nPASS packages/workspace/scenario-0400.spec.ts\n400 suites passed\n",
+        "isError": false,
+        "providerToolResult": {
+          "exitCode": 0,
+          "durationMs": 65340
+        },
+        "timestamp": "2026-11-15T08:00:05Z"
+      }
+    ],
+    "/api/sessions/761/agents/claude/runtime-state": {
+      "sessionId": 761,
+      "claudeSessionId": "claude-recorded-preview",
+      "runPhase": "idle",
+      "sessionState": "idle",
+      "canInterrupt": false,
+      "backgroundWork": [],
+      "backgroundRunActive": false,
+      "nativeSteering": true,
+      "pendingPermissionRequest": null,
+      "pendingUserInputRequest": null,
+      "pendingPrompts": [],
+      "queuePaused": false,
+      "liveItems": [],
+      "lastError": null,
+      "selectedModel": "sonnet",
+      "reasoningEffort": "medium",
+      "fastMode": false,
+      "permissionMode": "default",
+      "planMode": false,
+      "availableModels": [
+        {
+          "id": "sonnet",
+          "displayName": "Claude Sonnet",
+          "supportsEffort": true
+        }
+      ],
+      "contextUsage": null,
+      "sessionMetadata": {
+        "cwd": "/workspace/elevenex",
+        "model": "sonnet",
+        "permissionMode": "default",
+        "claudeCodeVersion": "2.1.296",
+        "outputStyle": "default",
+        "apiKeySource": "oauth",
+        "tools": [
+          "Bash"
+        ],
+        "slashCommands": [],
+        "skills": [],
+        "agents": [
+          "general-purpose",
+          "code-reviewer"
+        ],
+        "mcpServers": [],
+        "plugins": [],
+        "fastModeState": null
+      },
+      "runtimeStatus": null,
+      "authStatus": {
+        "installed": true,
+        "authenticated": true,
+        "version": "2.1.296",
+        "isAuthenticating": false,
+        "output": []
+      },
+      "rateLimit": null,
+      "notifications": [],
+      "hooks": [],
+      "recentHookEvents": [],
+      "tasks": [],
+      "taskLifecycle": [],
+      "subagents": [],
+      "latestToolProgress": null,
+      "latestToolSummary": null,
+      "latestApiRetry": null,
+      "latestPluginInstall": null,
+      "latestMemoryRecall": null,
+      "latestFilesPersisted": null,
+      "latestElicitationCompletion": null,
+      "latestPromptSuggestion": null,
+      "latestCompactBoundary": null,
+      "latestMirrorError": null,
+      "warmState": "warm",
+      "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+      "lastPromptTiming": null
+    },
+    "/api/sessions/761/agents/claude/autocomplete": [
+      {
+        "id": "agent:reviewer",
+        "kind": "agent",
+        "trigger": "@",
+        "label": "code-reviewer",
+        "insertText": "Use the code-reviewer agent to ",
+        "description": "Review code changes and test coverage",
+        "detail": "Model: sonnet",
+        "source": "runtime"
+      }
+    ],
+    "/api/agent-providers/claude/auth/status": {
+      "installed": true,
+      "authenticated": true,
+      "version": "2.1.296",
+      "isAuthenticating": false,
+      "output": []
+    },
+    "/api/settings": {
+      "defaultClaudeSessionSurface": "claude-ui",
+      "defaultAgentProvider": "claude",
+      "sessionToolbarButtons": null,
+      "defaultModelByProvider": {},
+      "defaultReasoningEffortByProvider": {},
+      "agentModelPresets": [],
+      "maxWorktreesPerRepo": 5,
+      "runTimeLimitHours": 0,
+      "onboardingCompletedAt": "2026-11-15T08:00:00Z",
+      "createdAt": null,
+      "updatedAt": null
+    }
+  },
+  "events": [
+    {
+      "type": "runtime_snapshot",
+      "payload": {
+        "sessionId": 761,
+        "claudeSessionId": "claude-recorded-preview",
+        "runPhase": "idle",
+        "sessionState": "idle",
+        "canInterrupt": false,
+        "backgroundWork": [],
+        "backgroundRunActive": false,
+        "nativeSteering": true,
+        "pendingPermissionRequest": null,
+        "pendingUserInputRequest": null,
+        "pendingPrompts": [],
+        "queuePaused": false,
+        "liveItems": [],
+        "lastError": null,
+        "selectedModel": "sonnet",
+        "reasoningEffort": "medium",
+        "fastMode": false,
+        "permissionMode": "default",
+        "planMode": false,
+        "availableModels": [
+          {
+            "id": "sonnet",
+            "displayName": "Claude Sonnet",
+            "supportsEffort": true
+          }
+        ],
+        "contextUsage": null,
+        "sessionMetadata": {
+          "cwd": "/workspace/elevenex",
+          "model": "sonnet",
+          "permissionMode": "default",
+          "claudeCodeVersion": "2.1.296",
+          "outputStyle": "default",
+          "apiKeySource": "oauth",
+          "tools": [
+            "Bash"
+          ],
+          "slashCommands": [],
+          "skills": [],
+          "agents": [
+            "general-purpose",
+            "code-reviewer"
+          ],
+          "mcpServers": [],
+          "plugins": [],
+          "fastModeState": null
+        },
+        "runtimeStatus": null,
+        "authStatus": {
+          "installed": true,
+          "authenticated": true,
+          "version": "2.1.296",
+          "isAuthenticating": false,
+          "output": []
+        },
+        "rateLimit": null,
+        "notifications": [],
+        "hooks": [],
+        "recentHookEvents": [],
+        "tasks": [],
+        "taskLifecycle": [],
+        "subagents": [],
+        "latestToolProgress": null,
+        "latestToolSummary": null,
+        "latestApiRetry": null,
+        "latestPluginInstall": null,
+        "latestMemoryRecall": null,
+        "latestFilesPersisted": null,
+        "latestElicitationCompletion": null,
+        "latestPromptSuggestion": null,
+        "latestCompactBoundary": null,
+        "latestMirrorError": null,
+        "warmState": "warm",
+        "lastWarmedAt": "2026-10-12T16:00:00.000Z",
+        "lastPromptTiming": null
+      }
+    }
+  ]
+}

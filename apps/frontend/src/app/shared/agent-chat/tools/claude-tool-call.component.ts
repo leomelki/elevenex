@@ -16,7 +16,7 @@ import {
   splitHighlightedLines,
 } from '@/shared/agent-chat/tools/code-highlight';
 import { InlineDiffComponent } from '@/shared/agent-chat/tools/inline-diff.component';
-import { ToolCommandComponent } from '@/shared/agent-chat/tools/tool-command.component';
+import { ShellToolCallComponent } from './shell-tool-call.component';
 import { isToolDenied } from '@/shared/agent-chat/tools/tool-denial';
 import { ToolKeyValueComponent } from '@/shared/agent-chat/tools/tool-key-value.component';
 import { ToolOutputComponent } from '@/shared/agent-chat/tools/tool-output.component';
@@ -132,7 +132,7 @@ type Todo = ToolTodoItem;
     ClaudeMessageComponent,
     ClaudeThinkingComponent,
     InlineDiffComponent,
-    ToolCommandComponent,
+    ShellToolCallComponent,
     ToolKeyValueComponent,
     ToolOutputComponent,
     ToolTodosComponent,

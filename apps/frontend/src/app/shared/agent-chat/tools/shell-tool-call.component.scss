@@ -1,0 +1,41 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.cw-shell__command {
+  max-height: 12rem;
+  overflow-wrap: anywhere;
+}
+.cw-shell__output {
+  max-height: 22rem;
+  tab-size: 4;
+}
+.cw-shell__output--wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cw-shell__status {
+  color: var(--muted-foreground);
+  &[data-state='done'] {
+    color: var(--success);
+    background: color-mix(in oklab, var(--success) 10%, transparent);
+  }
+  &[data-state='error'] {
+    color: var(--destructive);
+    background: color-mix(in oklab, var(--destructive) 10%, transparent);
+  }
+  &[data-state='denied'],
+  &[data-state='interrupted'],
+  &[data-state='incomplete'] {
+    color: var(--warning);
+    background: color-mix(in oklab, var(--warning) 10%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin {
+    animation: none;
+  }
+}
