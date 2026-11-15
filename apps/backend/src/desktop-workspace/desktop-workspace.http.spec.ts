@@ -60,8 +60,16 @@ describe('desktop workspace HTTP resource slice', () => {
     root = await mkdtemp(join(tmpdir(), 'elevenex-workspace-http-'));
     firstRepo = join(root, 'first');
     secondRepo = join(root, 'second');
-    await execute('git', ['init', '-b', 'main', firstRepo]);
-    await execute('git', ['init', '-b', 'main', secondRepo]);
+    for (const repository of [firstRepo, secondRepo]) {
+      await execute('git', ['init', repository]);
+      await execute('git', [
+        '-C',
+        repository,
+        'symbolic-ref',
+        'HEAD',
+        'refs/heads/main',
+      ]);
+    }
     database = createTestDb();
     const module = await Test.createTestingModule({
       controllers: [DesktopWorkspaceController],

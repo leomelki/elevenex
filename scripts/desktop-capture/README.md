@@ -517,6 +517,17 @@ questions, keyboard sending, editable drafts while streaming, navigation retenti
 uncertain delivery, paged original content, bounded history and narrow reduced
 motion states. It uses the connected workspace at the same preview URL.
 
+`scenarios/session-unseen-reply.mjs` verifies the quiet New reply dot, keyboard
+opening and automatic acknowledgment through the production chat owner. It
+checks stable row geometry, preservation while reading earlier content, and
+clearing on return to latest, in both themes and narrow reduced-motion layouts.
+Run against the connected workspace preview URL.
+
+`scenarios/session-status-recovery.mjs` covers legacy idle/active conversations,
+genuinely new sessions, unseen replies and live work together. It verifies
+refresh/reopening, keyboard viewing, stable settled row positions and both themes
+with narrow reduced-motion layouts against the connected workspace preview.
+
 `scenarios/background-refresh.mjs` samples real frames during delayed background
 navigation and Git reads, transient failures and recovery. It checks retained
 chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and
@@ -746,8 +757,10 @@ misrepresents its size. App layout/AX diagnostics still inspect the trusted app
 only; they do not establish page accessibility or agent observation permission.
 
 `scenarios/session-tool-timeline.mjs` covers the single chronological work
-timeline: inspection through new replies and discovery grouping, persistent
-Earlier/Show fewer controls, running and failure visibility, stable completion,
+timeline: message-delimited activity summaries, section-local recent-step budgets,
+inspection through new replies, independent keyboard disclosures, category icons
+with short labels, merged failure counts (including failure-only sections and
+running-to-failed receipts), error detail expansion, running visibility, stable completion,
 paired original input/output, keyboard focus, scoped motion frames, both themes
 and narrow reduced-motion layouts. Run against the connected component preview
 with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped

@@ -303,6 +303,28 @@ client integration does not authorize data loss or destructive migrations.
 
 ## Validation and current limits
 
+Session navigation derives inactive historical activity from persisted lifecycle,
+completion markers and native conversation IDs. A previously used conversation
+without a completion timestamp is Done, while an unused session is Queued.
+Explicit live provider states still take priority. The shared provider inference
+also repairs legacy default-harness mismatches in navigation replies. Quiet idle
+snapshots are omitted from the bounded live cache so they cannot evict active
+work; lifecycle changes and authoritative idle hooks release stale live entries.
+These reads do not hydrate runtimes, read histories or backfill timestamps.
+Codex and Pi persist successful completion markers after final transcript/change
+evidence is available. Interrupted, failed and invalidated turns do not create
+unseen replies, and marker-storage failures never replay agent work.
+
+Chat state optionally supplies `unseenCompletionAt` (an ISO completion version).
+Its presence advertises support for the additive `mark-seen` chat command.
+Main validates both forms; the backend checks task/session membership and clears
+only a still-unseen matching completion in one conditional database update.
+Legacy `mark-reviewed` callers retain unconditional behavior. Repeated or stale
+acknowledgments are harmless and do not emit navigation invalidations. A successful
+change invalidates bounded sidebar windows and wakes selected chat feeds across
+windows, without reloading transcript history. New completions also invalidate
+the feed's history version so persisted final output is included.
+
 Session chat optionally includes bounded `planUsage` on its existing state
 reply. The backend projects subscription-only Codex/Claude OAuth snapshots;
 main validates the provider identity, status, dates, up to eight unique windows
@@ -334,6 +356,16 @@ bounded exception lists, coalesces identical requests, and returns at most 100
 file rows, 20 running-session names and scalar totals. Filtering searches every
 changed file on the backend. A task-owned 4 MiB metadata cache reuses unchanged
 snapshots across filters/pages; its lifetime ends with the backend service.
+
+Desktop commits with a blank message use the same provider preference as session
+startup: explicit configured defaults take priority, otherwise the last-used
+provider is selected. Model selection remains with the text-generation service's
+provider defaults. Manual messages require no provider. Direct Git API/MCP callers
+continue to supply their own provider for generation. Provider failures are not
+retried automatically or replaced with heuristic messages; malformed AI output
+can be corrected within a limit of three generation attempts. Staged diff context
+is read as a bounded prefix with a deadline, without external diff drivers or
+text conversion.
 
 Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
 server-observed changed paths. Likely secret paths require explicit inclusion.

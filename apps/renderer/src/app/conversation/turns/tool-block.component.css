@@ -92,14 +92,24 @@ code {
   min-width: max-content;
 }
 .diff-line code {
+  color: var(--ink);
   padding-right: var(--space-2);
   white-space: pre;
 }
 .sign {
+  position: sticky;
+  left: 0;
   width: var(--space-6);
   flex: none;
   text-align: center;
   user-select: none;
+  background: var(--surface);
+}
+.added .sign {
+  background: var(--diff-add-soft);
+}
+.removed .sign {
+  background: var(--diff-del-soft);
 }
 .removed {
   color: var(--diff-del);
@@ -109,16 +119,71 @@ code {
   color: var(--diff-add);
   background: var(--diff-add-soft);
 }
-.patch .diff-line code {
-  padding-left: var(--space-2);
-}
 .context {
   color: var(--ink-muted);
+  background: var(--surface-sunken);
+}
+.context code {
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-muted);
+  font-size: var(--text-mono-meta-size);
+  line-height: var(--text-mono-meta-line);
+}
+.change-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
   background: var(--surface);
+}
+.change-block .diff {
+  border-radius: 0;
+}
+.change-block .diff:focus-visible {
+  outline-offset: -2px;
+}
+.change-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--line);
+}
+.change-heading ex-icon {
+  flex: none;
+}
+.change-heading h4 {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+[data-token="keyword"] {
+  color: var(--code-keyword);
+}
+[data-token="string"] {
+  color: var(--code-string);
+}
+[data-token="number"] {
+  color: var(--code-number);
+}
+[data-token="function"] {
+  color: var(--code-function);
+}
+[data-token="comment"] {
+  color: var(--code-comment);
 }
 
 :host(.compact) h4 {
   margin-bottom: var(--space-1);
+}
+:host(.compact) .change-heading h4 {
+  margin: 0;
 }
 :host(.compact) pre {
   background: transparent;

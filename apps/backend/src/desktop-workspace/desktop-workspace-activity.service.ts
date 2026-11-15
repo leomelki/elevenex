@@ -3,14 +3,11 @@ import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-regi
 import type { AgentRuntimeEvent } from '../agent-runtime/agent-runtime.types.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
+import { SessionsService } from '../sessions/sessions.service.js';
+import { sessionAgentProvider } from '../sessions/session-provider.js';
+import { inactiveSessionStatus, type WorkspaceSessionActivity } from './desktop-session-status.js';
+export type { WorkspaceSessionActivity } from './desktop-session-status.js';
 
-export interface WorkspaceSessionActivity {
-  readonly id: number;
-  readonly activeAgentProvider: string;
-  readonly status: string;
-  readonly hasUnreviewedCompletion: boolean;
-  readonly lastCompletionAt: string | null;
-}
 type Activity = 'running' | 'attention' | 'failed' | 'queued' | 'idle';
 const capacity = 2048;
 function record(value: unknown): Record<string, unknown> {
@@ -51,6 +48,7 @@ export class DesktopWorkspaceActivityService
     private readonly registry: AgentRuntimeRegistryService,
     private readonly hooks: ClaudeHooksService,
     private readonly navigation: NavigationEventsService,
+    private readonly sessions: SessionsService,
   ) {}
   onModuleInit(): void {
     for (const info of this.registry.listProviders()) {
@@ -66,19 +64,28 @@ export class DesktopWorkspaceActivityService
           next = stateActivity(event.payload),
           previous = this.runtime.get(key);
         this.runtime.delete(key);
-        this.runtime.set(key, next);
+        // Idle is recoverable from persisted session metadata. Keeping idle
+        // snapshots would let many quiet sessions evict genuinely live work.
+        if (next !== 'idle') this.runtime.set(key, next);
         while (this.runtime.size > capacity)
           this.runtime.delete(this.runtime.keys().next().value!);
         // Token and tool updates often repeat snapshots; only semantic status changes invalidate visible pages.
-        if (next !== previous) this.navigation.invalidate();
+        if (next !== (previous ?? 'idle')) this.navigation.invalidate();
       };
       provider.on('event', listener);
       this.stop.push(() => provider.off('event', listener));
     }
-    const activity = (event: { sessionId: number }) => {
+    const activity = (event: { sessionId: number; provider?: string }) => {
       const snapshot = this.hooks.getActivity(event.sessionId);
+      let cleared = false;
+      // Hook activity is updated before run_state. Returning to idle must not
+      // leave a cached spinner or input request alive after runtime teardown.
+      if (snapshot.activityStatus === 'idle' && !snapshot.backgroundActive) {
+        const key = `${event.provider ?? 'claude'}:${event.sessionId}`;
+        if (this.runtime.get(key) === 'running' || this.runtime.get(key) === 'attention') cleared = this.runtime.delete(key);
+      }
       const signature = `${snapshot.activityStatus}:${snapshot.actionKind}:${snapshot.backgroundActive}`;
-      if (this.hookSignatures.get(event.sessionId) === signature) return;
+      if (this.hookSignatures.get(event.sessionId) === signature && !cleared) return;
       this.hookSignatures.delete(event.sessionId);
       this.hookSignatures.set(event.sessionId, signature);
       while (this.hookSignatures.size > capacity)
@@ -87,6 +94,13 @@ export class DesktopWorkspaceActivityService
     };
     this.hooks.on('status-changed', activity);
     this.stop.push(() => this.hooks.off('status-changed', activity));
+    const lifecycle = (event: { sessionId: number; status: string }) => {
+      if (event.status !== 'stopped' && event.status !== 'archived') return;
+      for (const info of this.registry.listProviders()) this.runtime.delete(`${info.id}:${event.sessionId}`);
+      this.hookSignatures.delete(event.sessionId);
+    };
+    this.sessions.on('session-status-changed', lifecycle);
+    this.stop.push(() => this.sessions.off('session-status-changed', lifecycle));
   }
   onModuleDestroy(): void {
     for (const stop of this.stop) stop();
@@ -95,9 +109,9 @@ export class DesktopWorkspaceActivityService
     this.hookSignatures.clear();
   }
   status(session: WorkspaceSessionActivity): string {
-    if (session.status === 'archived') return 'archived';
+    if (session.status === 'archived' || session.status === 'stopped') return inactiveSessionStatus(session);
     const observed = this.runtime.get(
-        `${session.activeAgentProvider}:${session.id}`,
+        `${sessionAgentProvider(session)}:${session.id}`,
       ),
       hooks = this.hooks.getActivity(session.id);
     if (observed === 'attention' || hooks.activityStatus === 'waiting')
@@ -110,8 +124,6 @@ export class DesktopWorkspaceActivityService
       return 'running';
     if (observed === 'failed') return 'failed';
     if (observed === 'queued') return 'queued';
-    if (session.hasUnreviewedCompletion) return 'review';
-    if (session.lastCompletionAt || session.status === 'stopped') return 'done';
-    return 'queued';
+    return inactiveSessionStatus(session);
   }
 }

@@ -44,7 +44,8 @@ describe('WorktreePoolService.rename (real git)', () => {
     repoPath = path.join(projectRoot, 'repo');
     await fs.mkdir(repoPath, { recursive: true });
 
-    await git(repoPath, ['init', '-q', '--initial-branch=main', '.']);
+    await git(repoPath, ['init', '-q', '.']);
+    await git(repoPath, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
     await git(repoPath, ['config', 'user.email', 'test@example.com']);
     await git(repoPath, ['config', 'user.name', 'Test']);
     await fs.writeFile(path.join(repoPath, 'README.md'), '# repo\n');

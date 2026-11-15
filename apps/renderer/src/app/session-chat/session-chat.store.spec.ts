@@ -103,6 +103,40 @@ function setup() {
   return { store, bridge, scope };
 }
 
+it('coalesces seen writes and rejects late acknowledgments across completions and selection changes', async () => {
+  const { store, bridge } = setup(); await settle();
+  const first = '2026-11-14T12:00:00.000Z', next = '2026-11-14T12:01:00.000Z';
+  store.state.set({ ...state, unseenCompletionAt: first });
+  const pending = deferred<BackendResult<{ readonly accepted: true }>>();
+  bridge.sessionChatCommand.mockImplementationOnce(() => pending.promise);
+  const seen = store.markSeen(); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.state.set({ ...state, unseenCompletionAt: next });
+  pending.resolve(ok({ accepted: true })); await seen;
+  expect(store.state()?.unseenCompletionAt).toBe(next);
+  store.historical.set(true); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.historical.set(false); store.setActive(false); await store.markSeen();
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  store.setActive(true);
+  const old = deferred<BackendResult<{ readonly accepted: true }>>();
+  bridge.sessionChatCommand.mockImplementationOnce(() => old.promise);
+  const late = store.markSeen();
+  store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+  store.state.set({ ...state, unseenCompletionAt: next });
+  old.resolve(ok({ accepted: true })); await late;
+  expect(store.state()?.unseenCompletionAt).toBe(next);
+});
+
+it('retains unseen state after a failed acknowledgment and supports older engines without the field', async () => {
+  const { store, bridge } = setup(); await settle();
+  await store.markSeen(); expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  const at = '2026-11-14T12:00:00.000Z'; store.state.set({ ...state, unseenCompletionAt: at });
+  bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Offline' } });
+  await store.markSeen(); expect(store.state()?.unseenCompletionAt).toBe(at);
+  await store.markSeen(); expect(store.state()?.unseenCompletionAt).toBeNull();
+});
+
 it('retains conversation inputs on idle heartbeats and keeps transient poll failures quiet', async () => {
   const { store, bridge } = setup(); await settle();
   bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('prompt', 'user', 'Keep this conversation')] })));
@@ -589,25 +623,66 @@ describe("session chat ownership", () => {
         .filter((exchange) => exchange.prompt === "Change direction"),
     ).toHaveLength(1);
   });
-  it("replaces historical windows, pauses live reads, and retains drafts when returning to latest", async () => {
-    const { store, bridge } = setup();
-    await settle();
-    bridge.sessionChatRead.mockResolvedValueOnce(
-      ok(page(2, { before: "old", items: [item("latest", "user", "Latest")] })),
-    );
-    await store.refresh();
-    store.setDraft("A draft");
-    bridge.sessionChatRead.mockResolvedValueOnce(
-      ok(page(2, { items: [item("earlier", "user", "Earlier")] })),
-    );
+  it("stitches older pages into the chat without pausing live state or losing the draft", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "latest", next: null, items: [item("latest", "user", "Latest")] })));
+    await store.refresh(); store.setDraft("A draft");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { next: "earlier", items: [item("earlier", "user", "Earlier")] })));
     await store.older();
-    expect(store.items()[0]?.id).toBe("earlier");
+    expect(store.items().map(item => item.id)).toEqual(["earlier", "latest"]);
     const calls = bridge.sessionChatRead.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
-    expect(store.draft()).toBe("A draft");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, next: null, state: { ...state, phase: "running" } })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
+    expect(store.state()?.phase).toBe("running"); expect(store.draft()).toBe("A draft");
+  });
+  it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
+    const { store, bridge } = setup(); await settle();
+    const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
+      const from = input.following ? Number(input.following) + 1 : Math.max(0, Number(input.before ?? history.length) - 80);
+      const end = Math.min(history.length, from + 80);
+      return ok(page(2, { items: history.slice(from, end), before: from ? String(from) : null, next: end < history.length ? String(end - 1) : null }));
+    });
     await store.refresh();
-    expect(store.historical()).toBe(false);
+    for (let i = 0; i < 40; i++) {
+      await store.older();
+      expect(store.items().length).toBeLessThanOrEqual(320);
+      expect(store.items().every((item, i, items) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
+    }
+    expect(store.historical()).toBe(true);
+    const pinned = store.items();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-80), next: null, state: { ...state, phase: "running" } })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items()).toBe(pinned); expect(store.state()?.phase).toBe("running");
+    while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
+    expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
+  });
+  it("reconciles the live tail before sending from history and never dispatches a duplicate send", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "320", next: null, items: Array.from({ length: 320 }, (_, i) => item(String(i + 320), "user", `Message ${i}`)) })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item("earlier", "user", "Earlier")], next: "earlier" })));
+    await store.older(); expect(store.historical()).toBe(true);
+    store.setDraft("Reply from history");
+    const read = deferred<BackendResult<SessionChatPage>>(); bridge.sessionChatRead.mockReturnValueOnce(read.promise);
+    const sending = store.submit({ text: store.draft(), intent: "send", context: [] });
+    await store.submit({ text: store.draft(), intent: "send", context: [] });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    read.resolve(ok(page(2, { next: null, items: [item("latest", "user", "Current live tail")] })));
+    await sending; expect(bridge.sessionChatCommand).toHaveBeenCalledOnce();
+  });
+  it("keeps a failed history read retryable and rejects a history reply after navigation", async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "latest", next: null, items: [item("latest", "user", "Latest")] })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: "transport", message: "Try again" } });
+    await store.older(); expect(store.historyError()).toBe("Try again"); expect(store.items()[0]?.id).toBe("latest");
+    const pending = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(pending.promise);
+    const read = store.older(); store.open({ scopeId: "scope", taskId: 1, sessionId: 3 }, false);
+    pending.resolve(ok(page(2, { items: [item("old", "user", "Old session")] }))); await read; await settle();
+    expect(store.items().some(item => item.id === "old")).toBe(false); expect(store.historyLoading()).toBe(false);
   });
   it("changes an unstarted harness without losing the draft or accepting an old provider reply", async () => {
     const { store, bridge } = setup();
@@ -862,8 +937,64 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
     expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
   });
+  it.each(['automatic', 'steer'] as const)('shows a dequeued prompt and its answer on %s dispatch without a local send', async dispatch => {
+    const { store, bridge } = setup();
+    await settle();
+    const initial = [item('u1', 'user', 'Initial prompt'), item('a1', 'assistant', 'Initial answer')];
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: initial,
+      state: { ...state, phase: 'running', queue: [{ id: 'q1', text: 'Same follow-up' }, { id: 'q2', text: 'Same follow-up' }] },
+    })));
+    await store.refresh();
+    const receipt = item('native-user', 'user', 'Same follow-up');
+    const answer = item('a2', 'assistant', 'New answer');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false,
+      events: [{ type: 'item', item: receipt }, { type: 'item', item: answer }],
+      state: { ...state, phase: 'running', queue: [{ id: 'q2', text: 'Same follow-up' }] },
+    })));
+    if (dispatch === 'steer') await store.perform({ type: 'steer-queued', id: 'q1' });
+    else await vi.advanceTimersByTimeAsync(80);
+    await settle();
+    expect(store.exchanges().map(exchange => [exchange.id, exchange.prompt, exchange.answer])).toEqual([
+      ['u1', 'Initial prompt', 'Initial answer'], ['native-user', 'Same follow-up', 'New answer'],
+    ]);
+    expect(store.queue().map(item => item.id)).toEqual(['q2']);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [...initial, receipt, answer] })));
+    await store.refresh();
+    expect(store.exchanges().filter(exchange => exchange.prompt === 'Same follow-up')).toHaveLength(1);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(dispatch === 'steer' ? 1 : 0);
+  });
 });
 describe("provider-neutral transcript presentation", () => {
+  it("keeps inline images with their source commentary instead of appending them to the answer", () => {
+    const [exchange] = chatExchanges([
+      item("u", "user", "Check it"),
+      item("image", "assistant", "First capture", { media: [
+        { id: "image-1", path: "/tmp/capture.png", caption: "Capture", inline: true },
+      ] }),
+      item("tool", "tool_use", "", { toolId: "check", toolName: "bash" }),
+      item("final", "assistant", "Done"),
+    ], null, new Set());
+    expect(exchange?.answer).toBe("Done");
+    expect(exchange?.steps.find(step => step.id === "image")?.text)
+      .toBe("First capture\n\n![Capture](/tmp/capture.png)");
+  });
+
+  it("measures settled turns from the prompt to their last activity and lets live turns count", () => {
+    const at = (time: string) => ({ timestamp: `2026-10-28T12:${time}Z` });
+    const items = [
+      item("u1", "user", "Fix it", at("00:00")),
+      item("a1", "assistant", "Done", at("02:14")),
+      item("u2", "user", "Again", at("03:00")),
+      item("t2", "tool_use", "", { ...at("03:05"), toolKind: "bash" }),
+    ];
+    const [settled, live] = chatExchanges(items, { ...state, phase: "running" }, new Set());
+    expect(settled).toMatchObject({ status: "done", duration: 134 });
+    expect(live).toMatchObject({ status: "live", duration: undefined, startedAt: Date.parse("2026-10-28T12:03:00Z") });
+    const [partial] = chatExchanges([item("a0", "assistant", "Earlier", at("01:00"))], state, new Set());
+    expect(partial?.duration).toBeUndefined();
+  });
   it('pairs a result with the call identity when a provider omits its separate tool ID', () => {
     const [exchange] = chatExchanges([
       item('user', 'user', 'Check it'),
@@ -989,5 +1120,5 @@ it('keeps an earlier-history window on screen instead of jumping to latest after
   const calls = bridge.sessionChatRead.mock.calls.length, view = store.viewRevision();
   TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered'); scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
   store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();
-  expect(store.historical()).toBe(true); expect(store.items()[0]?.id).toBe('older'); expect(store.viewRevision()).toBe(view); expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
+  expect(store.items()[0]?.id).toBe('older'); expect(store.viewRevision()).toBe(view); expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
 });

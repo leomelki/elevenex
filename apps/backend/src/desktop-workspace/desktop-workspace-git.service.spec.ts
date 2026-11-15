@@ -15,8 +15,11 @@ import { TaskGitService } from '../tasks/task-git.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { DesktopWorkspaceGitService } from './desktop-workspace-git.service.js';
+import { SettingsService } from '../settings/settings.service.js';
+import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
 const execute = promisify(execFile);
+const selection = { includeUnstaged: true, excluded: [], includedSecrets: [] };
 describe('desktop workspace git boundary', () => {
   let database: ReturnType<typeof createTestDb>;
   let service: DesktopWorkspaceGitService;
@@ -26,6 +29,8 @@ describe('desktop workspace git boundary', () => {
   let projectId: number;
   let taskId: number;
   let repoId: number;
+  let settings: SettingsService;
+  let gitBoundary: Pick<GitService, 'commit' | 'push' | 'getStatusSummary'>;
   const commit = jest.fn().mockResolvedValue({
     hash: 'a',
     message: 'Saved',
@@ -41,7 +46,8 @@ describe('desktop workspace git boundary', () => {
     root = await mkdtemp(join(tmpdir(), 'elevenex-workspace-git-'));
     repository = join(root, 'repository');
     checkout = join(root, 'task');
-    await git(root, 'init', '-b', 'main', repository);
+    await git(root, 'init', repository);
+    await git(repository, 'symbolic-ref', 'HEAD', 'refs/heads/main');
     await git(repository, 'config', 'user.email', 'test@example.test');
     await git(repository, 'config', 'user.name', 'Test');
     await writeFile(join(repository, 'initial'), 'initial');
@@ -78,11 +84,29 @@ describe('desktop workspace git boundary', () => {
       worktreePath: checkout,
       name: 'Session',
     });
+    gitBoundary = {
+      commit,
+      push,
+      getStatusSummary: async () => ({
+        branch: await git(checkout, 'branch', '--show-current'),
+        upstream: 'origin/main',
+        headSha: null,
+        worktreeFingerprint: '',
+        hasChanges: false,
+        ahead: 0,
+        behind: 0,
+        files: [],
+        staged: { files: 0, additions: 0, deletions: 0 },
+        unstaged: { files: 0, additions: 0, deletions: 0 },
+        total: { files: 0, additions: 0, deletions: 0 },
+      }),
+    };
     const module = await Test.createTestingModule({
       providers: [
         DesktopWorkspaceGitService,
         TaskGitService,
         ProjectsService,
+        SettingsService,
         { provide: DRIZZLE, useValue: db },
         { provide: SessionsService, useValue: {} },
         {
@@ -109,22 +133,12 @@ describe('desktop workspace git boundary', () => {
         },
         {
           provide: GitService,
-          useValue: {
-            commit,
-            push,
-            getStatusSummary: async () => ({
-              branch: await git(checkout, 'branch', '--show-current'),
-              upstream: 'origin/main',
-              ahead: 0,
-              behind: 0,
-              files: [],
-              total: { files: 0, additions: 0, deletions: 0 },
-            }),
-          },
+          useValue: gitBoundary,
         },
       ],
     }).compile();
     service = module.get(DesktopWorkspaceGitService);
+    settings = module.get(SettingsService);
   });
   afterEach(async () => {
     database?.sqlite.close();
@@ -132,17 +146,15 @@ describe('desktop workspace git boundary', () => {
   });
 
   it('computes close confirmation counts from durable task sessions beyond the loaded navigation window', async () => {
-    await database.db
-      .insert(schema.sessions)
-      .values(
-        Array.from({ length: 30 }, (_, index) => ({
-          repoId,
-          workspaceId: taskId,
-          branchName: 'task',
-          worktreePath: checkout,
-          name: `Session ${index}`,
-        })),
-      );
+    await database.db.insert(schema.sessions).values(
+      Array.from({ length: 30 }, (_, index) => ({
+        repoId,
+        workspaceId: taskId,
+        branchName: 'task',
+        worktreePath: checkout,
+        name: `Session ${index}`,
+      })),
+    );
     expect(await service.closePreview(taskId)).toEqual({
       taskId,
       sessions: 31,
@@ -169,6 +181,123 @@ describe('desktop workspace git boundary', () => {
     expect(commit).toHaveBeenCalledWith(checkout, {
       message: 'Save the selected task',
       includeUnstaged: true,
+    });
+  });
+
+  describe('AI commits through the generation boundary', () => {
+    const generate = jest.fn<
+      ReturnType<TextAgentGenerationService['generate']>,
+      Parameters<TextAgentGenerationService['generate']>
+    >();
+    beforeEach(async () => {
+      generate.mockReset();
+      const module = await Test.createTestingModule({
+        providers: [
+          GitService,
+          { provide: TextAgentGenerationService, useValue: { generate } },
+        ],
+      }).compile();
+      const realGit = module.get(GitService);
+      gitBoundary.commit = realGit.commit.bind(realGit);
+      gitBoundary.getStatusSummary = realGit.getStatusSummary.bind(realGit);
+      await git(checkout, 'config', 'commit.gpgsign', 'false');
+      await writeFile(join(checkout, 'chosen.txt'), 'chosen change\n');
+    });
+
+    it.each(
+      (['claude', 'codex', 'pi', 'opencode'] as const).flatMap((provider) =>
+        [true, false].map((snapshot) => ({ provider, snapshot })),
+      ),
+    )(
+      'commits using configured $provider (snapshot: $snapshot)',
+      async ({ provider, snapshot }) => {
+        await settings.update({
+          defaultAgentProvider: provider,
+          agentModelPresets: [
+            {
+              id: 'configured',
+              name: 'Configured',
+              provider,
+              model: null,
+              reasoningEffort: null,
+              isDefault: true,
+            },
+          ],
+        });
+        await settings.rememberAgentConfig({
+          provider: provider === 'codex' ? 'claude' : 'codex',
+          model: null,
+          reasoningEffort: null,
+          fastMode: false,
+        });
+        generate.mockResolvedValue({
+          provider,
+          model: null,
+          text: '{"subject":"fix: save chosen change","body":"Explain the change."}',
+        });
+        const preview = snapshot
+          ? await service.commitPreview(taskId, selection)
+          : null;
+        await service.action(taskId, {
+          type: 'commit',
+          message: '   ',
+          ...(preview ? { selection, revision: preview.revision } : {}),
+        });
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(generate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            provider,
+            worktreePath: checkout,
+            taskName: 'commit-message',
+          }),
+        );
+        expect(generate.mock.calls[0][0].prompt).toContain('+chosen change');
+        expect(await git(checkout, 'log', '-1', '--format=%B')).toBe(
+          'fix: save chosen change\n\nExplain the change.',
+        );
+        expect(await git(checkout, 'show', 'HEAD:chosen.txt')).toBe(
+          'chosen change',
+        );
+        expect(await git(checkout, 'status', '--porcelain')).toBe('');
+        expect(await service.summary(taskId)).not.toHaveProperty('commitPhase');
+      },
+    );
+
+    it('uses the last-used provider when no explicit provider defaults exist', async () => {
+      await settings.rememberAgentConfig({
+        provider: 'pi',
+        model: 'provider/model',
+        reasoningEffort: 'low',
+        fastMode: false,
+      });
+      generate.mockResolvedValue({
+        provider: 'pi',
+        model: 'provider/model',
+        text: '{"subject":"Save chosen change","body":null}',
+      });
+      await service.action(taskId, { type: 'commit', message: '' });
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'pi' }),
+      );
+      expect(settings.getAgentProviderDefaults('pi').model).toBe(
+        'provider/model',
+      );
+    });
+
+    it('commits a manual message without loading settings or starting a provider', async () => {
+      const findSettings = jest.spyOn(settings, 'findOne');
+      const preview = await service.commitPreview(taskId, selection);
+      await service.action(taskId, {
+        type: 'commit',
+        message: 'Manual message',
+        selection,
+        revision: preview.revision,
+      });
+      expect(generate).not.toHaveBeenCalled();
+      expect(findSettings).not.toHaveBeenCalled();
+      expect(await git(checkout, 'log', '-1', '--format=%B')).toBe(
+        'Manual message',
+      );
     });
   });
   it.each(['rejected', 'interrupted'])('reports a saved commit after a %s push and allows push without committing again', async (failure) => {
@@ -232,6 +361,23 @@ describe('desktop workspace git boundary', () => {
     await expect(
       service.action(taskId, { type: 'push' }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+  it.each([
+    ['git@github.com: Permission denied (publickey).', false, 'git-push-authentication'],
+    ['Permission denied (publickey,password).', false, 'git-push-authentication'],
+    ['fatal: Authentication failed for https://user:secret@example.test/repo', false, 'git-push-authentication'],
+    ["fatal: could not read Username for 'https://example.test': terminal prompts disabled", false, 'git-push-authentication'],
+    ['HTTP Basic: Access denied', false, 'git-push-authentication'],
+    ['! [rejected] task -> task (fetch first)', true, 'git-push-behind'],
+    ['Could not resolve host: example.test', false, 'git-push-failed'],
+    ['No git remote is configured for this repository.', false, 'git-push-failed'],
+    ['pre-push hook declined https://user:secret@example.test/repo', false, 'git-push-failed'],
+  ])('reports a safe push failure for %s', async (message, nonFastForward, code) => {
+    push.mockResolvedValueOnce({ pushed: false, message, nonFastForward });
+    await expect(service.action(taskId, { type: 'push' })).rejects.toMatchObject({ response: { code } });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
+    expect(await git(checkout, 'symbolic-ref', '--short', 'HEAD')).toBe('task');
   });
   it('fast-forwards from upstream and preserves divergent local history when sync cannot fast-forward', async () => {
     await writeFile(join(repository, 'remote-change'), 'remote');

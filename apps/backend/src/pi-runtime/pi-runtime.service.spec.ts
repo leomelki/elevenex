@@ -8,10 +8,12 @@ import { PiRuntimeService } from './pi-runtime.service.js';
 import { PiSessionRuntime } from './pi-session-runtime.js';
 import type { PiSessionRuntimeEvent } from './pi-runtime.types.js';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
+import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 jest.mock('../session-title/session-title.service.js', () => ({
   SessionTitleService: jest.fn(),
 }));
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 
 jest.mock('child_process', () => ({
   execFile: jest.fn(),
@@ -21,6 +23,7 @@ jest.mock('child_process', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(async () => ({ PATH: '/mock/bin' })),
   findBinary: jest.fn(() => null),
+  findBinaryAsync: jest.fn(async () => null),
   buildSpawnCommand: jest.fn((command: string) => ({ command, shell: false })),
 }));
 
@@ -192,6 +195,7 @@ function createService(options?: {
   idleMs?: string;
   idleCap?: string;
   piSessionPath?: string;
+  turnChanges?: Pick<TurnChangesService, 'begin' | 'finish' | 'cancelSession'>;
 }) {
   if (options?.idleMs) process.env.PI_RUNTIME_IDLE_MS = options.idleMs;
   if (options?.idleCap) process.env.PI_RUNTIME_IDLE_CAP = options.idleCap;
@@ -203,6 +207,7 @@ function createService(options?: {
       piSessionPath,
     })),
     updateStatus: jest.fn(async () => undefined),
+    markCompletionUnreviewed: jest.fn(async () => undefined),
     updatePiSessionPath: jest.fn(async (_sessionId: number, path: string) => {
       piSessionPath = path;
     }),
@@ -237,6 +242,7 @@ function createService(options?: {
         }),
       } as never,
       tokens as never,
+      options?.turnChanges as never,
     ),
     sessions,
     tokens,
@@ -244,6 +250,67 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('passes the socket-mode MCP endpoint to the Pi extension environment', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const { service } = createService();
+    mockSpawn.mockReturnValue(
+      createPiProcess('/tmp/pi-socket-mcp.jsonl') as never,
+    );
+    try {
+      await service.submitPrompt(1, 'Hello');
+      expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+          ELEVENEX_AGENT_TOKEN: 'evx_pi_test',
+        }),
+        '/repo/session-1',
+      );
+    } finally {
+      await service.onModuleDestroy();
+      environment.restore();
+    }
+  });
+
+  it('releases a completed run when final evidence fails, allowing the next explicit prompt', async () => {
+    const changes = { begin: jest.fn(async () => undefined), finish: jest.fn(async () => undefined), cancelSession: jest.fn() };
+    changes.finish.mockRejectedValueOnce(new Error('Cannot save final evidence'));
+    const { service, sessions } = createService({ turnChanges: changes });
+    const child = createPiProcess('/tmp/pi-final-evidence-failure.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      await expect(service.submitPrompt(1, 'First turn')).rejects.toThrow('Cannot save final evidence');
+      expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      await service.submitPrompt(1, 'Second explicit turn');
+      expect(child.stdin.writes.filter(line => JSON.parse(line).type === 'prompt')).toHaveLength(2);
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+    } finally { await service.onModuleDestroy(); }
+  });
+  it('persists one unseen completion when a real prompt finishes', async () => {
+    const { service, sessions } = createService();
+    mockSpawn.mockReturnValue(createPiProcess('/tmp/pi-completion.jsonl') as never);
+    try {
+      await service.submitPrompt(1, 'Finish a reply');
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledWith(1, 'completed');
+      await service.getRuntimeState(1);
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+    } finally { await service.onModuleDestroy(); }
+  });
+  it('does not turn marker-write failures into failed or repeated agent work', async () => {
+    const { service, sessions } = createService();
+    sessions.markCompletionUnreviewed.mockRejectedValueOnce(new Error('Temporary database failure'));
+    const child = createPiProcess('/tmp/pi-completion-failure.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      await service.submitPrompt(1, 'Finish a reply');
+      expect(sessions.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+      expect((await service.getRuntimeState(1)).runPhase).toBe('idle');
+      expect(child.stdin.writes.filter(line => JSON.parse(line).type === 'prompt')).toHaveLength(1);
+    } finally { await service.onModuleDestroy(); }
+  });
   it('does not restart a disposed runtime for an effort capability read', async () => {
     const { service } = createService();
     mockSpawn.mockReturnValue(createPiProcess('/tmp/pi-thinking-cleanup.jsonl') as never);
@@ -960,13 +1027,14 @@ describe('PiRuntimeService lifecycle', () => {
       envStarted.resolve();
       return env.promise;
     });
-    const { service } = createService({ idleMs: '60000' });
+    const { service, sessions } = createService({ idleMs: '60000' });
     const first = service.submitPrompt(1, 'first');
     await envStarted.promise;
     await service.interrupt(1);
     await service.submitPrompt(1, 'second');
     env.resolve({ PATH: '/mock/bin' });
     await first;
+    expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
     expect(child.stdin.writes.map((write) => JSON.parse(write)).filter((command) => command.type === 'prompt')).toEqual([]);
     expect(await service.getRuntimeState(1)).toMatchObject({
       runPhase: 'idle',

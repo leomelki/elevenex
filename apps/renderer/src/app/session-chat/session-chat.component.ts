@@ -1,5 +1,6 @@
 import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
+import { DOCUMENT } from '@angular/common';
 import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import { SessionChatModels } from './session-chat-models';
@@ -99,6 +100,10 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SessionChatComponent {
+  private readonly document = inject(DOCUMENT);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  private readonly foreground = signal(this.document.hasFocus() && !this.document.hidden);
+  private readonly visibilityRevision = signal(0);
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
@@ -244,7 +249,6 @@ export class SessionChatComponent {
   );
   readonly activityDisabledReason = computed(() => this.archived() ? 'This session is archived. Activity is read only.'
     : this.store.offline() ? 'Reconnect to control this work.'
-    : this.store.historical() ? 'Return to latest to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
   readonly models = computed<readonly AgentModel[]>(() => {
@@ -280,7 +284,6 @@ export class SessionChatComponent {
       !this.archived() &&
       (this.store.starting() || !!this.store.state()) &&
       this.store.empty() &&
-      !this.store.historical() &&
       !this.store.state()?.providerLocked &&
       !this.store.state()?.permission &&
       !this.store.state()?.question,
@@ -337,7 +340,6 @@ export class SessionChatComponent {
       !current ||
       this.blocked() ||
       this.modelCatalog.loading() ||
-      this.store.historical() ||
       this.store.loading()
     )
       return;
@@ -423,6 +425,24 @@ export class SessionChatComponent {
       });
       cleanup(() => this.modelCatalog.reset());
     });
+    const view = this.document.defaultView;
+    const foreground = () => this.foreground.set(this.document.hasFocus() && !this.document.hidden);
+    view?.addEventListener('focus', foreground);
+    view?.addEventListener('blur', foreground);
+    this.document.addEventListener('visibilitychange', foreground);
+    inject(DestroyRef).onDestroy(() => {
+      view?.removeEventListener('focus', foreground);
+      view?.removeEventListener('blur', foreground);
+      this.document.removeEventListener('visibilitychange', foreground);
+    });
+    afterRenderEffect(cleanup => {
+      // Shell takeovers and modal layers retain the chat under inert ancestors.
+      // Observe only those ancestors, never the streamed transcript subtree.
+      const observer = new MutationObserver(() => this.visibilityRevision.update(value => value + 1));
+      for (let parent: HTMLElement | null = this.element; parent; parent = parent.parentElement)
+        observer.observe(parent, { attributes: true, attributeFilter: ['inert', 'hidden'] });
+      cleanup(() => observer.disconnect());
+    });
     effect(() => {
       const selection = this.selection();
       this.store.setActive(this.active());
@@ -464,6 +484,14 @@ export class SessionChatComponent {
       // Hydrated history must be positioned before paint, without scroll animation.
       untracked(() => scroll.scrollToEnd("instant"));
     });
+    afterRenderEffect(() => {
+      this.visibilityRevision();
+      const at = this.store.state()?.unseenCompletionAt;
+      const ready = !this.store.loading() && !this.store.historical() && !this.store.next();
+      const atEnd = this.chat()?.scroll()?.atEnd();
+      if (at && ready && atEnd && this.active() && this.foreground() && !this.element.closest('[inert], [hidden]'))
+        untracked(() => { void this.store.markSeen(); });
+    });
     effect((cleanup) => {
       if (!this.store.state()?.planUsage) return;
       this.usageTime.set(Date.now());
@@ -475,6 +503,10 @@ export class SessionChatComponent {
       clearTimeout(this.copyTimer);
       this.presetFlow.dispose();
     });
+  }
+  async latest(): Promise<void> {
+    await this.store.refresh();
+    this.chat()?.scroll()?.scrollToEnd("instant");
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();

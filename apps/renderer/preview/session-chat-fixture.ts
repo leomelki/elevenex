@@ -31,6 +31,7 @@ const savedPresets: readonly SessionChatPreset[] = [
 ];
 const stamp = "2026-10-28T10:20:00.000Z";
 export const previewChatState = (): SessionChatState => ({
+  unseenCompletionAt: null,
   attachments: true,
   sessionMentions: true,
   presets: savedPresets,
@@ -100,6 +101,8 @@ const retryQuestion: NonNullable<SessionChatState["question"]> = {
 /** Background work plus the events the backend keeps: finished work, failures, compaction. */
 export const previewChatWork = (now = Date.now()): NonNullable<SessionChatState["work"]> => sessionActivityWork('codex', now);
 
+// Seeded history shares one stamp; runtime receipts use the current time so
+// live turns count from a realistic start, as backend receipts do.
 const item = (
   id: string,
   kind: SessionChatItem["kind"],
@@ -162,6 +165,8 @@ const opening = () => [
     "answer",
     "assistant",
     "The retry path now claims the idempotency key **before** calling the payment provider. Concurrent requests share the original result.\n\n- Preserved retry behavior after transient errors.\n- Added coverage for simultaneous and delayed requests.\n- All **12 tests pass**.\n\n```ts\nconst claim = await retries.claim(key);\nif (!claim.created) return claim.result;\n```",
+    // A later receipt lets the settled turn show a realistic "Worked for" time.
+    { timestamp: "2026-10-28T10:22:14.000Z" },
   ),
 ];
 /** Harness-shaped fixtures stay outside the production import graph. */
@@ -233,7 +238,7 @@ export class SessionChatFixture {
   }
   /** Incoming reply growth without a local submission or transcript reset. */
   appendAssistant(text: string, id = 101): void {
-    this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text));
+    this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text, { timestamp: new Date().toISOString() }));
     this.changed();
   }
   constructor(destroy: DestroyRef) {
@@ -261,6 +266,16 @@ export class SessionChatFixture {
       this.sessions.set(id, session);
     }
     return session;
+  }
+  /** Durable completion marker and final content through the real read path. */
+  unseenCompletionAt(id: number): string | null {
+    return this.session(id).state.unseenCompletionAt ?? null;
+  }
+  completeUnseen(id: number, at: string): void {
+    const session = this.session(id);
+    session.items = [...session.items, item(`finished-${at}`, 'assistant', 'The agent has finished working. This reply has not been viewed yet.')];
+    session.state = { ...session.state, unseenCompletionAt: at, phase: 'idle', canInterrupt: false, permission: null, question: null, work: undefined };
+    this.changed(); this.resetVersion = this.version;
   }
   scenario(
     mode:
@@ -365,7 +380,7 @@ export class SessionChatFixture {
         error: "The provider disconnected. Your conversation is saved.",
       };
     if (mode === "history")
-      session.items = Array.from({ length: 240 }, (_, i) =>
+      session.items = Array.from({ length: 4000 }, (_, i) =>
         item(
           `history-${i}`,
           i % 2 ? "assistant" : "user",
@@ -491,10 +506,11 @@ export class SessionChatFixture {
         this.waiting.set(input.requestId, done);
       });
     const session = this.session(input.sessionId),
-      end = input.before
+      start = input.following ? session.items.findIndex(item => item.id === input.following) + 1 : -1,
+      end = input.following ? Math.min(session.items.length, start + 80) : input.before
         ? session.items.findIndex((item) => item.id === input.before)
         : session.items.length;
-    const items = session.items.slice(Math.max(0, end - 80), end).map((item) =>
+    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - 80), end).map((item) =>
       item.truncated
         ? {
             ...item,
@@ -513,7 +529,8 @@ export class SessionChatFixture {
         reset,
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
-        before: end > 80 ? (items[0]?.id ?? null) : null,
+        before: (start > 0 || end > 80) ? (items[0]?.id ?? null) : null,
+        next: end < session.items.length ? (items.at(-1)?.id ?? null) : null,
         state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
       },
     };
@@ -580,6 +597,12 @@ export class SessionChatFixture {
     }
     const session = this.session(input.sessionId),
       action = input.action;
+    if (action.type === 'mark-seen') {
+      if (session.state.unseenCompletionAt === action.completionAt) {
+        session.state = { ...session.state, unseenCompletionAt: null }; this.changed();
+      }
+      return { ok: true, value: { accepted: true } };
+    }
     let defaultChange: SessionChatCommandReply['defaultChange'];
     if (action.type === 'preset-default-restore') {
       if (action.expectedRevision !== this.defaultSnapshot().revision)
@@ -666,10 +689,10 @@ export class SessionChatFixture {
       else {
         const refs = [...action.text.matchAll(/^\[([^\]]+)\]\(<([^>]+)>\)/gm)].map((match, index) => ({ id: String(index), path: match[2]!, caption: match[1]!, inline: false, kind: /\.(png|jpe?g|gif|webp)$/i.test(match[2]!) ? 'image' as const : /\.(mp4|webm|mov)$/i.test(match[2]!) ? 'video' as const : 'file' as const }));
         const mentions = action.sessionIds?.map(sessionId => ({ sessionId, title: sessionId === 102 ? 'Review the race condition' : `Session ${sessionId}` }));
-        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs, mentions });
+        const receipt = item(`sent-${this.version}`, "user", action.text, { media: refs, mentions, timestamp: new Date().toISOString() });
         const delayed = this.delayedReceipts;
         if (!delayed) session.items.push(receipt);
-        session.items.push(item(`reply-${this.version}`, "assistant", ""));
+        session.items.push(item(`reply-${this.version}`, "assistant", "", { timestamp: new Date().toISOString() }));
         session.state = {
           ...session.state,
           phase: "running",
@@ -749,13 +772,28 @@ export class SessionChatFixture {
         phase: "idle",
         canInterrupt: false,
       };
-    else if (action.type === "cancel-queued" || action.type === "steer-queued")
+    else if (action.type === "cancel-queued")
       session.state = {
         ...session.state,
         queue: session.state.queue.filter((item) => item.id !== action.id),
       };
-    else if (action.type === "resume-queue")
+    else if (action.type === "steer-queued" || action.type === "resume-queue") {
+      const next = action.type === "steer-queued"
+        ? session.state.queue.find(item => item.id === action.id)
+        : session.state.phase === "idle" ? session.state.queue[0] : undefined;
       session.state = { ...session.state, queuePaused: false };
+      if (next) {
+        const timestamp = new Date().toISOString();
+        session.items.push(
+          item(`sent-${this.version}`, "user", next.text, { timestamp }),
+          item(`reply-${this.version}`, "assistant", "Applying the queued guidance.", { timestamp }),
+        );
+        session.state = {
+          ...session.state, phase: "running", canInterrupt: true,
+          queue: session.state.queue.filter(item => item.id !== next.id),
+        };
+      }
+    }
     else if (action.type === "plan")
       session.state = { ...session.state, plan: action.enabled };
     else if (action.type === "model")

@@ -1,6 +1,6 @@
 import { Component, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TurnStatus, WorkStep } from "../conversation.models";
 import { TurnComponent } from "./turn.component";
 
@@ -144,7 +144,7 @@ describe("turn work disclosure", () => {
     other.remove();
   });
 
-  it("does not count commentary and completion notes as work", () => {
+  it("keeps earlier commentary behind Worked without counting it as a tool", () => {
     const fixture = TestBed.createComponent(ReplyHostComponent);
     fixture.componentInstance.steps.set([
       { id: "say", kind: "say", text: "Checking the details." },
@@ -153,10 +153,9 @@ describe("turn work disclosure", () => {
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(fixture.componentInstance.steps().filter(step => step.kind !== 'say' && step.kind !== 'note')).toHaveLength(0);
-    expect(host.querySelector(".work")?.textContent).toContain('Earlier messages');
+    expect(host.querySelector(".work-row")?.textContent).toContain("Worked");
     expect(host.querySelector('ex-tool-step')).toBeNull();
-    host.querySelector<HTMLButtonElement>('.work')!.click();
-    fixture.detectChanges();
+    expect(host.querySelector('.prose')?.closest("ex-fold")?.hasAttribute("inert")).toBe(true);
     expect(host.querySelector('.prose')?.textContent).toContain('Checking the details.');
     expect(host.querySelector('.answer')?.textContent).toContain('Hi.');
     fixture.destroy();
@@ -172,7 +171,7 @@ describe("turn work disclosure", () => {
       fixture.componentInstance.steps.set([step]);
       fixture.detectChanges();
       const work = host.querySelector<HTMLButtonElement>(".work")!;
-      expect(work.textContent).toContain("Worked 12s");
+      expect(work.textContent).toContain("Worked for 12s");
       expect(work.getAttribute("aria-expanded")).toBe("false");
       work.click();
       fixture.detectChanges();
@@ -184,12 +183,6 @@ describe("turn work disclosure", () => {
     fixture.destroy();
   });
 });
-
-interface EvidenceObservation {
-  target?: Element;
-  resize: () => void;
-  disconnect: () => void;
-}
 
 describe("turn evidence", () => {
   it.each(["live", "done", "stopped", "failed"] as const)(
@@ -293,71 +286,70 @@ describe("turn evidence", () => {
     fixture.destroy();
     host.remove();
   });
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("updates overflow after resize and releases the observer when evidence leaves", async () => {
-    const observations: EvidenceObservation[] = [];
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        readonly observation: EvidenceObservation;
-        constructor(callback: () => void) {
-          this.observation = { resize: callback, disconnect: vi.fn() };
-          observations.push(this.observation);
-        }
-        observe(target: Element): void {
-          this.observation.target = target;
-        }
-        disconnect(): void {
-          this.observation.disconnect();
-        }
-      },
-    );
+  it("counts a live turn from its start and settles on the supplied duration", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-28T12:00:42Z") });
+    try {
+      const fixture = TestBed.createComponent(TurnComponent);
+      fixture.componentRef.setInput("status", "live");
+      fixture.componentRef.setInput("startedAt", Date.parse("2026-10-28T12:00:00Z"));
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const work = () => host.querySelector(".work-label")?.textContent?.replace(/\s+/g, " ").trim();
+      expect(work()).toBe("Working for 42s");
+      vi.advanceTimersByTime(20_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Working for 1m 2s");
+      expect(host.querySelector(".work-time")).not.toBeNull();
+      fixture.componentRef.setInput("steps", [{ id: "run", kind: "run", status: "done" }]);
+      fixture.componentRef.setInput("status", "stopped");
+      fixture.componentRef.setInput("duration", 63);
+      fixture.detectChanges();
+      vi.advanceTimersByTime(5_000);
+      fixture.detectChanges();
+      expect(work()).toBe("Stopped after 1m 3s");
+      fixture.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("restores completed-work facts beside the duration while keeping live work concise", () => {
     const fixture = TestBed.createComponent(TurnComponent);
+    fixture.componentRef.setInput("status", "live");
+    fixture.componentRef.setInput("elapsed", 12);
     fixture.componentRef.setInput("steps", [
-      { id: "think", kind: "think", text: "Checking the styles." },
+      { id: "run", kind: "run", status: "done" },
+      { id: "read", kind: "read", status: "done" },
+      { id: "unknown", kind: "read", status: "unknown" },
+      { id: "running", kind: "run", status: "running" },
     ]);
-    fixture.componentRef.setInput("files", [
-      { path: "turn.css", add: 83, del: 12 },
-    ]);
+    fixture.componentRef.setInput("files", [{ path: "turn.css", add: 83, del: 12 }]);
     fixture.detectChanges();
-    await fixture.whenStable();
     const host: HTMLElement = fixture.nativeElement;
-    const evidence = host.querySelector<HTMLElement>(".facts");
-    expect(evidence).not.toBeNull();
-    const observation = observations.find((item) => item.target === evidence);
-    expect(observation).toBeDefined();
-    if (!evidence || !observation) throw new Error("Missing evidence observer");
-    Object.defineProperty(evidence, "scrollWidth", { value: 400 });
-    Object.defineProperty(evidence, "clientWidth", {
-      value: 180,
-      configurable: true,
-    });
-    observation.resize();
-    await fixture.whenStable();
-    expect(evidence.classList.contains("clipped")).toBe(true);
-    Object.defineProperty(evidence, "clientWidth", { value: 500 });
-    observation.resize();
-    await fixture.whenStable();
-    expect(evidence.classList.contains("clipped")).toBe(false);
+    expect(host.querySelector(".work")?.textContent?.trim()).toBe("Working for 12s");
+    expect(host.querySelector(".work-row")?.textContent).toContain("Stop");
+    expect(host.querySelector(".facts")).toBeNull();
+    fixture.componentRef.setInput("status", "done");
+    fixture.componentRef.setInput("duration", 12);
+    fixture.detectChanges();
+    expect(host.querySelector(".work-label")?.textContent?.trim()).toBe("Worked for 12s");
+    expect(Array.from(host.querySelectorAll(".fact"), fact =>
+      fact.textContent?.replace(/\s+/g, " ").trim(),
+    )).toEqual(["Edited 1 file +83−12", "Ran 1 command", "Read 1 file"]);
+    const work = host.querySelector<HTMLButtonElement>(".work")!;
+    expect(work.getAttribute("aria-expanded")).toBe("false");
+    work.click();
+    fixture.detectChanges();
+    expect(work.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector("ex-outcome-bar")?.textContent).toContain("turn.css");
+    fixture.componentRef.setInput("filesTotal", 8);
+    fixture.detectChanges();
+    expect(host.querySelector(".fact")?.textContent).toContain("Edited 8 files");
+    expect(host.querySelector(".fact .diff")).toBeNull();
     fixture.componentRef.setInput("status", "live");
     fixture.detectChanges();
-    await fixture.whenStable();
-    expect(host.querySelector(".facts")).toBe(evidence);
-    fixture.componentRef.setInput("files", []);
-    fixture.detectChanges();
-    await fixture.whenStable();
     expect(host.querySelector(".facts")).toBeNull();
-    expect(observation.disconnect).toHaveBeenCalledOnce();
-    fixture.componentRef.setInput("files", [{ path: "turn.css" }]);
-    fixture.componentRef.setInput("status", "done");
-    fixture.detectChanges();
-    await fixture.whenStable();
-    const restored = observations.find(
-      (item) => item.target === host.querySelector(".facts"),
-    );
     fixture.destroy();
-    expect(restored?.disconnect).toHaveBeenCalledOnce();
   });
   it("keeps overlapping running tools before later commentary in the timeline", () => {
     const fixture = TestBed.createComponent(TurnComponent);

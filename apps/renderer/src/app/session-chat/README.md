@@ -6,6 +6,16 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+Unseen completions use the optional `state.unseenCompletionAt` version. After
+latest content renders at the end of the conversation in a focused, visible,
+active window, the owner sends `mark-seen` through the existing command bridge.
+Inert/hidden chat ancestors, older history and background windows keep the marker.
+The component releases its focus/visibility listeners and ancestor observer on
+destruction. No notification, approval or file-review action is required.
+The store coalesces acknowledgments and rejects replies for an old scope,
+selection or completion. Failed writes retain the marker; they never enter the
+prompt outbox. Older engines omit the field and receive no new command.
+
 The connected owner can supply a `creation: StartingSession` before a saved
 `selection` exists. The same chat/composer stays mounted through confirmation;
 `creationKey` retains UI identity and autofocus even if confirmation arrives before
@@ -91,7 +101,12 @@ Older engines omit the capability and retain their original send contract.
   rendered as text, including HTML returned by tools.
 
 The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Desktop Codex
+providers, with its existing prompt/queue/steer/stop semantics. Codex
+projects native user-message receipts into the live transcript, including prompts
+dispatched from the queue or steered into an active turn. Live and saved native
+receipts share the provider item ID; rewind/fork retain their saved record anchors.
+Duplicate start/completion events do not add another turn or reload history.
+Desktop Codex
 sends request acknowledgement once the runtime owns the turn, without keeping
 HTTP open until generation finishes; existing completion-waiting callers retain
 their default behavior. Later failures still use the runtime error/state feed. Questions include
@@ -178,8 +193,13 @@ interface currently returns full history inside the backend. Only bounded tails
 are copied/projected and transported to the renderer.
 
 History pages contain at most 80 items / 512 KiB; the visible live window retains
-at most 320 items. Earlier pages replace the window and pause live following
-until Back to latest. Ordinary display text is shortened at 16,000 characters,
+at most 320 items. Scrolling near either edge automatically loads an adjacent page and evicts
+content at the opposite edge above 320 items. Stable row anchors preserve the
+reading position, and loaded history never opts into arrival motion. The optional
+`following`/`next` contract continues forward without gaps while live state keeps
+refreshing. Sending reconciles the live tail first; the draft stays editable while
+reading. Engines without forward cursors retain an automatic return to their tail
+when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
 with explicit access to the original paged content. State, queue, model and
 activity collections have separate finite bounds; main caps the complete reply
 at 4 MiB. Feed expiry/rewrite produces a fresh bounded tail rather than a
@@ -189,14 +209,14 @@ The integration deliberately hides unavailable dictation, mention,
 fork, side-chat and queue edit/reorder controls. File links request the selected reply’s Changes
 panel; external HTTP(S) links use the existing main-process navigation policy.
 Richer MCP schemas remain a separate integration. Child transcripts open
-on demand through `sessionChatAgent`; pages replace the bounded history window,
-reject stale replies and cancel on close/navigation. The inspector (`SessionAgent`)
+on demand through `sessionChatAgent`; pages join a bounded 320-item scrolling window,
+reject stale replies and cancel on close/navigation. Evicted agent pages retain
+only their opaque request cursor so scrolling down can reload the same snapshot. The inspector (`SessionAgent`)
 pins the assignment above the transcript (folded when long) and drops the
 duplicate opening user message. Tool calls and their results render as the main
 thread's `ToolStep` rows; reasoning folds locally. A waiting agent points to the
-main conversation, which owns decisions. Show earlier/newer messages sit at the
-transcript's edges, Jump to latest appears only on an earlier page, and the
-footer states when the snapshot loaded; Refresh is the header's icon action. While
+main conversation, which owns decisions. Messages load automatically at either
+scroll edge, and the footer states when the snapshot loaded; Refresh is the header's icon action. While
 the agent is still listed, its live record supplies the split title/role and the
 reported usage (tokens, tools) for the header. See [cross-harness Activity design](../../../../../docs/session-activity.md) for provider support and feature boundaries. The desktop connection layer and legacy app are unchanged.
 

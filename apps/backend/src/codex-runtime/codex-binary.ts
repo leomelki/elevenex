@@ -1,9 +1,12 @@
-import { findBinary } from '../config/system-paths.js';
+import { findBinary, findBinaryAsync } from '../config/system-paths.js';
 import { realpath, stat } from 'node:fs/promises';
 
 /** Small async check; follows npm/native-install symlinks to the actual file. */
-export async function codexBinaryIdentity(binary = resolveCodexBinary()): Promise<string | null> {
+export async function codexBinaryIdentity(
+  binary?: string,
+): Promise<string | null> {
   try {
+    binary ??= await resolveCodexBinaryAsync();
     const path = await realpath(binary);
     const file = await stat(path);
     return `${path}:${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}:${file.ctimeMs}`;
@@ -11,6 +14,13 @@ export async function codexBinaryIdentity(binary = resolveCodexBinary()): Promis
     // An unavailable identity must not cause an unnecessary server restart.
     return null;
   }
+}
+
+export async function resolveCodexBinaryAsync(): Promise<string> {
+  const configured = process.env.ELEVENEX_CODEX_BIN?.trim();
+  return (
+    (await findBinaryAsync(configured || 'codex')) ?? configured ?? 'codex'
+  );
 }
 
 /**
@@ -24,9 +34,7 @@ export function resolveCodexBinary(): string {
   const configuredPath = process.env.ELEVENEX_CODEX_BIN?.trim();
   return selectCodexBinary(
     findBinary('codex'),
-    configuredPath
-      ? (findBinary(configuredPath) ?? configuredPath)
-      : undefined,
+    configuredPath ? (findBinary(configuredPath) ?? configuredPath) : undefined,
   );
 }
 

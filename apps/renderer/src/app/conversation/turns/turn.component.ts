@@ -5,8 +5,10 @@ import {
   type OnChanges,
   afterRenderEffect,
   computed,
+  effect,
   inject,
   input,
+  linkedSignal,
   output,
   signal,
   viewChild,
@@ -73,7 +75,7 @@ export class TurnComponent implements OnChanges {
   readonly filesTotal = input<number>();
   readonly error = input("");
   readonly open = input(false);
-  readonly maxVisible = input(4);
+  readonly maxVisible = input(5);
   readonly author = input("Agent");
   readonly mark = input("EX");
   readonly harness = input<string>();
@@ -109,27 +111,35 @@ export class TurnComponent implements OnChanges {
       this.toggled() ??
       (this.status() === "live" || this.open() || this.inspecting()),
   );
+  /** Epoch ms when a live turn began; it then counts its own elapsed time. */
+  readonly startedAt = input<number>();
+  private readonly now = signal(Date.now());
+  private readonly liveSeconds = computed(() => {
+    const start = this.startedAt();
+    const counted =
+      start === undefined ? 0 : Math.max(0, (this.now() - start) / 1000);
+    return Math.max(this.elapsed(), counted);
+  });
+  /** The verb stays prominent; the time reads as quieter, secondary detail. */
   readonly workLabel = computed(() => {
-    if (this.status() === "done" && !this.stepCount() && this.hasCommentary())
-      return "Earlier messages";
-    const seconds = this.status() === "live" ? this.elapsed() : this.duration();
-    const label =
-      this.status() === "live"
-        ? "Working"
-        : this.status() === "stopped"
-          ? "Stopped"
-          : this.status() === "failed"
-            ? "Failed"
-            : "Worked";
-    return seconds > 0
-      ? `${label}${this.status() === "stopped" || this.status() === "failed" ? " after" : ""} ${formatDuration(seconds)}`
-      : label;
+    const status = this.status();
+    const live = status === "live";
+    const seconds = live ? this.liveSeconds() : this.duration();
+    const verb = live
+      ? "Working"
+      : status === "stopped"
+        ? "Stopped"
+        : status === "failed"
+          ? "Failed"
+          : "Worked";
+    const time =
+      seconds >= 1
+        ? `${status === "stopped" || status === "failed" ? "after" : "for"} ${formatDuration(seconds)}`
+        : "";
+    return { verb, time };
   });
   readonly stepCount = computed(
     () => this.steps().filter((step) => !isProse(step)).length,
-  );
-  private readonly hasCommentary = computed(() =>
-    this.steps().some((step) => step.kind === "say" && !!step.text?.trim()),
   );
   protected readonly timelineSteps = computed(() =>
     this.stepCount()
@@ -137,24 +147,43 @@ export class TurnComponent implements OnChanges {
       : this.steps().filter((step) => step.kind === "say"),
   );
   protected readonly showWork = computed(
-    () =>
-      this.status() === "live" || this.stepCount() > 0 || this.hasCommentary(),
+    () => this.status() === "live" || this.timelineSteps().length > 0,
   );
+  protected readonly facts = computed(() =>
+    this.status() === "live"
+      ? []
+      : summarizeWork(
+          this.steps().filter((step) => step.status !== "running"),
+          this.files(),
+          this.filesTotal() ?? this.files().length,
+        ),
+  );
+  private readonly factsElement =
+    viewChild<ElementRef<HTMLElement>>("factsRegion");
+  protected readonly factsClipped = signal(false);
   // Retain the last visible heading through Fold's exit and interrupted reopen.
   // History without work never mounts a heading or invents a Worked label.
-  protected readonly workHeader = signal<{
-    readonly label: string;
-    readonly live: boolean;
-  } | null>(null);
-  readonly facts = computed(() =>
-    summarizeWork(
-      this.steps().filter((step) => step.status !== "running"),
-      this.files(),
-      this.filesTotal() ?? this.files().length,
-    ),
-  );
-  protected readonly factsElement =
-    viewChild<ElementRef<HTMLElement>>("factsRegion");
+  protected readonly workHeader = linkedSignal<
+    {
+      readonly show: boolean;
+      readonly verb: string;
+      readonly time: string;
+      readonly live: boolean;
+    },
+    {
+      readonly verb: string;
+      readonly time: string;
+      readonly live: boolean;
+    } | null
+  >({
+    source: () => ({
+      show: this.showWork(),
+      ...this.workLabel(),
+      live: this.status() === "live",
+    }),
+    computation: ({ show, verb, time, live }, previous) =>
+      show ? { verb, time, live } : (previous?.value ?? null),
+  });
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -162,9 +191,8 @@ export class TurnComponent implements OnChanges {
     "workRegion",
     { read: ElementRef },
   );
-  protected readonly factsClipped = signal(false);
   constructor() {
-    afterRenderEffect((cleanup) => {
+    afterRenderEffect((onCleanup) => {
       const element = this.factsElement()?.nativeElement;
       this.facts();
       if (!element) return;
@@ -174,19 +202,21 @@ export class TurnComponent implements OnChanges {
       if (typeof ResizeObserver === "undefined") return;
       const observer = new ResizeObserver(measure);
       observer.observe(element);
-      cleanup(() => observer.disconnect());
+      onCleanup(() => observer.disconnect());
+    });
+    // Only a live turn with a known start ticks; settled turns stay still.
+    effect((onCleanup) => {
+      if (this.status() !== "live" || this.startedAt() === undefined) return;
+      this.now.set(Date.now());
+      const timer = setInterval(() => this.now.set(Date.now()), 1000);
+      onCleanup(() => clearInterval(timer));
     });
   }
+
   ngOnChanges(): void {
     if (!this.initialized) {
       this.initialized = true;
       this.arriving.set(this.isNew());
-    }
-    if (this.showWork()) {
-      this.workHeader.set({
-        label: this.workLabel(),
-        live: this.status() === "live",
-      });
     }
     const focused = this.host.nativeElement.ownerDocument.activeElement;
     if (
@@ -208,6 +238,11 @@ export class TurnComponent implements OnChanges {
         this.workButton()?.nativeElement.focus({ preventScroll: true });
       }
     }
+  }
+
+  protected toggleWork(): void {
+    const open = !this.expanded();
+    this.toggled.set(open);
   }
 
   protected arrivalFinished(event: AnimationEvent): void {

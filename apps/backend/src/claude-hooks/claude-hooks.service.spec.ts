@@ -3,6 +3,7 @@ import { ClaudeHooksService } from './claude-hooks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { SessionTitleService } from '../session-title/session-title.service.js';
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 
 const flushImmediate = () =>
   new Promise<void>((resolve) => setImmediate(resolve));
@@ -18,6 +19,13 @@ function deferred<T>() {
 }
 
 describe('ClaudeHooksService', () => {
+  it('identifies the provider owning an authoritative idle transition without manufacturing a completion', () => {
+    const changed = jest.fn(); service.on('status-changed', changed);
+    service.updateRuntimeActivity(5, { activityStatus: 'running', actionKind: null, actionLabel: null, backgroundActive: false }, { authoritative: true, provider: 'codex' });
+    service.updateRuntimeActivity(5, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: false }, { authoritative: true, provider: 'codex' });
+    expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 5, provider: 'codex', status: 'idle' }));
+    expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+  });
   let service: ClaudeHooksService;
   let sessionsService: {
     findOne: jest.Mock;

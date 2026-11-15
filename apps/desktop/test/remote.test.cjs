@@ -441,7 +441,7 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   await mkdir(join(installation, 'backend/node/bin'), { recursive: true });
   await symlink(process.execPath, join(installation, 'backend/node/bin/node'));
   await writeFile(join(installation, 'installation.sha256'), 'verified-fixture');
-  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http'),fs=require('fs');fs.appendFileSync(${JSON.stringify(join(home, 'starts'))},'1');const ignoreTerm=fs.readFileSync(${JSON.stringify(join(home, 'starts'))},'utf8').length===1;const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(version)},pid:process.pid})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>{if(!ignoreTerm)server.close(()=>process.exit(0));});`);
+  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http'),fs=require('fs');fs.appendFileSync(${JSON.stringify(join(home, 'starts'))},'1');const ignoreTerm=fs.readFileSync(${JSON.stringify(join(home, 'starts'))},'utf8').length===1;const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(version)},pid:process.pid,shellTimeout:process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS,unknownShellTuning:process.env.ELEVENEX_SHELL_UNKNOWN})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>{if(!ignoreTerm)server.close(()=>process.exit(0));});`);
   // A conflicting TCP service must neither block initialization nor be killed.
   const controlPort = 20000 + createHash('sha256').update(`${home}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
   const occupied = createServer((_req, res) => res.writeHead(403).end());
@@ -449,7 +449,7 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   t.after(() => new Promise(resolve => occupied.close(resolve)));
   const children = [];
   const spawnFixture = async (_host, command, _ask, _interactive, signal) => {
-    const child = spawn('sh', ['-c', command], { cwd: home, env: { ...process.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child);
+    const child = spawn('sh', ['-c', command], { cwd: home, env: { ...process.env, HOME: home, ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS: '60000', ELEVENEX_SHELL_UNKNOWN: 'blocked' }, stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child);
     let diagnostics = ''; child.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-16384); });
     const exited = new Promise(resolve => { child.once('error', resolve); child.once('close', resolve); });
     const stop = async () => { child.stdin.end(); child.kill('SIGTERM'); await exited; };
@@ -476,6 +476,8 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   assert.equal((await fetch(`http://127.0.0.1:${backend.port}/api/info`)).status, 403);
   const initialInfo = await fetch(`http://127.0.0.1:${backend.port}/api/info`, { headers: { Authorization: backend.authorization } }).then(res => res.json());
   assert.equal(initialInfo.backendSha, version);
+  assert.equal(initialInfo.shellTimeout, '60000');
+  assert.equal(initialInfo.unknownShellTuning, undefined);
   const serviceStatus = [];
   const absent = await first.forward(1, 0, available => serviceStatus.push(available)); assert.equal(absent.reachable, false);
   await new Promise(resolve => { const socket = connect(absent.port, '127.0.0.1'); socket.on('error', () => undefined); socket.once('close', resolve); });

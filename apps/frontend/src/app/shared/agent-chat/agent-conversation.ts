@@ -133,7 +133,7 @@ export class AgentConversation {
   readonly liveToolUseIds = computed(
     () =>
       new Set(
-        this.live()
+        (this.runPhase() === 'running' || this.runPhase() === 'waiting' ? this.live() : [])
           .filter((item) => item.kind === 'tool_use' && item.toolUseId)
           .map((item) => item.toolUseId as string),
       ),

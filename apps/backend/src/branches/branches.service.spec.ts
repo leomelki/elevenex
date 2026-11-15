@@ -33,7 +33,10 @@ describe('BranchesService', () => {
 
     // Initialize a git repo with multiple branches
     fs.mkdirSync(mainRepoPath);
-    execSync('git init -b main', { cwd: mainRepoPath });
+    execFileSync('git', ['init'], { cwd: mainRepoPath });
+    execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], {
+      cwd: mainRepoPath,
+    });
     execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
     execSync('git config user.name "Test User"', { cwd: mainRepoPath });
 

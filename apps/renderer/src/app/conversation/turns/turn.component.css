@@ -89,6 +89,13 @@ footer {
   font-weight: 600;
   color: var(--ink);
 }
+.work-time {
+  /* Nested in the label so verb and time read and wrap as one phrase. */
+  font-weight: 400;
+  color: var(--ink-muted);
+  /* Ticking digits keep their width so the chevron and Stop never shift. */
+  font-variant-numeric: tabular-nums;
+}
 .work:hover .work-label {
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -144,14 +151,14 @@ footer {
   transform: none;
 }
 .fact {
-  gap: 5px;
+  gap: var(--space-1);
 }
 .fact.ok ex-icon {
   color: var(--accent);
 }
 .diff {
   display: inline-flex;
-  gap: 5px;
+  gap: var(--space-1);
   font-family: var(--font-mono);
   font-size: var(--text-mono-meta-size);
   font-variant-numeric: tabular-nums;
@@ -164,6 +171,7 @@ footer {
   color: var(--diff-del);
 }
 .chevron {
+  flex: none;
   margin-left: calc(-1 * var(--space-1));
 }
 .chevron ex-icon {
@@ -175,9 +183,6 @@ footer {
 .failure,
 .failed {
   color: var(--danger);
-}
-.failure {
-  font-size: var(--text-caption-size);
 }
 .answer {
   min-width: 0;
@@ -243,7 +248,6 @@ footer ex-turn-acts {
   :host.arriving.live .mark {
     animation: none;
   }
-  .work-item,
   .chevron ex-icon,
   footer ex-turn-acts {
     transition: none;

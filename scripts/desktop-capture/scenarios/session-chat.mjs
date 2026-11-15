@@ -80,18 +80,12 @@ export default async function* (capture) {
   await capture.click('ex-session-chat .feedback.error button');
   await capture.waitFor(() => document.querySelector('ex-session-chat .feedback:not(.error) button'));
   await capture.click('ex-session-chat .feedback:not(.error) button');
-  await mode('history'); await capture.waitFor(() => document.querySelector('ex-session-chat .history-controls button'));
-  await finish();
+  await mode('history');
+  await capture.component('ex-session-chat', component => component.latest());
+  await capture.waitFor(() => document.querySelector('ex-chat-scroll [data-user-message]'));
+  const original = await capture.component('ex-session-chat', component => component.store.items()[0]?.id);
   await capture.evaluate(() => { document.querySelector('ex-chat-scroll .viewport').scrollTop = 0; });
-  await capture.waitFor(() => document.querySelector('ex-chat-scroll .viewport').scrollTop < 1);
-  await capture.settle();
-  await capture.click('ex-session-chat .history-controls button');
-  await capture.waitFor(() => document.querySelector('ex-session-chat .history-controls')?.textContent.includes('Viewing earlier'));
-  yield { name: 'earlier-history', inspect: ['ex-chat-scroll', 'ex-session-chat .history-controls', 'ex-composer'] };
-  await finish();
-  await capture.evaluate(() => { document.querySelector('ex-chat-scroll .viewport').scrollTop = 0; });
-  await capture.waitFor(() => document.querySelector('ex-chat-scroll .viewport').scrollTop < 1);
-  await capture.settle();
-  await capture.click('ex-session-chat .history-controls button:last-child');
-  await capture.waitFor(() => !document.querySelector('ex-session-chat .history-controls')?.textContent.includes('Viewing earlier'));
+  await capture.waitFor(original => document.querySelector('ex-chat-scroll [data-user-message]')?.getAttribute('data-user-message') !== original, original);
+  assert.equal(await capture.evaluate(() => !!document.querySelector('.history-controls')), false);
+  yield { name: 'scrolling-history', inspect: ['ex-chat-scroll', 'ex-composer'] };
 }

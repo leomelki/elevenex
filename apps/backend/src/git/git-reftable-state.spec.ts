@@ -1,146 +1,166 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { worktreeSimpleGit } from '../config/system-paths.js';
-import {
-  clearLocalRefState,
-  readGitDirectoryHead,
-  readLocalRefSnapshot,
-  readOriginHead,
-  readRepositoryIdentity,
-} from './git-local-state.js';
+import { ReftableRefCache } from './git-reftable-state.js';
 
-// Run explicitly in the modern-Git validation job; a legacy Git cannot create
-// this storage format, and must not receive a passing mocked substitute.
-const modern =
-  process.env.ELEVENEX_TEST_MODERN_GIT === '1' ? describe : describe.skip;
-
-modern('native reftable snapshots with real Git', () => {
-  let root: string;
-  beforeEach(async () => {
-    root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-reftable-')));
-    const git = worktreeSimpleGit(root);
-    await git.raw(['init', '--ref-format=reftable', '--initial-branch=main']);
-    await git.addConfig('user.name', 'Reftable tests');
-    await git.addConfig('user.email', 'refs@example.test');
-    await git.addConfig('commit.gpgsign', 'false');
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
   });
-  afterEach(async () => {
+  return { promise, resolve };
+}
+
+describe('reftable ref cache ownership and freshness', () => {
+  const identity = {
+    gitDir: '/repo/.git/worktrees/task',
+    commonDir: '/repo/.git',
+  };
+  const sha = 'a'.repeat(40);
+  let versions: Map<string, string>;
+  let cache: ReftableRefCache;
+  beforeEach(() => {
+    jest.spyOn(Date, 'now').mockReturnValue(1_000);
+    versions = new Map();
+    cache = new ReftableRefCache(
+      (file) => Promise.resolve(versions.get(file) ?? 'one'),
+      1_500,
+    );
+  });
+  afterEach(() => {
+    cache.clear();
     jest.restoreAllMocks();
-    clearLocalRefState();
-    await rm(root, { recursive: true, force: true });
   });
-
-  it('shares native metadata reads, observes same-commit branch changes and does not retain fetched refs', async () => {
-    const git = worktreeSimpleGit(root);
-    await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
-    const head = (await git.raw(['rev-parse', 'HEAD'])).trim();
-    const raw = jest.spyOn(git, 'raw');
-    const snapshots = await Promise.all(
-      Array.from({ length: 20 }, () => readLocalRefSnapshot(git, root)),
+  const reader = () =>
+    jest.fn((args: string[]) =>
+      Promise.resolve(args[0] === 'symbolic-ref' ? 'refs/heads/main' : sha),
     );
-    expect(snapshots[0]).toMatchObject({ branch: 'main', headSha: head });
-    expect(raw).toHaveBeenCalledTimes(2); // one discovery + one native HEAD read
-    await readLocalRefSnapshot(git, root);
-    expect(raw).toHaveBeenCalledTimes(2);
-    await git.raw(['checkout', '-b', 'same-commit']);
-    const next = await readLocalRefSnapshot(git, root);
-    expect(next).toMatchObject({ branch: 'same-commit', headSha: head });
-    await git.raw(['update-ref', 'refs/remotes/origin/main', head]);
-    await git.raw([
-      'symbolic-ref',
-      'refs/remotes/origin/HEAD',
-      'refs/remotes/origin/main',
-    ]);
-    expect(await readOriginHead(next)).toBe('origin/main');
-    raw.mockClear();
+
+  it('coalesces bursts and serves unchanged HEAD and refs without more Git', async () => {
+    const read = reader();
+    const heads = await Promise.all(
+      Array.from({ length: 64 }, () => cache.head(identity, read)),
+    );
     expect(
-      await Promise.all(
-        Array.from({ length: 20 }, () => next.resolveRef('origin/main')),
+      heads.every((head) => head.sha === sha && head.ref === 'refs/heads/main'),
+    ).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    await cache.head(identity, read);
+    expect(read).toHaveBeenCalledTimes(2);
+    await Promise.all(
+      Array.from({ length: 64 }, () =>
+        cache.resolve(identity, 'refs/remotes/origin/main', false, read),
       ),
-    ).toEqual(Array.from({ length: 20 }, () => head));
-    expect(raw).toHaveBeenCalledTimes(1);
-    await writeFile(join(root, 'new.txt'), 'new\n');
-    await git.add('.');
-    await git.raw(['commit', '-m', 'Next']);
-    const second = (await git.raw(['rev-parse', 'HEAD'])).trim();
-    await git.raw(['update-ref', 'refs/remotes/origin/main', second]);
-    expect(await next.resolveRef('origin/main')).toBe(second);
-    expect(await readLocalRefSnapshot(git, root)).toMatchObject({
-      branch: 'same-commit',
-      headSha: second,
-    });
-    expect(await readGitDirectoryHead(root)).toBe(second);
-    expect(await next.resolveRef('origin/missing')).toBeNull();
-  });
-
-  it('reads linked-worktree and detached HEAD state from its own ref stack', async () => {
-    const git = worktreeSimpleGit(root);
-    await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
-    const head = (await git.raw(['rev-parse', 'HEAD'])).trim();
-    const linked = join(root, 'linked');
-    await git.raw(['worktree', 'add', '-b', 'linked', linked]);
-    const linkedGit = worktreeSimpleGit(linked);
-    expect(await readLocalRefSnapshot(linkedGit, linked)).toMatchObject({
-      branch: 'linked',
-      headSha: head,
-    });
-    await linkedGit.raw(['checkout', '--detach']);
-    expect(await readLocalRefSnapshot(linkedGit, linked)).toMatchObject({
-      branch: 'HEAD',
-      headSha: head,
-    });
-    expect(await readGitDirectoryHead(linked)).toBe(head);
-    expect(await readLocalRefSnapshot(git, root)).toMatchObject({
-      branch: 'main',
-      headSha: head,
-    });
-  });
-
-  it('preserves an unborn branch and observes its first commit', async () => {
-    const git = worktreeSimpleGit(root);
-    expect(await readLocalRefSnapshot(git, root)).toMatchObject({
-      branch: 'main',
-      headSha: null,
-    });
-    await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
-    const head = (await git.raw(['rev-parse', 'HEAD'])).trim();
-    expect(await readLocalRefSnapshot(git, root)).toMatchObject({
-      branch: 'main',
-      headSha: head,
-    });
-  });
-
-  it('keeps a fixed verification deadline and clears native state on worktree cache release', async () => {
-    const git = worktreeSimpleGit(root);
-    await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
-    const raw = jest.spyOn(git, 'raw');
-    const clock = jest.spyOn(Date, 'now').mockReturnValue(1_000);
-    await readLocalRefSnapshot(git, root);
-    expect(raw).toHaveBeenCalledTimes(2);
-    clock.mockReturnValue(2_000);
-    await readLocalRefSnapshot(git, root);
-    expect(raw).toHaveBeenCalledTimes(2);
-    clock.mockReturnValue(2_500);
-    await readLocalRefSnapshot(git, root);
-    expect(raw).toHaveBeenCalledTimes(3);
-    clearLocalRefState(root);
-    await readLocalRefSnapshot(git, root);
-    expect(raw).toHaveBeenCalledTimes(5);
-  });
-
-  it('evicts failed native reads so the next request can recover', async () => {
-    const git = worktreeSimpleGit(root);
-    await git.raw(['commit', '--allow-empty', '-m', 'Initial']);
-    await readRepositoryIdentity(git, root);
-    jest
-      .spyOn(git, 'raw')
-      .mockRejectedValueOnce(new Error('Temporary ref read failure'));
-    await expect(readLocalRefSnapshot(git, root)).rejects.toThrow(
-      'Temporary ref read failure',
     );
-    expect(await readLocalRefSnapshot(git, root)).toMatchObject({
-      branch: 'main',
+    expect(read).toHaveBeenCalledTimes(3);
+    await cache.resolve(identity, 'refs/remotes/origin/main', false, read);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['gitDir', 'commonDir'] as const)(
+    'invalidates immediately when %s tables change',
+    async (directory) => {
+      const read = reader();
+      await cache.head(identity, read);
+      versions.set(join(identity[directory], 'reftable', 'tables.list'), 'two');
+      read.mockImplementation((args) =>
+        Promise.resolve(
+          args[0] === 'symbolic-ref' ? 'refs/heads/switched' : sha,
+        ),
+      );
+      expect(await cache.head(identity, read)).toMatchObject({
+        ref: 'refs/heads/switched',
+        sha,
+      });
+      expect(read).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it('retries a failed Git read without requiring another ref update', async () => {
+    const read = reader();
+    read.mockRejectedValueOnce(new Error('Git unavailable'));
+    await expect(cache.head(identity, read)).rejects.toThrow('Git unavailable');
+    expect((await cache.head(identity, read)).sha).toBe(sha);
+    read.mockRejectedValueOnce(new Error('Git unavailable'));
+    await expect(
+      cache.resolve(identity, 'refs/remotes/origin/main', false, read),
+    ).rejects.toThrow('Git unavailable');
+    expect(
+      await cache.resolve(identity, 'refs/remotes/origin/main', false, read),
+    ).toBe(sha);
+  });
+
+  it('does not repopulate a released cache from an old in-flight read', async () => {
+    const gate = deferred<string>();
+    const oldRead = jest.fn((args: string[]) =>
+      gate.promise.then((value) =>
+        args[0] === 'symbolic-ref' ? 'refs/heads/old' : value,
+      ),
+    );
+    const old = cache.head(identity, oldRead);
+    await new Promise((resolve) => setImmediate(resolve));
+    cache.clear(identity.gitDir);
+    const freshRead = reader();
+    const fresh = await cache.head(identity, freshRead);
+    gate.resolve('b'.repeat(40));
+    await old;
+    expect(await cache.head(identity, freshRead)).toEqual(fresh);
+    expect(freshRead).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds cached ref choices per checkout', async () => {
+    const read = reader();
+    for (let index = 0; index < 33; index++)
+      await cache.resolve(identity, `refs/heads/branch-${index}`, false, read);
+    expect(read).toHaveBeenCalledTimes(33);
+    await cache.resolve(identity, 'refs/heads/branch-32', false, read);
+    expect(read).toHaveBeenCalledTimes(33);
+    await cache.resolve(identity, 'refs/heads/branch-0', false, read);
+    expect(read).toHaveBeenCalledTimes(34);
+  });
+
+  it('does not overwrite a replacement ref cache when an older request completes after release', async () => {
+    const gate = deferred<string>();
+    const old = cache.resolve(
+      identity,
+      'refs/remotes/origin/main',
+      false,
+      () => gate.promise,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    cache.clear(identity.gitDir);
+    const next = 'b'.repeat(40);
+    const read = jest.fn(() => Promise.resolve(next));
+    expect(
+      await cache.resolve(identity, 'refs/remotes/origin/main', false, read),
+    ).toBe(next);
+    gate.resolve(sha);
+    await old;
+    expect(
+      await cache.resolve(identity, 'refs/remotes/origin/main', false, read),
+    ).toBe(next);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('periodically verifies HEAD and remote refs even when filesystem versions remain unchanged', async () => {
+    const read = reader();
+    await cache.head(identity, read);
+    await cache.resolve(identity, 'refs/remotes/origin/main', false, read);
+    jest.mocked(Date.now).mockReturnValue(2_500);
+    const next = 'b'.repeat(40);
+    read.mockImplementation((args) =>
+      Promise.resolve(
+        args[0] === 'symbolic-ref' ? 'refs/heads/switched' : next,
+      ),
+    );
+    expect(await cache.head(identity, read)).toMatchObject({
+      ref: 'refs/heads/switched',
+      sha: next,
     });
+    expect(
+      await cache.resolve(identity, 'refs/remotes/origin/main', false, read),
+    ).toBe(next);
+    expect(read).toHaveBeenCalledTimes(6);
+    jest.mocked(Date.now).mockReturnValue(900);
+    await cache.head(identity, read);
+    expect(read).toHaveBeenCalledTimes(8);
   });
 });

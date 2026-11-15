@@ -72,8 +72,10 @@ export default async function* (capture) {
       assert.ok(oldHeader && newHeader, 'Keep unified file headers visible');
       assert.equal(oldHeader.context && !oldHeader.added && !oldHeader.removed, true);
       assert.equal(newHeader.context && !newHeader.added && !newHeader.removed, true);
-      assert.equal(snapshot.rows.find(row => row.text === '---old')?.removed, true);
-      assert.equal(snapshot.rows.find(row => row.text === '+++new')?.added, true);
+      assert.equal(snapshot.rows.find(row => row.text === '--old')?.removed, true);
+      assert.equal(snapshot.rows.find(row => row.text === '++new')?.added, true);
+      assert.equal(snapshot.rows.find(row => row.text === '--old')?.sign, '−');
+      assert.equal(snapshot.rows.find(row => row.text === '++new')?.sign, '+');
       assert.equal(snapshot.rows.filter(row => row.added).length, 1);
       assert.equal(snapshot.rows.filter(row => row.removed).length, 1);
     } else if (index === 3) {

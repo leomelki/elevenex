@@ -1,13 +1,70 @@
 import { CodexAppServerClient } from './codex-app-server.js';
-import { codexBinaryIdentity } from './codex-binary.js';
+import {
+  codexBinaryIdentity,
+  resolveCodexBinaryAsync,
+} from './codex-binary.js';
+import { join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 jest.mock('./codex-binary.js', () => ({
-  resolveCodexBinary: jest.fn(() => '/mock/codex'),
+  resolveCodexBinaryAsync: jest.fn(() => Promise.resolve('/mock/codex')),
   codexBinaryIdentity: jest.fn(),
 }));
 
 describe('Codex CLI replacement', () => {
   beforeEach(() => jest.resetAllMocks());
+
+  it('waits for shell warm-up before resolving the executable and cancels startup during shutdown', async () => {
+    const paths = jest.requireActual<
+      typeof import('../config/system-paths.js')
+    >('../config/system-paths.js');
+    let finish!: (env: NodeJS.ProcessEnv) => void;
+    const environment = jest
+      .spyOn(paths, 'buildAugmentedEnvAsync')
+      .mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+    const server = new CodexAppServerClient();
+    try {
+      const ready = server.ensureReady();
+      expect(resolveCodexBinaryAsync).not.toHaveBeenCalled();
+      server.onModuleDestroy();
+      finish({ PATH: '/ready/bin' });
+      await expect(ready).rejects.toThrow('shutting down');
+      expect(server.isRunning).toBe(false);
+    } finally {
+      environment.mockRestore();
+      server.onModuleDestroy();
+    }
+  });
+
+  it('explains which machine needs the CLI and permits retry after a spawn failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'elevenex-missing-codex-'));
+    jest
+      .mocked(resolveCodexBinaryAsync)
+      .mockResolvedValue(join(directory, 'codex'));
+    const server = new CodexAppServerClient();
+    const notifications: string[] = [];
+    const unsubscribe = server.onNotification(({ method }) =>
+      notifications.push(method),
+    );
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(server.ensureReady()).rejects.toThrow(
+          /ENOENT.*backend machine \(the remote host for SSH\).*ELEVENEX_CODEX_BIN/,
+        );
+        expect(server.isRunning).toBe(false);
+      }
+      expect(notifications).toContain('elevenex:app-server-down');
+    } finally {
+      unsubscribe();
+      server.onModuleDestroy();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 
   it('preserves the prewarmed process when a model refresh finds the same CLI', async () => {
     const server = new CodexAppServerClient();

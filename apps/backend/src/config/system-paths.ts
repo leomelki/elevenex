@@ -1,14 +1,20 @@
 import { accessSync, constants } from 'fs';
 import { homedir } from 'os';
-import { basename, extname, join } from 'path';
+import { basename, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
+import { isolateGitEnvironment } from './git-environment.js';
 import {
   assertSubprocessEnvironment,
   shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
+
+import { shellEnvironmentOptions } from './shell-environment-options.js';
+import { BinaryPathResolver } from './binary-paths.js';
+import { AccountShellLookup } from './account-shell.js';
+import { ShellRefreshQueue } from './shell-refresh-queue.js';
 
 const logger = new Logger('SystemPaths');
 const IS_WINDOWS = process.platform === 'win32';
@@ -70,19 +76,30 @@ export const COMMON_BINARY_PATHS: readonly string[] = (() => {
 // rc files print at startup (compinit warnings, "Last login: …", banners,
 // version-check notices, …).
 const ENV_BOUNDARY = '>>>ELEVENEX_ENV_BOUNDARY<<<';
+const ENV_END_BOUNDARY = '>>>ELEVENEX_ENV_END<<<';
 
 const REFRESH_THROTTLE_MS = 60_000;
-const SHELL_TIMEOUT_MS = 5_000;
+const shellOptions = shellEnvironmentOptions(process.env);
 const SHELL_OUTPUT_MAX_BYTES = 1024 * 1024;
-const SHELL_REFRESH_CONCURRENCY = 2;
+const accountShell = new AccountShellLookup(shellOptions.captureTimeoutMs);
+let pathMemo:
+  | { readonly inputs: readonly string[]; readonly result: string }
+  | undefined;
 
 // Cached login-shell env. Populated via async `refreshLoginShellEnv()`.
 // Mutated through the helpers below; not exported directly so all access goes
 // through `getCachedShellEnv()`.
 let _shellEnvCache: NodeJS.ProcessEnv | null = null;
 const shellProjection = new ShellEnvironmentProjection();
-let _lastRefreshAt = 0;
-const binaryPathCache = new Map<string, string>();
+let _lastRefreshAt = Number.NEGATIVE_INFINITY;
+let shellEnvironmentDisposed = false;
+const binaryResolver = new BinaryPathResolver(
+  () => ({
+    path: buildAugmentedPath(),
+    extensions: IS_WINDOWS ? process.env.PATHEXT : undefined,
+  }),
+  IS_WINDOWS,
+);
 
 // Per-cwd login-shell env cache. Some users wire version managers (nvm/fnm/
 // rbenv/…) into their rc files via `chpwd` hooks that read `.nvmrc`/`.tool-
@@ -92,27 +109,70 @@ const binaryPathCache = new Map<string, string>();
 // different version. We therefore keep a per-cwd cache, populated on demand
 // when a spawn site provides a `cwd`. LRU-bounded so a backend tracking
 // hundreds of worktrees doesn't grow unbounded.
-const PER_CWD_CACHE_MAX = 64;
+
 type CwdEnvEntry = {
   env: NodeJS.ProcessEnv;
+  bytes: number;
   captured: boolean;
+  attempted: boolean;
   lastRefreshAt: number;
   lastRefreshAttemptAt: number;
 };
 const _cwdEnvCache = new Map<string, CwdEnvEntry>();
-type ShellRefresh = {
-  cwd: string | undefined;
-  entry: CwdEnvEntry | undefined;
-  required: boolean;
-  running: boolean;
-  promise: Promise<NodeJS.ProcessEnv | null>;
-  resolve: (env: NodeJS.ProcessEnv | null) => void;
-};
-// Insertion order is FIFO within each priority; running jobs stay coalesced.
-// Background jobs are bounded by the cwd LRU. Explicit async callers retain
-// their queued job even if its cache entry is evicted, and receive its result.
-const _shellRefreshes = new Map<string | undefined, ShellRefresh>();
-let _activeShellRefreshes = 0;
+let cwdCacheBytes = 0;
+const shellRefreshes = new ShellRefreshQueue(
+  shellOptions,
+  async (cwd, signal) => {
+    const entry = cwd === undefined ? undefined : _cwdEnvCache.get(cwd);
+    if (cwd === undefined) _lastRefreshAt = Date.now();
+    else if (entry) {
+      entry.lastRefreshAttemptAt = Date.now();
+      entry.attempted = true;
+    }
+    const parsed = await runLoginShell(cwd, signal);
+    if (!parsed || signal.aborted) return null;
+    const now = Date.now();
+    if (cwd === undefined) {
+      try {
+        applyShellEnvToProcess(parsed);
+        _shellEnvCache = parsed;
+        _lastRefreshAt = now;
+        binaryResolver.clear();
+      } catch (error) {
+        logger.warn(
+          `async shell-env projection rejected: ${error instanceof Error ? error.message : 'invalid environment'}`,
+        );
+        return null;
+      }
+    } else {
+      // Never recreate evicted entries. Coalesced callers still receive their
+      // capture directly, including when the LRU churns while they wait.
+      const current = _cwdEnvCache.get(cwd);
+      if (current)
+        touchCwdLru(cwd, {
+          ...current,
+          env: parsed,
+          captured: true,
+          bytes: Buffer.byteLength(JSON.stringify(parsed)),
+          lastRefreshAt: now,
+          lastRefreshAttemptAt: now,
+        });
+    }
+    return parsed;
+  },
+);
+
+/** Application shutdown owns captures, queue timers and retained environments. */
+export function disposeShellEnvironment(): void {
+  shellEnvironmentDisposed = true;
+  shellRefreshes.dispose();
+  accountShell.dispose();
+  _cwdEnvCache.clear();
+  cwdCacheBytes = 0;
+  pathMemo = undefined;
+  _shellEnvCache = null;
+  binaryResolver.clear();
+}
 
 function getMinimalBootPath(): string {
   const parts = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', '/usr/local/bin'];
@@ -159,13 +219,15 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
   'PS2',
   'PS3',
   'PS4',
+  'FNM_MULTISHELL_PATH',
+  'NVM_BIN',
+  'NVM_INC',
 ]);
 
 // Baseline env to spawn a login shell with.
 //
-// - Global load (no cwd): minimal boot path plus HOME so the shell can find
-//   user startup files, without inheriting application exports from the
-//   backend (systemd, launchd, Finder/DMG, …).
+// - Global load (no cwd): preserve launch/application inputs, remove our old
+//   projection and transient shell state, and start PATH from a clean baseline.
 // - Per-cwd load: inherit the global cache's env so the worktree-local shell
 //   starts from the same baseline as the user's interactive session. This is
 //   what makes the system general: anything an rc file sets up — version
@@ -173,26 +235,27 @@ const PER_SHELL_INSTANCE_KEYS = new Set([
 //   project exports, locale, custom env — flows into per-cwd loads, and the
 //   worktree's chpwd hooks layer cwd-specific overrides on top.
 function getShellBaselineEnv(forCwdLoad: boolean): NodeJS.ProcessEnv {
-  if (!forCwdLoad || !_shellEnvCache) {
-    // Bash does not populate HOME when spawned with a replacement environment.
-    // Without it, login startup skips ~/.profile and user version managers.
-    return { HOME: homedir(), PATH: getMinimalBootPath(), PS1: '' };
-  }
-  const baseline: NodeJS.ProcessEnv = { PS1: '' };
-  for (const [key, value] of Object.entries(_shellEnvCache)) {
-    if (PER_SHELL_INSTANCE_KEYS.has(key)) continue;
-    if (typeof value === 'string') baseline[key] = value;
-  }
-  if (typeof baseline.PATH !== 'string') {
-    baseline.PATH = getMinimalBootPath();
-  }
+  // Shells do not reliably reconstruct HOME (bash leaves it unset). Version
+  // managers and native CLI installers use it in rc files, especially when
+  // SSH starts the backend with a minimal PATH. Preserve arbitrary startup
+  // inputs (HOME, XDG, NVM_DIR, company bootstrap settings), not our previous
+  // shell's growing projection or transient version-manager state.
+  const inherited = shellProjection.baseline(process.env);
+  const baseline: NodeJS.ProcessEnv = {
+    ...(forCwdLoad ? _shellEnvCache : {}),
+    ...inherited,
+    HOME: inherited.HOME || homedir(),
+    SHELL: getUserShell(inherited),
+    PATH: (forCwdLoad && _shellEnvCache?.PATH) || getMinimalBootPath(),
+  };
+  for (const key of PER_SHELL_INSTANCE_KEYS) delete baseline[key];
+  baseline.PS1 = '';
   return baseline;
 }
 
-function getUserShell(): string {
-  // Prefer SHELL (set by login). Fallback to /bin/sh, which exists on every
-  // POSIX system — zsh isn't installed on most Linux servers.
-  return process.env.SHELL || '/bin/sh';
+function getUserShell(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.SHELL?.trim()) return env.SHELL.trim();
+  return accountShell.sync();
 }
 
 function parseEnvOutput(raw: string): NodeJS.ProcessEnv {
@@ -201,15 +264,20 @@ function parseEnvOutput(raw: string): NodeJS.ProcessEnv {
   // never reached our capture command; rc-file chatter is not an environment.
   const idx = raw.indexOf(ENV_BOUNDARY);
   if (idx === -1) return {};
-  const envText = raw.slice(idx + ENV_BOUNDARY.length);
+  const start = idx + ENV_BOUNDARY.length;
+  // Login shells can print from logout hooks too. A NUL-prefixed end marker
+  // cannot occur inside an environment value, so isolate the complete dump.
+  const end = raw.indexOf(`\0${ENV_END_BOUNDARY}`, start);
+  if (end === -1) return {};
+  const envText = raw.slice(start, end + 1);
 
   const parsed: NodeJS.ProcessEnv = {};
-  for (const line of envText.split('\n')) {
+  for (const line of envText.split('\0')) {
     const eq = line.indexOf('=');
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
-    // Reject keys that aren't valid shell identifiers — guards against
-    // multi-line values (continuation lines) being parsed as new entries.
+    // Values can contain newlines and '='. NUL is the only unambiguous entry
+    // separator; reject malformed keys without modifying valid values.
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     parsed[key] = line.slice(eq + 1);
   }
@@ -224,19 +292,35 @@ const cwdTag = (cwd?: string) => (cwd ? `cwd=${cwd}` : 'cwd=<global>');
 // Returns null if the shell failed to produce any usable env. When `cwd` is
 // provided, the shell starts in that directory so chpwd-style hooks (nvm,
 // fnm, direnv) resolve the project-local version.
-function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
+function runLoginShell(
+  cwd: string | undefined,
+  signal: AbortSignal,
+  startedAt = performance.now(),
+): Promise<NodeJS.ProcessEnv | null> {
+  // SHELL is normally supplied by SSH/login. NSS may consult a remote directory
+  // service when it is absent, so isolate that lookup from the main event loop.
+  const inherited = shellProjection.baseline(process.env);
+  if (!inherited.SHELL?.trim() && !accountShell.cached)
+    return accountShell
+      .read()
+      .then(() =>
+        signal.aborted ? null : runLoginShell(cwd, signal, startedAt),
+      );
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let settled = false;
     let child: ReturnType<typeof spawn> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const shell = getUserShell();
-    const startedAt = Date.now();
+    const env = getShellBaselineEnv(cwd !== undefined);
+    const shell = env.SHELL ?? getUserShell();
+    const remainingMs =
+      shellOptions.captureTimeoutMs - (performance.now() - startedAt);
     const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
       if (err && child?.pid && child.pid > 0) {
         // POSIX captures have their own session/process group. Never signal
         // the backend's group, and kill rc descendants even if they hold the
@@ -257,7 +341,7 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       child?.stdout?.removeListener('data', onData);
       child?.stdout?.removeListener('error', onError);
       child?.stdout?.destroy();
-      const elapsed = Date.now() - startedAt;
+      const elapsed = performance.now() - startedAt;
       if (err) {
         logger.warn(
           `async shell-env load failed (${cwdTag(cwd)} elapsed=${elapsed}ms): ${err.message}`,
@@ -288,6 +372,7 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       );
       resolve(parsed);
     };
+    const onAbort = () => finish(new Error('shell capture cancelled'));
     const onError = (err: Error) => finish(err);
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
       finish(
@@ -308,14 +393,29 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       chunks.push(data);
     };
     try {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      if (remainingMs <= 0) {
+        finish(new Error('shell capture timed out'));
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      assertSubprocessEnvironment(env);
       // Interactive + login sources version-manager hooks in rc files.
       child = spawn(
         shell,
-        ['-i', '-l', '-c', `printf '%s' '${ENV_BOUNDARY}'; env`],
+        [
+          '-i',
+          '-l',
+          '-c',
+          `printf '%s' '${ENV_BOUNDARY}'; /usr/bin/env -0 && printf '%s' '${ENV_END_BOUNDARY}'`,
+        ],
         {
-          env: getShellBaselineEnv(cwd !== undefined),
+          env,
           stdio: ['ignore', 'pipe', 'ignore'],
-          cwd,
+          cwd: cwd ?? env.HOME,
           detached: true,
         },
       );
@@ -328,97 +428,13 @@ function runLoginShell(cwd?: string): Promise<NodeJS.ProcessEnv | null> {
       // keep stdio open, or a failed kill may never produce another event.
       timer = setTimeout(
         () => finish(new Error('shell capture timed out')),
-        SHELL_TIMEOUT_MS,
+        remainingMs,
       );
       timer.unref();
     } catch (err) {
       finish(err instanceof Error ? err : new Error(String(err)));
     }
   });
-}
-
-function drainShellRefreshes(): void {
-  while (_activeShellRefreshes < SHELL_REFRESH_CONCURRENCY) {
-    let next: ShellRefresh | undefined;
-    for (const candidate of _shellRefreshes.values()) {
-      if (candidate.running) continue;
-      next ??= candidate;
-      // Async callers can promote an existing queued capture in place;
-      // global bootstrap also takes precedence over background probes.
-      if (candidate.cwd === undefined || candidate.required) {
-        next = candidate;
-        break;
-      }
-    }
-    const job = next;
-    if (!job) break;
-    job.running = true;
-    _activeShellRefreshes++;
-    // Throttle from the actual attempt, even after a long queue wait.
-    if (job.cwd === undefined) {
-      _lastRefreshAt = Date.now();
-    } else if (job.entry && _cwdEnvCache.get(job.cwd) === job.entry) {
-      job.entry.lastRefreshAttemptAt = Date.now();
-    }
-    const finish = (parsed: NodeJS.ProcessEnv | null) => {
-      _shellRefreshes.delete(job.cwd);
-      _activeShellRefreshes--;
-      if (parsed) {
-        const now = Date.now();
-        if (job.cwd === undefined) {
-          try {
-            applyShellEnvToProcess(parsed);
-            _shellEnvCache = parsed;
-            _lastRefreshAt = now;
-            binaryPathCache.clear();
-          } catch (error) {
-            logger.warn(
-              `async shell-env projection rejected: ${error instanceof Error ? error.message : 'invalid environment'}`,
-            );
-            parsed = null;
-          }
-        } else if (job.entry && _cwdEnvCache.get(job.cwd) === job.entry) {
-          Object.assign(job.entry, {
-            env: parsed,
-            captured: true,
-            lastRefreshAt: now,
-            lastRefreshAttemptAt: now,
-          });
-          touchCwdLru(job.cwd, job.entry);
-        }
-      }
-      job.resolve(parsed);
-      drainShellRefreshes();
-    };
-    void runLoginShell(job.cwd).then(finish, () => finish(null));
-  }
-}
-
-function scheduleShellRefresh(
-  cwd?: string,
-  required = false,
-): Promise<NodeJS.ProcessEnv | null> {
-  const existing = _shellRefreshes.get(cwd);
-  if (existing) {
-    existing.required ||= required;
-    // A running capture may have been evicted, then requested again.
-    existing.entry = cwd === undefined ? undefined : _cwdEnvCache.get(cwd);
-    return existing.promise;
-  }
-  let resolve!: ShellRefresh['resolve'];
-  const promise = new Promise<NodeJS.ProcessEnv | null>((done) => {
-    resolve = done;
-  });
-  _shellRefreshes.set(cwd, {
-    cwd,
-    entry: cwd === undefined ? undefined : _cwdEnvCache.get(cwd),
-    required,
-    running: false,
-    promise,
-    resolve,
-  });
-  drainShellRefreshes();
-  return promise;
 }
 
 function getCachedShellEnv(): NodeJS.ProcessEnv {
@@ -460,17 +476,23 @@ function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
 // promotes it to the most-recent slot. Eviction drops queued background work;
 // running captures remain coalesced but cannot repopulate an evicted entry.
 function touchCwdLru(cwd: string, entry: CwdEnvEntry): void {
-  if (_cwdEnvCache.has(cwd)) _cwdEnvCache.delete(cwd);
+  const previous = _cwdEnvCache.get(cwd);
+  if (previous) {
+    cwdCacheBytes -= previous.bytes;
+    _cwdEnvCache.delete(cwd);
+  }
   _cwdEnvCache.set(cwd, entry);
-  while (_cwdEnvCache.size > PER_CWD_CACHE_MAX) {
-    const evictKey = _cwdEnvCache.keys().next().value;
-    if (evictKey === undefined) break;
+  cwdCacheBytes += entry.bytes;
+  while (
+    _cwdEnvCache.size > shellOptions.cacheEntries ||
+    cwdCacheBytes > shellOptions.cacheBytes
+  ) {
+    const oldest = _cwdEnvCache.entries().next();
+    if (oldest.done) break;
+    const [evictKey, evicted] = oldest.value;
     _cwdEnvCache.delete(evictKey);
-    const job = _shellRefreshes.get(evictKey);
-    if (job && !job.running && !job.required) {
-      _shellRefreshes.delete(evictKey);
-      job.resolve(null);
-    }
+    cwdCacheBytes -= evicted.bytes;
+    shellRefreshes.dropOptional(evictKey);
   }
 }
 
@@ -484,13 +506,15 @@ function refreshCwdEnvAsync(
 ): Promise<NodeJS.ProcessEnv | null> {
   const entry = _cwdEnvCache.get(cwd) ?? {
     env: getCachedShellEnv(),
+    bytes: 0,
     captured: false,
+    attempted: false,
     lastRefreshAt: attemptedAt,
     lastRefreshAttemptAt: attemptedAt,
   };
   entry.lastRefreshAttemptAt = attemptedAt;
   touchCwdLru(cwd, entry);
-  return scheduleShellRefresh(cwd, required);
+  return shellRefreshes.request(cwd, required);
 }
 
 // Returns the shell env for `cwd`, never blocking the event loop. Cold misses
@@ -508,9 +532,12 @@ function getCwdEnv(cwd: string): NodeJS.ProcessEnv {
   if (existing) {
     touchCwdLru(cwd, existing);
     const ageMs = now - existing.lastRefreshAt;
-    if (ageMs > REFRESH_THROTTLE_MS) {
+    if (ageMs < 0 || ageMs > REFRESH_THROTTLE_MS) {
       const attemptAgeMs = now - existing.lastRefreshAttemptAt;
-      if (!_shellRefreshes.has(cwd) && attemptAgeMs > REFRESH_THROTTLE_MS) {
+      if (
+        !shellRefreshes.has(cwd) &&
+        (attemptAgeMs < 0 || attemptAgeMs > REFRESH_THROTTLE_MS)
+      ) {
         void refreshCwdEnvAsync(cwd, now);
       }
     }
@@ -533,12 +560,15 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
   }
 
   const now = Date.now();
-  if (!force && now - _lastRefreshAt < REFRESH_THROTTLE_MS) {
-    return Promise.resolve();
+  if (shellRefreshes.has(undefined)) {
+    return shellRefreshes.request().then(() => undefined);
   }
-  const inFlight = _shellRefreshes.get(undefined);
-  if (inFlight) {
-    return inFlight.promise.then(() => undefined);
+  if (
+    !force &&
+    now >= _lastRefreshAt &&
+    now - _lastRefreshAt < REFRESH_THROTTLE_MS
+  ) {
+    return Promise.resolve();
   }
 
   // Set the throttle timestamp BEFORE the refresh completes so concurrent
@@ -547,37 +577,20 @@ export function refreshLoginShellEnv(force = false): Promise<void> {
   // herd if the shell is slow to start.
   _lastRefreshAt = now;
 
-  return scheduleShellRefresh().then(() => undefined);
+  return shellRefreshes.request().then(() => undefined);
 }
 
 /** Re-resolve installations after a user updates or installs an agent CLI. */
 export function clearBinaryPathCache(): void {
-  binaryPathCache.clear();
+  binaryResolver.clear();
 }
 
 export function findBinary(name: string): string | null {
-  if (binaryPathCache.has(name)) {
-    return binaryPathCache.get(name) ?? null;
-  }
+  return binaryResolver.find(name);
+}
 
-  // Login-shell captures are projected onto process.env asynchronously.
-  // buildAugmentedPath preserves that effective PATH order and appends known
-  // install directories only as fallbacks for stripped Electron/Finder PATHs.
-  for (const dir of buildAugmentedPath().split(PATH_DELIMITER)) {
-    if (!dir) continue;
-    for (const candidateName of getExecutableCandidateNames(name)) {
-      const candidate = join(dir, candidateName);
-      try {
-        accessSync(candidate, constants.X_OK);
-        binaryPathCache.set(name, candidate);
-        return candidate;
-      } catch {
-        // Try next
-      }
-    }
-  }
-
-  return null;
+export function findBinaryAsync(name: string): Promise<string | null> {
+  return binaryResolver.findAsync(name);
 }
 
 // Node >= 18.20 / 20.12 refuses to spawn `.cmd`/`.bat` files unless
@@ -602,31 +615,18 @@ export function buildSpawnCommand(command: string): {
   return { command, shell: false };
 }
 
-function getExecutableCandidateNames(name: string): string[] {
-  if (!IS_WINDOWS || extname(name)) {
-    return [name];
-  }
-
-  const pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
-  // Try PATHEXT variants (codex.cmd, codex.exe, …) BEFORE the bare name.
-  // On Windows the extensionless file is frequently a POSIX shim — e.g. Volta
-  // installs `codex` as a `#!/bin/bash` launcher next to the real `codex.cmd`
-  // — which CreateProcess cannot execute, so preferring it yields a path that
-  // spawns with ENOENT. The bare name stays as a last-resort fallback.
-  return [
-    ...pathext
-      .split(';')
-      .map((extension) => extension.trim())
-      .filter(Boolean)
-      .map((extension) => `${name}${extension}`),
-    name,
-  ];
-}
-
 export function buildAugmentedPath(
   basePath: string = getPathEnvValue(process.env),
   ...extraPaths: string[]
 ): string {
+  // A one-entry memo avoids rebuilding the same PATH for bursts of warm reads.
+  // No environment objects are retained, so caller exports are always reread.
+  const inputs = [basePath, ...extraPaths];
+  if (
+    pathMemo?.inputs.length === inputs.length &&
+    inputs.every((value, index) => value === pathMemo?.inputs[index])
+  )
+    return pathMemo.result;
   const seen = new Set<string>();
   const parts: string[] = [];
   let hasFnmMultishell = false;
@@ -646,7 +646,7 @@ export function buildAugmentedPath(
     }
   };
 
-  for (const source of [basePath, ...extraPaths]) {
+  for (const source of inputs) {
     for (const part of source.split(PATH_DELIMITER)) {
       addPart(part);
     }
@@ -655,7 +655,9 @@ export function buildAugmentedPath(
     addPart(part);
   }
 
-  return parts.join(PATH_DELIMITER);
+  const result = parts.join(PATH_DELIMITER);
+  pathMemo = { inputs, result };
+  return result;
 }
 
 // macOS Electron apps launched from Finder/DMG inherit no shell env, so
@@ -689,7 +691,9 @@ export function worktreeSimpleGit(
   worktreePath: string,
   options: { readOnly?: boolean } = {},
 ): SimpleGit {
-  const env = buildAugmentedEnv(process.env, worktreePath);
+  const env = isolateGitEnvironment(
+    buildAugmentedEnv(process.env, worktreePath),
+  );
   delete env.GIT_PAGER;
   delete env.PAGER;
   // Gitlinks can point to nested worktrees as well as submodules. Changes
@@ -768,7 +772,7 @@ export function stripInheritedTmuxEnv(
 }
 
 // Default interactive shell for a brand-new user terminal. POSIX systems honour
-// $SHELL (set by login), with zsh on macOS and portable sh elsewhere.
+// $SHELL (set by login), then the account's login shell, then a platform fallback.
 // Windows has no $SHELL and no /bin/zsh — prefer PowerShell (pwsh if installed, else Windows PowerShell),
 // then cmd.exe as a last resort.
 export function getDefaultUserShell(): string {
@@ -781,10 +785,28 @@ export function getDefaultUserShell(): string {
       'powershell.exe'
     );
   }
-  return (
-    process.env.SHELL ||
-    (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
-  );
+  return getUserShell();
+}
+
+/** Fresh terminal/action creation must not consult NSS synchronously during construction. */
+export async function getDefaultUserShellAsync(): Promise<string> {
+  const explicit = process.env.SHELL?.trim();
+  if (explicit) return explicit;
+  if (IS_WINDOWS)
+    return (
+      process.env.SHELL ||
+      (await findBinaryAsync('pwsh')) ||
+      (await findBinaryAsync('powershell')) ||
+      process.env.ComSpec ||
+      'powershell.exe'
+    );
+  const env = await buildAugmentedEnvAsync();
+  const shell = env.SHELL?.trim() || accountShell.cached;
+  if (!shell)
+    throw new Error(
+      'Account shell is still preparing. Retry after startup finishes.',
+    );
+  return shell;
 }
 
 // Map a persisted shell to one that can actually run on this platform. User
@@ -858,9 +880,9 @@ export function buildAugmentedEnv(
     !IS_WINDOWS &&
     !cwd &&
     !_shellEnvCache &&
-    !_shellRefreshes.has(undefined)
+    !shellRefreshes.has(undefined)
   ) {
-    void refreshLoginShellEnv(true);
+    void refreshLoginShellEnv();
   }
   return mergeAugmentedEnv(base, cwd, shellEnv);
 }
@@ -871,8 +893,10 @@ function mergeAugmentedEnv(
   shellEnv: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const pathKey = getPathEnvKey(base);
-  const merged = { ...shellEnv, ...base };
-  const shellAgent = shellConfiguredSshAgentSocket(base, shellEnv);
+  // A default/copy of process.env includes our global shell projection. It is
+  // not a caller override: worktree exports and unsets must supersede it.
+  const merged = shellProjection.compose(shellEnv, base);
+  const shellAgent = shellConfiguredSshAgentSocket(merged, shellEnv);
   if (shellAgent !== undefined) merged.SSH_AUTH_SOCK = shellAgent;
   // `base` (the backend's own launch-time env) must not clobber PWD once we've
   // resolved a specific target cwd — otherwise every spawned terminal inherits
@@ -902,21 +926,35 @@ function mergeAugmentedEnv(
   return env;
 }
 
-export async function buildAugmentedEnvAsync(
+async function captureAugmentedEnv(
   base: NodeJS.ProcessEnv = process.env,
   cwd?: string,
+  signal?: AbortSignal,
 ): Promise<NodeJS.ProcessEnv> {
   if (!IS_WINDOWS && !_shellEnvCache) {
-    await refreshLoginShellEnv(true).catch(() => undefined);
+    await refreshLoginShellEnv();
   }
+  signal?.throwIfAborted();
+  if (shellEnvironmentDisposed)
+    throw new Error('Shell environment is shutting down.');
 
   if (!IS_WINDOWS && cwd) {
     const entry = _cwdEnvCache.get(cwd);
-    if (_shellRefreshes.has(cwd) || !entry?.captured) {
+    if (!entry?.captured) {
+      if (
+        entry?.attempted &&
+        !shellRefreshes.has(cwd) &&
+        Date.now() >= entry.lastRefreshAttemptAt &&
+        Date.now() - entry.lastRefreshAttemptAt < REFRESH_THROTTLE_MS
+      )
+        return mergeAugmentedEnv(base, cwd, entry.env);
       // Use this caller's capture directly. The LRU can evict its entry while
       // it waits, and rereading the cache would return a different fallback
       // (and schedule yet another capture).
       const captured = await refreshCwdEnvAsync(cwd, Date.now(), true);
+      signal?.throwIfAborted();
+      if (shellEnvironmentDisposed)
+        throw new Error('Shell environment is shutting down.');
       return mergeAugmentedEnv(
         base,
         cwd,
@@ -929,4 +967,73 @@ export async function buildAugmentedEnvAsync(
     return mergeAugmentedEnv(base, cwd, getCachedShellEnv());
   }
   return buildAugmentedEnv(base, cwd);
+}
+
+/** Warm reads never wait for refresh. Cold callers own a deadline, not the shared capture. */
+export async function buildAugmentedEnvAsync(
+  base: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<NodeJS.ProcessEnv> {
+  if (shellEnvironmentDisposed)
+    throw new Error('Shell environment is shutting down.');
+  options.signal?.throwIfAborted();
+  if (IS_WINDOWS || (cwd ? _cwdEnvCache.get(cwd)?.captured : _shellEnvCache))
+    return buildAugmentedEnv(base, cwd);
+  const waiter = new AbortController();
+  const pending = captureAugmentedEnv(base, cwd, waiter.signal);
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
+    };
+    const abort = () => {
+      waiter.abort();
+      finish();
+      reject(new Error('Shell environment request cancelled.'));
+    };
+    const timer = setTimeout(() => {
+      waiter.abort();
+      finish();
+      reject(
+        new Error(
+          'Shell environment is still preparing. Retry after startup finishes.',
+        ),
+      );
+    }, shellOptions.coldWaitMs);
+    timer.unref();
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    void pending.then(
+      (env) => {
+        finish();
+        resolve(env);
+      },
+      (error: unknown) => {
+        finish();
+        reject(
+          error instanceof Error
+            ? error
+            : new Error('Shell environment preparation failed.'),
+        );
+      },
+    );
+  });
+}
+
+/** Keep backend readiness responsive while a custom slow shell warms in the background. */
+export async function warmShellEnvironment(): Promise<boolean> {
+  const pending = refreshLoginShellEnv(true);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      pending.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), shellOptions.bootstrapWaitMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

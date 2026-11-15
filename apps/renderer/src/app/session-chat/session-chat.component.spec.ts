@@ -157,6 +157,37 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('releases seen-view foreground listeners on teardown', async () => {
+    const windowAdded = vi.spyOn(window, 'addEventListener');
+    const documentAdded = vi.spyOn(document, 'addEventListener');
+    const windowRemoved = vi.spyOn(window, 'removeEventListener');
+    const documentRemoved = vi.spyOn(document, 'removeEventListener');
+    const { fixture } = setup(); await settle(fixture);
+    const foreground = windowAdded.mock.calls.find(([type, listener]) => type === 'focus' &&
+      documentAdded.mock.calls.some(([event, handler]) => event === 'visibilitychange' && handler === listener))?.[1];
+    expect(foreground).toBeDefined(); fixture.destroy();
+    expect(windowRemoved).toHaveBeenCalledWith('focus', foreground);
+    expect(windowRemoved).toHaveBeenCalledWith('blur', foreground);
+    expect(documentRemoved).toHaveBeenCalledWith('visibilitychange', foreground);
+  });
+  it('acknowledges a loaded reply only in the foreground, at the latest content, and outside inert layers', async () => {
+    let focused = false;
+    vi.spyOn(document, 'hasFocus').mockImplementation(() => focused);
+    const at = '2026-11-14T12:00:00.000Z';
+    const { fixture, root, bridge, complete } = setup([item('answer', 'assistant', 'Finished working.')], { ...state, unseenCompletionAt: at });
+    await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    root.setAttribute('inert', '');
+    focused = true; window.dispatchEvent(new Event('focus')); await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    const scroll = fixture.componentInstance.chat()!.scroll()!;
+    scroll.atEnd.set(false); root.removeAttribute('inert'); await settle(fixture);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    scroll.atEnd.set(true); await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledExactlyOnceWith('scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: at } });
+    complete(); await settle(fixture);
+    expect(fixture.componentInstance.store.state()?.unseenCompletionAt).toBeNull();
+  });
   it('copies reply and code text through the native bridge and reports native failures', async () => {
     const text = '  café 👩🏽‍💻\n\t代码\r\n';
     const { fixture, root, bridge } = setup([item('answer', 'assistant', text)]);
@@ -374,7 +405,7 @@ describe("connected chat reply rendering", () => {
     expect(tools[1]?.querySelector('.verb')?.textContent).toBe('Attempted to edit');
     expect(tools[1]?.querySelector('[aria-label="Completion unknown"]')).not.toBeNull();
     expect(tools[1]?.querySelector('ex-status-glyph')).toBeNull();
-    expect(root.querySelector('ex-turn .facts')?.textContent).not.toContain('edit');
+    expect(root.querySelector('ex-turn .summary-facts')?.textContent).not.toContain('edit');
   });
 
   it("renders the designed outcome after the answer and routes Review and a file chip to their reply", async () => {
@@ -441,7 +472,11 @@ describe("connected chat reply rendering", () => {
       const answer = turn.querySelector(".answer")!;
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+      if (phase === "idle") {
+        expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+      } else {
+        expect(turn.querySelector(".facts")).toBeNull();
+      }
       expect(turn.querySelectorAll(".caret")).toHaveLength(0);
       const head = tool.querySelector<HTMLButtonElement>(".head")!;
       expect(head.getAttribute("aria-expanded")).toBe("false");
@@ -453,6 +488,7 @@ describe("connected chat reply rendering", () => {
       await settle(fixture);
       expect(toggle.getAttribute("aria-expanded")).toBe("false");
       expect(tool.closest("ex-fold[inert]")).not.toBeNull();
+      expect(turn.querySelector(".group")?.getAttribute("aria-label")).toContain("1 command");
       expect(answer.closest("[inert]")).toBeNull();
     });
   }

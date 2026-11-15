@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { execFileAsync } from '../terminal/async-process.js';
 import { readGitCapabilities } from '../config/git-capabilities.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 /** Only network Git transports; never Git's executable helpers or local paths. */
 export function cloneRepositoryName(value: string): string | null {
@@ -178,7 +179,7 @@ async function git(
       timeout: 120_000,
       maxBuffer: 64 * 1024,
       env: {
-        ...process.env,
+        ...isolateGitEnvironment(process.env),
         GIT_TERMINAL_PROMPT: '0',
         GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes',
       },

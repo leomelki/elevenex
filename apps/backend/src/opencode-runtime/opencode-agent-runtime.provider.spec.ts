@@ -16,6 +16,7 @@ import type { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.servi
 import type { ClaudeRuntimeEvent } from '../claude-runtime/claude-runtime.types.js';
 
 jest.mock('./opencode-server.js', () => ({ OpenCodeServer: jest.fn() }));
+jest.mock('../sessions/sessions.service.js', () => ({ SessionsService: class SessionsService {} }));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -416,6 +417,33 @@ describe('OpenCode runtime lifecycle', () => {
       await tick();
       expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({ parts: [{ type: 'text', text: prompt }, { type: 'file', mime: 'image/jpeg', url: 'data:image/jpeg;base64,/9j/image' }] }), expect.anything());
     } finally { f.provider.onModuleDestroy(); }
+  });
+
+  it('passes the socket-mode MCP endpoint to OpenCode', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const f = fixture('s');
+    try {
+      await f.provider.getHistory(1);
+      expect(OpenCodeServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: {
+            mcp: {
+              elevenex: expect.objectContaining({
+                url: 'http://127.0.0.1:43210/api/mcp',
+                headers: { Authorization: 'Bearer evx_opencode_test' },
+              }),
+            },
+          },
+        }),
+      );
+    } finally {
+      f.provider.onModuleDestroy();
+      environment.restore();
+    }
   });
 
   it('connects coding sessions to Elevenex and adds current-session instructions', async () => {

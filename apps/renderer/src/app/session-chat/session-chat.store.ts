@@ -61,6 +61,7 @@ export class SessionChatStore {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private request: string | undefined;
   private disposed = false;
+  private seenRequest: string | undefined;
   private readonly commands = new Map<string, string>();
   // Replies cross IPC with new object identities even on an idle heartbeat.
   // Keep unchanged inputs stable so polling does not rebuild the conversation.
@@ -82,10 +83,15 @@ export class SessionChatStore {
   readonly readOnly = signal(false);
   readonly historical = signal(false);
   readonly before = signal<string | null>(null);
+  readonly next = signal<string | null>(null);
+  readonly historyLoading = signal(false);
+  readonly historyError = signal("");
+  readonly windowRevision = signal(0);
+  private supportsFollowing = false;
   readonly draft = computed(() => this.activeEntry().text());
   readonly mentions = computed(() => this.activeEntry().mentions());
   addMention(mention: ConversationMention): void {
-    if (!this.state()?.sessionMentions || mention.kind !== 'session' || this.readOnly() || this.historical() || this.busy() || this.uncertain()) return;
+    if (!this.state()?.sessionMentions || mention.kind !== 'session' || this.readOnly() || this.busy() || this.uncertain()) return;
     const id = Number(mention.id);
     if (!Number.isSafeInteger(id) || id <= 0 || this.mentions().length >= 8 || this.mentions().some(item => item.id === mention.id)) return;
     this.entry.mentions.update(items => [...items, mention]);
@@ -139,17 +145,36 @@ export class SessionChatStore {
   });
   readonly empty = computed(() => !this.exchanges().length && !this.running());
 
+  /** Called only after the focused view has rendered its latest content. */
+  async markSeen(): Promise<void> {
+    const selection = this.selection, at = this.state()?.unseenCompletionAt;
+    if (!selection || !at || this.disposed || this.offline() || !this.active() || this.loading() || this.historical() || this.next()) return;
+    const epoch = this.epoch, key = `${selection.scopeId}:${selection.sessionId}:${at}`;
+    if (this.seenRequest === key) return;
+    this.seenRequest = key;
+    try {
+      const result = await this.client.command(selection.scopeId, {
+        taskId: selection.taskId, sessionId: selection.sessionId,
+        action: { type: 'mark-seen', completionAt: at },
+      });
+      if (result.ok && !this.disposed && this.epoch === epoch && this.state()?.unseenCompletionAt === at)
+        this.state.update(state => state ? { ...state, unseenCompletionAt: null } : state);
+    } finally {
+      if (this.seenRequest === key) this.seenRequest = undefined;
+    }
+  }
+
   constructor() {
     let wasPaused: boolean | undefined;
     effect(() => {
       const paused = this.offline() || !this.active();
       const resumed = wasPaused === true && !paused;
       wasPaused = paused;
-      untracked(() => { if (paused) { this.stopRead(); this.loading.set(false); } else if (resumed && this.selection && !this.request && !this.historical()) void this.load(false); });
+      untracked(() => { if (paused) { this.stopRead(); this.loading.set(false); } else if (resumed && this.selection && !this.request) void this.load(false); });
     });
     const visible = () => {
       if (document.hidden) this.stopRead();
-      else if (this.selection && !this.historical()) void this.load(false);
+      else if (this.selection) void this.load(false);
     };
     document.addEventListener("visibilitychange", visible);
     inject(DestroyRef).onDestroy(() => {
@@ -169,7 +194,7 @@ export class SessionChatStore {
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
-    this.state.set(null); this.items.set([]); this.before.set(null); this.cursor = undefined;
+    this.state.set(null); this.items.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
@@ -212,6 +237,8 @@ export class SessionChatStore {
     const cached = this.drafts.snapshot(selection.sessionId);
     if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
+    if (!recovery) this.next.set(null);
+    this.historyLoading.set(false); this.historyError.set('');
     if (!recovery) this.fresh.set(new Set());
     this.error.set("");
     this.notice.set("");
@@ -221,8 +248,7 @@ export class SessionChatStore {
     this.historical.set(recovery && historical);
     this.checked.set(false);
     this.cursor = recovery ? previousCursor : undefined;
-    if (recovery && historical) this.loading.set(false);
-    else void this.load(!recovery);
+    void this.load(!recovery);
   }
   private remember(): void {
     const state = this.state();
@@ -238,19 +264,27 @@ export class SessionChatStore {
     if (this.request && this.selection)
       this.client.cancel(this.selection.scopeId, this.request);
     this.request = undefined;
+    this.historyLoading.set(false);
   }
   async refresh(): Promise<void> {
     this.historical.set(false);
+    this.next.set(null);
+    this.historyLoading.set(false); this.historyError.set('');
     this.stopRead();
     await this.load(true);
   }
   async older(): Promise<void> {
-    if (!this.before() || this.loading()) return;
+    if (!this.before() || this.loading() || this.historyLoading()) return;
     this.stopRead();
-    this.historical.set(true);
-    await this.load(false, this.before()!);
+    await this.load(false, this.before()!, "before");
   }
-  private async load(reset: boolean, before?: string): Promise<void> {
+  async newer(): Promise<void> {
+    if (!this.next() || this.loading() || this.historyLoading()) return;
+    if (!this.supportsFollowing) { await this.refresh(); return; }
+    this.stopRead();
+    await this.load(false, this.items().at(-1)?.id, "following");
+  }
+  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<void> {
     const selection = this.selection;
     if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;
     clearTimeout(this.timer);
@@ -259,13 +293,14 @@ export class SessionChatStore {
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
     this.request = requestId;
-    if (reset || before) this.loading.set(true);
+    if (reset) this.loading.set(true);
+    if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
     const result = await this.client.read(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       requestId,
-      ...(before
-        ? { before }
+      ...(position && direction
+        ? { [direction]: position }
         : !reset && this.cursor
           ? { after: this.cursor }
           : {}),
@@ -274,20 +309,33 @@ export class SessionChatStore {
       return;
     this.request = undefined;
     this.loading.set(false);
+    this.historyLoading.set(false);
     if (result.ok) {
       if (this.starting()) this.compactStart.set(!!this.draft().trim());
       this.starting.set(false);
       this.error.set("");
-      this.accept(result.value, !!before);
+      this.supportsFollowing = result.value.next !== undefined;
+      if (this.historical() && !direction && !reset) {
+        // Keep runtime state current without replacing the history being read.
+        this.state.set(result.value.state);
+        this.cursor = result.value.cursor;
+      } else if (!reset && !direction && result.value.reset && this.items().length && !result.value.items.some(item => this.items().some(old => old.id === item.id))) {
+        // A busy conversation may outgrow a feed tail while disconnected. Keep
+        // its contiguous history and fill the gap using the forward cursor.
+        this.next.set(this.items().at(-1)!.id);
+        this.historical.set(true);
+        this.state.set(result.value.state);
+        this.cursor = result.value.cursor;
+      } else this.accept(result.value, direction, !reset);
       if (this.uncertain()) this.checked.set(true);
-    } else if (reset || before || !this.state() || result.error.status === 404)
+    } else if (direction) this.historyError.set(result.error.message);
+    else if (reset || !this.state() || result.error.status === 404)
       this.error.set(
         result.error.status === 404
           ? "Chat is unavailable on this machine. Update its engine, then reconnect."
           : result.error.message,
       );
     if (
-      !this.historical() &&
       !this.readOnly() &&
       (result.ok ||
         (result.error.status !== 404 && result.error.code !== "stale-scope"))
@@ -300,11 +348,15 @@ export class SessionChatStore {
         result.ok ? 80 : 3000,
       );
   }
-  private accept(page: SessionChatPage, older: boolean): void {
+  private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
+    const older = direction === "before";
     const previous = this.items(),
       wasLoaded = !!this.cursor;
+    const base = older ? [...page.items, ...previous]
+      : direction || (page.reset && incremental) ? [...previous, ...page.items]
+      : page.reset ? page.items : previous;
     const next = new Map<string, SessionChatItem>(
-      (page.reset || older ? page.items : previous).map((item) => [
+      base.map((item) => [
         item.id,
         item,
       ]),
@@ -340,7 +392,7 @@ export class SessionChatStore {
             ),
           ]
         : [...next.values()];
-    const items = all.slice(-320);
+    const items = older ? all.slice(0, 320) : all.slice(-320);
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
@@ -351,7 +403,7 @@ export class SessionChatStore {
         if (!retained.has(id)) arrivals.delete(id);
       this.turnArrivals.set(arrivals);
     }
-    if (!older && wasLoaded) {
+    if (!direction && wasLoaded) {
       const known = new Set(previous.map((item) => item.id));
       this.fresh.set(
         new Set(
@@ -365,11 +417,20 @@ export class SessionChatStore {
         ),
       );
     }
+    if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
     this.items.set(items);
     this.state.set(page.state);
-    if (!older) this.cursor = page.cursor;
-    if (page.reset || older) this.before.set(page.before);
-    if (all.length > 320) this.before.set(items[0]?.id ?? null);
+    if (!direction) this.cursor = page.cursor;
+    if (older) {
+      this.before.set(page.before);
+      if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
+    } else {
+      if (!direction && page.reset && (!incremental || !previous.length)) this.before.set(page.before);
+      if (all.length > 320) this.before.set(items[0]?.id ?? null);
+      this.next.set(page.next ?? null);
+    }
+    this.historical.set(!!this.next());
+    if (direction || all.length > 320) this.windowRevision.update(value => value + 1);
     if (
       pending &&
       (items.some(
@@ -416,11 +477,16 @@ export class SessionChatStore {
   }
 
   async submit(submission: ComposerSubmission): Promise<void> {
+    if (this.loading()) return;
+    if (this.historical()) {
+      const epoch = this.epoch;
+      await this.refresh();
+      if (epoch !== this.epoch || this.error()) return;
+    }
     if (
       !this.selection || (!this.state() && !this.offline()) ||
       this.busy() ||
       this.readOnly() ||
-      this.historical() ||
       this.uncertain() || this.waitingUncertain() || (!this.offline() && this.waitingPending()) ||
       (!submission.text.trim() && !this.entry.files().length) ||
       this.entry.files().some(file => file.status !== "ready")
@@ -511,7 +577,6 @@ export class SessionChatStore {
     if (
       action.type === "provider" &&
       (this.state()?.providerLocked !== false ||
-        this.historical() ||
         !this.state()?.providers?.some(
           (provider) => provider.id === action.provider,
         ))

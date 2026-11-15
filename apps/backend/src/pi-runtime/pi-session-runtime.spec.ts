@@ -10,6 +10,7 @@ jest.mock('child_process', () => ({
 jest.mock('../config/system-paths.js', () => ({
   buildAugmentedEnvAsync: jest.fn(async () => ({ PATH: '/mock/bin' })),
   findBinary: jest.fn(() => null),
+  findBinaryAsync: jest.fn().mockResolvedValue(null),
   buildSpawnCommand: jest.fn((command: string) => ({ command, shell: false })),
 }));
 

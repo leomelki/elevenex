@@ -7,6 +7,13 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+// These unit tests inject session/terminal fakes and do not need native PTYs.
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
+jest.mock('../terminal/terminal.service.js', () => ({
+  TerminalService: class TerminalService {},
+}));
 jest.mock('@anthropic-ai/claude-agent-sdk', () => ({
   forkSession: jest.fn(),
   getSubagentMessages: jest.fn(),
@@ -1527,6 +1534,11 @@ describe('ClaudeRuntimeService', () => {
   });
 
   it('uses the independently installed Claude CLI when submitting prompts', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
     (query as jest.Mock).mockReturnValue({
       supportedModels: jest.fn().mockResolvedValue([]),
       getContextUsage: jest.fn().mockResolvedValue({
@@ -1544,12 +1556,57 @@ describe('ClaudeRuntimeService', () => {
       [Symbol.asyncIterator]: () => successfulResultIterator(),
     });
 
-    await service.submitPrompt(7, 'Stream this');
+    try {
+      await service.submitPrompt(7, 'Stream this');
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(jest.mocked(query).mock.calls[0][0].options).toHaveProperty(
+        'pathToClaudeCodeExecutable',
+      );
+      expect(jest.mocked(query).mock.calls[0][0].options).toMatchObject({
+        mcpServers: {
+          elevenex: {
+            url: 'http://127.0.0.1:43210/api/mcp',
+            headers: { Authorization: 'Bearer evx_claude_test' },
+          },
+        },
+      });
+    } finally {
+      await service.cleanupSession(7);
+      environment.restore();
+    }
+  });
 
-    expect(query).toHaveBeenCalledTimes(1);
-    expect((query as jest.Mock).mock.calls[0][0].options).toHaveProperty(
-      'pathToClaudeCodeExecutable',
-    );
+  it('resolves new Claude processes after environment warm-up instead of keeping the constructor selection', async () => {
+    const paths = jest.requireActual<
+      typeof import('../config/system-paths.js')
+    >('../config/system-paths.js');
+    let environmentReady = false;
+    const environment = jest
+      .spyOn(paths, 'buildAugmentedEnvAsync')
+      .mockImplementation(() => {
+        environmentReady = true;
+        return Promise.resolve({ PATH: '/updated/bin' });
+      });
+    const lookup = jest
+      .spyOn(paths, 'findBinaryAsync')
+      .mockImplementation(() => {
+        expect(environmentReady).toBe(true);
+        return Promise.resolve('/updated/bin/claude');
+      });
+    jest.mocked(query).mockImplementation(() => {
+      throw new Error('Fixture stops before contacting Claude');
+    });
+    try {
+      await service.prewarmSession(7);
+      expect(
+        jest.mocked(query).mock.calls.at(-1)?.[0].options
+          ?.pathToClaudeCodeExecutable,
+      ).toBe('/updated/bin/claude');
+    } finally {
+      await service.cleanupSession(7);
+      environment.mockRestore();
+      lookup.mockRestore();
+    }
   });
 
   it('accepts a fresh prompt after a finished task reactivates its conversation', async () => {

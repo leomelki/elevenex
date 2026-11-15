@@ -13,6 +13,10 @@ import { DesktopChatService } from './desktop-chat.service.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import { chatState, display } from './desktop-chat-projection.js';
 
+jest.mock('../sessions/sessions.service.js', () => ({
+  SessionsService: class SessionsService {},
+}));
+
 const item = (id: string, text = id): AgentTranscriptItem => ({
   id,
   kind: 'assistant',
@@ -48,6 +52,45 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('does not pair a new completion marker with an older in-flight history read', async () => {
+    let finish!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));
+    const old = chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    await settle();
+    const at = '2026-11-14T12:00:00.000Z';
+    session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'codex', hasUnreviewedCompletion: true, lastCompletionAt: at });
+    module.get(SessionsService).emit('session-completion-changed', { sessionId: 2, hasUnreviewedCompletion: true });
+    history = [item('new-final', 'New final reply')];
+    const current = await chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    expect(current!.state.unseenCompletionAt).toBe(at);
+    expect(current!.items.some(item => item.text === 'New final reply')).toBe(true);
+    finish([]); await old;
+  });
+  it('confines seen acknowledgments to the task and completion, without starting a runtime', async () => {
+    const sessions = module.get(SessionsService);
+    const at = '2026-11-14T12:00:00.000Z';
+    await expect(chat.command(9, 2, { type: 'mark-seen', completionAt: at })).rejects.toThrow('does not belong');
+    for (const completionAt of [undefined, null, '', 'yesterday', 'x'.repeat(100)])
+      await expect(chat.command(1, 2, { type: 'mark-seen', completionAt })).rejects.toThrow('Invalid completion');
+    await expect(chat.command(1, 2, { type: 'mark-seen', completionAt: at })).resolves.toEqual({ accepted: true });
+    expect(sessions.markCompletionReviewed).toHaveBeenCalledWith(2, at);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
+  it('wakes a selected feed on completion changes and releases its listener', async () => {
+    const sessions = module.get(SessionsService);
+    const at = '2026-11-14T12:00:00.000Z';
+    const first = await chat.read(1, 2, undefined, undefined, new AbortController().signal);
+    expect(sessions.listenerCount('session-completion-changed')).toBe(1);
+    const pending = chat.read(1, 2, first!.cursor, undefined, new AbortController().signal);
+    await settle();
+    session.mockResolvedValue({ workspaceId: 1, surface: 'session', status: 'active', activeAgentProvider: 'codex', hasUnreviewedCompletion: true, lastCompletionAt: at });
+    sessions.emit('session-completion-changed', { sessionId: 2, hasUnreviewedCompletion: true });
+    expect((await pending)!.state.unseenCompletionAt).toBe(at);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+    chat.onModuleDestroy();
+    expect(sessions.listenerCount('session-completion-changed')).toBe(0);
+  });
   it('only serves image references belonging to the requested task and transcript item', async () => {
     history = [{ ...item('image'), providerToolResult: [{ type: 'output_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] }];
     await expect(chat.media(1, 2, 'image', '0')).resolves.toMatchObject({ itemId: 'image', mediaId: '0' });
@@ -95,13 +138,14 @@ describe('selected session chat', () => {
         },
         {
           provide: SessionsService,
-          useValue: {
+          useValue: Object.assign(new EventEmitter(), {
             findOne: session,
+            markCompletionReviewed: jest.fn(),
             hasStartedAgentRuntime: started,
             updateActiveAgentProvider: updateProvider,
             assertSessionWorkspaceLinked: jest.fn(),
             reactivateRuntime: jest.fn(),
-          },
+          }),
         },
         {
           provide: AgentRuntimeRegistryService,
@@ -124,6 +168,21 @@ describe('selected session chat', () => {
     chat = module.get(DesktopChatService);
   });
   afterEach(async () => module.close());
+  it('serves exclusive forward pages without changing legacy tails or feed projections', async () => {
+    history = Array.from({ length: 1000 }, (_, i) => item(String(i)));
+    const signal = new AbortController().signal;
+    const forward = await chat.read(1, 2, undefined, undefined, signal, '39');
+    expect(forward).toMatchObject({ reset: false, next: '119', events: [] });
+    expect(forward!.items[0]!.id).toBe('40'); expect(forward!.items).toHaveLength(80);
+    const tail = await chat.read(1, 2, undefined, undefined, signal);
+    expect(tail!.next).toBeNull(); expect(tail!.items.at(-1)!.id).toBe('999');
+    await expect(chat.read(1, 2, undefined, '20', signal, '39')).rejects.toThrow('Invalid conversation cursor');
+    await expect(chat.read(1, 2, undefined, undefined, signal, 'missing')).rejects.toThrow('History cursor expired');
+    status = 'archived';
+    const archived = await chat.read(1, 2, undefined, undefined, signal, '39');
+    expect(archived!.items[0]!.id).toBe('40'); expect(archived!.next).toBe('119');
+  });
+
 
   it('stops only background work the runtime still reports as live and projects it for the bar', async () => {
     runtime.getRuntimeState.mockImplementation(async () => ({
@@ -394,6 +453,22 @@ describe('selected session chat', () => {
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
   });
+  it('streams dequeued user receipts once and retains their identity through saved history', async () => {
+    history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];
+    const initial = (await read())!;
+    const receipt: AgentTranscriptItem = { ...item('native-user', 'Queued follow-up'), kind: 'user' };
+    live = [receipt, item('follow-up-answer')];
+    emit('message_start');
+    const update = (await read(initial.cursor))!;
+    expect(update.reset).toBe(false);
+    expect(update.events.map(event => event.type === 'item' && event.item.id)).toEqual(['native-user', 'follow-up-answer']);
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    history = [...history, ...live];
+    emit('history_snapshot');
+    const saved = (await read(update.cursor))!;
+    expect(saved.items.map(item => item.id)).toEqual(['initial', 'initial-answer', 'native-user', 'follow-up-answer']);
+    expect(saved.items.filter(item => item.kind === 'user')).toHaveLength(2);
+  });
   it('keeps a pre-read cursor so events during hydration are reconciled without losing or duplicating text', async () => {
     runtime.getRuntimeState.mockImplementationOnce(async () => {
       emit();
@@ -568,6 +643,25 @@ describe('selected session chat', () => {
       undefined,
       { human: true, queue: false, waitForCompletion: false },
     );
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
+  it('allows choosing Claude after Codex fails before creating a native conversation', async () => {
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({
+      runPhase: 'error',
+      canInterrupt: false,
+      lastError: 'spawn codex ENOENT',
+      pendingPrompts: [],
+    });
+    await chat.command(1, 2, {
+      type: 'provider',
+      provider: 'claude',
+      expectedProvider: 'codex',
+    });
+    expect(updateProvider).toHaveBeenCalledWith(2, 'claude');
+    expect(runtime.getRuntimeState).toHaveBeenCalledWith(2, {
+      initialize: false,
+    });
     expect(runtime.submitPrompt).not.toHaveBeenCalled();
   });
   it('does not move queued prompts or a starting turn to another harness', async () => {

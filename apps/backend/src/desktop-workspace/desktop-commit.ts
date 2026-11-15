@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import type { GitService, GitStatusSummary } from '../git/git.service.js';
+import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import {
   selectedPaths,
   stagedRevision,
@@ -31,6 +32,7 @@ export async function commitSnapshot(
   selection: CommitSelection,
   message: string,
   onPhase: (phase: 'writing' | 'committing') => void,
+  provider?: AgentProviderId,
 ) {
   const paths = selectedPaths(status, selection);
   if (!paths.length)
@@ -114,6 +116,7 @@ export async function commitSnapshot(
     }
     await gitService.commit(path, {
       message,
+      provider,
       indexFile: index,
       onPhase: (value) => {
         phase = value;

@@ -7,6 +7,8 @@ export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
   readonly after?: string;
   readonly before?: string;
+  /** Exclusive item cursor for continuing toward the live end of history. */
+  readonly following?: string;
 }
 /** Display metadata from a durable session-context snapshot; never includes its contents or path. */
 export interface SessionChatMention {
@@ -67,6 +69,8 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Present on engines supporting mark-seen; null means no unseen completion. */
+  readonly unseenCompletionAt?: string | null;
   /** Explicit send can resolve at most eight session identities into context. */
   readonly sessionMentions?: boolean;
   readonly attachments?: boolean;
@@ -231,6 +235,8 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly items: readonly SessionChatItem[];
   readonly events: readonly SessionChatEvent[];
   readonly before: string | null;
+  /** Omitted by older engines. Null means this page reaches the live end. */
+  readonly next?: string | null;
   readonly state: SessionChatState;
 }
 export interface SessionChatPresetDefault {
@@ -248,6 +254,7 @@ export interface SessionChatCommandReply {
   };
 }
 export type SessionChatAction =
+  | { readonly type: "mark-seen"; readonly completionAt: string }
   | {
       readonly type: "preset-default";
       readonly id: string;

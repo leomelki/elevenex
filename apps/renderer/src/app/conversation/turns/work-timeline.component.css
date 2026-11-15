@@ -38,8 +38,7 @@ li {
   font-size: var(--text-body-size);
   line-height: var(--text-body-line);
 }
-.group,
-.earlier {
+.group {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -55,29 +54,58 @@ li {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
 }
-.group span {
-  min-width: 0;
+.summary-lead {
+  flex: none;
+  color: var(--ink);
+  font-weight: 500;
 }
-.group:hover,
-.earlier:hover {
+.summary-facts {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: var(--space-1) var(--space-3);
+}
+.summary-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.summary-fact.failure {
+  color: var(--danger);
+}
+.summary-fact ex-icon,
+.summary-fact ex-status-glyph,
+.disclosure {
+  flex: none;
+}
+.prose.has-text,
+.answer.has-text {
+  padding-block: var(--space-2);
+}
+.group:hover {
   color: var(--ink);
   background: var(--surface-sunken);
 }
-.group:focus-visible,
-.earlier:focus-visible {
+.group:focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-.earlier[aria-disabled="true"] {
-  cursor: default;
+.disclosure {
+  /* Same travel as the turn's work chevron, so every disclosure turns alike. */
+  transition: transform var(--dur-glide) var(--ease-glide);
 }
-.group ex-icon:last-child {
-  flex: none;
-  margin-left: auto;
-}
-.group ex-icon:last-child,
-.earlier > ex-icon {
-  transition: transform var(--dur-base) var(--ease-in-out);
+/*
+ * A closing section swaps its step for the summary in the same row. Fold
+ * normally closes faster than it opens; matching both curves here keeps the
+ * row's height steady, so the swap reads as a crossfade and nothing below
+ * bounces (it previously dipped ~10px mid-swap).
+ */
+ex-fold.group-fold,
+ex-fold.step-fold {
+  transition-duration: var(--dur-slow);
 }
 .turned {
   transform: rotate(90deg);
@@ -117,8 +145,7 @@ li {
   .step-enter > .row-clip {
     animation: none;
   }
-  .group ex-icon:last-child,
-  .earlier > ex-icon {
+  .disclosure {
     transition: none;
   }
 }

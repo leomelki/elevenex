@@ -44,7 +44,10 @@ describe('TextAgentGenerationService lifetime', () => {
     jest
       .spyOn(systemPaths, 'buildSpawnCommand')
       .mockReturnValue({ command: 'codex', shell: false });
-    jest.spyOn(codexBinary, 'resolveCodexBinary').mockReturnValue('codex');
+    jest
+      .spyOn(codexBinary, 'resolveCodexBinaryAsync')
+      .mockResolvedValue('codex');
+    jest.spyOn(systemPaths, 'findBinaryAsync').mockResolvedValue('claude');
   });
 
   afterEach(() => {

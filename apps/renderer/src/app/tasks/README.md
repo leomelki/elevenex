@@ -11,6 +11,14 @@ creation and its durable receipt. Keep it stable for that row's visible lifetime
 be dragged as a session reference, archived or restored. Its owner supplies status,
 metadata and recovery; the task family never sends a create request.
 
+The compatible `review` status is presented as **New reply**: a steady 5px accent
+dot centered in the existing glyph column. It means an agent finished a turn
+that has not been viewed, independent of file changes. Rows keep their ordinary
+text, geometry and ordering. The glyph's accessible label and tooltip explain
+the cue; the existing summary counter filters it. Viewing/clearing belongs to
+the connected chat owner, never SessionRow. It fades quietly with no burst and
+settles immediately under reduced motion.
+
 `SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative.
 
 | Component | Main inputs | Intent outputs |

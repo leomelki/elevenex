@@ -6,9 +6,9 @@ These standalone OnPush components consume renderer view models and emit typed i
 
 - `ChatComponent` composes `ChatScroll`, user messages, turns, Markdown and turn navigation from `readonly ChatExchange[]`. Project a composer with `chatComposer`, and optional decision cards with `chatContent`.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
-- `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Completion folds untouched work; inspected or explicitly expanded work stays open without expanding the recent window. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
+- `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
-- `WorkTimeline` groups adjacent successful discovery steps using flat, keyed rows, so grouping never reparents a tool. One recent-work budget covers the turn. Commentary, running/unknown tools, unresolved failures and inspected work stay visible. Earlier steps use a persistent Show fewer toggle with retained focus. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+- `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
@@ -23,6 +23,11 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `SessionStart` selects the provided or first preset, offers task/branch rename intents, and accepts a projected composer. Workspace preparation never disables typing by itself. Readiness and deferred first-message delivery belong to the future session controller.
 - `SideThread` is reusable panel content. When hosted in an overlay, set `trapFocus` to true and own dismissal through `closed`; the CDK restores focus to its originating element. The host owns popover placement. Promote is an intent, never a hidden fork operation.
 - `JobBriefComponent` renders the supplied opening brief of a git-helper session. Inputs are `title`, `time`, and `id`; project the brief as text with inline `code`. It never inserts messages in sessions or starts a helper. The owner supplies what happened, what judgement is needed, and when to stop.
+
+`ToolStep.detailTruncation` defaults to `"end"`. `WorkTimeline` uses `"start"`
+for read tools so long paths retain their filename and trailing folders. The
+full detail remains in the text and hover title; truncation follows the
+available row width.
 
 ## Scrolling and performance
 
@@ -41,6 +46,17 @@ range subscriptions are released with the rail. The `/conversation` preview has
 1/9/1,000/10,000-message controls for this behavior.
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
+
+Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
+`historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity
+emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
+evicts the opposite edge and increments `historyRevision` in the same update.
+Rows expose stable `data-chat-anchor` identities so the first visible row retains
+its offset after either operation. One in-flight request and a four-page automatic
+fill budget prevent loops on short/collapsed content; wheel, pointer and keyboard
+input renew that budget. History failures retain readable content and offer a
+focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
+before moving to the bottom. No history navigation buttons are needed.
 
 `ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts
 `"instant"` for opening history before paint. Reduced motion always jumps directly.
@@ -136,10 +152,15 @@ controlled `actions`, `stoppable`, `retryable`, and `copiedCode`. A
 `ChatExchange.isNew` opts only fresh prompts into motion; `overflow` entries emit
 `contentRequested` to the bounded original-content reader. Empty prompts support
 partial history windows without inventing user text. `Turn` forwards the action
-allowlist and retry capability, including keyboard shortcuts. Unknown duration
-shows Worked/Working without an invented zero-second measurement. Finished turns
-with no work steps (excluding commentary and system notes) omit the work header
-and timeline so the answer appears directly; live turns retain their status and
+allowlist and retry capability, including keyboard shortcuts. The work heading
+pairs a prominent verb with a muted, tabular time: `Worked for 2m 14s`,
+`Stopped after 12s` or `Failed after 12s`. `duration` supplies a settled turn's
+length; a live turn given `startedAt` (epoch ms) ticks `Working for …` once a
+second until it settles, and otherwise shows `elapsed`. The session adapter
+measures from the prompt to the turn's last activity, so a history window that
+starts mid-turn has no duration. Unknown or sub-second duration shows
+Worked/Working without an invented zero-second measurement. Finished turns
+with no activity or earlier commentary omit the work header so the answer appears directly; live turns retain their status and
 Stop control before the first step.
 Turn spacing lives inside each folding section so closed work and live-step
 sections leave no extra gaps between the work header and answer.
@@ -178,17 +199,41 @@ passes `answer`, `streaming`, `copiedCode` and `resolve` to the same Markdown
 instance as earlier commentary. File/link/page/copy intents work in both places.
 `Turn` still supports projected answer content for existing standalone callers.
 
-The timeline retains every step's component in its original keyed list. Discovery
-groups control the visibility of flat members, and automatically stay open around
-an inspected member. A group never opens merely because its header receives
-focus. `maxVisible` is one turn-wide budget of recent work entries (a discovery
-group is one entry), independent of live/completed status. “N earlier steps”
-counts tools only; commentary remains in order. Show fewer is an explicit request
-to release old inspection pins. Closed folds are inert immediately and retain
-disclosure state through their exit and reopening. Running tools remain visible
-when live history is collapsed. History is still on mount; appended rows grow
-before their ink appears. Existing Fold and AutoHeight handle reversible
-compaction, output and reasoning-height transitions with reduced-motion support.
+The timeline retains every step’s component in its original keyed list. Nonempty
+messages delimit activity sections; empty streaming replies do not close work.
+A new message or completion folds settled work in the preceding section into a
+summary at that location (“5 reads · 3 commands · 2 edits”), with a shared icon
+for each category. Counts
+represent observed operations; shell commands never imply file reads or edits.
+Completed failed calls fold into the same summary. A red status glyph and text
+(“1 failed”) remain visible in its button, including for a failure-only section.
+Failure counts are a subset of category totals; totals count attempts, not
+successes. Expected/recovered failures do not contribute to the failure marker;
+later success alone never clears it. Running/unknown tools remain visible.
+Each section opens independently and retains that choice through streaming and
+completion. The work line shows status/time and expands or collapses all sections;
+category totals remain available in the section summaries.
+Settled turns also reveal up to four work facts beside the duration on turn
+hover, keyboard focus or expansion (for example, Edited 2 files · Ran 3 commands).
+They enter with a short stagger and spring, and fade/slide out together on a
+shorter curve; reduced motion removes movement and touch keeps them visible.
+Unrecovered failure facts stay visible. Narrow headings clip the facts with a
+trailing fade while retaining the duration and disclosure. Counts exclude
+running/unknown tools; partial file windows omit aggregate line counts.
+Live counts use the shared Ticker, with still initial history and reduced motion.
+Inspected results and focused controls remain mounted and visible.
+Explicit section collapse releases its inspection pins; focusing a summary alone
+does not open it. Commentary stays visible even when the turn’s work is closed.
+`maxVisible` is the active section’s recent-step count (default 5); compaction
+starts as soon as a completed step falls outside that window. That
+partial summary leads with “Earlier” (accessible name “Show earlier activity: …”)
+so the visible recent window is not mistaken for its contents. A new
+message starts a fresh budget. Closed folds are inert immediately and retain
+disclosure state through exit and reopening. History is still on mount; appended
+rows grow before their ink appears. When a message closes a section, the step
+and its summary share one row and one `dur-slow` curve, so the row keeps its
+height and the swap crossfades. Fold and AutoHeight own reversible height
+transitions and reduced-motion behavior.
 
 
 ## Connected composer controls
@@ -325,8 +370,14 @@ these components never fetch URLs or load returned images. The supplying adapter
 owns parsing and limits. Closed Fold content remains inert, and running-to-result
 updates retain the tool disclosure. The `/connected-workspace` tools preview and
 `session-tools.mjs` capture scenario exercise every normalized family.
+Patch and replacement evidence uses compact file headers with leading path
+truncation, aligned change-marker gutters and the shared inert JavaScript/TypeScript
+syntax lexer. Unified file headers and hunk ranges stay neutral. Patch markers
+are separate from source text, preserving indentation, literal leading signs,
+blank lines and horizontal scrolling; the complete received payload remains in
+Original data. Gutters stay visible while scrolling long lines sideways.
 `WorkStep.status='unknown'` means no completion receipt was received: it uses a
-neutral clock, stays outside discovery groups and completed-work facts, and does
+neutral clock, stays outside activity summaries and completed-work facts, and does
 not imply failure or success. Tools retain focus and disclosure through results,
 new commentary and completion; removing a focused tool restores focus to the
 work control. Each new tool starts with its own disclosure state.

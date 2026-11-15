@@ -888,7 +888,7 @@ export class OpenCodeAgentRuntimeProvider
           ? 'Input needed'
           : null,
       backgroundActive: state.backgroundWork.length > 0,
-    });
+    }, { authoritative: true, provider: 'opencode' });
     this.emit('event', {
       type: 'runtime_snapshot',
       payload: { ...state, liveItems: [...state.liveItems] },

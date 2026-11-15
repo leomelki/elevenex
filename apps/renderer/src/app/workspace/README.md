@@ -82,6 +82,17 @@ surface. Git drafts submit through native forms, including Enter in the field.
 Session activity comes from authoritative backend navigation pages. Persisted
 session `active` is not an indication that an agent is running.
 
+Inactive historical conversations use their persisted lifecycle and native
+conversation identity even when older releases did not record completion dates.
+They show Done; a missing date alone never makes an existing conversation Queued.
+Only unused sessions or an explicit pending prompt queue use the dotted circle.
+New reply still requires the durable unseen-completion marker, so recovering old
+sessions does not manufacture unread replies. Legacy `idle`/`active` activity
+replies map to Done as well. Backend navigation and chat share the same provider
+inference for old rows that retain a default Claude choice after using another
+harness. Recovery uses bounded metadata pages, without reading transcript files,
+starting runtimes or scanning all sessions at startup.
+
 ## Bounds and invalidation
 
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.
@@ -123,6 +134,11 @@ session `active` is not an indication that an agent is running.
   Unknown git state is not presented as “Up to date”. Commit and branch rename
   require explicit drafts; push is non-force and sync uses the backend's safe
   fast-forward behavior. PR and merge commands are excluded from this slice.
+  Failed pushes retain local commits and show fixed guidance for authentication,
+  a remote branch with newer commits, or other Git failures. Raw Git output stays
+  on the backend; SSH authentication uses the connected machine's credentials or
+  forwarded local agent, so a locked/unavailable agent requires attention before
+  retrying Push.
 
 ## Creation, failures and cleanup
 

@@ -11,6 +11,11 @@ const tool = (id: string, extra: Partial<WorkStep> = {}): WorkStep => ({
   output: `Output for ${id}`,
   ...extra,
 });
+const say = (id: string): WorkStep => ({
+  id,
+  kind: "say",
+  text: `Progress ${id}`,
+});
 const exchange = (
   steps: readonly WorkStep[],
   extra: Partial<ChatExchange> = {},
@@ -19,7 +24,7 @@ const exchange = (
   prompt: "Check the change",
   status: "live",
   steps,
-  answer: "Checking the result.",
+  answer: "",
   answerId: "message",
   ...extra,
 });
@@ -41,6 +46,14 @@ function head(host: HTMLElement, id: string): HTMLButtonElement {
 }
 const visible = (host: HTMLElement, id: string): boolean =>
   !head(host, id).closest(".step-fold")?.hasAttribute("inert");
+function group(host: HTMLElement, id: string): HTMLButtonElement | null {
+  const control = host.querySelector<HTMLButtonElement>(
+    `[data-work-step="${id}"] .group`,
+  );
+  return control?.closest(".group-fold")?.hasAttribute("inert")
+    ? null
+    : control;
+}
 async function settle(fixture: ComponentFixture<ChatComponent>): Promise<void> {
   fixture.detectChanges();
   await fixture.whenStable();
@@ -51,25 +64,211 @@ afterEach(() => {
   document.querySelectorAll("ex-chat").forEach((e) => e.remove());
 });
 
-describe("chronological work disclosures", () => {
-  it('keeps an explicitly opened discovery group visible as later work arrives until Show fewer', async () => {
-    const reads = [1, 2, 3].map(n => tool(`read-${n}`, { kind: 'read' }));
-    const { host, fixture, update } = setup(exchange(reads));
-    const group = host.querySelector<HTMLButtonElement>('.group')!;
-    group.click(); host.querySelector<HTMLButtonElement>('.work')!.focus(); await settle(fixture);
-    update(exchange([...reads, ...Array.from({ length: 8 }, (_, n) => tool(`command-${n}`))]));
+describe("message-delimited work sections", () => {
+  it("keeps the last actual message when a settled receipt has no separate answer", async () => {
+    const { host, fixture, update } = setup(exchange([
+      say("intro"), tool("command"), say("last"),
+    ]));
+    update(exchange([say("intro"), tool("command"), say("last")], { status: "done" }));
     await settle(fixture);
-    expect(visible(host, 'read-1')).toBe(true);
-    const earlier = host.querySelector<HTMLButtonElement>('.earlier')!;
-    earlier.focus(); earlier.click(); await settle(fixture);
-    earlier.click(); await settle(fixture);
-    expect(group.getAttribute('aria-expanded')).toBe('false');
-    expect(visible(host, 'read-1')).toBe(false);
-    expect(document.activeElement).toBe(earlier);
+    expect(host.querySelector('[data-work-step="intro"] .step-fold')?.hasAttribute("inert")).toBe(true);
+    expect(host.querySelector('[data-work-step="last"] .step-fold')?.hasAttribute("inert")).toBe(false);
+    expect(visible(host, "command")).toBe(false);
   });
-  it("retains an expanded tool and its focus when a new reply moves the answer boundary", async () => {
+
+  it("starts Earlier with one tool beyond the five recent tools and grows it one call at a time", () => {
+    const steps = Array.from({ length: 11 }, (_, n) => tool(`command-${n}`));
+    const { host, update } = setup(exchange(steps.slice(0, 5)));
+    expect(group(host, "command-0")).toBeNull();
+    expect(visible(host, "command-0")).toBe(true);
+    for (let count = 6; count <= steps.length; count++) {
+      update(exchange(steps.slice(0, count)));
+      const earlier = count - 5;
+      expect(group(host, "command-0")?.textContent).toContain("Earlier");
+      expect(group(host, "command-0")?.getAttribute("aria-label")).toBe(
+        `Show earlier activity: ${earlier} ${earlier === 1 ? "command" : "commands"}`,
+      );
+      for (let index = 0; index < count; index++)
+        expect(visible(host, `command-${index}`)).toBe(index >= earlier);
+    }
+  });
+
+  it("collapses each section where it occurred, hiding earlier messages in completed history", () => {
+    const { host } = setup(
+      exchange(
+        [
+          say("intro"),
+          tool("read", { kind: "read" }),
+          tool("command"),
+          say("progress"),
+          tool("edit", { kind: "edit" }),
+        ],
+        { answer: "Done.", status: "done" },
+      ),
+    );
+    expect(group(host, "read")).toBeNull();
+    expect(group(host, "edit")).toBeNull();
+    for (const id of ["intro", "progress"])
+      expect(host.querySelector(`[data-work-step="${id}"] .step-fold`)?.hasAttribute("inert")).toBe(true);
+    expect(visible(host, "read")).toBe(false);
+    expect(visible(host, "edit")).toBe(false);
+    const text = [...host.querySelectorAll(".prose, .answer")].map((e) =>
+      e.textContent?.trim(),
+    );
+    expect(text).toEqual(["Progress intro", "Progress progress", "Done."]);
+    const order = [...host.querySelectorAll("[data-work-step]")].map((e) =>
+      e.getAttribute("data-work-step"),
+    );
+    expect(order).toEqual([
+      "intro",
+      "read",
+      "command",
+      "progress",
+      "edit",
+      "message",
+    ]);
+  });
+
+  it("starts a fresh budget after a message and folds a single completed tool as the next message arrives", () => {
+    const { host, update } = setup(
+      exchange([tool("first")], {
+        answerBeforeStepId: "first",
+        answer: "Starting.",
+      }),
+    );
+    expect(visible(host, "first")).toBe(true);
+    update(
+      exchange([say("message"), tool("first"), say("next"), tool("second")], {
+        answerId: "latest",
+      }),
+    );
+    expect(group(host, "first")?.textContent).toContain("1 command");
+    expect(visible(host, "first")).toBe(false);
+    expect(visible(host, "second")).toBe(true);
+    expect(group(host, "second")).toBeNull();
+  });
+
+  it("does not collapse an active section for an empty streaming message", () => {
+    const { host } = setup(
+      exchange([
+        tool("first"),
+        { id: "empty", kind: "say", text: " " },
+        tool("second"),
+      ]),
+    );
+    expect(visible(host, "first")).toBe(true);
+    expect(visible(host, "second")).toBe(true);
+    expect(group(host, "first")).toBeNull();
+    expect(
+      [...host.querySelectorAll("[data-work-step]")].map((e) =>
+        e.getAttribute("data-work-step"),
+      ),
+    ).toEqual(["first", "empty", "second", "message"]);
+  });
+
+  it.each(["live", "done", "failed", "stopped"] as const)(
+    "folds failed calls into the section while keeping unfinished work visible in a %s turn",
+    (status) => {
+      const { host } = setup(
+        exchange(
+          [
+            tool("running", { status: "running" }),
+            tool("failed", { status: "failed" }),
+            tool("unknown", { status: "unknown" }),
+            tool("done"),
+          ],
+          { answer: "Another update.", status },
+        ),
+      );
+      for (const id of ["running", "unknown"])
+        expect(visible(host, id)).toBe(status === "live");
+      expect(visible(host, "done")).toBe(false);
+      expect(visible(host, "failed")).toBe(false);
+      if (status === "live")
+        expect(group(host, "running")?.getAttribute("aria-label")).toContain("1 failed · 2 commands");
+      else expect(group(host, "running")).toBeNull();
+    },
+  );
+
+  it("keeps a failure-only summary visible and exposes error details through the same keyboard disclosure", async () => {
+    const failed = tool("failed", {
+      status: "failed",
+      output: "Database unavailable",
+    });
+    const { host, fixture, update } = setup(
+      exchange([failed], { answer: "The database check failed." }),
+    );
+    const control = group(host, "failed")!;
+    expect(control.getAttribute("aria-label")).toContain(
+      "1 failed · 1 command",
+    );
+    expect(control.querySelector(".failure ex-status-glyph")).not.toBeNull();
+    expect(visible(host, "failed")).toBe(false);
+    control.focus();
+    control.click();
+    await settle(fixture);
+    const button = head(host, "failed");
+    button.click();
+    button.focus();
+    await settle(fixture);
+    expect(host.querySelector("pre")?.textContent).toContain(
+      "Database unavailable",
+    );
+    update(
+      exchange([failed], {
+        status: "done",
+        answer: "The database check failed.",
+      }),
+    );
+    await settle(fixture);
+    expect(head(host, "failed")).toBe(button);
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    control.focus();
+    control.click();
+    await settle(fixture);
+    expect(visible(host, "failed")).toBe(false);
+    expect(document.activeElement).toBe(control);
+    expect(control.querySelector(".failure")?.textContent).toContain(
+      "1 failed",
+    );
+  });
+
+  it("retains a failure marker through later success and clears it only after explicit recovery", () => {
+    const failed = tool("failed", { status: "failed" });
+    const { host, update } = setup(exchange([failed], { answer: "Checking." }));
+    update(
+      exchange([failed, tool("success")], { answer: "Another check passed." }),
+    );
+    expect(
+      group(host, "failed")?.querySelector(".failure")?.textContent,
+    ).toContain("1 failed");
+    update(
+      exchange([{ ...failed, recovered: true }, tool("success")], {
+        answer: "Recovered.",
+      }),
+    );
+    expect(group(host, "failed")?.querySelector(".failure")).toBeNull();
+    expect(visible(host, "failed")).toBe(false);
+  });
+
+  it("includes an older failed attempt in active-section compaction", () => {
+    const steps = [
+      tool("failed", { status: "failed" }),
+      ...Array.from({ length: 10 }, (_, n) => tool(`command-${n}`)),
+    ];
+    const { host } = setup(exchange(steps));
+    expect(visible(host, "failed")).toBe(false);
+    expect(visible(host, "command-9")).toBe(true);
+    expect(group(host, "failed")?.getAttribute("aria-label")).toContain(
+      "1 failed · 6 commands",
+    );
+  });
+
+  it("retains an inspected tool and focus through new messages, completion, and explicit section collapse", async () => {
     const first = exchange([tool("command")], {
       answerBeforeStepId: "command",
+      answer: "Checking.",
     });
     const { host, fixture, update } = setup(first);
     const button = head(host, "command");
@@ -77,155 +276,86 @@ describe("chronological work disclosures", () => {
     button.focus();
     await settle(fixture);
     update(
-      exchange(
-        [{ id: "message", kind: "say", text: first.answer }, tool("command")],
-        {
-          answerId: "next-message",
-          answer: "The check passed.",
-        },
-      ),
+      exchange([say("message"), tool("command")], {
+        answerId: "next",
+        answer: "Done.",
+        status: "done",
+      }),
     );
-    await settle(fixture);
-    expect(head(host, "command")).toBe(button);
-    expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(button);
-    expect(host.querySelectorAll("ex-work-timeline")).toHaveLength(1);
-    expect(
-      host
-        .querySelector('[data-work-step="message"]')!
-        .compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("keeps an inspected read mounted and open as discovery groups form and grow", async () => {
-    const reads = [
-      tool("read-1", { kind: "read" }),
-      tool("read-2", { kind: "read" }),
-    ];
-    const { host, fixture, update } = setup(exchange(reads));
-    const button = head(host, "read-1");
-    button.click();
-    button.focus();
-    await settle(fixture);
-    update(exchange([...reads, tool("read-3", { kind: "read" })]));
-    expect(head(host, "read-1")).toBe(button);
-    expect(document.activeElement).toBe(button);
-    expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(visible(host, "read-1")).toBe(true);
-    const group = host.querySelector<HTMLButtonElement>(".group")!;
-    group.focus();
-    group.click();
-    await settle(fixture);
-    expect(group.getAttribute("aria-expanded")).toBe("false");
-    expect(visible(host, "read-1")).toBe(false);
-    expect(document.activeElement).toBe(group);
-    group.click();
-    await settle(fixture);
-    expect(visible(host, "read-1")).toBe(true);
-    expect(head(host, "read-1")).toBe(button);
-  });
-
-  it("does not open a discovery group merely by focusing its control", async () => {
-    const { host, fixture } = setup(
-      exchange([1, 2, 3].map((n) => tool(`read-${n}`, { kind: "read" }))),
-    );
-    const group = host.querySelector<HTMLButtonElement>(".group")!;
-    group.focus();
-    await settle(fixture);
-    expect(group.getAttribute("aria-expanded")).toBe("false");
-    expect(visible(host, "read-1")).toBe(false);
-  });
-
-  it("keeps running, unknown and failed work visible outside the recent budget", () => {
-    const steps = [
-      tool("running", { status: "running" }),
-      tool("failed", { status: "failed" }),
-      tool("unknown", { status: "unknown" }),
-      ...Array.from({ length: 8 }, (_, n) => tool(`done-${n}`)),
-    ];
-    const { host } = setup(exchange(steps));
-    for (const id of ["running", "failed", "unknown"])
-      expect(visible(host, id)).toBe(true);
-    expect(visible(host, "done-0")).toBe(false);
-    expect(host.querySelector(".earlier")?.textContent).toContain(
-      "4 earlier steps",
-    );
-  });
-
-  it("uses one budget around commentary and retains every progress message", () => {
-    const steps = Array.from({ length: 3 }, (_, n) => [
-      tool(`a-${n}`),
-      tool(`b-${n}`),
-      { id: `say-${n}`, kind: "say", text: `Progress ${n}` } satisfies WorkStep,
-    ]).flat();
-    const { host } = setup(exchange(steps, { answerBeforeStepId: "a-2" }));
-    expect(host.querySelectorAll(".earlier")).toHaveLength(1);
-    expect(host.querySelector(".earlier")?.textContent).toContain(
-      "2 earlier steps",
-    );
-    for (let n = 0; n < 3; n++)
-      expect(
-        host
-          .querySelector(`[data-work-step="say-${n}"] .step-fold`)
-          ?.hasAttribute("inert"),
-      ).toBe(false);
-  });
-
-  it("retains the earlier control and keyboard focus through repeated reveals and collapses", async () => {
-    const { host, fixture } = setup(
-      exchange(Array.from({ length: 8 }, (_, n) => tool(`tool-${n}`))),
-    );
-    const earlier = host.querySelector<HTMLButtonElement>(".earlier")!;
-    earlier.focus();
-    earlier.click();
-    await settle(fixture);
-    expect(earlier.getAttribute("aria-expanded")).toBe("true");
-    expect(earlier.textContent).toContain("Show fewer steps");
-    expect(visible(host, "tool-0")).toBe(true);
-    earlier.click();
-    await settle(fixture);
-    expect(document.activeElement).toBe(earlier);
-    expect(earlier.getAttribute("aria-expanded")).toBe("false");
-    expect(visible(host, "tool-0")).toBe(false);
-  });
-
-  it("preserves an inspected result and focus through running-to-done completion", async () => {
-    const { host, fixture, update } = setup(
-      exchange([tool("command", { status: "running" })]),
-    );
-    const button = head(host, "command");
-    button.click();
-    button.focus();
-    await settle(fixture);
-    update(exchange([tool("command")], { status: "done" }));
     await settle(fixture);
     expect(head(host, "command")).toBe(button);
     expect(document.activeElement).toBe(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
     expect(visible(host, "command")).toBe(true);
-    expect(host.querySelector(".work")?.getAttribute("aria-expanded")).toBe(
-      "true",
-    );
+    const control = group(host, "command")!;
+    control.focus();
+    control.click();
+    await settle(fixture);
+    expect(control.getAttribute("aria-expanded")).toBe("true");
+    control.click();
+    await settle(fixture);
+    expect(visible(host, "command")).toBe(false);
+    expect(document.activeElement).toBe(control);
+    control.click();
+    await settle(fixture);
+    expect(visible(host, "command")).toBe(true);
+    expect(head(host, "command")).toBe(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("keeps explicit work expansion compact through completion and reopen", async () => {
-    const steps = Array.from({ length: 20 }, (_, n) => tool(`tool-${n}`));
+  it("retains explicit section expansion through incoming tools and messages without opening other sections", async () => {
+    const steps = Array.from({ length: 11 }, (_, n) => tool(`command-${n}`));
     const { host, fixture, update } = setup(exchange(steps));
+    const control = group(host, "command-0")!;
+    control.focus();
+    control.click();
+    await settle(fixture);
+    update(
+      exchange([...steps, say("update"), tool("later")], {
+        status: "done",
+        answer: "Done.",
+      }),
+    );
+    await settle(fixture);
+    expect(group(host, "command-0")).toBe(control);
+    expect(visible(host, "command-0")).toBe(true);
+    expect(visible(host, "later")).toBe(false);
+    expect(document.activeElement).toBe(control);
+    control.click();
+    control.click();
+    control.click();
+    await settle(fixture);
+    expect(visible(host, "command-0")).toBe(false);
+    expect(document.activeElement).toBe(control);
+    expect(host.querySelectorAll("ex-work-timeline")).toHaveLength(1);
+  });
+
+  it("reveals messages and section summaries without expanding tool disclosures", async () => {
+    const { host, fixture } = setup(
+      exchange([say("intro"), tool("first"), say("progress"), tool("last")], {
+        status: "done",
+        answer: "Done.",
+      }),
+    );
     const work = host.querySelector<HTMLButtonElement>(".work")!;
     work.click();
+    await settle(fixture);
+    expect(visible(host, "first")).toBe(false);
+    expect(visible(host, "last")).toBe(false);
+    expect(group(host, "first")).not.toBeNull();
+    expect(host.querySelector('[data-work-step="intro"] .step-fold')?.hasAttribute("inert")).toBe(false);
+    group(host, "first")!.click();
+    await settle(fixture);
+    expect(visible(host, "first")).toBe(true);
+    expect(head(host, "first").getAttribute("aria-expanded")).toBe("false");
     work.click();
     await settle(fixture);
-    update(exchange(steps, { status: "done" }));
-    await settle(fixture);
-    expect(work.getAttribute("aria-expanded")).toBe("true");
-    expect(visible(host, "tool-0")).toBe(false);
-    expect(visible(host, "tool-19")).toBe(true);
-    expect(host.querySelector(".earlier")?.textContent).toContain(
-      "16 earlier steps",
-    );
+    expect(visible(host, "first")).toBe(false);
+    expect(visible(host, "last")).toBe(false);
+    expect(host.querySelectorAll(".prose, .answer")).toHaveLength(3);
   });
 
-  it("retains Markdown controls and forwards their intents when the latest reply becomes commentary", async () => {
+  it("retains Markdown controls and their intents when the latest reply becomes commentary", async () => {
     const text =
       "Read [the docs](https://example.com/docs).\n\n```ts\nconst retry = true;\n```";
     const { host, fixture, update } = setup(
@@ -238,13 +368,12 @@ describe("chronological work disclosures", () => {
     const copy = host.querySelector<HTMLButtonElement>(
       '[aria-label="Copy code"]',
     )!;
-    host.querySelector<HTMLButtonElement>(".work")!.click();
-    fixture.detectChanges();
     copy.focus();
     update(
       exchange([tool("command"), { id: "message", kind: "say", text }], {
         answerId: "next",
         answer: "Done.",
+        status: "done",
       }),
     );
     await settle(fixture);

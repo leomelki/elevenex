@@ -54,9 +54,10 @@ export default async function* (capture) {
         await capture.waitFor(() => document.querySelectorAll('.agent-dialog .entries > li').length >= 3);
         await ready();
         yield { name: `${theme}-${provider}-agent`, inspect: ['.agent-dialog', '.agent-dialog .transcript'] };
-        await capture.click('.agent-dialog .page-link');
-        await capture.waitFor(() => document.querySelectorAll('.agent-dialog .entries > li').length === 1);
-        await capture.click('.agent-dialog footer button');
+        await capture.evaluate(() => { document.querySelector('.agent-dialog .viewport').scrollTop = 0; });
+        await capture.waitFor(() => document.querySelector('.agent-dialog .entries')?.textContent.includes('Inspect the payment retry handler.'));
+        assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-dialog .page-link, .agent-dialog footer button')), false);
+        await capture.click('.agent-dialog .head-actions ex-icon-button:first-child button');
         await capture.waitFor(() => document.querySelectorAll('.agent-dialog .entries > li').length >= 3);
         if (provider === 'codex') {
           await capture.component('ex-connected-workspace-demo', c => { c.fixture.chat.agentReply = 'error'; });

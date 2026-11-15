@@ -24,6 +24,7 @@ describe('local ref snapshots', () => {
     await git('symbolic-ref', 'HEAD', 'refs/heads/main');
     await git('config', 'user.name', 'Fixture');
     await git('config', 'user.email', 'fixture@example.invalid');
+    await git('config', 'commit.gpgsign', 'false');
     await fs.writeFile(path.join(repo, 'file'), 'one\n');
     await git('add', '.');
     await git('commit', '-m', 'initial');
@@ -73,6 +74,48 @@ describe('local ref snapshots', () => {
       branch: 'linked',
       headSha: await git('rev-parse', 'HEAD'),
     });
+  });
+
+  it('resolves absolute repository directories from root and nested paths in main and linked checkouts', async () => {
+    const commonDir = await fs.realpath(path.join(repo, '.git'));
+    const linked = path.join(repo, 'linked checkout');
+    const alias = path.join(repo, 'repo alias');
+    await git('worktree', 'add', '-b', 'linked', linked);
+    await fs.symlink(repo, alias, 'junction');
+    for (const checkout of [repo, linked, alias]) {
+      const gitDir = await fs.realpath(
+        (
+          await exec('git', ['rev-parse', '--absolute-git-dir'], {
+            cwd: checkout,
+          })
+        ).stdout.trim(),
+      );
+      const nested = path.join(checkout, 'nested', 'deeper');
+      await fs.mkdir(nested, { recursive: true });
+      for (const cwd of [checkout, nested])
+        expect(
+          await readRepositoryIdentity(worktreeSimpleGit(cwd), cwd),
+        ).toEqual({
+          repoRoot: await fs.realpath(checkout),
+          gitDir,
+          commonDir,
+        });
+    }
+  });
+
+  it('preserves a separate Git directory containing Unicode and significant whitespace', async () => {
+    const directory = path.join(
+      repo,
+      process.platform === 'win32' ? 'git metadata café' : 'git metadata café ',
+    );
+    await git('init', '--separate-git-dir', directory);
+    expect(await readRepositoryIdentity(worktreeSimpleGit(repo), repo)).toEqual(
+      {
+        repoRoot: await fs.realpath(repo),
+        gitDir: await fs.realpath(directory),
+        commonDir: await fs.realpath(directory),
+      },
+    );
   });
 
   it('avoids warm Git discovery, shares common refs and observes packed/fetched refs and same-SHA branch switches', async () => {

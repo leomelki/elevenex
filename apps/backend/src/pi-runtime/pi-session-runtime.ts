@@ -4,7 +4,7 @@ import { StringDecoder } from 'string_decoder';
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
-  findBinary,
+  findBinaryAsync,
 } from '../config/system-paths.js';
 import type {
   PiRpcExtensionUiRequest,
@@ -82,7 +82,9 @@ export class PiSessionRuntime extends EventEmitter {
     // `pi.cmd`, and buildSpawnCommand sets shell:true so Node (>=18.20, the
     // CVE-2024-27980 mitigation) can launch the batch file. Spawning the bare
     // 'pi' here yields `spawn pi ENOENT` on Windows.
-    const { command, shell } = buildSpawnCommand(findBinary('pi') ?? 'pi');
+    const { command, shell } = buildSpawnCommand(
+      (await findBinaryAsync('pi')) ?? 'pi',
+    );
     const ready =
       this.options.extensionPath && this.options.waitForAgentReady !== false
         ? new Promise<void>((resolve, reject) => {

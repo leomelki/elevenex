@@ -14,7 +14,7 @@ import {
   buildShellCommandArgs,
   buildTmuxInlineEnvPrefix,
   findBinary,
-  getDefaultUserShell,
+  getDefaultUserShellAsync,
   normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileAsync, execFileQuiet } from '../terminal/async-process.js';
@@ -86,7 +86,6 @@ export class ActionPtyManager
   private completionMonitor?: NodeJS.Timeout;
   private completionCheckInFlight = false;
   private shuttingDown = false;
-  private readonly defaultShell = getDefaultUserShell();
   private gateway?: ActionGatewayLike;
   private persistence?: ActionPersistence;
   private readonly tmuxEnabled: boolean;
@@ -315,15 +314,18 @@ export class ActionPtyManager
     }
   }
   private async buildEnv(worktreePath: string): Promise<NodeJS.ProcessEnv> {
+    const env = await buildAugmentedEnvAsync(process.env, worktreePath);
     return {
-      ...(await buildAugmentedEnvAsync(process.env, worktreePath)),
+      ...env,
+      SHELL: env.SHELL || (await getDefaultUserShellAsync()),
       PWD: worktreePath,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };
   }
   private resolveShell(env: NodeJS.ProcessEnv): string {
-    return normalizeShellForPlatform(env.SHELL || this.defaultShell);
+    if (!env.SHELL) throw new Error('Action shell was not initialized');
+    return normalizeShellForPlatform(env.SHELL);
   }
   private logPipeCommand(log: string): string {
     return `ELECTRON_RUN_AS_NODE=1 ${this.shellEscape(process.execPath)} -e ${this.shellEscape(ACTION_LOG_WRITER)} ${this.shellEscape(log)}`;

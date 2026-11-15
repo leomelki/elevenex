@@ -35,6 +35,9 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: '2026-11-14T12:00:00.000Z' } });
+  // @ts-expect-error Seen acknowledgments must identify the observed completion.
+  void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen' } });
   expectTypeOf(invoke('clipboard:write-text', 'copy')).toEqualTypeOf<Promise<void>>();
   expectTypeOf<ElevenexBridge['writeClipboardText']>().toEqualTypeOf<(text: string) => Promise<void>>();
   // @ts-expect-error Clipboard writes accept text only.

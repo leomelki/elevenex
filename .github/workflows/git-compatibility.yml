@@ -1,0 +1,77 @@
+name: Git compatibility
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/git-compatibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  git-compatibility:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }} / Git ${{ matrix.git }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            node: 24
+            git: "2.25.1"
+          - os: ubuntu-24.04
+            node: 24
+            git: "2.56.0"
+          - os: ubuntu-24.04
+            node: 22
+            git: system
+          - os: macos-15
+            node: 24
+            git: system
+          - os: windows-2022
+            node: 24
+            git: system
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.4
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      # This focused suite needs no native addons or frontend postinstall assets.
+      - name: Install backend test dependencies
+        run: pnpm --filter elevenex-backend... install --frozen-lockfile --ignore-scripts
+      - name: Build and type-check backend
+        run: pnpm --dir apps/backend run build
+      - name: Build isolated Git version
+        if: matrix.git != 'system'
+        shell: bash
+        env:
+          GIT_VERSION: ${{ matrix.git }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zlib1g-dev
+          curl --fail --location --retry 3 "https://www.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz" --output "$RUNNER_TEMP/git.tar.xz"
+          tar -xJf "$RUNNER_TEMP/git.tar.xz" -C "$RUNNER_TEMP"
+          git_directory="$RUNNER_TEMP/git-$GIT_VERSION"
+          make -C "$git_directory" -j2 NO_RUST=YesPlease NO_CURL=YesPlease NO_OPENSSL=YesPlease NO_EXPAT=YesPlease NO_GETTEXT=YesPlease NO_PERL=YesPlease NO_TCLTK=YesPlease git git-upload-pack git-receive-pack
+          echo "$git_directory" >> "$GITHUB_PATH"
+          echo "GIT_EXEC_PATH=$git_directory" >> "$GITHUB_ENV"
+          # Per-cwd login-shell refreshes must retain the Git under test.
+          cat > "$RUNNER_TEMP/git-compatibility-shell" <<EOF
+          #!/bin/sh
+          export PATH="$git_directory:\$PATH"
+          exec /bin/bash --noprofile --norc "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/git-compatibility-shell"
+          echo "SHELL=$RUNNER_TEMP/git-compatibility-shell" >> "$GITHUB_ENV"
+      - name: Verify Git discovery, isolation and storage formats
+        run: pnpm --dir apps/backend run test:git

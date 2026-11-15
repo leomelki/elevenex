@@ -4,8 +4,12 @@ import { createInterface } from 'readline';
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
+  clearBinaryPathCache,
 } from '../config/system-paths.js';
-import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
+import {
+  codexBinaryIdentity,
+  resolveCodexBinaryAsync,
+} from './codex-binary.js';
 
 const CLIENT_INFO = {
   name: 'elevenex',
@@ -101,7 +105,9 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (child && !child.killed) child.kill('SIGTERM');
   }
 
-  get isRunning(): boolean { return !!this.child && this.child.exitCode === null; }
+  get isRunning(): boolean {
+    return !!this.child && this.child.exitCode === null;
+  }
 
   onModuleDestroy(): void {
     this.shuttingDown = true;
@@ -180,7 +186,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    const binary = resolveCodexBinary();
+    const binary = await resolveCodexBinaryAsync();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
@@ -323,8 +329,15 @@ export class CodexAppServerClient implements OnModuleDestroy {
       // Only tear down if this is still the active child — a stale handler
       // from a previously-killed instance shouldn't disrupt the new one.
       if (this.child !== child) return;
+      if ('code' in error && error.code === 'ENOENT') clearBinaryPathCache();
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
-      this.tearDown(error);
+      this.tearDown(
+        'code' in error && error.code === 'ENOENT'
+          ? new Error(
+              `${error.message}. Codex must be installed on the backend machine (the remote host for SSH). Check its PATH or set ELEVENEX_CODEX_BIN to its executable path, then refresh the agent models.`,
+            )
+          : error,
+      );
     });
 
     child.once('exit', (code, signal) => {

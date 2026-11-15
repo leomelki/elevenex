@@ -98,7 +98,10 @@ import { TerminalService } from '../terminal/terminal.service.js';
 import { execFileAsync } from '../terminal/async-process.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
-import { buildAugmentedEnvAsync, findBinary } from '../config/system-paths.js';
+import {
+  buildAugmentedEnvAsync,
+  findBinaryAsync,
+} from '../config/system-paths.js';
 import {
   getBackendHelperPath,
   getBackendRuntimeRoot,
@@ -645,12 +648,6 @@ export class ClaudeRuntimeService
     @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
-    if (this.claudeCliOverride) {
-      void this.refreshClaudeCliOverrideVersion();
-    } else {
-      this.logClaudeRuntimeConfiguration();
-    }
-
     this.claudeHooksService.on(
       'hook-event',
       (data: {
@@ -666,6 +663,7 @@ export class ClaudeRuntimeService
   onModuleInit(): void {
     // Warm the model list cache in the background so it is ready before any
     // session runtime needs it, and keep it fresh without any user action.
+    void this.refreshClaudeCliOverrideVersion().catch(() => undefined);
     this.refreshGlobalModels('startup').catch(() => undefined);
     this.modelsRefreshTimer = setInterval(() => {
       this.refreshGlobalModels('interval').catch(() => undefined);
@@ -806,8 +804,8 @@ export class ClaudeRuntimeService
   async getCliStatus(): Promise<AgentAuthStatus> {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     const binaryPath = configuredPath
-      ? (findBinary(configuredPath) ?? configuredPath)
-      : findBinary('claude');
+      ? ((await findBinaryAsync(configuredPath)) ?? configuredPath)
+      : await findBinaryAsync('claude');
     if (!binaryPath) {
       const installHint =
         process.platform === 'win32'
@@ -2647,8 +2645,7 @@ export class ClaudeRuntimeService
           model: state.selectedModel ?? 'default',
           permissionMode: state.selectedPermissionMode ?? 'default',
           warmState: runtime.warmState,
-          claudeBinary:
-            this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude',
+          claudeBinary: this.claudeCliOverride?.path ?? 'claude',
           historyItems: state.lastHistoryItemCount,
           historySource: state.lastHistorySource,
           historyAgeMs:
@@ -6288,8 +6285,8 @@ export class ClaudeRuntimeService
     // Always use the independently installed Claude Code CLI. Passing the
     // command name even when PATH resolution fails prevents the Agent SDK from
     // silently falling back to its bundled optional executable.
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
     const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
     const options: Options & {
       fastMode?: boolean;
@@ -6389,7 +6386,7 @@ export class ClaudeRuntimeService
         ...buildManagedPlannotatorEnv(
           sessionId,
           this.wrapperScriptPath,
-          await buildAugmentedEnvAsync(process.env, worktreePath),
+          environment,
         ),
         ELEVENEX_AGENT_TOKEN: mcpAgentToken,
       },
@@ -6444,8 +6441,8 @@ export class ClaudeRuntimeService
     serverName: string,
     abortController: AbortController,
   ): Promise<Options> {
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
 
     return {
       abortController,
@@ -6477,7 +6474,7 @@ export class ClaudeRuntimeService
       env: buildManagedPlannotatorEnv(
         sessionId,
         this.wrapperScriptPath,
-        await buildAugmentedEnvAsync(process.env, worktreePath),
+        environment,
       ),
     };
   }
@@ -6504,27 +6501,43 @@ export class ClaudeRuntimeService
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (configuredPath) {
       return {
-        path: findBinary(configuredPath) ?? configuredPath,
+        path: configuredPath,
         version: null,
         configured: true,
       };
     }
 
-    const installedPath = findBinary('claude');
-    return installedPath
-      ? { path: installedPath, version: null, configured: false }
-      : null;
+    return null;
+  }
+
+  private async resolveClaudeBinary(): Promise<string> {
+    const configured = process.env.ELEVENEX_CLAUDE_BIN?.trim();
+    const path = (await findBinaryAsync(configured || 'claude')) ?? configured;
+    if (
+      path !== this.claudeCliOverride?.path ||
+      Boolean(configured) !== this.claudeCliOverride?.configured
+    )
+      this.claudeCliOverride = path
+        ? { path, configured: Boolean(configured), version: null }
+        : null;
+    return path ?? 'claude';
   }
 
   private async refreshClaudeCliOverrideVersion(): Promise<void> {
-    if (!this.claudeCliOverride) {
+    await buildAugmentedEnvAsync();
+    if (this.modelsRefreshDestroyed) return;
+    await this.resolveClaudeBinary();
+    if (this.modelsRefreshDestroyed) return;
+    const selected = this.claudeCliOverride;
+    if (!selected) {
+      this.logClaudeRuntimeConfiguration();
       return;
     }
-    const version = await this.readClaudeCliVersion(
-      this.claudeCliOverride.path,
-    );
+    const version = await this.readClaudeCliVersion(selected.path);
+    if (this.modelsRefreshDestroyed || this.claudeCliOverride !== selected)
+      return;
     this.claudeCliOverride = {
-      ...this.claudeCliOverride,
+      ...selected,
       version,
     };
     this.logClaudeRuntimeConfiguration();
@@ -6993,8 +7006,8 @@ export class ClaudeRuntimeService
    */
   private async buildEphemeralModelQueryOptions(): Promise<Options> {
     const cwd = tmpdir();
-    const pathToClaudeCodeExecutable =
-      this.claudeCliOverride?.path ?? findBinary('claude') ?? 'claude';
+    const environment = await buildAugmentedEnvAsync(process.env, cwd);
+    const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
     const denyTool: CanUseTool = () =>
       Promise.resolve({
         behavior: 'deny',
@@ -7009,7 +7022,7 @@ export class ClaudeRuntimeService
       canUseTool: denyTool,
       onElicitation: declineElicitation,
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-      env: await buildAugmentedEnvAsync(process.env, cwd),
+      env: environment,
     };
   }
 

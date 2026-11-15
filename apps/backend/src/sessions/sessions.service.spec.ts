@@ -834,6 +834,21 @@ describe('SessionsService', () => {
   });
 
   describe('completion marker', () => {
+    it('acknowledges only the completion actually seen, idempotently', async () => {
+      const session = await service.create({ repoId, branchName: 'main', worktreePath: '/path' });
+      const completed = await service.markCompletionUnreviewed(session.id);
+      const changed = jest.fn();
+      service.on('session-completion-changed', changed);
+      try {
+        const stale = await service.markCompletionReviewed(session.id, '2000-01-01T00:00:00.000Z');
+        expect(stale.hasUnreviewedCompletion).toBe(true);
+        expect(changed).not.toHaveBeenCalled();
+        const seen = await service.markCompletionReviewed(session.id, completed.lastCompletionAt!);
+        expect(seen.hasUnreviewedCompletion).toBe(false);
+        await service.markCompletionReviewed(session.id, completed.lastCompletionAt!);
+        expect(changed).toHaveBeenCalledTimes(1);
+      } finally { service.off('session-completion-changed', changed); }
+    });
     it('should mark a completion as unreviewed', async () => {
       const session = await service.create({
         repoId,

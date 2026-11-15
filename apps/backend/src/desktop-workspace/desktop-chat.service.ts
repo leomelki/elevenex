@@ -49,7 +49,7 @@ interface ChatFeed {
   touched: number;
   attached: boolean;
   runtime?: Promise<Record<string, unknown>>;
-  history?: Promise<AgentTranscriptItem[]>;
+  history?: { readonly revision: number; readonly pending: Promise<AgentTranscriptItem[]> };
 }
 
 /** Only selected conversations are observed. Idle feeds expire and never hydrate sidebar sessions. */
@@ -58,6 +58,15 @@ export class DesktopChatService implements OnModuleDestroy {
   private readonly logger = new Logger(DesktopChatService.name);
   private readonly configuring = new Set<number>();
   private readonly feeds = new Map<number, ChatFeed>();
+  private readonly completionChanged = (event: { sessionId: number; hasUnreviewedCompletion: boolean }) => {
+    const feed = this.feeds.get(event.sessionId);
+    if (!feed) return;
+    // New completions may persist final output after the runtime's last event.
+    // Viewing it only changes the marker, so it must not reload history.
+    feed.revision++;
+    if (event.hasUnreviewedCompletion) feed.historyRevision++;
+    for (const wake of feed.waiters) wake();
+  };
   private readonly expiry = setInterval(() => {
     for (const [id, feed] of this.feeds) {
       if (feed.review && feed.review.expires < Date.now())
@@ -71,9 +80,12 @@ export class DesktopChatService implements OnModuleDestroy {
     private readonly registry: AgentRuntimeRegistryService,
     private readonly settings: SettingsService,
     private readonly conversationExports: ConversationExportService,
-  ) {}
+  ) {
+    this.sessions.on('session-completion-changed', this.completionChanged);
+  }
 
   onModuleDestroy(): void {
+    this.sessions.off('session-completion-changed', this.completionChanged);
     clearInterval(this.expiry);
     for (const id of this.feeds.keys()) this.release(id);
   }
@@ -105,6 +117,7 @@ export class DesktopChatService implements OnModuleDestroy {
       backgroundAgent: typeof provider.backgroundSubagent === 'function',
     });
     return {
+      unseenCompletionAt: session.hasUnreviewedCompletion ? session.lastCompletionAt : null,
       attachments: true,
       browserElements: provider.info.capabilities.multimodalPrompts === true,
       sessionMentions: true,
@@ -217,17 +230,30 @@ export class DesktopChatService implements OnModuleDestroy {
     return readChatAgent(provider, sessionId, agentId, before);
   }
 
+  private history(feed: ChatFeed, sessionId: number): Promise<AgentTranscriptItem[]> {
+    if (feed.history?.revision === feed.historyRevision) return feed.history.pending;
+    const revision = feed.historyRevision;
+    const pending = feed.provider.getHistory(sessionId).finally(() => {
+      if (feed.history?.pending === pending) feed.history = undefined;
+    });
+    feed.history = { revision, pending };
+    return pending;
+  }
+
   async read(
     taskId: number,
     sessionId: number,
     after: string | undefined,
     before: string | undefined,
     signal: AbortSignal,
+    following?: string,
   ) {
-    const session = await this.target(taskId, sessionId);
+    let session = await this.target(taskId, sessionId);
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
-      (before !== undefined && (before.length > 1000 || !before))
+      (before !== undefined && (typeof before !== 'string' || before.length > 1000 || !before)) ||
+      (following !== undefined && (typeof following !== 'string' || following.length > 1000 || !following)) ||
+      (following !== undefined && (after !== undefined || before !== undefined))
     )
       throw new BadRequestException('Invalid conversation cursor.');
     if (session.status === 'archived' || session.workspaceArchivedAt) {
@@ -236,6 +262,9 @@ export class DesktopChatService implements OnModuleDestroy {
         await provider.getHistory(sessionId),
         [],
         before,
+        undefined,
+        undefined,
+        following,
       );
       if (!window)
         throw new BadRequestException(
@@ -259,7 +288,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const cursor = () => `${feed.id}:${feed.revision}:${feed.historyRevision}`;
     if (feed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
-    if (after === cursor() && !before && !signal.aborted)
+    if (after === cursor() && !before && !following && !signal.aborted)
       await new Promise<void>((resolve) => {
         const done = () => {
           clearTimeout(timer);
@@ -273,20 +302,22 @@ export class DesktopChatService implements OnModuleDestroy {
         if (signal.aborted) done();
       });
     if (signal.aborted) return;
+    // Long polls can outlive completion or another window viewing the reply.
+    // Read the marker before hydrating content so its version cannot get ahead
+    // of the transcript delivered with it.
+    session = await this.target(taskId, sessionId);
     // Coalesce bursts without holding input or waiting for a full turn.
     const revision = cursor();
     const prior = after?.split(':');
     const reset =
-      !before &&
+      !before && !following &&
       (!prior ||
         prior[0] !== feed.id ||
         Number(prior[1]) > feed.revision ||
         Number(prior[2]) !== feed.historyRevision);
     const historyPromise =
-      reset || before
-        ? (feed.history ??= feed.provider.getHistory(sessionId).finally(() => {
-            feed.history = undefined;
-          }))
+      reset || before || following
+        ? this.history(feed, sessionId)
         : Promise.resolve([]);
     const runtime = (feed.runtime ??= feed.provider
       .getRuntimeState(
@@ -303,7 +334,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache);
+    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
@@ -315,7 +346,7 @@ export class DesktopChatService implements OnModuleDestroy {
         old = feed.projections.get(item.id);
       const version =
         old?.json === json ? old.revision : Number(revision.split(':')[1]);
-      if (!before) feed.projections.set(item.id, { json, revision: version });
+      if (!before && !following) feed.projections.set(item.id, { json, revision: version });
       return !prior || version > Number(prior[1])
         ? [{ type: 'item' as const, item }]
         : [];
@@ -329,9 +360,10 @@ export class DesktopChatService implements OnModuleDestroy {
       sessionId,
       cursor: revision,
       reset,
-      items: reset || before ? items : [],
-      events: reset || before ? [] : events,
+      items: reset || before || following ? items : [],
+      events: reset || before || following ? [] : events,
       before: window.before,
+      next: window.next,
       state: this.state(session, raw),
     };
   }
@@ -364,6 +396,13 @@ export class DesktopChatService implements OnModuleDestroy {
   async command(taskId: number, sessionId: number, value: unknown) {
     const session = await this.target(taskId, sessionId);
     const action = record(value);
+    if (action.type === 'mark-seen') {
+      const at = action.completionAt;
+      if (typeof at !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at)))
+        throw new BadRequestException('Invalid completion version.');
+      await this.sessions.markCompletionReviewed(sessionId, at);
+      return { accepted: true as const };
+    }
     if (this.configuring.has(sessionId))
       throw new ConflictException(
         'An agent configuration is being applied. Please wait.',
@@ -431,9 +470,7 @@ export class DesktopChatService implements OnModuleDestroy {
     ) {
       const pending = (async () => {
         const [history, raw] = await Promise.all([
-          (feed.history ??= feed.provider.getHistory(sessionId).finally(() => {
-            feed.history = undefined;
-          })),
+          this.history(feed, sessionId),
           session.status === 'archived' || session.workspaceArchivedAt
             ? Promise.resolve({})
             : feed.provider

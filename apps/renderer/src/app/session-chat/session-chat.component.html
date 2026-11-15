@@ -31,7 +31,7 @@
           [backgrounding]="store.busy() === 'background-agent'"
           (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
           (inspectRequested)="agentId.set($event)"
-          [stopDisabled]="blocked() || store.offline() || store.historical()"
+          [stopDisabled]="blocked() || store.offline()"
           [stopping]="store.busy() === 'stop-background'"
           (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
           [decisionPending]="!!state.permission || !!state.question"
@@ -52,6 +52,13 @@
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"
+  [historyBefore]="!!store.before()"
+  [historyAfter]="!!store.next()"
+  [historyLoading]="store.historyLoading()"
+  [historyError]="store.historyError()"
+  [historyRevision]="store.windowRevision()"
+  (historyRequested)="$event === 'before' ? store.older() : store.newer()"
+  (latestRequested)="latest()"
   [stoppable]="!archived() && !!store.state()?.canInterrupt"
   [retryable]="!blocked()"
   [copiedCode]="copiedCode()"
@@ -66,25 +73,6 @@
   (contentRequested)="openToolContent({ itemId: $event, part: 'text' })"
   (toolContentRequested)="openToolContent($event)"
 >
-  <div chatHistory class="history-controls">
-    @if (store.before()) {
-      <button
-        exButton
-        variant="ghost"
-        size="sm"
-        [disabled]="store.loading()"
-        (click)="store.older()"
-      >
-        {{ store.loading() ? "Loading…" : "Earlier messages" }}
-      </button>
-    }
-    @if (store.historical()) {
-      <span>Viewing earlier messages</span
-      ><button exButton variant="secondary" size="sm" (click)="store.refresh()">
-        Back to latest
-      </button>
-    }
-  </div>
   <div chatContent>
     @if (store.offline() && !store.state()) { <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" /> }
     @if (store.loading() && !store.starting() && !store.exchanges().length) {
@@ -264,7 +252,7 @@
         </button>
       </div>
     }
-    @if (!archived() && !store.historical()) {
+    @if (!archived()) {
       <ex-agent-usage-notice
         [agent]="agent()"
         [identity]="identity()"
@@ -282,8 +270,8 @@
       [draft]="store.draft()"
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
-      [disabled]="archived() || store.historical()"
-      [sending]="!!creation() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [disabled]="archived()"
+      [sending]="!!creation() || store.loading() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
       [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
       [waiting]="store.waitingMessages()"
@@ -298,7 +286,7 @@
       [harnesses]="harnesses()"
       [agentLocked]="store.state()?.providerLocked !== false"
       [settingsDisabled]="
-        store.offline() || store.waitingPending() || !!store.uncertain() || !store.state() || store.historical()
+        store.offline() || store.waitingPending() || !!store.uncertain() || !store.state()
       "
       [settingsBusy]="!!store.busy() || store.loading() || modelCatalog.loading()"
       [modelsRefreshAvailable]="!!store.state()?.presetCatalogs"
@@ -344,13 +332,11 @@
       [placeholder]="
         archived()
           ? 'Restore this session to send messages'
-          : store.historical()
-            ? 'Return to latest messages to reply'
-            : store.running()
-              ? 'Add a follow-up · Alt Enter to steer'
-              : store.state()?.sessionMentions
-                ? 'Message the agent, or @ to mention a session…'
-                : 'Message the agent…'
+          : store.running()
+            ? 'Add a follow-up · Alt Enter to steer'
+            : store.state()?.sessionMentions
+              ? 'Message the agent, or @ to mention a session…'
+              : 'Message the agent…'
       "
       (submitted)="store.submit($event)"
       (stop)="store.perform({ type: 'stop' })"
