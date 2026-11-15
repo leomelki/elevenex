@@ -4,8 +4,12 @@ import { createInterface } from 'readline';
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
+  clearBinaryPathCache,
 } from '../config/system-paths.js';
-import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
+import {
+  codexBinaryIdentity,
+  resolveCodexBinaryAsync,
+} from './codex-binary.js';
 
 const CLIENT_INFO = {
   name: 'elevenex',
@@ -182,7 +186,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
-    const binary = resolveCodexBinary();
+    const binary = await resolveCodexBinaryAsync();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
@@ -325,6 +329,7 @@ export class CodexAppServerClient implements OnModuleDestroy {
       // Only tear down if this is still the active child — a stale handler
       // from a previously-killed instance shouldn't disrupt the new one.
       if (this.child !== child) return;
+      if ('code' in error && error.code === 'ENOENT') clearBinaryPathCache();
       this.logger.error(`codex app-server spawn error: ${String(error)}`);
       this.tearDown(
         'code' in error && error.code === 'ENOENT'

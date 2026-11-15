@@ -20,6 +20,7 @@ createServer((request, response) => {
   else response.end(JSON.stringify({ pid: process.pid, worker: worker.pid,
     db: process.env.DB_PATH, dataRoot: process.env.ELEVENEX_DATA_ROOT, bind: process.env.ELEVENEX_BIND_HOST,
     nodeOptions: process.env.NODE_OPTIONS, supervised: process.env.ELEVENEX_BACKEND_SUPERVISED,
+    shellTimeout: process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS, unknownShellTuning: process.env.ELEVENEX_SHELL_UNKNOWN,
     runtimeRoot: process.env.ELEVENEX_BACKEND_RUNTIME_ROOT, inheritedOverride: process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN,
     videoEncoder: process.env.ELEVENEX_BROWSER_VIDEO_ENCODER, unknownVideo: process.env.ELEVENEX_BROWSER_VIDEO_COMMAND,
   }));
@@ -51,13 +52,17 @@ function alive(pid) {
 
 test('starts on loopback with isolated data, verifies readiness, and stops the whole process tree', async t => {
   const { root, installation } = await setup(t);
+  const oldShell = process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS, oldUnknown = process.env.ELEVENEX_SHELL_UNKNOWN;
+  process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS = '60000';
+  process.env.ELEVENEX_SHELL_UNKNOWN = 'blocked';
+  t.after(() => { if (oldShell === undefined) delete process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS; else process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS = oldShell; if (oldUnknown === undefined) delete process.env.ELEVENEX_SHELL_UNKNOWN; else process.env.ELEVENEX_SHELL_UNKNOWN = oldUnknown; });
   const oldOverride = process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN;
   process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = 'https://untrusted.test';
-  const oldVideo = process.env.ELEVENEX_BROWSER_VIDEO_ENCODER, oldUnknown = process.env.ELEVENEX_BROWSER_VIDEO_COMMAND;
+  const oldVideo = process.env.ELEVENEX_BROWSER_VIDEO_ENCODER, oldUnknownVideo = process.env.ELEVENEX_BROWSER_VIDEO_COMMAND;
   process.env.ELEVENEX_BROWSER_VIDEO_ENCODER = 'software'; process.env.ELEVENEX_BROWSER_VIDEO_COMMAND = 'untrusted';
   t.after(() => {
     if (oldVideo === undefined) delete process.env.ELEVENEX_BROWSER_VIDEO_ENCODER; else process.env.ELEVENEX_BROWSER_VIDEO_ENCODER = oldVideo;
-    if (oldUnknown === undefined) delete process.env.ELEVENEX_BROWSER_VIDEO_COMMAND; else process.env.ELEVENEX_BROWSER_VIDEO_COMMAND = oldUnknown;
+    if (oldUnknownVideo === undefined) delete process.env.ELEVENEX_BROWSER_VIDEO_COMMAND; else process.env.ELEVENEX_BROWSER_VIDEO_COMMAND = oldUnknownVideo;
   });
   t.after(() => { if (oldOverride === undefined) delete process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN; else process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = oldOverride; });
   const running = await startBackend(installation, root, version, new AbortController().signal);
@@ -66,6 +71,8 @@ test('starts on loopback with isolated data, verifies readiness, and stops the w
   assert.equal(info.db, join(root, 'data/elevenex.db'));
   assert.equal(info.dataRoot, join(root, 'data'));
   assert.equal(info.bind, '127.0.0.1');
+  assert.equal(info.shellTimeout, '60000');
+  assert.equal(info.unknownShellTuning, undefined);
   assert.equal(info.supervised, '1');
   assert.equal(info.runtimeRoot, root);
   assert.equal(info.inheritedOverride, undefined);

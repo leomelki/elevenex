@@ -8,18 +8,24 @@ const MAX_ENVIRONMENT_BYTES = 128 * 1024;
 const MAX_ENTRY_BYTES = 64 * 1024;
 
 export function assertSubprocessEnvironment(env: NodeJS.ProcessEnv): void {
-  const entries = Object.entries(env).flatMap(([key, value]) =>
+  const values = Object.entries(env);
+  let bytes = 8;
+  let count = 0;
+  let oversizedEntry = false;
+  // The normal path needs no per-variable objects or sorting allocations.
+  for (const [key, value] of values) {
+    if (value === undefined) continue;
+    const size = Buffer.byteLength(key) + Buffer.byteLength(value) + 2;
+    bytes += size + 8;
+    count++;
+    oversizedEntry ||= size > MAX_ENTRY_BYTES;
+  }
+  if (bytes <= MAX_ENVIRONMENT_BYTES && !oversizedEntry) return;
+  const entries = values.flatMap(([key, value]) =>
     value === undefined
       ? []
       : [{ key, bytes: Buffer.byteLength(key) + Buffer.byteLength(value) + 2 }],
   );
-  // Include pointer-table overhead as well as the KEY=value\0 strings.
-  const bytes = entries.reduce((sum, entry) => sum + entry.bytes + 8, 8);
-  if (
-    bytes <= MAX_ENVIRONMENT_BYTES &&
-    entries.every((entry) => entry.bytes <= MAX_ENTRY_BYTES)
-  )
-    return;
   const largest = entries
     .sort((a, b) => b.bytes - a.bytes)
     .slice(0, 5)
@@ -30,7 +36,7 @@ export function assertSubprocessEnvironment(env: NodeJS.ProcessEnv): void {
     .join(',');
   // Names and byte counts only: values can contain tokens, prompts and URLs.
   throw new Error(
-    `Subprocess environment exceeds the launch budget: keys=${entries.length} bytes=${bytes} limit=${MAX_ENVIRONMENT_BYTES} entryLimit=${MAX_ENTRY_BYTES} largestBytes=[${largest}]`,
+    `Subprocess environment exceeds the launch budget: keys=${count} bytes=${bytes} limit=${MAX_ENVIRONMENT_BYTES} entryLimit=${MAX_ENTRY_BYTES} largestBytes=[${largest}]`,
   );
 }
 
@@ -49,6 +55,21 @@ export class ShellEnvironmentProjection {
       else baseline[key] = value.inherited;
     }
     return baseline;
+  }
+
+  /** Compose into a fresh child env without allocating an intermediate baseline. */
+  compose(
+    shell: NodeJS.ProcessEnv,
+    current: NodeJS.ProcessEnv,
+  ): NodeJS.ProcessEnv {
+    const target = { ...shell, ...current };
+    for (const [key, owned] of this.values) {
+      if (current[key] !== owned.projected) continue;
+      if (owned.inherited !== undefined) target[key] = owned.inherited;
+      else if (Object.hasOwn(shell, key)) target[key] = shell[key];
+      else delete target[key];
+    }
+    return target;
   }
 
   apply(

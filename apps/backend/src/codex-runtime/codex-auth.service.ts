@@ -15,7 +15,7 @@ import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
 } from '../config/system-paths.js';
-import { resolveCodexBinary } from './codex-binary.js';
+import { resolveCodexBinaryAsync } from './codex-binary.js';
 import type {
   CodexAuthStatus,
   CodexLoginMode,
@@ -138,7 +138,7 @@ export class CodexAuthService extends EventEmitter {
       await this.killActive();
     }
     const env = await buildAugmentedEnvAsync();
-    const codexBin = resolveCodexBinary();
+    const codexBin = await resolveCodexBinaryAsync();
     try {
       await execFile(codexBin, ['--version'], {
         env,
@@ -414,7 +414,7 @@ export class CodexAuthService extends EventEmitter {
     const inflight = (async () => {
       try {
         const env = await buildAugmentedEnvAsync();
-        const codexBin = resolveCodexBinary();
+        const codexBin = await resolveCodexBinaryAsync();
         const { command, shell } = buildSpawnCommand(codexBin);
         const { stdout } = await execFile(command, ['--version'], {
           encoding: 'utf-8',

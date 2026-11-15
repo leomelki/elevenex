@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process';
 import { access, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { buildSpawnCommand, findBinary } from '../config/system-paths.js';
+import { buildSpawnCommand, findBinaryAsync } from '../config/system-paths.js';
 
 export async function resolveOpenCodeBinary(): Promise<string> {
-  const binary = process.env.OPENCODE_BINARY?.trim() || findBinary('opencode');
+  const binary =
+    process.env.OPENCODE_BINARY?.trim() || (await findBinaryAsync('opencode'));
   if (binary) return binary;
   const candidate = join(homedir(), '.opencode', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
   try { await access(candidate); return candidate; } catch { return 'opencode'; }

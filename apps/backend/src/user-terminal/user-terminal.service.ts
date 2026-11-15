@@ -13,14 +13,13 @@ import {
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { UserPtyManager } from './user-pty-manager.service.js';
-import { getDefaultUserShell } from '../config/system-paths.js';
+import { getDefaultUserShellAsync } from '../config/system-paths.js';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
 @Injectable()
 export class UserTerminalService {
   private readonly logger = new Logger('UserTerminalService');
-  private readonly defaultShell = getDefaultUserShell();
   private readonly startInFlight = new Map<
     number,
     Promise<{ success: boolean; error?: string }>
@@ -40,7 +39,7 @@ export class UserTerminalService {
   }) {
     const workspace = await currentWorkspaceForPath(this.db, dto.worktreePath);
     if (workspace) await assertWorkspaceCanExecute(this.db, workspace.id);
-    const shell = dto.shell ?? this.defaultShell;
+    const shell = dto.shell ?? (await getDefaultUserShellAsync());
     const name = dto.name || path.basename(shell);
 
     const rows = await this.db

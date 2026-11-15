@@ -11,9 +11,9 @@ import type {
 import {
   buildAugmentedEnvAsync,
   buildSpawnCommand,
-  findBinary,
+  findBinaryAsync,
 } from '../config/system-paths.js';
-import { resolveCodexBinary } from '../codex-runtime/codex-binary.js';
+import { resolveCodexBinaryAsync } from '../codex-runtime/codex-binary.js';
 import { PiSessionRuntime } from '../pi-runtime/pi-session-runtime.js';
 import { SettingsService } from '../settings/settings.service.js';
 
@@ -271,7 +271,7 @@ export class TextAgentGenerationService {
 
     const model = this.resolveModel('claude', request.claude?.model);
     const env = await withCancellation(
-      buildAugmentedEnvAsync(process.env, request.worktreePath),
+      buildAugmentedEnvAsync(process.env, request.worktreePath, { signal }),
       signal,
     );
     signal.throwIfAborted();
@@ -282,6 +282,11 @@ export class TextAgentGenerationService {
         message: 'Tool use disabled',
       }));
 
+    const executable = await withCancellation(
+      this.resolveClaudeCodeExecutable(),
+      signal,
+    );
+    signal.throwIfAborted();
     const runtimeQuery = sdk.query({
       prompt: request.prompt,
       options: {
@@ -302,7 +307,7 @@ export class TextAgentGenerationService {
         ...(request.claude?.allowedTools
           ? { allowedTools: request.claude.allowedTools }
           : {}),
-        pathToClaudeCodeExecutable: this.resolveClaudeCodeExecutable(),
+        pathToClaudeCodeExecutable: executable,
         systemPrompt: request.claude?.systemPrompt ?? {
           type: 'preset' as const,
           preset: 'claude_code' as const,
@@ -358,7 +363,7 @@ export class TextAgentGenerationService {
     const model = this.resolveModel('codex', request.codex?.model);
     try {
       const env = await withCancellation(
-        buildAugmentedEnvAsync(process.env, request.worktreePath),
+        buildAugmentedEnvAsync(process.env, request.worktreePath, { signal }),
         signal,
       );
       signal.throwIfAborted();
@@ -390,16 +395,18 @@ export class TextAgentGenerationService {
    * Windows command shims, and POSIX launchers through the same interface used
    * by interactive Codex sessions.
    */
-  private runCodexExec(
+  private async runCodexExec(
     worktreePath: string,
     prompt: string,
     model: string | null,
     env: NodeJS.ProcessEnv,
     signal: AbortSignal,
   ): Promise<string> {
+    signal.throwIfAborted();
+    const binary = await withCancellation(resolveCodexBinaryAsync(), signal);
     return new Promise((resolve, reject) => {
       signal.throwIfAborted();
-      const { command, shell } = buildSpawnCommand(resolveCodexBinary());
+      const { command, shell } = buildSpawnCommand(binary);
       const args = [
         'exec',
         '--json',
@@ -708,12 +715,12 @@ export class TextAgentGenerationService {
     };
   }
 
-  private resolveClaudeCodeExecutable(): string {
+  private async resolveClaudeCodeExecutable(): Promise<string> {
     const configuredPath = process.env.ELEVENEX_CLAUDE_BIN?.trim();
     if (configuredPath) {
-      return findBinary(configuredPath) ?? configuredPath;
+      return (await findBinaryAsync(configuredPath)) ?? configuredPath;
     }
 
-    return findBinary('claude') ?? 'claude';
+    return (await findBinaryAsync('claude')) ?? 'claude';
   }
 }

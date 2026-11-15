@@ -16,6 +16,7 @@ type MockShellProcess = EventEmitter & {
 let systemPaths: typeof import('./system-paths.js');
 let mockExecSync: jest.Mock;
 let mockSpawn: jest.Mock;
+let killProcessSpy: jest.SpyInstance;
 let originalEnv: NodeJS.ProcessEnv;
 let children: MockShellProcess[];
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -36,7 +37,11 @@ beforeEach(() => {
   jest.resetAllMocks();
   jest.useFakeTimers({ now: 0 });
   originalEnv = process.env;
-  process.env = { ...originalEnv };
+  process.env = {
+    ...originalEnv,
+    ELEVENEX_SHELL_CACHE_ENTRIES: '64',
+    ELEVENEX_SHELL_QUEUE_TIMEOUT_MS: '30000',
+  };
   for (const key of [
     'ZDOTDIR',
     'XDG_CONFIG_HOME',
@@ -46,8 +51,9 @@ beforeEach(() => {
     'XDG_RUNTIME_DIR',
   ])
     delete process.env[key];
+  process.env.SHELL = originalEnv.SHELL || '/bin/sh';
   children = [];
-  jest.spyOn(process, 'kill').mockReturnValue(true);
+  killProcessSpy = jest.spyOn(process, 'kill').mockReturnValue(true);
   loadSystemPaths();
 });
 
@@ -89,8 +95,7 @@ async function closeShellProcess(
 ): Promise<void> {
   child.stdout.emit('data', Buffer.from(output));
   child.emit('close', 0);
-  await Promise.resolve();
-  await Promise.resolve();
+  await jest.advanceTimersByTimeAsync(0);
 }
 
 describe('findBinary PATH precedence', () => {
@@ -644,6 +649,125 @@ describePosix('system-paths bounded shell refreshes', () => {
     }
   }
 
+  it('serves 1000 warm async reads immediately during a slow background refresh', async () => {
+    await seedGlobalEnv();
+    const cold = systemPaths.buildAugmentedEnvAsync({}, '/repo/warm');
+    await closeShellProcess(children[1], envOutput('/cached/bin'));
+    await cold;
+    await jest.advanceTimersByTimeAsync(61000);
+    const results = await Promise.all(
+      Array.from({ length: 1000 }, () =>
+        systemPaths.buildAugmentedEnvAsync({}, '/repo/warm'),
+      ),
+    );
+    expect(results.every((env) => env.PATH?.startsWith('/cached/bin:'))).toBe(
+      true,
+    );
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
+    expect(children[2].stdout.listenerCount('data')).toBe(1);
+    await closeShellProcess(children[2], envOutput('/updated/bin'));
+    expect(
+      (await systemPaths.buildAugmentedEnvAsync({}, '/repo/warm')).PATH,
+    ).toMatch(/^\/updated\/bin:/);
+  });
+
+  it('refreshes cached environments after the host wall clock moves backwards', async () => {
+    jest.setSystemTime(100000);
+    await seedGlobalEnv();
+    const read = systemPaths.buildAugmentedEnvAsync({}, '/repo/clock');
+    await closeShellProcess(children[1], envOutput('/clock/bin'));
+    await read;
+    jest.setSystemTime(0);
+    expect(
+      (await systemPaths.buildAugmentedEnvAsync({}, '/repo/clock')).PATH,
+    ).toMatch(/^\/clock\/bin:/);
+    expect(mockSpawn).toHaveBeenCalledTimes(3);
+    await closeShellProcess(children[2], envOutput('/clock-updated/bin'));
+    const global = systemPaths.refreshLoginShellEnv();
+    expect(mockSpawn).toHaveBeenCalledTimes(4);
+    await closeShellProcess(children[3], envOutput('/global-updated/bin'));
+    await global;
+  });
+
+  it('allows a shell taking eight seconds to finish without blocking unrelated work', async () => {
+    await seedGlobalEnv();
+    const cold = systemPaths.buildAugmentedEnvAsync({}, '/repo/slow');
+    await jest.advanceTimersByTimeAsync(8000);
+    expect(children[1].stdout.listenerCount('data')).toBe(1);
+    expect((await systemPaths.buildAugmentedEnvAsync({})).PATH).toContain(
+      '/global/bin',
+    );
+    await closeShellProcess(children[1], envOutput('/slow/bin'));
+    expect((await cold).PATH).toMatch(/^\/slow\/bin:/);
+  });
+
+  it('does not hold backend readiness on a long configured capture and bounds cold callers independently', async () => {
+    process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS = '60000';
+    loadSystemPaths();
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const warming = systemPaths.warmShellEnvironment();
+    const cold = systemPaths.buildAugmentedEnvAsync({}, '/repo/deferred');
+    const rejected = expect(cold).rejects.toThrow('still preparing');
+    await jest.advanceTimersByTimeAsync(8000);
+    await expect(warming).resolves.toBe(false);
+    expect(children[0].stdout.listenerCount('data')).toBe(1);
+    await jest.advanceTimersByTimeAsync(12000);
+    await rejected;
+    await closeShellProcess(children[0], envOutput('/global/bin'));
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect((await systemPaths.buildAugmentedEnvAsync({})).PATH).toContain(
+      '/global/bin',
+    );
+  });
+
+  it('cancels a cold waiter without cancelling a capture shared by another caller', async () => {
+    await seedGlobalEnv();
+    const controller = new AbortController();
+    const cancelled = systemPaths.buildAugmentedEnvAsync({}, '/repo/shared', {
+      signal: controller.signal,
+    });
+    const kept = systemPaths.buildAugmentedEnvAsync({}, '/repo/shared');
+    const rejection = expect(cancelled).rejects.toThrow('cancelled');
+    controller.abort();
+    await rejection;
+    expect(killProcessSpy).not.toHaveBeenCalled();
+    await closeShellProcess(children[1], envOutput('/shared/bin'));
+    expect((await kept).PATH).toMatch(/^\/shared\/bin:/);
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds retained capture bytes as well as the number of cached workspaces', async () => {
+    process.env.ELEVENEX_SHELL_CACHE_BYTES = String(1024 * 1024);
+    loadSystemPaths();
+    await seedGlobalEnv();
+    for (let i = 0; i < 32; i++) {
+      const read = systemPaths.buildAugmentedEnvAsync({}, `/repo/large-${i}`);
+      await closeShellProcess(
+        children[i + 1],
+        envOutput(`/large-${i}/bin`, `DATA=${'x'.repeat(50000)}\0`),
+      );
+      await read;
+    }
+    expect(
+      (await systemPaths.buildAugmentedEnvAsync({}, '/repo/large-31')).PATH,
+    ).toMatch(/^\/large-31\/bin:/);
+    expect(mockSpawn).toHaveBeenCalledTimes(33);
+    const evicted = systemPaths.buildAugmentedEnvAsync({}, '/repo/large-0');
+    await closeShellProcess(children[33], envOutput('/recaptured/bin'));
+    await evicted;
+    expect(mockSpawn).toHaveBeenCalledTimes(34);
+  });
+
+  it('owns shutdown of active processes and queued reads', async () => {
+    await seedGlobalEnv();
+    const read = systemPaths.buildAugmentedEnvAsync({}, '/repo/closing');
+    const rejected = expect(read).rejects.toThrow('shutting down');
+    systemPaths.disposeShellEnvironment();
+    await rejected;
+    expect(killProcessSpy).toHaveBeenCalledWith(-children[1].pid, 'SIGKILL');
+    expect(children[1].stdout.eventNames()).toEqual([]);
+  });
+
   it('shares a two-shell bound across global and many unique cwd refreshes', async () => {
     mockSpawn.mockImplementation(() => createShellProcess());
     const globalRefresh = systemPaths.refreshLoginShellEnv(true);
@@ -750,6 +874,7 @@ describePosix('system-paths bounded shell refreshes', () => {
     expect(mockSpawn.mock.calls[2]).toHaveProperty('2.cwd', os.homedir());
     await closeShellProcess(children[2], envOutput('/global/bin'));
     await Promise.all([first, second]);
+    await jest.advanceTimersByTimeAsync(0);
     expect(mockSpawn).toHaveBeenCalledTimes(4);
     expect(mockSpawn.mock.calls[3][2].cwd).toBe('/repo/async');
     await closeShellProcess(children[3], envOutput('/async/bin'));
@@ -861,7 +986,7 @@ describePosix('system-paths bounded shell refreshes', () => {
       failed.stdout.emit('data', Buffer.from(envOutput('/partial/bin')));
       switch (failure) {
         case 'timeout':
-          await jest.advanceTimersByTimeAsync(5_000);
+          await jest.advanceTimersByTimeAsync(15_000);
           break;
         case 'process error':
           failed.emit('error', new Error('spawn failed'));
@@ -879,7 +1004,7 @@ describePosix('system-paths bounded shell refreshes', () => {
           failed.emit('exit', null, 'SIGTERM');
           break;
       }
-      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(0);
       expect(mockSpawn).toHaveBeenCalledTimes(3);
       expect(process.kill).toHaveBeenCalledWith(-failed.pid, 'SIGKILL');
       expect(failed.eventNames()).toEqual([]);
@@ -963,12 +1088,11 @@ describePosix('system-paths bounded shell refreshes', () => {
 
       expect(mockSpawn).toHaveBeenCalledTimes(2);
       for (const environment of environments) {
-        expect(Object.keys(environment).sort()).toEqual([
-          'HOME',
-          'PATH',
-          'PS1',
-        ]);
-        expect(environment.HOME).toBe(os.homedir());
+        expect(environment.HOME).toBe(home || os.homedir());
+        expect(environment.SHELL).toBe(process.env.SHELL);
+        expect(environment.ELEVENEX_TEST_APPLICATION_EXPORT).toBe('application-only');
+        expect(environment.PWD).toBeUndefined();
+        expect(environment.FNM_MULTISHELL_PATH).toBeUndefined();
         expect(environment.PATH).toBeTruthy();
         expect(environment.PS1).toBe('');
       }
