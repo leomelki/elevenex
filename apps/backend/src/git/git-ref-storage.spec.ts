@@ -47,6 +47,7 @@ for (const format of formats) {
       await git('config', 'commit.gpgsign', 'false');
     });
     afterEach(async () => {
+      jest.restoreAllMocks();
       clearLocalRefState();
       await rm(repo, { recursive: true, force: true });
     });
@@ -99,6 +100,44 @@ for (const format of formats) {
         headSha: next,
       });
       expect((await snapshot()).headSha).toBe(sha);
+    });
+
+    it('keeps warm reads and concurrent remote lookups cheap without delaying fetched updates', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(1_000);
+      await git('commit', '--allow-empty', '-m', 'initial');
+      const sha = await git('rev-parse', 'HEAD');
+      await git('update-ref', 'refs/remotes/origin/main', sha);
+      const client = worktreeSimpleGit(repo);
+      const raw = jest.spyOn(client, 'raw');
+      const verify = jest.spyOn(client, 'revparse');
+      const first = await readLocalRefSnapshot(client, repo);
+      const discovery = raw.mock.calls.length;
+      await Promise.all(
+        Array.from({ length: 32 }, () => first.resolveRef('origin/main')),
+      );
+      expect(raw.mock.calls.length - discovery).toBe(
+        format.name === 'reftable' ? 1 : 0,
+      );
+      const before = {
+        raw: raw.mock.calls.length,
+        verify: verify.mock.calls.length,
+      };
+      const warm = await Promise.all(
+        Array.from({ length: 32 }, () => readLocalRefSnapshot(client, repo)),
+      );
+      expect(
+        warm.every((value) => value.headSha === sha && value.branch === 'main'),
+      ).toBe(true);
+      await warm[0].resolveRef('origin/main');
+      expect(raw).toHaveBeenCalledTimes(before.raw);
+      expect(verify).toHaveBeenCalledTimes(before.verify);
+      await git('commit', '--allow-empty', '-m', 'next');
+      const next = await git('rev-parse', 'HEAD');
+      await git('update-ref', 'refs/remotes/origin/main', next);
+      expect(await first.resolveRef('origin/main')).toBe(next);
+      expect((await readLocalRefSnapshot(client, repo)).headSha).toBe(next);
+      clearLocalRefState(repo);
+      expect((await readLocalRefSnapshot(client, repo)).headSha).toBe(next);
     });
   });
 }

@@ -23,7 +23,7 @@ Object.assign(process.env, {
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_OPTIONAL_LOCKS: "0",
-  SHELL: "/bin/sh",
+  SHELL: process.env.ELEVENEX_BENCHMARK_SHELL || "/bin/sh",
 });
 async function git(repo, ...args) {
   return (
@@ -33,7 +33,8 @@ async function git(repo, ...args) {
 async function fixture(root) {
   const repo = path.join(root, "repo");
   await fs.mkdir(repo);
-  await git(repo, "init", "-q", "-b", "main");
+  await git(repo, "init", "-q");
+  await git(repo, "symbolic-ref", "HEAD", "refs/heads/main");
   await git(repo, "config", "user.name", "Fixture");
   await git(repo, "config", "user.email", "fixture@example.invalid");
   await git(repo, "config", "gc.auto", "0");
@@ -517,6 +518,7 @@ async function main() {
       "git/git-worktree-fingerprint.js",
       "git/git.service.js",
       "git/git-local-state.js",
+      "git/git-reftable-state.js",
       "git/git-cache.js",
       "git/git-read-scheduler.js",
       "git/git-diff-records.js",
@@ -524,6 +526,8 @@ async function main() {
       "git/git-review-index.js",
       "git/git-worktree-cache-lifecycle.js",
       "config/system-paths.js",
+      "config/git-environment.js",
+      "config/git-command-configuration.js",
     ]) {
       moduleHashes[name] = await realRead(path.join(dist, name))
         .then((value) => createHash("sha256").update(value).digest("hex"))

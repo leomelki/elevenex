@@ -1,14 +1,14 @@
-import { readFile, realpath, stat, lstat } from 'node:fs/promises';
+import { readFile, stat, lstat, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import {
   registerGitRepository,
   gitFileScheduler,
   gitRepositoryKey,
+  scheduledGitRaw,
 } from './git-read-scheduler.js';
 import { GitByteLru, GitCacheBudget, copyCacheString } from './git-cache.js';
-import { worktreeSimpleGit } from '../config/system-paths.js';
-import { clearReftableState, readReftableState } from './git-reftable-state.js';
+import { ReftableRefCache } from './git-reftable-state.js';
 
 const VERIFY_MS = 1_500;
 const MAX_ENTRIES = 1_000;
@@ -27,7 +27,11 @@ export interface LocalRefSnapshot extends RepositoryIdentity {
   resolveRef: (ref: string) => Promise<string | null>;
 }
 
-const identities = new Map<string, Promise<RepositoryIdentity>>();
+interface CachedIdentity {
+  promise: Promise<RepositoryIdentity>;
+  value?: RepositoryIdentity;
+}
+const identities = new Map<string, CachedIdentity>();
 const snapshots = new Map<string, Promise<LocalRefSnapshot>>();
 const verifications = new Map<string, { at: number; version: string }>();
 interface PackedRefs {
@@ -37,6 +41,8 @@ interface PackedRefs {
 }
 const packed = new GitByteLru<PackedRefs>(new GitCacheBudget(16 * 1024 * 1024));
 const pathVersions = new Map<string, Promise<string>>();
+const reftableRefs = new ReftableRefCache(readPathVersion, VERIFY_MS);
+const REFTABLE_HEAD = 'ref: refs/heads/.invalid';
 
 function retain<K, V>(cache: Map<K, V>, key: K, value: V): void {
   cache.delete(key);
@@ -90,30 +96,36 @@ export function readRepositoryIdentity(
   const cached = identities.get(key);
   if (cached) {
     retain(identities, key, cached);
-    return cached;
+    return cached.promise;
   }
   const pending = Promise.all([
     git.raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir']),
     realpath(key),
   ])
     .then(async ([output, physicalPath]) => {
-      // Git before 2.31 lacks --path-format. These paths are absolute or
-      // relative to the physical cwd, so normalize without another process.
+      // Git may return absolute or cwd-relative paths. Normalize here because
+      // older Git echoes --path-format=absolute as an extra output line.
       const directories = output.replace(/\r?\n$/, '').split(/\r?\n/);
-      if (directories.length !== 3 || directories.some(value => !value))
+      if (directories.length !== 3 || directories.some((value) => !value))
         throw new Error('Cannot resolve repository identity');
+      // Canonicalize aliases too: macOS /var and /private/var (or a user
+      // symlink) must share the same repository concurrency/cache identity.
       const [repoRoot, gitDir, commonDir] = await Promise.all(
-        directories.map(directory => realpath(path.resolve(physicalPath, directory))),
+        directories.map((directory) => realpath(path.resolve(physicalPath, directory))),
       );
-      if (identities.get(key) === pending)
+      const identity = { repoRoot, gitDir, commonDir };
+      if (identities.get(key) === entry) {
+        entry.value = identity;
         registerGitRepository(key, commonDir);
-      return { repoRoot, gitDir, commonDir };
+      }
+      return identity;
     })
     .catch((error) => {
-      if (identities.get(key) === pending) identities.delete(key);
+      if (identities.get(key) === entry) identities.delete(key);
       throw error;
     });
-  retain(identities, key, pending);
+  const entry: CachedIdentity = { promise: pending };
+  retain(identities, key, entry);
   return pending;
 }
 
@@ -200,23 +212,17 @@ export async function readGitDirectoryHead(
     await readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => ''),
   );
   const commonDir = common ? path.resolve(gitDir, common) : gitDir;
-  const head = await readFile(path.join(gitDir, 'HEAD'), 'utf8').catch(
-    () => '',
+  const sha = await readRef(
+    { repoRoot: worktreePath, gitDir, commonDir },
+    'HEAD',
   );
-  if (head.trim() === 'ref: refs/heads/.invalid')
-    return (
-      await readReftableState(worktreeSimpleGit(worktreePath), {
-        repoRoot: worktreePath,
-        gitDir,
-        commonDir,
-      })
-    ).headSha;
-  if (head.startsWith('ref: '))
-    return readRef(
-      { repoRoot: worktreePath, gitDir, commonDir },
-      head.trim().slice(5),
-    );
-  return /^[a-f0-9]{40,64}$/.test(head.trim()) ? head.trim() : null;
+  if (sha || !(await stat(path.join(commonDir, 'reftable')).catch(() => null)))
+    return sha;
+  return reftableRefs
+    .resolve({ gitDir, commonDir }, 'HEAD', false, (args) =>
+      scheduledGitRaw(worktreePath, args),
+    )
+    .catch(() => null);
 }
 
 /** Fixed-path reads only. HEAD/index belong to the worktree; refs/objects to commonDir. */
@@ -229,51 +235,55 @@ export function readLocalRefSnapshot(
   if (existing) return existing;
   const build = async (): Promise<LocalRefSnapshot> => {
     const identity = await readRepositoryIdentity(git, key);
-    const readHead = () => readFile(path.join(identity.gitDir, 'HEAD'), 'utf8');
+    const readHead = async (): Promise<{
+      text: string;
+      version: string;
+      sha?: string | null;
+    }> => {
+      const text = (
+        await readFile(path.join(identity.gitDir, 'HEAD'), 'utf8')
+      ).trim();
+      // Normal refs keep their existing filesystem-only warm path. Reftable's
+      // sentinel needs Git, but only when its table-list versions change.
+      if (text !== REFTABLE_HEAD) return { text, version: text };
+      const head = await reftableRefs.head(identity, (args) => git.raw(args));
+      return {
+        text: head.ref ? `ref: ${head.ref}` : (head.sha ?? ''),
+        version: [head.version, head.ref, head.sha].join('\0'),
+        sha: head.sha,
+      };
+    };
     for (let attempt = 0; attempt < 3; attempt++) {
-      const head = (await readHead()).trim();
-      if (head === 'ref: refs/heads/.invalid') {
-        const [state, indexVersion] = await Promise.all([
-          readReftableState(git, identity),
-          readPathVersion(path.join(identity.gitDir, 'index')),
-        ]);
-        return {
-          ...identity,
-          ...state,
-          indexVersion,
-          resolveRef: (ref: string) =>
-            state.resolveRef(
-              ref === 'HEAD' || ref.startsWith('refs/')
-                ? ref
-                : `refs/remotes/${ref}`,
-            ),
-        };
-      }
+      const observed = await readHead();
+      const head = observed.text;
+      const reftable = observed.sha !== undefined;
       const branchRef = head.startsWith('ref: ') ? head.slice(5) : null;
-      let headSha = branchRef
-        ? await readRef(identity, branchRef)
-        : /^[a-f0-9]{40,64}$/.test(head)
-          ? head
-          : null;
+      let headSha =
+        observed.sha !== undefined
+          ? observed.sha
+          : branchRef
+            ? await readRef(identity, branchRef)
+            : /^[a-f0-9]{40,64}$/.test(head)
+              ? head
+              : null;
       const indexVersion = await readPathVersion(
         path.join(identity.gitDir, 'index'),
       );
-      if ((await readHead()).trim() !== head) continue;
+      if ((await readHead()).version !== observed.version) continue;
       const version = [head, headSha, indexVersion].join('\0');
       const last = verifications.get(key);
       // Files/reftable storage can change outside this process. Verify on an
       // absolute deadline, and immediately when HEAD/index changes.
       if (
-        !last ||
-        last.version !== version ||
-        Date.now() - last.at >= VERIFY_MS
+        !reftable &&
+        (!last || last.version !== version || Date.now() - last.at >= VERIFY_MS)
       ) {
         const startedAt = Date.now();
         const authoritative = await git
           .revparse(['--verify', 'HEAD'])
           .then((value) => value.trim())
           .catch(() => null);
-        if ((await readHead()).trim() !== head) continue;
+        if ((await readHead()).version !== observed.version) continue;
         headSha = authoritative;
         if (snapshots.get(key) === pending)
           retain(verifications, key, {
@@ -293,17 +303,17 @@ export function readLocalRefSnapshot(
               : ref.startsWith('refs/')
                 ? ref
                 : `refs/remotes/${ref}`;
+          if (reftable)
+            return reftableRefs.resolve(identity, full, false, (args) =>
+              git.raw(args),
+            );
           const sha = await readRef(identity, full);
           if (sha) return sha;
           // Reftable and oversized packed-refs use Git's storage implementation.
-          const reftable = await stat(
-            path.join(identity.commonDir, 'reftable'),
-          ).catch(() => null);
           const packedInfo = await stat(
             path.join(identity.commonDir, 'packed-refs'),
           ).catch(() => null);
-          return reftable ||
-            (packedInfo && packedInfo.size > MAX_PACKED_REF_BYTES)
+          return packedInfo && packedInfo.size > MAX_PACKED_REF_BYTES
             ? git
                 .raw(['rev-parse', '--verify', '--quiet', full])
                 .then((value) => value.trim() || null)
@@ -323,44 +333,43 @@ export function readLocalRefSnapshot(
 
 export function clearLocalRefState(worktreePath?: string): void {
   if (!worktreePath) {
-    clearReftableState();
     identities.clear();
     snapshots.clear();
     verifications.clear();
     packed.clear();
+    reftableRefs.clear();
     return;
   }
   const key = path.resolve(worktreePath);
-  clearReftableState(key);
+  const identity = identities.get(key)?.value;
   identities.delete(key);
   snapshots.delete(key);
   verifications.delete(key);
+  if (identity) reftableRefs.clear(identity.gitDir);
 }
 
 export async function readOriginHead(
   identity: RepositoryIdentity,
 ): Promise<string | null> {
-  const text = (
+  let text = (
     await readFile(
       path.join(identity.commonDir, 'refs/remotes/origin/HEAD'),
       'utf8',
     ).catch(() => '')
   ).trim();
-  if (text.startsWith('ref: refs/remotes/'))
-    return text.slice('ref: refs/remotes/'.length);
   if (
-    await stat(path.join(identity.commonDir, 'reftable', 'tables.list')).catch(
-      () => null,
-    )
+    !text &&
+    (await stat(path.join(identity.commonDir, 'reftable')).catch(() => null))
   ) {
-    const ref = (
-      await worktreeSimpleGit(identity.repoRoot)
-        .raw(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])
-        .catch(() => '')
-    ).trim();
-    return ref.startsWith('refs/remotes/')
-      ? ref.slice('refs/remotes/'.length)
-      : null;
+    const ref = await reftableRefs.resolve(
+      identity,
+      'refs/remotes/origin/HEAD',
+      true,
+      (args) => scheduledGitRaw(identity.repoRoot, args),
+    );
+    text = ref ? `ref: ${ref.trim()}` : '';
   }
-  return null;
+  return text.startsWith('ref: refs/remotes/')
+    ? text.slice('ref: refs/remotes/'.length)
+    : null;
 }
