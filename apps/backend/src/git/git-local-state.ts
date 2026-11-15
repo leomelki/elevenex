@@ -96,15 +96,15 @@ export function readRepositoryIdentity(
     git.raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir']),
     realpath(key),
   ])
-    .then(([output, physicalPath]) => {
+    .then(async ([output, physicalPath]) => {
       // Git before 2.31 lacks --path-format. These paths are absolute or
       // relative to the physical cwd, so normalize without another process.
-      const [repoRoot, gitDir, commonDir] = output
-        .trimEnd()
-        .split('\n')
-        .map((value) => (value ? path.resolve(physicalPath, value) : ''));
-      if (!repoRoot || !gitDir || !commonDir)
+      const directories = output.replace(/\r?\n$/, '').split(/\r?\n/);
+      if (directories.length !== 3 || directories.some(value => !value))
         throw new Error('Cannot resolve repository identity');
+      const [repoRoot, gitDir, commonDir] = await Promise.all(
+        directories.map(directory => realpath(path.resolve(physicalPath, directory))),
+      );
       if (identities.get(key) === pending)
         registerGitRepository(key, commonDir);
       return { repoRoot, gitDir, commonDir };

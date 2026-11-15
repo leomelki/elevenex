@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 import {
   FileOperationQueue,
   sortFileItems,
@@ -453,6 +454,7 @@ async function runGitLsFiles(
     ],
     {
       windowsHide: true,
+      env: isolateGitEnvironment(process.env),
       signal,
       killSignal: 'SIGKILL',
     },

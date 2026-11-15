@@ -11,6 +11,7 @@ import {
 } from '../config/system-paths.js';
 import { execFileAsync } from '../terminal/async-process.js';
 import { copyCacheString } from '../git/git-cache.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 export interface WorktreeStatus {
   dirty: boolean;
@@ -45,7 +46,7 @@ export class TaskGitService {
     ]);
     // Git before 2.31 echoes the unsupported --path-format option as output.
     // Relative output uses the physical cwd, including through nested symlinks.
-    return fs.realpath(path.resolve(physicalPath, common.trim()));
+    return fs.realpath(path.resolve(physicalPath, common.replace(/\r?\n$/, '')));
   }
 
   async exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -141,7 +142,7 @@ export class TaskGitService {
         {
           cwd: repoPath,
           env: {
-            ...buildAugmentedEnv(process.env, repoPath),
+            ...isolateGitEnvironment(buildAugmentedEnv(process.env, repoPath)),
             GIT_TERMINAL_PROMPT: '0',
             GCM_INTERACTIVE: 'never',
           },

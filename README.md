@@ -52,6 +52,7 @@ Elevenex is a pnpm monorepo with a desktop shell, a frontend, a backend, and a s
 
 - Node.js with a toolchain capable of building native modules.
 - `pnpm` for workspace installs and scripts.
+- Git 2.25 or newer on each backend host; see [Git compatibility](docs/git-compatibility.md).
 - `claude` available on your `PATH` if you want to use the in-app Claude Code workspace.
 - Native build support required by dependencies such as `better-sqlite3` and `node-pty`.
 

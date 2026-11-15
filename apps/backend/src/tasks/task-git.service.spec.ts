@@ -131,6 +131,19 @@ describe('TaskGitService checkout inspection with real Git', () => {
     }
   });
 
+  it('preserves a separate Git directory containing Unicode and significant whitespace', async () => {
+    const directory = join(
+      root,
+      process.platform === 'win32' ? 'git metadata café' : 'git metadata café ',
+    );
+    await worktreeSimpleGit(root).raw([
+      'init',
+      '--separate-git-dir',
+      directory,
+    ]);
+    expect(await service.repositoryKey(root)).toBe(await realpath(directory));
+  });
+
   it('saves index caches only when asked to persist them', async () => {
     const index = join(root, '.git', 'index');
     const initial = await readFile(index);

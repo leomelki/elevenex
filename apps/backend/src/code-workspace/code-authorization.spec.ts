@@ -11,7 +11,16 @@ describe('new Code task/worktree authority', () => {
   beforeEach(async () => { root = await realpath(await mkdtemp(join(tmpdir(), 'code-authority-'))); });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
   it('invalidates file authority after branch changes, task closure and checkout reassignment', async () => {
-    const repository = join(root, 'repo'); await mkdir(repository); await execute('git', ['init', '-b', 'main', repository]);
+    const repository = join(root, 'repo');
+    await mkdir(repository);
+    await execute('git', ['init', repository]);
+    await execute('git', [
+      '-C',
+      repository,
+      'symbolic-ref',
+      'HEAD',
+      'refs/heads/main',
+    ]);
     await writeFile(join(repository, 'file'), 'original'); await execute('git', ['-C', repository, 'add', '.']);
     await execute('git', ['-C', repository, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'fixture']);
     const task = { id: 1, repoId: 1, path: repository, name: 'Task', createdAt: '2026-01-01', archivedAt: null as string | null, taskState: 'ready', linkStatus: 'linked', taskBranch: 'main', startingCommit: null, unlinkedAt: null };

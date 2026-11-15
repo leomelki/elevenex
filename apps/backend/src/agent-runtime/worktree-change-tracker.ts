@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import chokidar from 'chokidar';
 import { formatPatch, parsePatch, structuredPatch } from 'diff';
 import { buildAugmentedEnv } from '../config/system-paths.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 import type {
   TurnChangeDetails,
   TurnChangedFile,
@@ -797,20 +798,7 @@ function git(
   allowedCodes = [0],
 ): Promise<Buffer> {
   return new Promise((done, reject) => {
-    const env = buildAugmentedEnv();
-    for (const key of [
-      'GIT_DIR',
-      'GIT_WORK_TREE',
-      'GIT_INDEX_FILE',
-      'GIT_COMMON_DIR',
-      'GIT_OBJECT_DIRECTORY',
-      'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-      'GIT_LITERAL_PATHSPECS',
-      'GIT_GLOB_PATHSPECS',
-      'GIT_NOGLOB_PATHSPECS',
-      'GIT_ICASE_PATHSPECS',
-    ])
-      delete env[key];
+    const env = isolateGitEnvironment(buildAugmentedEnv());
     env.GIT_OPTIONAL_LOCKS = '0';
     // Only ls-tree receives filename pathspecs; check-ignore rejects this mode.
     if (args[0] === 'ls-tree') env.GIT_LITERAL_PATHSPECS = '1';
