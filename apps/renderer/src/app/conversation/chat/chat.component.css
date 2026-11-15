@@ -37,3 +37,11 @@ ex-turn-nav {
 :host.center-composer { justify-content: center; overflow-y: auto; }
 :host.center-composer .conversation { display: none; }
 :host.center-composer .composer { margin: auto; }
+
+/* Keep visited disclosures, selection and focus. Browser containment releases
+   offscreen layout/paint, while auto remembers the last real reply height. */
+.reply-window.contained {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto var(--chat-reply-estimate);
+}
+.reply-placeholder { height: var(--chat-reply-estimate); }

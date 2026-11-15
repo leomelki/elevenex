@@ -229,7 +229,11 @@ previously selected task/session still exists: reconcile its IDs first.
 Directory children, file search, branch search, commit history and transcripts
 need bounded queries with stable ordering. Prefer backend cursor/keyset
 pagination to fetching everything and filtering in Angular. Use incremental
-transcript windows and cursors rather than sending an entire conversation again.
+transcript ranges and cursors rather than sending an entire conversation again.
+Selected chat can opt into a larger bounded initial history batch with
+`historyLimit` (up to 2,000 items / 2 MiB projected content). Omission preserves
+the 80-item legacy default. Subsequent feed reads remain incremental; renderer
+retention and rendering have independent budgets documented in the session-chat guide.
 Watch only visible/selected resources and relevant ancestors. Unrelated commits
 must not rescan the file tree or reload every branch/history page.
 

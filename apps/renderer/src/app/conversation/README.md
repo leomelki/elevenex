@@ -49,7 +49,8 @@ range subscriptions are released with the rail. The `/conversation` preview has
 Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 `historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity
 emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
-evicts the opposite edge and increments `historyRevision` in the same update.
+may evict the opposite edge when its retention budget is full, and increments
+`historyRevision` in the same update.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
 its offset after either operation. One in-flight request and a four-page automatic
 fill budget prevent loops on short/collapsed content; wheel, pointer and keyboard
@@ -59,6 +60,13 @@ before moving to the bottom. No history navigation buttons are needed.
 
 `ChatScroll.scrollToEnd(behavior)` defaults to smooth scrolling and accepts
 `"instant"` for opening history before paint. Reduced motion always jumps directly.
+`Chat.renderHistoryWindow` opts into deferred replies for histories above 40
+turns. It preserves prompt and reply anchors, reserves estimated reply heights,
+mounts near-viewport replies and the latest four immediately, then retains visited
+views with browser `content-visibility` containment. Disclosures and focus survive
+scrolling; this deliberately does not recycle visited DOM. Connected data owners
+must still bound retained history. Navigation to an unvisited region jumps and
+holds the prompt through initial height corrections; user input cancels the hold.
 The connected session owner jumps once after each selected session has loaded;
 subsequent updates preserve the reader's position when they scroll up.
 The floating arrow-only return control appears whenever the reader is more than

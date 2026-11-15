@@ -42,6 +42,7 @@ export class ChatScrollComponent {
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();
   readonly latestRequested = output<void>();
+  private navigationAnchor?: { readonly target: HTMLElement; readonly until: number };
   private readingAnchor?: { element: Element; top: number };
   private paintedRevision = 0;
   private historyPending = false;
@@ -49,6 +50,7 @@ export class ChatScrollComponent {
   private historyBudget = 4;
   onViewportInteraction(): void {
     this.historyBudget = 4;
+    this.navigationAnchor = undefined;
     this.interruptSendReveal();
     if (this.contentReady) this.scheduleMeasure();
   }
@@ -58,7 +60,7 @@ export class ChatScrollComponent {
     let tail = this.content().nativeElement.lastElementChild;
     // Projection slots can leave a persistent empty decision wrapper at the
     // bottom. Anchoring that wrapper would jump straight over the new exchange.
-    while (tail && !tail.matches('ex-turn, [data-user-message]'))
+    while (tail && !tail.matches('[data-chat-anchor], ex-turn, [data-user-message]'))
       tail = tail.previousElementSibling;
     this.paintedTail = tail ? { element: tail, top: tail.getBoundingClientRect().top } : undefined;
   }
@@ -138,6 +140,7 @@ export class ChatScrollComponent {
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");
   private readonly destroy = inject(DestroyRef);
   private messages: HTMLElement[] = [];
+  private anchors: HTMLElement[] = [];
   private readonly dismissed = new Set<string>();
   private frame: number | null = null;
   private lastActive = "";
@@ -174,7 +177,7 @@ export class ChatScrollComponent {
       this.contentReady = true;
       const viewport = this.viewport().nativeElement;
       const content = this.content().nativeElement;
-      this.refreshMessages();
+      this.refreshRows();
       this.atEnd.set(this.startAtEnd());
       if (this.startAtEnd()) viewport.scrollTop = viewport.scrollHeight;
       this.lastScrollHeight = viewport.scrollHeight;
@@ -188,18 +191,18 @@ export class ChatScrollComponent {
               Array.from(record.addedNodes).some(
                 (node) =>
                   node instanceof HTMLElement &&
-                  (node.matches("[data-user-message]") ||
-                    node.querySelector("[data-user-message]")),
+                  (node.matches("[data-user-message], [data-chat-anchor]") ||
+                    node.querySelector("[data-user-message], [data-chat-anchor]")),
               ) ||
               Array.from(record.removedNodes).some(
                 (node) =>
                   node instanceof HTMLElement &&
-                  (node.matches("[data-user-message]") ||
-                    node.querySelector("[data-user-message]")),
+                  (node.matches("[data-user-message], [data-chat-anchor]") ||
+                    node.querySelector("[data-user-message], [data-chat-anchor]")),
               ),
           )
         )
-          this.refreshMessages();
+          this.refreshRows();
         this.scheduleMeasure();
       });
       mutations.observe(content, { childList: true, subtree: true });
@@ -240,10 +243,17 @@ export class ChatScrollComponent {
       target.getBoundingClientRect().top -
       viewport.getBoundingClientRect().top +
       viewport.scrollTop;
+    // Deferred replies can acquire their measured height during navigation.
+    // Jump to that region, then retain the chosen prompt through those first
+    // layouts. A native smooth target would keep its obsolete pixel offset.
+    const deferred = !!this.content().nativeElement.querySelector('[data-chat-estimated]');
+    this.navigationAnchor = deferred ? { target, until: performance.now() + 1000 } : undefined;
+    this.atEnd.set(false);
     viewport.scrollTo({
       top: Math.max(0, top - 24),
-      behavior: this.reducedMotion() ? "instant" : "smooth",
+      behavior: deferred || this.reducedMotion() ? "instant" : "smooth",
     });
+    this.scheduleMeasure();
     if (!this.reducedMotion()) {
       this.highlight?.cancel();
       this.highlight = target.animate(
@@ -253,6 +263,7 @@ export class ChatScrollComponent {
     }
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
+    this.navigationAnchor = undefined;
     this.interruptSendReveal();
     const viewport = this.viewport().nativeElement;
     // Keep the return control present until native smooth scrolling arrives.
@@ -276,7 +287,7 @@ export class ChatScrollComponent {
   }
   private rememberReadingAnchor(): void {
     const top = this.viewport().nativeElement.getBoundingClientRect().top;
-    const children = this.content().nativeElement.querySelectorAll("[data-chat-anchor]");
+    const children = this.anchors;
     // The DOM is bounded by the connected owner's transcript window. Keep the
     // first visible stable row, including a reply whose prompt is off screen.
     let low = 0, high = children.length;
@@ -298,7 +309,8 @@ export class ChatScrollComponent {
     this.atEnd.set(false);
     this.historyRequested.emit(direction);
   }
-  private refreshMessages(): void {
+  private refreshRows(): void {
+    this.anchors = Array.from(this.content().nativeElement.querySelectorAll<HTMLElement>("[data-chat-anchor]"));
     this.messages = Array.from(
       this.content().nativeElement.querySelectorAll<HTMLElement>(
         "[data-user-message]",
@@ -319,6 +331,12 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
+    const anchor = this.navigationAnchor;
+    if (anchor && (!anchor.target.isConnected || performance.now() > anchor.until)) this.navigationAnchor = undefined;
+    if (this.navigationAnchor) {
+      viewport.scrollTop += this.navigationAnchor.target.getBoundingClientRect().top - viewport.getBoundingClientRect().top - 24;
+      this.atEnd.set(false);
+    }
     const changed = viewport.scrollHeight !== this.lastScrollHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
     else if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
@@ -363,7 +381,7 @@ export class ChatScrollComponent {
     if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
-      const margin = Math.min(480, viewport.clientHeight * 0.75);
+      const margin = Math.max(800, viewport.clientHeight * 1.5);
       if (this.historyBefore() && viewport.scrollTop < margin)
         this.requestHistory("before");
       else if (this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)

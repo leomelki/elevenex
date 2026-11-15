@@ -410,6 +410,29 @@ describe('selected session chat', () => {
       chat.read(9, 2, undefined, undefined, new AbortController().signal),
     ).rejects.toThrow('does not belong');
   });
+  it('loads ordinary sessions in one opted-in batch while keeping legacy defaults', async () => {
+    history = Array.from({ length: 1800 }, (_, i) => item(String(i)));
+    const page = (await chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, 2000))!;
+    expect(page.items).toHaveLength(1800);
+    expect(page.before).toBeNull();
+    expect(page.next).toBeNull();
+    expect((await read())!.items).toHaveLength(80);
+    for (const limit of [0, -1, 2001, 1.5, NaN])
+      await expect(chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, limit)).rejects.toThrow('batch size');
+  });
+
+  it('bounds large Unicode batches by bytes and continues both directions without gaps', async () => {
+    history = Array.from({ length: 3000 }, (_, i) => item(String(i), '😀'.repeat(7000)));
+    const latest = (await chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, 2000))!;
+    expect(latest.items.length).toBeGreaterThan(1);
+    expect(latest.items.length).toBeLessThan(2000);
+    expect(Buffer.byteLength(JSON.stringify(latest.items))).toBeLessThan(2 * 1024 * 1024 + 2000);
+    const older = (await chat.read(1, 2, undefined, latest.before!, new AbortController().signal, undefined, 2000))!;
+    expect(Number(older.items.at(-1)!.id) + 1).toBe(Number(latest.items[0]!.id));
+    const forward = (await chat.read(1, 2, undefined, undefined, new AbortController().signal, older.items.at(-1)!.id, 2000))!;
+    expect(forward.items.map(item => item.id)).toEqual(latest.items.map(item => item.id));
+  });
+
   it('streams idempotent item replacements and never rereads persisted history per token', async () => {
     live = [item('reply', 'Hello')];
     const initial = (await read())!;

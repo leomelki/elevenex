@@ -13,6 +13,7 @@ import {
   ELEVENEX_BRIDGE,
 } from "../backend/backend-client.service";
 import { createSessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
+import { CHAT_RETAINED_ITEMS } from './session-chat-retention';
 import { SessionChatStore } from "./session-chat.store";
 import { chatExchanges } from "./session-chat-transcript";
 const state: SessionChatState = {
@@ -366,7 +367,7 @@ describe("session chat ownership", () => {
     if (boundary === "paging") {
       bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
         reset: false,
-        events: Array.from({ length: 320 }, (_, i) => ({ type: "item" as const, item: item(`later-${i}`, "system", "Later record") })),
+        events: Array.from({ length: CHAT_RETAINED_ITEMS }, (_, i) => ({ type: "item" as const, item: item(`later-${i}`, "system", "Later record") })),
       })));
       await store.refresh();
       expect(store.items().some(item => item.id === "durable")).toBe(false);
@@ -607,31 +608,82 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
     expect(store.state()?.phase).toBe("running"); expect(store.draft()).toBe("A draft");
   });
+  it('requests a large initial batch, keeps loaded history, and resumes cached sessions incrementally', async () => {
+    const { store, bridge } = setup(); await settle();
+    const history = Array.from({ length: 1800 }, (_, i) => item(String(i), i % 2 ? 'assistant' : 'user', `Message ${i}`));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: history, next: null })));
+    await store.refresh();
+    expect(bridge.sessionChatRead.mock.lastCall?.[1].historyLimit).toBe(2000);
+    expect(store.items()).toHaveLength(1800);
+    const reads = bridge.sessionChatRead.mock.calls.length;
+    await store.older(); await store.newer();
+    expect(bridge.sessionChatRead.mock.calls.length).toBe(reads);
+    const opening = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(opening.promise);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false);
+    expect(store.loading()).toBe(true);
+    const reopening = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(reopening.promise);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false);
+    expect(store.loading()).toBe(false);
+    reopening.resolve(ok(page(2, { reset: false, next: null })));
+    opening.resolve(ok(page(3))); await settle();
+    expect(bridge.sessionChatRead.mock.lastCall?.[1].after).toBe('cursor');
+    expect(store.items()).toHaveLength(1800);
+  });
+
+  it('prefetches a finite number of older batches and cancels scheduled work on navigation', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
+      const end = Number(input.before ?? 12000), start = Math.max(0, end - 2000);
+      return ok(page(input.sessionId, { items: Array.from({ length: end - start }, (_, i) => item(String(start + i), 'system', 'Record')), before: start ? String(start) : null, next: null }));
+    });
+    await store.refresh();
+    const initial = bridge.sessionChatRead.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600);
+    expect(store.items()).toHaveLength(8000);
+    expect(bridge.sessionChatRead.mock.calls.length - initial).toBe(3);
+    expect(store.next()).toBeNull();
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    const boundary = bridge.sessionChatRead.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(200);
+    expect(bridge.sessionChatRead.mock.calls.slice(boundary).every(([, input]) => input.sessionId === 3)).toBe(true);
+  });
+
+  it('replaces removed tail records on an authoritative history reset', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('u', 'user', 'Hi'), item('gone', 'assistant', 'Rewound')] })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('u', 'user', 'Hi')] })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items().map(item => item.id)).toEqual(['u']);
+  });
+
   it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
     const { store, bridge } = setup(); await settle();
-    const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));
+    const history = Array.from({ length: 12000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));
     bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
-      const from = input.following ? Number(input.following) + 1 : Math.max(0, Number(input.before ?? history.length) - 80);
-      const end = Math.min(history.length, from + 80);
+      const from = input.following ? Number(input.following) + 1 : Math.max(0, Number(input.before ?? history.length) - 2000);
+      const end = Math.min(history.length, from + 2000);
       return ok(page(2, { items: history.slice(from, end), before: from ? String(from) : null, next: end < history.length ? String(end - 1) : null }));
     });
     await store.refresh();
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 4; i++) {
       await store.older();
-      expect(store.items().length).toBeLessThanOrEqual(320);
+      expect(store.items().length).toBeLessThanOrEqual(CHAT_RETAINED_ITEMS);
       expect(store.items().every((item, i, items) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
     }
     expect(store.historical()).toBe(true);
     const pinned = store.items();
-    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-80), next: null, state: { ...state, phase: "running" } })));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-2000), next: null, state: { ...state, phase: "running" } })));
     await vi.advanceTimersByTimeAsync(80);
     expect(store.items()).toBe(pinned); expect(store.state()?.phase).toBe("running");
-    while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
-    expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
+    while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(CHAT_RETAINED_ITEMS); }
+    expect(store.items().at(-1)?.id).toBe("11999"); expect(store.historical()).toBe(false);
   });
   it("reconciles the live tail before sending from history and never dispatches a duplicate send", async () => {
     const { store, bridge } = setup(); await settle();
-    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "320", next: null, items: Array.from({ length: 320 }, (_, i) => item(String(i + 320), "user", `Message ${i}`)) })));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "320", next: null, items: Array.from({ length: CHAT_RETAINED_ITEMS }, (_, i) => item(String(i + 320), "user", `Message ${i}`)) })));
     await store.refresh();
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item("earlier", "user", "Earlier")], next: "earlier" })));
     await store.older(); expect(store.historical()).toBe(true);
@@ -1086,8 +1138,8 @@ it('keeps the visible chat lifetime and incremental cursor across same-machine r
 });
 it('keeps an earlier-history window on screen instead of jumping to latest after recovery', async () => {
   const { store, bridge, scope } = setup(); await settle();
-  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'earlier', items: [item('latest', 'user', 'Latest')] }))); await store.refresh();
-  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Reading history')] }))); await store.older();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'earlier', items: Array.from({ length: CHAT_RETAINED_ITEMS }, (_, i) => item(`latest-${i}`, 'system', 'Latest')) }))); await store.refresh();
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Reading history')], next: 'older' }))); await store.older();
   const calls = bridge.sessionChatRead.mock.calls.length, view = store.viewRevision();
   TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered'); scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
   store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();

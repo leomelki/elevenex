@@ -246,7 +246,10 @@ export class DesktopChatService implements OnModuleDestroy {
     before: string | undefined,
     signal: AbortSignal,
     following?: string,
+    historyLimit = 80,
   ) {
+    if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 2000)
+      throw new BadRequestException('Invalid conversation batch size.');
     let session = await this.target(taskId, sessionId);
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
@@ -264,6 +267,7 @@ export class DesktopChatService implements OnModuleDestroy {
         undefined,
         undefined,
         following,
+        historyLimit,
       );
       if (!window)
         throw new BadRequestException(
@@ -333,14 +337,14 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following);
+    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following, reset || before || following ? historyLimit : 80);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
       );
     const { items } = window;
     feed.touched = Date.now();
-    const events = items.flatMap((item) => {
+    const events = items.slice(-80).flatMap((item) => {
       const json = JSON.stringify(item),
         old = feed.projections.get(item.id);
       const version =

@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
   Component,
@@ -24,6 +25,7 @@ import { MentionComponent } from '../composer/mention.component';
 @Component({
   selector: "ex-chat",
   imports: [
+    NgTemplateOutlet,
     ButtonComponent,
     AttachmentsComponent,
     TurnComponent,
@@ -38,6 +40,8 @@ import { MentionComponent } from '../composer/mention.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatComponent {
+  /** Retain reply views once visited; Chromium skips offscreen layout using remembered sizes. */
+  readonly renderHistoryWindow = input(false);
   readonly centerComposer = input(false);
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
@@ -80,6 +84,9 @@ export class ChatComponent {
               : undefined,
     })),
   );
+  replyEstimate(exchange: ChatExchange): number {
+    return Math.min(1600, Math.max(96, 96 + Math.ceil(exchange.answer.length / 80) * 24));
+  }
   focusLastMessage(): void {
     const id = this.exchanges().at(-1)?.id;
     if (id) this.scroll()?.scrollToMessage(id);

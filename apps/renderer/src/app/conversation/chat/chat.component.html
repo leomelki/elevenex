@@ -41,8 +41,11 @@
           }
         </ex-message>
       }
-      <ex-turn
+      <div #replyHost class="reply-window" [class.contained]="renderHistoryWindow()"
         [attr.data-chat-anchor]="exchange.id + ':reply'"
+        [style.--chat-reply-estimate]="replyEstimate(exchange) + 'px'">
+        <ng-template #reply>
+      <ex-turn
         [reach]="reach()"
         [isNew]="exchange.isNew || false"
         [status]="exchange.status"
@@ -78,6 +81,17 @@
         (stop)="stop.emit(exchange.id)"
         (retry)="retry.emit(exchange.id)"
       />
+        </ng-template>
+        @if (renderHistoryWindow()) {
+          @defer (on viewport({trigger: replyHost, rootMargin: '1200px', scrollMargin: '1200px'}); when exchanges().length <= 40 || $index >= exchanges().length - 4 || exchange.status === 'live' || exchange.isNew) {
+            <ng-container [ngTemplateOutlet]="reply" />
+          } @placeholder {
+            <div class="reply-placeholder" data-chat-estimated aria-hidden="true"></div>
+          }
+        } @else {
+          <ng-container [ngTemplateOutlet]="reply" />
+        }
+      </div>
       @for (content of exchange.overflow || []; track content.id) {
         <button
           exButton

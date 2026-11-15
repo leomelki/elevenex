@@ -590,6 +590,43 @@ test('harness selection requires a known action shape and an expected current pr
 });
 
 
+test('conversation batch opt-in validates before transport and stays scoped to the trusted window', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises'), vm = require('node:vm');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  let calls = 0;
+  const url = await server(context, (request, response) => {
+    calls++; assert.equal(new URL(request.url, 'http://localhost').searchParams.get('historyLimit'), '2000');
+    response.writeHead(200, json); response.end(JSON.stringify({ taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state }));
+  });
+  const client = new BackendClient(() => local(url), () => {}); context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, adapter = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  const mocks = { './session-chat-agents': { registerChatAgents: () => () => {} }, './session-chat-attachments': { registerChatAttachments: () => () => {} }, './session-chat-media': { registerSessionChatMedia: () => () => {} } };
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat'), 'utf8'), {
+    exports: adapter, URLSearchParams, require: name => name === '../ipc' ? ipc : mocks[name] ?? require('../dist/backend-client/' + name.slice(2)),
+  });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  const stop = adapter.registerSessionChatIpc(client, (candidate, contents) => candidate === frame && contents === sender); context.after(stop);
+  const read = historyLimit => handlers.get('session-chat:read')(event, scope, { taskId: 1, sessionId: 2, requestId: 'read', historyLimit });
+  for (const limit of [0, -1, 2001, 1.5, '2000', Infinity]) assert.throws(() => read(limit));
+  assert.equal(calls, 0);
+  assert.equal((await read(2000)).ok, true); assert.equal(calls, 1);
+  assert.throws(() => handlers.get('session-chat:read')({ senderFrame: {}, sender }, scope, {}));
+  stop(); assert.equal(handlers.size, 0);
+});
+
+test('larger transcript batches require opt-in and retain finite item and event limits', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const item = { id: 'u', kind: 'user', text: 'Hello', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: Array(1800).fill(item), events: [], state };
+  assert.throws(() => parseChatPage(page, 1, 2));
+  assert.equal(parseChatPage(page, 1, 2, 2000).items.length, 1800);
+  assert.throws(() => parseChatPage({ ...page, items: Array(2001).fill(item) }, 1, 2, 2000));
+  assert.throws(() => parseChatPage({ ...page, events: Array(81).fill({ type: 'item', item }) }, 1, 2, 2000));
+});
+
 test('background work is optional, bounded and validated, and stop targets only live-work keys', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
   const state = { provider: 'claude', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };

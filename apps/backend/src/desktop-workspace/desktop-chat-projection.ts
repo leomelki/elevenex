@@ -220,7 +220,10 @@ export function chatWindow(
   changesCache?: ChatChangesCache,
   mediaCache?: ChatMediaCache,
   following?: string,
+  limit = 80,
 ) {
+  const candidateLimit = limit * 2;
+  const byteLimit = limit > 80 ? 2 * 1024 * 1024 : 512 * 1024;
   const historyEnd = before
     ? history.findIndex((item) => item.id === before)
     : history.length;
@@ -236,17 +239,17 @@ export function chatWindow(
     if (hStart < 0 && lStart < 0) return null;
     // Copy only the next bounded candidates, even for million-item histories.
     if (hStart >= 0)
-      for (const item of history.slice(hStart + 1, hStart + 161)) candidates.set(item.id, item);
+      for (const item of history.slice(hStart + 1, hStart + candidateLimit + 1)) candidates.set(item.id, item);
     if (lStart >= 0 || hStart >= 0)
-      for (const item of live.slice(Math.max(0, lStart + 1), Math.max(0, lStart + 1) + 160)) {
-        if (lStart >= 0 || hStart + 161 >= history.length || candidates.has(item.id))
+      for (const item of live.slice(Math.max(0, lStart + 1), Math.max(0, lStart + 1) + candidateLimit)) {
+        if (lStart >= 0 || hStart + candidateLimit + 1 >= history.length || candidates.has(item.id))
           candidates.set(item.id, item);
       }
   } else {
-    for (const item of history.slice(Math.max(0, hEnd - 160), hEnd))
+    for (const item of history.slice(Math.max(0, hEnd - candidateLimit), hEnd))
       candidates.set(item.id, item);
     if (!before || liveEnd >= 0)
-      for (const item of live.slice(Math.max(0, liveEnd - 160), liveEnd))
+      for (const item of live.slice(Math.max(0, liveEnd - candidateLimit), liveEnd))
         candidates.set(item.id, item);
     else
       for (const item of live)
@@ -257,7 +260,7 @@ export function chatWindow(
   const calls = new Map(all.filter(item => item.kind === 'tool_use').map(item => [item.toolUseId ?? item.id, item]));
   let bytes = 0,
     start = following ? 0 : all.length;
-  while ((following ? start < all.length : start > 0) && items.length < 80) {
+  while ((following ? start < all.length : start > 0) && items.length < limit) {
     const rawIndex = following ? start : start - 1;
     const raw = all[rawIndex];
     const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
@@ -270,15 +273,16 @@ export function chatWindow(
       }));
     }
     const size = Buffer.byteLength(JSON.stringify(item));
-    if (bytes + size > 512 * 1024) break;
+    if (bytes + size > byteLimit) break;
     bytes += size;
     if (following) { start++; items.push(item); }
-    else { start--; items.unshift(item); }
+    else { start--; items.push(item); }
   }
+  if (!following) items.reverse();
   return {
     items,
     before:
-      following || start > 0 || hEnd > 160 || liveEnd > 160 ? (items[0]?.id ?? null) : null,
+      following || start > 0 || hEnd > candidateLimit || liveEnd > candidateLimit ? (items[0]?.id ?? null) : null,
     next: before || (following && start < all.length) ? (items.at(-1)?.id ?? null) : null,
   };
 }

@@ -47,6 +47,7 @@
   }
 </header>
 <ex-chat
+  [renderHistoryWindow]="true"
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
   [exchanges]="store.exchanges()"

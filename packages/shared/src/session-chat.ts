@@ -5,6 +5,8 @@ export interface SessionChatTarget {
 }
 export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
+  /** Opt-in history batch size (1–2000). Older engines may retain their smaller default. */
+  readonly historyLimit?: number;
   readonly after?: string;
   readonly before?: string;
   /** Exclusive item cursor for continuing toward the live end of history. */

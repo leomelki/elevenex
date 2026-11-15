@@ -42,6 +42,12 @@ export function registerSessionChatIpc(
         sessionId = chatId(raw["sessionId"]);
       const key = "session-chat:" + requestId(raw["requestId"]),
         query = new URLSearchParams();
+      if (raw["historyLimit"] !== undefined) {
+        const limit = raw["historyLimit"];
+        if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 2000)
+          throw new Error("Invalid conversation batch size.");
+        query.set("historyLimit", String(limit));
+      }
       if (raw["after"] !== undefined)
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
@@ -67,6 +73,7 @@ export function registerSessionChatIpc(
             ),
             taskId,
             sessionId,
+            typeof raw["historyLimit"] === "number" ? raw["historyLimit"] : 80,
           ),
         15000,
       );

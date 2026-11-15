@@ -493,12 +493,13 @@ export class SessionChatFixture {
         const timer = setTimeout(done, 8000);
         this.waiting.set(input.requestId, done);
       });
+    const limit = input.historyLimit ?? 80;
     const session = this.session(input.sessionId),
       start = input.following ? session.items.findIndex(item => item.id === input.following) + 1 : -1,
-      end = input.following ? Math.min(session.items.length, start + 80) : input.before
+      end = input.following ? Math.min(session.items.length, start + limit) : input.before
         ? session.items.findIndex((item) => item.id === input.before)
         : session.items.length;
-    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - 80), end).map((item) =>
+    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - limit), end).map((item) =>
       item.truncated
         ? {
             ...item,
@@ -517,7 +518,7 @@ export class SessionChatFixture {
         reset,
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
-        before: (start > 0 || end > 80) ? (items[0]?.id ?? null) : null,
+        before: (start > 0 || end > limit) ? (items[0]?.id ?? null) : null,
         next: end < session.items.length ? (items.at(-1)?.id ?? null) : null,
         state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
       },

@@ -21,9 +21,11 @@ import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
 import {
-  chatExchanges,
+  ChatTranscriptProjection,
   type PendingChatPrompt,
 } from "./session-chat-transcript";
+
+import { CHAT_HISTORY_BATCH, CHAT_RETAINED_BYTES, CHAT_RETAINED_ITEMS, chatItemBytes, retainChatItems } from './session-chat-retention';
 
 interface PendingSubmission extends PendingChatPrompt {
   readonly sendOrigin?: MessageSendOrigin;
@@ -87,6 +89,7 @@ export class SessionChatStore {
   readonly historyError = signal("");
   readonly windowRevision = signal(0);
   private supportsFollowing = false;
+  private prefetchBudget = 3;
   readonly draft = computed(() => this.activeEntry().text());
   readonly mentions = computed(() => this.activeEntry().mentions());
   addMention(mention: ConversationMention): void {
@@ -123,9 +126,10 @@ export class SessionChatStore {
       });
     return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
   });
+  private readonly projection = new ChatTranscriptProjection();
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
-    return chatExchanges(
+    return this.projection.project(
       this.items(),
       this.state(),
       this.fresh(),
@@ -194,9 +198,10 @@ export class SessionChatStore {
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
     this.state.set(null); this.items.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
-    this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
+    this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); this.projection.clear();
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
+    this.prefetchBudget = 3;
     this.viewRevision.update(value => value + 1);
   }
 
@@ -232,11 +237,12 @@ export class SessionChatStore {
     this.readOnly.set(readOnly);
     this.pending.set(null);
     this.pendingQueue.set(null);
-    if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
+    if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); this.projection.clear(); }
     const cached = this.drafts.snapshot(selection.sessionId);
+    if (cached || recovery) this.loading.set(false);
     if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
-    if (!recovery) this.next.set(null);
+    if (!recovery) { this.next.set(cached?.next ?? null); this.supportsFollowing = cached?.supportsFollowing ?? false; }
     this.historyLoading.set(false); this.historyError.set('');
     if (!recovery) this.fresh.set(new Set());
     this.error.set("");
@@ -244,14 +250,15 @@ export class SessionChatStore {
     this.defaultChange.set(undefined);
     this.commands.clear();
     this.busy.set("");
-    this.historical.set(recovery && historical);
+    this.historical.set(recovery ? historical : !!cached?.next);
     this.checked.set(false);
-    this.cursor = recovery ? previousCursor : undefined;
-    void this.load(!recovery);
+    this.cursor = recovery ? previousCursor : cached?.cursor;
+    this.prefetchBudget = 3;
+    void this.load(!recovery && !cached);
   }
   private remember(): void {
     const state = this.state();
-    if (this.selection && state) this.drafts.remember(this.selection.sessionId, { items: this.items(), state, cursor: this.cursor, before: this.before() });
+    if (this.selection && state) this.drafts.remember(this.selection.sessionId, { items: this.items(), state, cursor: this.cursor, before: this.before(), next: this.next(), supportsFollowing: this.supportsFollowing });
   }
   setDraft(value: string): void {
     this.entry.text.set(value);
@@ -266,6 +273,7 @@ export class SessionChatStore {
     this.historyLoading.set(false);
   }
   async refresh(): Promise<void> {
+    this.prefetchBudget = 3;
     this.historical.set(false);
     this.next.set(null);
     this.historyLoading.set(false); this.historyError.set('');
@@ -298,6 +306,7 @@ export class SessionChatStore {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       requestId,
+      historyLimit: CHAT_HISTORY_BATCH,
       ...(position && direction
         ? { [direction]: position }
         : !reset && this.cursor
@@ -314,11 +323,12 @@ export class SessionChatStore {
       this.starting.set(false);
       this.error.set("");
       this.supportsFollowing = result.value.next !== undefined;
+      const known = new Set(this.items().map(item => item.id));
       if (this.historical() && !direction && !reset) {
         // Keep runtime state current without replacing the history being read.
         this.state.set(result.value.state);
         this.cursor = result.value.cursor;
-      } else if (!reset && !direction && result.value.reset && this.items().length && !result.value.items.some(item => this.items().some(old => old.id === item.id))) {
+      } else if (!reset && !direction && result.value.reset && result.value.before !== null && this.items().length && result.value.items.length > 0 && !result.value.items.some(item => known.has(item.id))) {
         // A busy conversation may outgrow a feed tail while disconnected. Keep
         // its contiguous history and fill the gap using the forward cursor.
         this.next.set(this.items().at(-1)!.id);
@@ -334,24 +344,29 @@ export class SessionChatStore {
           ? "Chat is unavailable on this machine. Update its engine, then reconnect."
           : result.error.message,
       );
-    if (
-      !this.readOnly() &&
-      (result.ok ||
-        (result.error.status !== 404 && result.error.code !== "stale-scope"))
-    )
-      this.timer = setTimeout(
-        () => {
-          this.timer = undefined;
-          void this.load(false);
-        },
-        result.ok ? 80 : 3000,
-      );
+    const canPrefetch = result.ok && this.prefetchBudget > 0 && this.before() && !this.historical()
+      && this.items().length < CHAT_RETAINED_ITEMS
+      && this.items().reduce((sum, item) => sum + chatItemBytes(item), 0) < CHAT_RETAINED_BYTES - 4 * 1024 * 1024;
+    if (canPrefetch) {
+      // A finite idle fill, on the same request lane as polling. Navigation,
+      // mutation, explicit paging and visibility changes cancel it together.
+      this.prefetchBudget--;
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        if (this.before()) void this.load(false, this.before()!, 'before');
+      }, 200);
+    } else if (!this.readOnly() && (result.ok || (result.error.status !== 404 && result.error.code !== 'stale-scope'))) {
+      this.timer = setTimeout(() => { this.timer = undefined; void this.load(false); }, result.ok ? 80 : 3000);
+    }
   }
   private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
     const older = direction === "before";
     const previous = this.items(),
       wasLoaded = !!this.cursor;
-    const base = older ? [...page.items, ...previous]
+    const boundary = page.reset && incremental && !direction ? previous.findIndex(item => item.id === page.items[0]?.id) : -1;
+    const base = !direction && page.reset && incremental && (page.before === null || boundary >= 0)
+      ? [...previous.slice(0, page.before === null ? 0 : boundary), ...page.items]
+      : older ? [...page.items, ...previous]
       : direction || (page.reset && incremental) ? [...previous, ...page.items]
       : page.reset ? page.items : previous;
     const next = new Map<string, SessionChatItem>(
@@ -391,7 +406,8 @@ export class SessionChatStore {
             ),
           ]
         : [...next.values()];
-    const items = older ? all.slice(0, 320) : all.slice(-320);
+    const items = retainChatItems(all, older);
+    const evicted = items.length < all.length;
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
@@ -416,20 +432,23 @@ export class SessionChatStore {
         ),
       );
     }
-    if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
+    if (direction) {
+      const retained = new Set(items.map(item => item.id));
+      this.fresh.update(ids => new Set([...ids].filter(id => retained.has(id))));
+    }
     this.items.set(items);
     this.state.set(page.state);
     if (!direction) this.cursor = page.cursor;
     if (older) {
       this.before.set(page.before);
-      if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
+      if (evicted) this.next.set(items.at(-1)?.id ?? null);
     } else {
-      if (!direction && page.reset && (!incremental || !previous.length)) this.before.set(page.before);
-      if (all.length > 320) this.before.set(items[0]?.id ?? null);
+      if (!direction && page.reset && (!incremental || !previous.length || page.before === null)) this.before.set(page.before);
+      if (evicted) this.before.set(items[0]?.id ?? null);
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
-    if (direction || all.length > 320) this.windowRevision.update(value => value + 1);
+    if (direction || evicted) this.windowRevision.update(value => value + 1);
     if (
       pending &&
       (items.some(

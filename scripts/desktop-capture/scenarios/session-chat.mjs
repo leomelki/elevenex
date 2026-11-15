@@ -17,8 +17,10 @@ export default async function* (capture) {
     await capture.click('ex-turn .work');
     await capture.waitFor(() => document.querySelector('ex-turn .work')?.getAttribute('aria-expanded') === 'true');
     await finish();
-    await capture.evaluate(() => document.querySelector('ex-work-timeline li:last-child ex-tool-step .head')?.scrollIntoView({ block: 'center' }));
-    await capture.click('ex-work-timeline li:last-child ex-tool-step .head');
+    await capture.evaluate(() => document.querySelector('[data-work-step="test"] .group')?.scrollIntoView({ block: 'center' }));
+    await capture.click('[data-work-step="test"] .group');
+    await finish();
+    await capture.click('[data-work-step="test"] ex-tool-step .head');
     await finish();
     yield { name: `${theme}-tool-details`, inspect: ['ex-work-timeline', 'ex-tool-step'] };
     await mode('permission');
@@ -52,8 +54,10 @@ export default async function* (capture) {
     yield { name: `${theme}-shortened-tool-reply`, inspect: ['ex-chat-scroll', 'ex-turn .answer'] };
     await mode('long-message');
     await capture.waitFor(() => [...document.querySelectorAll('ex-chat button')].some(button => button.textContent.includes('Read full message')));
+    await finish();
     await capture.evaluate(() => [...document.querySelectorAll('ex-chat button')].find(button => button.textContent.includes('Read full message'))?.scrollIntoView({ block: 'center' }));
-    await capture.click('ex-chat-scroll .content > button');
+    await finish();
+    await capture.click('ex-chat-scroll > .viewport > .content > button:last-of-type');
     await capture.waitFor(() => document.querySelector('[aria-label="Full transcript content"] pre')?.textContent.includes('Verified concurrent request'));
     yield { name: theme + '-full-message', inspect: ['[aria-label="Full transcript content"]'] };
     await capture.click('[aria-label="Full transcript content"] footer button:last-child');
@@ -82,10 +86,12 @@ export default async function* (capture) {
   await capture.click('ex-session-chat .feedback:not(.error) button');
   await mode('history');
   await capture.component('ex-session-chat', component => component.latest());
-  await capture.waitFor(() => document.querySelector('ex-chat-scroll [data-user-message]'));
+  await capture.waitFor(() => document.querySelectorAll('ex-chat .reply-window').length === 2000);
   const original = await capture.component('ex-session-chat', component => component.store.items()[0]?.id);
   await capture.evaluate(() => { document.querySelector('ex-chat-scroll .viewport').scrollTop = 0; });
-  await capture.waitFor(original => document.querySelector('ex-chat-scroll [data-user-message]')?.getAttribute('data-user-message') !== original, original);
+  await capture.waitFor(() => document.querySelector('[data-chat-anchor="history-0:reply"] ex-turn'));
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll [data-user-message]')?.getAttribute('data-user-message')), original);
+  assert.equal(await capture.component('ex-session-chat', component => component.store.items().length), 4000);
   assert.equal(await capture.evaluate(() => !!document.querySelector('.history-controls')), false);
   yield { name: 'scrolling-history', inspect: ['ex-chat-scroll', 'ex-composer'] };
 }

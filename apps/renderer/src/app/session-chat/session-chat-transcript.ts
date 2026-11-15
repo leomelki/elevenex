@@ -288,3 +288,47 @@ export function chatExchanges(
     };
   });
 }
+
+/** Per-conversation projection cache. Streaming only rebuilds the changed turn;
+ * completed turns keep their tool parsing, timestamps and readonly view models.
+ * Replacing the map on every projection releases evicted/navigation history. */
+export class ChatTranscriptProjection {
+  private cache = new Map<string, {
+    readonly items: readonly SessionChatItem[];
+    readonly stateKey: string;
+    readonly fresh: boolean;
+    readonly attachments: ChatExchange['attachments'];
+    readonly value: ChatExchange;
+  }>();
+
+  clear(): void { this.cache.clear(); }
+
+  project(items: readonly SessionChatItem[], state: SessionChatState | null, fresh: ReadonlySet<string>, pending?: PendingChatPrompt): readonly ChatExchange[] {
+    const groups: SessionChatItem[][] = [];
+    for (const item of pending ? withPendingPrompt(items, pending) : items) {
+      if (item.kind === 'user' || !groups.length) groups.push([]);
+      groups.at(-1)!.push(item);
+    }
+    const previous = this.cache;
+    const next: typeof this.cache = new Map();
+    this.cache = next;
+    const author = state?.providers?.find(provider => provider.id === state.provider)?.label;
+    return groups.map((group, index) => {
+      const first = group[0]!;
+      const id = first.kind === 'user' ? first.id : 'history-' + first.id;
+      const last = index === groups.length - 1;
+      const viewState = last || !state ? state : { ...state, phase: 'idle' as const, error: null, permission: null, question: null };
+      const stateKey = JSON.stringify([viewState?.provider, author, viewState?.phase, viewState?.error, !!viewState?.permission, !!viewState?.question]);
+      const attachments = id === pending?.id ? pending.attachments : undefined;
+      const cached = previous.get(id);
+      const entry = cached && cached.stateKey === stateKey && cached.fresh === fresh.has(id) && cached.attachments === attachments
+        && cached.items.length === group.length && group.every((item, i) => cached.items[i] === item)
+        ? cached : {
+          items: group, stateKey, fresh: fresh.has(id), attachments,
+          value: { ...chatExchanges(group, viewState, fresh)[0]!, ...(attachments ? { attachments } : {}) },
+        };
+      next.set(id, entry);
+      return entry.value;
+    });
+  }
+}

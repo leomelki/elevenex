@@ -34,6 +34,7 @@ export class DesktopChatController {
     @Query('after') after: string | undefined,
     @Query('before') before: string | undefined,
     @Query('following') following: string | undefined,
+    @Query('historyLimit') historyLimit: string | undefined,
     @Res() response: Response,
   ) {
     const abort = new AbortController();
@@ -47,6 +48,7 @@ export class DesktopChatController {
         before,
         abort.signal,
         following,
+        historyLimit === undefined ? undefined : Number(historyLimit),
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

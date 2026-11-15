@@ -50,7 +50,7 @@ Older engines omit the capability and retain their original send contract.
 
 - `SessionChatClient` calls only named, scope-bound bridge operations. Main owns
   HTTP, credentials, validation, coalescing, deadlines and cancellation.
-- `SessionChatStore` owns one visible transcript window, long reads, mutation
+- `SessionChatStore` owns one retained transcript range, long reads, mutation
   epochs and feedback. It cancels reads on navigation, hiding or destruction.
   Pending writes can finish on their original backend; their replies never
   change a different conversation. No write is replayed by reconnect or refresh.
@@ -68,7 +68,9 @@ Older engines omit the capability and retain their original send contract.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
-  into entry motion; initial history stays still.
+  into entry motion; initial history stays still. Its store-owned `ChatTranscriptProjection`
+  caches unchanged turns, so streaming does not reparse completed tool receipts or
+  reformat thousands of timestamps. Evicted turns release their cache entries.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
@@ -192,18 +194,46 @@ work. Provider APIs still own source transcript reading; their `getHistory`
 interface currently returns full history inside the backend. Only bounded tails
 are copied/projected and transported to the renderer.
 
-History pages contain at most 80 items / 512 KiB; the visible live window retains
-at most 320 items. Scrolling near either edge automatically loads an adjacent page and evicts
-content at the opposite edge above 320 items. Stable row anchors preserve the
-reading position, and loaded history never opts into arrival motion. The optional
-`following`/`next` contract continues forward without gaps while live state keeps
-refreshing. Sending reconciles the live tail first; the draft stays editable while
-reading. Engines without forward cursors retain an automatic return to their tail
-when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
-with explicit access to the original paged content. State, queue, model and
-activity collections have separate finite bounds; main caps the complete reply
-at 4 MiB. Feed expiry/rewrite produces a fresh bounded tail rather than a
-pretend lossless event log.
+The desktop opts into `historyLimit: 2000`: ordinary sessions load in one
+request, subject to a 2 MiB projected-content budget. Omitted limits preserve the
+older 80-item / 512 KiB contract; old engines may ignore the new option and
+continue returning small pages. Incremental events remain capped at 80 and main
+still caps the complete reply at 4 MiB. Only bounded candidate ranges are copied
+before projection, even when the provider holds a much larger source history.
+
+`session-chat-retention` separates the fetch size from memory retention. The
+selected conversation keeps a contiguous range of up to 8,000 records / an
+estimated 16 MiB of serialized UTF-16 data. Scrolling through that range makes
+no further history requests. Above either budget, paging evicts the opposite
+edge and preserves the existing forward-cursor recovery. This is a data budget,
+not a bound on browser heap or component count. Display text stays shortened at
+16,000 characters, with explicit paged access to the original.
+
+Opening/refreshing can prefetch up to three additional older batches, 200ms
+apart, while space remains in memory. These share the existing single request
+lane and include current runtime state; ordinary incremental polling resumes
+afterward. Manual paging, hiding, navigation, commands and disposal cancel the
+same request/timer. There is no unselected-session crawl or mutation replay.
+Edge proximity requests more before the reader reaches unloaded content.
+
+Workspace-owned `SessionChatDrafts` keeps at most five transcript snapshots and
+24 MiB total estimated serialized data, evicting the least recently used.
+Snapshots include both history edges and the feed cursor, so reopening resumes
+incrementally instead of discarding retained history. Different machine scopes
+clear snapshots; verified same-machine recovery may rebind them. An authoritative
+reset replaces its returned tail (or full history), including records removed by
+rewind. A disconnected range keeps forward reconciliation instead of inventing
+a contiguous transcript. Sending reconciles an evicted live tail first.
+
+Connected chat enables `Chat.renderHistoryWindow`. Beyond 40 turns it defers
+unvisited replies until near the viewport, leaving estimated reply space and
+prompt/navigation anchors in the document. The latest four replies and new/live
+turns mount immediately. Visited replies stay mounted to preserve disclosures,
+focus, text selection and Markdown state. Chromium's `content-visibility: auto`
+skips offscreen layout/paint and remembers their real intrinsic heights; this
+is browser rendering containment, not DOM recycling. Large-history navigation
+holds the selected prompt through deferred height corrections and releases on
+user input. Initial history never opts into entry motion.
 
 The integration deliberately hides unavailable dictation, mention,
 fork, side-chat and queue edit/reorder controls. File links request the selected reply’s Changes

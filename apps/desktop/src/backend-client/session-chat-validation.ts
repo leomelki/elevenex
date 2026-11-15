@@ -460,7 +460,9 @@ export function parseChatPage(
   value: unknown,
   taskId: number,
   sessionId: number,
+  historyLimit = 80,
 ): SessionChatPage {
+  if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 2000) throw invalid();
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
     throw invalid();
@@ -472,7 +474,7 @@ export function parseChatPage(
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], 80, item),
+    items: array(raw["items"], historyLimit, item),
     events: array(raw["events"], 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };
