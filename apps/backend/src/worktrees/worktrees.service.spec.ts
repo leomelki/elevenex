@@ -26,7 +26,8 @@ describe('WorktreesService', () => {
     fs.mkdirSync(mainRepoPath);
     // Pin the initial branch: the suite asserts on "main", which is only the
     // default where init.defaultBranch is configured.
-    execSync('git init -b main', { cwd: mainRepoPath });
+    execSync('git init', { cwd: mainRepoPath });
+    execSync('git symbolic-ref HEAD refs/heads/main', { cwd: mainRepoPath });
     execSync('git config user.email "test@test.com"', { cwd: mainRepoPath });
     execSync('git config user.name "Test User"', { cwd: mainRepoPath });
 

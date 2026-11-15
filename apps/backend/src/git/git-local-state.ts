@@ -1,10 +1,11 @@
-import { readFile, stat, lstat } from 'node:fs/promises';
+import { readFile, stat, lstat, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SimpleGit } from 'simple-git';
 import {
   registerGitRepository,
   gitFileScheduler,
   gitRepositoryKey,
+  scheduledGitRaw,
 } from './git-read-scheduler.js';
 import { GitByteLru, GitCacheBudget, copyCacheString } from './git-cache.js';
 
@@ -91,17 +92,18 @@ export function readRepositoryIdentity(
     return cached;
   }
   const pending = git
-    .raw([
-      'rev-parse',
-      '--path-format=absolute',
-      '--show-toplevel',
-      '--git-dir',
-      '--git-common-dir',
-    ])
-    .then((output) => {
-      const [repoRoot, gitDir, commonDir] = output.trimEnd().split('\n');
-      if (!repoRoot || !gitDir || !commonDir)
+    .raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'])
+    .then(async (output) => {
+      // Git may return absolute or cwd-relative paths. Normalize here because
+      // older Git echoes --path-format=absolute as an extra output line.
+      const directories = output.replace(/\r?\n$/, '').split(/\r?\n/);
+      if (directories.length !== 3 || directories.some((value) => !value))
         throw new Error('Cannot resolve repository identity');
+      // Canonicalize aliases too: macOS /var and /private/var (or a user
+      // symlink) must share the same repository concurrency/cache identity.
+      const [repoRoot, gitDir, commonDir] = await Promise.all(
+        directories.map((directory) => realpath(path.resolve(key, directory))),
+      );
       if (identities.get(key) === pending)
         registerGitRepository(key, commonDir);
       return { repoRoot, gitDir, commonDir };
@@ -197,7 +199,15 @@ export async function readGitDirectoryHead(
     await readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => ''),
   );
   const commonDir = common ? path.resolve(gitDir, common) : gitDir;
-  return readRef({ repoRoot: worktreePath, gitDir, commonDir }, 'HEAD');
+  const sha = await readRef(
+    { repoRoot: worktreePath, gitDir, commonDir },
+    'HEAD',
+  );
+  if (sha || !(await stat(path.join(commonDir, 'reftable')).catch(() => null)))
+    return sha;
+  return scheduledGitRaw(worktreePath, ['rev-parse', '--verify', 'HEAD'])
+    .then((value) => value.trim() || null)
+    .catch(() => null);
 }
 
 /** Fixed-path reads only. HEAD/index belong to the worktree; refs/objects to commonDir. */
@@ -210,7 +220,19 @@ export function readLocalRefSnapshot(
   if (existing) return existing;
   const build = async (): Promise<LocalRefSnapshot> => {
     const identity = await readRepositoryIdentity(git, key);
-    const readHead = () => readFile(path.join(identity.gitDir, 'HEAD'), 'utf8');
+    const reftable = await stat(
+      path.join(identity.commonDir, 'reftable'),
+    ).catch(() => null);
+    // Reftable's HEAD file is a placeholder, not the current branch or commit.
+    const readHead = reftable
+      ? async () => {
+          const ref = await git
+            .raw(['symbolic-ref', '--quiet', 'HEAD'])
+            .then((value) => value.trim())
+            .catch(() => null);
+          return ref ? `ref: ${ref}` : git.revparse(['--verify', 'HEAD']);
+        }
+      : () => readFile(path.join(identity.gitDir, 'HEAD'), 'utf8');
     for (let attempt = 0; attempt < 3; attempt++) {
       const head = (await readHead()).trim();
       const branchRef = head.startsWith('ref: ') ? head.slice(5) : null;
@@ -260,9 +282,6 @@ export function readLocalRefSnapshot(
           const sha = await readRef(identity, full);
           if (sha) return sha;
           // Reftable and oversized packed-refs use Git's storage implementation.
-          const reftable = await stat(
-            path.join(identity.commonDir, 'reftable'),
-          ).catch(() => null);
           const packedInfo = await stat(
             path.join(identity.commonDir, 'packed-refs'),
           ).catch(() => null);
@@ -302,12 +321,23 @@ export function clearLocalRefState(worktreePath?: string): void {
 export async function readOriginHead(
   identity: RepositoryIdentity,
 ): Promise<string | null> {
-  const text = (
+  let text = (
     await readFile(
       path.join(identity.commonDir, 'refs/remotes/origin/HEAD'),
       'utf8',
     ).catch(() => '')
   ).trim();
+  if (
+    !text &&
+    (await stat(path.join(identity.commonDir, 'reftable')).catch(() => null))
+  ) {
+    const ref = await scheduledGitRaw(identity.repoRoot, [
+      'symbolic-ref',
+      '--quiet',
+      'refs/remotes/origin/HEAD',
+    ]).catch(() => '');
+    text = ref ? `ref: ${ref.trim()}` : '';
+  }
   return text.startsWith('ref: refs/remotes/')
     ? text.slice('ref: refs/remotes/'.length)
     : null;

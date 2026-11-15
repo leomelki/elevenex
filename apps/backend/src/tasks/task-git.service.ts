@@ -10,6 +10,7 @@ import {
   worktreeSimpleGit,
 } from '../config/system-paths.js';
 import { execFileAsync } from '../terminal/async-process.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 export interface WorktreeStatus {
   dirty: boolean;
@@ -38,13 +39,11 @@ export class TaskGitService {
   private readonly fetches = new Map<string, Promise<void>>();
 
   async repositoryKey(repoPath: string): Promise<string> {
+    // Older Git echoes unknown rev-parse options into stdout with exit code 0.
+    // Resolve the path ourselves instead of using --path-format=absolute.
     const common = (
-      await worktreeSimpleGit(repoPath).raw([
-        'rev-parse',
-        '--path-format=absolute',
-        '--git-common-dir',
-      ])
-    ).trim();
+      await worktreeSimpleGit(repoPath).raw(['rev-parse', '--git-common-dir'])
+    ).replace(/\r?\n$/, '');
     return fs.realpath(path.resolve(repoPath, common));
   }
 
@@ -141,7 +140,7 @@ export class TaskGitService {
         {
           cwd: repoPath,
           env: {
-            ...buildAugmentedEnv(process.env, repoPath),
+            ...isolateGitEnvironment(buildAugmentedEnv(process.env, repoPath)),
             GIT_TERMINAL_PROMPT: '0',
             GCM_INTERACTIVE: 'never',
           },

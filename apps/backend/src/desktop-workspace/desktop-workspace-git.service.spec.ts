@@ -41,7 +41,8 @@ describe('desktop workspace git boundary', () => {
     root = await mkdtemp(join(tmpdir(), 'elevenex-workspace-git-'));
     repository = join(root, 'repository');
     checkout = join(root, 'task');
-    await git(root, 'init', '-b', 'main', repository);
+    await git(root, 'init', repository);
+    await git(repository, 'symbolic-ref', 'HEAD', 'refs/heads/main');
     await git(repository, 'config', 'user.email', 'test@example.test');
     await git(repository, 'config', 'user.name', 'Test');
     await writeFile(join(repository, 'initial'), 'initial');

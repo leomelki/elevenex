@@ -128,6 +128,12 @@ describe('Desktop project repository setup', () => {
       { cwd: root },
     );
     expect(head.stdout.trim()).toMatch(/^[a-f0-9]{40,64}$/);
+    const branch = await processRunner.execFileAsync(
+      'git',
+      ['symbolic-ref', '--short', 'HEAD'],
+      { cwd: root },
+    );
+    expect(branch.stdout.trim()).toBe('main');
   });
   it('validates all paths and canonical duplicates before initializing anything', async () => {
     await expect(

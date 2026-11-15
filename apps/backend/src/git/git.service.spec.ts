@@ -340,6 +340,7 @@ describe('GitService', () => {
       fs.writeFileSync(path.join(repoPath, 'new-file.txt'), 'new content');
       await service.stageFiles(repoPath, ['new-file.txt']);
       const hookPath = path.join(repoPath, '.git', 'hooks', 'pre-commit');
+      fs.mkdirSync(path.dirname(hookPath), { recursive: true });
       fs.writeFileSync(
         hookPath,
         '#!/bin/sh\necho "pre-commit rejected commit" >&2\nexit 1\n',
@@ -1165,7 +1166,11 @@ describe('GitService', () => {
     it('reads the current branch in an unborn repository', async () => {
       const unborn = path.join(tmpDir, 'unborn');
       fs.mkdirSync(unborn);
-      execFileSync('git', ['init', '-b', 'new-branch'], {
+      execFileSync('git', ['init'], {
+        cwd: unborn,
+        stdio: 'pipe',
+      });
+      execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/new-branch'], {
         cwd: unborn,
         stdio: 'pipe',
       });

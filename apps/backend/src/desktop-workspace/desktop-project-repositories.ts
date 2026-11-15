@@ -3,6 +3,7 @@ import { mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { execFileAsync } from '../terminal/async-process.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 /** Only network Git transports; never Git's executable helpers or local paths. */
 export function cloneRepositoryName(value: string): string | null {
@@ -130,7 +131,14 @@ export async function prepareProjectRepositories(
       entry.initialize &&
       !(await stat(join(entry.path, '.git')).catch(() => null))
     ) {
-      await git(['init', '--initial-branch=main'], entry.path, signal);
+      // --initial-branch requires Git 2.28; initialize the unborn branch with
+      // plumbing supported by the Git shipped with Ubuntu 20.04 as well.
+      await git(['init'], entry.path, signal);
+      await git(
+        ['symbolic-ref', 'HEAD', 'refs/heads/main'],
+        entry.path,
+        signal,
+      );
       // An empty root commit enables isolated task workspaces without committing the person's files.
       await git(
         [
@@ -166,7 +174,7 @@ async function git(
       timeout: 120_000,
       maxBuffer: 64 * 1024,
       env: {
-        ...process.env,
+        ...isolateGitEnvironment(process.env),
         GIT_TERMINAL_PROMPT: '0',
         GIT_SSH_COMMAND: 'ssh -oBatchMode=yes -oStrictHostKeyChecking=yes',
       },

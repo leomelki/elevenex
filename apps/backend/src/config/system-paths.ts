@@ -4,6 +4,7 @@ import { basename, join } from 'path';
 import { spawn } from 'child_process';
 import { Logger } from '@nestjs/common';
 import simpleGit, { SimpleGit } from 'simple-git';
+import { isolateGitEnvironment } from './git-environment.js';
 import {
   assertSubprocessEnvironment,
   ShellEnvironmentProjection,
@@ -687,7 +688,9 @@ export function worktreeSimpleGit(
   worktreePath: string,
   options: { readOnly?: boolean } = {},
 ): SimpleGit {
-  const env = buildAugmentedEnv(process.env, worktreePath);
+  const env = isolateGitEnvironment(
+    buildAugmentedEnv(process.env, worktreePath),
+  );
   delete env.GIT_PAGER;
   delete env.PAGER;
   // Gitlinks can point to nested worktrees as well as submodules. Changes

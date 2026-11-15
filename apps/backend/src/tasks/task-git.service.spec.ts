@@ -4,6 +4,7 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -86,7 +87,8 @@ describe('TaskGitService checkout inspection with real Git', () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-task-git-')));
     service = new TaskGitService();
     const git = worktreeSimpleGit(root);
-    await git.raw(['init', '--initial-branch=main']);
+    await git.raw(['init']);
+    await git.raw(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     await git.addConfig('user.name', 'Task tests');
     await git.addConfig('user.email', 'tasks@example.test');
     await git.addConfig('core.untrackedCache', 'true');
@@ -104,6 +106,37 @@ describe('TaskGitService checkout inspection with real Git', () => {
     if (optionalLocks === undefined) delete process.env.GIT_OPTIONAL_LOCKS;
     else process.env.GIT_OPTIONAL_LOCKS = optionalLocks;
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('shares one canonical repository key across main, linked, nested and aliased paths', async () => {
+    const linked = join(root, 'linked checkout');
+    const nested = join(linked, 'nested', 'deeper');
+    const alias = join(root, 'repo alias');
+    await worktreeSimpleGit(root).raw([
+      'worktree',
+      'add',
+      '--detach',
+      linked,
+      'HEAD',
+    ]);
+    await symlink(root, alias, 'junction');
+
+    const expected = await realpath(join(root, '.git'));
+    for (const checkout of [root, join(root, 'nested'), linked, nested, alias])
+      expect(await service.repositoryKey(checkout)).toBe(expected);
+  });
+
+  it('preserves a separate Git directory containing Unicode and significant whitespace', async () => {
+    const directory = join(
+      root,
+      process.platform === 'win32' ? 'git metadata café' : 'git metadata café ',
+    );
+    await worktreeSimpleGit(root).raw([
+      'init',
+      '--separate-git-dir',
+      directory,
+    ]);
+    expect(await service.repositoryKey(root)).toBe(await realpath(directory));
   });
 
   it('saves index caches only when asked to persist them', async () => {

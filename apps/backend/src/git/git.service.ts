@@ -6,6 +6,7 @@ import { execFile, spawn, type ExecFileOptions } from 'node:child_process';
 import * as path from 'node:path';
 import { SimpleGit, StatusResult, LogResult } from 'simple-git';
 import type { RemoteWithRefs } from 'simple-git';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 import {
   buildAugmentedEnv,
@@ -1051,7 +1052,9 @@ export class GitService {
       const child = spawn('git', ['ls-remote', '--heads', '--', remote, ref], {
         cwd: worktreePath,
         env: {
-          ...buildAugmentedEnv(process.env, worktreePath),
+          ...isolateGitEnvironment(
+            buildAugmentedEnv(process.env, worktreePath),
+          ),
           GIT_TERMINAL_PROMPT: '0',
         },
         stdio: ['ignore', 'pipe', 'ignore'],

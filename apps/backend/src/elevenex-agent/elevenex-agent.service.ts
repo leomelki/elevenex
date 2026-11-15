@@ -7,6 +7,7 @@ import { elevenexMcpUrl } from '../mcp/session-tool-context.js';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
+import { isolateGitEnvironment } from '../config/git-environment.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -164,23 +165,26 @@ export class ElevenexAgentService implements OnModuleInit {
       // Not a repo yet — initialize below.
     }
 
-    await execFileAsync('git', ['init'], { cwd: dir });
+    const options = { cwd: dir, env: isolateGitEnvironment(process.env) };
+    await execFileAsync('git', ['init'], options);
     // Local identity so the seed commit succeeds even on machines with no global
     // git user configured.
-    await execFileAsync('git', ['config', 'user.name', 'Elevenex Agent'], {
-      cwd: dir,
-    });
+    await execFileAsync(
+      'git',
+      ['config', 'user.name', 'Elevenex Agent'],
+      options,
+    );
     await execFileAsync(
       'git',
       ['config', 'user.email', 'agent@elevenex.local'],
-      { cwd: dir },
+      options,
     );
     await writeFile(join(dir, '.gitkeep'), '', 'utf-8');
-    await execFileAsync('git', ['add', '.gitkeep'], { cwd: dir });
+    await execFileAsync('git', ['add', '.gitkeep'], options);
     await execFileAsync(
       'git',
       ['commit', '--no-gpg-sign', '-m', 'chore: init elevenex agent workspace'],
-      { cwd: dir },
+      options,
     );
   }
 
