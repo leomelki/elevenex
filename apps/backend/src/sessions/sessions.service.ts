@@ -1,4 +1,5 @@
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
+import { hasStartedAgentConversation, sessionAgentProvider, type SessionProviderColumns } from './session-provider.js';
 import {
   Inject,
   Injectable,
@@ -62,17 +63,6 @@ type SessionCompletionKind = (typeof VALID_COMPLETION_KINDS)[number];
 interface SessionListOptions {
   includeHidden?: boolean;
   includeFinishedTasks?: boolean;
-}
-
-/**
- * The per-provider session-id columns. A provider counts as "started" once its
- * column holds anything other than the `-1` placeholder.
- */
-interface SessionProviderColumns {
-  claudeSessionId?: string | null;
-  codexSessionId?: string | null;
-  piSessionPath?: string | null;
-  opencodeSessionId?: string | null;
 }
 
 @Injectable()
@@ -700,54 +690,15 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
-  /**
-   * Per-provider session-id columns, most-specific first. Inference walks this
-   * list in order, so adding a provider means adding one row here rather than
-   * another arm to a nested conditional.
-   */
-  private static readonly PROVIDER_SESSION_COLUMNS = [
-    ['opencode', 'opencodeSessionId'],
-    ['pi', 'piSessionPath'],
-    ['codex', 'codexSessionId'],
-    ['claude', 'claudeSessionId'],
-  ] as const;
-
-  private startedProviders(
-    session: SessionProviderColumns,
-  ): Set<AgentProviderId> {
-    const started = new Set<AgentProviderId>();
-    for (const [provider, column] of SessionsService.PROVIDER_SESSION_COLUMNS) {
-      const value = session[column];
-      if (value && value !== '-1') started.add(provider);
-    }
-    return started;
-  }
-
   /** A native conversation identity locks harness selection across all clients. */
   hasStartedAgentRuntime(session: SessionProviderColumns): boolean {
-    return this.startedProviders(session).size > 0;
+    return hasStartedAgentConversation(session);
   }
 
   private withInferredActiveAgentProvider<
     T extends SessionProviderColumns & { activeAgentProvider?: string | null },
   >(session: T): T & { activeAgentProvider: AgentProviderId } {
-    const started = this.startedProviders(session);
-    const persisted = session.activeAgentProvider?.trim();
-
-    // Trust the persisted choice unless it is the bare 'claude' default that
-    // was never actually started while some other provider was — that pairing
-    // means the column is stale, not chosen.
-    const persistedIsStaleDefault =
-      persisted === 'claude' && !started.has('claude') && started.size > 0;
-
-    if (persisted && !persistedIsStaleDefault) {
-      return { ...session, activeAgentProvider: persisted };
-    }
-
-    const inferred = SessionsService.PROVIDER_SESSION_COLUMNS.find(
-      ([provider]) => started.has(provider),
-    );
-    return { ...session, activeAgentProvider: inferred?.[0] ?? 'claude' };
+    return { ...session, activeAgentProvider: sessionAgentProvider(session) };
   }
 
   async markWorktreeContextInjected(id: number) {

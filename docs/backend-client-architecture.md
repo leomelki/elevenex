@@ -301,6 +301,18 @@ client integration does not authorize data loss or destructive migrations.
 
 ## Validation and current limits
 
+Session navigation derives inactive historical activity from persisted lifecycle,
+completion markers and native conversation IDs. A previously used conversation
+without a completion timestamp is Done, while an unused session is Queued.
+Explicit live provider states still take priority. The shared provider inference
+also repairs legacy default-harness mismatches in navigation replies. Quiet idle
+snapshots are omitted from the bounded live cache so they cannot evict active
+work; lifecycle changes and authoritative idle hooks release stale live entries.
+These reads do not hydrate runtimes, read histories or backfill timestamps.
+Codex and Pi persist successful completion markers after final transcript/change
+evidence is available. Interrupted, failed and invalidated turns do not create
+unseen replies, and marker-storage failures never replay agent work.
+
 Chat state optionally supplies `unseenCompletionAt` (an ISO completion version).
 Its presence advertises support for the additive `mark-seen` chat command.
 Main validates both forms; the backend checks task/session membership and clears

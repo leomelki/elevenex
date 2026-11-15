@@ -4,6 +4,8 @@ import {
 } from './desktop-project-repositories.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { inactiveSessionStatus } from './desktop-session-status.js';
+import { sessionAgentProvider } from '../sessions/session-provider.js';
 import {
   BadRequestException,
   ConflictException,
@@ -198,14 +200,8 @@ export class DesktopWorkspaceService {
       name: row.name ?? 'Session',
       status:
         this.activity?.status(row) ??
-        (row.status === 'archived'
-          ? 'archived'
-          : row.hasUnreviewedCompletion
-            ? 'review'
-            : row.lastCompletionAt || row.status === 'stopped'
-              ? 'done'
-              : 'queued'),
-      provider: row.activeAgentProvider,
+        inactiveSessionStatus(row),
+      provider: sessionAgentProvider(row),
       updatedAt: row.updatedAt,
     };
   }

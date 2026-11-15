@@ -16,6 +16,42 @@ import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
+  it.each(['completed', 'interrupted', 'failed'])(
+    'records an unseen reply only for a successful turn (%s)', async status => {
+      const { service, sessionsService, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      try {
+        const pending = service.submitPrompt(7, 'Check completion tracking');
+        await new Promise<void>(resolve => setImmediate(resolve));
+        wire.notificationHandler({ method: 'turn/completed', params: {
+          threadId: 'thread-1', turn: { id: 'turn-1', status, ...(status === 'failed' ? { error: { message: 'Failed turn' } } : {}) },
+        } });
+        await pending;
+        if (status === 'completed') expect(sessionsService.markCompletionUnreviewed).toHaveBeenCalledWith(7, 'completed');
+        else expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+        expect((await service.getRuntimeState(7)).runPhase).toBe(status === 'failed' ? 'error' : 'idle');
+      } finally { service.onModuleDestroy(); }
+    },
+  );
+  it('records completion after final evidence and retains successful output if marker storage fails', async () => {
+    let finish!: () => void;
+    const finishing = new Promise<void>(resolve => { finish = resolve; });
+    const changes = { begin: jest.fn(async () => undefined), finish: jest.fn(async () => { await finishing; return undefined; }) };
+    const { service, sessionsService, appServer } = createService(undefined, changes);
+    sessionsService.markCompletionUnreviewed.mockRejectedValueOnce(new Error('Temporary database failure'));
+    const wire = wireAppServerTurn(appServer);
+    try {
+      const pending = service.submitPrompt(7, 'Reply successfully');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      wire.notificationHandler({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(changes.finish).toHaveBeenCalled();
+      expect(sessionsService.markCompletionUnreviewed).not.toHaveBeenCalled();
+      finish(); await pending;
+      expect(sessionsService.markCompletionUnreviewed).toHaveBeenCalledTimes(1);
+      expect((await service.getRuntimeState(7)).runPhase).toBe('idle');
+    } finally { finish(); service.onModuleDestroy(); }
+  });
   it('populates and updates Activity from child events without opening agent history', async () => {
     const { service, sessionsService, appServer, historyService } =
       createService();
@@ -930,7 +966,7 @@ describe('CodexRuntimeService', () => {
         actionLabel: null,
         backgroundActive: false,
       },
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     hooksService.updateRuntimeActivity.mockClear();
     await service.getSnapshot(7);
@@ -944,7 +980,7 @@ describe('CodexRuntimeService', () => {
         actionLabel: null,
         backgroundActive: false,
       },
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
   });
 
@@ -1126,7 +1162,7 @@ describe('CodexRuntimeService', () => {
         activityStatus: 'waiting',
         actionLabel: expect.stringContaining('stop'),
       }),
-      { authoritative: true },
+      { authoritative: true, provider: 'codex' },
     );
     await expect(service.resumePendingPrompts(7)).rejects.toThrow(
       'Retry stopping',
@@ -1571,6 +1607,7 @@ describe('CodexRuntimeService', () => {
         .fn<() => Promise<typeof session>>()
         .mockResolvedValue(session),
       updateStatus: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
+      markCompletionUnreviewed: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
       updateCodexSessionId: jest
         .fn<() => Promise<unknown>>()
         .mockResolvedValue({}),

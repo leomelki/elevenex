@@ -636,6 +636,7 @@ export class PiRuntimeService
       this.initializingRuns.delete(sessionId);
 
       let changeCapture: TurnChangeCapture | undefined;
+      let completed = false;
       try {
         changeCapture = await this.turnChanges?.begin(
           sessionId,
@@ -663,7 +664,9 @@ export class PiRuntimeService
         });
         await completionPromise;
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
+        if (run.interruptRequested) { this.finalizeInterruptedRun(sessionId); return; }
         this.finishRun(sessionId);
+        completed = !state.lastError;
       } catch (error) {
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
         if (run?.interruptRequested) {
@@ -678,37 +681,50 @@ export class PiRuntimeService
         this.emitEvent({ type: 'error', payload: { sessionId, message } });
         this.emitRunState(sessionId);
       } finally {
-        const changes = await this.turnChanges?.finish(
-          changeCapture,
-          state.piSessionPath,
-        );
-        if (changes && ownsSession() && this.activeRuns.get(sessionId) === run)
-          this.pushItem(sessionId, changes);
-        if (this.activeRuns.get(sessionId) === run)
-          this.activeRuns.delete(sessionId);
-        if (ownsSession()) this.scheduleIdleShutdown(sessionId);
-        if (
-          ownsSession() &&
-          !state.lastError &&
-          !state.queuePaused &&
-          state.pendingPrompts.length > 0
-        ) {
-          const [next, ...rest] = state.pendingPrompts;
-          state.pendingPrompts = rest;
-          this.emitRunState(sessionId);
-          setImmediate(() => {
-            if (!ownsSession()) return;
-            this.submitPrompt(
-              sessionId,
-              next.prompt,
-              undefined,
-              next.images,
-            ).catch((error) => {
-              this.logger.error(
-                `Pending Pi prompt failed session=${sessionId}: ${String(error)}`,
-              );
+        let changesFinished = false;
+        try {
+          const changes = await this.turnChanges?.finish(
+            changeCapture,
+            state.piSessionPath,
+          );
+          if (changes && ownsSession() && this.activeRuns.get(sessionId) === run)
+            this.pushItem(sessionId, changes);
+          if (completed && ownsSession() && this.activeRuns.get(sessionId) === run && !run.interruptRequested) {
+            try {
+              await this.sessionsService.markCompletionUnreviewed(sessionId, 'completed');
+            } catch (error) {
+              this.logger.warn(`Failed to record Pi completion for session ${sessionId}: ${String(error)}`);
+            }
+          }
+          changesFinished = true;
+        } finally {
+          if (this.activeRuns.get(sessionId) === run)
+            this.activeRuns.delete(sessionId);
+          if (ownsSession()) this.scheduleIdleShutdown(sessionId);
+          if (
+            changesFinished &&
+            ownsSession() &&
+            !state.lastError &&
+            !state.queuePaused &&
+            state.pendingPrompts.length > 0
+          ) {
+            const [next, ...rest] = state.pendingPrompts;
+            state.pendingPrompts = rest;
+            this.emitRunState(sessionId);
+            setImmediate(() => {
+              if (!ownsSession()) return;
+              this.submitPrompt(
+                sessionId,
+                next.prompt,
+                undefined,
+                next.images,
+              ).catch((error) => {
+                this.logger.error(
+                  `Pending Pi prompt failed session=${sessionId}: ${String(error)}`,
+                );
+              });
             });
-          });
+          }
         }
       }
     } catch (error) {
@@ -1878,6 +1894,7 @@ export class PiRuntimeService
     this.hooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state),
+      { authoritative: true, provider: 'pi' },
     );
     this.emitEvent({
       type: 'run_state',

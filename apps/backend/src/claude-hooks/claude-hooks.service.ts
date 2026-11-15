@@ -167,7 +167,7 @@ export class ClaudeHooksService extends EventEmitter {
   updateRuntimeActivity(
     sessionId: number,
     activity: ClaudeSessionActivity,
-    options: { authoritative?: boolean } = {},
+    options: { authoritative?: boolean; provider?: string } = {},
   ): void {
     const previous = this.getActivity(sessionId);
     // Native providers own their turn state. A leftover TUI hook must not
@@ -189,7 +189,7 @@ export class ClaudeHooksService extends EventEmitter {
       return;
     }
 
-    this.emitStatusChanged(sessionId);
+    this.emitStatusChanged(sessionId, options.provider);
   }
 
   async handleHookEvent(
@@ -344,12 +344,13 @@ export class ClaudeHooksService extends EventEmitter {
     );
   }
 
-  private emitStatusChanged(sessionId: number): void {
+  private emitStatusChanged(sessionId: number, provider?: string): void {
     const activity = this.getActivity(sessionId);
     this.emit('status-changed', {
       sessionId,
       status: activity.activityStatus,
       ...activity,
+      ...(provider ? { provider } : {}),
     });
   }
 

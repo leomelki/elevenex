@@ -19,7 +19,8 @@ export function workspaceSessionStatus(session: WorkspaceSession): SessionStatus
     case 'attention': case 'waiting': case 'waiting_for_input': return 'attention';
     case 'failed': case 'error': return 'failed';
     case 'review': return 'review';
-    case 'completed': case 'done': case 'stopped': case 'archived': return 'done';
+    case 'completed': case 'done': case 'stopped': case 'archived':
+    case 'idle': case 'active': return 'done';
     default: return 'queued';
   }
 }

@@ -49,6 +49,20 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   ];
   private failReads = false;
   private navigationRevision = 0;
+  /** Older engine activity replies alongside real queued/live/unseen states. */
+  legacySessionActivity(): void {
+    this.taskRows = this.taskRows.filter(task => task.id === 11);
+    this.sessionRows = [
+      { id: 101, taskId: 11, repoId: 1, name: 'Previously completed conversation', provider: 'codex', status: 'idle', updatedAt: stamp },
+      { id: 102, taskId: 11, repoId: 1, name: 'Restored conversation', provider: 'codex', status: 'active', updatedAt: stamp },
+      { id: 103, taskId: 11, repoId: 1, name: 'Finished while you were away', provider: 'codex', status: 'review', updatedAt: stamp },
+      { id: 104, taskId: 11, repoId: 1, name: 'New conversation', provider: 'codex', status: 'created', updatedAt: stamp },
+      { id: 105, taskId: 11, repoId: 1, name: 'Agent currently working', provider: 'codex', status: 'running', updatedAt: stamp },
+    ];
+    this.chat.scenario('reply-only', 101);
+    this.chat.completeUnseen(103, '2026-11-15T00:00:00.000Z');
+    this.navigationRevision++;
+  }
   completeUnseen(sessionId: number, at: string): void {
     this.chat.completeUnseen(sessionId, at);
     this.sessionRows = this.sessionRows.map(row => row.id === sessionId ? { ...row, status: 'review' } : row);
