@@ -1,4 +1,7 @@
 import { promises as fs } from 'fs';
+jest.mock('./user-pty-manager.service.js', () => ({
+  UserPtyManager: class UserPtyManager {},
+}));
 import { UserTerminalService } from './user-terminal.service.js';
 
 function createDeferred<T>() {

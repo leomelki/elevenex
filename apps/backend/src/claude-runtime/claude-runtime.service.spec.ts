@@ -1555,10 +1555,12 @@ describe('ClaudeRuntimeService', () => {
         environmentReady = true;
         return Promise.resolve({ PATH: '/updated/bin' });
       });
-    const lookup = jest.spyOn(paths, 'findBinary').mockImplementation(() => {
-      expect(environmentReady).toBe(true);
-      return '/updated/bin/claude';
-    });
+    const lookup = jest
+      .spyOn(paths, 'findBinaryAsync')
+      .mockImplementation(() => {
+        expect(environmentReady).toBe(true);
+        return Promise.resolve('/updated/bin/claude');
+      });
     jest.mocked(query).mockImplementation(() => {
       throw new Error('Fixture stops before contacting Claude');
     });

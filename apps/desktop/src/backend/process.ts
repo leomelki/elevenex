@@ -8,6 +8,9 @@ import { boundedBody } from './download';
 import type { InstalledBackend } from './install';
 import { signalBackendTree } from './process-tree';
 
+// Explicit bounded backend tuning only; never forward arbitrary runtime overrides.
+const SHELL_TUNING = /^ELEVENEX_SHELL_(?:CAPTURE_TIMEOUT_MS|QUEUE_TIMEOUT_MS|CAPTURE_CONCURRENCY|MAX_PENDING_CAPTURES|CACHE_ENTRIES|CACHE_BYTES|COLD_WAIT_MS|BOOTSTRAP_WAIT_MS)$/;
+
 export interface BackendExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
 export interface RunningBackend {
   readonly url: string;
@@ -35,7 +38,7 @@ function environment(installation: InstalledBackend, root: string, port: number,
   const env = { ...process.env };
   // Do not inherit Electron or Node injection/debug flags into downloaded code.
   for (const key of Object.keys(env)) {
-    if (key.startsWith('ELEVENEX_') || key.startsWith('ELECTRON_') || key === 'NODE_OPTIONS' || key === 'NODE_PATH') delete env[key];
+    if ((key.startsWith('ELEVENEX_') && !SHELL_TUNING.test(key)) || key.startsWith('ELECTRON_') || key === 'NODE_OPTIONS' || key === 'NODE_PATH') delete env[key];
   }
   return {
     ...env, NODE_ENV: 'production', DB_PATH: join(root, 'data/elevenex.db'),

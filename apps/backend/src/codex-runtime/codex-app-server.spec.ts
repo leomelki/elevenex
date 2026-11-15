@@ -1,11 +1,14 @@
 import { CodexAppServerClient } from './codex-app-server.js';
-import { codexBinaryIdentity, resolveCodexBinary } from './codex-binary.js';
+import {
+  codexBinaryIdentity,
+  resolveCodexBinaryAsync,
+} from './codex-binary.js';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 jest.mock('./codex-binary.js', () => ({
-  resolveCodexBinary: jest.fn(() => '/mock/codex'),
+  resolveCodexBinaryAsync: jest.fn(() => Promise.resolve('/mock/codex')),
   codexBinaryIdentity: jest.fn(),
 }));
 
@@ -27,7 +30,7 @@ describe('Codex CLI replacement', () => {
     const server = new CodexAppServerClient();
     try {
       const ready = server.ensureReady();
-      expect(resolveCodexBinary).not.toHaveBeenCalled();
+      expect(resolveCodexBinaryAsync).not.toHaveBeenCalled();
       server.onModuleDestroy();
       finish({ PATH: '/ready/bin' });
       await expect(ready).rejects.toThrow('shutting down');
@@ -40,7 +43,9 @@ describe('Codex CLI replacement', () => {
 
   it('explains which machine needs the CLI and permits retry after a spawn failure', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'elevenex-missing-codex-'));
-    jest.mocked(resolveCodexBinary).mockReturnValue(join(directory, 'codex'));
+    jest
+      .mocked(resolveCodexBinaryAsync)
+      .mockResolvedValue(join(directory, 'codex'));
     const server = new CodexAppServerClient();
     const notifications: string[] = [];
     const unsubscribe = server.onNotification(({ method }) =>

@@ -59,6 +59,18 @@ describe('subprocess environment budget', () => {
 });
 
 describe('shell environment ownership', () => {
+  it('composes fresh child environments while respecting project unsets and current caller overrides', () => {
+    const projection = new ShellEnvironmentProjection();
+    const caller = { ORIGINAL: 'launch', PROJECT: 'global', REMOVED: 'global' };
+    projection.apply(caller, { ORIGINAL: 'launch' }, caller);
+    const first = projection.compose({ PROJECT: 'worktree' }, caller);
+    expect(first).toEqual({ ORIGINAL: 'launch', PROJECT: 'worktree' });
+    caller.PROJECT = 'explicit';
+    expect(projection.compose({ PROJECT: 'worktree' }, caller).PROJECT).toBe(
+      'explicit',
+    );
+    expect(first.PROJECT).toBe('worktree');
+  });
   it('retains the last good projection atomically when the next one is too large', () => {
     const projection = new ShellEnvironmentProjection();
     const target: NodeJS.ProcessEnv = { PATH: '/launch/bin' };

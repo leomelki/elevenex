@@ -14,6 +14,9 @@ import { backendSocketPath, queryDaemon, publishDaemon, verifyHealthRequest, ver
 import { ensureDaemon } from './runtime-start';
 import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
 
+// Explicit bounded backend tuning only; never forward arbitrary runtime overrides.
+const SHELL_TUNING = /^ELEVENEX_SHELL_(?:CAPTURE_TIMEOUT_MS|QUEUE_TIMEOUT_MS|CAPTURE_CONCURRENCY|MAX_PENDING_CAPTURES|CACHE_ENTRIES|CACHE_BYTES|COLD_WAIT_MS|BOOTSTRAP_WAIT_MS)$/;
+
 async function backendReady(socketPath: string, version: string, signal: AbortSignal): Promise<boolean> {
   return new Promise(resolve => {
     const req = request({ socketPath, path: '/api/info', method: 'GET', signal }, res => {
@@ -124,7 +127,7 @@ async function daemon(root: string, installation: string, version: string, port:
       if (stopping) break;
       const env = { ...process.env };
       for (const key of Object.keys(env)) {
-        if (key.startsWith('ELEVENEX_') || key.startsWith('ELECTRON_') || ['NODE_OPTIONS', 'NODE_PATH', 'SSH_AUTH_SOCK'].includes(key)) delete env[key];
+        if ((key.startsWith('ELEVENEX_') && !SHELL_TUNING.test(key)) || key.startsWith('ELECTRON_') || ['NODE_OPTIONS', 'NODE_PATH', 'SSH_AUTH_SOCK'].includes(key)) delete env[key];
       }
       // Reuse the local backend's process lease. Daemon death closes its IPC
       // pipe, so a replacement daemon cannot leave an orphan database owner.

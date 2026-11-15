@@ -10,7 +10,7 @@ import {
   buildShellCommandArgs,
   buildTmuxInlineEnvPrefix,
   findBinary,
-  getDefaultUserShell,
+  getDefaultUserShellAsync,
   normalizeShellForPlatform,
 } from '../config/system-paths.js';
 import { execFileAsync, execFileQuiet } from '../terminal/async-process.js';
@@ -28,7 +28,7 @@ jest.mock('../config/system-paths.js', () => ({
   ]),
   buildTmuxInlineEnvPrefix: jest.fn(() => "PATH='/repo/bin'"),
   findBinary: jest.fn(),
-  getDefaultUserShell: jest.fn(() => '/bin/sh'),
+  getDefaultUserShellAsync: jest.fn().mockResolvedValue('/bin/sh'),
   normalizeShellForPlatform: jest.fn((shell: string) => shell),
 }));
 
@@ -80,7 +80,7 @@ describe('ActionPtyManager', () => {
   const mockBuildShellCommandArgs = jest.mocked(buildShellCommandArgs);
   const mockBuildTmuxInlineEnvPrefix = jest.mocked(buildTmuxInlineEnvPrefix);
   const mockFindBinary = jest.mocked(findBinary);
-  const mockGetDefaultUserShell = jest.mocked(getDefaultUserShell);
+  const mockGetDefaultUserShell = jest.mocked(getDefaultUserShellAsync);
   const mockNormalizeShellForPlatform = jest.mocked(normalizeShellForPlatform);
   const mockShouldUseTmux = jest.mocked(shouldUseTmux);
 
@@ -117,7 +117,7 @@ describe('ActionPtyManager', () => {
       '-lc',
       command,
     ]);
-    mockGetDefaultUserShell.mockReturnValue('/bin/sh');
+    mockGetDefaultUserShell.mockResolvedValue('/bin/sh');
     mockNormalizeShellForPlatform.mockImplementation((shell) => shell);
     mockShouldUseTmux.mockReturnValue(true);
     mockExecFileQuiet.mockResolvedValue(undefined);

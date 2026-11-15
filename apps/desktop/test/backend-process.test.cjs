@@ -20,6 +20,7 @@ createServer((request, response) => {
   else response.end(JSON.stringify({ pid: process.pid, worker: worker.pid,
     db: process.env.DB_PATH, dataRoot: process.env.ELEVENEX_DATA_ROOT, bind: process.env.ELEVENEX_BIND_HOST,
     nodeOptions: process.env.NODE_OPTIONS, supervised: process.env.ELEVENEX_BACKEND_SUPERVISED,
+    shellTimeout: process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS, unknownShellTuning: process.env.ELEVENEX_SHELL_UNKNOWN,
     runtimeRoot: process.env.ELEVENEX_BACKEND_RUNTIME_ROOT, inheritedOverride: process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN,
   }));
 }).listen(Number(process.env.ELEVENEX_PROXY_PORT), process.env.ELEVENEX_BIND_HOST);
@@ -50,6 +51,10 @@ function alive(pid) {
 
 test('starts on loopback with isolated data, verifies readiness, and stops the whole process tree', async t => {
   const { root, installation } = await setup(t);
+  const oldShell = process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS, oldUnknown = process.env.ELEVENEX_SHELL_UNKNOWN;
+  process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS = '60000';
+  process.env.ELEVENEX_SHELL_UNKNOWN = 'blocked';
+  t.after(() => { if (oldShell === undefined) delete process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS; else process.env.ELEVENEX_SHELL_CAPTURE_TIMEOUT_MS = oldShell; if (oldUnknown === undefined) delete process.env.ELEVENEX_SHELL_UNKNOWN; else process.env.ELEVENEX_SHELL_UNKNOWN = oldUnknown; });
   const oldOverride = process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN;
   process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = 'https://untrusted.test';
   t.after(() => { if (oldOverride === undefined) delete process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN; else process.env.ELEVENEX_PROXY_UPSTREAM_ORIGIN = oldOverride; });
@@ -59,6 +64,8 @@ test('starts on loopback with isolated data, verifies readiness, and stops the w
   assert.equal(info.db, join(root, 'data/elevenex.db'));
   assert.equal(info.dataRoot, join(root, 'data'));
   assert.equal(info.bind, '127.0.0.1');
+  assert.equal(info.shellTimeout, '60000');
+  assert.equal(info.unknownShellTuning, undefined);
   assert.equal(info.supervised, '1');
   assert.equal(info.runtimeRoot, root);
   assert.equal(info.inheritedOverride, undefined);
