@@ -334,8 +334,14 @@ cross the bridge. Their remaining percentages drive the clock ring, delayed
 hover/focus card, menu bars and low/exhausted notices above the composer.
 Reset times use the user's locale and refresh while mounted. Passing a reset
 does not invent replenished allowance: the display waits for a provider update.
-Claude data becomes available when its SDK emits subscription rate-limit events;
-Codex uses its existing coalesced account-limit refresh and notifications.
+Claude reads subscription windows through the optional native SDK usage API on
+prewarm, runtime reads and activity, with coalescing and a one-minute cache per
+runtime (including failures). The read skips behavioral transcript scans, never
+starts a process, and publishes independently of context/model reads. Its
+availability flag establishes subscription data before the first prompt; explicit
+API-key metadata suppresses it. Live subscription rate-limit events remain a
+fallback for older CLIs and supersede pending reads. Retired runtime replies are
+discarded. Codex uses its existing coalesced account-limit refresh and notifications.
 No extra repository reads, account credential access or renderer networking is added.
 The notice follows the design's context/quota priority and returns focus to the
 composer on dismissal. Automatic plan pausing/resume, Send at reset, cross-agent

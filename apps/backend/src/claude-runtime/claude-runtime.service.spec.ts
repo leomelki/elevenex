@@ -27,6 +27,7 @@ import {
   getSubagentMessages,
   listSubagents,
   query,
+  type SDKControlGetUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
   ClaudeRuntimeService,
@@ -282,6 +283,226 @@ describe('ClaudeRuntimeService', () => {
         packageAnchors: [],
       }),
     ).toEqual({ version: 'unknown' });
+  });
+
+  describe('subscription usage reads', () => {
+    const usage: SDKControlGetUsageResponse = {
+      session: {
+        total_cost_usd: 0,
+        total_api_duration_ms: 0,
+        total_duration_ms: 0,
+        total_lines_added: 0,
+        total_lines_removed: 0,
+        model_usage: {},
+      },
+      subscription_type: 'max',
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 12, resets_at: '2026-11-15T12:00:00Z' },
+      },
+      behaviors: null,
+    };
+    function attachRuntime() {
+      const runtime = new ClaudeSessionRuntime({
+        sessionId: 7,
+        options: {},
+        onMessage: () => undefined,
+        onFatal: () => undefined,
+        onClosed: () => undefined,
+        prewarmIdleShutdownMs: 90_000,
+        postTurnIdleShutdownMs: 300_000,
+      });
+      service['sessionRuntimes'].set(7, runtime);
+      return {
+        runtime,
+        read: jest.spyOn(runtime, 'getUsage').mockResolvedValue(usage),
+      };
+    }
+    const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    it('publishes subscription usage on prewarm before a prompt or rate-limit event', async () => {
+      const { runtime, read } = attachRuntime();
+      jest.spyOn(runtime, 'ensureStarted').mockResolvedValue();
+      const events: unknown[] = [];
+      service.on('event', (event) => events.push(event));
+      await service.prewarmSession(7);
+      await settle();
+      expect(read).toHaveBeenCalledTimes(1);
+      const state = await service.getRuntimeState(7);
+      expect(state.planUsage).toMatchObject({
+        provider: 'claude',
+        planName: 'Max',
+        windows: [{ remainingPercentage: 88 }],
+      });
+      expect(events).toContainEqual({
+        type: 'plan_usage',
+        payload: {
+          sessionId: 7,
+          planUsage: state.planUsage,
+        },
+      });
+    });
+
+    it('coalesces concurrent reads, throttles successful reads and refreshes after the TTL', async () => {
+      const { read } = attachRuntime();
+      let resolve!: (value: SDKControlGetUsageResponse) => void;
+      read.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      await Promise.all(
+        Array.from({ length: 20 }, () => service.getRuntimeState(7)),
+      );
+      expect(read).toHaveBeenCalledTimes(1);
+      resolve(usage);
+      await settle();
+      expect(
+        (await service.getRuntimeState(7)).planUsage?.windows[0]
+          .remainingPercentage,
+      ).toBe(88);
+      expect(read).toHaveBeenCalledTimes(1);
+      const clock = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(Date.now() + 60_001);
+      try {
+        read.mockResolvedValue({
+          ...usage,
+          rate_limits: { seven_day: { utilization: 93, resets_at: null } },
+        });
+        await service.getRuntimeState(7);
+        await settle();
+        expect((await service.getRuntimeState(7)).planUsage).toMatchObject({
+          status: 'warning',
+          windows: [{ id: 'seven_day', remainingPercentage: 7 }],
+        });
+        expect(read).toHaveBeenCalledTimes(2);
+        service['handleRateLimitEvent'](7, {
+          type: 'rate_limit_event',
+          rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+          uuid: '11111111-1111-1111-1111-111111111111',
+          session_id: 'claude-session-1',
+        });
+        expect((await service.getRuntimeState(7)).planUsage).toMatchObject({
+          planName: 'Max',
+          status: 'exhausted',
+          windows: [
+            { id: 'five_hour', remainingPercentage: 0 },
+            { id: 'seven_day', remainingPercentage: 7 },
+          ],
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it('retains stream usage on old CLI failures and throttles failures', async () => {
+      const { read } = attachRuntime();
+      service['handleRateLimitEvent'](7, {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'allowed',
+          rateLimitType: 'five_hour',
+          utilization: 0.25,
+        },
+        uuid: '11111111-1111-1111-1111-111111111111',
+        session_id: 'claude-session-1',
+      });
+      read.mockRejectedValue(new Error('Unknown control request: get_usage'));
+      await service.getRuntimeState(7);
+      await settle();
+      expect(
+        (await service.getRuntimeState(7)).planUsage?.windows[0]
+          .remainingPercentage,
+      ).toBe(75);
+      expect(read).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['replacement', 'cleanup', 'stream', 'shutdown'] as const)(
+      'discards late usage after %s',
+      async (change) => {
+        const { read } = attachRuntime();
+        let resolve!: (value: SDKControlGetUsageResponse) => void;
+        read.mockReturnValue(
+          new Promise((r) => {
+            resolve = r;
+          }),
+        );
+        await service.getRuntimeState(7);
+        if (change === 'replacement') attachRuntime();
+        if (change === 'cleanup') await service.cleanupSession(7);
+        if (change === 'stream')
+          service['handleRateLimitEvent'](7, {
+            type: 'rate_limit_event',
+            rate_limit_info: {
+              status: 'allowed_warning',
+              utilization: 0.92,
+              rateLimitType: 'five_hour',
+            },
+            uuid: '22222222-2222-2222-2222-222222222222',
+            session_id: 'claude-session-1',
+          });
+        if (change === 'shutdown') service.onModuleDestroy();
+        resolve(usage);
+        await settle();
+        expect(
+          service['runtimeStates'].get(7)?.planUsage?.windows[0]
+            ?.remainingPercentage ?? null,
+        ).toBe(change === 'stream' ? 8 : null);
+      },
+    );
+
+    it('clears subscription data when the native runtime reports API-key auth', async () => {
+      const { read } = attachRuntime();
+      service['handleRateLimitEvent'](7, {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'allowed',
+          rateLimitType: 'five_hour',
+          utilization: 0.25,
+        },
+        uuid: '11111111-1111-1111-1111-111111111111',
+        session_id: 'claude-session-1',
+      });
+      read.mockResolvedValue({
+        ...usage,
+        rate_limits_available: false,
+        rate_limits: null,
+      });
+      await service.getRuntimeState(7);
+      await settle();
+      expect((await service.getRuntimeState(7)).planUsage).toBeNull();
+    });
+
+    it('keeps usage hidden when explicit API-key metadata arrives during a read', async () => {
+      const { read } = attachRuntime();
+      let resolve!: (value: SDKControlGetUsageResponse) => void;
+      read.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      await service.getRuntimeState(7);
+      const state = service['runtimeStates'].get(7)!;
+      state.sessionMetadata = {
+        cwd: '/tmp/project',
+        model: 'sonnet',
+        permissionMode: 'default',
+        claudeCodeVersion: '2.1.296',
+        outputStyle: 'default',
+        apiKeySource: 'ANTHROPIC_API_KEY',
+        tools: [],
+        slashCommands: [],
+        skills: [],
+        agents: [],
+        fastModeState: null,
+        mcpServers: [],
+        plugins: [],
+      };
+      resolve(usage);
+      await settle();
+      expect((await service.getRuntimeState(7)).planUsage).toBeNull();
+    });
   });
 
   it('returns a pending MCP URL elicitation for the requested server', () => {
