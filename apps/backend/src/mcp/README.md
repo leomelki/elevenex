@@ -15,14 +15,22 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   milliseconds from 1000 to 86400000. An active tool suspends expiry and starts a fresh idle
   period when it finishes. SSE disconnects preserve the logical session. Initialization failure,
   expiry, DELETE and module shutdown close transports/servers and clear registrations/cursors.
-- **Private-socket runtimes**: SSH desktop backends retain their private Unix socket
-  for application APIs. Before module initialization, they also allocate an ephemeral
-  loopback listener exposing only `/api/mcp`, with a valid session bearer token
-  required on every request. Browser-origin requests and all other paths are denied.
-  The runtime publishes that address through `ELEVENEX_MCP_URL` so Claude, Codex,
-  Pi, OpenCode and the shared mission configuration use their own backend instead
-  of the legacy port 11111. Shutdown closes the listener. Explicit MCP URL overrides
-  and legacy/local TCP defaults remain supported.
+- **Harness endpoint**: legacy TCP backends use their configured edge-proxy port.
+  Socket-only desktop backends (`ELEVENEX_DESKTOP_SOCKET`) start a separate MCP-only
+  HTTP listener on an OS-assigned `127.0.0.1` port. Bootstrap awaits this before
+  `app.init()` so mission startup and workspace configuration see the actual address.
+  `McpAgentEndpointService` owns the listener and publishes its address as application
+  process configuration in `ELEVENEX_MCP_URL`; the shared `elevenexMcpUrl()` resolver
+  supplies Claude, Codex (including forks), OpenCode, Pi, and mission workspace config.
+  An explicit nonblank `ELEVENEX_MCP_URL` takes precedence in either transport mode.
+  Socket mode fails explicitly if a runtime requests the URL before endpoint startup.
+  The extra listener accepts only `/api/mcp`, validates Host/Origin, and requires a
+  live session bearer on **every** request, including initialization and discovery.
+  It never exposes backend API, WebSocket, or terminal routes. Anonymous external-client
+  compatibility remains on the existing edge transport. Shutdown closes active SSE
+  connections and releases the assigned port. Multiple backend instances do not share
+  ports. Existing provider processes retain their loaded tools/configuration; after
+  deploying backend changes, reconnect idle runtimes to adopt the new endpoint.
 - **Identity**: every coding session and mission lazily receives a stable `mcpAgentToken`.
   Claude, Codex, and OpenCode receive the authenticated HTTP server through runtime configuration;
   Pi receives `ELEVENEX_AGENT_TOKEN` and `ELEVENEX_MCP_URL` through its extension environment.

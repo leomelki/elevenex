@@ -250,6 +250,31 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('passes the socket-mode MCP endpoint to the Pi extension environment', async () => {
+    const environment = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_DESKTOP_SOCKET: '/private/backend.sock',
+      ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+    });
+    const { service } = createService();
+    mockSpawn.mockReturnValue(
+      createPiProcess('/tmp/pi-socket-mcp.jsonl') as never,
+    );
+    try {
+      await service.submitPrompt(1, 'Hello');
+      expect(mockBuildAugmentedEnv).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ELEVENEX_MCP_URL: 'http://127.0.0.1:43210/api/mcp',
+          ELEVENEX_AGENT_TOKEN: 'evx_pi_test',
+        }),
+        '/repo/session-1',
+      );
+    } finally {
+      await service.onModuleDestroy();
+      environment.restore();
+    }
+  });
+
   it('releases a completed run when final evidence fails, allowing the next explicit prompt', async () => {
     const changes = { begin: jest.fn(async () => undefined), finish: jest.fn(async () => undefined), cancelSession: jest.fn() };
     changes.finish.mockRejectedValueOnce(new Error('Cannot save final evidence'));

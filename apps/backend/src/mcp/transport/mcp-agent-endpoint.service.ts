@@ -5,112 +5,115 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { McpAgentTokenService } from '../identity/mcp-agent-token.service.js';
 import { ElevenexMcpHttpTransport } from './elevenex-mcp-http.transport.js';
+import { McpAgentTokenService } from '../identity/mcp-agent-token.service.js';
 
-/** HTTP-only agent clients cannot connect to the desktop's private Unix socket. */
+/**
+ * Harnesses speak HTTP, even when the desktop reaches us over a private socket.
+ * Expose only authenticated MCP on an OS-assigned loopback port in that mode;
+ * never open the backend's unauthenticated API/PTY routes on TCP.
+ */
 @Injectable()
 export class McpAgentEndpointService implements OnModuleDestroy {
-  private server?: Server;
-  private preparation?: Promise<void>;
-  private endpoint?: string;
-  private stopping = false;
+  private server: Server | null = null;
+  private starting: Promise<void> | null = null;
+  private destroyed = false;
+  private endpoint: URL | null = null;
+  private previousUrl: string | undefined;
 
   constructor(
     private readonly transport: ElevenexMcpHttpTransport,
     private readonly tokens: McpAgentTokenService,
   ) {}
 
-  /** Publish before module initialization can create agent configuration. */
+  /** Bootstrap awaits this before app.init() can start missions or write config. */
   prepare(): Promise<void> {
-    if (this.stopping)
-      return Promise.reject(new Error('Agent MCP endpoint is shutting down.'));
-    return (this.preparation ??= this.start());
+    if (this.destroyed)
+      return Promise.reject(new Error('MCP agent endpoint is shutting down.'));
+    return (this.starting ??= this.listen());
   }
 
-  private async start(): Promise<void> {
-    // Keep legacy TCP defaults and explicitly configured external MCP endpoints.
+  private async listen(): Promise<void> {
+    // Preserve external deployments and the legacy TCP endpoint verbatim.
     if (
       !process.env.ELEVENEX_DESKTOP_SOCKET ||
       process.env.ELEVENEX_MCP_URL?.trim()
     )
       return;
-    const server = createServer((request, response) => {
-      void this.handle(request, response).catch(() => {
-        if (response.headersSent) response.destroy();
-        else {
-          response.writeHead(500);
-          response.end('Agent MCP request failed.');
-        }
+    this.previousUrl = process.env.ELEVENEX_MCP_URL;
+    const server = createServer((req, res) => {
+      void this.handle(req, res).catch(() => {
+        // Never include credentials or request data in an HTTP error.
+        if (res.headersSent) res.destroy();
+        else res.writeHead(500).end();
       });
     });
     this.server = server;
     await new Promise<void>((resolve, reject) => {
-      const failed = (error: Error) => {
-        reject(error);
-      };
-      server.once('error', failed);
+      server.once('error', reject);
       server.listen(0, '127.0.0.1', () => {
-        server.off('error', failed);
+        server.off('error', reject);
         resolve();
       });
     });
     const address = server.address();
     if (!address || typeof address === 'string')
-      throw new Error('Invalid agent MCP listener address.');
-    this.endpoint = `http://127.0.0.1:${address.port}/api/mcp`;
-    process.env.ELEVENEX_MCP_URL = this.endpoint;
+      throw new Error('MCP agent endpoint did not bind TCP.');
+    this.endpoint = new URL(`http://127.0.0.1:${address.port}/api/mcp`);
+    // This is application-owned process configuration, set before shell capture
+    // and provider startup. All harnesses and the mission workspace use it.
+    process.env.ELEVENEX_MCP_URL = this.endpoint.href;
   }
 
   private async handle(
-    request: IncomingMessage,
-    response: ServerResponse,
+    req: IncomingMessage,
+    res: ServerResponse,
   ): Promise<void> {
-    // This listener must never expose the private backend, browser pixels or WS gateways.
-    if (request.url !== '/api/mcp') {
-      response.writeHead(404);
-      response.end();
+    const endpoint = this.endpoint;
+    if (this.destroyed || !endpoint) {
+      res.writeHead(503).end();
       return;
     }
-    if (this.stopping) {
-      response.writeHead(503);
-      response.end();
+    if (req.url !== endpoint.pathname) {
+      res.writeHead(404).end();
       return;
     }
+    // Harnesses send no Origin. Reject browser cross-origin access and DNS
+    // rebinding as well as requiring a live session bearer on every request.
     if (
-      request.headers.origin !== undefined ||
-      request.headers['sec-fetch-site'] !== undefined
+      req.headers.host !== endpoint.host ||
+      req.headers.origin !== undefined ||
+      req.headers['sec-fetch-site'] !== undefined
     ) {
-      response.writeHead(403);
-      response.end();
+      res.writeHead(403).end();
       return;
     }
-    const token =
-      request.headers.authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
-    if ((await this.tokens.resolveSessionId(token)) === null) {
-      response.writeHead(401, {
-        'WWW-Authenticate': 'Bearer realm="elevenex"',
-      });
-      response.end();
+    const token = req.headers.authorization?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    if (!token || (await this.tokens.resolveSessionId(token)) === null) {
+      res.writeHead(401, { 'WWW-Authenticate': 'Bearer' }).end();
       return;
     }
-    if (response.destroyed || this.stopping) {
-      response.destroy();
-      return;
-    }
-    await this.transport.handle(request, response);
+    if (this.destroyed || res.destroyed) return;
+    await this.transport.handle(req, res);
   }
 
   async onModuleDestroy(): Promise<void> {
-    this.stopping = true;
-    await this.preparation?.catch(() => undefined);
-    if (this.endpoint && process.env.ELEVENEX_MCP_URL === this.endpoint)
-      delete process.env.ELEVENEX_MCP_URL;
+    this.destroyed = true;
+    await this.starting?.catch(() => undefined);
     const server = this.server;
-    if (!server?.listening) return;
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
+    if (server?.listening) {
+      const closed = new Promise<void>((resolve) =>
+        server.close(() => resolve()),
+      );
+      // SSE responses are long lived; shutdown must not wait for clients.
       server.closeAllConnections();
-    });
+      await closed;
+    }
+    if (this.endpoint && process.env.ELEVENEX_MCP_URL === this.endpoint.href) {
+      if (this.previousUrl === undefined) delete process.env.ELEVENEX_MCP_URL;
+      else process.env.ELEVENEX_MCP_URL = this.previousUrl;
+    }
+    this.server = null;
+    this.endpoint = null;
   }
 }

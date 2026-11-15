@@ -275,6 +275,8 @@ async function bootstrap() {
   agentChannelGateway.attachToServer(httpServer);
   app.get(DesktopPortForwardingGateway).attachToServer(httpServer);
 
+  // Publish a harness-reachable MCP endpoint before module initialization can
+  // bootstrap missions. Socket-only desktop transport has no public TCP API.
   await app.get(McpAgentEndpointService).prepare();
   await app.init();
 
