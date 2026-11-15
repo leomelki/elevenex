@@ -8,6 +8,7 @@ import {
   scheduledGitRaw,
 } from './git-read-scheduler.js';
 import { GitByteLru, GitCacheBudget, copyCacheString } from './git-cache.js';
+import { ReftableRefCache } from './git-reftable-state.js';
 
 const VERIFY_MS = 1_500;
 const MAX_ENTRIES = 1_000;
@@ -26,7 +27,11 @@ export interface LocalRefSnapshot extends RepositoryIdentity {
   resolveRef: (ref: string) => Promise<string | null>;
 }
 
-const identities = new Map<string, Promise<RepositoryIdentity>>();
+interface CachedIdentity {
+  promise: Promise<RepositoryIdentity>;
+  value?: RepositoryIdentity;
+}
+const identities = new Map<string, CachedIdentity>();
 const snapshots = new Map<string, Promise<LocalRefSnapshot>>();
 const verifications = new Map<string, { at: number; version: string }>();
 interface PackedRefs {
@@ -36,6 +41,8 @@ interface PackedRefs {
 }
 const packed = new GitByteLru<PackedRefs>(new GitCacheBudget(16 * 1024 * 1024));
 const pathVersions = new Map<string, Promise<string>>();
+const reftableRefs = new ReftableRefCache(readPathVersion, VERIFY_MS);
+const REFTABLE_HEAD = 'ref: refs/heads/.invalid';
 
 function retain<K, V>(cache: Map<K, V>, key: K, value: V): void {
   cache.delete(key);
@@ -89,7 +96,7 @@ export function readRepositoryIdentity(
   const cached = identities.get(key);
   if (cached) {
     retain(identities, key, cached);
-    return cached;
+    return cached.promise;
   }
   const pending = git
     .raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'])
@@ -104,15 +111,19 @@ export function readRepositoryIdentity(
       const [repoRoot, gitDir, commonDir] = await Promise.all(
         directories.map((directory) => realpath(path.resolve(key, directory))),
       );
-      if (identities.get(key) === pending)
+      const identity = { repoRoot, gitDir, commonDir };
+      if (identities.get(key) === entry) {
+        entry.value = identity;
         registerGitRepository(key, commonDir);
-      return { repoRoot, gitDir, commonDir };
+      }
+      return identity;
     })
     .catch((error) => {
-      if (identities.get(key) === pending) identities.delete(key);
+      if (identities.get(key) === entry) identities.delete(key);
       throw error;
     });
-  retain(identities, key, pending);
+  const entry: CachedIdentity = { promise: pending };
+  retain(identities, key, entry);
   return pending;
 }
 
@@ -205,8 +216,10 @@ export async function readGitDirectoryHead(
   );
   if (sha || !(await stat(path.join(commonDir, 'reftable')).catch(() => null)))
     return sha;
-  return scheduledGitRaw(worktreePath, ['rev-parse', '--verify', 'HEAD'])
-    .then((value) => value.trim() || null)
+  return reftableRefs
+    .resolve({ gitDir, commonDir }, 'HEAD', false, (args) =>
+      scheduledGitRaw(worktreePath, args),
+    )
     .catch(() => null);
 }
 
@@ -220,46 +233,55 @@ export function readLocalRefSnapshot(
   if (existing) return existing;
   const build = async (): Promise<LocalRefSnapshot> => {
     const identity = await readRepositoryIdentity(git, key);
-    const reftable = await stat(
-      path.join(identity.commonDir, 'reftable'),
-    ).catch(() => null);
-    // Reftable's HEAD file is a placeholder, not the current branch or commit.
-    const readHead = reftable
-      ? async () => {
-          const ref = await git
-            .raw(['symbolic-ref', '--quiet', 'HEAD'])
-            .then((value) => value.trim())
-            .catch(() => null);
-          return ref ? `ref: ${ref}` : git.revparse(['--verify', 'HEAD']);
-        }
-      : () => readFile(path.join(identity.gitDir, 'HEAD'), 'utf8');
+    const readHead = async (): Promise<{
+      text: string;
+      version: string;
+      sha?: string | null;
+    }> => {
+      const text = (
+        await readFile(path.join(identity.gitDir, 'HEAD'), 'utf8')
+      ).trim();
+      // Normal refs keep their existing filesystem-only warm path. Reftable's
+      // sentinel needs Git, but only when its table-list versions change.
+      if (text !== REFTABLE_HEAD) return { text, version: text };
+      const head = await reftableRefs.head(identity, (args) => git.raw(args));
+      return {
+        text: head.ref ? `ref: ${head.ref}` : (head.sha ?? ''),
+        version: [head.version, head.ref, head.sha].join('\0'),
+        sha: head.sha,
+      };
+    };
     for (let attempt = 0; attempt < 3; attempt++) {
-      const head = (await readHead()).trim();
+      const observed = await readHead();
+      const head = observed.text;
+      const reftable = observed.sha !== undefined;
       const branchRef = head.startsWith('ref: ') ? head.slice(5) : null;
-      let headSha = branchRef
-        ? await readRef(identity, branchRef)
-        : /^[a-f0-9]{40,64}$/.test(head)
-          ? head
-          : null;
+      let headSha =
+        observed.sha !== undefined
+          ? observed.sha
+          : branchRef
+            ? await readRef(identity, branchRef)
+            : /^[a-f0-9]{40,64}$/.test(head)
+              ? head
+              : null;
       const indexVersion = await readPathVersion(
         path.join(identity.gitDir, 'index'),
       );
-      if ((await readHead()).trim() !== head) continue;
+      if ((await readHead()).version !== observed.version) continue;
       const version = [head, headSha, indexVersion].join('\0');
       const last = verifications.get(key);
       // Files/reftable storage can change outside this process. Verify on an
       // absolute deadline, and immediately when HEAD/index changes.
       if (
-        !last ||
-        last.version !== version ||
-        Date.now() - last.at >= VERIFY_MS
+        !reftable &&
+        (!last || last.version !== version || Date.now() - last.at >= VERIFY_MS)
       ) {
         const startedAt = Date.now();
         const authoritative = await git
           .revparse(['--verify', 'HEAD'])
           .then((value) => value.trim())
           .catch(() => null);
-        if ((await readHead()).trim() !== head) continue;
+        if ((await readHead()).version !== observed.version) continue;
         headSha = authoritative;
         if (snapshots.get(key) === pending)
           retain(verifications, key, {
@@ -279,14 +301,17 @@ export function readLocalRefSnapshot(
               : ref.startsWith('refs/')
                 ? ref
                 : `refs/remotes/${ref}`;
+          if (reftable)
+            return reftableRefs.resolve(identity, full, false, (args) =>
+              git.raw(args),
+            );
           const sha = await readRef(identity, full);
           if (sha) return sha;
           // Reftable and oversized packed-refs use Git's storage implementation.
           const packedInfo = await stat(
             path.join(identity.commonDir, 'packed-refs'),
           ).catch(() => null);
-          return reftable ||
-            (packedInfo && packedInfo.size > MAX_PACKED_REF_BYTES)
+          return packedInfo && packedInfo.size > MAX_PACKED_REF_BYTES
             ? git
                 .raw(['rev-parse', '--verify', '--quiet', full])
                 .then((value) => value.trim() || null)
@@ -310,12 +335,15 @@ export function clearLocalRefState(worktreePath?: string): void {
     snapshots.clear();
     verifications.clear();
     packed.clear();
+    reftableRefs.clear();
     return;
   }
   const key = path.resolve(worktreePath);
+  const identity = identities.get(key)?.value;
   identities.delete(key);
   snapshots.delete(key);
   verifications.delete(key);
+  if (identity) reftableRefs.clear(identity.gitDir);
 }
 
 export async function readOriginHead(
@@ -331,11 +359,12 @@ export async function readOriginHead(
     !text &&
     (await stat(path.join(identity.commonDir, 'reftable')).catch(() => null))
   ) {
-    const ref = await scheduledGitRaw(identity.repoRoot, [
-      'symbolic-ref',
-      '--quiet',
+    const ref = await reftableRefs.resolve(
+      identity,
       'refs/remotes/origin/HEAD',
-    ]).catch(() => '');
+      true,
+      (args) => scheduledGitRaw(identity.repoRoot, args),
+    );
     text = ref ? `ref: ${ref.trim()}` : '';
   }
   return text.startsWith('ref: refs/remotes/')

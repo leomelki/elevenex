@@ -105,6 +105,95 @@ describe('Git repository environment isolation', () => {
     expect(await git(foreign, 'status', '--porcelain')).toBe('');
   });
 
+  it('preserves global includes, per-repository settings and inherited command options', async () => {
+    const global = join(root, 'global config');
+    const included = join(root, 'included config');
+    const conditional = join(root, 'conditional config');
+    const gitPath = (value: string) => value.replace(/\\/g, '/');
+    await writeFile(
+      included,
+      '[core]\n untrackedCache = true\n fsmonitor = /custom/fsmonitor\n[credential]\n helper = !custom-auth-helper\n',
+    );
+    await writeFile(
+      conditional,
+      '[test]\n conditional = selected-repository\n',
+    );
+    await writeFile(
+      global,
+      `[include]\n path = ${JSON.stringify(included)}\n[includeIf "gitdir/i:${gitPath(target)}/.git"]\n path = ${JSON.stringify(conditional)}\n`,
+    );
+    // Git 2.25 reads XDG global config but predates GIT_CONFIG_GLOBAL.
+    const profile = join(root, 'profile');
+    await mkdir(join(profile, 'git'), { recursive: true });
+    await writeFile(join(profile, 'git', 'config'), await readFile(global));
+    process.env.XDG_CONFIG_HOME = profile;
+    process.env.GIT_CONFIG_GLOBAL = global;
+    process.env.GIT_CONFIG_PARAMETERS =
+      "'core.preloadIndex=true' 'core.worktree=/foreign'";
+    const client = worktreeSimpleGit(target);
+    for (const [key, value] of [
+      ['core.untrackedCache', 'true'],
+      ['core.fsmonitor', '/custom/fsmonitor'],
+      ['credential.helper', '!custom-auth-helper'],
+      ['core.preloadIndex', 'true'],
+      ['test.conditional', 'selected-repository'],
+    ])
+      expect({
+        key,
+        value: (await client.raw(['config', '--get', key])).trim(),
+      }).toEqual({ key, value });
+    await git(target, 'config', 'core.untrackedCache', 'false');
+    expect(
+      (await client.raw(['config', '--get', 'core.untrackedCache'])).trim(),
+    ).toBe('false');
+    expect((await client.raw(['rev-parse', '--show-toplevel'])).trim()).toBe(
+      target,
+    );
+  });
+
+  it('honors per-worktree configuration without inheriting another checkout', async () => {
+    await git(target, 'config', 'extensions.worktreeConfig', 'true');
+    const linked = join(root, 'linked');
+    await git(target, 'worktree', 'add', '-b', 'linked', linked);
+    await git(linked, 'config', '--worktree', 'core.preloadIndex', 'false');
+    await git(target, 'config', '--worktree', 'core.preloadIndex', 'true');
+    expect(
+      (
+        await worktreeSimpleGit(linked).raw([
+          'config',
+          '--get',
+          'core.preloadIndex',
+        ])
+      ).trim(),
+    ).toBe('false');
+    expect(
+      (
+        await worktreeSimpleGit(target).raw([
+          'config',
+          '--get',
+          'core.preloadIndex',
+        ])
+      ).trim(),
+    ).toBe('true');
+  });
+
+  it('reads shared alternate objects without redirecting HEAD or index writes', async () => {
+    const sha = await git(foreign, 'rev-parse', 'HEAD');
+    const targetHead = await git(target, 'rev-parse', 'HEAD');
+    process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES = join(
+      foreign,
+      '.git',
+      'objects',
+    );
+    expect(
+      (await worktreeSimpleGit(target).raw(['cat-file', '-t', sha])).trim(),
+    ).toBe('commit');
+    expect((await worktreeSimpleGit(target).revparse(['HEAD'])).trim()).toBe(
+      targetHead,
+    );
+    expect(await git(foreign, 'status', '--porcelain')).toBe('');
+  });
+
   it('preserves authentication, global settings and the original environment object', () => {
     const env = {
       GIT_DIR: '/other',

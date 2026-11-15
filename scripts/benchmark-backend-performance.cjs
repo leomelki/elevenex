@@ -33,7 +33,8 @@ async function git(cwd, ...args) {
 async function fixture(root) {
   const repo = path.join(root, "repo");
   await fs.mkdir(repo, { recursive: true });
-  await git(repo, "init", "-q", "-b", "master");
+  await git(repo, "init", "-q");
+  await git(repo, "symbolic-ref", "HEAD", "refs/heads/master");
   await git(repo, "config", "user.name", "Performance fixture");
   await git(repo, "config", "user.email", "fixture@example.invalid");
   await git(repo, "config", "core.hooksPath", path.join(root, "no-hooks"));
@@ -140,7 +141,7 @@ async function worker(dist, repo, trace, output) {
   process.env.GIT_TRACE2_EVENT = trace;
   process.env.GIT_OPTIONAL_LOCKS = "0";
   // A deterministic shell prevents user rc files/version managers adding noise.
-  process.env.SHELL = "/bin/sh";
+  process.env.SHELL = process.env.ELEVENEX_BENCHMARK_SHELL || "/bin/sh";
   const { GitService } = require(path.join(dist, "git/git.service.js"));
   const fingerprints = require(
     path.join(dist, "git/git-worktree-fingerprint.js"),
@@ -410,13 +411,21 @@ async function main() {
       for (const module of [
         "git/git.service.js",
         "git/git-worktree-fingerprint.js",
+        "git/git-local-state.js",
+        "git/git-reftable-state.js",
         "github/github.service.js",
         "github/repo-context-resolver.service.js",
         "config/system-paths.js",
+        "config/git-environment.js",
+        "config/git-command-configuration.js",
       ]) {
-        moduleHashes[name][module] = createHash("sha256")
-          .update(await fs.readFile(path.join(dist, module)))
-          .digest("hex");
+        moduleHashes[name][module] = await fs
+          .readFile(path.join(dist, module))
+          .then((value) => createHash("sha256").update(value).digest("hex"))
+          .catch((error) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          });
       }
     }
     const report = {
