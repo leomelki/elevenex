@@ -192,13 +192,45 @@ test('a dead forwarded-agent lease falls back before consuming bytes and revocat
   const realPath = join(root, 'real.sock'); const proxyPath = join(root, 'proxy.sock');
   const clients = new Set(); const real = createSocketServer(socket => { clients.add(socket); socket.once('close', () => clients.delete(socket)); socket.pipe(socket); });
   await new Promise(resolve => real.listen(realPath, resolve)); const proxy = new ForwardedAgentProxy(proxyPath, () => now); await proxy.listen();
+  assert.equal(await readFile(proxyPath + '.state', 'utf8'), '0');
   t.after(async () => { await proxy.dispose(); for (const socket of clients) socket.destroy(); await new Promise(resolve => real.close(resolve)); await rm(root, { recursive: true, force: true }); });
   proxy.renew('working', realPath); now++; proxy.renew('dead', join(root, 'missing.sock'));
+  await proxy.flush();
+  assert.equal(await readFile(proxyPath + '.state', 'utf8'), '1');
+  const { stat } = require('node:fs/promises');
+  const published = await stat(proxyPath + '.state');
+  for (let i = 0; i < 100; i++) proxy.renew('working', realPath);
+  await proxy.flush();
+  assert.equal((await stat(proxyPath + '.state')).ino, published.ino, 'heartbeats do not rewrite availability');
+  assert.equal((await stat(proxyPath + '.state')).mtimeMs, published.mtimeMs);
+  assert.equal(published.mode & 0o777, 0o600);
   const socket = connectSocket(proxyPath); socket.on('error', () => undefined);
   const reply = new Promise(resolve => socket.once('data', resolve)); socket.write('one-sign-request'); assert.equal(String(await reply), 'one-sign-request');
   proxy.renew('dead', null);
   const again = new Promise(resolve => socket.once('data', resolve)); socket.write('second-request'); assert.equal(String(await again), 'second-request');
   const closed = new Promise(resolve => socket.once('close', resolve)); proxy.renew('working', null); await closed;
+  await proxy.flush();
+  assert.equal(await readFile(proxyPath + '.state', 'utf8'), '0');
+});
+
+test('agent availability expires without a disconnect message and disposal removes its private state', async t => {
+  if (process.platform === 'win32') return t.skip('POSIX remote agent socket');
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const root = await mkdtemp('/tmp/ex-agent-expiry-');
+  let now = 0;
+  const path = join(root, 'agent.sock');
+  const proxy = new ForwardedAgentProxy(path, () => now);
+  t.after(async () => { await proxy.dispose(); await rm(root, { recursive: true, force: true }); });
+  await proxy.listen();
+  proxy.renew('client', join(root, 'forwarded.sock'));
+  await proxy.flush();
+  assert.equal(await readFile(path + '.state', 'utf8'), '1');
+  now = 25001;
+  t.mock.timers.tick(5000);
+  await proxy.flush();
+  assert.equal(await readFile(path + '.state', 'utf8'), '0');
+  await proxy.dispose();
+  await assert.rejects(readFile(path + '.state'), { code: 'ENOENT' });
 });
 
 test('a draft from an old environment is rejected without replacing the current input', async t => {

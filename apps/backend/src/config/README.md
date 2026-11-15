@@ -38,6 +38,24 @@ these results; legacy calls before warm-up may still perform synchronous I/O.
 New Codex/Claude processes resolve their binary after
 environment warm-up; already running agents retain their process and environment.
 
+`SSH_AUTH_SOCK` follows successful interactive login-shell captures, including
+shell-selected agents and explicit unsets. Explicit child-environment overrides
+still take priority. Remote launchers can identify their reconnectable proxy with
+`ELEVENEX_SSH_AGENT_PROXY`; `ssh-agent-environment.ts` then reads the daemon's
+private one-byte availability file before shell startup. When SSH supplied no
+agent, the shell receives no socket, allowing conditional rc-file agent setup
+to behave normally. Presence means SSH/the remote account supplied a socket,
+not that a key is loaded or that signing is allowed. No key probes are performed.
+
+One owned directory watcher follows atomic availability changes and invalidates
+global/worktree captures only when agent presence changes. In-flight captures
+are cancelled and stale required reads fail with a retryable setup error; prompts
+and mutations are never replayed. Subsequent captures reread the bounded file,
+including when watch notifications are unavailable. Warm launches use memory
+only. Disposal closes the watcher and capture queue. Legacy launchers without
+the marker retain their original transport defaults; the presence-aware startup
+requires both an updated remote launcher and backend.
+
 ## Slow shells and resource tuning
 
 Warm global/worktree reads return the last successful environment immediately,

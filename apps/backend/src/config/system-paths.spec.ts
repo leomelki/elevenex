@@ -49,6 +49,7 @@ beforeEach(() => {
     'XDG_STATE_HOME',
     'XDG_CACHE_HOME',
     'XDG_RUNTIME_DIR',
+    'ELEVENEX_SSH_AGENT_PROXY',
   ])
     delete process.env[key];
   process.env.SHELL = originalEnv.SHELL || '/bin/sh';
@@ -342,6 +343,79 @@ describePosix('system-paths per-cwd env cache', () => {
 });
 
 describePosix('global shell environment replacement', () => {
+  it.each([
+    ['server-local selection', '/transport/agent.sock', '/server/agent.sock'],
+    ['preserved forwarding', '/transport/agent.sock', '/transport/agent.sock'],
+    ['disabled forwarding', undefined, undefined],
+    ['shell unset', '/transport/agent.sock', undefined],
+  ])(
+    'uses the shell agent for %s without replacing explicit child overrides',
+    async (_name, inherited, selected) => {
+      if (inherited === undefined) delete process.env.SSH_AUTH_SOCK;
+      else process.env.SSH_AUTH_SOCK = inherited;
+      mockSpawn.mockImplementation(() => createShellProcess());
+      const refresh = systemPaths.refreshLoginShellEnv(true);
+      await closeShellProcess(
+        children[0],
+        envOutput(
+          '/shell/bin',
+          selected === undefined ? '' : `SSH_AUTH_SOCK=${selected}\0`,
+        ),
+      );
+      await refresh;
+      expect(process.env.SSH_AUTH_SOCK).toBe(selected);
+      expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(selected);
+      expect(
+        systemPaths.buildAugmentedEnv({
+          ...process.env,
+          SSH_AUTH_SOCK: '/caller/agent.sock',
+        }).SSH_AUTH_SOCK,
+      ).toBe('/caller/agent.sock');
+
+      const project = systemPaths.buildAugmentedEnvAsync(
+        process.env,
+        '/repo/agent',
+      );
+      await closeShellProcess(
+        children[1],
+        envOutput('/project/bin', 'SSH_AUTH_SOCK=/project/agent.sock\0'),
+      );
+      expect((await project).SSH_AUTH_SOCK).toBe('/project/agent.sock');
+      expect(process.env.SSH_AUTH_SOCK).toBe(selected);
+    },
+  );
+
+  it('keeps shell agent unsets across refreshes and worktree captures', async () => {
+    process.env.SSH_AUTH_SOCK = '/transport/agent.sock';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[0], envOutput('/shell/bin'));
+    await refresh;
+    const project = systemPaths.buildAugmentedEnvAsync(
+      process.env,
+      '/repo/no-agent',
+    );
+    await closeShellProcess(children[1], envOutput('/project/bin'));
+    expect((await project).SSH_AUTH_SOCK).toBeUndefined();
+    const next = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[2],
+      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/server/new.sock\0'),
+    );
+    await next;
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
+      '/server/new.sock',
+    );
+  });
+
+  it('retains the inherited agent when shell capture fails', async () => {
+    process.env.SSH_AUTH_SOCK = '/transport/agent.sock';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const result = systemPaths.buildAugmentedEnvAsync();
+    children[0].emit('error', new Error('shell unavailable'));
+    expect((await result).SSH_AUTH_SOCK).toBe('/transport/agent.sock');
+  });
+
   it('lets worktree exports and unsets replace projected globals while retaining explicit overrides', async () => {
     process.env.ELEVENEX_TEST_OVERRIDE = 'launch';
     mockSpawn.mockImplementation(() => createShellProcess());
@@ -1177,7 +1251,7 @@ describePosix('system-paths bounded shell refreshes', () => {
     children[0].stdout.emit('data', output.subarray(0, split));
     children[0].stdout.emit('data', output.subarray(split));
     children[0].emit('close', 0);
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
 
     const env = systemPaths.buildAugmentedEnv({}, '/repo/chatty');
     expect(env.CUSTOM).toBe('héllo=世界');

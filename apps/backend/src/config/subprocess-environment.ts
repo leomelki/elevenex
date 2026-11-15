@@ -41,7 +41,10 @@ export function assertSubprocessEnvironment(env: NodeJS.ProcessEnv): void {
 export class ShellEnvironmentProjection {
   private readonly values = new Map<
     string,
-    { readonly inherited: string | undefined; readonly projected: string }
+    {
+      readonly inherited: string | undefined;
+      readonly projected: string | undefined;
+    }
   >();
 
   baseline(current: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -84,9 +87,10 @@ export class ShellEnvironmentProjection {
     }
     this.values.clear();
     for (const [key, projected] of Object.entries(next)) {
-      if (projected === undefined || projected === baseline[key]) continue;
+      if (projected === baseline[key]) continue;
       this.values.set(key, { inherited: baseline[key], projected });
-      target[key] = projected;
+      if (projected === undefined) delete target[key];
+      else target[key] = projected;
     }
   }
 }

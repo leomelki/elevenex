@@ -14,6 +14,7 @@ import { shellEnvironmentOptions } from './shell-environment-options.js';
 import { BinaryPathResolver } from './binary-paths.js';
 import { AccountShellLookup } from './account-shell.js';
 import { ShellRefreshQueue } from './shell-refresh-queue.js';
+import { SshAgentEnvironment } from './ssh-agent-environment.js';
 
 const logger = new Logger('SystemPaths');
 const IS_WINDOWS = process.platform === 'win32';
@@ -160,11 +161,24 @@ const shellRefreshes = new ShellRefreshQueue(
     return parsed;
   },
 );
+const sshAgent = new SshAgentEnvironment(
+  process.env.ELEVENEX_SSH_AGENT_PROXY,
+  () => {
+    shellRefreshes.invalidate();
+    _shellEnvCache = null;
+    _lastRefreshAt = Number.NEGATIVE_INFINITY;
+    _cwdEnvCache.clear();
+    cwdCacheBytes = 0;
+    binaryResolver.clear();
+    void refreshLoginShellEnv(true);
+  },
+);
 
 /** Application shutdown owns captures, queue timers and retained environments. */
 export function disposeShellEnvironment(): void {
   shellEnvironmentDisposed = true;
   shellRefreshes.dispose();
+  sshAgent.dispose();
   accountShell.dispose();
   _cwdEnvCache.clear();
   cwdCacheBytes = 0;
@@ -291,7 +305,7 @@ const cwdTag = (cwd?: string) => (cwd ? `cwd=${cwd}` : 'cwd=<global>');
 // Returns null if the shell failed to produce any usable env. When `cwd` is
 // provided, the shell starts in that directory so chpwd-style hooks (nvm,
 // fnm, direnv) resolve the project-local version.
-function runLoginShell(
+async function runLoginShell(
   cwd: string | undefined,
   signal: AbortSignal,
   startedAt = performance.now(),
@@ -305,13 +319,29 @@ function runLoginShell(
       .then(() =>
         signal.aborted ? null : runLoginShell(cwd, signal, startedAt),
       );
+  const env = getShellBaselineEnv(cwd !== undefined);
+  if (sshAgent.managed) {
+    try {
+      const remaining =
+        shellOptions.captureTimeoutMs - (performance.now() - startedAt);
+      if (remaining <= 0) return null;
+      await sshAgent.prepare(
+        env,
+        AbortSignal.any([signal, AbortSignal.timeout(Math.ceil(remaining))]),
+      );
+    } catch {
+      logger.warn(
+        'SSH agent environment could not be prepared for shell capture.',
+      );
+      return null;
+    }
+  }
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let settled = false;
     let child: ReturnType<typeof spawn> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const env = getShellBaselineEnv(cwd !== undefined);
     const shell = env.SHELL ?? getUserShell();
     const remainingMs =
       shellOptions.captureTimeoutMs - (performance.now() - startedAt);
@@ -453,6 +483,9 @@ function getCachedShellEnv(): NodeJS.ProcessEnv {
 //   - Other keys are added only if missing — we never clobber a value the
 //     app deliberately set (e.g. `process.env.GIT_OPTIONAL_LOCKS = '0'` in
 //     main.ts) or that the user passed via systemd/launchd/CLI.
+//   - SSH_AUTH_SOCK follows the captured shell, including an explicit unset.
+//     A remote launch can supply Elevenex's stable forwarded-agent proxy while
+//     the user's rc files select a server-local agent, just as in a terminal.
 function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
   const baseline = shellProjection.baseline(process.env);
   const next = { ...baseline };
@@ -464,6 +497,8 @@ function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
       next[key] = value;
     }
   }
+
+  if (!IS_WINDOWS) next.SSH_AUTH_SOCK = shellEnv.SSH_AUTH_SOCK;
 
   shellProjection.apply(process.env, baseline, ensureUtf8Locale(next));
 }
@@ -893,6 +928,14 @@ function mergeAugmentedEnv(
   // A default/copy of process.env includes our global shell projection. It is
   // not a caller override: worktree exports and unsets must supersede it.
   const merged = shellProjection.compose(shellEnv, base);
+  // A successful capture owns shell agent selection. Cold/failed captures use
+  // the transport's actual presence; explicit child overrides still win.
+  if (!IS_WINDOWS && base.SSH_AUTH_SOCK === process.env.SSH_AUTH_SOCK) {
+    if (Object.keys(shellEnv).length > 0)
+      merged.SSH_AUTH_SOCK = shellEnv.SSH_AUTH_SOCK;
+    else if (sshAgent.managed) merged.SSH_AUTH_SOCK = sshAgent.socket;
+    if (merged.SSH_AUTH_SOCK === undefined) delete merged.SSH_AUTH_SOCK;
+  }
   // `base` (the backend's own launch-time env) must not clobber PWD once we've
   // resolved a specific target cwd — otherwise every spawned terminal inherits
   // the backend process's stale PWD instead of the worktree it's opening.
@@ -976,7 +1019,14 @@ export async function buildAugmentedEnvAsync(
   if (IS_WINDOWS || (cwd ? _cwdEnvCache.get(cwd)?.captured : _shellEnvCache))
     return buildAugmentedEnv(base, cwd);
   const waiter = new AbortController();
-  const pending = captureAugmentedEnv(base, cwd, waiter.signal);
+  const agentGeneration = sshAgent.generation;
+  const pending = captureAugmentedEnv(base, cwd, waiter.signal).then((env) => {
+    if (agentGeneration !== sshAgent.generation)
+      throw new Error(
+        'SSH agent environment changed during shell setup. Retry the operation.',
+      );
+    return env;
+  });
   return new Promise((resolve, reject) => {
     const finish = () => {
       clearTimeout(timer);

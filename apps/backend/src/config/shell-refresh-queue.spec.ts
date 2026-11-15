@@ -99,4 +99,23 @@ describe('bounded shell capture admission', () => {
     await expect(queue.request('after-shutdown')).resolves.toBeNull();
     expect(running).toHaveLength(1);
   });
+
+  it('rejects stale required captures on transport changes and accepts fresh work without stale completions', async () => {
+    const active = queue.request('active', true);
+    const queued = queue.request('queued', true);
+    const activeFailure = expect(active).rejects.toThrow(
+      'SSH agent environment changed',
+    );
+    const queuedFailure = expect(queued).rejects.toThrow(
+      'SSH agent environment changed',
+    );
+    queue.invalidate();
+    await Promise.all([activeFailure, queuedFailure]);
+    expect(running[0].signal.aborted).toBe(true);
+    const fresh = queue.request('active', true);
+    await finish(0);
+    expect(queue.has('active')).toBe(true);
+    await finish(1);
+    await expect(fresh).resolves.toEqual({ PATH: '/1/bin' });
+  });
 });

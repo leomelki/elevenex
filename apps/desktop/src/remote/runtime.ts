@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { connect as connectSocket } from 'node:net';
 import { createSocket, type Socket as OwnershipSocket } from 'node:dgram';
 import { ForwardedAgentProxy } from './agent-proxy';
@@ -70,6 +70,8 @@ async function daemon(root: string, installation: string, version: string, port:
   };
   const agentPath = join(root, 'agent.sock');
   const agents = new ForwardedAgentProxy(agentPath);
+  let releaseAgentContext: (() => void) | undefined;
+  const agentContext = new Promise<void>(resolve => { releaseAgentContext = resolve; });
   const health = createServer((req, res) => {
     const handoff = verifyHandoffRequest(req, token, snapshot());
     const nonce = handoff?.nonce ?? verifyHealthRequest(req, token);
@@ -92,6 +94,8 @@ async function daemon(root: string, installation: string, version: string, port:
     if (typeof lease === 'string' && /^[a-f0-9-]{36}$/.test(lease) && typeof agent === 'string' && agent.length <= 4096) {
       const path = Buffer.from(agent, 'base64').toString('utf8');
       agents.renew(lease, path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
+      void agents.flush().then(() => { releaseAgentContext?.(); releaseAgentContext = undefined; respond(); }, () => { res.writeHead(503).end(); });
+      return;
     }
     respond();
   });
@@ -122,6 +126,14 @@ async function daemon(root: string, installation: string, version: string, port:
   if (inherited && process.send) process.send({ type: 'adopted' }, () => undefined);
   const crashes: number[] = [];
   try {
+    // Start with this connection's real SSH environment, including absence.
+    // Handoff/reconnect must not race backend shell warm-up with lease setup.
+    await new Promise<void>(resolve => {
+      const done = () => { lifetime.signal.removeEventListener('abort', done); resolve(); };
+      lifetime.signal.addEventListener('abort', done, { once: true });
+      void agentContext.then(done);
+      if (lifetime.signal.aborted) done();
+    });
     while (!stopping) {
       await rm(socketPath, { force: true });
       if (stopping) break;
@@ -138,6 +150,7 @@ async function daemon(root: string, installation: string, version: string, port:
           ELEVENEX_BACKEND_RUNTIME_ROOT: join(installation, 'backend'), ELEVENEX_BIND_HOST: '127.0.0.1',
           ELEVENEX_DESKTOP_SOCKET: socketPath, ELEVENEX_PROXY_PORT: '11111', FRONTEND_PORT: '11111',
           SSH_AUTH_SOCK: agentPath,
+          ELEVENEX_SSH_AGENT_PROXY: agentPath,
         },
       });
       child.send({ type: 'ownership' }, ownership, { keepOpen: true }, () => undefined);
@@ -186,7 +199,10 @@ async function daemon(root: string, installation: string, version: string, port:
 }
 
 async function bridge(root: string, installation: string, version: string, port: number, token: string): Promise<void> {
-  const lease = { id: randomUUID(), agent: process.env['SSH_AUTH_SOCK'] ?? null };
+  // An account may export a relative socket. Preserve the SSH command's cwd,
+  // rather than resolving it later in the persistent daemon/backend directory.
+  const sourceAgent = process.env['SSH_AUTH_SOCK'];
+  const lease = { id: randomUUID(), agent: sourceAgent ? resolvePath(sourceAgent) : null };
   await publishReplacement(root, installation, __filename, version);
   const health = await ensureDaemon({ root, installation, version, port, token, lease, runtime: __filename, allowUpdate: process.argv[6] === 'update' });
   const wire = new Wire(process.stdin, process.stdout);

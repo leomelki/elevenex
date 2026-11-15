@@ -100,6 +100,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
     release, interactive: true, ask: async value => value.kind === 'credential' ? 'fixture-passphrase' : 'yes', progress: () => undefined };
   const coldStart = performance.now(); const initialRuntime = await connectRemote({ ...options, signal: AbortSignal.timeout(10000) }); transports.push(initialRuntime);
   const coldMilliseconds = performance.now() - coldStart;
+  assert.equal(await readFile(join(remoteRoot, 'agent.sock.state'), 'utf8'), '0', 'backend startup observes native SSH agent absence');
   const backend = await initialRuntime.forward(0, 0); assert.equal(backend.reachable, true);
   assert.equal((await fetch(`http://127.0.0.1:${backend.port}/api/info`, { headers: { Authorization: backend.authorization } }).then(res => res.json())).backendSha, version);
   await initialRuntime.close();
@@ -170,6 +171,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   await writeConfig(agentPath, 'key.pub', agentPath);
   const forwardedRuntime = await connectRemote({ ...options, interactive: false, signal: AbortSignal.timeout(10000) }); transports.push(forwardedRuntime);
   const forwardedBackend = await forwardedRuntime.forward(0, 0);
+  assert.equal(await readFile(join(remoteRoot, 'agent.sock.state'), 'utf8'), '1', 'a configured custom forwarding socket is published before readiness');
   assert.match(await fetch(`http://127.0.0.1:${forwardedBackend.port}/agent`, { headers: { Authorization: forwardedBackend.authorization } }).then(res => res.text()), /ED25519/);
   await forwardedRuntime.close();
   await writeConfig(agentPath, 'key.pub', 'yes');
@@ -191,6 +193,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   await writeConfig(agentPath, 'key.pub', 'no');
   const unforwardedRuntime = await connectRemote({ ...options, interactive: false, signal: AbortSignal.timeout(10000) }); transports.push(unforwardedRuntime);
   const unforwardedBackend = await unforwardedRuntime.forward(0, 0);
+  assert.equal(await readFile(join(remoteRoot, 'agent.sock.state'), 'utf8'), '0', 'turning forwarding off revokes the proxy default on the persistent backend');
   assert.doesNotMatch(await fetch(`http://127.0.0.1:${unforwardedBackend.port}/agent`, { headers: { Authorization: unforwardedBackend.authorization } }).then(res => res.text()), /ED25519/);
   await unforwardedRuntime.close();
   // A shell startup file (or server environment) may set its own agent socket.
@@ -199,8 +202,17 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
     spawn: (host, command, ...args) => spawnSsh(host, `SSH_AUTH_SOCK=${shellQuote(agentPath)} ${command}`, ...args),
   }); transports.push(shellAgentRuntime);
   const shellAgentBackend = await shellAgentRuntime.forward(0, 0);
+  assert.equal(await readFile(join(remoteRoot, 'agent.sock.state'), 'utf8'), '1', 'remote account agent configuration is preserved without client forwarding');
   assert.match(await fetch(`http://127.0.0.1:${shellAgentBackend.port}/agent`, { headers: { Authorization: shellAgentBackend.authorization } }).then(res => res.text()), /ED25519/);
   await shellAgentRuntime.close();
+  await until(async () => await readFile(join(remoteRoot, 'agent.sock.state'), 'utf8') === '0');
+  await symlink(agentPath, join(root, 'home/relative-agent.sock'));
+  const relativeAgentRuntime = await connectRemote({ ...options, interactive: false, signal: AbortSignal.timeout(10000),
+    spawn: (host, command, ...args) => spawnSsh(host, `cd ${shellQuote(join(root, 'home'))} && SSH_AUTH_SOCK=relative-agent.sock ${command}`, ...args),
+  }); transports.push(relativeAgentRuntime);
+  const relativeAgentBackend = await relativeAgentRuntime.forward(0, 0);
+  assert.match(await fetch(`http://127.0.0.1:${relativeAgentBackend.port}/agent`, { headers: { Authorization: relativeAgentBackend.authorization } }).then(res => res.text()), /ED25519/, 'relative account sockets keep the original SSH working directory');
+  await relativeAgentRuntime.close();
   await writeFile(config, (await readFile(config, 'utf8')) + 'Host *\n Ciphers aes128-ctr\n');
   challenges.length = 0;
   const incompatibleConnection = await connect('printf UNEXPECTED_CIPHER_SUCCESS', false);

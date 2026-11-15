@@ -111,9 +111,22 @@ export class ShellRefreshQueue {
 
   dispose(): void {
     this.disposed = true;
+    this.invalidate();
+  }
+
+  /** Transport environment changes invalidate work begun under the old input. */
+  invalidate(): void {
     for (const job of [...this.jobs.values()]) {
       job.controller.abort();
-      this.settle(job, null);
+      this.settle(
+        job,
+        null,
+        !this.disposed && job.required
+          ? new Error(
+              'SSH agent environment changed during shell setup. Retry the operation.',
+            )
+          : undefined,
+      );
     }
   }
 

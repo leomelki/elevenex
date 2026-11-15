@@ -59,6 +59,22 @@ describe('subprocess environment budget', () => {
 });
 
 describe('shell environment ownership', () => {
+  it('tracks shell unsets and restores launch values only when rebuilding a capture baseline', () => {
+    const projection = new ShellEnvironmentProjection();
+    const target: NodeJS.ProcessEnv = {
+      SSH_AUTH_SOCK: '/transport/agent.sock',
+    };
+    const baseline = projection.baseline(target);
+    projection.apply(target, baseline, { SSH_AUTH_SOCK: undefined });
+    expect(target.SSH_AUTH_SOCK).toBeUndefined();
+    expect(Object.hasOwn(target, 'SSH_AUTH_SOCK')).toBe(false);
+    expect(projection.baseline(target)).toEqual(baseline);
+    target.SSH_AUTH_SOCK = '/explicit/agent.sock';
+    expect(projection.baseline(target).SSH_AUTH_SOCK).toBe(
+      '/explicit/agent.sock',
+    );
+  });
+
   it('composes fresh child environments while respecting project unsets and current caller overrides', () => {
     const projection = new ShellEnvironmentProjection();
     const caller = { ORIGINAL: 'launch', PROJECT: 'global', REMOVED: 'global' };

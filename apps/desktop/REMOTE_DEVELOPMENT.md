@@ -37,6 +37,21 @@ unless the user supplies an explicit override in the saved host. The remote acco
 There is no separate application consent toggle. Old saved host toggles are
 discarded when settings load; saved hosts retain their other settings.
 
+Agent processes follow the remote interactive login shell's `SSH_AUTH_SOCK`,
+including a shell-selected server-local agent or an explicit unset. The backend's
+stable agent proxy is the inherited transport default, not an override of shell
+startup. Before starting the backend, the daemon waits for authenticated SSH
+context and atomically publishes whether that context supplied an agent socket.
+The backend removes an absent proxy before shell startup, so guards such as
+`if [ -z "$SSH_AUTH_SOCK" ]` work as they do in a normal SSH login. A successful
+shell capture supplies the resulting socket; failed captures retain the last
+good environment, and explicit per-process environment overrides still win.
+Presence transitions invalidate cached captures; ordinary lease renewals do not
+write files or start shells. The proxy does not list keys or probe a signing
+request to decide availability. Configured but empty/locked agents stay selected.
+This does not enable client forwarding: OpenSSH's effective host configuration
+and the server's policy continue to decide whether a client agent is available.
+
 Only the app's session requirements are supplied as command-line options:
 
 - `-T`, `RemoteCommand=none`, `SessionType=default`, `StdinNull=no` and
@@ -201,6 +216,7 @@ legacy remote data and local desktop data:
 | `clients/<source-hash>/` | Immutable bridge/supervisor code |
 | `data/` | Database, tasks, sessions, agent workspaces and app-owned caches |
 | `b-<instance-hash>`, `agent.sock` | Private, mode-0600 backend instance socket and stable agent proxy |
+| `agent.sock.state` | Private, atomic one-byte agent-presence signal owned and removed by the daemon |
 | `control-token` | Mode-0600 daemon authentication token; never renderer-visible |
 | `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
 | `handoff-<revision>.json` | Private prepared runtime/shim descriptor, atomically published before handoff |
