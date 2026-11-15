@@ -8,7 +8,10 @@ export interface ShellToolView {
   readonly command: string;
   readonly description: string;
   readonly directory: string;
+  /** Plain captured text (ANSI removed, carriage-return overwrites applied) for copy and preview. */
   readonly output: string;
+  /** Styled terminal lines parsed from the captured ANSI output. */
+  readonly lines: readonly TerminalLine[];
   readonly preview: string;
   readonly lineCount: number;
   readonly state: ShellState;
@@ -55,11 +58,10 @@ export function shellToolView(
   const fallback = [string(receipt['stdout']), string(receipt['stderr'])]
     .filter(Boolean)
     .join('\n');
-  // Output is always rendered as text. ANSI sequences must not become HTML or links.
-  const output = Anser.ansiToText(
-    isHardError(result) ? extractToolError(raw) : raw || fallback,
-  ).replace(/\r\n?/g, '\n');
-  const lineCount = outputLineCount(output);
+  // Output is always rendered as text nodes. ANSI sequences only become bounded style values.
+  const lines = parseTerminalOutput(isHardError(result) ? extractToolError(raw) : raw || fallback);
+  const output = terminalPlainText(lines);
+  const lineCount = lines.length;
   const preview = output.slice(-2000).trimEnd().split('\n').at(-1)?.trim().slice(0, 240) ?? '';
   const durationMs = finiteNumber(receipt['durationMs'] ?? receipt['duration_ms']);
   return {
@@ -67,6 +69,7 @@ export function shellToolView(
     description: string(input['description']).trim(),
     directory: string(input['workdir']) || string(input['cwd']),
     output,
+    lines,
     preview,
     lineCount,
     state,
@@ -82,26 +85,107 @@ export function formatShellDuration(seconds: number): string {
   return `${Math.floor(safe / 60)}m ${safe % 60}s`;
 }
 
-export function outputLineCount(text: string): number {
-  if (!text) return 0;
-  let lines = text.endsWith('\n') ? 0 : 1;
-  for (let index = 0; index < text.length; index++) if (text[index] === '\n') lines++;
-  return lines;
+/** Render a generous tail by default; "show all" stays bounded so the DOM remains responsive. */
+export const TERMINAL_TAIL_LINES = 2000;
+export const TERMINAL_MAX_LINES = 20_000;
+export function terminalWindow(lines: readonly TerminalLine[], showAll: boolean) {
+  const limit = showAll ? TERMINAL_MAX_LINES : TERMINAL_TAIL_LINES;
+  const start = Math.max(0, lines.length - limit);
+  return { lines: start ? lines.slice(start) : lines, hidden: start };
 }
 
-/** Keep the useful tail bounded even for a single huge line. Copy retains all captured output. */
-export function shellOutputWindow(text: string, expanded: boolean) {
-  const maxCharacters = expanded ? 100_000 : 24_000;
-  const maxLines = expanded ? 1000 : 200;
-  let start = Math.max(0, text.length - maxCharacters);
-  let lines = 0;
-  for (let index = text.length - (text.endsWith('\n') ? 2 : 1); index >= start; index--) {
-    if (text[index] === '\n' && ++lines === maxLines) {
-      start = index + 1;
-      break;
+export interface TerminalSpan {
+  readonly text: string;
+  readonly fg: string | null;
+  readonly bg: string | null;
+  /** Space-separated decoration classes (`cw-term--bold`, …), empty when unstyled. */
+  readonly decoration: string;
+}
+export type TerminalLine = readonly TerminalSpan[];
+
+/** Parse only the tail of pathological output; providers already cap what they capture. */
+const MAX_PARSED_CHARACTERS = 500_000;
+const NAMED_COLORS = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+] as const;
+const DECORATIONS = new Set(['bold', 'dim', 'italic', 'underline', 'strikethrough', 'hidden']);
+
+/**
+ * Convert captured terminal output into styled lines the way a terminal would show it:
+ * SGR colors and decorations are kept, a bare carriage return overwrites the current line,
+ * and every other control sequence (cursor moves, OSC titles/links, bells) is dropped.
+ */
+export function parseTerminalOutput(raw: string): TerminalLine[] {
+  const source = (raw.length > MAX_PARSED_CHARACTERS ? raw.slice(-MAX_PARSED_CHARACTERS) : raw)
+    // OSC sequences (window titles, hyperlinks) terminate with BEL or ST.
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g, '')
+    .replace(/\r\n/g, '\n');
+  const lines: TerminalSpan[][] = [[]];
+  // A carriage return only overwrites once new text arrives, like a real cursor return.
+  let returned = false;
+  for (const entry of Anser.ansiToJson(source, { use_classes: true, remove_empty: true })) {
+    const fg = terminalColor(entry.fg, entry.fg_truecolor);
+    const bg = terminalColor(entry.bg, entry.bg_truecolor);
+    const decoration = (entry.decorations ?? [])
+      .filter((name) => DECORATIONS.has(name))
+      .map((name) => `cw-term--${name}`)
+      .join(' ');
+    const parts = entry.content.split(/(\n|\r)/);
+    for (const part of parts) {
+      if (part === '\n') {
+        lines.push([]);
+        returned = false;
+      } else if (part === '\r') returned = true;
+      else {
+        // Drop leftover C0 controls (bell, backspace, stray escapes) but keep tabs.
+        const text = part.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+        if (!text) continue;
+        if (returned) lines[lines.length - 1] = [];
+        returned = false;
+        const line = lines[lines.length - 1];
+        const last = line.at(-1);
+        if (last && last.fg === fg && last.bg === bg && last.decoration === decoration)
+          line[line.length - 1] = { ...last, text: last.text + text };
+        else line.push({ text, fg, bg, decoration });
+      }
     }
   }
-  return { text: text.slice(start), truncated: start > 0 };
+  if (lines.length > 1 && lines[lines.length - 1].length === 0) lines.pop();
+  return lines.length === 1 && lines[0].length === 0 ? [] : lines;
+}
+
+export function terminalPlainText(lines: readonly TerminalLine[]): string {
+  return lines.map((line) => line.map((span) => span.text).join('')).join('\n');
+}
+
+/** Map Anser color classes onto the shared terminal palette CSS variables. */
+function terminalColor(name: string | null, truecolor: string | null): string | null {
+  if (!name) return null;
+  if (name === 'ansi-truecolor')
+    return truecolor && /^\d{1,3}, \d{1,3}, \d{1,3}$/.test(truecolor) ? `rgb(${truecolor})` : null;
+  const named = /^ansi-(bright-)?(black|red|green|yellow|blue|magenta|cyan|white)$/.exec(name);
+  if (named) return `var(--terminal-${named[1] ? 'bright-' : ''}${named[2]})`;
+  const palette = /^ansi-palette-(\d{1,3})$/.exec(name);
+  if (!palette) return null;
+  const index = Number(palette[1]);
+  if (index < 16) return `var(--terminal-${index >= 8 ? 'bright-' : ''}${NAMED_COLORS[index % 8]})`;
+  if (index < 232) {
+    const steps = [0, 95, 135, 175, 215, 255];
+    const offset = index - 16;
+    return `rgb(${steps[Math.floor(offset / 36)]}, ${steps[Math.floor(offset / 6) % 6]}, ${steps[offset % 6]})`;
+  }
+  if (index < 256) {
+    const level = 8 + (index - 232) * 10;
+    return `rgb(${level}, ${level}, ${level})`;
+  }
+  return null;
 }
 
 function record(value: unknown): Record<string, unknown> {

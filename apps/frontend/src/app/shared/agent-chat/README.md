@@ -29,11 +29,14 @@ features own their workflows and compose these pieces.
   Shell receipts are owned by `shell-tool-call.component.*`; the pure
   `shared/agent-tools/shell-tool-format.ts` normalizes commands and provider
   metadata. Missing results remain distinct from completion; exit codes are
-  shown only when supplied by the provider. Collapsed receipts show the command,
-  outcome and last output line. Expanded output is plain text with a bounded
-  tail (200 lines / 24k characters, optionally 1000 / 100k); copy includes all
-  captured output. Command previews are also bounded; copy preserves the full
-  command. Clipboard feedback and disclosures belong to each receipt. The
+  shown only when supplied by the provider. Receipts render as an always-open,
+  intentionally dark terminal (`--terminal-*` tokens in `styles.css`, matching
+  xterm): `cwd $ command`, then the output with ANSI SGR colors/decorations kept
+  as style bindings (never HTML), bare `\r` overwrites applied and other control
+  sequences dropped. The screen starts scrolled to the end, follows new output
+  while the reader stays at the bottom, and renders the last 2000 lines (up to
+  20000 on demand); copy includes all captured output. Command previews are
+  bounded; copy preserves the full command. Clipboard feedback and disclosures belong to each receipt. The
   read-only `e2e/fixtures/shell-tool-ui.json` fixture supplies representative
   results for the repository screenshot workflow, including large output.
 - `composer/`: prompt editing, attachments, queue controls, and draft storage.

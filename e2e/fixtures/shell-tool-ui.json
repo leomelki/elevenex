@@ -44,7 +44,7 @@
         "id": "tests-result",
         "kind": "tool_result",
         "toolUseId": "tests",
-        "content": " \u2713 shell-tool-format.spec.ts (7 tests)\n \u2713 shell-tool-call.component.spec.ts (7 tests)\n\n Test Files  2 passed (2)\n      Tests  14 passed (14)\n",
+        "content": "\n \u001b[1;46;30m RUN \u001b[0m \u001b[36mv3.2.4 \u001b[0m\u001b[90m/workspace/elevenex/apps/frontend\u001b[0m\n\n \u001b[32m✓\u001b[0m src/app/shared/agent-tools/\u001b[1mshell-tool-format.spec.ts\u001b[0m \u001b[90m(9 tests)\u001b[0m \u001b[33m12ms\u001b[0m\n \u001b[32m✓\u001b[0m src/app/shared/agent-chat/tools/\u001b[1mshell-tool-call.component.spec.ts\u001b[0m \u001b[90m(7 tests)\u001b[0m \u001b[33m184ms\u001b[0m\n \u001b[33m↓\u001b[0m src/app/shared/services/\u001b[1mterminal-renderer.service.spec.ts\u001b[0m \u001b[90m(4 tests | \u001b[33m4 skipped\u001b[90m)\u001b[0m\n\n\u001b[2m Test Files \u001b[22m \u001b[1;32m2 passed\u001b[0m\u001b[90m | \u001b[33m1 skipped\u001b[0m\u001b[90m (3)\u001b[0m\n\u001b[2m      Tests \u001b[22m \u001b[1;32m16 passed\u001b[0m\u001b[90m | \u001b[33m4 skipped\u001b[0m\u001b[90m (20)\u001b[0m\n\u001b[2m   Start at \u001b[22m 08:00:01\n\u001b[2m   Duration \u001b[22m 1.94s\u001b[0m\n",
         "isError": false,
         "providerToolResult": {
           "exitCode": 0,
@@ -91,7 +91,7 @@
         "id": "lint-result",
         "kind": "tool_result",
         "toolUseId": "lint",
-        "content": "src/config.ts:18:7 - error TS2322\nType \"string\" is not assignable to type \"number\".\n\nFound 1 error.\n",
+        "content": "\u001b[96msrc/config.ts\u001b[0m:\u001b[93m18\u001b[0m:\u001b[93m7\u001b[0m - \u001b[91merror\u001b[0m\u001b[90m TS2322: \u001b[0mType 'string' is not assignable to type 'number'.\n\n\u001b[7m18\u001b[0m   timeout: process.env.TIMEOUT ?? '30s',\n\u001b[7m  \u001b[0m \u001b[91m  ~~~~~~~\u001b[0m\n\n\nFound 1 error in src/config.ts\u001b[90m:18\u001b[0m\n",
         "isError": true,
         "providerToolResult": {
           "exitCode": 2,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentTranscriptItem } from '@/shared/models/agent-runtime.model';
-import { shellOutputWindow, shellToolView } from './shell-tool-format';
+import {
+  parseTerminalOutput,
+  shellToolView,
+  terminalPlainText,
+  terminalWindow,
+} from './shell-tool-format';
 
 const call: AgentTranscriptItem = {
   id: 'shell',
@@ -95,7 +100,7 @@ describe('shellToolView', () => {
         false,
       ),
     ).toMatchObject({
-      output: 'PASS\n<script>unsafe</script>\n',
+      output: 'PASS\n<script>unsafe</script>',
       lineCount: 2,
       preview: '<script>unsafe</script>',
     });
@@ -121,18 +126,47 @@ describe('shellToolView', () => {
   });
 });
 
-describe('shellOutputWindow', () => {
-  it('shows the last 200 lines and optionally 1000, without altering the source', () => {
-    const text = Array.from({ length: 1500 }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
-    const window = shellOutputWindow(text, false);
-    expect(window.truncated).toBe(true);
-    expect(window.text.startsWith('line 1301\n')).toBe(true);
-    expect(window.text.endsWith('line 1500\n')).toBe(true);
-    expect(shellOutputWindow(text, true).text.startsWith('line 501\n')).toBe(true);
+describe('parseTerminalOutput', () => {
+  it('keeps SGR colors and decorations as bounded style values', () => {
+    const [line] = parseTerminalOutput(
+      '\u001b[1;31mERR\u001b[0m plain \u001b[38;5;208mor\u001b[38;2;10;20;30mtc\u001b[0m \u001b[92;44mx\u001b[0m',
+    );
+    expect(line).toEqual([
+      { text: 'ERR', fg: 'var(--terminal-red)', bg: null, decoration: 'cw-term--bold' },
+      { text: ' plain ', fg: null, bg: null, decoration: '' },
+      { text: 'or', fg: 'rgb(255, 135, 0)', bg: null, decoration: '' },
+      { text: 'tc', fg: 'rgb(10, 20, 30)', bg: null, decoration: '' },
+      { text: ' ', fg: null, bg: null, decoration: '' },
+      {
+        text: 'x',
+        fg: 'var(--terminal-bright-green)',
+        bg: 'var(--terminal-blue)',
+        decoration: '',
+      },
+    ]);
   });
-  it('caps a single very long line and keeps small output intact', () => {
-    expect(shellOutputWindow('a'.repeat(200_000), false).text.length).toBe(24_000);
-    expect(shellOutputWindow('a'.repeat(200_000), true).text.length).toBe(100_000);
-    expect(shellOutputWindow('hello\n', false)).toEqual({ text: 'hello\n', truncated: false });
+  it('applies carriage-return overwrites and drops other control sequences', () => {
+    const lines = parseTerminalOutput(
+      'progress 10%\rprogress 100%\r\n\u001b]8;;https://x\u0007link\u001b]8;;\u0007 \u001b]0;title\u0007ok\u0007\nkept\r',
+    );
+    expect(terminalPlainText(lines)).toBe('progress 100%\nlink ok\nkept');
+    expect(parseTerminalOutput('')).toEqual([]);
+    expect(parseTerminalOutput('a\n\nb\n')).toHaveLength(3);
+  });
+});
+
+describe('terminalWindow', () => {
+  it('renders the last 2000 lines by default and up to 20000 when expanded', () => {
+    const lines = parseTerminalOutput(
+      Array.from({ length: 25_000 }, (_, i) => `line ${i + 1}`).join('\n'),
+    );
+    const tail = terminalWindow(lines, false);
+    expect(tail.hidden).toBe(23_000);
+    expect(terminalPlainText(tail.lines).startsWith('line 23001\n')).toBe(true);
+    expect(terminalWindow(lines, true).hidden).toBe(5_000);
+    expect(terminalWindow(lines.slice(0, 10), false)).toEqual({
+      lines: lines.slice(0, 10),
+      hidden: 0,
+    });
   });
 });
