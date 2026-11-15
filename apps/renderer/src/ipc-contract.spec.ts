@@ -35,6 +35,9 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  expectTypeOf(invoke('workspace:wait', 'scope', { after: 1, requestId: 'request' })).toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').WorkspaceRevision>>>();
+  // @ts-expect-error Navigation waits require a scalar cursor and cancellable request identity.
+  void invoke('workspace:wait', 'scope', { after: '1' });
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: '2026-11-14T12:00:00.000Z' } });
   // @ts-expect-error Seen acknowledgments must identify the observed completion.
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen' } });

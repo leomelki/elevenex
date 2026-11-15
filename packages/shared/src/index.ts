@@ -10,7 +10,7 @@ export type * from './session-chat';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
-import type { WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
+import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
 import type { EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteDiagnostic, RemoteForwardInput, RemoteHost, RemoteHostInput } from './remote';
@@ -104,7 +104,9 @@ export interface InvokeContracts {
   'workspace:delete-project': { args: [scopeId: string, projectId: number]; result: BackendResult<{ readonly accepted: true }> };
   'workspace:waiting-read': { args: [expected: EnvironmentSelection]; result: WaitingWritingSnapshot };
   'workspace:waiting-save': { args: [expected: EnvironmentSelection, identity: string, input: WaitingWriting]; result: void };
-  'workspace:revision': { args: [scopeId: string]; result: BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }> };
+  'workspace:wait': { args: [scopeId: string, input: WorkspaceRevisionWait]; result: BackendResult<WorkspaceRevision> };
+  'workspace:cancel-wait': { args: [scopeId: string, requestId: string]; result: void };
+  'workspace:revision': { args: [scopeId: string]; result: BackendResult<WorkspaceRevision> };
   'workspace:projects': { args: [scopeId: string, input: WorkspacePageQuery]; result: BackendResult<WorkspacePage<WorkspaceProject>> };
   'workspace:project-name-availability': { args: [scopeId: string, name: string]; result: BackendResult<{ readonly available: boolean }> };
   'workspace:project': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceProjectDetail> };
@@ -239,7 +241,9 @@ export interface ElevenexBridge {
   workspaceDeleteProject(scopeId: string, projectId: number): Promise<BackendResult<{ readonly accepted: true }>>;
   workspaceWaitingRead(expected: EnvironmentSelection): Promise<WaitingWritingSnapshot>;
   workspaceWaitingSave(expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void>;
-  workspaceRevision(scopeId: string): Promise<BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }>>;
+  workspaceWait(scopeId: string, input: WorkspaceRevisionWait): Promise<BackendResult<WorkspaceRevision>>;
+  workspaceCancelWait(scopeId: string, requestId: string): Promise<void>;
+  workspaceRevision(scopeId: string): Promise<BackendResult<WorkspaceRevision>>;
   workspaceProjects(scopeId: string, input: WorkspacePageQuery): Promise<BackendResult<WorkspacePage<WorkspaceProject>>>;
   workspaceProjectNameAvailability(scopeId: string, name: string): Promise<BackendResult<{ readonly available: boolean }>>;
   workspaceProject(scopeId: string, input: number): Promise<BackendResult<WorkspaceProjectDetail>>;

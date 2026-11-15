@@ -206,7 +206,7 @@ export class WorkspaceStore {
         else this.reset(next);
         if (next) {
           this.loading.set(true);
-          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
+          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } }, { wait: (after, requestId) => this.bridge.workspaceWait(next, { after, requestId }), cancel: requestId => this.bridge.workspaceCancelWait(next, requestId) });
         }
       });
     });
@@ -427,8 +427,35 @@ export class WorkspaceStore {
         if (!task) continue;
         const page = restored?.sessions?.taskId === task.id ? restored.sessions.page
           : await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, limit: 20, order: 'latest' }), () => revision === this.listRevision, background);
-        if (page) { sessions.set(task.id, page.items); cursors.set(task.id, page.nextCursor); }
-        if (revision === this.listRevision && this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && archive?.taskId !== task.id) await this.archives.refresh(scope, task.id);
+        if (page && revision === this.listRevision && this.scopeId() === scope) {
+          let rows = page.items;
+          const pinned = this.selectedSession();
+          // An older selected conversation can be pinned outside the latest
+          // window. Revalidate that one ID, rather than retaining its old status
+          // or scanning every intervening page.
+          if (background && pinned?.taskId === task.id && pinned.status !== 'archived' && !rows.some(row => row.id === pinned.id)) {
+            const focused = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, ...(pinned.id > 1 ? { cursor: String(pinned.id - 1) } : {}), limit: 1 }), () => revision === this.listRevision, true);
+            const updated = focused?.items.find(row => row.id === pinned.id);
+            if (updated) rows = [...rows.slice(0, 19), updated].sort((a, b) => a.id - b.id);
+          }
+          if (revision !== this.listRevision || this.scopeId() !== scope) return;
+          sessions.set(task.id, rows); cursors.set(task.id, page.nextCursor);
+          // Live indicators must not wait for other tasks or archived history.
+          // Preserve a pinned selection outside the latest page until final reconciliation.
+          if (background) this.sessionRecords.update(current => {
+            const next = new Map(current), selected = this.selectedSession();
+            next.set(task.id, selected && selected.taskId === task.id && !rows.some(item => item.id === selected.id)
+              ? [...rows.slice(0, 19), selected] : rows);
+            return next;
+          });
+        }
+        if (revision === this.listRevision && this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && archive?.taskId !== task.id) {
+          const archived = this.archives.refresh(scope, task.id);
+          // Archives own coalescing, stale replies and errors. Their latency
+          // must not delay live status reconciliation or the next revision wait.
+          if (background) void archived.catch(() => undefined);
+          else await archived;
+        }
       }
     }));
     if (revision !== this.listRevision || this.scopeId() !== scope) return;

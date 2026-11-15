@@ -193,3 +193,18 @@ export interface WorkspaceRestoreSession {
   readonly taskId: number;
   readonly sessionId: number;
 }
+
+/** Optional capability retains compatibility with engines using revision polling. */
+export interface WorkspaceRevision {
+  readonly revision: number;
+  readonly version: 1;
+  readonly revisionWait?: true;
+  readonly sessionArchive?: true;
+  readonly sessionArchiveHistory?: true;
+  readonly taskRequests?: true;
+  readonly commitPanel?: true;
+}
+export interface WorkspaceRevisionWait {
+  readonly after: number;
+  readonly requestId: string;
+}
