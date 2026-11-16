@@ -161,7 +161,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     inject(DestroyRef).onDestroy(() => { for (const finish of [...this.revisionWaits.values()]) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); for (const finish of this.pendingSessionCreates.values()) finish('unknown'); this.pendingSessionCreates.clear(); });
-    inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); this.setChildReads('ready'); });
+    inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); this.setChildReads('ready'); this.holdSessionMoves(false); });
   }
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
@@ -246,7 +246,18 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     this.sessionRows = this.sessionRows.map(session => session.taskId === input.taskId && session.id === input.sessionId ? { ...session, status: 'archived' } : session.parentSessionId === input.sessionId ? { ...session, parentSessionId: null } : session);
     return success({ accepted: true as const });
   };
+  private sessionMovesHeld = false;
+  private readonly pendingSessionMoves = new Set<() => void>();
+  /** Delay confirmation to check release feedback while the source still exists. */
+  holdSessionMoves(held: boolean): void {
+    this.sessionMovesHeld = held;
+    if (!held) for (const finish of this.pendingSessionMoves) finish();
+  }
   workspaceMoveSession = async (_scope: string, input: import('@elevenex/shared').WorkspaceMoveSession) => {
+    if (this.sessionMovesHeld) await new Promise<void>(resolve => {
+      const finish = () => { this.pendingSessionMoves.delete(finish); resolve(); };
+      this.pendingSessionMoves.add(finish);
+    });
     const source = this.sessionRows.find(row => row.id === input.sessionId && row.taskId === input.taskId);
     if (!source) throw new Error('Unknown session');
     if (source.parentSessionId !== input.parentSessionId) this.nestingRanks.set(source.id, ++this.nestingSequence);

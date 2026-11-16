@@ -41,15 +41,36 @@ export class SessionRowComponent implements OnChanges {
   protected readonly confirming = signal(false);
   protected readonly dragging = signal(false);
   protected startDrag(event: DragEvent): void {
+    this.endDrag();
     if (!event.dataTransfer || this.confirming() || this.session().local) { event.preventDefault(); return; }
     writeSessionDrag(event.dataTransfer, this.session());
     this.dragging.set(true);
+    // A drop can be handled elsewhere, and native dragend can arrive after the
+    // move's reply. Release the source feedback on the drop itself.
+    const end = () => this.endDrag();
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') this.endDrag(); };
+    this.document.addEventListener('drop', end, true);
+    this.document.addEventListener('dragend', end, true);
+    this.document.addEventListener('keydown', key);
+    this.document.defaultView?.addEventListener('blur', end);
+    this.removeDragListeners = () => {
+      this.document.removeEventListener('drop', end, true);
+      this.document.removeEventListener('dragend', end, true);
+      this.document.removeEventListener('keydown', key);
+      this.document.defaultView?.removeEventListener('blur', end);
+    };
+  }
+  protected endDrag(): void {
+    this.dragging.set(false);
+    this.removeDragListeners?.();
+    this.removeDragListeners = undefined;
   }
   private readonly document = inject(DOCUMENT);
   private confirmationSession: string | null = null;
   private removeOutsideListener?: () => void;
+  private removeDragListeners?: () => void;
 
-  constructor() { inject(DestroyRef).onDestroy(() => this.cancelArchive()); }
+  constructor() { inject(DestroyRef).onDestroy(() => { this.cancelArchive(); this.endDrag(); }); }
   ngOnChanges(): void {
     if (!this.allowArchive() || this.session().status !== 'running' || this.session().id !== this.confirmationSession) this.cancelArchive();
   }

@@ -49,6 +49,10 @@ describe('task-owned nesting drag', () => {
     // The ghost holds its slot, and the count includes it, until the confirmed row arrives.
     expect(document.querySelector('ex-session-drag-preview.landing')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('[data-session-root="1"] .child-count.pending')).not.toBeNull();
+    // No dragend or backend reply is needed to release the original row.
+    expect(fixture.nativeElement.querySelector('.drag-source, .dragging, .receded, .unavailable')).toBeNull();
+    send('[data-session-id="2"] .select', 'drop');
+    expect(fixture.componentInstance.moves).toHaveLength(1);
     fixture.componentInstance.rows.set([{ ...root, childCount: 2 }, child, { ...leaf, parentId: '1' }]); fixture.detectChanges();
     expect(document.querySelector('ex-session-drag-preview')).toBeNull();
     expect(fixture.nativeElement.querySelector('.child-count.pending')).toBeNull();
@@ -61,6 +65,7 @@ describe('task-owned nesting drag', () => {
       send('[data-session-id="1"] .select', 'dragover');
       send('[data-session-id="1"] .select', 'drop');
       expect(document.querySelector('ex-session-drag-preview')).not.toBeNull();
+      expect(fixture.nativeElement.querySelector('.drag-source, .dragging')).toBeNull();
       vi.advanceTimersByTime(1500); fixture.detectChanges();
       expect(document.querySelector('ex-session-drag-preview')).toBeNull();
       expect(fixture.nativeElement.querySelector('.drag-source')).toBeNull();
@@ -89,6 +94,7 @@ describe('task-owned nesting drag', () => {
     expect(fixture.nativeElement.querySelector('header').classList.contains('session-drop-root')).toBe(true);
     send('header', 'drop');
     expect(fixture.componentInstance.moves).toEqual([{ sessionId: '2', parentSessionId: null }]);
+    expect(fixture.nativeElement.querySelector('.drag-source, .dragging, .outdent-preview')).toBeNull();
   });
   it('cancels on Escape, disabling, blur and destruction without a mutation', () => {
     const { fixture, send } = setup();
@@ -108,7 +114,8 @@ describe('task-owned nesting drag', () => {
     const outside = document.createElement('div'); document.body.append(outside);
     const event = new Event('drop', { bubbles: true, cancelable: true }); outside.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false); expect(fixture.componentInstance.moves).toEqual([]);
-    await Promise.resolve();
+    await Promise.resolve(); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.drag-source, .dragging')).toBeNull();
     expect(document.querySelector('ex-session-drag-preview')).toBeNull(); outside.remove();
   });
 });

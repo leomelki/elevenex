@@ -294,7 +294,9 @@ depth, so no row moves while aiming. The docked ghost breathes immediately to
 reveal the covered row, which remains a valid target. Groups that cannot accept
 the session recede. Reduced motion removes the reach, snap and breath and keeps a
 steady translucent ghost. Collapsed groups stay collapsed while aiming and show a
-stacked edge. On drop the ghost holds its slot (bounded to 1.5s) until the
+stacked edge. Dropping immediately releases the grab cursor and restores the
+source row, independently of backend confirmation. Only the destination ghost
+holds its slot (bounded to 1.5s) until the
 confirmed row arrives, then the row glides from the ghost into place and the
 destination opens. While a child is dragged its task header shows a quiet ready
 outline; holding it over the header lights the header and previews the moved row

@@ -161,3 +161,34 @@ describe('session row archive intent', () => {
     expect(view.nativeElement.querySelector('.archive')).toBeNull();
   });
 });
+
+describe('session row drag release', () => {
+  function row() {
+    const fixture = TestBed.createComponent(SessionRowComponent);
+    fixture.componentRef.setInput('session', sessions[0]); fixture.detectChanges();
+    const button = fixture.nativeElement.querySelector('.select') as HTMLButtonElement;
+    const event = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: { setData: vi.fn() } });
+    button.dispatchEvent(event); fixture.detectChanges();
+    expect(button.classList.contains('dragging')).toBe(true);
+    return { fixture, button };
+  }
+  it.each(['drop', 'dragend', 'Escape', 'blur'])('clears grab feedback on %s without waiting for a move reply', event => {
+    const { fixture, button } = row();
+    if (event === 'blur') window.dispatchEvent(new Event('blur'));
+    else if (event === 'Escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    else document.dispatchEvent(new Event(event));
+    fixture.detectChanges();
+    expect(button.classList.contains('dragging')).toBe(false);
+  });
+  it('releases its document and window listeners on destruction', () => {
+    const { fixture } = row();
+    const documentRemove = vi.spyOn(document, 'removeEventListener');
+    const windowRemove = vi.spyOn(window, 'removeEventListener');
+    fixture.destroy();
+    expect(documentRemove).toHaveBeenCalledWith('drop', expect.any(Function), true);
+    expect(documentRemove).toHaveBeenCalledWith('dragend', expect.any(Function), true);
+    expect(documentRemove).toHaveBeenCalledWith('keydown', expect.any(Function));
+    expect(windowRemove).toHaveBeenCalledWith('blur', expect.any(Function));
+  });
+});

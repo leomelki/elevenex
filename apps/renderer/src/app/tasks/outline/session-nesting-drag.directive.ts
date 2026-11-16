@@ -31,8 +31,8 @@ export class SessionNestingDragDirective implements OnChanges {
   readonly droppedParent = signal<string | null>(null);
   /** The hovered group shows the docked slot, not only its highlight. */
   readonly docked = computed(() => { const target = this.target(); return !!target && target.childrenAppendOrder !== false; });
-  /** The session currently lifted out of its place, during aim or landing. */
-  readonly movingId = computed(() => this.source()?.id ?? this.landing()?.sessionId ?? null);
+  /** Only an active drag lifts the source; a pending landing must not dim it. */
+  readonly movingId = computed(() => this.source()?.id ?? null);
   private readonly liveSource = computed(() => this.dragSessions().find(row => row.id === this.source()?.id));
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);

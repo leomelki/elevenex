@@ -49,7 +49,19 @@ export default async function* (capture) {
     assert.deepEqual(await geometry(),before);
     yield {name:`${theme}-covered-target`,inspect:['.drop-active','ex-session-drag-preview']};
     const point = await over('[data-session-id="108"] .select',data);
+    await capture.component('ex-connected-workspace-demo', component => component.fixture.holdSessionMoves(true));
     await capture.cdp('Input.dispatchDragEvent',{type:'drop',...point,data});
+    // No dragend or backend receipt: the original row releases on the first paint.
+    await capture.settle();
+    assert.deepEqual(await capture.evaluate(() => {
+      const source = document.querySelector('[data-session-root="106"] .branch-row');
+      const button = source.querySelector('.select');
+      return { opacity: getComputedStyle(source).opacity, buttonOpacity: getComputedStyle(button).opacity,
+        labelOpacity: getComputedStyle(button.querySelector('.label')).opacity, cursor: getComputedStyle(button).cursor,
+        dragging: !!document.querySelector('.dragging, .drag-source, .unavailable, .outdent-preview') };
+    }), {opacity:'1',buttonOpacity:'1',labelOpacity:'1',cursor:'pointer',dragging:false});
+    yield {name:`${theme}-released-before-confirmation`,inspect:['[data-session-root="106"]','.children']};
+    await capture.component('ex-connected-workspace-demo', component => component.fixture.holdSessionMoves(false));
     await capture.waitFor(()=>document.querySelector('.children [data-session-id="106"]'));
     // The landing ghost is released once the confirmed row is in place.
     await capture.waitFor(()=>!document.querySelector('ex-session-drag-preview'));
@@ -80,7 +92,15 @@ export default async function* (capture) {
     await over('[data-session-id="101"] .select',reduced);
     assert.equal(await capture.evaluate(()=>document.querySelector('ex-session-drag-preview').getAnimations({subtree:true}).length),0);
     yield {name:`${theme}-reduced-dock`,inspect:['.drop-active','ex-session-drag-preview']};
-    await capture.press('Escape'); await cancel();
+    const reducedPoint = await at('[data-session-id="101"] .select');
+    await capture.component('ex-connected-workspace-demo', component => component.fixture.holdSessionMoves(true));
+    await capture.cdp('Input.dispatchDragEvent',{type:'drop',...reducedPoint,data:reduced});
+    await capture.settle();
+    assert.equal(await capture.evaluate(() => !!document.querySelector('.dragging, .drag-source, .unavailable, .outdent-preview')),false);
+    yield {name:`${theme}-reduced-released`,inspect:['[data-session-root="106"]']};
+    await capture.component('ex-connected-workspace-demo', component => component.fixture.holdSessionMoves(false));
+    await capture.waitFor(()=>document.querySelector('.children [data-session-id="106"]'));
+    await finish();
     await capture.reducedMotion(false);
   }
 }
