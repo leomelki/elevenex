@@ -31,7 +31,7 @@ export default async function* (capture) {
     // Wait past the hover delay while positioned over the destination.
     await capture.evaluate(() => new Promise(resolve => window.setTimeout(resolve, 450)));
     assert.equal(await capture.evaluate(() => document.querySelector('ex-tooltip')), null);
-    yield {name:`${theme}-drop-target`,inspect:['ex-workspace-navigation','.drop-active','.drop-hint']};
+    yield {name:`${theme}-drop-target`,inspect:['ex-workspace-navigation','.drop-active','ex-session-drag-preview']};
     await capture.cdp('Input.dispatchDragEvent',{type:'drop',...target,data});
     await capture.waitFor(()=>document.querySelector('.children [data-session-id="102"]'));
     await finish();

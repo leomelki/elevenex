@@ -54,6 +54,7 @@ export class WorkspaceStore {
   readonly commitPanelAvailable = signal(false);
   readonly hierarchy = new WorkspaceSessionHierarchy();
   readonly sessionNestingAvailable = signal(false);
+  private readonly sessionNestingOrderAvailable = signal(false);
   readonly sessionArchiveAvailable = signal(false);
   readonly sessionArchiveHistoryAvailable = signal(false);
   private readonly archives = new WorkspaceSessionArchives(this.bridge, scope => this.valid(scope));
@@ -169,7 +170,7 @@ export class WorkspaceStore {
     ...(task.repoName && task.projectRepositoryCount !== 1 ? { repo: task.repoName } : {}),
     sessions: [
       ...(this.navigationSessions().get(task.id) ?? []).map(session => ({ id: String(session.id), renderId: this.sessionRenderIds().get(session.id),
-        ...(this.sessionNestingAvailable() && !this.closed() ? { parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
+        ...(this.sessionNestingAvailable() && !this.closed() ? { childrenAppendOrder: this.sessionNestingOrderAvailable(), parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
           childrenLoading: this.hierarchy.windows().get(session.id)?.loading ?? false,
           childrenError: this.hierarchy.windows().get(session.id)?.error ?? null,
           earlierChildren: this.hierarchy.windows().get(session.id)?.earlier ?? false, moreChildren: !!this.hierarchy.windows().get(session.id)?.nextCursor } : {}), mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
@@ -221,7 +222,7 @@ export class WorkspaceStore {
         else this.reset(next);
         if (next) {
           this.loading.set(true);
-          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionNestingAvailable.set(result.value.sessionNesting === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
+          this.observer = new WorkspaceNavigationObserver(this.document, async () => { const result = await this.bridge.workspaceRevision(next); if (this.valid(next) && result.ok) { this.taskRequestsAvailable.set(result.value.taskRequests === true); this.commitPanelAvailable.set(result.value.commitPanel === true); this.sessionNestingAvailable.set(result.value.sessionNesting === true); this.sessionNestingOrderAvailable.set(result.value.sessionNestingOrder === true); this.sessionArchiveAvailable.set(result.value.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(result.value.sessionArchiveHistory === true); } return result; }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } });
         }
       });
     });
@@ -292,7 +293,7 @@ export class WorkspaceStore {
     }
     if (!this.capable) {
       const capability = await this.read(scope, () => this.bridge.workspaceRevision(scope));
-      if (this.valid(scope)) { this.taskRequestsAvailable.set(capability?.taskRequests === true); this.commitPanelAvailable.set(capability?.commitPanel === true); this.sessionNestingAvailable.set(capability?.sessionNesting === true); this.sessionArchiveAvailable.set(capability?.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(capability?.sessionArchiveHistory === true); }
+      if (this.valid(scope)) { this.taskRequestsAvailable.set(capability?.taskRequests === true); this.commitPanelAvailable.set(capability?.commitPanel === true); this.sessionNestingAvailable.set(capability?.sessionNesting === true); this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true); this.sessionArchiveAvailable.set(capability?.sessionArchive === true); this.sessionArchiveHistoryAvailable.set(capability?.sessionArchiveHistory === true); }
       if (!this.current(scope, revision)) return;
       if (!capability || capability.version !== 1) { this.loading.set(false); this.error.set(this.error() ?? 'This backend needs an update before it can open the workspace.'); return; }
       this.capable = true;
@@ -596,7 +597,7 @@ export class WorkspaceStore {
     const scope = this.scopeId(), taskId = Number(intent.taskId), parentId = Number(intent.sessionId), revision = this.listRevision;
     if (!scope || !this.sessionNestingAvailable() || !this.navigationSessions().get(taskId)?.some(row => row.id === parentId)) return;
     await this.hierarchy.load(taskId, parentId, intent.earlier ?? false,
-      cursor => this.bridge.workspaceSessions(scope, { taskId, parentSessionId: parentId, limit: 20, order: 'latest', ...(cursor ? { cursor } : {}) }),
+      cursor => this.bridge.workspaceSessions(scope, { taskId, parentSessionId: parentId, limit: 20, order: 'latest', ...(this.sessionNestingOrderAvailable() ? { childOrder: 'nested' } : {}), ...(cursor ? { cursor } : {}) }),
       () => this.valid(scope) && revision === this.listRevision);
   }
   async moveSession(intent: { readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }): Promise<void> {
@@ -1006,7 +1007,7 @@ export class WorkspaceStore {
   private valid(scope: string): boolean { return !this.disposed && this.scopeId() === scope && this.backend.state().scope?.id === scope; }
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
-    this.hierarchy.reset(); this.sessionNestingAvailable.set(false);
+    this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;
     this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);

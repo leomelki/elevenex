@@ -20,6 +20,8 @@ export const sessions = sqliteTable(
     parentSessionId: integer('parent_session_id').references((): AnySQLiteColumn => sessions.id, {
       onDelete: 'set null',
     }),
+    // Append order within a desktop group; ID breaks ties for migrated rows.
+    nestingOrder: integer('nesting_order').notNull().default(0),
     branchName: text('branch_name').notNull(),
     worktreePath: text('worktree_path').notNull(),
     transcriptWorktreePath: text('transcript_worktree_path'),
@@ -83,6 +85,7 @@ export const sessions = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => [
+    index('sessions_nesting_order_idx').on(table.parentSessionId, table.workspaceId, table.nestingOrder, table.id),
     index('sessions_parent_idx').on(table.parentSessionId, table.workspaceId, table.status, table.id),
     index('sessions_repo_activity_idx').on(
       table.repoId,

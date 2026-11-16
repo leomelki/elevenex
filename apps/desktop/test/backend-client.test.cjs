@@ -878,6 +878,13 @@ test('session moves validate scope, input, reply identity and paginated children
   assert.equal((await children({taskId:1,parentSessionId:4,limit:20})).ok,true);
   assert.match(requests.at(-1),/parentSessionId=4/);
   assert.equal((await children({taskId:1,parentSessionId:5})).ok,false);
+  reply.nextCursor = '2:12';
+  assert.equal((await children({taskId:1,parentSessionId:4,childOrder:'nested',cursor:'3:20'})).value.nextCursor,'2:12');
+  assert.match(requests.at(-1),/childOrder=nested/);
+  assert.match(requests.at(-1),/cursor=3%3A20/);
+  assert.equal((await children({taskId:1,parentSessionId:4})).ok,false); // unchanged legacy cursor validation
+  for (const input of [{taskId:1,childOrder:'nested'}, {taskId:1,parentSessionId:null,childOrder:'nested'}, {taskId:1,parentSessionId:4,childOrder:'other'}, {taskId:1,parentSessionId:4,childOrder:'nested',cursor:'1:2:3'}]) assert.throws(()=>children(input));
+  reply.nextCursor = null;
   reply.items[0].childCount = -1;
   assert.equal((await children({taskId:1,parentSessionId:4})).ok,false);
   client.reset(42); const count = requests.length;

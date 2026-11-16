@@ -37,7 +37,7 @@ export class DesktopWorkspaceController {
     private readonly projectDeletion: DesktopProjectDeletionService,
   ) {}
   @Get('revision') revision() {
-    return { revision: this.navigation.revision, version: 1, taskRequests: true, commitPanel: true, sessionArchive: true, sessionArchiveHistory: true, sessionNesting: true };
+    return { revision: this.navigation.revision, version: 1, taskRequests: true, commitPanel: true, sessionArchive: true, sessionArchiveHistory: true, sessionNesting: true, sessionNestingOrder: true };
   }
   private async changed<T>(operation: Promise<T>): Promise<T> {
     const value = await operation;
@@ -163,7 +163,7 @@ export class DesktopWorkspaceController {
   }
   @Get('tasks/:id/sessions') listSessions(
     @Param('id') id: string,
-    @Query() query: PageQuery & { order?: string; state?: string; parentSessionId?: string },
+    @Query() query: PageQuery & { order?: string; state?: string; parentSessionId?: string; childOrder?: string },
   ) {
     return this.workspace.listSessions(resourceId(id), query);
   }

@@ -216,15 +216,19 @@ function nonnegativeCount(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
   return value;
 }
+function validNestingCursor(value: string): boolean {
+  return /^(0|[1-9]\d*):[1-9]\d*$/.test(value) && value.split(':').every(part => Number.isSafeInteger(Number(part)));
+}
 export function parseWorkspacePage<T>(
   value: unknown,
   map: (value: unknown) => T,
+  nested = false,
 ): WorkspacePage<T> {
   const raw = object(value);
   if (!Array.isArray(raw['items']) || raw['items'].length > 100)
     throw invalidResponse();
-  const cursor = nullable(raw['nextCursor'], 20);
-  if (cursor !== null && !/^[1-9]\d*$/.test(cursor)) throw invalidResponse();
+  const cursor = nullable(raw['nextCursor'], nested ? 40 : 20);
+  if (cursor !== null && !(nested ? validNestingCursor(cursor) : /^[1-9]\d*$/.test(cursor))) throw invalidResponse();
   return { items: raw['items'].map(map), nextCursor: cursor };
 }
 function detail(value: unknown): WorkspaceProjectDetail {
@@ -250,13 +254,13 @@ function required(value: unknown, max: number): string {
   if (!result) throw new Error('A nonempty value is required.');
   return result;
 }
-function query(value: unknown): { limit: number; cursor?: string } {
+function query(value: unknown, nested = false): { limit: number; cursor?: string } {
   const raw = object(value),
     limit = raw['limit'] === undefined ? 50 : id(raw['limit']);
   if (limit > 100) throw new Error('Page limit exceeds 100.');
   const cursor =
-    raw['cursor'] === undefined ? undefined : required(raw['cursor'], 20);
-  if (cursor && !/^[1-9]\d*$/.test(cursor)) throw new Error('Invalid cursor.');
+    raw['cursor'] === undefined ? undefined : required(raw['cursor'], nested ? 40 : 20);
+  if (cursor && !(nested ? validNestingCursor(cursor) : /^[1-9]\d*$/.test(cursor))) throw new Error('Invalid cursor.');
   return { limit, ...(cursor === undefined ? {} : { cursor }) };
 }
 function queryString(values: object): string {
@@ -367,12 +371,13 @@ export function registerWorkspaceIpc(
           revision < 0
         )
           throw invalidResponse();
+        if (response['sessionNestingOrder'] !== undefined && response['sessionNestingOrder'] !== true) throw invalidResponse();
         if (response['sessionNesting'] !== undefined && response['sessionNesting'] !== true) throw invalidResponse();
         if (response['sessionArchiveHistory'] !== undefined && response['sessionArchiveHistory'] !== true) throw invalidResponse();
         if (response['sessionArchive'] !== undefined && response['sessionArchive'] !== true) throw invalidResponse();
         if (response['taskRequests'] !== undefined && response['taskRequests'] !== true) throw invalidResponse();
         if (response['commitPanel'] !== undefined && response['commitPanel'] !== true) throw invalidResponse();
-        return { revision, version: 1 as const, ...(response['sessionNesting'] === true ? { sessionNesting: true as const } : {}), ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
+        return { revision, version: 1 as const, ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true as const } : {}), ...(response['sessionNesting'] === true ? { sessionNesting: true as const } : {}), ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
       });
     }),
   );
@@ -549,12 +554,14 @@ export function registerWorkspaceIpc(
       taskId = id(raw['taskId']);
     if (raw['order'] !== undefined && raw['order'] !== 'latest') throw invalidResponse();
     if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived') throw invalidResponse();
+    if (raw['childOrder'] !== undefined && (raw['childOrder'] !== 'nested' || typeof raw['parentSessionId'] !== 'number')) throw invalidResponse();
+    const nested = raw['childOrder'] === 'nested';
     return read(
       window,
       scope,
-      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
+      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw, nested), ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
       (value) => {
-        const result = parseWorkspacePage(value, session);
+        const result = parseWorkspacePage(value, session, nested);
         if (result.items.some((session) => session.taskId !== taskId || (typeof raw['parentSessionId'] === 'number' && session.parentSessionId !== raw['parentSessionId']) || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
           throw invalidResponse();
         return result;

@@ -41,6 +41,8 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     { id: 12, projectId: 1, repoId: 1, name: 'Review settlement window', branchName: 'review/settlement-window', stage: 'waiting', state: 'ready', archivedAt: null, updatedAt: stamp },
     { id: 13, projectId: 2, repoId: 2, name: 'Improve checkout accessibility', branchName: 'feat/checkout-focus', stage: 'planned', state: 'ready', archivedAt: null, updatedAt: stamp },
   ];
+  private readonly nestingRanks = new Map<number, number>();
+  private nestingSequence = 0;
   private sessionRows: WorkspaceSession[] = [
     { id: 101, taskId: 11, repoId: 1, name: 'Guard concurrent requests', provider: 'codex', status: 'running', updatedAt: stamp },
     { id: 102, taskId: 11, repoId: 1, name: 'Review the race condition', provider: 'codex', status: 'idle', updatedAt: stamp },
@@ -55,6 +57,19 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   setChildReads(mode: 'ready' | 'held' | 'failed'): void {
     this.childReadsHeld = mode === 'held'; this.childReadsFailed = mode === 'failed';
     if (!this.childReadsHeld) { for (const finish of this.pendingChildReads) finish(); this.pendingChildReads.clear(); }
+  }
+  /** Stable roots/children for zero-reflow drag feedback and ordering checks. */
+  nestingScene(): void {
+    this.sessionRows = this.sessionRows.filter(row => row.taskId !== 11).concat([
+      {id:101,taskId:11,repoId:1,name:'Plan session nesting',provider:'codex',status:'done',updatedAt:stamp},
+      {id:102,taskId:11,repoId:1,name:'Update docs',provider:'codex',status:'done',updatedAt:stamp},
+      {id:105,taskId:11,repoId:1,name:'Backend migration',provider:'codex',status:'done',updatedAt:stamp},
+      {id:106,taskId:11,repoId:1,name:'Fix tooltip overlap',provider:'codex',status:'done',updatedAt:stamp},
+      {id:107,taskId:11,repoId:1,parentSessionId:101,name:'Keyboard support',provider:'codex',status:'done',updatedAt:stamp},
+      {id:108,taskId:11,repoId:1,parentSessionId:101,name:'Screen reader feedback',provider:'codex',status:'done',updatedAt:stamp},
+    ]);
+    this.nestingRanks.clear(); this.nestingSequence = 0;
+    this.navigationRevision++;
   }
   manyChildren(): void {
     this.sessionRows = this.sessionRows.filter(row => row.id < 400).concat(Array.from({length:45},(_,index)=>({id:400+index,taskId:11,repoId:1,parentSessionId:101,name:`Child investigation ${index + 1}`,provider:'codex',status:'done',updatedAt:stamp})));
@@ -128,7 +143,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));
@@ -147,9 +162,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
       if (this.childReadsHeld) await new Promise<void>(resolve => this.pendingChildReads.add(resolve));
       if (this.childReadsFailed) return { ok: false as const, error: { code: 'transport' as const, message: 'Could not load child sessions. Try again.' } };
     }
-    const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.parentSessionId === undefined || (session.parentSessionId ?? null) === query.parentSessionId) && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || session.id < Number(query.cursor))).sort((a,b) => b.id - a.id);
+    const nested = query.childOrder === 'nested';
+    const [rank, cursorId] = query.cursor?.split(':').map(Number) ?? [];
+    const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.parentSessionId === undefined || (session.parentSessionId ?? null) === query.parentSessionId) && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || (nested ? (this.nestingRanks.get(session.id) ?? 0) < rank! || ((this.nestingRanks.get(session.id) ?? 0) === rank && session.id < cursorId!) : session.id < Number(query.cursor)))).sort((a,b) => (nested ? (this.nestingRanks.get(b.id) ?? 0) - (this.nestingRanks.get(a.id) ?? 0) : 0) || b.id - a.id);
     const limit = query.limit ?? 20;
-    return success({ items: rows.slice(0,limit).reverse().map(session => ({ ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length })), nextCursor: rows.length > limit ? String(rows[limit - 1]!.id) : null });
+    const last = rows[limit - 1];
+    return success({ items: rows.slice(0,limit).reverse().map(session => ({ ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length })), nextCursor: rows.length > limit ? nested ? `${this.nestingRanks.get(last!.id) ?? 0}:${last!.id}` : String(last!.id) : null });
   };
   workspaceTask = async (_scope: string, id: number) => success(this.navigationTask(this.taskRows.find(task => task.id === id)!));
   workspaceRetryTask = async (scope: string, id: number, recovery?: WorkspaceTaskRecovery) => {
@@ -208,6 +226,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceMoveSession = async (_scope: string, input: import('@elevenex/shared').WorkspaceMoveSession) => {
     const source = this.sessionRows.find(row => row.id === input.sessionId && row.taskId === input.taskId);
     if (!source) throw new Error('Unknown session');
+    if (source.parentSessionId !== input.parentSessionId) this.nestingRanks.set(source.id, ++this.nestingSequence);
     const moved = { ...source, parentSessionId: input.parentSessionId };
     this.sessionRows = this.sessionRows.map(row => row.id === source.id ? moved : row);
     this.navigationRevision++;

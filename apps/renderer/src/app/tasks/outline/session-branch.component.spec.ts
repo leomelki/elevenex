@@ -37,15 +37,4 @@ describe('session groups', () => {
     expect(item).toBeDefined(); item!.click(); fixture.detectChanges();
     expect(moved).toHaveBeenCalledWith({ sessionId: '2', parentSessionId: null });
   });
-  it('accepts same-task leaves and rejects self, existing membership, populated groups and disabled drops', () => {
-    const fixture = setup(), moved = vi.fn(); fixture.componentInstance.moveRequested.subscribe(moved);
-    const row = fixture.nativeElement.querySelector('.branch-row');
-    const drop = () => { const event = new Event('drop', { bubbles: true, cancelable: true }); row.dispatchEvent(event); return event.defaultPrevented; };
-    for (const source of [root,child,{...child,id:'3',childCount:2}]) {
-      fixture.componentRef.setInput('dragSource',source); fixture.detectChanges(); expect(drop()).toBe(false);
-    }
-    fixture.componentRef.setInput('dragSource',{ ...child,id:'3',parentId:null }); fixture.detectChanges();
-    expect(drop()).toBe(true); expect(moved).toHaveBeenCalledWith({sessionId:'3',parentSessionId:'1'});
-    fixture.componentRef.setInput('allowNesting',false); fixture.detectChanges(); expect(drop()).toBe(false);
-  });
 });

@@ -14,11 +14,11 @@
 </ex-fold>
 @for (batch of orderedBatches(); track batch.key) {
   <ex-session-batch [sessions]="batch.sessions" [selected]="selected()" [muted]="window().muted" [open]="batch.open" [initial]="batch.initial" [closingDistance]="closingDistance()"
-    [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [allSessions]="sessions()" [dragSource]="dragSource()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (closed)="settled(batch.key)" />
+    [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [allSessions]="sessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (closed)="settled(batch.key)" />
 }
 @for (entry of presence.rows(); track entry.key) {
   <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
     <ex-session-branch [session]="entry.value" [selected]="selected()" [muted]="window().muted === entry.value.id"
-      [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [sessions]="sessions()" [dragSource]="dragSource()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+      [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [sessions]="sessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
   </ex-fold>
 }

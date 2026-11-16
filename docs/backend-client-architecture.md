@@ -504,3 +504,15 @@ expire on engine shutdown/startup. Existing clients may omit the owner and retai
 engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
 termination; opening an empty Terminal pane creates a fresh shell through the
 existing explicit opening flow. There is no shutdown channel in the preload.
+
+The optional `sessionNestingOrder: true` workspace capability enables
+`workspaceSessions` child queries with `childOrder: 'nested'`. This mode orders
+by the persisted per-group nesting rank, then session ID. Successful moves append
+at the end; repeated moves to the same parent preserve order. Migrated children
+have rank zero and retain their ID order. A `(rank, ID)` keyset cursor remains
+usable after the cursor row is removed. Pages stay bounded to 100; the renderer
+keeps a 20-child window and reloads its latest page after a confirmed move.
+Omitting the option preserves existing flat/root/child ordering and numeric
+cursors. Main validates the opt-in mode and its bounded cursor without changing
+other resource pagination. Older engines keep the group highlight and keyboard
+moves; the renderer withholds the dock's append-position promise.

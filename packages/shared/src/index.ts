@@ -104,7 +104,7 @@ export interface InvokeContracts {
   'workspace:delete-project': { args: [scopeId: string, projectId: number]; result: BackendResult<{ readonly accepted: true }> };
   'workspace:waiting-read': { args: [expected: EnvironmentSelection]; result: WaitingWritingSnapshot };
   'workspace:waiting-save': { args: [expected: EnvironmentSelection, identity: string, input: WaitingWriting]; result: void };
-  'workspace:revision': { args: [scopeId: string]; result: BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }> };
+  'workspace:revision': { args: [scopeId: string]; result: BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionNestingOrder?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }> };
   'workspace:projects': { args: [scopeId: string, input: WorkspacePageQuery]; result: BackendResult<WorkspacePage<WorkspaceProject>> };
   'workspace:project-name-availability': { args: [scopeId: string, name: string]; result: BackendResult<{ readonly available: boolean }> };
   'workspace:project': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceProjectDetail> };
@@ -240,7 +240,7 @@ export interface ElevenexBridge {
   workspaceDeleteProject(scopeId: string, projectId: number): Promise<BackendResult<{ readonly accepted: true }>>;
   workspaceWaitingRead(expected: EnvironmentSelection): Promise<WaitingWritingSnapshot>;
   workspaceWaitingSave(expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void>;
-  workspaceRevision(scopeId: string): Promise<BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }>>;
+  workspaceRevision(scopeId: string): Promise<BackendResult<{ readonly revision: number; readonly version: 1; readonly sessionNesting?: true; readonly sessionNestingOrder?: true; readonly sessionArchive?: true; readonly sessionArchiveHistory?: true; readonly taskRequests?: true; readonly commitPanel?: true }>>;
   workspaceProjects(scopeId: string, input: WorkspacePageQuery): Promise<BackendResult<WorkspacePage<WorkspaceProject>>>;
   workspaceProjectNameAvailability(scopeId: string, name: string): Promise<BackendResult<{ readonly available: boolean }>>;
   workspaceProject(scopeId: string, input: number): Promise<BackendResult<WorkspaceProjectDetail>>;

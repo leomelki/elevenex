@@ -23,6 +23,27 @@ describe('DesktopWorkspaceService', () => {
   const activityStatus = jest.fn<string | undefined, []>();
   const archiveSession = jest.fn();
   const restoreSession = jest.fn();
+  it('appends older sessions with bounded nesting cursors while preserving legacy order', async () => {
+    const create = (name: string) => database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'main',worktreePath:'/repo/task',name}).returning().get();
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const parent = create('Parent'), older = create('Older'), newer = create('Newer'), last = create('Last');
+    await service.moveSession(taskId,newer.id,parent.id);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id);
+    const query = {parentSessionId:String(parent.id),childOrder:'nested',order:'latest',limit:'2'};
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row=>row.id)).toEqual([older.id,last.id]);
+    expect(latest.nextCursor).toMatch(/^2:/);
+    // The cursor is self-contained even if its session is removed from the group.
+    await service.moveSession(taskId,older.id,null);
+    expect((await service.listSessions(taskId,{...query,cursor:latest.nextCursor!})).items.map(row=>row.id)).toEqual([newer.id]);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id); // idempotent, does not reorder
+    expect((await service.listSessions(taskId,{...query,limit:'20'})).items.map(row=>row.id)).toEqual([newer.id,last.id,older.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:String(parent.id)})).items.map(row=>row.id)).toEqual([older.id,newer.id,last.id]);
+    for (const cursor of ['x','1:0','-1:2','1:2:3','99999999999999999999:1']) await expect(service.listSessions(taskId,{...query,cursor})).rejects.toThrow();
+    await expect(service.listSessions(taskId,{childOrder:'nested',parentSessionId:'root'})).rejects.toThrow();
+  });
   it('reconciles a creation by its indexed request identity without replaying setup', async () => {
     await database.db.update(schema.workspaces).set({ taskRequestId: 'desktop-stable-request' }).where(eq(schema.workspaces.id, taskId));
     expect((await service.taskRequest(repoId, 'desktop-stable-request')).task?.id).toBe(taskId);

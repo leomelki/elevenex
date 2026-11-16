@@ -1,0 +1,15 @@
+:host { --drag-fill: var(--surface-raised); display: block; width: 100%; min-width: 0; position: relative; height: 28px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); box-shadow: var(--shadow-pop); pointer-events: none; }
+.fill { position: absolute; inset: 0; border-radius: inherit; background: var(--drag-fill); }
+.content { position: relative; display: flex; height: 100%; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); }
+.title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-ui-size); }
+ex-icon { display: none; }
+:host(.docked) { --drag-fill: var(--surface); border: 1px dashed var(--accent); box-shadow: none; color: var(--accent); }
+:host(.docked) ex-icon { display: block; }
+/* Begin the reveal on docking. The outline stays steady as the underlying row
+   becomes readable. This overlay never takes pointer input or layout space. */
+:host(.docked) .fill { animation: session-ghost-fill calc(var(--dur-base) * 11) var(--ease-in-out) infinite; }
+:host(.docked) .content { animation: session-ghost-content calc(var(--dur-base) * 11) var(--ease-in-out) infinite; }
+:host(.stacked)::before { content: ''; position: absolute; left: var(--space-1); right: var(--space-1); top: -4px; height: 2px; border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius: var(--radius-xs); }
+@keyframes session-ghost-fill { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes session-ghost-content { 0%, 100% { opacity: 1; } 50% { opacity: .1; } }
+@media (prefers-reduced-motion: reduce) { :host(.docked) .fill, :host(.docked) .content { animation: none; opacity: .6; } }

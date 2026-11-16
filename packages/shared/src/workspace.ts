@@ -75,6 +75,8 @@ export interface WorkspaceTaskQuery extends WorkspacePageQuery {
 export interface WorkspaceSessionQuery extends WorkspacePageQuery {
   /** Omit for legacy flat pages; null selects roots, an ID selects children. */
   readonly parentSessionId?: number | null;
+  /** Opt-in append order for child pages. Requires sessionNestingOrder. */
+  readonly childOrder?: 'nested';
   /** Explicit lifecycle window; omission preserves older callers, including closed-task history. */
   readonly state?: 'normal' | 'archived';
   /** Newest bounded page, still returned in chronological display order. Omission preserves oldest-first callers. */

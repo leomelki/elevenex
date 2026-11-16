@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import {
   and,
+  or,
   asc,
   desc,
   lt,
@@ -324,13 +325,22 @@ export class DesktopWorkspaceService {
       projectRepositoryCount: repositories.count,
     };
   }
-  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string; parentSessionId?: string }) {
+  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string; parentSessionId?: string; childOrder?: string }) {
     if (query.order !== undefined && query.order !== 'latest') throw new BadRequestException('Invalid session order.');
     if (query.state !== undefined && query.state !== 'normal' && query.state !== 'archived') throw new BadRequestException('Invalid session state.');
     const parentId = query.parentSessionId === undefined ? undefined : query.parentSessionId === 'root' ? null : resourceId(query.parentSessionId);
+    if (query.childOrder !== undefined && (query.childOrder !== 'nested' || typeof parentId !== 'number')) throw new BadRequestException('Invalid child order.');
+    const nested = query.childOrder === 'nested';
+    let position: { rank: number; id: number } | undefined;
+    if (nested && query.cursor !== undefined) {
+      if (query.cursor.length > 40 || !/^(0|[1-9]\d*):[1-9]\d*$/.test(query.cursor)) throw new BadRequestException('Invalid nesting cursor.');
+      const [rank, id] = query.cursor.split(':').map(Number);
+      if (!Number.isSafeInteger(rank) || !Number.isSafeInteger(id)) throw new BadRequestException('Invalid nesting cursor.');
+      position = { rank, id };
+    }
     const latest = query.order === 'latest';
     const task = await this.tasks.record(taskId);
-    const { limit, cursor } = bounds(query);
+    const { limit, cursor } = bounds(nested ? { limit: query.limit } : query);
     const rows = await this.db
       .select({ session: schema.sessions, childCount: sessionChildCount })
       .from(schema.sessions)
@@ -344,12 +354,16 @@ export class DesktopWorkspaceService {
             : eq(schema.sessions.parentSessionId, parentId),
           query.state === 'archived' ? eq(schema.sessions.status, 'archived')
             : query.state === 'normal' || !task.archivedAt ? ne(schema.sessions.status, 'archived') : undefined,
-          latest ? lt(schema.sessions.id, query.cursor === undefined ? Number.MAX_SAFE_INTEGER : cursor) : gt(schema.sessions.id, cursor),
+          nested ? position ? or(
+            latest ? lt(schema.sessions.nestingOrder, position.rank) : gt(schema.sessions.nestingOrder, position.rank),
+            and(eq(schema.sessions.nestingOrder, position.rank), latest ? lt(schema.sessions.id, position.id) : gt(schema.sessions.id, position.id)),
+          ) : undefined : latest ? lt(schema.sessions.id, query.cursor === undefined ? Number.MAX_SAFE_INTEGER : cursor) : gt(schema.sessions.id, cursor),
         ),
       )
-      .orderBy(latest ? desc(schema.sessions.id) : asc(schema.sessions.id))
+      .orderBy(...(nested ? [latest ? desc(schema.sessions.nestingOrder) : asc(schema.sessions.nestingOrder)] : []), latest ? desc(schema.sessions.id) : asc(schema.sessions.id))
       .limit(limit + 1);
     const result = page(rows.map(row => ({ ...this.sessionView(row.session, taskId), childCount: row.childCount })), limit);
+    if (nested && rows.length > limit) result.nextCursor = `${rows[limit - 1].session.nestingOrder}:${rows[limit - 1].session.id}`;
     return latest ? { ...result, items: result.items.reverse() } : result;
   }
   async projectNameAvailability(value: unknown) {

@@ -1,13 +1,16 @@
-<div class="branch" [class.drop-active]="dropActive() && canDrop()">
-  <div class="branch-row" (dragover)="dragOver($event)" (dragleave)="leave($event)" (drop)="drop($event)">
-    @if (session().childCount || children().length) {
+<div class="branch" [attr.data-session-root]="!session().parentId ? session().id : null" [class.drop-active]="dropActive()" [class.drag-source]="drag?.source()?.id === session().id">
+  <div class="branch-row">
+    @if (childCount() || dropActive()) {
       <button class="disclosure" type="button" [attr.aria-label]="(expanded() ? 'Collapse children of ' : 'Expand children of ') + session().title"
         [attr.aria-expanded]="expanded()" (click)="toggle()" [exTooltip]="(session().childCount ?? children().length) + ' child sessions'">
-        <ex-icon name="chevron-down" [size]="12" [class.closed]="!expanded()" />
+        <ex-icon [name]="dropActive() ? 'plus' : 'chevron-down'" [size]="12" [class.closed]="!dropActive() && !expanded()" />
       </button>
     } @else { <span class="disclosure-space"></span> }
     <ex-session-row [session]="session()" [selected]="selected() === session().id" [muted]="muted()"
       [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+    @if (childCount() || dropActive()) {
+      <span class="child-count" [class.pending]="dropActive()" [attr.aria-label]="childCount() + ' child sessions'"><ex-ticker [value]="childCount() + (dropActive() ? 1 : 0)" /></span>
+    }
     @if (allowNesting() && !session().local) {
       <button class="move-menu" type="button" [attr.aria-label]="'Move ' + session().title" exTooltip="Move session" [cdkMenuTriggerFor]="moves"><ex-icon name="more" [size]="14" /></button>
       <ng-template #moves>
@@ -22,7 +25,6 @@
       </ng-template>
     }
   </div>
-  @if (dropActive() && canDrop()) { <span class="drop-hint" aria-hidden="true">Move under {{ session().title }}</span> }
   <ex-fold [open]="expanded() && (!!session().childCount || !!children().length)">
     <div class="children">
       @for (child of children(); track child.renderId ?? child.id) {

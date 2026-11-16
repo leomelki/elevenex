@@ -144,3 +144,5 @@ button:focus-visible {
 .diff-del {
   color: var(--diff-del);
 }
+/* A depth destination on existing chrome; pickup never inserts a drop strip. */
+header.session-drop-root { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }

@@ -285,13 +285,29 @@ current bounded child window with `childrenLoading`, `childrenError` and
 `moveSessionRequested({taskId, sessionId, parentSessionId})` and
 `sessionChildrenRequested({taskId, sessionId, earlier?})`.
 
-Drag a leaf onto another root in the same task to nest it. The highlighted target
-explains the move; dragging into a composer still copies a mention. Each row's
+Drag a leaf anywhere over another root's visible group in the same task to nest
+it. The group tint, plus disclosure and preview count show the destination; a
+pointer-transparent dashed ghost docks at child depth without changing list
+geometry. It breathes immediately to reveal the covered row, which remains a
+valid target. Reduced motion uses a steady ghost. Collapsed groups stay collapsed
+while aiming and show a stacked edge; dropping opens the destination. Drag a
+child onto its task header to return it to task level without implying a sort
+position. Edge scrolling never inserts padding into the list.
+
+The task-scoped `SessionNestingDragDirective` owns native transfer, overlay,
+announcements, edge scrolling and cancellation/cleanup. It keeps the existing
+session MIME data and copy/move semantics, so dragging into a composer still
+copies a mention. `TaskSession.childrenAppendOrder=false` supports older engines:
+the group still highlights, but the preview stays at the pointer rather than
+promising an unsupported landing position. Other supplied-data owners default
+to append placement. Each row's
 Move menu provides the keyboard alternative and “Move to task level”. A populated
 group must release its children before becoming a child itself. Disclosure never
 selects the parent; selected children reveal their group, and closed children are
 inert. Existing caps count root groups. Filtering retains loaded matching children
 with their parent context. Menus offer at most 20 roots from the loaded window.
 
-`session-nesting.mjs` exercises the connected preview with native drops, keyboard
+`session-nesting-dock.mjs` checks stable geometry, both breathing phases, covered
+row targeting, append placement, header drag-out, composer mentions and reduced
+motion in both themes. `session-nesting.mjs` exercises the connected preview with native drops, keyboard
 moves, both themes and narrow reduced-motion layouts.

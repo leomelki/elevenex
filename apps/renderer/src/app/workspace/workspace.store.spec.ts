@@ -926,13 +926,13 @@ describe('session organization', () => {
     const {store,bridge,start} = setup();
     let parentSessionId: number | null = null;
     const parent = {...session,id:6,name:'Plan',parentSessionId:null};
-    bridge.workspaceRevision.mockImplementation(async()=>ok({revision:1,version:1 as const,sessionArchive:true as const,sessionNesting:true as const}));
+    bridge.workspaceRevision.mockImplementation(async()=>ok({revision:1,version:1 as const,sessionArchive:true as const,sessionNesting:true as const,sessionNestingOrder:true as const}));
     bridge.workspaceSessions.mockImplementation(async(_scope,query)=>ok(page(query.parentSessionId === 6 ? [{...session,parentSessionId}] : parentSessionId === null ? [{...session,parentSessionId},parent] : [{...parent,childCount:1}])));
     bridge.workspaceMoveSession.mockImplementation(async(_scope,input)=>{ parentSessionId=input.parentSessionId; return ok({...session,parentSessionId}); });
     await start(); await store.selectSession({taskId:'3',sessionId:'5'});
     await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:'6'});
     expect(bridge.workspaceMoveSession).toHaveBeenCalledWith('scope',{taskId:3,sessionId:5,parentSessionId:6});
-    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope',{taskId:3,parentSessionId:6,limit:20,order:'latest'});
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope',{taskId:3,parentSessionId:6,limit:20,order:'latest',childOrder:'nested'});
     expect(store.selectedSession()?.parentSessionId).toBe(6);
     expect(store.tasks()[0]?.sessions.find(row=>row.id==='5')?.parentId).toBe('6');
     await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:null});

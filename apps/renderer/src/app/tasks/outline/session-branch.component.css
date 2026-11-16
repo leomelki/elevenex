@@ -15,6 +15,9 @@ ex-session-row { flex: 1; min-width: 0; }
 .children p, .earlier { margin: 0; padding: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
 .children button { border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
 .children button:disabled { opacity: .5; cursor: default; }
-.drop-active > .branch-row { background: var(--accent-soft); outline: 1px solid var(--accent); border-radius: var(--radius-sm); }
-.drop-hint { position: absolute; z-index: 1; top: 100%; right: var(--space-2); max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: var(--accent); color: var(--on-accent); font-size: var(--text-caption-size); pointer-events: none; }
+.drop-active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent); }
+.drop-active > .branch-row > .disclosure { color: var(--accent); }
+.drag-source > .branch-row { opacity: .4; }
+.child-count { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
+.child-count.pending { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .disclosure ex-icon { transition: none; } }

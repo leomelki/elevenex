@@ -38,6 +38,7 @@ import { SubtaskGlyphComponent } from "./subtask-glyph.component";
 import { TaskSignalComponent } from "./task-signal.component";
 import { subtaskLocations } from "./subtask-order";
 
+import { SessionNestingDragDirective } from './session-nesting-drag.directive';
 import { ArchivedSessionsComponent } from "./archived-sessions.component";
 
 type SessionOutlineRow =
@@ -72,6 +73,7 @@ type SessionOutlineRow =
 @Component({
   selector: "ex-task-group",
   imports: [
+    SessionNestingDragDirective,
     ArchivedSessionsComponent,
     TaskSignalComponent,
     TickerComponent,

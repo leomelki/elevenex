@@ -24,8 +24,11 @@ export function moveSession(db: DrizzleDB, taskId: number, sessionId: number, pa
       if (parent.parentSessionId !== null || tx.select({ id: schema.sessions.id }).from(schema.sessions).where(and(eq(schema.sessions.workspaceId, taskId), eq(schema.sessions.parentSessionId, sessionId), ne(schema.sessions.status, 'archived'))).limit(1).get())
         throw new BadRequestException('Sessions support two levels. Move children to task level first.');
     }
+    // A repeated delivery must not reorder an already-confirmed move.
+    if (session.parentSessionId === parentSessionId) return session;
+    const nestingOrder = parentSessionId === null ? 0 : (tx.select({ value: sql<number>`coalesce(max(${schema.sessions.nestingOrder}), 0)` }).from(schema.sessions).where(and(eq(schema.sessions.workspaceId, taskId), eq(schema.sessions.parentSessionId, parentSessionId))).get()?.value ?? 0) + 1;
     if (parentSessionId !== null) tx.update(schema.sessions).set({ parentSessionId: null }).where(and(eq(schema.sessions.parentSessionId, sessionId), eq(schema.sessions.status, 'archived'))).run();
-    return tx.update(schema.sessions).set({ parentSessionId, folderId: null, updatedAt: new Date().toISOString() })
+    return tx.update(schema.sessions).set({ parentSessionId, nestingOrder, folderId: null, updatedAt: new Date().toISOString() })
       .where(eq(schema.sessions.id, sessionId)).returning().get();
   });
 }

@@ -21,7 +21,6 @@ export class SessionBatchComponent implements OnChanges {
   readonly allowArchive = input(false);
   readonly allowNesting = input(false);
   readonly allSessions = input<readonly TaskSession[]>([]);
-  readonly dragSource = input<TaskSession | null>(null);
   readonly moveRequested = output<SessionMoveIntent>();
   readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
   readonly open = input(true);

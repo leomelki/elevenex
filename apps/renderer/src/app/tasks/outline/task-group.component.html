@@ -1,5 +1,5 @@
-<article [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
-  <header>
+<article exSessionNestingDrag [dragSessions]="task().sessions" [dragTaskId]="task().id" [dragEnabled]="allowNesting() && !archiveDisabled()" (sessionDropped)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
+  <header data-session-task-header>
     <button
       class="toggle"
       type="button"

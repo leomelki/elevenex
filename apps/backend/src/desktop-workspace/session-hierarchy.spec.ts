@@ -57,7 +57,7 @@ it('migrates old folders into groups without losing names, archived states or em
   const sqlite = new Database(':memory:');
   sqlite.pragma('foreign_keys = ON');
   try {
-    const migrations = readMigrationFiles({migrationsFolder:resolve(process.cwd(),'drizzle')});
+    const migrations = readMigrationFiles({migrationsFolder:resolve(process.cwd(),'drizzle')}).slice(0, 53);
     for (const migration of migrations.slice(0,-1)) for (const statement of migration.sql) sqlite.exec(statement);
     sqlite.exec(`
       INSERT INTO projects(id,name,created_at,updated_at) VALUES(1,'Project','now','now');

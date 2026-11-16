@@ -3,7 +3,6 @@ import { EaseSwapComponent, FoldComponent, IconComponent, TickerComponent } from
 import { ListPresence } from '../../ui/motion/list-presence';
 import type { TaskSession, TaskSessionDisclosure } from '../task.models';
 import { SessionBranchComponent } from './session-branch.component';
-import { readSessionDrag } from '../session-drag';
 import type { SessionMoveIntent } from '../task.models';
 import { SessionBatchComponent } from './session-batch.component';
 import { sessionWindow } from './session-window';
@@ -26,7 +25,6 @@ interface BatchSource {
   templateUrl: './working-sessions.component.html',
   styleUrl: './working-sessions.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '(dragstart)': 'startDrag($event)', '(dragend)': 'dragSource.set(null)' },
 })
 export class WorkingSessionsComponent {
   readonly taskId = input.required<string>();
@@ -39,11 +37,6 @@ export class WorkingSessionsComponent {
   readonly allowNesting = input(false);
   readonly moveRequested = output<SessionMoveIntent>();
   readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
-  protected readonly dragSource = signal<TaskSession | null>(null);
-  protected startDrag(event: DragEvent): void {
-    const reference = event.dataTransfer ? readSessionDrag(event.dataTransfer, this.sessions().find(session => session.mentionScope)?.mentionScope) : null;
-    this.dragSource.set(reference ? this.sessions().find(session => session.id === reference.id) ?? null : null);
-  }
   protected readonly roots = computed(() => {
     const ids = new Set(this.sessions().map(session => session.id));
     return this.sessions().filter(session => !session.parentId || !ids.has(session.parentId));
