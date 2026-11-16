@@ -7,6 +7,16 @@ import {
   readWorktreeStatusSnapshot,
 } from './git-worktree-fingerprint.js';
 
+// These tests exercise snapshot caching with a mocked simple-git; the real
+// status reader has its own spec.
+jest.mock('./worktree-status-reader.js', () => ({
+  readWorktreeStatus: (
+    _worktreePath: string,
+    git: SimpleGit,
+    statusArgs: string[],
+  ) => git.status(statusArgs),
+}));
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;

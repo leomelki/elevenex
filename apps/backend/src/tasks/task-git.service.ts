@@ -9,6 +9,7 @@ import {
   buildAugmentedEnv,
   worktreeSimpleGit,
 } from '../config/system-paths.js';
+import { refreshCommitGraphAfterFetch } from '../git/commit-graph-refresh.js';
 import { execFileAsync } from '../terminal/async-process.js';
 import { copyCacheString } from '../git/git-cache.js';
 import { isolateGitEnvironment } from '../config/git-environment.js';
@@ -149,7 +150,9 @@ export class TaskGitService {
           timeout: 30_000,
           killSignal: 'SIGKILL',
         },
-      ).then(() => undefined);
+      ).then(() => {
+        refreshCommitGraphAfterFetch(repoPath, [target.ref]);
+      });
       this.fetches.set(key, pending);
     }
     try {

@@ -11,6 +11,10 @@ import {
 } from './git.service.js';
 import type { SimpleGit, StatusResult } from 'simple-git';
 import { clearWorktreeFingerprintCache } from './git-worktree-fingerprint.js';
+import {
+  configureWorktreeStatusReader,
+  resetWorktreeStatusReader,
+} from './worktree-status-reader.js';
 import { BadRequestException } from '@nestjs/common';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
@@ -502,6 +506,44 @@ describe('GitService', () => {
       expect(typeof prompt === 'string' && prompt.length).toBeLessThan(30_000);
     });
 
+    it('uses the supplied snapshot index for both status and diff context', async () => {
+      configureWorktreeStatusReader({ indexSettleMs: 0 });
+      try {
+        execFileSync('git', ['config', 'core.untrackedCache', 'true'], {
+          cwd: repoPath,
+        });
+        fs.writeFileSync(
+          path.join(repoPath, 'snapshot-feature.ts'),
+          'export const snapshotFeature = true;\n',
+        );
+        await service.stageFiles(repoPath, ['snapshot-feature.ts']);
+        const indexFile = path.join(tmpDir, 'snapshot-index');
+        fs.copyFileSync(path.join(repoPath, '.git', 'index'), indexFile);
+        execFileSync('git', ['reset', '--mixed', 'HEAD'], { cwd: repoPath });
+        generate.mockResolvedValue({
+          provider: 'codex',
+          model: null,
+          text: '{"subject":"feat(git): add snapshot feature","body":null}',
+        });
+
+        await service.suggestCommitMessage(repoPath, 'codex', indexFile);
+
+        expect(generate.mock.calls[0][0].prompt).toContain('snapshot-feature.ts');
+        expect(generate.mock.calls[0][0].prompt).toContain(
+          '+export const snapshotFeature = true;',
+        );
+        expect(
+          execFileSync('git', ['diff', '--cached', '--name-only'], {
+            cwd: repoPath,
+            encoding: 'utf8',
+          }),
+        ).toBe('');
+      } finally {
+        configureWorktreeStatusReader(null);
+        resetWorktreeStatusReader(repoPath);
+      }
+    });
+
     it('preserves the explicit-provider requirement for direct API callers', async () => {
       await expect(
         service.suggestCommitMessage(repoPath, undefined),
@@ -938,6 +980,51 @@ describe('GitService', () => {
       },
       15_000,
     );
+
+    it('reports the same line totals as unrestricted diffs', async () => {
+      fs.writeFileSync(
+        path.join(repoPath, 'rename-me.txt'),
+        'line\n'.repeat(30),
+      );
+      fs.writeFileSync(path.join(repoPath, 'delete-me.txt'), 'gone\n');
+      execSync('git add . && git commit -m "more files"', { cwd: repoPath });
+      execSync('git mv rename-me.txt renamed.txt', { cwd: repoPath });
+      fs.writeFileSync(path.join(repoPath, 'initial.txt'), 'staged\nlines\n');
+      execSync('git add initial.txt', { cwd: repoPath });
+      fs.writeFileSync(
+        path.join(repoPath, 'initial.txt'),
+        'staged\nlines\nand unstaged\n',
+      );
+      fs.rmSync(path.join(repoPath, 'delete-me.txt'));
+      fs.writeFileSync(path.join(repoPath, 'untracked.txt'), 'a\nb\n');
+
+      const sum = (args: string) =>
+        execSync(`git diff --numstat --find-renames ${args}`, {
+          cwd: repoPath,
+          encoding: 'utf8',
+        })
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => line.split('\t'))
+          .reduce(
+            (total, [added, deleted]) => ({
+              additions: total.additions + Number(added),
+              deletions: total.deletions + Number(deleted),
+            }),
+            { additions: 0, deletions: 0 },
+          );
+
+      const summary = await service.getStatusSummary(repoPath);
+
+      expect(summary.staged).toMatchObject(sum('--cached'));
+      // The untracked file adds its two lines to the unstaged side.
+      const unstaged = sum('');
+      expect(summary.unstaged).toMatchObject({
+        additions: unstaged.additions + 2,
+        deletions: unstaged.deletions,
+      });
+    });
 
     it('ignores internal changes in tracked worktrees across status, stats, diffs, and fingerprints', async () => {
       const firstWorktree = createTrackedWorktree('first');

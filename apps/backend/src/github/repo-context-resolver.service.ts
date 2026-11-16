@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as path from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
+import { readCurrentBranch } from '../git/git-head.js';
 
 export interface RepoContext {
   repoRoot: string;
@@ -36,11 +37,7 @@ export class RepoContextResolverService {
   private async readContext(worktreePath: string): Promise<RepoContext> {
     const git = worktreeSimpleGit(worktreePath);
     const repoRoot = (await git.revparse(['--show-toplevel'])).trim();
-    // Reading the current symbolic ref does not visit every branch's tip.
-    const branch = await git
-      .raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
-      .then((value) => value.trim())
-      .catch(() => '');
+    const branch = await readCurrentBranch(git);
 
     if (!branch) {
       throw new Error('Detached HEAD is not supported for GitHub cockpit.');

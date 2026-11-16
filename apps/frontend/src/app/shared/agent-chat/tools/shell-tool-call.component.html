@@ -1,0 +1,176 @@
+@let shell = view();
+@let screenState = terminal();
+<!-- The terminal is an intentionally dark surface in both themes; `dark` scopes the dark tokens. -->
+<section
+  class="cw-tool cw-term dark min-w-0 overflow-hidden rounded-lg border text-[13px] text-foreground"
+  [attr.data-state]="shell.state"
+  aria-label="Shell command"
+>
+  <header class="cw-term__chrome flex h-9 min-w-0 items-center gap-0.5 pr-1.5 pl-1">
+    <button
+      type="button"
+      class="cw-tool__head flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+      [attr.aria-expanded]="open()"
+      [title]="open() ? 'Collapse' : 'Expand'"
+      (click)="toggle()"
+    >
+      <ng-icon
+        name="lucideChevronRight"
+        size="13"
+        class="shrink-0 text-muted-foreground transition-transform"
+        [class.rotate-90]="open()"
+        aria-hidden="true"
+      />
+      <span
+        class="min-w-0 flex-1 truncate text-[12.5px] font-medium"
+        [class.font-mono]="!shell.description"
+        [title]="shell.description || commandPreview()"
+      >
+        {{ shell.description || commandSummary() || 'Shell command' }}
+      </span>
+      @if (shell.duration && shell.state !== 'running') {
+        <span class="shrink-0 font-mono text-[11px] text-muted-foreground">{{
+          shell.duration
+        }}</span>
+      }
+      <span
+        class="cw-shell__status inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] font-medium"
+        [attr.data-state]="shell.state"
+      >
+        <ng-icon
+          [name]="stateIcon()"
+          size="12"
+          [class.animate-spin]="shell.state === 'running'"
+          aria-hidden="true"
+        />
+        {{ status() }}
+      </span>
+    </button>
+    @if (open() && shell.output) {
+      <button
+        z-button
+        zType="ghost"
+        zSize="xs"
+        type="button"
+        class="size-7 p-0 text-muted-foreground hover:text-foreground aria-pressed:text-foreground"
+        aria-label="Wrap output lines"
+        [title]="wrap() ? 'Disable line wrap' : 'Wrap long lines'"
+        [attr.aria-pressed]="wrap()"
+        (click)="wrap.set(!wrap())"
+      >
+        <ng-icon name="lucideWrapText" size="14" aria-hidden="true" />
+      </button>
+      <button
+        z-button
+        zType="ghost"
+        zSize="xs"
+        type="button"
+        class="h-7 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+        aria-label="Copy output"
+        title="Copy the full output"
+        [zDisabled]="copying('output')"
+        (click)="copy('output')"
+      >
+        <ng-icon
+          [name]="copyFeedback() === 'Output copied' ? 'lucideCheck' : 'lucideCopy'"
+          size="13"
+          aria-hidden="true"
+        />{{ copyFeedback() === 'Output copied' ? 'Copied' : 'Copy' }}
+      </button>
+    }
+  </header>
+
+  @if (open()) {
+    <div
+      #screen
+      class="cw-tool__body cw-term__screen min-w-0 overflow-auto overscroll-contain px-3.5 py-2.5 font-mono text-[12.5px] leading-[1.55]"
+      tabindex="0"
+      aria-label="Terminal output"
+      (scroll)="onScroll(screen)"
+    >
+      <div class="group relative flex min-w-0 gap-2 pr-8">
+        @if (shell.directory) {
+          <span class="cw-term__cwd shrink-0" [title]="shell.directory">{{
+            directoryLabel()
+          }}</span>
+        }
+        <span class="cw-term__sigil shrink-0 select-none" aria-hidden="true">$</span>
+        <span
+          class="cw-shell__command min-w-0 flex-1 whitespace-pre-wrap"
+          aria-label="Command text"
+          >{{ commandPreview() || 'Command unavailable' }}</span
+        >
+        @if (shell.command) {
+          <button
+            z-button
+            zType="ghost"
+            zSize="xs"
+            type="button"
+            class="absolute top-0 right-0 size-6 p-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+            aria-label="Copy command"
+            title="Copy command"
+            [zDisabled]="copying('command')"
+            (click)="copy('command')"
+          >
+            <ng-icon
+              [name]="copyFeedback() === 'Command copied' ? 'lucideCheck' : 'lucideCopy'"
+              size="12"
+              aria-hidden="true"
+            />
+          </button>
+        }
+      </div>
+      @if (shell.command.length > commandPreview().length) {
+        <div class="cw-term__note">… command shortened, copy it for the full text</div>
+      }
+
+      @if (screenState.hidden || showAll()) {
+        <button
+          type="button"
+          class="cw-term__note my-1 block rounded-sm text-left underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          (click)="toggleShowAll()"
+        >
+          @if (screenState.hidden) {
+            ··· {{ screenState.hidden.toLocaleString() }} earlier
+            {{ screenState.hidden === 1 ? 'line' : 'lines' }} —
+            {{ showAll() ? 'copy for the rest' : 'show all' }}
+          } @else {
+            ··· show only the last lines
+          }
+        </button>
+      }
+
+      @if (shell.output) {
+        <div
+          class="cw-shell__output"
+          [class.cw-shell__output--wrap]="wrap()"
+          role="log"
+          aria-label="Command output"
+        >
+          @for (line of screenState.lines; track $index) {
+            <div class="cw-term__line">
+              @for (span of line; track $index) {
+                <span
+                  [class]="span.decoration"
+                  [style.color]="span.fg"
+                  [style.background-color]="span.bg"
+                  >{{ span.text }}</span
+                >
+              }
+            </div>
+          }
+        </div>
+      } @else if (shell.state !== 'running') {
+        <div class="cw-term__note italic">{{ shell.emptyMessage }}</div>
+      }
+      @if (shell.state === 'running') {
+        <span class="cw-term__cursor" aria-hidden="true"></span
+        ><span class="sr-only">Waiting for output…</span>
+      }
+      @if (shell.state === 'denied' && call().interaction?.content?.['message']; as reason) {
+        <div class="cw-term__denied mt-1 whitespace-pre-wrap">{{ reason }}</div>
+      }
+    </div>
+  }
+  <span class="sr-only" role="status">{{ copyFeedback() }}</span>
+</section>
