@@ -479,7 +479,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingPermissionRequest = {
       requestId: 'perm-1',
@@ -496,7 +496,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: 'permission',
       actionLabel: 'Permission needed',
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = {
@@ -511,7 +511,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: 'user_input',
       actionLabel: 'Input needed',
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingUserInputRequest = null;
     state.runPhase = 'running';
@@ -522,7 +522,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.runPhase = 'idle';
     state.sessionState = 'idle';
@@ -532,7 +532,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     const runStates = emittedEvents.filter(
       (event) => event.type === 'run_state',

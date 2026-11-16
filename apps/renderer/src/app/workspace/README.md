@@ -1,5 +1,12 @@
 # Connected workspace navigation
 
+Navigation uses an event-driven, cancellable revision wait when the engine
+advertises `revisionWait`, with five-second polling retained for older engines.
+The observer owns one wait, cancels it when hidden or disposed, and reconciles
+only visible bounded pages. It advances the revision after successful reads so
+changes during hydration and transient failures cannot be lost. Live session
+rows publish as each task page arrives, independently of archived-history reads.
+
 Background revision, Git status and archived-history checks revalidate visible
 windows in place. They retain the last successful data while pending or
 temporarily unavailable, without navigation loading states or transient error

@@ -5860,6 +5860,7 @@ export class ClaudeRuntimeService
     this.claudeHooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state),
+      { authoritative: state.surface === 'session', provider: 'claude' },
     );
     this.emitEvent({
       type: 'run_state',

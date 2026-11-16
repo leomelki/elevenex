@@ -5,7 +5,10 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { sessionAgentProvider } from '../sessions/session-provider.js';
-import { inactiveSessionStatus, type WorkspaceSessionActivity } from './desktop-session-status.js';
+import {
+  inactiveSessionStatus,
+  type WorkspaceSessionActivity,
+} from './desktop-session-status.js';
 export type { WorkspaceSessionActivity } from './desktop-session-status.js';
 
 type Activity = 'running' | 'attention' | 'failed' | 'queued' | 'idle';
@@ -21,16 +24,20 @@ function stateActivity(value: unknown): Activity {
     state.pendingPermissionRequest ||
     state.pendingUserInputRequest ||
     state.runPhase === 'waiting' ||
+    state.sessionState === 'requires_action' ||
     state.sessionState === 'waiting_for_input'
   )
     return 'attention';
+  if (state.runPhase === 'error') return 'failed';
   if (
     state.canInterrupt === true ||
     state.runPhase === 'running' ||
-    state.sessionState === 'running'
+    state.sessionState === 'running' ||
+    state.backgroundRunActive === true ||
+    (Array.isArray(state.backgroundWork) && state.backgroundWork.length > 0)
   )
     return 'running';
-  if (state.lastError || state.runPhase === 'error') return 'failed';
+  if (state.lastError) return 'failed';
   if (Array.isArray(state.pendingPrompts) && state.pendingPrompts.length)
     return 'queued';
   return 'idle';
@@ -67,8 +74,11 @@ export class DesktopWorkspaceActivityService
         // Idle is recoverable from persisted session metadata. Keeping idle
         // snapshots would let many quiet sessions evict genuinely live work.
         if (next !== 'idle') this.runtime.set(key, next);
-        while (this.runtime.size > capacity)
-          this.runtime.delete(this.runtime.keys().next().value!);
+        while (this.runtime.size > capacity) {
+          const [oldest] = this.runtime.keys();
+          if (oldest === undefined) break;
+          this.runtime.delete(oldest);
+        }
         // Token and tool updates often repeat snapshots; only semantic status changes invalidate visible pages.
         if (next !== (previous ?? 'idle')) this.navigation.invalidate();
       };
@@ -82,25 +92,36 @@ export class DesktopWorkspaceActivityService
       // leave a cached spinner or input request alive after runtime teardown.
       if (snapshot.activityStatus === 'idle' && !snapshot.backgroundActive) {
         const key = `${event.provider ?? 'claude'}:${event.sessionId}`;
-        if (this.runtime.get(key) === 'running' || this.runtime.get(key) === 'attention') cleared = this.runtime.delete(key);
+        if (
+          this.runtime.get(key) === 'running' ||
+          this.runtime.get(key) === 'attention'
+        )
+          cleared = this.runtime.delete(key);
       }
-      const signature = `${snapshot.activityStatus}:${snapshot.actionKind}:${snapshot.backgroundActive}`;
-      if (this.hookSignatures.get(event.sessionId) === signature && !cleared) return;
+      const signature = `${snapshot.activityStatus}:${snapshot.actionKind}:${snapshot.backgroundActive}:${snapshot.failed === true}`;
+      if (this.hookSignatures.get(event.sessionId) === signature && !cleared)
+        return;
       this.hookSignatures.delete(event.sessionId);
       this.hookSignatures.set(event.sessionId, signature);
-      while (this.hookSignatures.size > capacity)
-        this.hookSignatures.delete(this.hookSignatures.keys().next().value!);
+      while (this.hookSignatures.size > capacity) {
+        const [oldest] = this.hookSignatures.keys();
+        if (oldest === undefined) break;
+        this.hookSignatures.delete(oldest);
+      }
       this.navigation.invalidate();
     };
     this.hooks.on('status-changed', activity);
     this.stop.push(() => this.hooks.off('status-changed', activity));
     const lifecycle = (event: { sessionId: number; status: string }) => {
       if (event.status !== 'stopped' && event.status !== 'archived') return;
-      for (const info of this.registry.listProviders()) this.runtime.delete(`${info.id}:${event.sessionId}`);
+      for (const info of this.registry.listProviders())
+        this.runtime.delete(`${info.id}:${event.sessionId}`);
       this.hookSignatures.delete(event.sessionId);
     };
     this.sessions.on('session-status-changed', lifecycle);
-    this.stop.push(() => this.sessions.off('session-status-changed', lifecycle));
+    this.stop.push(() =>
+      this.sessions.off('session-status-changed', lifecycle),
+    );
   }
   onModuleDestroy(): void {
     for (const stop of this.stop) stop();
@@ -109,20 +130,21 @@ export class DesktopWorkspaceActivityService
     this.hookSignatures.clear();
   }
   status(session: WorkspaceSessionActivity): string {
-    if (session.status === 'archived' || session.status === 'stopped') return inactiveSessionStatus(session);
+    if (session.status === 'archived' || session.status === 'stopped')
+      return inactiveSessionStatus(session);
     const observed = this.runtime.get(
         `${sessionAgentProvider(session)}:${session.id}`,
       ),
       hooks = this.hooks.getActivity(session.id);
     if (observed === 'attention' || hooks.activityStatus === 'waiting')
       return 'attention';
+    if (observed === 'failed' || hooks.failed) return 'failed';
     if (
       observed === 'running' ||
       hooks.activityStatus === 'running' ||
       hooks.backgroundActive
     )
       return 'running';
-    if (observed === 'failed') return 'failed';
     if (observed === 'queued') return 'queued';
     return inactiveSessionStatus(session);
   }

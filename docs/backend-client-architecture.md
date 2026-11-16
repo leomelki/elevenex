@@ -157,7 +157,21 @@ Sidebar session activity uses the backend's existing in-memory hook snapshots
 and a bounded scalar provider-event cache. It does not hydrate runtimes, request
 model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
-the sidebar. Session pages supply authoritative activity for the visible window.
+the sidebar. Engines advertising `revisionWait` support a cancellable revision
+wait through the existing per-window HTTP transport. It wakes on changes or after
+25 seconds, uses a pre-read cursor to avoid missed updates, and never replays
+mutations. Hidden windows cancel the wait; visibility resumes reconciliation.
+Older engines keep five-second revision polling. Disconnects back off, and failed
+reconciliation retains its cursor for retry. Session pages supply authoritative
+activity for the visible window; live rows update before unrelated archive reads.
+
+Activity normalization covers Claude (native and terminal), Codex, Pi and both
+OpenCode versions. Explicit decisions take precedence over work, errors over a
+stale interrupt flag, and independent background work remains running. Terminal
+Claude hooks publish activity before metadata persistence and clear provisional
+activity if persistence fails. Tool/elicitation results resume work; task and
+subagent completion do not complete the main turn. `StopFailure` publishes an
+optional failure flag while retaining the legacy three-value activity protocol.
 
 Browser uses narrow task-owned local guest and remote streaming adapters; see the
 [production browser guide](../apps/renderer/src/app/task-browser/README.md) for

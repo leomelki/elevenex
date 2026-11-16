@@ -2,6 +2,8 @@ const scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const calls = [
   ['workspaceCommitPreview', 'workspace:commit-preview', [scope, { taskId: 1, includeUnstaged: true, excluded: [], includedSecrets: [] }]],
   ['workspaceClosePreview', 'workspace:close-preview', [scope, 1]],
+  ['workspaceWait', 'workspace:wait', [scope, { after: 1, requestId: scope }]],
+  ['workspaceCancelWait', 'workspace:cancel-wait', [scope, scope]],
   ['workspaceRevision', 'workspace:revision', [scope]],
   ['workspaceRetryTask', 'workspace:retry-task', [scope, 1]],
   ['workspaceGit', 'workspace:git', [scope, 1]],
