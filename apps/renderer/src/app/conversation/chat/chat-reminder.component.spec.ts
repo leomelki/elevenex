@@ -1,0 +1,174 @@
+import { Component, signal } from "@angular/core";
+import { TestBed } from "@angular/core/testing";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatScrollComponent } from "./chat-scroll.component";
+import { MessageComponent } from "./message.component";
+
+@Component({
+  imports: [ChatScrollComponent, MessageComponent],
+  template: `<ex-chat-scroll [startAtEnd]="false" [reminder]="enabled()" [historyLoading]="loading()" [historyError]="error()">
+    <ex-message role="user" messageId="first">Explain the retry policy</ex-message>
+    <p>A long answer</p>
+    <ex-message role="user" messageId="second">Check cancellation too</ex-message>
+    <p class="tail">Another long answer</p>
+  </ex-chat-scroll>`,
+})
+class ReminderTestComponent {
+  readonly enabled = signal(true);
+  readonly loading = signal(false);
+  readonly error = signal("");
+}
+
+describe("ChatScroll contextual reminder", () => {
+  const resizeCallbacks: (() => void)[] = [];
+  beforeEach(() => {
+    resizeCallbacks.length = 0;
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    vi.stubGlobal("ResizeObserver", class implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(() => callback([], this));
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function setup() {
+    const fixture = TestBed.createComponent(ReminderTestComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    const viewport = element.querySelector<HTMLDivElement>(".viewport")!;
+    const messages = element.querySelectorAll<HTMLElement>("[data-user-message]");
+    const dimensions = { height: 800, next: 3000, end: 6000 };
+    Object.defineProperties(viewport, {
+      clientHeight: { get: () => dimensions.height },
+      scrollHeight: { value: 8000 },
+    });
+    const rect = (offset: number, height: number) => new DOMRect(0, 100 + offset - viewport.scrollTop, 600, height);
+    viewport.getBoundingClientRect = () => new DOMRect(0, 100, 600, dimensions.height);
+    messages[0]!.getBoundingClientRect = () => rect(0, 100);
+    messages[1]!.getBoundingClientRect = () => rect(dimensions.next, 100);
+    element.querySelector<HTMLElement>(".tail")!.getBoundingClientRect = () => rect(dimensions.end - 1000, 1000);
+    viewport.scrollTo = vi.fn();
+    const settle = async () => {
+      await new Promise(requestAnimationFrame);
+      fixture.detectChanges();
+      await fixture.whenStable();
+    };
+    const moveTo = async (offset: number) => {
+      viewport.scrollTop = offset;
+      viewport.dispatchEvent(new Event("scroll"));
+      await settle();
+    };
+    const resize = async () => {
+      for (const callback of resizeCallbacks) callback();
+      await settle();
+    };
+    const reminder = () => element.querySelector<HTMLElement>(".reminder");
+    return { fixture, viewport, dimensions, moveTo, resize, reminder, settle };
+  }
+
+  it("waits until well past the prompt, tolerates small reversals, and hides near the prompt", async () => {
+    const { moveTo, reminder } = await setup();
+    for (const offset of [50, 101, 250, 379]) {
+      await moveTo(offset);
+      expect(reminder()).toBeNull();
+    }
+    await moveTo(400);
+    expect(reminder()?.textContent).toContain("Explain the retry policy");
+    await moveTo(360);
+    expect(reminder()).not.toBeNull();
+    await moveTo(330);
+    expect(reminder()).toBeNull();
+    await moveTo(360);
+    expect(reminder()).toBeNull();
+  });
+
+  it("scales the margin with available height and suppresses cramped viewports", async () => {
+    const { dimensions, moveTo, resize, reminder } = await setup();
+    dimensions.height = 400;
+    await moveTo(250);
+    expect(reminder()).toBeNull();
+    await moveTo(265);
+    expect(reminder()).not.toBeNull();
+    dimensions.height = 300;
+    await resize();
+    expect(reminder()).toBeNull();
+    dimensions.height = 1600;
+    await moveTo(410);
+    expect(reminder()).toBeNull();
+    await moveTo(425);
+    expect(reminder()).not.toBeNull();
+  });
+
+  it("clears as the next prompt enters view and waits until it is safely out of view again", async () => {
+    const { moveTo, reminder } = await setup();
+    await moveTo(2100);
+    expect(reminder()).not.toBeNull();
+    await moveTo(2201);
+    expect(reminder()).toBeNull();
+    await moveTo(2180);
+    expect(reminder()).toBeNull();
+    await moveTo(2150);
+    expect(reminder()).not.toBeNull();
+    await moveTo(3101);
+    expect(reminder()).toBeNull();
+    await moveTo(3400);
+    expect(reminder()?.textContent).toContain("Check cancellation too");
+  });
+
+  it("requires substantial content on screen and reconciles content shrinkage", async () => {
+    const { dimensions, moveTo, resize, reminder } = await setup();
+    await moveTo(5650);
+    expect(reminder()).toBeNull();
+    await moveTo(5500);
+    expect(reminder()).not.toBeNull();
+    dimensions.end = 5890;
+    await resize();
+    expect(reminder()).toBeNull();
+  });
+
+  it("reconciles reminder settings and competing history status without scrolling", async () => {
+    const { fixture, moveTo, reminder, settle } = await setup();
+    await moveTo(400);
+    for (const [state, suppressed] of [[fixture.componentInstance.loading, true], [fixture.componentInstance.enabled, false]] as const) {
+      state.set(suppressed);
+      fixture.detectChanges();
+      await settle();
+      expect(reminder()).toBeNull();
+      state.set(!suppressed);
+      fixture.detectChanges();
+      await settle();
+      expect(reminder()).not.toBeNull();
+    }
+    fixture.componentInstance.error.set("History unavailable");
+    fixture.detectChanges();
+    await settle();
+    expect(reminder()).toBeNull();
+  });
+
+  it("dismisses only this prompt and preserves keyboard focus when the reminder disappears", async () => {
+    const { viewport, moveTo, reminder } = await setup();
+    await moveTo(400);
+    const hide = reminder()!.querySelector<HTMLButtonElement>(".hide")!;
+    hide.focus();
+    hide.click();
+    await moveTo(500);
+    expect(reminder()).toBeNull();
+    expect(document.activeElement).toBe(viewport);
+    await moveTo(3400);
+    const prompt = reminder()!.querySelector<HTMLButtonElement>(".prompt")!;
+    expect(prompt.getAttribute("aria-label")).toContain("Back to your message: Check cancellation too");
+    prompt.focus();
+    prompt.click();
+    expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 2976, behavior: "instant" });
+    await moveTo(3000);
+    expect(reminder()).toBeNull();
+    expect(document.activeElement).toBe(viewport);
+    await moveTo(400);
+    expect(reminder()).toBeNull();
+  });
+});

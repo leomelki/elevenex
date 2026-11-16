@@ -161,6 +161,12 @@ after growth, shrinkage and interrupted newlines, plus native scrolling at the
 height cap and narrow reduced-motion layouts in both themes. Run it with
 `--url http://127.0.0.1:4310`.
 
+`scenarios/chat-reminder.mjs` checks the real conversation components for delayed
+context reminders, boundary reversals, visible neighbouring prompts, short
+replies, dismissal and keyboard return. It covers both themes, narrow layouts
+and reduced motion against `pnpm desktop:preview` with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
 through the connected workspace preview. It samples each real animation frame
 for excess rows, changing DOM identity and height overshoot, with repeated text,

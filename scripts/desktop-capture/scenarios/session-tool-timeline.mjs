@@ -75,10 +75,10 @@ export default async function* (capture) {
     );
     if (
       await capture.evaluate(
-        () => !!document.querySelector(".reminder-top button"),
+        () => !!document.querySelector(".reminder .hide"),
       )
     )
-      await capture.click(".reminder-top button");
+      await capture.click(".reminder .hide");
     await finish();
   };
   const shown = (id) =>

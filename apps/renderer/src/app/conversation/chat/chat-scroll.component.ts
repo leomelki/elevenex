@@ -6,6 +6,7 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   inject,
   input,
   output,
@@ -136,6 +137,7 @@ export class ChatScrollComponent {
   readonly viewport =
     viewChild.required<ElementRef<HTMLDivElement>>("viewport");
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");
+  private readonly reminderElement = viewChild<ElementRef<HTMLElement>>("reminderElement");
   private readonly destroy = inject(DestroyRef);
   private messages: HTMLElement[] = [];
   private readonly dismissed = new Set<string>();
@@ -144,6 +146,12 @@ export class ChatScrollComponent {
   private lastScrollHeight = 0;
   private highlight: Animation | null = null;
   constructor() {
+    effect(() => {
+      this.reminder();
+      this.historyLoading();
+      this.historyError();
+      if (this.contentReady) this.scheduleMeasure();
+    });
     afterEveryRender(() => {
       if (this.contentReady && this.paintedRevision !== this.historyRevision()) {
         const viewport = this.viewport().nativeElement;
@@ -227,7 +235,7 @@ export class ChatScrollComponent {
   hideReminder(): void {
     const pin = this.pin();
     if (pin) this.dismissed.add(pin.id);
-    this.pin.set(null);
+    this.setReminder(null);
   }
   scrollToMessage(id: string): void {
     this.interruptSendReveal();
@@ -325,7 +333,8 @@ export class ChatScrollComponent {
     else if (changed) this.unread.set(true);
     this.lastScrollHeight = viewport.scrollHeight;
     if (!this.sendScroll) this.updatePosition();
-    const top = viewport.getBoundingClientRect().top;
+    const bounds = viewport.getBoundingClientRect();
+    const top = bounds.top;
     let low = 0;
     let high = this.messages.length - 1;
     let candidate: HTMLElement | undefined;
@@ -343,23 +352,8 @@ export class ChatScrollComponent {
       this.lastActive = id;
       this.activeExchange.emit(id);
     }
-    const shouldPin =
-      this.reminder() &&
-      candidate &&
-      candidate.getBoundingClientRect().bottom < top &&
-      !this.dismissed.has(id);
     this.rememberPosition();
-    this.pin.set(
-      shouldPin && candidate
-        ? {
-            id,
-            text:
-              candidate.querySelector(".content")?.textContent?.trim() ??
-              candidate.textContent?.trim() ??
-              "",
-          }
-        : null,
-    );
+    this.measureReminder(candidate, this.messages[low], bounds);
     if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
@@ -369,6 +363,32 @@ export class ChatScrollComponent {
       else if (this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
         this.requestHistory("following");
     }
+  }
+  private measureReminder(candidate: HTMLElement | undefined, next: HTMLElement | undefined, viewport: DOMRect): void {
+    const id = candidate?.dataset["userMessage"] ?? "";
+    const retained = this.pin()?.id === id;
+    // Context is useful deep into one exchange, not just after its prompt clips.
+    // Scale the reading distance to the viewport, bounded for small/tall windows.
+    // Separate entry/exit margins tolerate small scroll reversals without flicker.
+    const distance = Math.min(320, Math.max(160, viewport.height * 0.35));
+    const nextTop = next?.getBoundingClientRect().top ?? Infinity;
+    const end = next ? nextTop : this.content().nativeElement.lastElementChild?.getBoundingClientRect().bottom ?? viewport.top;
+    // Leave at least eight reminder-row heights of reading space.
+    const useful = this.reminder() && candidate && !this.dismissed.has(id) &&
+      !this.historyLoading() && !this.historyError() && viewport.height >= 320 &&
+      viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 48 : 0) &&
+      nextTop >= viewport.bottom + (retained ? 0 : 48) &&
+      end - viewport.top >= viewport.height * (retained ? 0.5 : 0.6);
+    const text = useful
+      ? (candidate.querySelector(".content")?.textContent ?? candidate.textContent)?.trim() ?? ""
+      : "";
+    this.setReminder(text ? { id, text } : null);
+  }
+  private setReminder(reminder: Reminder | null): void {
+    if (!reminder && this.reminderElement()?.nativeElement.contains(document.activeElement))
+      this.viewport().nativeElement.focus({ preventScroll: true });
+    if (this.pin()?.id !== reminder?.id || this.pin()?.text !== reminder?.text)
+      this.pin.set(reminder);
   }
   private reducedMotion(): boolean {
     return matchMedia("(prefers-reduced-motion: reduce)").matches;

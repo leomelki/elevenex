@@ -41,6 +41,9 @@
   padding: var(--space-6) var(--space-4) var(--space-8);
 }
 .reminder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   position: absolute;
   z-index: 5;
   top: var(--space-2);
@@ -52,18 +55,15 @@
   background: var(--glass);
   backdrop-filter: blur(var(--blur-glass));
   box-shadow: var(--shadow-raised);
-  padding: var(--space-2) var(--space-3);
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-3);
   color: var(--ink);
   font-size: var(--text-ui-size);
 }
-.reminder-top {
-  display: flex;
-  align-items: center;
+.reminder strong {
+  flex: none;
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
-}
-.reminder-top strong {
-  flex: 1;
   font-weight: 500;
 }
 button {
@@ -83,22 +83,26 @@ button:focus-visible {
   box-shadow: var(--focus-ring);
 }
 .prompt {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  width: 100%;
-  margin: var(--space-1) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height);
   color: var(--ink);
   text-align: left;
   line-height: var(--text-ui-line);
 }
-.back {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
+.prompt span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.prompt ex-icon { flex: none; }
+.hide {
+  flex: none;
+  min-height: var(--control-height);
   font-size: var(--text-caption-size);
-  color: var(--accent);
 }
 .return {
   position: absolute;

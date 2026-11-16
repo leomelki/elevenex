@@ -22,16 +22,13 @@
   </div>
 }
 @if (pin(); as pin) {
-  <aside class="reminder" aria-label="Message reminder">
-    <div class="reminder-top">
-      <strong>You asked</strong
-      ><button type="button" (click)="hideReminder()">Hide</button>
-    </div>
-    <button type="button" class="prompt" (click)="scrollToMessage(pin.id)">
-      {{ pin.text }}</button
-    ><button type="button" class="back" (click)="scrollToMessage(pin.id)">
-      <ex-icon name="arrow-up" [size]="12" />Back to your message
+  <aside #reminderElement class="reminder" aria-label="Message reminder">
+    <strong>You asked</strong>
+    <button type="button" class="prompt" [attr.aria-label]="'Back to your message: ' + pin.text" (click)="scrollToMessage(pin.id)">
+      <span>{{ pin.text }}</span>
+      <ex-icon name="arrow-up" [size]="12" />
     </button>
+    <button type="button" class="hide" aria-label="Hide message reminder" (click)="hideReminder()">Hide</button>
   </aside>
 }
 <div
