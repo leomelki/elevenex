@@ -294,12 +294,8 @@ depth, so no row moves while aiming. The docked ghost breathes immediately to
 reveal the covered row, which remains a valid target. Groups that cannot accept
 the session recede. Reduced motion removes the reach, snap and breath and keeps a
 steady translucent ghost. Collapsed groups stay collapsed while aiming and show a
-stacked edge. Dropping immediately releases the grab cursor and restores the
-source row, independently of backend confirmation. Native release handlers render
-the row and task feedback synchronously: scheduling a zoneless render alone can
-leave the grab cursor and dimmed source visible through native drag completion.
-Only the destination ghost holds its slot (bounded to 1.5s) until the confirmed
-row arrives, then the row glides from the ghost into place and the
+stacked edge. On drop the ghost holds its slot (bounded to 1.5s) until the
+confirmed row arrives, then the row glides from the ghost into place and the
 destination opens. While a child is dragged its task header shows a quiet ready
 outline; holding it over the header lights the header and previews the moved row
 at task level in place, without implying a sort position. Edge scrolling never
@@ -323,6 +319,3 @@ docked chip, both breathing phases, covered row targeting, receding groups,
 landing and append placement, header drag-out, composer mentions and reduced
 motion in both themes. `session-nesting.mjs` exercises the connected preview with native drops, keyboard
 moves, both themes and narrow reduced-motion layouts.
-`session-drag-release.mjs` starts and releases trusted mouse gestures, holds move
-confirmation and checks source opacity/cursor inside native dragend, before a
-scheduled Angular render. Run with `--url http://127.0.0.1:4310/connected-workspace`.

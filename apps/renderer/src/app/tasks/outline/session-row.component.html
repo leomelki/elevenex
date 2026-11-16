@@ -8,7 +8,7 @@
   [class.receded]="receded()"
   [attr.aria-description]="session().local ? 'Local draft. Session creation is not yet confirmed.' : 'Drag onto another session to move under it, or into a message to mention it. Use Move session for keyboard moves.'"
   (dragstart)="startDrag($event)"
-  (dragend)="endDrag()"
+  (dragend)="dragging.set(false)"
   [exTooltip]="session().title"
   [class.attention]="session().status === 'attention' && !selected()"
   [class.failed]="session().status === 'failed' && !selected()"
