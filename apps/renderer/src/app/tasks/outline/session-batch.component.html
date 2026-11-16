@@ -2,7 +2,7 @@
   @for (entry of presence.rows(); track entry.key) {
     <ex-fold [open]="entry.present && !entry.entering" (transitionend)="presence.settled(entry.key, $event)">
       <ex-session-branch [session]="entry.value" [selected]="selected()" [muted]="muted() === entry.value.id"
-        [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [sessions]="allSessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+        [allowArchive]="allowArchive()" [allowNesting]="allowNesting()" [sessions]="allSessions()" (moveRequested)="moveRequested.emit($event)" (childrenRequested)="childrenRequested.emit($event)" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
     </ex-fold>
   }
 </div>

@@ -91,6 +91,7 @@ export class TaskListComponent {
   readonly restoreRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly archivedSessionsRequested = output<{ readonly taskId: string; readonly page: 'latest' | 'earlier' }>();
   readonly archiveRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
+  readonly deleteRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly selected = input<string | null>(null);
   readonly filter = input<SessionStatus | null>(null);
   readonly showProjects = input(true);

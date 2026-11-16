@@ -58,6 +58,8 @@ export interface WorkspaceTaskSetupIssue {
   readonly canExceedWorktreeLimit?: boolean;
 }
 export interface WorkspaceSession {
+  /** Engine permits permanent removal only before any conversation starts. */
+  readonly canDelete?: boolean;
   readonly parentSessionId?: number | null;
   readonly childCount?: number;
   readonly id: number;
@@ -194,6 +196,10 @@ export interface WorkspaceArchiveSession {
   readonly taskId: number;
   readonly sessionId: number;
   readonly confirmStop: boolean;
+}
+export interface WorkspaceDeleteSession {
+  readonly taskId: number;
+  readonly sessionId: number;
 }
 export interface WorkspaceRestoreSession {
   readonly taskId: number;

@@ -517,9 +517,9 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.throws(() => handlers.get('workspace:archive-session')({senderFrame:{},sender},scope,{taskId:1,sessionId:2,confirmStop:true}));
   assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:true})).ok,true);
   assert.deepEqual(requests[0],{path:'/api/desktop-workspace/tasks/1/sessions/2/archive',body:{confirmStop:true}});
-  reply = {id:2,taskId:1,repoId:3,name:'Kept',status:'done',provider:'codex',updatedAt:'',private:'discard'};
+  reply = {id:2,taskId:1,repoId:3,name:'Kept',status:'done',provider:'codex',updatedAt:'',canDelete:false,private:'discard'};
   const restored = await restore(scope,{taskId:1,sessionId:2});
-  assert.equal(restored.ok,true); assert.equal(restored.value.private,undefined);
+  assert.equal(restored.ok,true); assert.equal(restored.value.canDelete,false); assert.equal(restored.value.private,undefined);
   reply = {...reply,taskId:9};
   assert.equal((await restore(scope,{taskId:1,sessionId:2})).error.code,'outcome-unknown');
   reply = {items:[{id:2,taskId:1,repoId:3,name:'Recent',status:'queued',provider:'codex',updatedAt:''}],nextCursor:null};
@@ -534,9 +534,20 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'normal'})).ok,false);
   reply = {revision:1,version:1,sessionArchive:true,sessionArchiveHistory:true};
   assert.equal((await handlers.get('workspace:revision')(event,scope)).value.sessionArchiveHistory,true);
+  const remove = input => handlers.get('workspace:delete-session')(event,scope,input);
+  for (const input of [null, {taskId:1,sessionId:0}, {taskId:'1',sessionId:2}]) assert.throws(() => remove(input));
+  assert.throws(() => handlers.get('workspace:delete-session')({senderFrame:{},sender},scope,{taskId:1,sessionId:2}));
+  reply = {accepted:true};
+  assert.equal((await remove({taskId:1,sessionId:2})).ok,true);
+  assert.deepEqual(requests.at(-1),{path:'/api/desktop-workspace/tasks/1/sessions/2/delete',body:null});
+  reply = {accepted:false};
+  assert.equal((await remove({taskId:1,sessionId:2})).error.code,'outcome-unknown');
+  reply = {items:[{id:2,taskId:1,repoId:3,name:'Invalid flag',status:'queued',provider:'codex',updatedAt:'',canDelete:'yes'}],nextCursor:null};
+  assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1})).ok,false);
   client.reset(42);
+  assert.equal((await remove({taskId:1,sessionId:2})).error.code,'stale-scope');
   assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:false})).error.code,'stale-scope');
-  assert.equal(requests.length,7);
+  assert.equal(requests.length,10);
   stop(); assert.equal(handlers.size,0);
 });
 

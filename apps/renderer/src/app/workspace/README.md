@@ -270,8 +270,17 @@ Session rows expose archive only when the backend advertises `sessionArchive`.
 The owner removes a row from the normal list only after confirmed success, selects its next normal
 neighbour when necessary, and retains a scoped Toast/Undo. Main validates IDs,
 confirmation and response identity; backend checks task ownership/readiness and
-live activity before strict process cleanup. Desktop row archives retain
-`archivedByTask` so normal task reopen restores them, without changing legacy
+live activity before strict process cleanup.
+
+Unstarted sessions expose an engine-owned `canDelete` flag and use the named
+`workspaceDeleteSession` operation instead. The engine rechecks persisted
+conversation identity, completion and live activity while claiming the row;
+started sessions must be archived. Existing session cleanup releases prewarmed
+runtimes before removal; cleanup failures restore the unused row for retry. Empty deletion promotes children, removes the
+row and moves selection/focus like archive, but creates no archive or Undo.
+Older engines omit the flag and retain their archive behavior.
+
+Desktop row archives retain `archivedByTask` so normal task reopen restores them, without changing legacy
 standalone archive behavior. Completed and stopped conversations remain normal
 sessions in chronological order; only explicit archiving removes a row. Archiving
 the selected session selects the next remaining conversation, wrapping to the

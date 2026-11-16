@@ -69,10 +69,10 @@
 
 @if (allowArchive() && !archived() && !session().local) {
   <button class="archive" type="button"
-    [attr.aria-label]="confirming() ? 'Stop and archive ' + session().title + ': press again to confirm' : 'Archive ' + session().title"
-    [exTooltip]="confirming() ? '' : 'Archive session'"
+    [attr.aria-label]="confirming() ? 'Stop and archive ' + session().title + ': press again to confirm' : (session().canDelete ? 'Delete ' : 'Archive ') + session().title"
+    [exTooltip]="confirming() ? '' : session().canDelete ? 'Delete session' : 'Archive session'"
     (click)="archive($event)" (blur)="cancelArchive()" (keydown.escape)="cancelArchive($event)">
-    <span class="archive-icon"><ex-icon name="archive" [size]="14" /></span>
+    <span class="archive-icon"><ex-icon [name]="session().canDelete ? 'trash' : 'archive'" [size]="14" /></span>
     <span class="archive-label" aria-hidden="true"><span>Stop and archive</span></span>
   </button>
 }

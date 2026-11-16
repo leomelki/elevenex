@@ -88,6 +88,8 @@ export interface TaskSessionDisclosure {
 }
 export interface SessionMoveIntent { readonly sessionId: string; readonly parentSessionId: string | null }
 export interface TaskSession {
+  /** Supplied by the owner only when the engine permits deleting an unstarted session. */
+  readonly canDelete?: boolean;
   /** False for older engines without append-ordered child pages. */
   readonly childrenAppendOrder?: boolean;
   readonly parentId?: string | null;

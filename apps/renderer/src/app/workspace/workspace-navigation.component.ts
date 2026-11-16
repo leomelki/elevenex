@@ -33,10 +33,10 @@ export class WorkspaceNavigationComponent {
   protected readonly visibleError = computed(() => (this.store.pendingTask()?.setupIssue?.message === this.store.error() ? null : this.store.error()) ?? this.store.resumeError());
   protected readonly label = computed(() => this.store.selectedProject()?.name ?? 'All projects');
   protected readonly projectMark = computed(() => this.store.projects().find(project => project.id === this.store.activeProject()));
-  protected async archiveSession(intent: { readonly taskId: string; readonly session: TaskSession }): Promise<void> {
+  protected async removeSession(intent: { readonly taskId: string; readonly session: TaskSession }, deleting = false): Promise<void> {
     const origin = this.root.ownerDocument.activeElement, scope = this.store.scopeId();
-    await this.store.archiveSession(intent);
-    if (this.destroy.destroyed || this.store.scopeId() !== scope || this.store.sessionArchiveUndo()?.session.id !== Number(intent.session.id)) return;
+    const removed = await (deleting ? this.store.deleteSession(intent) : this.store.archiveSession(intent));
+    if (!removed || this.destroy.destroyed || this.store.scopeId() !== scope) return;
     afterNextRender(() => {
       const document = this.root.ownerDocument;
       if (document.activeElement !== origin && document.activeElement !== document.body) return;

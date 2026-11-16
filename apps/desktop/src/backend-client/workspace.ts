@@ -228,6 +228,7 @@ function session(value: unknown): WorkspaceSession {
     status: text(raw['status'], 64),
     provider: text(raw['provider'], 64),
     updatedAt: text(raw['updatedAt'], 64),
+    ...(raw['canDelete'] === undefined ? {} : { canDelete: boolean(raw['canDelete']) }),
     ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? null : id(raw['parentSessionId']) }),
     ...(raw['childCount'] === undefined ? {} : { childCount: nonnegativeCount(raw['childCount']) }),
   };
@@ -720,6 +721,10 @@ export function registerWorkspaceIpc(
       },
       parseWorkspaceTask,
     );
+  });
+  register('workspace:delete-session', (window, scope, input) => {
+    const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/delete`, undefined, accepted);
   });
   register('workspace:archive-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);

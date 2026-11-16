@@ -25,6 +25,7 @@ const backendRoot = mkdtempSync(join(tmpdir(), 'elevenex-electron-backend-'));
 app.setPath('appData', backendRoot);
 const revision = 'a'.repeat(40);
 let backendUrl;
+const deletedUnusedSessions = [];
 const terminalRows = new Map();
 const terminalOwners = [];
 let terminalCleanupCount = 0;
@@ -47,6 +48,12 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
     };
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/delete') {
+        assert.equal(request.method, 'POST');
+        request.resume(); deletedUnusedSessions.push(2);
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ accepted: true })); return;
+      }
       if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
       if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
       if (pathname === '/release-browser-task') {
@@ -236,6 +243,11 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  const deletedUnused = await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:2})`);
+  assert.deepEqual(deletedUnused, {ok:true,value:{accepted:true}});
+  assert.deepEqual(deletedUnusedSessions, [2]);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:0}).then(()=>false,()=>true)`), true);
+  console.log('Unstarted session deletion passed through the sandboxed preload and scoped HTTP adapter');
   await require('./browser-picker-native.cjs')();
   await require('./browser-order-native.cjs')();
   await require('./browser-machine-native.cjs')();

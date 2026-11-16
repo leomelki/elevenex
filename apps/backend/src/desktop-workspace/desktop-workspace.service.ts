@@ -195,14 +195,14 @@ export class DesktopWorkspaceService {
     row: typeof schema.sessions.$inferSelect,
     taskId: number,
   ) {
+    const status = this.activity?.status(row) ?? inactiveSessionStatus(row);
     return {
       id: row.id,
       taskId,
+      canDelete: row.status === 'created' && inactiveSessionStatus(row) === 'queued' && status === 'queued',
       repoId: row.repoId,
       name: row.name ?? 'Session',
-      status:
-        this.activity?.status(row) ??
-        inactiveSessionStatus(row),
+      status,
       provider: sessionAgentProvider(row),
       updatedAt: row.updatedAt,
       parentSessionId: row.parentSessionId,
@@ -572,6 +572,13 @@ export class DesktopWorkspaceService {
     await this.activeTaskSession(taskId, sessionId);
     const moved = moveSession(this.db, taskId, sessionId, parentSessionId === null ? null : resourceId(parentSessionId));
     return this.sessionView(moved, taskId);
+  }
+  async deleteSession(taskId: number, sessionId: number) {
+    await this.activeTaskSession(taskId, sessionId);
+    await this.sessions.deleteUnstarted(sessionId, session =>
+      session.workspaceId === taskId && session.surface === 'session' && this.sessionView(session, taskId).canDelete,
+    );
+    return { accepted: true as const };
   }
   async archiveSession(taskId: number, sessionId: number, confirmStop: unknown) {
     if (typeof confirmStop !== 'boolean') throw new BadRequestException('A stop confirmation is required.');

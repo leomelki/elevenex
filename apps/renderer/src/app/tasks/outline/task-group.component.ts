@@ -104,6 +104,7 @@ export class TaskGroupComponent implements OnChanges {
   readonly capStep = input(5);
   readonly allowArchive = input(false);
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   readonly restoreRequested = output<TaskSession>();
   readonly archivedSessionsRequested = output<'latest' | 'earlier'>();
   readonly archiveDisabled = input(false);

@@ -137,6 +137,21 @@ describe('session row archive intent', () => {
     const { archive, archived, activated } = row(status);
     archive.click(); expect(archived).toHaveBeenCalledOnce(); expect(activated).not.toHaveBeenCalled();
   });
+  it('shows Delete for an explicitly unstarted session and emits only its delete intent', () => {
+    const { fixture, archive, archived, activated } = row('queued');
+    const deleted = vi.fn();
+    fixture.componentInstance.deleteRequested.subscribe(deleted);
+    fixture.componentRef.setInput('session', { id: 'one', title: 'New session', status: 'queued', canDelete: true });
+    fixture.detectChanges();
+    expect(archive.getAttribute('aria-label')).toBe('Delete New session');
+    archive.click();
+    expect(deleted).toHaveBeenCalledOnce();
+    expect(archived).not.toHaveBeenCalled();
+    expect(activated).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('session', { id: 'one', title: 'New session', status: 'done', canDelete: false });
+    fixture.detectChanges();
+    expect(archive.getAttribute('aria-label')).toBe('Archive New session');
+  });
   it('confirms running sessions with a second click, and cancels on Escape, blur and outside input', () => {
     const { fixture, archive, archived } = row('running');
     archive.click(); fixture.detectChanges();

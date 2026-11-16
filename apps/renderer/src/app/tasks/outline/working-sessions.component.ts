@@ -44,6 +44,7 @@ export class WorkingSessionsComponent {
   readonly disclosure = model<TaskSessionDisclosure | null>(null);
   readonly activated = output<string>();
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   protected readonly window = computed(() => sessionWindow(this.roots(), this.cap(), this.sessions().find(session => session.id === this.selected())?.parentId ?? this.selected(), this.filtered(), this.disclosure()?.taskId === this.taskId() ? this.disclosure() : null));
   protected readonly hidden = computed(() => this.window().hidden.size);
   protected readonly step = computed(() => Number.isFinite(this.capStep()) ? Math.max(1, Math.floor(this.capStep())) : 5);

@@ -114,6 +114,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   workspaceSessions: (scopeId, input) => invoke('workspace:sessions', scopeId, input),
   workspaceCreateProject: (scopeId, input) => invoke('workspace:create-project', scopeId, input),
   workspaceCreateTask: (scopeId, input) => invoke('workspace:create-task', scopeId, input),
+  workspaceDeleteSession: (scopeId, input) => invoke('workspace:delete-session', scopeId, input),
   workspaceArchiveSession: (scopeId, input) => invoke('workspace:archive-session', scopeId, input),
   workspaceMoveSession: (scopeId, input) => invoke('workspace:move-session', scopeId, input),
   workspaceRestoreSession: (scopeId, input) => invoke('workspace:restore-session', scopeId, input),

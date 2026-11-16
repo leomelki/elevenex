@@ -531,6 +531,33 @@ describe('SessionsService', () => {
   });
 
   describe('delete', () => {
+    it('blocks new prompts during unstarted deletion and cleans resources', async () => {
+      const parent = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      agentRuntimeCleanupMock.cleanupSession.mockImplementationOnce(async () => {
+        expect((await service.findOne(parent.id)).status).toBe('archived');
+      });
+      await service.deleteUnstarted(parent.id, () => true);
+      expect(agentRuntimeCleanupMock.cleanupSession).toHaveBeenCalledWith(parent.id);
+      expect(ptyManagerMock.killTmuxSession).toHaveBeenCalledWith(parent.id);
+      await expect(service.findOne(parent.id)).rejects.toThrow(NotFoundException);
+    });
+    it('retains unused metadata and reactivates after cleanup failure so deletion can be retried', async () => {
+      const session = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      agentRuntimeCleanupMock.cleanupSession.mockRejectedValueOnce(new Error('Cleanup failed'));
+      await expect(service.deleteUnstarted(session.id, () => true)).rejects.toThrow('Cleanup failed');
+      expect((await service.findOne(session.id)).status).toBe('created');
+      expect(agentRuntimeCleanupMock.reactivateSession).toHaveBeenCalledWith(session.id);
+      await service.deleteUnstarted(session.id, () => true);
+      await expect(service.findOne(session.id)).rejects.toThrow(NotFoundException);
+    });
+    it('does not stop sessions that have history or are no longer idle', async () => {
+      const session = await service.create({repoId, branchName:'main', worktreePath:'/tmp/wt'});
+      await expect(service.deleteUnstarted(session.id, () => false)).rejects.toThrow('has started');
+      await service.updateCodexSessionId(session.id,'history');
+      await expect(service.deleteUnstarted(session.id, () => true)).rejects.toThrow('has started');
+      expect(agentRuntimeCleanupMock.cleanupSession).not.toHaveBeenCalled();
+      expect((await service.findOne(session.id)).codexSessionId).toBe('history');
+    });
     it('should delete a session', async () => {
       const created = await service.create({
         repoId,

@@ -8,7 +8,7 @@
       </button>
     } @else { <span class="disclosure-space"></span> }
     <ex-session-row [session]="session()" [selected]="selected() === session().id" [muted]="muted()" [emphasis]="dropActive() || outdentPreview()" [receded]="unavailable() && !outdentPreview()"
-      [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
+      [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
     @if (childCount() || pending()) {
       <span class="child-count" [class.pending]="pending()" [attr.aria-label]="childCount() + ' child sessions'"><ex-ticker [value]="childCount() + (pending() ? 1 : 0)" /></span>
     }
@@ -30,7 +30,7 @@
     <div class="children">
       @for (child of children(); track child.renderId ?? child.id) {
         <ex-session-branch [session]="child" [sessions]="sessions()" [selected]="selected()" [allowArchive]="allowArchive()" [allowNesting]="allowNesting()"
-          (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (moveRequested)="moveRequested.emit($event)" />
+          (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" (moveRequested)="moveRequested.emit($event)" />
       }
       @if (session().childrenLoading) { <p role="status">Loading children…</p> }
       @if (session().childrenError; as error) { <p role="alert">{{ error }} <button type="button" (click)="childrenRequested.emit({sessionId:session().id})">Retry</button></p> }

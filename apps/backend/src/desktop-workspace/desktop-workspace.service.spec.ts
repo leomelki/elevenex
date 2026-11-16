@@ -129,6 +129,11 @@ describe('DesktopWorkspaceService', () => {
           useValue: {
             archiveAllByProject: jest.fn().mockResolvedValue(undefined),
             archiveAndStop: archiveSession,
+            deleteUnstarted: async (id: number, canDelete: (session: typeof schema.sessions.$inferSelect) => boolean) => {
+              const session = db.select().from(schema.sessions).where(eq(schema.sessions.id,id)).get();
+              if (!session || !canDelete(session)) throw new BadRequestException('This session has started. Archive it instead.');
+              db.delete(schema.sessions).where(eq(schema.sessions.id,id)).run();
+            },
             unarchive: restoreSession,
           },
         },
@@ -157,6 +162,41 @@ describe('DesktopWorkspaceService', () => {
     expect(row.archivedByTask).toBe(false);
     await database.db.update(schema.workspaces).set({archivedAt:'now'}).where(eq(schema.workspaces.id,taskId));
     await expect(service.archiveSession(taskId,session.id,true)).rejects.toThrow('not ready');
+  });
+
+  it('deletes only unstarted task sessions and promotes their children without archiving', async () => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const [parent, child] = database.db.insert(schema.sessions).values(['Unused','Child with history'].map(name => ({repoId, workspaceId:taskId, branchName:'build', worktreePath:'/repo/task', name}))).returning().all();
+    database.db.update(schema.sessions).set({status:'active',codexSessionId:'child-history'}).where(eq(schema.sessions.id,child.id)).run();
+    await service.moveSession(taskId, child.id, parent.id);
+    expect((await service.listSessions(taskId,{})).items.find(row=>row.id===parent.id)?.canDelete).toBe(true);
+    await expect(service.deleteSession(taskId + 1, parent.id)).rejects.toThrow();
+    expect(await service.deleteSession(taskId,parent.id)).toEqual({accepted:true});
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,parent.id)).get()).toBeUndefined();
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,child.id)).get()?.parentSessionId).toBeNull();
+    expect(archiveSession).not.toHaveBeenCalled();
+    expect((await service.listSessions(taskId,{state:'archived'})).items).toEqual([]);
+  });
+  it.each([
+    {status:'active'}, {status:'stopped'}, {status:'archived'},
+    {claudeSessionId:'claude-history'}, {codexSessionId:'codex-history'},
+    {piSessionPath:'/history'}, {opencodeSessionId:'opencode-history'},
+    {lastCompletionAt:'2026-11-16T00:00:00.000Z'}, {hasUnreviewedCompletion:true},
+  ])('preserves started sessions on delete: %j', async patch => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const session = database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task',...patch}).returning().get();
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('has started');
+    expect(database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id)).get()).toBeDefined();
+  });
+  it('rejects deletion when live activity starts before the request or the task is closed', async () => {
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const session = database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task'}).returning().get();
+    expect((await service.listSessions(taskId,{})).items[0].canDelete).toBe(true);
+    activityStatus.mockReturnValue('running');
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('has started');
+    activityStatus.mockReturnValue(undefined);
+    database.db.update(schema.workspaces).set({archivedAt:'now'}).where(eq(schema.workspaces.id,taskId)).run();
+    await expect(service.deleteSession(taskId,session.id)).rejects.toThrow('not ready');
   });
 
   it('pages roots independently from children and promotes children when their parent is archived', async () => {
@@ -292,6 +332,7 @@ describe('DesktopWorkspaceService', () => {
     expect(first.items).toHaveLength(1);
     expect(JSON.stringify(first)).not.toContain('private-token');
     expect(Object.keys(first.items[0]).sort()).toEqual([
+      'canDelete',
       'childCount',
       'id',
       'name',

@@ -209,6 +209,12 @@ export class DesktopWorkspaceController {
   ) {
     return this.changed(this.workspace.moveSession(resourceId(taskId), resourceId(sessionId), workspaceBody(input).parentSessionId));
   }
+  @Post('tasks/:taskId/sessions/:sessionId/delete') deleteSession(
+    @Param('taskId') taskId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.changed(this.workspace.deleteSession(resourceId(taskId), resourceId(sessionId)));
+  }
   @Post('tasks/:taskId/sessions/:sessionId/archive') archiveSession(
     @Param('taskId') taskId: string,
     @Param('sessionId') sessionId: string,

@@ -58,7 +58,7 @@
         <ex-session-row
           [session]="row.session"
           [allowArchive]="allowArchive()"
-          (archiveRequested)="archiveRequested.emit($event)"
+          (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)"
           [selected]="selected() === row.session.id"
           (activated)="selectSession.emit($event)"
         />

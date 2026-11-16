@@ -534,6 +534,12 @@ genuinely new sessions, unseen replies and live work together. It verifies
 refresh/reopening, keyboard viewing, stable settled row positions and both themes
 with narrow reduced-motion layouts against the connected workspace preview.
 
+`scenarios/session-delete.mjs` checks engine-confirmed unstarted sessions: the
+trash icon and Delete label, keyboard deletion, next-session selection/focus,
+absence after refresh and no archive Undo. Started sessions retain Archive and
+running-session confirmation. Both themes and narrow reduced-motion layouts run
+against the connected workspace preview with `--url`.
+
 `scenarios/background-refresh.mjs` samples real frames during delayed background
 navigation and Git reads, transient failures and recovery. It checks retained
 chat/sidebar DOM, reading position, draft/cursor/focus, enabled controls and

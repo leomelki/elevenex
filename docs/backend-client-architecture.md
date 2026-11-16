@@ -196,6 +196,14 @@ Quota failures expose a safe count/limit explanation and optional
 older desktop clients. Explicit quota recovery delegates to `confirmOverLimit`
 on the saved task; it does not change the configured repository limit.
 
+Session rows may include `canDelete`, an optional engine-owned eligibility flag.
+The named `workspaceDeleteSession(scope, {taskId, sessionId})` permanently removes
+only unstarted sessions in a ready active task. The backend rechecks lifecycle,
+provider identities, completion and live activity without yielding before claiming
+the row. The existing deletion lifecycle releases prewarmed runtimes and processes;
+cleanup failure restores the unused row for retry. Children return to task level. No archive or Undo is created. Missing flags retain
+archive behavior with older engines; legacy deletion/archive contracts are unchanged.
+
 ## Adding a frontend feature
 
 1. Read the backend controller, DTOs, service behavior, relevant legacy consumer

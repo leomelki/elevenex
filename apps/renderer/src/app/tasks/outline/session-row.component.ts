@@ -38,6 +38,7 @@ export class SessionRowComponent implements OnChanges {
   readonly restoreRequested = output<TaskSession>();
   readonly allowArchive = input(false);
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   protected readonly confirming = signal(false);
   protected readonly dragging = signal(false);
   protected startDrag(event: DragEvent): void {
@@ -56,6 +57,7 @@ export class SessionRowComponent implements OnChanges {
 
   protected archive(event: Event): void {
     if (!this.allowArchive()) return;
+    if (this.session().canDelete) { this.deleteRequested.emit(this.session()); return; }
     if (this.session().status === 'running' && !this.confirming()) {
       this.confirmationSession = this.session().id;
       this.confirming.set(true);

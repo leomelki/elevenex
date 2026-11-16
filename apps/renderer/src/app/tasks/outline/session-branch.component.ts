@@ -22,6 +22,7 @@ export class SessionBranchComponent {
   readonly allowNesting = input(false);
   readonly activated = output<string>();
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   readonly moveRequested = output<SessionMoveIntent>();
   readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
   protected readonly drag = inject(SessionNestingDragDirective, { optional: true });

@@ -28,6 +28,7 @@ export class SessionBatchComponent implements OnChanges {
   readonly closingDistance = input(0);
   readonly activated = output<string>();
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   readonly closed = output<void>();
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly destroy = inject(DestroyRef);

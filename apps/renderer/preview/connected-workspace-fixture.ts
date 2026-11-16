@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
-import type { BackendResult, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
+import type { BackendResult, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
 import { SessionChatFixture } from './session-chat-fixture';
 
@@ -22,6 +22,10 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   sessionChatCommand = async (_scope: string, input: import('@elevenex/shared').SessionChatCommand) => {
     this.sentChatActions.push(input);
     const result = await this.chat.command(input);
+    if (result.ok && input.action.type === 'send') {
+      this.sessionRows = this.sessionRows.map(row => row.id === input.sessionId ? { ...row, canDelete: false, status: 'running' } : row);
+      this.navigationRevision++;
+    }
     if (result.ok && input.action.type === 'mark-seen' && !this.chat.unseenCompletionAt(input.sessionId)) {
       this.sessionRows = this.sessionRows.map(row => row.id === input.sessionId ? { ...row, status: 'done' } : row);
       this.navigationRevision++;
@@ -104,7 +108,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
       { id: 101, taskId: 11, repoId: 1, name: 'Previously completed conversation', provider: 'codex', status: 'idle', updatedAt: stamp },
       { id: 102, taskId: 11, repoId: 1, name: 'Restored conversation', provider: 'codex', status: 'active', updatedAt: stamp },
       { id: 103, taskId: 11, repoId: 1, name: 'Finished while you were away', provider: 'codex', status: 'review', updatedAt: stamp },
-      { id: 104, taskId: 11, repoId: 1, name: 'New conversation', provider: 'codex', status: 'created', updatedAt: stamp },
+      { id: 104, taskId: 11, repoId: 1, name: 'New conversation', provider: 'codex', status: 'created', canDelete: true, updatedAt: stamp },
       { id: 105, taskId: 11, repoId: 1, name: 'Agent currently working', provider: 'codex', status: 'running', updatedAt: stamp },
     ];
     this.chat.scenario('reply-only', 101);
@@ -242,6 +246,13 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     if (task.state === 'ready') await this.workspaceCreateSession(_scope, { taskId: task.id });
     return success(task);
   };
+  workspaceDeleteSession = async (_scope: string, input: WorkspaceDeleteSession) => {
+    const session = this.sessionRows.find(row => row.taskId === input.taskId && row.id === input.sessionId);
+    if (!session?.canDelete) return { ok: false as const, error: { code: 'http' as const, message: 'This session has started. Archive it instead.' } };
+    this.sessionRows = this.sessionRows.filter(row => row.id !== session.id).map(row => row.parentSessionId === session.id ? { ...row, parentSessionId: null } : row);
+    this.navigationRevision++;
+    return success({ accepted: true as const });
+  };
   workspaceArchiveSession = async (_scope: string, input: WorkspaceArchiveSession) => {
     this.sessionRows = this.sessionRows.map(session => session.taskId === input.taskId && session.id === input.sessionId ? { ...session, status: 'archived' } : session.parentSessionId === input.sessionId ? { ...session, parentSessionId: null } : session);
     return success({ accepted: true as const });
@@ -283,7 +294,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
       if (outcome !== 'success') return { ok: false, error: outcome === 'failed' ? { code: 'http', status: 409, message: 'The task is still preparing. Try again shortly.' } : { code: 'outcome-unknown', message: 'Lost creation reply.' } };
     }
     const task = this.taskRows.find(task => task.id === input.taskId)!;
-    const session: WorkspaceSession = { id: Math.max(0, ...this.sessionRows.map(session => session.id)) + 1, taskId: task.id, repoId: task.repoId, name: input.name ?? 'Explore the task', provider: 'codex', status: 'idle', updatedAt: stamp };
+    const session: WorkspaceSession = { id: Math.max(0, ...this.sessionRows.map(session => session.id)) + 1, taskId: task.id, repoId: task.repoId, name: input.name ?? 'Explore the task', provider: 'codex', status: 'created', canDelete: true, updatedAt: stamp };
     this.sessionRows = [...this.sessionRows, session]; this.chat.scenario('new', session.id); return success(session);
   };
   workspaceSetStage = async (_scope: string, input: WorkspaceSetStage) => {

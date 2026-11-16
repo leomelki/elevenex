@@ -38,10 +38,10 @@ settles immediately under reduced motion.
 | `BranchChip` | `name`, `base`, `compact`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
 | `WorkspacePicker` | `value`, `items` | `valueChange(name or 'auto')`, `newWorkspace()`, `manageWorkspaces()` |
 | `NewTask` | `project`, optional `projectMenu`, `active`, `repos`, initial `repo`, pure `branchesFor(repoId)`, `branches`, `bases`, `base`, `branchPrefix`, initial `title`, initial `step`, initial `branchQuery`, `baseQuery`, `hi`, `workspace`, `workspaces`, `links`, `autoFocus` | `create(CreatedTask)`, `plan(PlannedTask)`, `cancelled()`, `linkRequested()`, `projectRequested()`, `addRepository()`, `workspaceRequested('new' or 'manage')` |
-| `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `restoreRequested(TaskSession)` |
+| `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)` |
 | `ArchivedSessions` | `archive: TaskSessionArchive`, `selected`, `disabled` | `requested(latest or earlier)`, `selectSession(sessionId)`, `restoreRequested(TaskSession)` |
-| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
-| `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
+| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
+| `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `deleteRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
 | `PanelTabs` | `tabs`, `active`, `labelled`, `label` | `selectTab(id)` |
 | `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `busyLabel`, `compact`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
 
@@ -198,7 +198,11 @@ Opt into archive actions with `allowArchive` and handle `archiveRequested` in th
 owner. The action is absent by default. Running rows require a second activation
 in the expanding Stop and archive button; Escape, blur and outside pointer input
 cancel it. Pointer leave retains confirmation. Nonrunning rows emit immediately.
-Sub-task rows forward the same intent. Consumers resolve the session's owning task
+A session with owner-supplied `canDelete: true`
+shows a trash icon and Delete session tooltip instead, emitting `deleteRequested`
+in one activation. Handle that intent separately: permanent removal offers no Undo.
+Omitted or false eligibility retains Archive, including queued work with history.
+Sub-task rows forward both intents. Consumers resolve the session's owning task
 when integrating a hierarchy. The connected workspace validates task/session
 ownership and current activity again in main/backend, retains history and edits,
 then removes the row and offers Undo. Restoring a stopped turn never restarts it.

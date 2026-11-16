@@ -56,6 +56,22 @@ describe('task outline ownership', () => {
     expect(selected).toHaveBeenCalledWith({ taskId: 'task', sessionId: '42' });
   });
 
+  it('forwards deletion of an unstarted session to its owning task and disables it during mutations', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const session = { id: 'unused', title: 'Unused', status: 'queued' as const, canDelete: true };
+    fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, sessions: [session] }]);
+    fixture.componentRef.setInput('allowArchive', true);
+    const deleted = vi.fn(), archived = vi.fn();
+    fixture.componentInstance.deleteRequested.subscribe(deleted);
+    fixture.componentInstance.archiveRequested.subscribe(archived);
+    fixture.detectChanges();
+    (fixture.nativeElement.querySelector('[aria-label="Delete Unused"]') as HTMLButtonElement).click();
+    expect(deleted).toHaveBeenCalledWith({taskId:tasks[0]!.id,session});
+    expect(archived).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('disabled', true); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[aria-label="Delete Unused"]')).toBeNull();
+  });
+
   it('suppresses task and sub-task creation controls while disabled', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     fixture.componentRef.setInput('tasks', [{ ...tasks[0]!, subtasks: [{ id: 'child', title: 'Child', sessions: [] }] }]);
