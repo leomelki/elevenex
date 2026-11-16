@@ -1,0 +1,9 @@
+<div #surface class="surface" role="textbox" aria-label="Message the agent" aria-multiline="true" aria-autocomplete="list"
+  [attr.contenteditable]="disabled() ? 'false' : 'true'" [attr.aria-disabled]="disabled()" [attr.tabindex]="disabled() ? -1 : 0"
+  [attr.aria-controls]="controls()" [attr.aria-activedescendant]="activeOption()" [attr.data-placeholder]="placeholder()"
+  (beforeinput)="beforeInput($event)" (input)="input($event)" (keydown)="key($event)"
+  (compositionstart)="composition(true)" (compositionend)="composition(false)"
+  (keyup)="remember()" (mouseup)="remember()" (blur)="remember()"
+  (copy)="clipboard($event)" (cut)="clipboard($event, true)" (paste)="paste($event)" (drop)="drop($event)"
+></div>
+<ng-template #tokens />

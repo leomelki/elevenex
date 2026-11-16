@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import type { McpToolServices } from './mcp-tool-services.js';
 import type { DeltaCursorStore } from './delta-cursor.store.js';
 import type { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
@@ -50,6 +51,9 @@ export class ToolError extends Error {
  *  - `truncated`set when output was capped; pair with a "narrow your scope" hint.
  */
 export interface ToolResultEnvelope<TData = unknown> {
+  /** Binary images stay out of structuredContent and its JSON text mirror. */
+  images?: readonly Pick<ImageContent, 'data' | 'mimeType'>[];
+  isError?: boolean;
   data: TData;
   touched?: Record<string, unknown>;
   deepLink?: string;

@@ -15,6 +15,7 @@
     "dist/**/*.js",
     "dist/backend-release.json",
     "dist/code/*.css",
+    "dist/browser/tokens.css",
     "dist/code/LICENSE.txt",
     "renderer/**/*",
     "assets/icons/icon.png",

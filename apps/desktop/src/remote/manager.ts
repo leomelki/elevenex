@@ -152,10 +152,10 @@ export class RemoteManager {
     if (current && this.hostInUse(current.id)) throw new Error('Disconnect this host in every window before editing its shared settings');
     if (!current && this.settings.hosts.length >= 100) throw new Error('Saved host limit reached');
     const host = { ...validated, id: current?.id ?? randomUUID() };
-    const previousIdentity = current ? this.writingIdentity({ kind: 'remote', hostId: current.id }) : null;
+    const previousIdentity = current ? this.configurationIdentity({ kind: 'remote', hostId: current.id }) : null;
     if (current) {
       this.settings.hosts.splice(this.settings.hosts.indexOf(current), 1, host);
-      if (previousIdentity !== this.writingIdentity({ kind: 'remote', hostId: host.id })) {
+      if (previousIdentity !== this.configurationIdentity({ kind: 'remote', hostId: host.id })) {
         for (const window of this.settings.windows) if (window.waiting) delete window.waiting[host.id];
       }
       await this.retireConnection(host.id);
@@ -305,7 +305,8 @@ export class RemoteManager {
     const host = selection.kind === 'remote' ? this.settings.hosts.find(host => host.id === selection.hostId) : null;
     return createHash('sha256').update(JSON.stringify(host ? [host.id, host.host, host.user, host.port, host.configFile] : ['local'])).digest('hex');
   }
-  private writingIdentity(selection: EnvironmentSelection): string {
+  /** Stable destination identity excludes machine presentation for durable scoped state. */
+  configurationIdentity(selection: EnvironmentSelection): string {
     const host = selection.kind === 'remote' ? this.settings.hosts.find(host => host.id === selection.hostId) : null;
     if (selection.kind === 'remote' && !host) throw new Error('Unknown machine');
     return createHash('sha256').update(JSON.stringify(host ? [host.id, host.host, host.user, host.port, host.identityFile, host.configFile] : ['local'])).digest('hex');
@@ -314,7 +315,7 @@ export class RemoteManager {
     this.assertWritable(); if (this.waitingError) throw new Error('Waiting writing needs repair.'); const window = this.window(windowId), selection = validate.selection(expected);
     if (environmentKey(selection) !== environmentKey(window.saved.selection)) throw new Error('The selected machine changed.');
     const saved: SavedWaitingWriting = window.saved.waiting?.[environmentKey(selection)] ?? { chat: [], tasks: [] };
-    const identity = this.writingIdentity(selection);
+    const identity = this.configurationIdentity(selection);
     if (selection.kind === 'remote' && saved.identity !== identity) {
       // Never give unbound/old-destination writing a new identity while it can
       // still dispatch. Retain it for inspection, including version-1 journals.
@@ -326,12 +327,12 @@ export class RemoteManager {
   }
   async waitingSave(windowId: number, expected: EnvironmentSelection, identity: string, input: WaitingWriting): Promise<void> {
     this.assertWritable(); if (this.waitingError) throw new Error('Waiting writing needs repair.'); const window = this.window(windowId), selection = validate.selection(expected), key = environmentKey(selection);
-    if (key !== environmentKey(window.saved.selection) || identity !== this.writingIdentity(selection)) throw new Error('The selected machine changed.');
+    if (key !== environmentKey(window.saved.selection) || identity !== this.configurationIdentity(selection)) throw new Error('The selected machine changed.');
     const saved = { ...waitingWriting(input), identity }, previous = window.saved.waiting?.[key];
     window.saved.waiting ??= {}; window.saved.waiting[key] = saved;
     try { await this.save(); }
     catch { if (window.saved.waiting[key] === saved) { if (previous) window.saved.waiting[key] = previous; else delete window.saved.waiting[key]; } throw new Error('Waiting writing could not be saved.'); }
-    if (this.windows.get(windowId) !== window || key !== environmentKey(window.saved.selection) || identity !== this.writingIdentity(selection)) throw new Error('The selected machine changed.');
+    if (this.windows.get(windowId) !== window || key !== environmentKey(window.saved.selection) || identity !== this.configurationIdentity(selection)) throw new Error('The selected machine changed.');
   }
   async saveContext(windowId: number, input: EnvironmentContext, expected: EnvironmentSelection): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.window(windowId);
@@ -378,6 +379,33 @@ export class RemoteManager {
     connection.answer(windowId, challengeId, answer);
   }
   diagnostics(windowId: number) { return this.connections.get(this.hostId(this.remoteWindow(windowId)))?.logs() ?? []; }
+
+  /** Ephemeral task-browser lease; never creates a saved Ports UI definition. */
+  async browserProxy(windowId: number, authorize: (host: string, port: number) => void) {
+    const window = this.remoteWindow(windowId), connection = this.connections.get(this.hostId(window));
+    const transport = connection?.currentTransport();
+    if (!transport?.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
+    const current = () => {
+      if (this.windows.get(windowId) !== window || window.intent !== 'connected' || connection?.currentTransport() !== transport) throw new Error('Remote connection changed');
+    };
+    const proxy = await transport.browserProxy((host, port) => { current(); authorize(host, port); });
+    try { current(); return proxy; }
+    catch (error) { await proxy.close(); throw error; }
+  }
+
+  /** Ephemeral task-browser lease; never creates a saved Ports UI definition. */
+  async browserForward(windowId: number, port: number) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid task server port');
+    const window = this.remoteWindow(windowId);
+    const connection = this.connections.get(this.hostId(window));
+    const transport = connection?.currentTransport();
+    if (!transport) throw new Error('Remote transport is unavailable');
+    const running = await transport.forward(port, 0, () => undefined);
+    if (this.windows.get(windowId) !== window || connection?.currentTransport() !== transport) {
+      await running.close(); throw new Error('Remote connection changed');
+    }
+    return running;
+  }
 
   async addForward(windowId: number, input: RemoteForwardInput, targetHost?: string): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId); const validated = validate.forward(input);

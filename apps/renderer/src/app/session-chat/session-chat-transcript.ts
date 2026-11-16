@@ -1,3 +1,10 @@
+import { parseBrowserElements, type BrowserElementContext } from '@elevenex/shared';
+
+/** Pairs a recorded image with the element it shows, by its exact attachment name. */
+function elementOf(elements: readonly BrowserElementContext[], caption: string) {
+  const element = elements.find(row => row.attachment === caption);
+  return element ? { element: element.reference, marker: element.marker } : {};
+}
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
 import type { ChatExchange, WorkStep } from "../conversation";
 import {
@@ -70,12 +77,13 @@ export function chatExchanges(
     items: SessionChatItem[];
   }[] = [];
   for (const item of pending ? withPendingPrompt(items, pending) : items) {
-    if (item.kind === "user")
+    if (item.kind === "user") {
+      const browser = parseBrowserElements(item.text);
       groups.push({
         id: item.id,
-        prompt: item.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
+        prompt: browser.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
         mentions: item.mentions?.map(mention => ({ id: String(mention.sessionId), kind: 'session', label: mention.title })),
-        attachments: item.media?.map(media => ({ id: media.id, path: media.path, name: media.caption, kind: media.kind ?? 'image' })),
+        attachments: item.media?.map(media => ({ id: media.id, path: media.path, name: media.caption, kind: media.kind ?? 'image', ...elementOf(browser.elements, media.caption) })),
         time: new Date(item.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
@@ -83,7 +91,7 @@ export function chatExchanges(
         startedAt: epoch(item.timestamp),
         items: [],
       });
-    else {
+    } else {
       if (!groups.length)
         groups.push({
           id: "history-" + item.id,

@@ -1,9 +1,10 @@
 import { TestBed } from "@angular/core/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageComponent } from "./message.component";
 import { TurnComponent } from "../turns/turn.component";
 
-afterEach(() => TestBed.resetTestingModule());
+beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })));
+afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
 
 describe("agent reply marks", () => {
   for (const component of [MessageComponent, TurnComponent]) {

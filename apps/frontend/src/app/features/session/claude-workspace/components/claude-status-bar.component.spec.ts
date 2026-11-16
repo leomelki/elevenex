@@ -2,7 +2,7 @@ import '@angular/compiler';
 import { OverlayContainer } from '@angular/cdk/overlay';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZard } from '@/shared/core/provider/providezard';
 import { describe, expect, it } from 'vitest';
 import type { AgentBackgroundWorkItem } from '@/shared/models/agent-runtime.model';
@@ -70,11 +70,61 @@ describe('ClaudeStatusBarComponent', () => {
     ]);
   });
 
+  it.each(['light', 'dark'])('offers no guessed models or default before Codex discovery in %s mode', async (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      const fixture = await render();
+      fixture.componentRef.setInput('currentProvider', 'codex');
+      fixture.componentRef.setInput('selectedModel', 'saved-model');
+      fixture.componentRef.setInput('availableModels', [{ id: 'old-model', displayName: 'Old' }]);
+      fixture.detectChanges();
+      expect(fixture.componentInstance.pickerModels()).toEqual([]);
+      expect(fixture.componentInstance.selectedModelLabel()).toBe('Loading Codex models…');
+      const emitted: string[] = [];
+      fixture.componentInstance.modelChange.subscribe((model) => emitted.push(model));
+      fixture.componentInstance.pickModel('');
+      expect(emitted).toEqual([]);
+      const http = TestBed.inject(HttpTestingController);
+      const loading = fixture.componentInstance.catalog.load('codex');
+      http.expectOne('/api/agent-providers/codex/models').flush([{
+        provider: 'codex', displayName: 'Codex', models: [], reasoningEfforts: [],
+        providerDefaultModelId: null, supportsModelSelection: true,
+        unavailableReason: 'Install Codex and sign in.',
+      }]);
+      await loading;
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(fixture.componentInstance.selectedModelLabel()).toBe('Codex models unavailable');
+      const trigger = fixture.nativeElement.querySelector('.cw-sb__model-trigger') as HTMLButtonElement;
+      trigger.click();
+      fixture.detectChanges();
+      const menu = TestBed.inject(OverlayContainer).getContainerElement();
+      expect(menu.textContent).not.toContain('Agent default');
+      expect(menu.textContent).not.toContain('old-model');
+      expect(menu.textContent).toContain('Codex hasn’t reported any models');
+      const recovered = fixture.componentInstance.catalog.load('codex');
+      http.expectOne('/api/agent-providers/codex/models').flush([{
+        provider: 'codex', displayName: 'Codex',
+        models: [{ id: 'current-model', displayName: 'Current', description: '', isProviderDefault: true }],
+        reasoningEfforts: [], providerDefaultModelId: 'current-model', supportsModelSelection: true,
+      }]);
+      await recovered;
+      fixture.detectChanges();
+      expect(menu.textContent).toContain('Agent default');
+      fixture.componentInstance.pickModel('');
+      expect(emitted).toEqual(['']);
+      fixture.destroy();
+    } finally {
+      document.documentElement.classList.remove('dark');
+    }
+  });
+
   it('updates model choices from a refreshed catalog while preserving the selected model', async () => {
     const fixture = await render();
     fixture.componentRef.setInput('currentProvider', 'codex');
     fixture.componentRef.setInput('selectedModel', 'saved-model');
     fixture.componentRef.setInput('availableModels', [{ id: 'old-model', displayName: 'Old' }]);
+    fixture.detectChanges();
     fixture.componentInstance.catalog.catalogs.set([
       {
         provider: 'codex',
@@ -88,7 +138,6 @@ describe('ClaudeStatusBarComponent', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.pickerModels().map((model) => model.id)).toEqual([
       'new-model',
-      'old-model',
       'saved-model',
     ]);
     expect(fixture.componentInstance.selectedModel()).toBe('saved-model');
@@ -102,6 +151,7 @@ describe('ClaudeStatusBarComponent', () => {
         const fixture = await render();
         fixture.componentRef.setInput('currentProvider', 'opencode');
         fixture.componentRef.setInput('selectedModel', 'project/local');
+        fixture.detectChanges();
         fixture.componentInstance.catalog.catalogs.set([
           {
             provider: 'opencode',

@@ -1,3 +1,6 @@
+import { dirname, isAbsolute, join } from 'node:path';
+import { getBackendRuntimeMode } from './backend-runtime-mode.js';
+
 // Reserve room for argv and runtime-added variables with a conservative exec
 // budget; host limits vary by OS and stack size. Never truncate credentials or
 // silently remove a caller's configuration to make a process start.
@@ -89,4 +92,22 @@ export class ShellEnvironmentProjection {
       target[key] = projected;
     }
   }
+}
+
+/** A remote launcher proxy is a fallback; the account's shell may select its own agent. */
+export function shellConfiguredSshAgentSocket(
+  base: NodeJS.ProcessEnv,
+  shell: NodeJS.ProcessEnv,
+): string | undefined {
+  const dataRoot = base.ELEVENEX_DATA_ROOT;
+  // Recognize only the desktop daemon's stable socket. Explicit launch-time
+  // agent choices and local/legacy runtimes retain their existing precedence.
+  if (
+    getBackendRuntimeMode(base) !== 'remote' ||
+    !dataRoot ||
+    !isAbsolute(dataRoot) ||
+    base.SSH_AUTH_SOCK !== join(dirname(dataRoot), 'agent.sock')
+  )
+    return undefined;
+  return shell.SSH_AUTH_SOCK;
 }

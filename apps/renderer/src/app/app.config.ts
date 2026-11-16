@@ -9,6 +9,7 @@ export const appConfig: ApplicationConfig = {
     provideRouter(
       [
         { path: 'code-window', loadComponent: () => import('./code/code-window.component').then(module => module.CodeWindowComponent) },
+        { path: 'browser-window', loadComponent: () => import('./task-browser/browser-window.component').then(module => module.BrowserWindowComponent) },
         {
           path: "",
           loadComponent: () =>

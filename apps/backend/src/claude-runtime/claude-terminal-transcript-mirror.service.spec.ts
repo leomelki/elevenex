@@ -455,6 +455,17 @@ describe('ClaudeTerminalTranscriptMirrorService', () => {
     });
   });
 
+  it('reports terminal turn failures immediately and clears the error on a new turn', async () => {
+    await writeFile(transcriptPath, '');
+    const events: { type: string; payload: unknown }[] = [];
+    service.attachClient(7, event => events.push(event));
+    await waitFor(() => events.some(event => event.type === 'history_snapshot'));
+    hooks.emit('status-changed', { sessionId: 7, status: 'idle', failed: true });
+    expect(events.at(-1)).toMatchObject({ type: 'run_state', payload: { runPhase: 'error', canInterrupt: false, lastError: 'The terminal agent turn failed.' } });
+    hooks.emit('status-changed', { sessionId: 7, status: 'running' });
+    expect(events.at(-1)).toMatchObject({ type: 'run_state', payload: { runPhase: 'running', lastError: null } });
+  });
+
   it('closes the watcher when the final client detaches', async () => {
     await writeFile(transcriptPath, '');
     const detach = service.attachClient(7, () => undefined);

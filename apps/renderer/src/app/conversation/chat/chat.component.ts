@@ -21,6 +21,7 @@ import { MessageComponent } from "./message.component";
 import { AttachmentsComponent } from "./attachments.component";
 import { ButtonComponent } from '../../ui';
 import { MentionComponent } from '../composer/mention.component';
+import { ElementProseComponent } from '../element/element-prose.component';
 @Component({
   selector: "ex-chat",
   imports: [
@@ -31,6 +32,7 @@ import { MentionComponent } from '../composer/mention.component';
     ChatScrollComponent,
     MessageComponent,
     MentionComponent,
+    ElementProseComponent,
   ],
   templateUrl: "./chat.component.html",
   styleUrl: "./chat.component.css",

@@ -128,6 +128,33 @@ checks must inspect the isolated child separately.
 
 ## Motion
 
+`scenarios/browser-stream.mjs` checks the production remote-display component
+through `/browser-video`, with real Chromium pixels and managed FFmpeg H.264,
+trusted keyboard/IME input, both themes, narrow reduced motion and display pause.
+Use `--url http://127.0.0.1:4310` against `pnpm desktop:preview`. The bridge is an
+isolated preview provider; host input/transport and profiles have native integration
+tests. This capture is not an external SSH/WAN or packaged-app test.
+It also interrupts one input receipt while retaining the picture, then checks
+that a new trusted wheel gesture resumes scrolling without a click or replay.
+
+`scenarios/browser-overlay-input.mjs` checks the real task-browser layout owner
+with CDK tooltips and dialogs on `/task-browser`: an overlapping informational
+tooltip preserves input readiness and hit testing; dialogs block input and
+restore focus/readiness on exit. It covers both themes and narrow reduced motion.
+Its preview records layout receipts without a website or browser engine.
+
+`scenarios/browser-agent-policy.mjs` checks the production browser owner on
+`/task-browser`: code-first host access wording, older-host fallback, both themes,
+narrow layouts and reduced motion. It changes only the preview store’s advertised
+capability; native browser behavior has separate Electron/Chromium regressions.
+
+`scenarios/browser-tabs.mjs` checks the shared Browser/Terminal tab strip through
+the Browser preview: middle selection, idle dividers and hover suppression,
+natural wheel/trackpad scrolling, metadata refreshes, keyboard selection/closing,
+animated and interrupted new-tab entry, empty state and narrow reduced motion
+in both themes. Run it against `pnpm desktop:preview` with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-input-motion.mjs` checks trusted multiline edits through the
 connected workspace preview. It asserts text/box alignment before, during and
 after growth, shrinkage and interrupted newlines, plus native scrolling at the
@@ -151,6 +178,11 @@ It checks both themes, panel width/tabs/takeover and focus restoration, native
 Enter submission, project settings, new tasks, project creation
 and handoff, error recovery, narrow layouts and reduced motion. It uses actual
 components rather than `--fixture`; its backend is controlled preview data.
+`scenarios/panel-reflow.mjs` uses the same preview with thirty longer replies.
+It checks that repeated/interrupted panel toggles do not start competing content
+height animations, and preserves drafts, end-following and keyboard focus in
+both themes, narrow layouts and reduced motion. Its report records frame timings
+as diagnostics rather than a hardware-independent FPS guarantee.
 `scenarios/new-project.mjs` focuses on project creation in both themes: nested
 Escape and focus restoration, empty/failed folder results, keyboard retry, Git
 URLs, multiple repositories, name and appearance, retained rejection/uncertain
@@ -677,6 +709,52 @@ not verify the operating system's picker appearance. Run sequentially with other
 native captures after building. When starting a disposable backend, set both
 `DB_PATH` and `ELEVENEX_DATA_ROOT` explicitly, as well as its runtime/migrations
 directory, to avoid inheriting a running development session's database.
+### Native task browser integration
+
+`scenarios/browser-agent-feedback.mjs` uses `/browser-agent` to check the real
+BrowserView's independent cursor, sampled glide, interrupted retarget, one-shot
+click pulse, running/waiting/done/error feedback, Stop focus and narrow/reduced
+motion in both themes. Native Electron and backend Chromium tests separately
+verify that the scoped agent API publishes this data during real browser work.
+
+`scenarios/browser-agent-control.mjs` uses the `/task-browser` preview to verify
+the production Stop/Hand back controls without step metadata, keyboard access
+and focus retention in both themes and narrow reduced-motion layouts. The
+preview transport simulates ownership; real acquisition/revocation is exercised
+separately by the native Electron and backend Chromium regressions.
+
+`scenarios/browser-new-tab.mjs` uses `--url http://127.0.0.1:4310/task-browser`
+to check the production default tab, +/Command/Ctrl-T, address focus/drafts,
+Enter navigation, task-server shortcuts, empty tabs and narrow/reduced-motion
+layouts in both themes. Its isolated preview transport does not load websites;
+native Electron and runtime Chromium integration tests verify actual navigation.
+
+`--backend-url http://127.0.0.1:<port>` borrows an already running **isolated**
+backend for live product captures. The capture CLI validates its `/api/info`
+revision; only the test runner substitutes the backend lifecycle composition.
+The production app/preload has no endpoint override. The runner never stops or
+modifies the borrowed backend's lifecycle. Scenarios may make normal domain
+mutations, so use a disposable database/repository rather than a personal backend.
+
+Yield `{ name: 'native-browser', native: true }` to capture actual app and
+WebContentsView page surfaces and compose them at their registered native bounds.
+Electron's root/window screenshot omits child views. Each native source PNG and
+its bounds are retained in `report.json`; the gallery explicitly labels the
+composition. This is **not an OS-compositor screenshot**. Ordinary checkpoints retain
+Chromium screenshots. Native checkpoints require the actual window size to match
+the viewport; use `capture.window.setContentSize(width, height)` together with
+`capture.viewport(width, height)`. No crop is supported for native checkpoints.
+Native page assertions remain separate from app accessibility/layout diagnostics,
+which inspect only the trusted app renderer. This capture-only capability does
+not expose screenshot or DOM observation to agents driving task pages.
+
+Local Browser guests are DOM-composited and use ordinary checkpoints, unlike
+child WebContentsView compositions. For a native guest capture, resize the real
+window and root viewport together, then call
+`await capture.cdp('Emulation.clearDeviceMetricsOverride')`. Root-only device-scale
+emulation otherwise gives a guest a different DPR from the host display and
+misrepresents its size. App layout/AX diagnostics still inspect the trusted app
+only; they do not establish page accessibility or agent observation permission.
 
 `scenarios/session-tool-timeline.mjs` covers the single chronological work
 timeline: message-delimited activity summaries, section-local recent-step budgets,

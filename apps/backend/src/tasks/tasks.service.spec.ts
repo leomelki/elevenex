@@ -39,6 +39,9 @@ import { TaskSetup } from './task.types.js';
 import { assertWorkspaceCanExecute } from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 
+// Terminals are injected stubs in this suite; loading a native PTY is unnecessary.
+jest.mock('node-pty', () => ({ spawn: jest.fn() }));
+
 jest.setTimeout(60000);
 
 describe('conciseFailureMessage', () => {

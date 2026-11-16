@@ -119,6 +119,7 @@ export class DesktopChatService implements OnModuleDestroy {
     return {
       unseenCompletionAt: session.hasUnreviewedCompletion ? session.lastCompletionAt : null,
       attachments: true,
+      browserElements: provider.info.capabilities.multimodalPrompts === true,
       sessionMentions: true,
       presetCatalogs: true,
       presets: chatPresets(this.settings, this.registry),

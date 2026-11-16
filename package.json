@@ -11,6 +11,7 @@
     "backend:dev": "pnpm --dir apps/backend start:dev",
     "backend:prod": "pnpm --dir apps/backend start:prod",
     "backend:build": "pnpm --dir apps/backend build",
+    "browser:setup": "node scripts/browser-setup.cjs",
     "backend:bundle": "pnpm backend:build && node scripts/bundle-electron-backend.js",
     "frontend:dev": "pnpm --dir apps/frontend start",
     "frontend:build": "pnpm --dir apps/frontend build",

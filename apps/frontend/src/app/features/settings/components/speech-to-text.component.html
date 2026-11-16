@@ -286,7 +286,7 @@
       <div class="flex flex-col gap-1.5">
         <app-option-select
           ariaLabel="Cleanup model"
-          placeholder="Agent default"
+          [placeholder]="cleanupModelSelectable() ? 'Select a model' : 'Models unavailable'"
           emptyText="No models reported by this agent"
           [options]="cleanupModelOptions()"
           [value]="settings().cleanupModel ?? ''"

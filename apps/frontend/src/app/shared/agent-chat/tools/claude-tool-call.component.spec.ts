@@ -251,9 +251,8 @@ describe('ClaudeToolCallComponent', () => {
 
     const button = fixture.nativeElement.querySelector('.cw-tool__head') as HTMLButtonElement;
     expect(fixture.nativeElement.querySelector('.cw-tool').dataset['state']).toBe('denied');
-    expect(button.querySelector('.cw-tool__state-icon ng-icon')?.getAttribute('name')).toBe(
-      'lucideShield',
-    );
+    expect(button.textContent).toContain('Deny');
+    expect(button.textContent).not.toContain('Completed');
     button.click();
     fixture.detectChanges();
 
@@ -296,6 +295,23 @@ describe('ClaudeToolCallComponent', () => {
     fixture.detectChanges();
 
     expect((fixture.nativeElement as HTMLElement).textContent ?? '').toContain('Running 20s');
+  });
+
+  it('renders restored Codex shell commands through the shared shell receipt', async () => {
+    await TestBed.configureTestingModule({ imports: [ClaudeToolCallComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(ClaudeToolCallComponent);
+    fixture.componentRef.setInput('call', {
+      id: 'restored-shell', kind: 'tool_use', toolName: 'exec_command', toolInput: { cmd: 'pnpm typecheck' }, timestamp: '',
+    });
+    fixture.componentRef.setInput('result', {
+      id: 'restored-shell-result', kind: 'tool_result', content: 'Type check failed', isError: true, timestamp: '',
+    });
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('cw-shell-tool-call')).not.toBeNull();
+    expect(host.querySelector('.cw-shell__command')?.textContent).toBe('pnpm typecheck');
+    expect(host.querySelector('.cw-tool')?.getAttribute('data-state')).toBe('error');
+    fixture.destroy();
   });
 
   it('renders expanded edit diffs with the shared inline diff view', async () => {

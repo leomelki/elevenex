@@ -1,7 +1,45 @@
 import {
   assertSubprocessEnvironment,
+  shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
+
+describe('remote shell SSH agent selection', () => {
+  const remote = {
+    ELEVENEX_BACKEND_MODE: 'remote',
+    ELEVENEX_DATA_ROOT: '/runtime/desktop/data',
+    SSH_AUTH_SOCK: '/runtime/desktop/agent.sock',
+  };
+
+  it('honors a shell-selected agent over the desktop proxy without probing or copying keys', () => {
+    expect(
+      shellConfiguredSshAgentSocket(remote, {
+        SSH_AUTH_SOCK: '/account/agent.sock',
+      }),
+    ).toBe('/account/agent.sock');
+    expect(shellConfiguredSshAgentSocket(remote, { SSH_AUTH_SOCK: '' })).toBe(
+      '',
+    );
+  });
+
+  it('retains the stable proxy when the shell has no agent configuration', () => {
+    expect(shellConfiguredSshAgentSocket(remote, {})).toBeUndefined();
+  });
+
+  it.each([
+    { ...remote, SSH_AUTH_SOCK: '/explicit/agent.sock' },
+    { ...remote, ELEVENEX_BACKEND_MODE: 'local' },
+    { ...remote, ELEVENEX_BACKEND_MODE: undefined },
+    { ...remote, ELEVENEX_DATA_ROOT: undefined },
+    { ...remote, ELEVENEX_DATA_ROOT: 'relative/data' },
+  ])('preserves explicit and legacy launch settings (%j)', (base) => {
+    expect(
+      shellConfiguredSshAgentSocket(base, {
+        SSH_AUTH_SOCK: '/shell/agent.sock',
+      }),
+    ).toBeUndefined();
+  });
+});
 
 describe('subprocess environment budget', () => {
   it('accepts ordinary tool configuration, credentials, Unicode and absent values unchanged', () => {

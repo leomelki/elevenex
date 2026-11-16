@@ -257,6 +257,25 @@ describe('Settings', () => {
     };
   }
 
+  it('offers no Codex model or effort default and blocks saving before discovery', async () => {
+    const { fixture, editor } = await setupPresets();
+    editor.presetProvider.set('codex');
+    editor.presetModel.set('saved-model');
+    expect(editor.presetModelOptions()).toEqual([]);
+    expect(editor.presetEffortOptions()).toEqual([]);
+    expect(editor.presetCanChooseEffort()).toBe(false);
+    expect(editor.selectedModelLabel()).toBe('Codex models unavailable');
+    editor.savePreset();
+    httpMock.expectNone((request) => request.method === 'PATCH');
+    editor.catalog.catalogs.set([{
+      provider: 'codex', displayName: 'Codex', models: [{ id: 'current-model', displayName: 'Current', description: '' }],
+      reasoningEfforts: [], providerDefaultModelId: 'current-model', supportsModelSelection: true,
+    }]);
+    expect(editor.presetModelOptions()[0].label).toBe('Agent default');
+    expect(editor.presetModelsReady()).toBe(true);
+    fixture.destroy();
+  });
+
   it('uses the native OpenCode default model and its advertised variants', async () => {
     const { editor } = await setupPresets();
     editor.catalog.catalogs.set([

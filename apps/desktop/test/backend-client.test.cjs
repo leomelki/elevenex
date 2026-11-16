@@ -474,6 +474,19 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
     assert.equal(result.ok, false); assert.match(result.error.message, new RegExp(expected));
     assert.doesNotMatch(result.error.message, /private backend/);
   }
+  for (const [code, expected] of [
+    ['git-push-authentication', 'SSH key'],
+    ['git-push-behind', 'newer commits'],
+    ['git-push-failed', 'pre-push hooks'],
+    ['unknown-push-code', 'conflicts with the current workspace'],
+  ]) {
+    reply = { code, message: 'private Git output https://user:secret@example.test/repo' };
+    const result = await handlers.get('workspace:git-action')(event, scope, { taskId: 1, type: 'push' });
+    assert.equal(result.ok, false);
+    assert.match(result.error.message, new RegExp(expected));
+    assert.doesNotMatch(result.error.message, /private Git|secret|example\.test/);
+    assert.deepEqual(requests.at(-1).body, { type: 'push' });
+  }
   const count = requests.length; client.reset(42); assert.equal((await read()).error.code, 'stale-scope'); assert.equal(requests.length, count);
 });
 
@@ -804,6 +817,24 @@ test('task request reconciliation is scoped, read-only and validates repository 
   client.reset(42); assert.equal((await read({ repoId: 2, requestId: 'stable' })).error.code, 'stale-scope'); assert.equal(requests, 3);
 });
 
+test('persistent channels have scope-owned cancellation without a request deadline', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const client = new BackendClient(() => local('http://127.0.0.1:1'), () => undefined);
+  client.attach(1);
+  const scope = client.state(1).scope.id;
+  let signal;
+  const pending = client.execute(1, scope, 'browser-stream:1', false, async (_endpoint, owned) => {
+    signal = owned;
+    await new Promise(resolve => owned.addEventListener('abort', resolve, { once: true }));
+  }, null);
+  context.mock.timers.tick(3600000);
+  assert.equal(signal.aborted, false);
+  client.reset(1);
+  assert.equal(signal.aborted, true);
+  assert.equal((await pending).error.code, 'stale-scope');
+  client.dispose();
+});
+
 test('agent transcript validation checks identity, bounds, states and reported context', () => {
   const { parseChatAgentPage, parseChatAction } = require('../dist/backend-client/session-chat-validation');
   const value = { agentId: 'child', label: 'Reviewer', status: 'interrupted', prompt: '', model: null,
@@ -849,4 +880,40 @@ test('named child history adapter confines reads to a trusted window and expecte
   const stale = await handlers.get('session-chat:agent')(event, 'b'.repeat(36), { taskId: 1, sessionId: 2, agentId: 'child', requestId: 'read' });
   assert.equal(stale.error.code, 'stale-scope'); assert.equal(calls, 1);
   stop(); assert.equal(handlers.size, 0);
+});
+
+test('navigation waits bound and validate replies, coalesce per request and cancel only within the owning window and scope', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let arrive;
+  const arrived = new Promise(resolve => { arrive = resolve; });
+  const requests = [];
+  const url = await server(context, (request, response) => { requests.push({request,response}); arrive(); });
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(42); client.attach(43);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
+  const stop = workspace.registerWorkspaceIpc(client, candidate => candidate === frame); context.after(stop);
+  const input = { after: 3, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+  const wait = (...args) => handlers.get('workspace:wait')(event, ...args);
+  const cancel = (...args) => handlers.get('workspace:cancel-wait')(event, ...args);
+  for (const invalid of [{...input, after:-1}, {...input, after:'3'}, {...input, requestId:'x'}, {...input, url:'http://example.com'}]) assert.throws(() => wait(scope,invalid));
+  assert.throws(() => wait(scope,input,'extra'));
+  assert.throws(() => handlers.get('workspace:wait')({senderFrame:{},sender},scope,input));
+  const first = wait(scope,input), duplicate = wait(scope,input);
+  await arrived; assert.equal(requests.length,1); assert.equal(requests[0].request.url,'/api/desktop-workspace/revision?after=3');
+  // Neither another window nor an old scope can cancel the live read.
+  handlers.get('workspace:cancel-wait')({senderFrame:frame,sender:{id:43}},scope,input.requestId);
+  cancel(client.state(43).scope.id,input.requestId);
+  requests[0].response.writeHead(200,json); requests[0].response.end(JSON.stringify({revision:4,version:1,revisionWait:true,private:'omit'}));
+  const result = await first; assert.equal(result.ok,true); assert.equal(result.value.revision,4); assert.equal(result.value.private,undefined);
+  assert.deepEqual(await duplicate,result);
+  const pending = wait(scope,{...input, after:4});
+  cancel(scope,input.requestId); assert.equal((await pending).ok,false);
+  const late = wait(scope,{...input, after:5}); client.reset(42); assert.equal((await late).error.code,'stale-scope');
+  assert.equal((await wait(scope,input)).error.code,'stale-scope');
+  stop(); assert.equal(handlers.size,0);
 });

@@ -16,7 +16,8 @@ export interface BrowserTab extends ViewTab {
 }
 
 export type BrowserDriver = 'agent' | 'you' | 'needs';
-export interface BrowserStep { readonly n: number; readonly total?: number; readonly text: string }
+export interface BrowserStep { readonly n: number; readonly total?: number; readonly text: string; readonly status?: 'running' | 'waiting' | 'done' | 'error' }
+export interface BrowserCursor { readonly x: number; readonly y: number; readonly pulse: number }
 export interface BrowserTarget {
   readonly x: number; readonly y: number; readonly w: number; readonly h: number;
   readonly label: string; readonly file?: string;
@@ -125,3 +126,5 @@ export const CHANGE_STATUS_LABEL: Readonly<Record<ChangeStatus, string>> = {
 
 export function fileName(path: string): string { return path.split('/').at(-1) ?? path; }
 export function folderName(path: string): string { return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''; }
+/** Stable insertion intent; null appends without replacing concurrently opened tabs. */
+export interface ViewTabMove { readonly tabId: string; readonly beforeTabId: string | null }

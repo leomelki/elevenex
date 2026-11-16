@@ -45,6 +45,8 @@ export class MachineStartupFixture {
   };
   backendClientState = async () => this.scope;
   backendInfo = async () => ({ ok: true as const, value: { backendSha: 'a'.repeat(40) } });
+  workspaceWait = async (_scope: string, _input: import('@elevenex/shared').WorkspaceRevisionWait): Promise<BackendResult<import('@elevenex/shared').WorkspaceRevision>> => { void _scope; void _input; return this.workspaceRevision(); };
+  workspaceCancelWait = async (_scope: string, _requestId: string): Promise<void> => { void _scope; void _requestId; };
   workspaceRevision = async (): Promise<BackendResult<{ readonly revision: number; readonly version: 1 }>> => ({ ok: true, value: { revision: 0, version: 1 } });
   workspaceProjects = async (): Promise<BackendResult<WorkspacePage<WorkspaceProject>>> => ({ ok: true, value: { items: [], nextCursor: null } });
   workspaceTasks = async (scope: string, query: WorkspaceTaskQuery): Promise<BackendResult<WorkspacePage<WorkspaceTask>>> => { void scope; void query; return { ok: true, value: { items: [], nextCursor: null } }; };

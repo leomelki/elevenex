@@ -55,7 +55,7 @@
                 class="handle"
                 cdkDragHandle
                 [disabled]="disabled()"
-                [attr.aria-label]="'Reorder ' + item.text"
+                [attr.aria-label]="'Reorder ' + preview(item.text)"
                 (keydown.arrowup)="$event.preventDefault(); move(item.id, -1)"
                 (keydown.arrowdown)="$event.preventDefault(); move(item.id, 1)"
               >
@@ -63,7 +63,7 @@
               </button>
             }
             <span class="number">{{ index + 1 }}</span>
-            <span class="text" [title]="item.text">{{ item.text }}</span>
+            <span class="text" [title]="preview(item.text)">{{ preview(item.text) }}</span>
             <span class="actions"
               >@if (!waitingFor()) { <ex-icon-button
                 icon="steer"

@@ -4,11 +4,13 @@ const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTermin
 const { app, BrowserWindow, Menu, nativeTheme, nativeImage, clipboard, ClipboardItem } = require('electron');
 terminalMethods.push('taskTerminalCopyPort');
 const assert = require('node:assert/strict');
+process.on('uncaughtException', error => { console.error('Uncaught smoke error:', error); app.exit(1); });
 const { mkdtempSync } = require('node:fs');
 const { rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { createServer } = require('node:http');
+const { WebSocketServer } = require('../../backend/node_modules/ws');
 const { URL } = require('node:url');
 const { BackendManager } = require('../dist/backend/manager');
 const { backendRelease } = require('../dist/backend/release');
@@ -31,8 +33,54 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   release: async () => backendRelease({ version: revision, tag: `runtime-${revision}` }, process.platform, process.arch),
   install: async () => ({ directory: backendRoot, entry: '', executable: '' }),
   start: async () => {
+    let holdBrowserAuthorization = false;
+    const browserAuthorizations = new Set();
+    let holdBrowserTask = false;
+    const browserTaskReads = new Set();
+    const browserTask = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) }));
+    };
+    const authorizeBrowser = response => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true }));
+    };
     const http = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
+      if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
+      if (pathname === '/release-browser-task') {
+        holdBrowserTask = false;
+        for (const pending of browserTaskReads) browserTask(pending);
+        browserTaskReads.clear(); response.end(); return;
+      }
+      if (pathname === '/api/desktop-browser/tasks/1' && holdBrowserTask) {
+        browserTaskReads.add(response);
+        response.once('close', () => browserTaskReads.delete(response));
+        return;
+      }
+      if (pathname === '/hold-browser-authorization') { holdBrowserAuthorization = true; response.end(); return; }
+      if (pathname === '/browser-authorization-pending') { response.end(String(browserAuthorizations.size)); return; }
+      if (pathname === '/release-browser-authorization') {
+        holdBrowserAuthorization = false;
+        for (const pending of browserAuthorizations) authorizeBrowser(pending);
+        browserAuthorizations.clear(); response.end(); return;
+      }
+      if (pathname === '/browser-test') {
+        response.writeHead(200, { 'content-type': 'text/html', 'access-control-allow-origin': '*' });
+        response.end('<!doctype html><html><body style="margin:20px"><h1>Task browser native test</h1><div id="scroll-target" style="height:80px;overflow:auto"><div style="height:500px">Nested scroll area</div></div><button style="margin:60px" onclick="window.clicks++">Pick this</button><input type="password"><input autocomplete="cc-number"><iframe src="about:blank"></iframe><script>window.clicks=0</script></body></html>'); return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-browser/authorize') {
+        request.resume();
+        if (holdBrowserAuthorization) {
+          browserAuthorizations.add(response);
+          response.once('close', () => browserAuthorizations.delete(response));
+        } else authorizeBrowser(response);
+        return;
+      }
+      if (request.method === 'POST' && pathname === '/api/desktop-browser/poll') {
+        request.resume(); response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify({ command: null, ports: [] })); return;
+      }
       if (pathname === '/api/desktop-workspace/tasks/1/terminals') {
         response.setHeader('content-type', 'application/json');
         if (request.method === 'GET') {
@@ -76,6 +124,11 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/revision': { revision: 0, version: 1 },
         '/api/desktop-workspace/projects': { items: [], nextCursor: null },
         '/api/desktop-workspace/tasks': { items: [], nextCursor: null },
+        '/api/desktop-browser/tasks/1': { id: 1, repoId: 1, state: 'ready', identity: 'c'.repeat(64) },
+        '/api/desktop-browser/tasks/3': { id: 3, repoId: 1, state: 'ready', identity: 'd'.repeat(64) },
+        '/api/desktop-browser/tasks/4': { id: 4, repoId: 1, state: 'ready', identity: 'e'.repeat(64) },
+        '/api/desktop-browser/tasks/5': { id: 5, repoId: 1, state: 'ready', identity: 'f'.repeat(64) },
+        '/api/desktop-browser/tasks/6': { id: 6, repoId: 1, state: 'ready', identity: 'a'.repeat(64) },
         '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
         '/api/desktop-workspace/folders': [],
         '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
@@ -85,11 +138,18 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(responses[pathname]));
     });
+    const browserSocket = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
+    http.on('upgrade', (request, socket, head) => {
+      if (request.url !== '/browser-socket') { socket.destroy(); return; }
+      browserSocket.handleUpgrade(request, socket, head, peer => peer.on('message', (message, binary) => peer.send(message, { binary })));
+    });
     await new Promise(resolve => http.listen(0, '127.0.0.1', resolve));
     backendUrl = `http://127.0.0.1:${http.address().port}`;
     let stopped;
     const exited = new Promise(resolve => { stopped = resolve; });
     return { url: backendUrl, exited, stop: async () => {
+      for (const socket of browserSocket.clients) socket.terminate();
+      await new Promise(resolve => browserSocket.close(resolve));
       assert.equal(terminalRows.size, 0, 'terminal cleanup must precede engine shutdown');
       await new Promise(resolve => { http.close(resolve); http.closeAllConnections(); });
       stopped({ code: 0, signal: null });
@@ -97,7 +157,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
   },
 });
 
-const timeout = setTimeout(() => { console.error('Electron smoke test timed out'); app.exit(1); }, 30000);
+const timeout = setTimeout(() => { console.error('Electron smoke test timed out'); for(const window of BrowserWindow.getAllWindows())window.destroy(); app.exit(1); }, 60000);
 function nextWindow() {
   return new Promise((resolve, reject) => {
     app.once('browser-window-created', (_event, window) => {
@@ -150,7 +210,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -176,6 +236,15 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  await require('./browser-picker-native.cjs')();
+  await require('./browser-order-native.cjs')();
+  await require('./browser-machine-native.cjs')();
+  await require('./browser-local-native.cjs')();
+  const browserSite = await require('./browser-site.cjs')();
+  window.once('closed', () => { void browserSite.close(); });
+  await require('./browser-code-native.cjs')();
+  await require('./browser-playwright-native.cjs')();
+  const reconnectingBrowserPage = await require('./browser-native.cjs')(window, firstScope.scope.id, browserSite.url, backendUrl);
   const gitSummary = await window.webContents.executeJavaScript(`window.elevenex.workspaceGit('${firstScope.scope.id}', 1)`);
   assert.equal(gitSummary.ok, true); assert.equal(gitSummary.value.changesRevision, 'b'.repeat(64));
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`), {
@@ -246,6 +315,15 @@ void (async () => {
   await window.webContents.executeJavaScript('window.smokeBackendUnsubscribe()');
   const restartedScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.notEqual(restartedScope.scope.id, firstScope.scope.id);
+  const browserUntil = Date.now() + 3000;
+  while (!reconnectingBrowserPage.isDestroyed() && Date.now() < browserUntil) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(reconnectingBrowserPage.isDestroyed(), true, 'Scope change must destroy native pages and release observations');
+  const restoredBrowser = await window.webContents.executeJavaScript(`window.elevenex.taskBrowserRead('${restartedScope.scope.id}', 1)`);
+  assert.equal(restoredBrowser.ok, true);
+  assert.equal(restoredBrowser.value.tabs.length, 1);
+  assert.equal(restoredBrowser.value.tabs[0].driver, 'you');
+  assert.equal(restoredBrowser.value.tabs[0].url.includes('private-query'), false);
+  await window.webContents.executeJavaScript(`window.elevenex.taskBrowserHide('${restartedScope.scope.id}', 1)`);
   assert.equal((await window.webContents.executeJavaScript(`window.elevenex.backendInfo('${firstScope.scope.id}')`)).error.code, 'stale-scope');
   const clientEvents = await window.webContents.executeJavaScript('window.smokeClientEvents');
   assert.ok(clientEvents.some(state => state.scope === null));
@@ -322,5 +400,6 @@ void (async () => {
 })().catch((error) => {
   console.error(error);
   clearTimeout(timeout);
+  for(const window of BrowserWindow.getAllWindows())window.destroy();
   app.exit(1);
 });

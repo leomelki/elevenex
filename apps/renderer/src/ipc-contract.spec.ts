@@ -35,6 +35,9 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  expectTypeOf(invoke('workspace:wait', 'scope', { after: 1, requestId: 'request' })).toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').WorkspaceRevision>>>();
+  // @ts-expect-error Navigation waits require a scalar cursor and cancellable request identity.
+  void invoke('workspace:wait', 'scope', { after: '1' });
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen', completionAt: '2026-11-14T12:00:00.000Z' } });
   // @ts-expect-error Seen acknowledgments must identify the observed completion.
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'mark-seen' } });
@@ -49,6 +52,25 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('code:present', {scopeId:'scope',taskId:1}, {visible:true,compact:false});
   // @ts-expect-error Frame presentation carries no arbitrary URL or native geometry.
   void invoke('code:present', {scopeId:'scope',taskId:1}, {url:'https://example.com'});
+  void invoke('task-browser:configure', 'scope', 1, 'desktop-proxy');
+  // @ts-expect-error Engine location cannot inject a proxy address or credentials.
+  void invoke('task-browser:configure', 'scope', 1, { proxy: 'http://evil' });
+  // @ts-expect-error Browser location is a closed set.
+  void invoke('task-browser:configure', 'scope', 1, 'custom-chromium');
+  void invoke('task-browser:read', 'scope', 1);
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-relative', deltaX: 1, deltaY: -1, buttons: 0, modifiers: 0, pointerLockEpoch: 2 });
+  // @ts-expect-error Pointer lock identities are numeric host epochs, never arbitrary data.
+  void invoke('task-browser:input', 'scope', 1, 'tab', 1, { kind: 'pointer-unlock', pointerLockEpoch: 'old' });
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab', sessionId: 2 });
+  // @ts-expect-error Browser operations must capture the expected backend scope.
+  void invoke('task-browser:read', 1);
+  // @ts-expect-error A handoff must explicitly name the receiving conversation.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'handoff', tabId: 'tab' });
+  // @ts-expect-error Task pages never expose arbitrary JavaScript or generic CDP.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'evaluate', script: 'document.body.innerText' });
+  // @ts-expect-error Agent text entry is not a browser capability.
+  void invoke('task-browser:command', 'scope', 1, { kind: 'type', text: 'secret', tabId: 'tab' });
+
   void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2, generation: null, after: 0 });
   // @ts-expect-error Command metadata reads require an output generation and cursor.
   void invoke('task-terminal:commands', 'scope', { taskId: 1, terminalId: 2 });

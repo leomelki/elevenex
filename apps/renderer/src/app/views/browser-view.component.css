@@ -4,12 +4,13 @@
 .toolbar { display: flex; flex: none; align-items: center; gap: var(--space-1); min-height: calc(var(--control-height) + var(--space-2)); padding: 0 var(--space-1); border-bottom: 1px solid var(--line); }
 .navigation, .tools { display: flex; align-items: center; flex: none; }
 .address { display: flex; flex: 1; align-items: center; gap: var(--space-1); min-width: 0; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
+.address:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 .address > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .server { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font-size: var(--text-overline-size); }
-.driver { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: 600; transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
-.driver[data-driver="agent"] { color: var(--accent); background: var(--accent-soft); }
-.driver[data-driver="needs"] { color: var(--attention); background: var(--attention-soft); }
+.driver { border: 0; font-family: inherit; line-height: var(--text-overline-line); cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-1); flex: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); white-space: nowrap; font-size: var(--text-overline-size); font-weight: var(--text-caption-weight); transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
+ex-dropdown-menu [exDropdownItem] small { display: block; margin-top: var(--space-1); font-size: var(--text-caption-size); color: var(--ink-muted); white-space: normal; }
 .agent-mark { display: inline-grid; place-items: center; flex: none; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-xs); color: var(--accent); background: var(--accent-soft); font: 600 8px/1 var(--font-sans); }
+.agent-mark.waiting { color: var(--ink-muted); background: transparent; }
 .needs { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); color: var(--ink); background: var(--attention-soft); }
 .needs ex-icon { color: var(--attention); flex: none; }
 .needs > span { display: flex; flex: 1; flex-direction: column; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
@@ -24,34 +25,81 @@ small { color: var(--ink-muted); font-size: var(--text-caption-size); }
 /* Paint above the opaque page: an inset shadow on the preview is covered by it. */
 .driving-frame { position: absolute; inset: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: flex-end; padding: var(--space-2); box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; }
 .takeover-hint { padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); background: var(--accent); color: var(--on-accent); font-size: var(--text-overline-size); font-weight: var(--text-overline-weight); }
-.target { position: absolute; top: 0; left: 0; z-index: 1; border-radius: var(--radius-md); box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 22%, transparent); pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out), width var(--dur-slow) var(--ease-in-out), height var(--dur-slow) var(--ease-in-out); }
-.target > span { position: absolute; bottom: calc(100% + var(--space-1)); left: 0; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--accent); color: var(--on-accent); font-size: var(--text-overline-size); white-space: nowrap; }
-.target.picked { box-shadow: 0 0 0 2px var(--review), 0 0 0 6px var(--review-soft); }
-.target.picked > span { background: var(--review); color: var(--surface); }
-.agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out); }
-.agent-cursor svg { position: relative; display: block; filter: drop-shadow(0 1px 2px var(--line-strong)); }
-.cursor-pulse { position: absolute; top: calc(-1 * var(--space-2)); left: calc(-1 * var(--space-2)); width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); animation: cursor-pulse calc(var(--dur-base) * 8) var(--ease-out) infinite; }
+/* Rings. The agent's target is teal and glides; yours (hover and picked) is review indigo. */
+.target { position: absolute; top: 0; left: 0; z-index: 1; border-radius: var(--radius-md); box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 22%, transparent); pointer-events: none; transition: transform var(--dur-slow) var(--ease-in-out), width var(--dur-slow) var(--ease-in-out), height var(--dur-slow) var(--ease-in-out), box-shadow var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out); }
+.ring-label { position: absolute; bottom: calc(100% + var(--space-1)); left: 0; display: inline-flex; gap: var(--space-2); max-width: max(100%, 16rem); overflow: hidden; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--accent); color: var(--on-accent); font: var(--text-mono-meta-weight) var(--text-overline-size)/var(--text-mono-meta-line) var(--font-mono); white-space: nowrap; text-overflow: ellipsis; }
+.label-below > .ring-label { top: calc(100% + var(--space-1)); bottom: auto; }
+.target.hover { z-index: 2; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--review) 10%, transparent); box-shadow: 0 0 0 1.5px var(--review); transition: none; }
+.target.hover > .ring-label { background: var(--review); color: var(--surface); }
+.target.hover .ring-label small { color: inherit; font-size: inherit; opacity: .72; }
+.target.picked { background: color-mix(in oklab, var(--review) 6%, transparent); box-shadow: 0 0 0 2px var(--review), 0 0 0 6px var(--review-soft); }
+/* Picking is felt once: one ring goes out from the element as it locks in. */
+.target.picked::after { content: ''; position: absolute; inset: 0; border-radius: inherit; animation: ring-lock var(--dur-deliberate) var(--ease-out) both; pointer-events: none; }
+@keyframes ring-lock { from { box-shadow: 0 0 0 2px var(--review); } to { box-shadow: 0 0 0 14px transparent; } }
+.ring-enter { animation: ring-enter var(--dur-base) var(--ease-out); }
+.ring-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
+@keyframes ring-enter { from { opacity: 0; scale: 1.04; } }
+@keyframes ring-fade { to { opacity: 0; } }
+.agent-cursor { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; transition: transform var(--dur-slow) var(--ease-glide); }
+.cursor-enter { animation: fade-in var(--dur-fast) var(--ease-out) both; }
+.cursor-leave { animation: ring-fade var(--dur-fast) var(--ease-in) both; }
+/* The glyph's (0, 0) tip and ripple share the supplied page coordinate. */
+.cursor-glyph { position: relative; display: block; overflow: visible; translate: -2px -2px; filter: drop-shadow(0 1px 2px color-mix(in oklab, var(--ink) 24%, transparent)); }
+.cursor-arrow, .cursor-spark { fill: var(--accent); stroke: var(--surface-raised); stroke-width: 2.5; paint-order: stroke fill; }
+.cursor-facet { fill: color-mix(in oklab, var(--accent) 78%, var(--surface-raised)); }
+.cursor-pulse { position: absolute; top: 0; left: 0; translate: -50% -50%; width: var(--space-6); height: var(--space-6); border: 2px solid var(--accent); border-radius: var(--radius-full); background: color-mix(in oklab, var(--accent) 10%, transparent); animation: cursor-pulse var(--dur-deliberate) var(--ease-out) both; }
 @keyframes cursor-pulse { from { transform: scale(.4); opacity: .8; } to { transform: scale(1.6); opacity: 0; } }
-.question { position: absolute; bottom: var(--space-3); left: var(--space-3); right: var(--space-3); z-index: 5; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); }
-.question-header { display: flex; align-items: flex-start; gap: var(--space-2); }
-.target-name { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; font-family: var(--font-mono); font-size: var(--text-overline-size); color: var(--review); }
-.target-name ex-icon { flex: none; }
-.target-name > span, .target-name small { min-width: 0; overflow-wrap: anywhere; }
-.target-name small { font-size: inherit; }
+/* Picking: a quiet frame and one hint, both above the page and transparent to the pointer. */
+.page.pointing { cursor: crosshair; }
+.pointing-frame { position: absolute; inset: 0; z-index: 3; box-shadow: inset 0 0 0 2px var(--review); pointer-events: none; }
+.pointing-hint { position: absolute; top: var(--space-3); left: 50%; z-index: 4; display: inline-flex; align-items: center; gap: var(--space-2); max-width: calc(100% - var(--space-3) * 2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3); border-radius: var(--radius-full); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); color: var(--ink); font-size: var(--text-caption-size); font-weight: var(--text-ui-weight); white-space: nowrap; translate: -50% 0; pointer-events: none; }
+.pointing-hint > ex-icon { flex: none; color: var(--review); }
+.pointing-hint > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frame-enter { animation: fade-in var(--dur-base) var(--ease-out); }
+.frame-leave { animation: fade-in var(--dur-fast) var(--ease-in) reverse both; }
+.hint-enter { animation: hint-enter var(--dur-base) var(--ease-glide); }
+.hint-leave { animation: hint-enter var(--dur-fast) var(--ease-in) reverse both; }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes hint-enter { from { opacity: 0; transform: translateY(calc(-1 * var(--space-2))) scale(.96); } }
+
+/* The question card comes out of the picked element: under it, over it, or docked at the page edge away from it. */
+.question { --card-shift: calc(-1 * var(--space-1)); position: absolute; z-index: 5; display: flex; flex-direction: column; gap: var(--space-1); width: min(22.5rem, calc(100% - var(--space-3) * 2)); padding: var(--space-2); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line); transform-origin: var(--card-origin, 50% 100%); cursor: auto; }
+.question:focus-within { box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line-strong); }
+.question[data-side="above"], .question[data-side="bottom"] { --card-shift: var(--space-1); translate: 0 -100%; }
+.question[data-side="top"], .question[data-side="bottom"] { width: calc(100% - var(--space-3) * 2); }
+.question[data-side="top"] { --card-shift: calc(-1 * var(--space-2)); }
+.question[data-side="bottom"] { --card-shift: var(--space-2); }
+.question > header { display: flex; align-items: center; gap: var(--space-1); min-width: 0; padding-left: var(--space-1); }
+.target-name { display: flex; flex: 1; align-items: baseline; gap: var(--space-2); min-width: 0; font: var(--text-mono-meta-weight) var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); white-space: nowrap; }
+.target-name > b, .target-name > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; }
+.target-name > b { flex: 0 1 auto; color: var(--review); }
+.target-name > small { flex: 0 10 auto; color: var(--ink-muted); }
+.question textarea { field-sizing: content; min-height: calc(var(--text-ui-line) + var(--space-1) * 2); max-height: calc(var(--text-ui-line) * 6 + var(--space-1) * 2); padding: var(--space-1); border: 0; border-radius: var(--radius-xs); outline: none; background: transparent; color: var(--ink); font: var(--text-ui-weight) var(--text-ui-size)/var(--text-ui-line) var(--font-sans); resize: none; }
+.question textarea::placeholder { color: var(--ink-muted); }
+.question > footer { display: flex; align-items: center; gap: var(--space-2); padding-left: var(--space-1); }
+.question .note { flex: 1; min-width: 0; color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); overflow-wrap: anywhere; }
+.question > footer > button { flex: none; }
+.question-enter { animation: question-enter var(--dur-base) var(--ease-out); }
+.question-leave { animation: question-enter var(--dur-fast) var(--ease-in) reverse both; pointer-events: none; }
+@keyframes question-enter { from { opacity: 0; transform: translateY(var(--card-shift)) scale(.96); } }
 .page[hidden], .driver[hidden] { display: none; }
-textarea { border: 0; padding: var(--space-1); border-radius: var(--radius-xs); background: transparent; color: var(--ink); font: inherit; font-size: var(--text-ui-size); resize: none; }
-textarea:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 footer, .foot { display: flex; align-items: center; gap: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
 footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .foot { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--ink); }
 .foot > ex-icon { flex: none; color: var(--accent); }
 .foot > .agent-mark { flex: none; }
+.foot > .workflow-actions { display: flex; flex: none; gap: var(--space-2); grid-column: 1 / -1; justify-self: start; }
+.workflow-errors { color: var(--danger); }
 .foot > button, .needs > button { flex: none; }
 .step-copy { display: flex; align-items: center; min-width: 0; overflow: hidden; }
 .step-copy b { flex: none; }
 .separator { margin-inline: var(--space-1); color: var(--ink-muted); }
 .step-copy ex-ease-swap { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-.foot > .step-dots { display: flex; flex: none; gap: var(--space-1); }
+.step-status { flex: none; color: var(--ink-muted); font: var(--text-caption-weight) var(--text-caption-size)/var(--text-caption-line) var(--font-sans); }
+.step-status.failed { color: var(--danger); }
+.agent-mark.failed { background: var(--danger-soft); color: var(--danger); }
+.foot > .step-progress { display: flex; flex: none; align-items: center; gap: var(--space-2); min-height: var(--text-caption-line); }
+.step-dots { display: flex; flex: none; gap: var(--space-1); min-height: var(--space-1); }
 .step-dots i { width: var(--space-1); height: var(--space-1); border-radius: var(--radius-full); background: var(--line-strong); opacity: .45; transition: background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
 .step-dots .done { background: var(--accent); opacity: .55; }
 .step-dots .now { background: var(--accent); opacity: 1; box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -60,9 +108,8 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); color: var(--ink-muted); font-size: var(--text-ui-size); }
 .empty p { margin: 0; }
 @container (max-width: 540px) {
-  .agent-step { flex-wrap: wrap; column-gap: var(--space-2); row-gap: var(--space-1); }
-  .agent-step .step-copy { flex-basis: calc(100% - var(--space-6)); }
-  .agent-step > .step-dots { flex: 1; padding-left: calc(var(--space-4) + var(--space-2)); }
+  .agent-step { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: var(--space-2); row-gap: var(--space-1); }
+  .agent-step > .step-progress { grid-column: 2; }
 }
 @container (max-width: 360px) {
   .toolbar { flex-wrap: wrap; padding-block: var(--space-1); }
@@ -72,4 +119,14 @@ footer > span, .foot > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .driver, .page, .target, .agent-cursor, .step-dots i { transition: none; }
   .cursor-pulse { animation: none; opacity: 0; }
+  .cursor-leave { opacity: 0; }
+  .ring-enter, .ring-leave, .frame-enter, .frame-leave, .hint-enter, .hint-leave, .question-enter, .question-leave, .cursor-enter, .cursor-leave { animation: none; }
+  .target.picked::after { animation: none; opacity: 0; }
 }
+
+/* The container owns the rounding; a rounded, unpadded input clips the caret. */
+.address > input { width: 100%; min-width: 0; border: 0; border-radius: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; outline: none; }
+
+.page.keeping-empty { background: transparent; }
+
+.page.clipped { overflow: clip; }

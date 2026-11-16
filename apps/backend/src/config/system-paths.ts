@@ -7,6 +7,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { isolateGitEnvironment } from './git-environment.js';
 import {
   assertSubprocessEnvironment,
+  shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
 
@@ -464,6 +465,8 @@ function applyShellEnvToProcess(shellEnv: NodeJS.ProcessEnv): void {
       next[key] = value;
     }
   }
+  const shellAgent = shellConfiguredSshAgentSocket(baseline, shellEnv);
+  if (shellAgent !== undefined) next.SSH_AUTH_SOCK = shellAgent;
 
   shellProjection.apply(process.env, baseline, ensureUtf8Locale(next));
 }
@@ -684,9 +687,12 @@ function ensureUtf8Locale(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // has been globally augmented with the user's *default* nvm/fnm version,
 // not the one the worktree pins via `.nvmrc`. Without the override, hooks
 // resolve to the wrong node and bail or behave inconsistently.
+//
+// `options.config` adds per-invocation `-c key=value` overrides on top of the
+// defaults below, without touching the repository's config.
 export function worktreeSimpleGit(
   worktreePath: string,
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean; config?: readonly string[] } = {},
 ): SimpleGit {
   const env = isolateGitEnvironment(
     buildAugmentedEnv(process.env, worktreePath),
@@ -703,7 +709,7 @@ export function worktreeSimpleGit(
     env.GIT_NO_LAZY_FETCH = '1';
   }
   const client = simpleGit(worktreePath, {
-    config: ['diff.ignoreSubmodules=dirty'],
+    config: ['diff.ignoreSubmodules=dirty', ...(options.config ?? [])],
     ...(controller
       ? { abort: controller.signal, timeout: { block: 15_000 } }
       : {}),
@@ -893,6 +899,8 @@ function mergeAugmentedEnv(
   // A default/copy of process.env includes our global shell projection. It is
   // not a caller override: worktree exports and unsets must supersede it.
   const merged = shellProjection.compose(shellEnv, base);
+  const shellAgent = shellConfiguredSshAgentSocket(merged, shellEnv);
+  if (shellAgent !== undefined) merged.SSH_AUTH_SOCK = shellAgent;
   // `base` (the backend's own launch-time env) must not clobber PWD once we've
   // resolved a specific target cwd — otherwise every spawned terminal inherits
   // the backend process's stale PWD instead of the worktree it's opening.

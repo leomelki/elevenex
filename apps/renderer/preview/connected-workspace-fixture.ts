@@ -48,7 +48,29 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     { id: 104, taskId: 13, repoId: 2, name: 'Keyboard path through checkout', provider: 'codex', status: 'idle', updatedAt: stamp },
   ];
   private failReads = false;
-  private navigationRevision = 0;
+  private revisionWaitEnabled = false;
+  private readonly revisionWaits = new Map<string, () => void>();
+  private revisionValue = 0;
+  private get navigationRevision(): number { return this.revisionValue; }
+  private set navigationRevision(value: number) {
+    this.revisionValue = value;
+    for (const finish of [...this.revisionWaits.values()]) finish();
+  }
+  /** Opt-in event-driven fixture for native status regression captures. */
+  liveSessionStatus(sessionId: number, status: WorkspaceSession['status']): void {
+    this.revisionWaitEnabled = true;
+    this.sessionRows = this.sessionRows.map(row => row.id === sessionId ? { ...row, status } : row);
+    this.navigationRevision++;
+  }
+  override workspaceWait = async (_scope: string, input: import('@elevenex/shared').WorkspaceRevisionWait) => {
+    if (input.after === this.navigationRevision) await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); this.revisionWaits.delete(input.requestId); resolve(); };
+      const timer = setTimeout(finish, 25000);
+      this.revisionWaits.set(input.requestId, finish);
+    });
+    return this.workspaceRevision();
+  };
+  override workspaceCancelWait = async (_scope: string, requestId: string): Promise<void> => { this.revisionWaits.get(requestId)?.(); };
   /** Older engine activity replies alongside real queued/live/unseen states. */
   legacySessionActivity(): void {
     this.taskRows = this.taskRows.filter(task => task.id === 11);
@@ -110,6 +132,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
 
   constructor() {
     super(); this.ready();
+    inject(DestroyRef).onDestroy(() => { for (const finish of [...this.revisionWaits.values()]) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingFolderReads) finish(); });
     inject(DestroyRef).onDestroy(() => { for (const finish of this.pendingTaskReads) finish(); for (const finish of this.pendingSessionCreates.values()) finish('unknown'); this.pendingSessionCreates.clear(); });
     inject(DestroyRef).onDestroy(() => { this.setCommitPreviewHeld(false); this.setGitActionHeld(false); });
@@ -117,7 +140,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));

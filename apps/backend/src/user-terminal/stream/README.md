@@ -31,6 +31,13 @@ stream attachment transfers query handling to the server. The renderer consumes
 those queries without emitting duplicate replies. View-only replay cannot send
 keyboard data or historical device replies to a process.
 
+Headless xterm has no theme and does not answer OSC palette/foreground/background/
+cursor color queries (4, 10, 11, 12). Stream views consume these query sequences
+too. Programs such as `gh`/termenv use the server's following cursor-position
+report to fall back; a delayed view color reply would otherwise become input to
+the next interactive prompt. Color-setting sequences without queries still apply
+in the view. HTTP-era terminals keep their existing color replies.
+
 Worker messages carry a screen incarnation, independently of numeric terminal
 IDs. Old completions and protocol replies cannot acquire a replacement PTY.
 Checkpoint requests are barriers behind preceding writes. The parser-tail tracker

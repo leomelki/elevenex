@@ -27,9 +27,9 @@ export class McpAgentEndpointService implements OnModuleDestroy {
   ) {}
 
   /** Bootstrap awaits this before app.init() can start missions or write config. */
-  start(): Promise<void> {
+  prepare(): Promise<void> {
     if (this.destroyed)
-      return Promise.reject(new Error('MCP agent endpoint is closed.'));
+      return Promise.reject(new Error('MCP agent endpoint is shutting down.'));
     return (this.starting ??= this.listen());
   }
 
@@ -74,7 +74,7 @@ export class McpAgentEndpointService implements OnModuleDestroy {
       res.writeHead(503).end();
       return;
     }
-    if (req.url?.split('?')[0] !== endpoint.pathname) {
+    if (req.url !== endpoint.pathname) {
       res.writeHead(404).end();
       return;
     }
@@ -82,7 +82,8 @@ export class McpAgentEndpointService implements OnModuleDestroy {
     // rebinding as well as requiring a live session bearer on every request.
     if (
       req.headers.host !== endpoint.host ||
-      (req.headers.origin && req.headers.origin !== endpoint.origin)
+      req.headers.origin !== undefined ||
+      req.headers['sec-fetch-site'] !== undefined
     ) {
       res.writeHead(403).end();
       return;

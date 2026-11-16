@@ -196,6 +196,12 @@ export class SessionChatFixture {
   private catalogDelay = 0;
   private catalogFailure = false;
   catalogBehavior(delay: number, fail = false): void { this.catalogDelay = Math.min(5000, Math.max(0, delay)); this.catalogFailure = fail; }
+  /** Cold conversation state must not prevent independent catalog discovery. */
+  coldModels(id = 102): void {
+    const session = this.session(id);
+    session.state = { ...session.state, model: null, models: [] };
+    this.changed();
+  }
   private catalogData(provider: string): SessionChatCatalog {
     const label = previewChatState().providers?.find(p => p.id === provider)?.label ?? provider;
     const model = provider === 'claude' ? { id: 'sonnet', label: 'Claude Sonnet', reasoningEfforts: ['low', 'medium', 'high'], supportsFastMode: false }
@@ -279,6 +285,7 @@ export class SessionChatFixture {
       | "running"
       | "failed"
       | "history"
+      | "panel-reflow"
       | "ready"
       | "new"
       | "unknown"
@@ -382,6 +389,11 @@ export class SessionChatFixture {
             : `Check request ${Math.floor(i / 2)}.`,
         ),
       );
+    if (mode === 'panel-reflow')
+      session.items = Array.from({ length: 30 }, (_, i) => [
+        item(`panel-prompt-${i}`, 'user', `Review section ${i}`),
+        item(`panel-reply-${i}`, 'assistant', ('A detailed response with enough prose to wrap when the side panel opens. '.repeat(30) + '\n\n').repeat(5)),
+      ]).flat();
     if (mode === "long")
       session.items[6] = {
         ...session.items[6]!,

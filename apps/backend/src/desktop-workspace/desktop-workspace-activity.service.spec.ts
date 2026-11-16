@@ -31,6 +31,7 @@ describe('bounded workspace sidebar activity', () => {
   const snapshots = new Map<number, ClaudeSessionActivity>();
   const sessions = new EventEmitter();
   const codex = Object.assign(new EventEmitter(), { info: { id: 'codex' } });
+  const providers = new Map(['claude', 'codex', 'pi', 'opencode', 'custom-harness'].map(id => [id, id === 'codex' ? codex : Object.assign(new EventEmitter(), { info: { id } })]));
   const provider = Object.assign(new EventEmitter(), {
     info: { id: 'claude' },
     getRuntimeState: jest.fn(),
@@ -53,6 +54,8 @@ describe('bounded workspace sidebar activity', () => {
     });
   beforeEach(async () => {
     snapshots.clear();
+    providers.set('claude', provider);
+    for (const runtime of providers.values()) runtime.removeAllListeners();
     provider.removeAllListeners();
     hooks.removeAllListeners();
     sessions.removeAllListeners(); codex.removeAllListeners();
@@ -66,8 +69,8 @@ describe('bounded workspace sidebar activity', () => {
         {
           provide: AgentRuntimeRegistryService,
           useValue: {
-            listProviders: () => [provider.info, codex.info],
-            getProvider: (id: string) => id === 'codex' ? codex : provider,
+            listProviders: () => [...providers.values()].map(runtime => runtime.info),
+            getProvider: (id: string) => providers.get(id)!,
           },
         },
         { provide: ClaudeHooksService, useValue: hooks },
@@ -79,6 +82,35 @@ describe('bounded workspace sidebar activity', () => {
     navigation = module.get(NavigationEventsService);
   });
   afterEach(async () => module.close());
+  it.each(['claude', 'codex', 'pi', 'opencode', 'custom-harness'])(
+    'normalizes every scalar status for %s without hydrating a runtime', providerId => {
+      const target = session(1, { activeAgentProvider: providerId, status: 'active' });
+      const emitter = providers.get(providerId)!;
+      for (const [state, expected] of [
+        [{ sessionState: 'requires_action' }, 'attention'],
+        [{ sessionState: 'waiting_for_input' }, 'attention'],
+        [{ runPhase: 'running', pendingPermissionRequest: {} }, 'attention'],
+        [{ runPhase: 'running' }, 'running'],
+        [{ runPhase: 'idle', backgroundWork: [{ id: 'agent' }] }, 'running'],
+        [{ runPhase: 'idle', backgroundRunActive: true }, 'running'],
+        [{ runPhase: 'error', canInterrupt: true }, 'failed'],
+        [{ lastError: 'Failed to initialize' }, 'failed'],
+        [{ runPhase: 'idle', pendingPrompts: [{}] }, 'queued'],
+        [{ runPhase: 'idle', pendingPrompts: [] }, 'done'],
+      ] as const) {
+        emitter.emit('event', { type: 'run_state', payload: { sessionId: 1, ...state } });
+        expect(service.status(target)).toBe(expected);
+      }
+    },
+  );
+  it('retains a terminal failure until the next turn, with explicit input taking priority', () => {
+    snapshots.set(1, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: false, failed: true });
+    hooks.emit('status-changed', { sessionId: 1 });
+    expect(service.status(session(1))).toBe('failed');
+    snapshots.set(1, { activityStatus: 'waiting', actionKind: 'permission', actionLabel: null, backgroundActive: true });
+    hooks.emit('status-changed', { sessionId: 1 });
+    expect(service.status(session(1))).toBe('attention');
+  });
   it('recovers old inactive conversations without completion stamps or history hydration', () => {
     for (const identity of [{ claudeSessionId: 'old' }, { codexSessionId: 'old' }, { piSessionPath: '/old.jsonl' }, { opencodeSessionId: 'old' }]) {
       expect(service.status(session(1, identity))).toBe('done');

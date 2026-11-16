@@ -17,7 +17,7 @@
           [isNew]="exchange.isNew || false"
           [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
-          >{{ exchange.prompt }}
+          ><ex-element-prose [text]="exchange.prompt" [resolve]="resolve()" [attachments]="exchange.attachments ?? []" />
           @if (exchange.mentions?.length) {
             <div
               class="message-mentions"
@@ -35,6 +35,7 @@
           @if (exchange.attachments?.length) {
             <ex-attachments
               [files]="exchange.attachments || []"
+              [mentionedText]="exchange.prompt"
               [resolve]="resolve()"
               (copyPath)="copyCode.emit($event)"
             />

@@ -2,6 +2,7 @@ import type {
   BackendResult,
   InvokeContracts,
   WorkspaceAppearance,
+  WorkspaceRevision,
   WorkspacePage,
   WorkspaceProject,
   WorkspaceProjectDetail,
@@ -77,6 +78,23 @@ function appearance(value: unknown): WorkspaceAppearance {
     ...(raw['icon'] === undefined ? {} : { icon: text(raw['icon'], 64) }),
   };
 }
+function parseRevision(value: unknown): WorkspaceRevision {
+  const response = object(value);
+  if (response['version'] !== 1) throw invalidResponse();
+  const revision = count(response['revision']);
+  for (const capability of ['revisionWait', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel']) {
+    if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
+  }
+  return {
+    revision, version: 1,
+    ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
+    ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),
+    ...(response['sessionArchive'] === true ? { sessionArchive: true } : {}),
+    ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
+    ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
+  };
+}
+
 function project(value: unknown): WorkspaceProject {
   const raw = object(value);
   return {
@@ -352,23 +370,27 @@ export function registerWorkspaceIpc(
       )
         throw new Error('A backend scope is required.');
       return read(windowId, args[0], `${base}/revision`, (value) => {
-        const response = object(value);
-        if (response['version'] !== 1) throw invalidResponse();
-        const revision = response['revision'];
-        if (
-          typeof revision !== 'number' ||
-          !Number.isSafeInteger(revision) ||
-          revision < 0
-        )
-          throw invalidResponse();
-        if (response['sessionArchiveHistory'] !== undefined && response['sessionArchiveHistory'] !== true) throw invalidResponse();
-        if (response['sessionArchive'] !== undefined && response['sessionArchive'] !== true) throw invalidResponse();
-        if (response['taskRequests'] !== undefined && response['taskRequests'] !== true) throw invalidResponse();
-        if (response['commitPanel'] !== undefined && response['commitPanel'] !== true) throw invalidResponse();
-        return { revision, version: 1 as const, ...(response['taskRequests'] === true ? { taskRequests: true as const } : {}), ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true as const } : {}), ...(response['sessionArchive'] === true ? { sessionArchive: true as const } : {}), ...(response['commitPanel'] === true ? { commitPanel: true as const } : {}) };
+        return parseRevision(value);
       });
     }),
   );
+  const waitIdentity = (value: unknown): string => {
+    if (typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value)) throw new Error('A backend scope and navigation request identity are required.');
+    return value;
+  };
+  stops.push(handleForWindow('workspace:wait', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid navigation wait scope or arguments.');
+    const scope = waitIdentity(args[0]), input = object(args[1]);
+    if (Object.keys(input).some(key => key !== 'after' && key !== 'requestId')) throw new Error('Invalid navigation wait scope or arguments.');
+    const after = count(input['after']), requestId = waitIdentity(input['requestId']);
+    // Coalesce duplicate waits; cancellation cannot reach another domain.
+    return client.execute(window, scope, `workspace-wait:${requestId}`, false, async (endpoint, signal) =>
+      parseRevision(await requestBackendJson(endpoint, { path: `${base}/revision?after=${after}`, limit: 4096 }, signal)), 30_000);
+  }));
+  stops.push(handleForWindow('workspace:cancel-wait', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid navigation cancellation scope or arguments.');
+    client.cancel(window, waitIdentity(args[0]), `workspace-wait:${waitIdentity(args[1])}`);
+  }));
   register('workspace:close-preview', (window, scope, input) => {
     const taskId = id(input);
     return read(
@@ -454,6 +476,9 @@ export function registerWorkspaceIpc(
         'commit-message-failed': 'Elevenex could not write a commit message. Enter a message above and try again.',
         'commit-rejected': 'Git rejected the commit. Check your Git name/email, commit hooks and signing setup, then try again.',
         'commit-saved-push-failed': 'Your commit was saved, but the push failed. Refresh status, then use Push to try again.',
+        'git-push-authentication': 'Push failed because Git could not authenticate. Check Git credentials on this machine. For an SSH machine, unlock your local SSH key and reconnect with agent forwarding available. Your commits are still saved locally.',
+        'git-push-behind': 'Push was rejected because the remote branch has newer commits. Fetch and review the remote branch before trying again. Your commits are still saved locally.',
+        'git-push-failed': 'Push failed. Check the remote, network connection, repository permissions and pre-push hooks. Your commits are still saved locally.',
       },
     );
   });
