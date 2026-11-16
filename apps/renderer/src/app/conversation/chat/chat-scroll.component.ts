@@ -334,26 +334,14 @@ export class ChatScrollComponent {
     this.lastScrollHeight = viewport.scrollHeight;
     if (!this.sendScroll) this.updatePosition();
     const bounds = viewport.getBoundingClientRect();
-    const top = bounds.top;
-    let low = 0;
-    let high = this.messages.length - 1;
-    let candidate: HTMLElement | undefined;
-    // Binary search the ordered prompts; scrolling costs O(log n) layout reads, not a transcript scan.
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2);
-      const message = this.messages[middle];
-      if (message && message.getBoundingClientRect().top < top + 16) {
-        candidate = message;
-        low = middle + 1;
-      } else high = middle - 1;
-    }
+    const candidate = this.promptAt(bounds.top + 16);
     const id = candidate?.dataset["userMessage"] ?? "";
     if (id !== this.lastActive) {
       this.lastActive = id;
       this.activeExchange.emit(id);
     }
     this.rememberPosition();
-    this.measureReminder(candidate, this.messages[low], bounds);
+    this.measureReminder(bounds);
     if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
@@ -364,25 +352,37 @@ export class ChatScrollComponent {
         this.requestHistory("following");
     }
   }
-  private measureReminder(candidate: HTMLElement | undefined, next: HTMLElement | undefined, viewport: DOMRect): void {
+  private measureReminder(viewport: DOMRect): void {
+    // Match the legacy chat's reading probe: keep the previous prompt's context
+    // until the next prompt reaches the upper reading area, not the bottom edge.
+    const probe = viewport.top + Math.min(160, Math.max(48, viewport.height * 0.28));
+    const candidate = this.promptAt(probe);
     const id = candidate?.dataset["userMessage"] ?? "";
     const retained = this.pin()?.id === id;
-    // Context is useful deep into one exchange, not just after its prompt clips.
-    // Scale the reading distance to the viewport, bounded for small/tall windows.
-    // Separate entry/exit margins tolerate small scroll reversals without flicker.
-    const distance = Math.min(320, Math.max(160, viewport.height * 0.35));
-    const nextTop = next?.getBoundingClientRect().top ?? Infinity;
-    const end = next ? nextTop : this.content().nativeElement.lastElementChild?.getBoundingClientRect().bottom ?? viewport.top;
-    // Leave at least eight reminder-row heights of reading space.
+    // A small buffer prevents a barely clipped prompt from immediately being
+    // repeated. Relax it by 24px on return to avoid flickering at the boundary.
+    const distance = Math.min(96, Math.max(48, viewport.height * 0.12));
     const useful = this.reminder() && candidate && !this.dismissed.has(id) &&
-      !this.historyLoading() && !this.historyError() && viewport.height >= 320 &&
-      viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 48 : 0) &&
-      nextTop >= viewport.bottom + (retained ? 0 : 48) &&
-      end - viewport.top >= viewport.height * (retained ? 0.5 : 0.6);
+      !this.historyLoading() && !this.historyError() && viewport.height >= 240 &&
+      viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 24 : 0);
     const text = useful
       ? (candidate.querySelector(".content")?.textContent ?? candidate.textContent)?.trim() ?? ""
       : "";
     this.setReminder(text ? { id, text } : null);
+  }
+  private promptAt(y: number): HTMLElement | undefined {
+    let low = 0, high = this.messages.length - 1;
+    let candidate: HTMLElement | undefined;
+    // Binary search the cached ordered prompts; scrolling stays O(log n).
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const message = this.messages[middle];
+      if (message && message.getBoundingClientRect().top <= y) {
+        candidate = message;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    return candidate;
   }
   private setReminder(reminder: Reminder | null): void {
     if (!reminder && this.reminderElement()?.nativeElement.contains(document.activeElement))

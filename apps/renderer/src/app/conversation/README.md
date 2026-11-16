@@ -48,14 +48,15 @@ range subscriptions are released with the rail. The `/conversation` preview has
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
 The contextual reminder is a single row with an ellipsized prompt, a return action
-on that prompt and Hide. It appears only after the entire prompt is at least 35%
-of the viewport height above the reading edge (clamped to 160–320px), with no next
-prompt in view or within 48px below it, and at least 60% of a viewport of the
-current exchange remaining. Once shown, the distance relaxes by 48px and the
-remaining-content requirement to 50% to prevent boundary flicker; a visible next
-prompt always hides it. Viewports below 320px and history loading/error states
-suppress it. Hide lasts for that prompt while it remains in the bounded history
-window. Removing a focused reminder hands focus to the transcript.
+on that prompt and Hide. It follows the legacy chat's reading probe, 28% down the
+viewport (clamped to 48–160px): context stays available while the next prompt is
+near the bottom, then clears as that prompt enters the upper reading area.
+The source prompt must be fully above a 12%-of-height reading buffer (clamped to
+48–96px); the return threshold relaxes by 24px to avoid boundary flicker. This
+prevents a barely clipped prompt from immediately being repeated. Viewports
+below 240px and history loading/error states suppress it. Hide lasts for that
+prompt while it remains in the bounded history window. Removing a focused
+reminder hands focus to the transcript.
 
 Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 `historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity

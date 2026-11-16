@@ -49,17 +49,17 @@ export default async function* (capture) {
       assert.equal(geometry.ellipsis, 'ellipsis');
       yield { name: `${name}-useful-context`, selector: '.demo-chat', metadata: geometry, inspect: ['.demo-chat .reminder', '.demo-chat .prompt'] };
 
-      const distance = await capture.evaluate(() => Math.min(320, Math.max(160, document.querySelector('.demo-chat .viewport').clientHeight * 0.35)));
-      await move('context', distance - 24);
+      const distance = await capture.evaluate(() => Math.min(96, Math.max(48, document.querySelector('.demo-chat .viewport').clientHeight * 0.12)));
+      await move('context', distance - 12);
       assert.equal(await shown(), true, 'Small scroll reversals retain context');
-      await move('context', distance - 60);
+      await move('context', distance - 36);
       assert.equal(await shown(), false);
-      await move('context', distance - 24);
+      await move('context', distance - 12);
       assert.equal(await shown(), false, 'The entry margin prevents boundary flicker');
       await move('context', 400);
 
-      // Keep the next prompt at the lower edge; the old reminder must disappear
-      // even though the previous prompt is still far above the viewport.
+      // Context stays useful while the next prompt is only at the bottom edge.
+      // Hand off when it reaches the legacy chat's upper reading probe.
       await capture.evaluate(() => {
         const viewport = document.querySelector('.demo-chat .viewport');
         const next = document.querySelector('[data-user-message="short"]');
@@ -67,8 +67,18 @@ export default async function* (capture) {
         viewport.dispatchEvent(new window.Event('scroll'));
       });
       await capture.settle();
-      assert.equal(await shown(), false, 'A neighbouring visible prompt supplies enough context');
-      yield { name: `${name}-next-prompt`, selector: '.demo-chat', inspect: ['[data-user-message="short"]'] };
+      assert.equal(await shown(), true, 'Keep context while the reader is still following the old response');
+      yield { name: `${name}-next-prompt-at-bottom`, selector: '.demo-chat', inspect: ['.demo-chat .reminder', '[data-user-message="short"]'] };
+      await capture.evaluate(() => {
+        const viewport = document.querySelector('.demo-chat .viewport');
+        const next = document.querySelector('[data-user-message="short"]');
+        const probe = Math.min(160, Math.max(48, viewport.clientHeight * 0.28));
+        viewport.scrollTop += next.getBoundingClientRect().top - viewport.getBoundingClientRect().top - probe + 1;
+        viewport.dispatchEvent(new window.Event('scroll'));
+      });
+      await capture.settle();
+      assert.equal(await shown(), false, 'Visible prompts take over in the upper reading area');
+      yield { name: `${name}-next-prompt-at-top`, selector: '.demo-chat', inspect: ['[data-user-message="short"]'] };
 
       await move('short', 8);
       assert.equal(await shown(), false, 'A short reply should not acquire a reminder');

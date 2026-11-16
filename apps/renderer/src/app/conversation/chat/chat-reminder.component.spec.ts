@@ -42,16 +42,15 @@ describe("ChatScroll contextual reminder", () => {
     const element: HTMLElement = fixture.nativeElement;
     const viewport = element.querySelector<HTMLDivElement>(".viewport")!;
     const messages = element.querySelectorAll<HTMLElement>("[data-user-message]");
-    const dimensions = { height: 800, next: 3000, end: 6000 };
+    const dimensions = { height: 800, promptHeight: 100, next: 3000 };
     Object.defineProperties(viewport, {
       clientHeight: { get: () => dimensions.height },
       scrollHeight: { value: 8000 },
     });
     const rect = (offset: number, height: number) => new DOMRect(0, 100 + offset - viewport.scrollTop, 600, height);
     viewport.getBoundingClientRect = () => new DOMRect(0, 100, 600, dimensions.height);
-    messages[0]!.getBoundingClientRect = () => rect(0, 100);
+    messages[0]!.getBoundingClientRect = () => rect(0, dimensions.promptHeight);
     messages[1]!.getBoundingClientRect = () => rect(dimensions.next, 100);
-    element.querySelector<HTMLElement>(".tail")!.getBoundingClientRect = () => rect(dimensions.end - 1000, 1000);
     viewport.scrollTo = vi.fn();
     const settle = async () => {
       await new Promise(requestAnimationFrame);
@@ -73,62 +72,62 @@ describe("ChatScroll contextual reminder", () => {
 
   it("waits until well past the prompt, tolerates small reversals, and hides near the prompt", async () => {
     const { moveTo, reminder } = await setup();
-    for (const offset of [50, 101, 250, 379]) {
+    for (const offset of [50, 101, 150, 195]) {
       await moveTo(offset);
       expect(reminder()).toBeNull();
     }
-    await moveTo(400);
+    await moveTo(200);
     expect(reminder()?.textContent).toContain("Explain the retry policy");
-    await moveTo(360);
+    await moveTo(180);
     expect(reminder()).not.toBeNull();
-    await moveTo(330);
+    await moveTo(170);
     expect(reminder()).toBeNull();
-    await moveTo(360);
+    await moveTo(180);
     expect(reminder()).toBeNull();
   });
 
   it("scales the margin with available height and suppresses cramped viewports", async () => {
     const { dimensions, moveTo, resize, reminder } = await setup();
     dimensions.height = 400;
-    await moveTo(250);
+    await moveTo(145);
     expect(reminder()).toBeNull();
-    await moveTo(265);
+    await moveTo(150);
     expect(reminder()).not.toBeNull();
-    dimensions.height = 300;
+    dimensions.height = 200;
     await resize();
     expect(reminder()).toBeNull();
     dimensions.height = 1600;
-    await moveTo(410);
+    await moveTo(195);
     expect(reminder()).toBeNull();
-    await moveTo(425);
+    await moveTo(200);
     expect(reminder()).not.toBeNull();
   });
 
-  it("clears as the next prompt enters view and waits until it is safely out of view again", async () => {
+  it("keeps context until the next prompt reaches the upper reading area", async () => {
     const { moveTo, reminder } = await setup();
     await moveTo(2100);
     expect(reminder()).not.toBeNull();
     await moveTo(2201);
+    expect(reminder()?.textContent).toContain("Explain the retry policy");
+    await moveTo(2830);
+    expect(reminder()?.textContent).toContain("Explain the retry policy");
+    await moveTo(2841);
     expect(reminder()).toBeNull();
-    await moveTo(2180);
-    expect(reminder()).toBeNull();
-    await moveTo(2150);
-    expect(reminder()).not.toBeNull();
     await moveTo(3101);
     expect(reminder()).toBeNull();
-    await moveTo(3400);
+    await moveTo(3200);
     expect(reminder()?.textContent).toContain("Check cancellation too");
   });
 
-  it("requires substantial content on screen and reconciles content shrinkage", async () => {
-    const { dimensions, moveTo, resize, reminder } = await setup();
-    await moveTo(5650);
+  it("waits until an entire long prompt is outside the reading buffer", async () => {
+    const { dimensions, moveTo, reminder } = await setup();
+    dimensions.promptHeight = 1200;
+    await moveTo(1150);
     expect(reminder()).toBeNull();
-    await moveTo(5500);
+    await moveTo(1201);
+    expect(reminder()).toBeNull();
+    await moveTo(1296);
     expect(reminder()).not.toBeNull();
-    dimensions.end = 5890;
-    await resize();
-    expect(reminder()).toBeNull();
   });
 
   it("reconciles reminder settings and competing history status without scrolling", async () => {
