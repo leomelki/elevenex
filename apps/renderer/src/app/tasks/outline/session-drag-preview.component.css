@@ -66,9 +66,9 @@
 :host(.landing) .chip .fill, :host(.landing) .chip .content { animation: none; }
 
 @keyframes session-dock-reach { from { transform: scaleY(0); opacity: 0; } }
-@keyframes session-dock-breathe-fill { 50% { opacity: .15; } }
-@keyframes session-dock-breathe-content { 50% { opacity: .1; } }
-@keyframes session-dock-breathe-extension { 50% { opacity: .25; } }
+@keyframes session-dock-breathe-fill { 50% { opacity: .55; } }
+@keyframes session-dock-breathe-content { 50% { opacity: .45; } }
+@keyframes session-dock-breathe-extension { 50% { opacity: .6; } }
 
 /* Reduced motion: no reach, snap or breath; a steady translucent ghost still
    lets the covered row show through. */
