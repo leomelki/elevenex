@@ -83,7 +83,7 @@ async function settle<T>(fixture: ComponentFixture<T>): Promise<void> {
   await fixture.whenStable();
 }
 
-function setup(items: readonly SessionChatItem[] = [], chatState = state) {
+function setup(items: readonly SessionChatItem[] = [], chatState = state, initialRead?: Promise<BackendResult<SessionChatPage>>) {
   let page: SessionChatPage = {
     taskId: 1,
     sessionId: 2,
@@ -107,7 +107,10 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
       },
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
-    sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
+    sessionChatRead: vi.fn(async () => {
+      if (initialRead) { const pending = initialRead; initialRead = undefined; return pending; }
+      return { ok: true as const, value: page };
+    }),
     sessionChatContent: vi.fn(async (_scope: string, input: SessionChatContentRead) => ({ ok: true as const,
       value: { itemId: input.itemId, part: input.part, offset: input.offset, text: `Complete ${input.part} for ${input.itemId}`, total: 100, nextOffset: null } })),
     sessionChatCommand: vi.fn(
@@ -157,6 +160,44 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('mounts history and composer together after cold hydration, with retry after a failed read', async () => {
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    const { fixture, root, bridge, publish } = setup([], state, new Promise(yes => { resolve = yes; }));
+    await settle(fixture);
+    expect(root.querySelector('ex-composer')).toBeNull();
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('Loading conversation');
+    resolve({ ok: false, error: { code: 'transport', message: 'Connection interrupted' } });
+    await settle(fixture);
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Connection interrupted');
+    expect(root.querySelector('ex-composer')).toBeNull();
+    publish({ taskId: 1, sessionId: 2, cursor: 'loaded', reset: true, before: null, events: [],
+      state: { ...state, providerLocked: true }, items: [item('reply', 'assistant', 'Loaded reply')] });
+    (root.querySelector('.opening button') as HTMLButtonElement).click();
+    await settle(fixture);
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(2);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Loaded reply');
+  });
+
+  it('renders a cached session immediately with fresh scroll ownership while its refresh waits', async () => {
+    const { fixture, root, bridge } = setup([item('reply', 'assistant', 'Cached reply')]);
+    await settle(fixture);
+    const previous = fixture.componentInstance.chat()!.scroll();
+    fixture.componentInstance.store.setDraft('Retain my writing');
+    bridge.sessionChatRead.mockImplementation(() => new Promise(() => undefined));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    expect(root.querySelector('ex-composer')).toBeNull();
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+    await settle(fixture);
+    expect(fixture.componentInstance.store.loading()).toBe(true);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
+    expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
+    expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
+  });
+
   it('releases seen-view foreground listeners on teardown', async () => {
     const windowAdded = vi.spyOn(window, 'addEventListener');
     const documentAdded = vi.spyOn(document, 'addEventListener');
@@ -340,16 +381,14 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector("ex-turn")).toBe(turn);
   });
   it("opens hydrated sessions at the end and preserves reading position on refresh", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root } = setup([
       item("prompt", "user", "An existing conversation"),
       item("reply", "assistant", "The latest reply"),
     ]);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 2000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
     await settle(fixture);
+    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(2000);
 
     viewport.scrollTop = 100;
@@ -360,13 +399,11 @@ describe("connected chat reply rendering", () => {
   });
 
   it("jumps to the end after a switched session's delayed history renders, including reopening", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(3000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root, bridge } = setup([item("first", "user", "First session")]);
     await settle(fixture);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 3000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
+    let viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     viewport.scrollTop = 100;
     viewport.dispatchEvent(new Event("scroll"));
     let resolveRead!: (reply: { ok: true; value: SessionChatPage }) => void;
@@ -379,12 +416,14 @@ describe("connected chat reply rendering", () => {
       items: [item("second", "user", "Second session")], events: [], state,
     } });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
 
     viewport.scrollTop = 200;
     viewport.dispatchEvent(new Event("scroll"));
     fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 2 });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
   });
 

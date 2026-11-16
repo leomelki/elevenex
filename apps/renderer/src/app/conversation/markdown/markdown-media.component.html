@@ -1,84 +1,44 @@
-@if (asset(); as file) {
-  @switch (file.kind) {
-    @case ("image") {
-      @if (file.loading) {
-        <p role="status">Loading image…</p>
-      } @else if (file.error) {
-        <p role="status">{{ file.error }}</p>
-      } @else if (safeSource() && failedSource() === safeSource()) {
-        <p role="status">Could not display this image.</p>
-      } @else if (safeSource()) {
-        <figure>
-          <button
-            #imageTrigger
-            type="button"
-            class="image"
-            (click)="showViewer(imageTrigger)"
-            [attr.aria-label]="'Enlarge ' + (caption() || path())"
-          >
-            <img
-              [src]="safeSource()"
-              [alt]="caption()"
-              [attr.width]="file.w || null"
-              [attr.height]="file.h || null"
-              loading="lazy"
-              (error)="failedSource.set(safeSource())"
-            />
-          </button>
-          @if (showCaption()) {
-            <figcaption>{{ caption() }}</figcaption>
-          }
-        </figure>
-      } @else {
-        <button type="button" (click)="openFile.emit(path())">
-          Open {{ caption() || path() }}
-        </button>
-      }
-    }
-    @case ("video") {
-      @if (file.loading) {
-        <p role="status">Loading video…</p>
-      } @else if (file.error) {
-        <p role="status">{{ file.error }}</p>
-      } @else {
-        <ex-markdown-recording
-          [source]="file.src || ''"
-          [knownDuration]="file.dur || 0"
-          [poster]="file.poster || ''"
-          [width]="file.w"
-          [height]="file.h"
-          [caption]="caption()"
-          [showCaption]="showCaption()"
-          [compact]="compact()"
-          [marks]="file.marks || []"
-          (openFile)="openFile.emit(path())"
-        />
-      }
-    }
-    @case ("page") {
-      <section class="page">
-        <header>
-          <span>{{ file.title || caption() || path() }}</span
-          ><button type="button" (click)="openPage.emit(path())">
-            Open in Browser
-          </button>
-        </header>
-        <p class="page-note">{{ path() }}</p>
-      </section>
+@if (asset()?.kind === 'page') {
+  <section class="page">
+    <header>
+      <span>{{ pageTitle() }}</span>
+      <button type="button" (click)="openPage.emit(path())">Open in Browser</button>
+    </header>
+    <p class="page-note">{{ path() }}</p>
+  </section>
+} @else if (asset()?.kind === 'video') {
+  @if (asset(); as file) {
+    @if (file.kind === 'video') {
+      <ex-markdown-recording
+        [source]="file.src || ''" [loading]="!!file.loading" [error]="file.error || ''"
+        [knownDuration]="file.dur || 0" [poster]="file.poster || ''"
+        [width]="file.w" [height]="file.h" [caption]="caption()"
+        [showCaption]="showCaption()" [compact]="compact()" [marks]="file.marks || []"
+        (openFile)="openFile.emit(path())"
+      />
     }
   }
 } @else {
-  <button type="button" class="missing" (click)="openFile.emit(path())">
-    Image unavailable: {{ caption() || path() }}
-  </button>
+  <figure>
+    <div class="media-frame" [attr.aria-busy]="imageLoading() ? 'true' : null">
+      @if (imageSource(); as source) {
+        <button #imageTrigger type="button" class="image" (click)="showViewer(imageTrigger)"
+          [attr.aria-label]="'Enlarge ' + (caption() || path())">
+          <img [src]="source" [alt]="caption()" loading="lazy" (error)="failedSource.set(source)" />
+        </button>
+      } @else {
+        <div class="media-status" role="status">
+          <span>{{ imageStatus() }}</span>
+          @if (!imageLoading()) {
+            <button type="button" (click)="openFile.emit(path())">Open {{ caption() || path() }}</button>
+          }
+        </div>
+      }
+    </div>
+    @if (showCaption()) { <figcaption>{{ caption() }}</figcaption> }
+  </figure>
 }
 @if (viewer(); as preview) {
-  <ex-image-viewer
-    [source]="preview.source"
-    [label]="preview.label"
-    [from]="preview.from"
-    [open]="viewerOpen()"
-    (closeRequested)="viewerOpen.set(false)"
-    (closed)="viewer.set(null)"
-  />
+  <ex-image-viewer [source]="preview.source" [label]="preview.label" [from]="preview.from"
+    [open]="viewerOpen()" (closeRequested)="viewerOpen.set(false)" (closed)="viewer.set(null)" />
 }

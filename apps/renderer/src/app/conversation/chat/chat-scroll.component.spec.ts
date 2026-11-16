@@ -145,6 +145,26 @@ describe("ChatScroll return to bottom", () => {
     expect(viewport.scrollTop).toBe(1600);
   });
 
+  it('keeps the tail visible on viewport-only resize without marking a reader’s messages unread', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    moveTo(800);
+    dimensions.viewport = 300;
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(1200);
+    expect(fixture.componentInstance.atEnd()).toBe(true);
+    expect(fixture.componentInstance.unread()).toBe(false);
+    moveTo(200);
+    dimensions.viewport = 250;
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(200);
+    expect(fixture.componentInstance.atEnd()).toBe(false);
+    expect(fixture.componentInstance.unread()).toBe(false);
+  });
+
   it("jumps directly with reduced motion and reconciles a viewport that no longer overflows", async () => {
     const { fixture, viewport, dimensions, scrollTo, moveTo, button, control } = await setup();
     moveTo(200);

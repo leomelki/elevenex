@@ -68,6 +68,7 @@
       }
     </div>
     <span class="grow"></span>
+    <div class="git-status"><ng-content select="[gitStatus]" /></div>
     @if (git(); as state) {
       <ex-git-bar [unreachable]="unreachable()"
         [files]="state.files ?? 0"

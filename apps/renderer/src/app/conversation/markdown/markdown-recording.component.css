@@ -20,8 +20,9 @@ input:focus-visible {
 video {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: 380px;
+  height: 100%;
+  position: absolute;
+  inset: 0;
   object-fit: contain;
 }
 .controls {
@@ -93,19 +94,33 @@ figcaption {
   font-size: var(--text-caption-size);
   margin-top: var(--space-1);
 }
-.error {
-  font-size: var(--text-caption-size);
-  color: var(--danger);
-  margin: var(--space-1) 0;
-}
-.fallback {
-  background: var(--surface-sunken);
-}
-
 :host.compact .player {
   border: 0;
   border-radius: var(--radius-sm);
 }
-:host.compact video:not(:fullscreen) {
+:host.compact .media-window {
+  aspect-ratio: auto;
   height: 148px;
 }
+.media-window {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  max-height: 380px;
+}
+.media-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  text-align: center;
+  overflow: auto;
+  background: var(--surface-sunken);
+}
+button:disabled { cursor: default; opacity: .45; }
+video:fullscreen { position: static; height: 100%; max-height: none; }

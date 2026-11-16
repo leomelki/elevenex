@@ -71,6 +71,8 @@ shell. `WorkspaceOnboardingComponent` is the first-project card. It emits
 `launching`; the machine container owns source retention and the existing
 `jumpHome`/`settleMark` flight into the rail. The task header accepts `panelOpen`
 and emits `panelToggle`; panel processes are outside this feature.
+Git loading, retry and behind-upstream Sync controls share the header's reserved
+metadata row. Late Git replies and failures keep the chat's viewport height fixed.
 
 Later projects open from the rail's supplied plus-button origin through
 `dialogFrom`. Cancellation keeps that origin for the return morph. A successful

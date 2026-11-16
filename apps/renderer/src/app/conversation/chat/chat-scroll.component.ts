@@ -173,6 +173,7 @@ export class ChatScrollComponent {
   private frame: number | null = null;
   private lastActive = "";
   private lastScrollHeight = 0;
+  private lastViewportHeight = 0;
   private highlight: Animation | null = null;
   constructor() {
     effect(() => {
@@ -217,6 +218,7 @@ export class ChatScrollComponent {
       this.atEnd.set(this.startAtEnd());
       if (this.startAtEnd()) viewport.scrollTop = viewport.scrollHeight;
       this.lastScrollHeight = viewport.scrollHeight;
+      this.lastViewportHeight = viewport.clientHeight;
       const resize = new ResizeObserver(() => this.scheduleMeasure());
       resize.observe(content);
       resize.observe(viewport);
@@ -381,11 +383,13 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
-    const changed = viewport.scrollHeight !== this.lastScrollHeight;
+    const contentChanged = viewport.scrollHeight !== this.lastScrollHeight;
+    const resized = viewport.clientHeight !== this.lastViewportHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
-    else if (changed) this.unread.set(true);
+    else if ((contentChanged || resized) && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
+    else if (contentChanged) this.unread.set(true);
     this.lastScrollHeight = viewport.scrollHeight;
+    this.lastViewportHeight = viewport.clientHeight;
     if (!this.sendScroll) this.updatePosition();
     const scrollbar = viewport.offsetWidth - viewport.clientWidth;
     if (scrollbar !== this.scrollbarWidth) {

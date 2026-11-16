@@ -53,6 +53,16 @@ export class SessionChatMedia {
       if (!paths.has(path)) this.known.delete(path);
     this.queue = this.queue.filter((ref) => paths.has(ref.path));
     const queue = refs.filter((ref) => !this.known.has(ref.path));
+    // Declare every frame's media kind before the bounded transport queue runs.
+    // Otherwise the fourth video briefly lays out as an unknown image and gains
+    // a control row only when a request slot becomes free.
+    this.assets.update(previous => {
+      const next = new Map(previous);
+      for (const ref of queue) next.set(ref.path, {
+        kind: ref.kind === 'video' ? 'video' : 'image', src: '', w: 0, h: 0, loading: true,
+      });
+      return next;
+    });
     for (const ref of queue) this.known.add(ref.path);
     this.queue.push(...queue);
     this.pump();
@@ -66,13 +76,6 @@ export class SessionChatMedia {
       if (!ref) break;
       const id = crypto.randomUUID();
       this.requests.add(id);
-      this.set(ref.path, {
-        kind: ref.kind === "video" ? "video" : "image",
-        src: "",
-        w: 0,
-        h: 0,
-        loading: true,
-      });
       void this.load(selection, ref, id, generation);
     }
   }

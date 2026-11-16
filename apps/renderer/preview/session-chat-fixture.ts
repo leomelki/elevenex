@@ -197,9 +197,9 @@ export class SessionChatFixture {
   private catalogFailure = false;
   catalogBehavior(delay: number, fail = false): void { this.catalogDelay = Math.min(5000, Math.max(0, delay)); this.catalogFailure = fail; }
   /** Cold conversation state must not prevent independent catalog discovery. */
-  coldModels(id = 102): void {
+  coldModels(id = 102, model: string | null = null): void {
     const session = this.session(id);
-    session.state = { ...session.state, model: null, models: [] };
+    session.state = { ...session.state, model, models: [] };
     this.changed();
   }
   private catalogData(provider: string): SessionChatCatalog {
@@ -243,6 +243,7 @@ export class SessionChatFixture {
   }
   constructor(destroy: DestroyRef) {
     destroy.onDestroy(() => {
+      this.holdReads(false);
       for (const done of this.waiting.values()) done();
       for (const timer of this.timers) clearTimeout(timer);
     });
@@ -492,9 +493,25 @@ export class SessionChatFixture {
     this.changed();
   }
   cancel(id: string): void {
+    this.heldReads.get(id)?.();
     this.waiting.get(id)?.();
   }
+  private readsHeld = false;
+  private readonly heldReads = new Map<string, () => void>();
+  /** Controlled transport latency for first-frame/session-switch regressions. */
+  holdReads(held: boolean): void {
+    this.readsHeld = held;
+    if (!held) for (const done of [...this.heldReads.values()]) done();
+  }
+  /** Replay a bounded recorded page without importing task data into production. */
+  seed(id: number, page: Pick<SessionChatPage, 'items' | 'state'>): void {
+    this.sessions.set(id, { items: [...page.items].slice(-320), state: page.state });
+    this.changed();
+  }
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
+    if (this.readsHeld) await new Promise<void>(resolve => {
+      this.heldReads.set(input.requestId, () => { this.heldReads.delete(input.requestId); resolve(); });
+    });
     if (input.after === String(this.version))
       await new Promise<void>((resolve) => {
         const done = () => {

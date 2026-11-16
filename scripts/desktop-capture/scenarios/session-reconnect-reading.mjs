@@ -31,7 +31,11 @@ export default async function* (capture) {
     assert.ok(Math.abs(before - recovered.top) < 2, `Reconnection must keep the reading position: ${before} → ${recovered.top}`);
     assert.equal(recovered.unread, true);
     yield { name: `${theme}-recovered-reading-position`, inspect: ['ex-chat-scroll .viewport', 'ex-chat-scroll .return'], metadata: { before, recovered } };
-    await capture.component('ex-session-chat', component => component.store.older());
+    // Filling unused space still includes the live tail. Traverse far enough to
+    // evict it before asserting recovery of a genuinely historical window.
+    await capture.component('ex-session-chat', async component => {
+      for (let page = 0; page < 4 && !component.store.historical(); page++) await component.store.older();
+    });
     const historical = await capture.component('ex-session-chat', component => ({ first: component.store.items()[0]?.id, view: component.store.viewRevision() }));
     await capture.component('ex-reconnect-demo', component => component.platform.recover());
     await capture.waitFor(() => document.querySelector('.workspace-frame.ex-offline'));

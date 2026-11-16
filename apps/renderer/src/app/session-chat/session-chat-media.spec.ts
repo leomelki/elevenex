@@ -78,6 +78,7 @@ describe("selected chat images", () => {
     media.update(selection, items(5));
     expect(client.media).toHaveBeenCalledTimes(3);
     expect(media.resolve("image-0")).toMatchObject({ loading: true });
+    expect(media.resolve("image-4")).toMatchObject({ kind: 'image', loading: true });
     pending[0]!.resolve({
       ok: true,
       value: {

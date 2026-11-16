@@ -145,6 +145,7 @@ export class AgentPickerComponent {
   );
   protected readonly modelLabel = computed(
     () =>
+      this.value().modelLabel ||
       this.harnesses()
         .find((h) => h.id === this.value().harness)
         ?.models.find((m) => m.id === this.value().model)?.label ||

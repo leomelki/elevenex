@@ -658,6 +658,21 @@ describe("session chat ownership", () => {
     while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
     expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
   });
+  it('does not flash a paged historical window before loading the latest session', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'latest', next: null,
+      items: Array.from({ length: 320 }, (_, index) => item(String(index), 'user', `Message ${index}`)) })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { next: 'earlier', items: [item('earlier', 'user', 'Earlier')] })));
+    await store.older();
+    expect(store.historical()).toBe(true);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    bridge.sessionChatRead.mockReturnValueOnce(deferred<BackendResult<SessionChatPage>>().promise);
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false);
+    expect(store.loading()).toBe(true);
+    expect(store.state()).toBeNull();
+    expect(store.items()).toEqual([]);
+  });
   it("reconciles the live tail before sending from history and never dispatches a duplicate send", async () => {
     const { store, bridge } = setup(); await settle();
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: "320", next: null, items: Array.from({ length: 320 }, (_, i) => item(String(i + 320), "user", `Message ${i}`)) })));
@@ -967,6 +982,20 @@ describe("session chat ownership", () => {
   });
 });
 describe("provider-neutral transcript presentation", () => {
+  it('keeps successful generated media visible beside the final answer and deduplicates assistant embeds', () => {
+    const media = [{ id: 'image', path: '/generated.png', caption: 'Result', inline: true }];
+    const output = item('image-output', 'tool_result', 'Image attachment', { toolId: 'draw', media });
+    const input = item('draw', 'tool_use', '', { toolId: 'draw', toolName: 'imagegen' });
+    const prompt = item('prompt', 'user', 'Draw it');
+    const [exchange] = chatExchanges([prompt, input, output, item('again', 'tool_result', 'Same image', { media }), item('final', 'assistant', 'Done')], state, new Set());
+    expect(exchange?.answer).toBe('Done\n\n![Result](/generated.png)');
+    expect(exchange?.steps.some(step => step.id === 'draw')).toBe(true);
+    const [embedded] = chatExchanges([prompt, input, output, item('final', 'assistant', 'Done\n\n![Preview](</generated.png>)')], state, new Set());
+    expect(embedded?.answer).toBe('Done\n\n![Preview](</generated.png>)');
+    const [failed] = chatExchanges([prompt, input, { ...output, error: true }, item('final', 'assistant', 'Could not draw it')], state, new Set());
+    expect(failed?.answer).toBe('Could not draw it');
+  });
+
   it("keeps inline images with their source commentary instead of appending them to the answer", () => {
     const [exchange] = chatExchanges([
       item("u", "user", "Check it"),

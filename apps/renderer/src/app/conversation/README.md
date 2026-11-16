@@ -15,6 +15,10 @@ These standalone OnPush components consume renderer view models and emit typed i
 - Session drops emit the same `mentionInserted` intent as the @ picker. Supply `sessionMentionScope` for connected references, bounded `mentionItems` for keyboard discovery and controlled `context`; handle `contextRemoved` in the owner. Session references live only in their controlled context chips. Drops preserve the draft and its selection; choosing a session from the @ picker consumes the active query without inserting a text copy. Both restore editor focus and never submit or navigate. Removing the chip removes the session reference; ordinary message text stays independent. Duplicate session IDs and more than eight references are refused. Disabled/sending states reject drops. Cancellation/exit releases the indicator; drop transitions and chip entry respect reduced motion. Long chip labels truncate while retaining their full accessible removal name.
 - `AgentPicker.openPicker()` opens from a feature-owned action; `closePicker()` synchronously restores its opener before handing off to a modal such as PresetCreator.
 - `AgentPicker` consumes supported harness/model/thinking capabilities, never inventing provider options. A session locks its harness by default. Unsupported thinking levels remain disabled.
+- `AgentConfig.modelLabel` can supply the closed picker's authoritative display
+  label independently of its live menu catalog, so later model discovery does
+  not resize the composer toolbar. Without it the picker resolves the catalog
+  label, then the configured model ID as before.
 - `Composer` and `AgentPicker` accept `modelsRefreshAvailable` and `modelsError`, and emit `modelsRefreshRequested`. The owner supplies catalog loading through `settingsBusy` / `busy`, performs the scoped read, and retains authoritative choices during refresh. The menu owns no transport; refresh stays inside the open surface and preserves its focus.
 - `QuestionCard` owns unfinished answers and navigation. Listed single choices answer immediately; multiple questions emit one answer map only when complete. Custom answers remain selected as they are edited. Pass `answers` to render a resolved result. `ApprovalCard` remains controlled and emits the exact resolution intent.
 - `Chat.centerComposer` centers its existing composer region for an empty session, preserving the composer instance, draft and focus when the first turn starts. Keep it false when decisions or history need to be visible.
@@ -46,6 +50,14 @@ range subscriptions are released with the rail. The `/conversation` preview has
 1/9/1,000/10,000-message controls for this behavior.
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
+
+End following also reconciles viewport-only height changes, including composer
+growth, without marking existing messages unread. The connected session owner
+mounts history and configured controls together after its first page. A cached
+latest window renders and positions immediately while refreshing. A different
+session gets fresh scroll/disclosure ownership; same-session refresh and verified
+same-machine recovery retain the mounted view and reading position. Local session
+creation keeps its immediate editable welcome through the durable receipt.
 
 The contextual reminder is a centered glass capsule sized to its prompt, echoing
 the title island: an ↑ in an accent well and the prompt on one ellipsized line.
@@ -109,7 +121,17 @@ content and viewport also reconciles the control after layout changes.
 
 Markdown becomes a typed AST rendered as text nodes and semantic Angular templates. Raw HTML is always inert text. Active link schemes and credential-bearing URLs are rejected. File and web links emit separate intents; copying code emits `copyCode`. Mermaid fences remain code until a future trusted diagram adapter is supplied.
 
-Local raster images have reserved dimensions and a keyboard-accessible native modal viewer. Grouped images provide a picture viewer with previous/next keyboard navigation. Before/after pairs have a keyboard-accessible comparison slider. Local recordings have playback, seek, speed, full-screen and timestamped step controls, and never autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
+Raster previews reserve a bounded 16:9 well (148px high in compact attachment
+cards) through missing, loading, ready and error states. Natural image dimensions
+belong to the full-size viewer; decoding a tall image never expands the transcript.
+Gallery grid/strip and Before/After comparison geometry come from the embed list
+and captions before sources arrive. Slots stay keyed by path; partial failures
+retain their place, comparison controls remain disabled until both images are
+ready, and a gallery selection survives other images completing out of order.
+Grouped images retain previous/next keyboard navigation. Recordings reserve their
+preview and control row while loading or unavailable; `MarkdownRecording.loading`
+and `error` describe asynchronous resolver state. Playback, seek, speed,
+full-screen and timestamped steps remain available when ready, without autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
 
 The production desktop forbids frame embedding and remote media. HTML documents therefore show a named page card and emit `openPage` for the Browser feature. `srcdoc` is never mounted or trusted. A future isolated page-preview adapter must preserve that desktop security boundary; the component does not weaken CSP or expose sandbox escape capabilities. Code highlighting is a text-only display lexer for JavaScript/TypeScript using the shared code palette. Code copy feedback is controlled through `copiedCode`, after the owner has handled the copy intent. Live page execution remains behind the future Browser adapter.
 

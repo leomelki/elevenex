@@ -21,6 +21,9 @@ import { safeMediaSource } from "./markdown-parser";
   host: { "[class.compact]": "compact()" },
 })
 export class MarkdownRecordingComponent {
+  readonly loading = input(false);
+  readonly error = input('');
+  readonly unavailable = computed(() => this.loading() || !!this.error() || this.mediaError() || !this.safeSource());
   readonly knownDuration = input(0);
   readonly totalDuration = computed(
     () => this.duration() || this.knownDuration(),
@@ -56,6 +59,7 @@ export class MarkdownRecordingComponent {
     });
   }
   async toggle(): Promise<void> {
+    if (this.unavailable()) return;
     const video = this.video()?.nativeElement;
     if (!video) return;
     if (video.paused) {
@@ -101,6 +105,7 @@ export class MarkdownRecordingComponent {
     }
   }
   onKey(event: KeyboardEvent): void {
+    if (this.unavailable()) return;
     if (event.target !== event.currentTarget) return;
     if (event.key === " ") {
       event.preventDefault();

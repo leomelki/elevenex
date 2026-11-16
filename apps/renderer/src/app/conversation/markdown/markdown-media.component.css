@@ -12,13 +12,15 @@ figure {
   border: 0;
   cursor: zoom-in;
   width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
 }
-img,
-video {
+img {
   display: block;
   max-width: 100%;
-  height: auto;
-  max-height: 380px;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
@@ -66,19 +68,30 @@ header span {
   width: 100%;
   border-radius: 0;
 }
-.missing {
-  font-family: var(--font-mono);
+.media-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  max-height: 380px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
 }
-
-:host.compact .image {
+.media-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  overflow: auto;
+}
+:host.compact .media-frame {
+  aspect-ratio: auto;
   height: 148px;
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  overflow: hidden;
-}
-:host.compact .image img {
-  width: 100%;
-  height: 100%;
-  max-height: 100%;
-  border-radius: 0;
 }

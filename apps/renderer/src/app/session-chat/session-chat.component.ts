@@ -46,7 +46,6 @@ import {
   DropdownComponent,
   PresenceComponent,
   ToastComponent,
-  SkeletonComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -79,7 +78,6 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     PresetCreatorComponent,
     ToolContentComponent,
     ButtonComponent,
-    SkeletonComponent,
     IconComponent,
     DropdownComponent,
     PresenceComponent,
@@ -135,6 +133,8 @@ export class SessionChatComponent {
   }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  /** One scroll/editor lifetime per selected session, retained through recovery. */
+  readonly chatViews = computed(() => [{ revision: this.store.viewRevision() }]);
   readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
   private readonly catalogTarget = computed(() => {
     const selection = this.selection();
@@ -284,6 +284,9 @@ export class SessionChatComponent {
         this.harnesses().find((harness) => harness.id === state.provider)
           ?.mark ?? "Ag",
       model: state.model ?? "",
+      // The closed control uses the first page's display data. A secondary
+      // model catalog may enrich the menu without resizing the toolbar.
+      modelLabel: state.models.find(model => model.id === state.model)?.label ?? state.model ?? '',
       thinking: state.reasoning ?? undefined,
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
@@ -449,7 +452,9 @@ export class SessionChatComponent {
         scrollIdentity = identity;
         opening = true;
       }
-      const ready = !this.store.loading() && !!this.store.state();
+      // Cached history is already usable while its refresh is pending. Position
+      // that first render too; a refresh must never pull an active reader down.
+      const ready = !!this.store.state();
       const scroll = this.chat()?.scroll();
       if (!opening || !ready || !scroll) return;
       opening = false;

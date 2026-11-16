@@ -35,6 +35,21 @@ export class MarkdownMediaComponent {
       ? safeMediaSource(asset.src ?? "")
       : "";
   });
+  readonly imageLoading = computed(() => { const asset = this.asset(); return asset?.kind === 'image' && !!asset.loading; });
+  readonly pageTitle = computed(() => {
+    const asset = this.asset();
+    return (asset?.kind === 'page' ? asset.title : '') || this.caption() || this.path();
+  });
+  readonly imageSource = computed(() => {
+    const asset = this.asset();
+    const source = this.safeSource();
+    return asset?.kind === 'image' && !asset.loading && !asset.error && source !== this.failedSource() ? source : '';
+  });
+  readonly imageStatus = computed(() => {
+    const asset = this.asset();
+    if (asset?.kind === 'image' && asset.loading) return 'Loading image…';
+    return asset?.kind === 'image' && asset.error ? asset.error : 'Image unavailable';
+  });
   showViewer(from: HTMLElement): void {
     this.viewer.set({ source: this.safeSource(), label: this.caption() || this.path(), from });
     this.viewerOpen.set(true);

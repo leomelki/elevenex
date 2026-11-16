@@ -554,6 +554,19 @@ sessions starts at the end on the first rendered frame. It also checks reading
 position through refresh, both themes, narrow layouts and reduced motion using
 the connected workspace preview.
 
+`scenarios/session-loading-stability.mjs` holds cold and cached chat reads through
+the production owner, checks first-frame composer/editor geometry, end following,
+reading-position retention and inline Git feedback in both themes and narrow
+reduced motion. Run against the connected preview with `--url`. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of bounded
+`{id, items, state}` recorded pages for transcript replay; this is preview evidence,
+not a live backend or packaged-app test.
+
+`scenarios/session-media-loading.mjs` checks reserved gallery/comparison/recording
+geometry through loading, out-of-order readiness and errors, plus image-viewer
+keyboard navigation and focus restoration in both themes and narrow reduced
+motion. Run it against the same preview URL.
+
 `scenarios/chat-scroll-return.mjs` checks the floating return control without
 incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
 focus handoff, interrupted exits and unread indicators on the arrow-only button.

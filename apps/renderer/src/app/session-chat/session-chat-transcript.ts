@@ -245,7 +245,18 @@ export function chatExchanges(
       !live && group.startedAt !== undefined && endedAt !== undefined
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
-    const answer = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
+    const reply = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
+    // Generated artifacts are outcomes, so they must survive collapsed tool
+    // evidence. Assistant commentary keeps its own media in source order.
+    const generated = new Map<string, string>();
+    for (const item of group.items) {
+      if (item.kind !== 'tool_result' || item.error) continue;
+      for (const media of item.media ?? []) {
+        if (!media.inline || reply.includes(`](${media.path})`) || reply.includes(`](<${media.path}>)`)) continue;
+        generated.set(media.path, `![${media.caption.replace(/[[\]\r\n]/g, ' ')}](${media.path})`);
+      }
+    }
+    const answer = [reply, ...generated.values()].filter(Boolean).join("\n\n");
     return {
       overflow: group.items
         // Tool evidence belongs in the work timeline, not below the answer.
