@@ -174,11 +174,10 @@ describe('session row drag release', () => {
     return { fixture, button };
   }
   it.each(['drop', 'dragend', 'Escape', 'blur'])('clears grab feedback on %s without waiting for a move reply', event => {
-    const { fixture, button } = row();
+    const { button } = row();
     if (event === 'blur') window.dispatchEvent(new Event('blur'));
     else if (event === 'Escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     else document.dispatchEvent(new Event(event));
-    fixture.detectChanges();
     expect(button.classList.contains('dragging')).toBe(false);
   });
   it('releases its document and window listeners on destruction', () => {

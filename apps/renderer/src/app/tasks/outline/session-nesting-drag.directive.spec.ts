@@ -25,14 +25,25 @@ function setup() {
   const fixture = TestBed.createComponent(Harness); fixture.detectChanges();
   const data = new Map<string, string>();
   const transfer = { effectAllowed: '', dropEffect: '', setData: vi.fn((type: string, value: string) => data.set(type, value)), setDragImage: vi.fn(), getData: (type: string) => type === SESSION_DRAG_TYPE ? data.get(type) ?? '' : '' };
-  const send = (selector: string, type: string) => {
+  const send = (selector: string, type: string, render = true) => {
     const event = new Event(type, { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'dataTransfer', { value: transfer });
-    fixture.nativeElement.querySelector(selector).dispatchEvent(event); fixture.detectChanges(); return event;
+    fixture.nativeElement.querySelector(selector).dispatchEvent(event);
+    if (render) fixture.detectChanges();
+    return event;
   };
   return { fixture, send, transfer };
 }
 describe('task-owned nesting drag', () => {
+  it('renders source release within the native drop handler, before another paint or receipt', () => {
+    const { fixture, send } = setup();
+    send('[data-session-id="3"] .select', 'dragstart');
+    send('[data-session-id="1"] .select', 'dragover');
+    expect(fixture.nativeElement.querySelector('.drag-source')).not.toBeNull();
+    send('[data-session-id="1"] .select', 'drop', false);
+    expect(fixture.nativeElement.querySelector('.drag-source, .dragging, .receded, .unavailable')).toBeNull();
+    expect(fixture.componentInstance.moves).toEqual([{ sessionId: '3', parentSessionId: '1' }]);
+  });
   it('targets the whole group through a child and drops exactly once, releasing its overlay', () => {
     const { fixture, send, transfer } = setup();
     send('[data-session-id="3"] .select', 'dragstart');

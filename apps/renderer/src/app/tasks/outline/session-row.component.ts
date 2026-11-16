@@ -1,6 +1,7 @@
 import { DOCUMENT } from "@angular/common";
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   computed,
   DestroyRef,
@@ -61,16 +62,22 @@ export class SessionRowComponent implements OnChanges {
     };
   }
   protected endDrag(): void {
+    const wasDragging = this.dragging();
     this.dragging.set(false);
     this.removeDragListeners?.();
     this.removeDragListeners = undefined;
+    // Native drag completion can defer the zoneless render. Clear the cursor
+    // and opacity bindings before returning to Chromium's drag loop.
+    if (wasDragging && !this.destroy.destroyed) this.changeDetector.detectChanges();
   }
   private readonly document = inject(DOCUMENT);
+  private readonly changeDetector = inject(ChangeDetectorRef);
+  private readonly destroy = inject(DestroyRef);
   private confirmationSession: string | null = null;
   private removeOutsideListener?: () => void;
   private removeDragListeners?: () => void;
 
-  constructor() { inject(DestroyRef).onDestroy(() => { this.cancelArchive(); this.endDrag(); }); }
+  constructor() { this.destroy.onDestroy(() => { this.cancelArchive(); this.endDrag(); }); }
   ngOnChanges(): void {
     if (!this.allowArchive() || this.session().status !== 'running' || this.session().id !== this.confirmationSession) this.cancelArchive();
   }

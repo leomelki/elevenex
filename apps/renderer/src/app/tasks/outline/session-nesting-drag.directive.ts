@@ -1,5 +1,5 @@
 import { DOCUMENT } from '@angular/common';
-import { afterNextRender, ComponentRef, computed, DestroyRef, Directive, ElementRef, inject, Injector, input, OnChanges, output, signal } from '@angular/core';
+import { afterNextRender, ChangeDetectorRef, ComponentRef, computed, DestroyRef, Directive, ElementRef, inject, Injector, input, OnChanges, output, signal } from '@angular/core';
 import { Overlay, OverlayRef } from '@angular/cdk/overlay';
 import { ComponentPortal } from '@angular/cdk/portal';
 import { readSessionDrag } from '../session-drag';
@@ -38,6 +38,7 @@ export class SessionNestingDragDirective implements OnChanges {
   private readonly document = inject(DOCUMENT);
   private readonly overlay = inject(Overlay);
   private readonly injector = inject(Injector);
+  private readonly changeDetector = inject(ChangeDetectorRef);
   private preview?: ComponentRef<SessionDragPreviewComponent>;
   private overlayRef?: OverlayRef;
   private point = { x: 0, y: 0 };
@@ -96,11 +97,13 @@ export class SessionNestingDragDirective implements OnChanges {
       this.paint();
     };
     const leave = (event: DragEvent) => { if (!event.relatedTarget) { this.outside = true; this.setTarget(null, false); this.paint(); } };
-    const end = () => this.end();
+    // Native drag completion can delay the scheduled zoneless render. Flush
+    // this task's feedback before returning control to the native drag loop.
+    const end = () => { this.end(); this.changeDetector.detectChanges(); };
     // Capture sees a drop even when the composer stops propagation. Hit testing
     // still confines moves to this task; outside drops keep their native data.
-    const onDrop = (event: DragEvent) => this.drop(event);
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') this.end(); };
+    const onDrop = (event: DragEvent) => { this.drop(event); this.changeDetector.detectChanges(); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') end(); };
     this.document.addEventListener('dragover', move);
     this.document.addEventListener('dragleave', leave);
     this.document.addEventListener('drop', onDrop, true);
