@@ -96,6 +96,9 @@ Older engines omit the capability and retain their original send contract.
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
   each tool. Envelopes without supported native receipts remain inspectable.
+- Claude tool calls share the same message/tool ID in live events and saved
+  history, so reopening an active turn merges each call once and keeps its
+  result in the bounded transcript page.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.

@@ -4150,7 +4150,9 @@ export class ClaudeRuntimeService
           providerToolInput,
         );
         const item: ClaudeTranscriptItem = {
-          id: `${message.uuid}:tool:${part.id}`,
+          // Match normalizeHistory so reopening an active turn replaces the
+          // saved call instead of appending a duplicate beyond its result.
+          id: `${streamMessageId}:tool_use:${part.id ?? partIndex}`,
           kind: 'tool_use',
           agentId: message.agent_id,
           toolUseId: part.id,
