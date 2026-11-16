@@ -1,51 +1,3 @@
-<header class="session-bar">
-  @if (store.state(); as state) {
-    <span class="provider">{{ providerLabel() }}</span>
-    <span class="status" role="status"
-      ><ex-status-glyph [status]="status()" [size]="12" />{{
-        statusLabel()
-      }}</span
-    >
-    @if (status() === "attention") {
-      <button exButton variant="ghost" size="sm" (click)="focusDecision()">
-        View request
-      </button>
-    }
-    @if (state.reasoning) {
-      <span class="metadata">{{ state.reasoning }} thinking</span>
-    }
-    <span class="grow"></span>
-    @if (state.context; as context) {
-      <ex-context-meter
-        [used]="context.percentage / 100"
-        [tokens]="context.tokens + ' of ' + context.limit"
-      />
-    }
-    @if (state.work; as work) {
-      <!-- Keyed by conversation so seen issues and an open panel never carry across sessions. -->
-      @for (key of [identity()]; track key) {
-        <ex-session-activity
-          [work]="work"
-          [provider]="providerLabel()"
-          [disabledReason]="activityDisabledReason()"
-          [backgrounding]="store.busy() === 'background-agent'"
-          (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
-          (inspectRequested)="agentId.set($event)"
-          [stopDisabled]="blocked() || store.offline()"
-          [stopping]="store.busy() === 'stop-background'"
-          (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
-          [decisionPending]="!!state.permission || !!state.question"
-          (answerRequested)="focusDecision()"
-        />
-      }
-    }
-  } @else {
-    <span class="metadata">{{ store.starting() ? 'New session' : 'Connecting to conversation…' }}</span>
-  }
-  @if (archived()) {
-    <span class="metadata">Archived · Read only</span>
-  }
-</header>
 <ex-chat
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
@@ -344,6 +296,26 @@
       (queueSteer)="queueAction('steer-queued', $event)"
       (queueRemove)="queueAction('cancel-queued', $event)"
     >
+      <ng-container composerSettings>
+        @if (store.state()?.work; as work) {
+          <!-- Keyed by conversation so seen issues and an open panel never carry across sessions. -->
+          @for (key of [identity()]; track key) {
+            <ex-session-activity
+              [work]="work"
+              [provider]="providerLabel()"
+              [disabledReason]="activityDisabledReason()"
+              [backgrounding]="store.busy() === 'background-agent'"
+              (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
+              (inspectRequested)="agentId.set($event)"
+              [stopDisabled]="blocked() || store.offline()"
+              [stopping]="store.busy() === 'stop-background'"
+              (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
+              [decisionPending]="!!store.state()?.permission || !!store.state()?.question"
+              (answerRequested)="focusDecision()"
+            />
+          }
+        }
+      </ng-container>
     </ex-composer>
   </div>
 </ex-chat>

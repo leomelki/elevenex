@@ -23,7 +23,7 @@ export default async function* (capture) {
     await capture.press('Escape');
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-agent-picker > button')), true);
     await capture.click('ex-composer textarea');
-    await capture.hover('.session-bar .provider');
+    await capture.hover('ex-session-chat ex-chat-scroll');
     await capture.waitFor(() => !document.querySelector('.agent-settings, .usage-card'));
   };
   for (const theme of ['light', 'dark']) {

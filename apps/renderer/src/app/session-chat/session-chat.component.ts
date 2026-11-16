@@ -42,13 +42,11 @@ import {
 import {
   AutoHeightDirective,
   ButtonComponent,
-  ContextMeterComponent,
   IconComponent,
   DropdownComponent,
   PresenceComponent,
   ToastComponent,
   SkeletonComponent,
-  StatusGlyphComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -81,8 +79,6 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     PresetCreatorComponent,
     ToolContentComponent,
     ButtonComponent,
-    ContextMeterComponent,
-    StatusGlyphComponent,
     SkeletonComponent,
     IconComponent,
     DropdownComponent,
@@ -215,30 +211,6 @@ export class SessionChatComponent {
   );
   private copyTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usageTime = signal(Date.now());
-  /** Work outliving its turn keeps the session busy even after the reply ends. */
-  readonly background = computed(
-    () => !!this.store.state()?.work?.running.some(item => item.background !== false),
-  );
-  readonly status = computed(() =>
-    this.store.state()?.permission || this.store.state()?.question
-      ? "attention"
-      : this.store.running() || this.background()
-        ? "running"
-        : this.store.state()?.phase === "error"
-          ? "failed"
-          : "done",
-  );
-  readonly statusLabel = computed(() =>
-    this.status() === "attention"
-      ? "Needs you"
-      : this.status() === "running"
-        ? this.store.running()
-          ? "Running"
-          : "Working in background"
-        : this.status() === "failed"
-          ? "Failed"
-          : "Ready",
-  );
   readonly blocked = computed(
     () =>
       (this.store.offline() && !this.store.outbox) ||

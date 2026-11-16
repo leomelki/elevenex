@@ -121,8 +121,8 @@ attaching a runtime.
 
 ## Background work and activity
 
-`SessionActivity` in the session bar summarizes work that outlives its turn and
-runtime events worth noticing. It reads the optional `state.work` field, which the
+`SessionActivity` in the composer controls summarizes work that outlives its turn
+and runtime events worth noticing. It reads the optional `state.work` field, which the
 backend's `desktop-chat-work` projection builds from the runtime's authoritative
 `backgroundWork` list, enriched by its task/agent records:
 
@@ -139,10 +139,10 @@ backend's `desktop-chat-work` projection builds from the runtime's authoritative
   running hooks, progress ticks and quota data (owned by the agent menu) are dropped.
 
 The trigger is absent when both lists are empty. With live work it reads
-“N in background” plus the longest elapsed time, and the session status becomes
-“Working in background” after the reply ends. Otherwise warnings/failures from the
-last 30 minutes flag “N issues” until the panel is opened; older history leaves a
-quiet clock button. The CDK dialog traps and restores focus, closes on Escape or
+“N in background” plus the longest elapsed time, including after the reply ends.
+Otherwise warnings/failures from the last 30 minutes flag “N issues” until the panel
+is opened; older history leaves a quiet clock button. The CDK dialog traps and
+restores focus, closes on Escape or
 outside click, and stays open with an empty state if the work finishes underneath it.
 Elapsed times tick locally (1s only while work runs); no extra reads are added:
 the data rides the existing long-poll feed.

@@ -40,7 +40,7 @@ export default async function* (capture) {
   for (const theme of ['light', 'dark']) {
     await capture.viewport(1440, 960); await capture.theme(theme);
     await capture.component('ex-connected-workspace-demo', component => component.fixture.chat.scenario('ready'));
-    await capture.waitFor(() => !document.querySelector('ex-composer button.send')?.disabled || !!document.querySelector('ex-session-chat .provider'));
+    await capture.waitFor(() => !document.querySelector('ex-composer button.send')?.disabled || !!document.querySelector('ex-agent-picker > button'));
     await capture.fill(textarea, 'Compare with ');
     const drag = await startDrag();
     await capture.waitFor(() => document.querySelector('ex-composer .drop-label.visible'));

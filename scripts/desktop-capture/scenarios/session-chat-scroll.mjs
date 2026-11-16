@@ -5,7 +5,7 @@ export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
   await capture.component('ex-machine-workspace', c => c.store.selectSession({ taskId: '11', sessionId: '101' }));
-  await capture.waitFor(() => document.querySelector('ex-session-chat .provider'));
+  await capture.waitFor(() => document.querySelector('ex-agent-picker > button'));
   const chat = (fn, value) => capture.component('ex-session-chat', fn, value);
   const move = async (edge) => {
     // Native scroll container plus trusted wheel input supplies direction/intent.

@@ -14,13 +14,13 @@ export default async function* (capture) {
     await capture.press('Home'); for (let i = 0; i < index; i++) await capture.press('ArrowDown');
     await capture.press('Enter');
   };
-  const codexOutside = async () => assert.equal(await capture.evaluate(() => document.querySelector('ex-session-chat .provider').textContent.trim()), 'Codex');
+  const codexOutside = async () => assert.equal(await capture.evaluate(() => document.querySelector('ex-agent-picker > button').getAttribute('aria-label').includes('Codex')), true);
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.viewport(1440, 960);
     await capture.waitFor(() => !!document.querySelector('ex-session-chat .preset-heading > button:not(:disabled)'));
     const deepIndex = await capture.evaluate(() => [...document.querySelectorAll('ex-preset-picker ex-preset-card')].findIndex(card => card.textContent.includes('Deep work')));
     await capture.click(`ex-preset-picker ex-preset-card:nth-child(${deepIndex + 1}) button`);
-    await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.trim() === 'Codex');
+    await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.getAttribute('aria-label').includes('Codex'));
     await capture.fill('ex-composer textarea', 'Keep this message while I choose the harness.');
     await capture.evaluate(() => document.querySelector('ex-session-chat .preset-heading > button').scrollIntoView({ block: 'center' }));
     await capture.settle();
@@ -67,7 +67,7 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('.preset-creator button[aria-label^="Model:"]')?.textContent.includes('Sonnet'));
     await capture.click('.preset-creator button[type="submit"]');
     await capture.waitFor(() => !document.querySelector('.preset-creator'));
-    await capture.waitFor(() => document.querySelector('ex-session-chat .provider')?.textContent.trim() === 'Claude Code');
+    await capture.waitFor(() => document.querySelector('ex-agent-picker > button')?.getAttribute('aria-label').includes('Claude Code'));
     assert.equal(await capture.evaluate(name => document.querySelector('ex-preset-picker').textContent.includes(name), name), true);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep this message while I choose the harness.');
     await settle(); yield { name: theme + '-saved-harness', inspect: ['ex-preset-picker', 'ex-composer'] };

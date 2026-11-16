@@ -9,31 +9,6 @@
 ex-chat {
   flex: 1;
 }
-.session-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  min-height: var(--control-height);
-  font-size: var(--text-caption-size);
-  color: var(--ink-muted);
-}
-.provider {
-  color: var(--ink);
-  text-transform: capitalize;
-}
-.status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.grow {
-  flex: 1;
-}
-.metadata {
-  white-space: nowrap;
-}
 .start { padding-bottom: var(--space-6); }
 .start-content {
   display: flex;
@@ -87,12 +62,6 @@ ex-chat {
   margin-block: var(--space-4);
 }
 @media (max-width: 760px) {
-  .metadata {
-    display: none;
-  }
-  .session-bar {
-    gap: var(--space-2);
-  }
   .feedback {
     align-items: flex-start;
     flex-wrap: wrap;
