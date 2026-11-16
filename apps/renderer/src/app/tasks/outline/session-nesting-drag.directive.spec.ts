@@ -45,8 +45,38 @@ describe('task-owned nesting drag', () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain('Nest Docs under Plan');
     send('[data-session-id="2"] .select', 'drop');
     expect(fixture.componentInstance.moves).toEqual([{ sessionId: '3', parentSessionId: '1' }]);
-    expect(document.querySelector('ex-session-drag-preview')).toBeNull();
     expect(fixture.nativeElement.querySelector('.drop-active')).toBeNull();
+    // The ghost holds its slot, and the count includes it, until the confirmed row arrives.
+    expect(document.querySelector('ex-session-drag-preview.landing')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-session-root="1"] .child-count.pending')).not.toBeNull();
+    fixture.componentInstance.rows.set([{ ...root, childCount: 2 }, child, { ...leaf, parentId: '1' }]); fixture.detectChanges();
+    expect(document.querySelector('ex-session-drag-preview')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.child-count.pending')).toBeNull();
+  });
+  it('releases an unconfirmed landing after a bounded hold', () => {
+    vi.useFakeTimers();
+    try {
+      const { fixture, send } = setup();
+      send('[data-session-id="3"] .select', 'dragstart');
+      send('[data-session-id="1"] .select', 'dragover');
+      send('[data-session-id="1"] .select', 'drop');
+      expect(document.querySelector('ex-session-drag-preview')).not.toBeNull();
+      vi.advanceTimersByTime(1500); fixture.detectChanges();
+      expect(document.querySelector('ex-session-drag-preview')).toBeNull();
+      expect(fixture.nativeElement.querySelector('.drag-source')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+  it('recedes groups that cannot accept the dragged session and readies the header for a child', () => {
+    const { fixture, send } = setup();
+    send('[data-session-id="2"] .select', 'dragstart');
+    expect(fixture.nativeElement.querySelector('[data-session-root="1"]').classList.contains('unavailable')).toBe(true);
+    expect(fixture.nativeElement.querySelector('[data-session-root="3"]').classList.contains('unavailable')).toBe(false);
+    expect(fixture.nativeElement.querySelector('header').classList.contains('session-drop-ready')).toBe(true);
+    send('header', 'dragover');
+    expect(fixture.nativeElement.querySelector('.drag-source').classList.contains('outdent-preview')).toBe(true);
+    document.dispatchEvent(new Event('dragend')); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.unavailable, .outdent-preview')).toBeNull();
+    expect(fixture.nativeElement.querySelector('header').classList.contains('session-drop-ready')).toBe(false);
   });
   it('rejects self and populated sources, permits child drag-out on the header', () => {
     const { fixture, send } = setup();

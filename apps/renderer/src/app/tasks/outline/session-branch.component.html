@@ -1,15 +1,16 @@
-<div class="branch" [attr.data-session-root]="!session().parentId ? session().id : null" [class.drop-active]="dropActive()" [class.drag-source]="drag?.source()?.id === session().id">
+<div class="branch" [attr.data-session-root]="!session().parentId ? session().id : null" [class.drop-active]="dropActive()" [class.docked]="dropActive() && drag?.docked()"
+  [class.unavailable]="unavailable()" [class.drag-source]="moving()" [class.outdent-preview]="outdentPreview()">
   <div class="branch-row">
-    @if (childCount() || dropActive()) {
+    @if (childCount()) {
       <button class="disclosure" type="button" [attr.aria-label]="(expanded() ? 'Collapse children of ' : 'Expand children of ') + session().title"
         [attr.aria-expanded]="expanded()" (click)="toggle()" [exTooltip]="(session().childCount ?? children().length) + ' child sessions'">
-        <ex-icon [name]="dropActive() ? 'plus' : 'chevron-down'" [size]="12" [class.closed]="!dropActive() && !expanded()" />
+        <ex-icon name="chevron-down" [size]="12" [class.closed]="!expanded()" />
       </button>
     } @else { <span class="disclosure-space"></span> }
-    <ex-session-row [session]="session()" [selected]="selected() === session().id" [muted]="muted()"
+    <ex-session-row [session]="session()" [selected]="selected() === session().id" [muted]="muted()" [emphasis]="dropActive() || outdentPreview()" [receded]="unavailable() && !outdentPreview()"
       [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
-    @if (childCount() || dropActive()) {
-      <span class="child-count" [class.pending]="dropActive()" [attr.aria-label]="childCount() + ' child sessions'"><ex-ticker [value]="childCount() + (dropActive() ? 1 : 0)" /></span>
+    @if (childCount() || pending()) {
+      <span class="child-count" [class.pending]="pending()" [attr.aria-label]="childCount() + ' child sessions'"><ex-ticker [value]="childCount() + (pending() ? 1 : 0)" /></span>
     }
     @if (allowNesting() && !session().local) {
       <button class="move-menu" type="button" [attr.aria-label]="'Move ' + session().title" exTooltip="Move session" [cdkMenuTriggerFor]="moves"><ex-icon name="more" [size]="14" /></button>

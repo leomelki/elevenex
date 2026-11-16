@@ -1,7 +1,7 @@
 :host { display: block; min-width: 0; }
-.branch { position: relative; border-radius: var(--radius-sm); }
-.branch-row { display: flex; align-items: center; min-width: 0; }
-ex-session-row { flex: 1; min-width: 0; }
+.branch { position: relative; border-radius: var(--radius-md); transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+.branch-row { display: flex; align-items: center; min-width: 0; border-radius: var(--radius-sm); transition: opacity var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+ex-session-row { flex: 1; min-width: 0; transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
 .disclosure, .disclosure-space { flex: none; width: 16px; }
 .disclosure, .move-menu { display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs); color: var(--ink-muted); background: transparent; cursor: pointer; }
 .disclosure { height: 24px; }
@@ -11,13 +11,22 @@ ex-session-row { flex: 1; min-width: 0; }
 .branch-row:hover > .move-menu, .branch-row:focus-within > .move-menu, .move-menu[aria-expanded="true"] { opacity: 1; }
 .disclosure:hover, .move-menu:hover { color: var(--ink); background: var(--surface-sunken); }
 .disclosure:focus-visible, .move-menu:focus-visible, .children button:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
-.children { margin-left: var(--space-4); border-left: 1px solid var(--line); padding-left: var(--space-1); }
+.children { margin-left: var(--space-4); border-left: 1px solid var(--line); padding-left: var(--space-1); transition: border-color var(--dur-base) var(--ease-out); }
 .children p, .earlier { margin: 0; padding: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
 .children button { border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
 .children button:disabled { opacity: .5; cursor: default; }
-.drop-active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent); }
+/* Drop feedback. The whole group is the destination. */
+.drop-active { --drop-ring: color-mix(in oklab, var(--accent) 40%, transparent); background: color-mix(in oklab, var(--accent-soft) 75%, var(--surface)); box-shadow: inset 0 0 0 1px var(--drop-ring); }
+/* Docked: the group is the top of one outline that the drag preview's
+   extension completes below it, without moving any row. */
+.drop-active.docked { border-radius: var(--radius-md) var(--radius-md) 0 0; box-shadow: inset 1px 0 0 var(--drop-ring), inset -1px 0 0 var(--drop-ring), inset 0 1px 0 var(--drop-ring); }
 .drop-active > .branch-row > .disclosure { color: var(--accent); }
+.drop-active .children { border-left-color: var(--accent); }
 .drag-source > .branch-row { opacity: .4; }
-.child-count { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); }
-.child-count.pending { color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .disclosure ex-icon { transition: none; } }
+/* Held over the task header: the moved row previews task level in place. */
+.outdent-preview > .branch-row { opacity: 1; }
+.outdent-preview > .branch-row > ex-session-row { border-radius: var(--radius-sm); background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.unavailable > .branch-row > .child-count { opacity: .4; }
+.child-count { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+.child-count.pending { color: var(--on-accent); background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .disclosure ex-icon, .branch, .branch-row, ex-session-row, .children, .child-count { transition: none; } }

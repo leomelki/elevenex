@@ -1,15 +1,79 @@
-:host { --drag-fill: var(--surface-raised); display: block; width: 100%; min-width: 0; position: relative; height: 28px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink); box-shadow: var(--shadow-pop); pointer-events: none; }
-.fill { position: absolute; inset: 0; border-radius: inherit; background: var(--drag-fill); }
-.content { position: relative; display: flex; height: 100%; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); }
-.title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-ui-size); }
-ex-icon { display: none; }
-:host(.docked) { --drag-fill: var(--surface); border: 1px dashed var(--accent); box-shadow: none; color: var(--accent); }
-:host(.docked) ex-icon { display: block; }
-/* Begin the reveal on docking. The outline stays steady as the underlying row
-   becomes readable. This overlay never takes pointer input or layout space. */
-:host(.docked) .fill { animation: session-ghost-fill calc(var(--dur-base) * 11) var(--ease-in-out) infinite; }
-:host(.docked) .content { animation: session-ghost-content calc(var(--dur-base) * 11) var(--ease-in-out) infinite; }
-:host(.stacked)::before { content: ''; position: absolute; left: var(--space-1); right: var(--space-1); top: -4px; height: 2px; border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); border-radius: var(--radius-xs); }
-@keyframes session-ghost-fill { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
-@keyframes session-ghost-content { 0%, 100% { opacity: 1; } 50% { opacity: .1; } }
-@media (prefers-reduced-motion: reduce) { :host(.docked) .fill, :host(.docked) .content { animation: none; opacity: .6; } }
+/* The layer covers the viewport so its pieces use viewport coordinates. It
+   never takes pointer input or layout space; hit testing sees the rows below. */
+:host {
+  --dock-fill: color-mix(in oklab, var(--accent-soft) 75%, var(--surface));
+  --dock-ring: color-mix(in oklab, var(--accent) 40%, transparent);
+  --breath: calc(var(--dur-base) * 11);
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+:host(.hidden) { visibility: hidden; }
+:host(.leaving) { opacity: 0; }
+
+/* The hovered group extends downward: the group above draws the top half of
+   the same outline, so both read as one shape. */
+.extension {
+  position: absolute;
+  height: 34px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  box-shadow: inset 1px 0 0 var(--dock-ring), inset -1px 0 0 var(--dock-ring), inset 0 -1px 0 var(--dock-ring), 0 6px 12px -8px color-mix(in oklab, var(--ink) 25%, transparent);
+  transform-origin: top;
+  animation: session-dock-reach var(--dur-base) var(--ease-out) both;
+}
+.extension-fill { position: absolute; inset: 0; border-radius: inherit; background: var(--dock-fill); animation: session-dock-breathe-extension var(--breath) var(--ease-in-out) infinite; }
+/* The tree guide continues into the slot. */
+.extension::before { content: ''; position: absolute; z-index: 1; left: var(--space-4); top: 0; height: 30px; border-left: 1px dashed var(--accent); }
+/* Hidden children: a stacked edge says the slot comes after them. */
+.extension.collapsed::after { content: ''; position: absolute; z-index: 1; left: 26px; right: 10px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: color-mix(in oklab, var(--accent) 28%, transparent); }
+
+.chip {
+  --chip-fill: var(--surface-raised);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 200px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  opacity: .9;
+}
+.fill { position: absolute; inset: 0; border-radius: inherit; background: var(--chip-fill); }
+.content { position: relative; display: flex; height: 100%; align-items: center; gap: var(--space-2); padding: 0 var(--space-3) 0 var(--space-2); }
+.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+
+/* Docked: the session snaps into the slot as a breathing ghost, so the row it
+   covers shows through without anything moving. */
+.chip.docked, .chip.settling { transition: transform var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
+.chip.docked {
+  --chip-fill: color-mix(in oklab, var(--accent-soft) 70%, var(--surface-raised));
+  max-width: none;
+  outline: 1px dashed color-mix(in oklab, var(--accent) 70%, transparent);
+  outline-offset: -1px;
+  color: var(--accent);
+  box-shadow: var(--shadow-raised);
+  opacity: 1;
+}
+.chip.docked .fill { animation: session-dock-breathe-fill var(--breath) var(--ease-in-out) infinite; }
+.chip.docked .content { animation: session-dock-breathe-content var(--breath) var(--ease-in-out) infinite; }
+/* Committed: hold a steady ghost until the confirmed row replaces it. */
+:host(.landing) .chip .fill, :host(.landing) .chip .content { animation: none; }
+
+@keyframes session-dock-reach { from { transform: scaleY(0); opacity: 0; } }
+@keyframes session-dock-breathe-fill { 50% { opacity: .15; } }
+@keyframes session-dock-breathe-content { 50% { opacity: .1; } }
+@keyframes session-dock-breathe-extension { 50% { opacity: .25; } }
+
+/* Reduced motion: no reach, snap or breath; a steady translucent ghost still
+   lets the covered row show through. */
+@media (prefers-reduced-motion: reduce) {
+  :host, .chip.docked, .chip.settling { transition: none; }
+  .extension, .extension-fill, .chip.docked .fill, .chip.docked .content { animation: none; }
+  .extension, .chip.docked { opacity: .85; }
+}

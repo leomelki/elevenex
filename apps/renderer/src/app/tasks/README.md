@@ -19,7 +19,7 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
-`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative.
+`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
 
 | Component | Main inputs | Intent outputs |
 | --- | --- | --- |
@@ -286,13 +286,20 @@ current bounded child window with `childrenLoading`, `childrenError` and
 `sessionChildrenRequested({taskId, sessionId, earlier?})`.
 
 Drag a leaf anywhere over another root's visible group in the same task to nest
-it. The group tint, plus disclosure and preview count show the destination; a
-pointer-transparent dashed ghost docks at child depth without changing list
-geometry. It breathes immediately to reveal the covered row, which remains a
-valid target. Reduced motion uses a steady ghost. Collapsed groups stay collapsed
-while aiming and show a stacked edge; dropping opens the destination. Drag a
-child onto its task header to return it to task level without implying a sort
-position. Edge scrolling never inserts padding into the list.
+it (the Magnetic dock). The whole group is the destination: it takes an accent
+tint and outline, its title and tree guide turn accent, and its count fills with
+the pending total. The group's outline extends downward as a pointer-transparent
+overlay, and the dragged chip snaps from the pointer into that slot at child
+depth, so no row moves while aiming. The docked ghost breathes immediately to
+reveal the covered row, which remains a valid target. Groups that cannot accept
+the session recede. Reduced motion removes the reach, snap and breath and keeps a
+steady translucent ghost. Collapsed groups stay collapsed while aiming and show a
+stacked edge. On drop the ghost holds its slot (bounded to 1.5s) until the
+confirmed row arrives, then the row glides from the ghost into place and the
+destination opens. While a child is dragged its task header shows a quiet ready
+outline; holding it over the header lights the header and previews the moved row
+at task level in place, without implying a sort position. Edge scrolling never
+inserts padding into the list.
 
 The task-scoped `SessionNestingDragDirective` owns native transfer, overlay,
 announcements, edge scrolling and cancellation/cleanup. It keeps the existing
@@ -307,7 +314,8 @@ selects the parent; selected children reveal their group, and closed children ar
 inert. Existing caps count root groups. Filtering retains loaded matching children
 with their parent context. Menus offer at most 20 roots from the loaded window.
 
-`session-nesting-dock.mjs` checks stable geometry, both breathing phases, covered
-row targeting, append placement, header drag-out, composer mentions and reduced
+`session-nesting-dock.mjs` checks stable geometry, the joined group/extension and
+docked chip, both breathing phases, covered row targeting, receding groups,
+landing and append placement, header drag-out, composer mentions and reduced
 motion in both themes. `session-nesting.mjs` exercises the connected preview with native drops, keyboard
 moves, both themes and narrow reduced-motion layouts.

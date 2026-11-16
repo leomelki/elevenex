@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 
-/** Magnetic dock: no reflow during aim, whole-group hit testing and native transfer. */
+/** Magnetic dock: the group extends into a slot, the chip snaps in and breathes,
+ * no row reflows while aiming, the ghost holds until the confirmed row lands,
+ * and native transfer still reaches the composer. */
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
@@ -18,7 +20,9 @@ export default async function* (capture) {
     return {items,dragOperationsMask:17};
   };
   const at = selector => capture.evaluate(selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {x:r.x+r.width*.5,y:r.y+r.height*.5}; }, selector);
-  const over = async (selector, data) => { const point = await at(selector); await capture.cdp('Input.dispatchDragEvent',{type:'dragEnter',...point,data}); await capture.cdp('Input.dispatchDragEvent',{type:'dragOver',...point,data}); await capture.settle(); return point; };
+  // Wait for the snap/reach transitions; the infinite breath keeps running.
+  const snapped = () => capture.waitFor(() => [...(document.querySelector('ex-session-drag-preview')?.getAnimations({subtree:true}) ?? [])].every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
+  const over = async (selector, data) => { const point = await at(selector); await capture.cdp('Input.dispatchDragEvent',{type:'dragEnter',...point,data}); await capture.cdp('Input.dispatchDragEvent',{type:'dragOver',...point,data}); await capture.settle(); await snapped(); return point; };
   const cancel = async () => { await capture.evaluate(() => document.dispatchEvent(new window.DragEvent('dragend',{bubbles:true}))); await capture.settle(); assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-session-drag-preview')),false); };
   const geometry = () => capture.evaluate(() => [...document.querySelectorAll('[data-task-id="11"] [data-session-id]')].map(row => ({id:row.dataset.sessionId,y:row.getBoundingClientRect().y,height:row.getBoundingClientRect().height})));
   for (const theme of ['light','dark']) {
@@ -33,9 +37,11 @@ export default async function* (capture) {
     await over('[data-session-id="108"] .select',data);
     assert.equal(await capture.evaluate(()=>document.querySelector('.drop-active')?.dataset.sessionRoot),'101');
     assert.deepEqual(await geometry(),before);
+    assert.equal(await capture.evaluate(()=>!!document.querySelector('.drop-active.docked') && !!document.querySelector('ex-session-drag-preview .extension') && !!document.querySelector('ex-session-drag-preview .chip.docked')),true);
+    assert.equal(await capture.evaluate(()=>document.querySelector('.drop-active .child-count.pending')?.textContent.trim()),'3');
     for (const [name,time] of [['ghost',0],['revealed-row',1100]]) {
-      await capture.evaluate(time=>document.getAnimations().filter(animation=>animation.animationName?.includes('session-ghost-')).forEach(animation=>{animation.pause();animation.currentTime=time;}),time);
-      yield {name:`${theme}-${name}`,inspect:['.drop-active','ex-session-drag-preview']};
+      await capture.evaluate(time=>document.getAnimations().filter(animation=>animation.animationName?.includes('session-dock-breathe')).forEach(animation=>{animation.pause();animation.currentTime=time;}),time);
+      yield {name:`${theme}-${name}`,inspect:['.drop-active','ex-session-drag-preview .extension','ex-session-drag-preview .chip']};
     }
     // The overlay is pointer-transparent: the covered root can be targeted.
     await over('[data-session-id="102"] .select',data);
@@ -45,13 +51,18 @@ export default async function* (capture) {
     const point = await over('[data-session-id="108"] .select',data);
     await capture.cdp('Input.dispatchDragEvent',{type:'drop',...point,data});
     await capture.waitFor(()=>document.querySelector('.children [data-session-id="106"]'));
+    // The landing ghost is released once the confirmed row is in place.
+    await capture.waitFor(()=>!document.querySelector('ex-session-drag-preview'));
     await finish();
     assert.deepEqual(await capture.evaluate(()=>[...document.querySelectorAll('[data-session-root="101"] .children [data-session-id]')].map(row=>row.dataset.sessionId)),['107','108','106']);
     yield {name:`${theme}-appended-older-session`,inspect:['.children']};
     const out = await start('106');
+    // A child's own group cannot take it back; the header offers task level.
+    assert.equal(await capture.evaluate(()=>document.querySelector('[data-session-root="101"]').classList.contains('unavailable') && !!document.querySelector('header.session-drop-ready')),true);
+    yield {name:`${theme}-drag-child`,inspect:['.unavailable','header.session-drop-ready']};
     const outPoint = await over('[data-task-id="11"] header',out);
-    assert.equal(await capture.evaluate(()=>!!document.querySelector('.session-drop-root')),true);
-    yield {name:`${theme}-drag-out`,inspect:['.session-drop-root']};
+    assert.equal(await capture.evaluate(()=>!!document.querySelector('.session-drop-root') && !!document.querySelector('.outdent-preview')),true);
+    yield {name:`${theme}-drag-out`,inspect:['.session-drop-root','.outdent-preview','ex-session-drag-preview .chip']};
     await capture.cdp('Input.dispatchDragEvent',{type:'drop',...outPoint,data:out});
     await capture.waitFor(()=>document.querySelector('[data-session-root="106"]'));
     await finish();

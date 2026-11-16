@@ -30,6 +30,18 @@ export class SessionBranchComponent {
   protected readonly expanded = linkedSignal<{ id: string; selected: boolean }, boolean>({ source: () => ({ id: this.session().id, selected: this.containsSelection() || this.drag?.droppedParent() === this.session().id }), computation: (value, previous) => value.selected || (previous?.source.id === value.id && previous.value) || false });
   protected readonly targets = computed(() => this.sessions().filter(row => !row.parentId && !row.local && row.id !== this.session().id).slice(0, 20));
   protected readonly dropActive = computed(() => this.drag?.target()?.id === this.session().id);
+  /** The count includes a session that is docked here or landing here. */
+  protected readonly pending = computed(() => this.dropActive() || this.drag?.landing()?.parentId === this.session().id);
+  protected readonly moving = computed(() => this.drag?.movingId() === this.session().id);
+  /** Held over the task header, the moved row previews task level in place. */
+  protected readonly outdentPreview = computed(() => this.moving() && !!this.drag?.toTaskLevel());
+  /** While aiming, groups that cannot accept the dragged session recede. */
+  protected readonly unavailable = computed(() => {
+    const drag = this.drag, session = this.session();
+    if (!drag?.source()) return false;
+    const root = session.parentId ? this.sessions().find(row => row.id === session.parentId) : session;
+    return !!root && !drag.accepts(root);
+  });
   protected readonly childCount = computed(() => this.session().childCount ?? this.children().length);
   protected toggle(): void {
     this.expanded.update(value => !value);
