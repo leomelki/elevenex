@@ -98,9 +98,11 @@ export function readRepositoryIdentity(
     retain(identities, key, cached);
     return cached.promise;
   }
-  const pending = git
-    .raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'])
-    .then(async (output) => {
+  const pending = Promise.all([
+    git.raw(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir']),
+    realpath(key),
+  ])
+    .then(async ([output, physicalPath]) => {
       // Git may return absolute or cwd-relative paths. Normalize here because
       // older Git echoes --path-format=absolute as an extra output line.
       const directories = output.replace(/\r?\n$/, '').split(/\r?\n/);
@@ -109,7 +111,7 @@ export function readRepositoryIdentity(
       // Canonicalize aliases too: macOS /var and /private/var (or a user
       // symlink) must share the same repository concurrency/cache identity.
       const [repoRoot, gitDir, commonDir] = await Promise.all(
-        directories.map((directory) => realpath(path.resolve(key, directory))),
+        directories.map((directory) => realpath(path.resolve(physicalPath, directory))),
       );
       const identity = { repoRoot, gitDir, commonDir };
       if (identities.get(key) === entry) {

@@ -18,8 +18,10 @@ import {
 import { listWorkspaceFolders } from './desktop-workspace-folders.js';
 
 jest.mock('node:os', () => ({
-  ...jest.requireActual('node:os'),
-  homedir: jest.fn(),
+  ...jest.requireActual<typeof import('node:os')>('node:os'),
+  homedir: jest.fn(
+    jest.requireActual<typeof import('node:os')>('node:os').homedir,
+  ),
 }));
 
 describe('Desktop project repository setup', () => {

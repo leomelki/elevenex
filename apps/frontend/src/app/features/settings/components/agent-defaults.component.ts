@@ -27,11 +27,7 @@ import { ZardInputDirective } from '@/shared/components/input';
 import { OptionSelectComponent, OptionSelectItem } from '@/shared/components/option-select';
 import { PresetOptionsBadges } from './preset-options-badges.component';
 import { ZardCheckboxComponent } from '@/shared/components/checkbox';
-import {
-  AGENT_DEFAULT_OPTION,
-  toModelOption,
-  withPinnedModel,
-} from '@/shared/models/agent-model-options';
+import { AGENT_DEFAULT_OPTION, agentModelOptions } from '@/shared/models/agent-model-options';
 import { AgentModelPreset, DefaultAgentProvider } from '@/shared/models/app-settings.model';
 
 /**
@@ -125,10 +121,13 @@ export class AgentDefaults {
       this.presetEffortOptions().find((option) => option.value === this.presetEffort())
         ?.description ?? 'Let the agent choose how much to think.',
   );
+  readonly presetModelsReady = computed(
+    () => this.presetProvider() !== 'codex' || !!this.presetCatalog()?.models.length,
+  );
   readonly selectedModelLabel = computed(
     () =>
       this.presetModelOptions().find((option) => option.value === this.presetModel())?.label ??
-      'Agent default',
+      (this.presetModelsReady() ? 'Agent default' : 'Codex models unavailable'),
   );
   readonly defaultUsage = computed(() =>
     this.presetUseForNewSessions() ? 'sessions' : this.presetIsDefault() ? 'agent' : 'manual',
@@ -161,21 +160,16 @@ export class AgentDefaults {
   );
   readonly presetCanChooseEffort = computed(
     () =>
+      this.presetModelsReady() &&
       this.presetCatalog()?.models.find(
         (item) => item.id === (this.presetModel() || this.presetCatalog()?.providerDefaultModelId),
       )?.supportsEffort !== false,
   );
-  readonly presetModelOptions = computed<OptionSelectItem[]>(() => {
-    const catalog = this.presetCatalog();
-    if (!catalog) return [AGENT_DEFAULT_OPTION];
-    return [
-      AGENT_DEFAULT_OPTION,
-      ...withPinnedModel(catalog.models, this.presetModel()).map((model) =>
-        toModelOption(model, catalog),
-      ),
-    ];
-  });
+  readonly presetModelOptions = computed<OptionSelectItem[]>(() =>
+    agentModelOptions(this.presetCatalog() ?? null, this.presetModel(), this.presetProvider()),
+  );
   readonly presetEffortOptions = computed<OptionSelectItem[]>(() => {
+    if (!this.presetModelsReady()) return [];
     const catalog = this.presetCatalog();
     const model = catalog?.models.find(
       (item) => item.id === (this.presetModel() || catalog.providerDefaultModelId),
@@ -253,7 +247,12 @@ export class AgentDefaults {
 
   savePreset(): void {
     const name = this.presetName().trim() || this.suggestedName();
-    if (this.appSettings.saving() || (!this.editingPresetId() && !this.canAddPreset())) return;
+    if (
+      !this.presetModelsReady() ||
+      this.appSettings.saving() ||
+      (!this.editingPresetId() && !this.canAddPreset())
+    )
+      return;
     const id = this.editingPresetId() ?? crypto.randomUUID();
     const preset: AgentModelPreset = {
       id,

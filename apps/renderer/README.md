@@ -14,7 +14,8 @@ pnpm desktop:preview
 
 Open `http://127.0.0.1:4310`. The workspace preview composes real components;
 Foundations, Tasks, Projects, Settings, Sub-tasks, Git helpers, Conversation, Agent picker, Machines and views, and Machine flow exercise their public
-APIs. Example data lives only in `preview/`, under a separate Angular build
+APIs. `/task-browser` exercises the production browser's default/new-tab flow
+with a preview-only transport. Example data lives only in `preview/`, under a separate Angular build
 configuration. It is absent from the production entry graph and packaged app.
 
 The **Sidebar motion** and **Git motion** pages exercise repeated/bulk changes
@@ -118,7 +119,8 @@ candidate mounts, behind inert Home, before launch; its first render crosses a
 paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
 legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
-selected agent reply; Code hosts the genuine task-confined web workbench; Terminal provides real task-owned shells and scripts. Actions retains its frame, and Browser accepts the terminal service handoff. See [Code ownership and recovery](src/app/code/README.md). Expansion
+selected agent reply; Browser composes the [production task browser](src/app/task-browser/README.md);
+Code hosts the [task-confined web workbench](src/app/code/README.md); Terminal provides real task-owned shells and scripts. Actions retains its frame. See [terminal ownership and recovery](src/app/task-terminal/README.md). Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.
@@ -134,6 +136,9 @@ preview-only backend adapter. Its fixture never enters the production build.
   releases clipping after settling, and makes closed descendants inert.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
+  Width-driven wrapping follows the panel/window resize directly and cancels
+  competing height motion. The observer's delivered sizes establish the new
+  baseline; subsequent content growth at that width still animates.
 - `FlipDirective` captures painted positions before keyed children update and
   animates only elements in its own `data-flip-scope`. Nested session scopes do
   not get transformed twice. Sidebar scopes use reordering only: Fold already

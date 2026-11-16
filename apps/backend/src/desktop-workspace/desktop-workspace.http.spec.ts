@@ -127,6 +127,26 @@ describe('desktop workspace HTTP resource slice', () => {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
 
+  it('keeps revision reads compatible and wakes waiting HTTP clients without periodic polling', async () => {
+    const initial = object(await (await request('/revision')).json());
+    expect(initial.revisionWait).toBe(true);
+    expect(initial.sessionNesting).toBe(true);
+    expect(initial.sessionNestingOrder).toBe(true);
+    const navigation = app.get(NavigationEventsService);
+    const entered = new Promise<void>(resolve => {
+      const wait = navigation.wait.bind(navigation);
+      jest.spyOn(navigation, 'wait').mockImplementationOnce((after, signal) => { resolve(); return wait(after, signal); });
+    });
+    const pending = request(`/revision?after=${initial.revision}`);
+    await entered; navigation.invalidate();
+    const next = object(await (await pending).json());
+    expect(next.revision).toBe(Number(initial.revision) + 1);
+    expect((await request('/revision?after=-1')).status).toBe(400);
+    expect((await request('/revision?after=9007199254740992')).status).toBe(400);
+    // A revision change before registration must also return immediately.
+    expect(object(await (await request(`/revision?after=${initial.revision}`)).json()).revision).toBe(next.revision);
+  });
+
   it('checks names across active, archived and hidden projects without loading project pages', async () => {
     await database.db.insert(schema.projects).values([
       { name: 'Taken name & repo' },

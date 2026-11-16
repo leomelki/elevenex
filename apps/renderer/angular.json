@@ -25,6 +25,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "tokens.css",
+                "input": "src/design-system",
+                "output": "design-system"
               }
             ],
             "styles": [

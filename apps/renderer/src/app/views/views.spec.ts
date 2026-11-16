@@ -156,6 +156,19 @@ describe('Side-view interactions', () => {
     expect(portOpened).not.toHaveBeenCalled();
   });
 
+  it('preserves an unfinished address during page updates and navigates only on explicit Enter', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page', url: 'https://example.com/' }]);
+    fixture.componentRef.setInput('addressEditable', true); fixture.detectChanges();
+    const navigate = vi.fn(); fixture.componentInstance.navigated.subscribe(navigate);
+    const input = fixture.nativeElement.querySelector('.address input') as HTMLInputElement;
+    input.value = 'https://example.com/next'; input.dispatchEvent(new Event('input', { bubbles: true })); fixture.detectChanges();
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page', url: 'https://example.com/background' }]); fixture.detectChanges();
+    expect(input.value).toBe('https://example.com/next'); expect(navigate).not.toHaveBeenCalled();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); fixture.detectChanges();
+    expect(navigate).toHaveBeenCalledWith('https://example.com/next');
+  });
+
   it('keeps browser handoff feedback and actions together for the selected server', async () => {
     const fixture = TestBed.createComponent(TerminalViewComponent);
     const server = { id: 'web', title: 'Web', status: 'serving' as const, port: 8080 };
@@ -212,19 +225,87 @@ describe('Side-view interactions', () => {
     expect(root.textContent).not.toContain('http://127.0.0.1:24766/');
   });
 
-  it('requests immediate takeover for page input only while the agent drives', () => {
+  it('does not turn page input or page focus into an explicit agent block', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
     fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('streaming', true);
     fixture.detectChanges();
     const takeover = vi.fn();
     fixture.componentInstance.takeOverRequested.subscribe(takeover);
     const preview = fixture.nativeElement.querySelector('.preview') as HTMLElement;
+    preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(takeover).not.toHaveBeenCalled();
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-    expect(takeover).toHaveBeenCalledTimes(1);
+    preview.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    fixture.nativeElement.querySelector('.driver').click();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
+    expect(takeover).not.toHaveBeenCalled();
     fixture.componentRef.setInput('driver', 'you');
     fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
+    fixture.componentRef.setInput('driver', 'needs'); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.driver').textContent.trim()).toBe('Streaming');
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-    expect(takeover).toHaveBeenCalledTimes(1);
+    expect(takeover).not.toHaveBeenCalled();
+  });
+  it('always exposes Stop while an agent controls a tab, including without step metadata', async () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
+    fixture.componentRef.setInput('driver', 'agent');
+    const stopped = vi.fn(), resumed = vi.fn();
+    fixture.componentInstance.takeOverRequested.subscribe(stopped);
+    fixture.componentInstance.handBackRequested.subscribe(resumed);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const stop = fixture.nativeElement.querySelector('[aria-label="Block browser agent"]') as HTMLButtonElement;
+    expect(stop.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
+    stop.focus(); stop.click();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput('driver', 'you');
+    fixture.componentRef.setInput('agentWaiting', true);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const handBack = fixture.nativeElement.querySelector('[aria-label="Allow browser agent"]') as HTMLButtonElement;
+    expect(document.activeElement).toBe(handBack);
+    handBack.click();
+    expect(resumed).toHaveBeenCalledTimes(1);
+  });
+  it('retains one cursor while it moves, displays honest step status and hides decoration on takeover', async () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
+    fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('step', { n: 1, total: 3, text: 'Find Save', status: 'running' });
+    fixture.componentRef.setInput('cursor', { x: 20, y: 30, pulse: 0 });
+    fixture.detectChanges(); await fixture.whenStable();
+    const cursor = fixture.nativeElement.querySelector('.agent-cursor') as HTMLElement;
+    expect(cursor.style.transform).toBe('translate(20px, 30px)');
+    fixture.componentRef.setInput('cursor', { x: 120, y: 130, pulse: 1 });
+    fixture.componentRef.setInput('step', { n: 2, total: 3, text: 'Waiting for results', status: 'waiting' });
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('.agent-cursor')).toBe(cursor);
+    expect(cursor.style.transform).toBe('translate(120px, 130px)');
+    expect(cursor.querySelectorAll('.cursor-pulse')).toHaveLength(1);
+    expect(fixture.nativeElement.querySelector('.step-status').textContent).toBe('Waiting');
+    fixture.componentRef.setInput('step', { n: 3, total: 3, text: 'Saved and verified', status: 'done' });
+    fixture.componentRef.setInput('cursor', undefined);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('.step-status').textContent).toBe('Done');
+    expect(fixture.nativeElement.querySelectorAll('.step-dots .done')).toHaveLength(3);
+    fixture.componentRef.setInput('driver', 'you'); fixture.componentRef.setInput('agentWaiting', true);
+    fixture.detectChanges(); await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector('.agent-cursor')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.step-copy').textContent).toContain('Agent blocked');
+  });
+
+  it('keeps a partly scrolled target in page viewport coordinates', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Page' }]);
+    fixture.componentRef.setInput('picked', { x: -10, y: -20, w: 100, h: 60, label: 'Partly visible element' });
+    fixture.detectChanges();
+    const ring = fixture.nativeElement.querySelector('.target') as HTMLElement;
+    expect(ring.style.transform).toBe('translate(-14px, -24px)');
+    expect(ring.style.width).toBe('108px'); expect(ring.style.height).toBe('68px');
   });
 
   it('clears page chrome and questions when the last browser tab closes', () => {
@@ -266,6 +347,105 @@ describe('Side-view interactions', () => {
     expect(picking).toHaveBeenCalledWith(false);
   });
 
+  it('acknowledges a pick immediately and catches Escape before streamed input consumes it', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('picking', true);
+    fixture.componentRef.setInput('hovered', { x: 10, y: 40, w: 120, h: 20, label: 'button' });
+    fixture.componentRef.setInput('pickerReady', false);
+    fixture.detectChanges();
+    const preview = fixture.nativeElement.querySelector('.preview') as HTMLElement;
+    expect(fixture.nativeElement.querySelector('.pointing-hint')?.textContent).toContain('Preparing point mode');
+    preview.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.target.hover.picked')).toBeNull();
+    fixture.componentRef.setInput('pickerReady', true); fixture.detectChanges();
+    preview.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.target.hover.picked')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.pointing-hint')?.textContent).toContain('Adding element');
+    fixture.componentRef.setInput('capturePending', true); fixture.detectChanges();
+    preview.addEventListener('keydown', event => event.stopPropagation());
+    const cancel = vi.fn(); fixture.componentInstance.pickingChange.subscribe(cancel);
+    preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(cancel).toHaveBeenCalledWith(false);
+    fixture.componentRef.setInput('picking', false); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.pointing-hint')).toBeNull();
+  });
+
+  it('shows where to point, follows the hovered element and cancels picking with Escape', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('driver', 'agent');
+    fixture.componentRef.setInput('action', { x: 20, y: 80, w: 100, h: 30, label: 'Pay' });
+    fixture.componentRef.setInput('picking', true);
+    fixture.componentRef.setInput('hovered', { x: 10, y: 40, w: 120, h: 20, label: 'h3.title', file: 'CheckoutForm.tsx:41' });
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('[role="status"].pointing-hint')?.textContent).toContain('Click an element to ask about it');
+    // Picking replaces the agent's frame, cursor and target with your own ring.
+    expect(root.querySelector('.driving-frame, .agent-cursor')).toBeNull();
+    expect(root.querySelectorAll('.target')).toHaveLength(1);
+    expect(root.querySelector('.target.hover')?.textContent).toContain('h3.title');
+    expect(root.querySelector('[aria-label="Point and ask (⇧⌘C)"]')?.getAttribute('aria-pressed')).toBe('true');
+    const picking = vi.fn();
+    fixture.componentInstance.pickingChange.subscribe(picking);
+    root.querySelector('.preview')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(picking).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps point and ask active while asking, offers another pick and toggles it off', () => {
+    const fixture = TestBed.createComponent(BrowserViewComponent);
+    fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+    fixture.componentRef.setInput('picked', { x: 10, y: 20, w: 100, h: 30, label: 'button.pay', file: 'CheckoutForm.tsx:88' });
+    fixture.componentRef.setInput('askNote', 'Sends the source line');
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('.pointing-hint')).toBeNull();
+    expect(root.querySelector('.question .target-name b')?.textContent).toBe('button.pay');
+    expect(root.querySelector('.question .target-name small')?.textContent).toBe('CheckoutForm.tsx:88');
+    expect(root.querySelector('.question .note')?.textContent).toBe('Sends the source line');
+    const picking = vi.fn();
+    fixture.componentInstance.pickingChange.subscribe(picking);
+    root.querySelector<HTMLButtonElement>('[aria-label="Pick another element"]')!.click();
+    expect(picking).toHaveBeenLastCalledWith(true);
+    const toggle = root.querySelector<HTMLButtonElement>('[aria-label="Point and ask (⇧⌘C)"]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    expect(picking).toHaveBeenLastCalledWith(false);
+  });
+
+  it('places the question beside its element when there is room, otherwise docks it away from the element', () => {
+    // jsdom has no layout: supply the page and card sizes the card measures.
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(() => pageWidth);
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(300);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(100);
+    let pageWidth = 440;
+    try {
+      const fixture = TestBed.createComponent(BrowserViewComponent);
+      fixture.componentRef.setInput('tabs', [{ id: 'one', title: 'Checkout', url: 'localhost' }]);
+      fixture.componentRef.setInput('picked', { x: 300, y: 20, w: 100, h: 30, label: 'button.pay' });
+      fixture.detectChanges();
+      const card = () => fixture.nativeElement.querySelector('.question') as HTMLElement;
+      // Under the ring, clamped inside the page's right edge.
+      expect(card().dataset['side']).toBe('below');
+      expect(card().style.top).toBe('62px'); expect(card().style.left).toBe('128px');
+      fixture.componentRef.setInput('picked', { x: 20, y: 400, w: 100, h: 40, label: 'button.pay' });
+      fixture.detectChanges();
+      expect(card().dataset['side']).toBe('above');
+      expect(card().style.top).toBe('388px'); expect(card().style.left).toBe('16px');
+      // A new pick measures again: a narrow page docks it at the visible foot.
+      fixture.componentRef.setInput('picked', undefined);
+      fixture.detectChanges();
+      pageWidth = 360;
+      fixture.componentRef.setInput('picked', { x: 20, y: 30, w: 100, h: 40, label: 'button.pay' });
+      fixture.detectChanges();
+      expect(card().dataset['side']).toBe('bottom');
+      expect(card().style.top).toBe('488px'); expect(card().style.left).toBe('12px');
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it('shows bounded workflow progress and the active agent tab, then clears driving UI on takeover', () => {
     const fixture = TestBed.createComponent(BrowserViewComponent);
     fixture.componentRef.setInput('tabs', [{ id: 'checkout', title: 'Checkout', by: 'agent' }, { id: 'docs', title: 'Docs', by: 'agent' }]);
@@ -283,12 +463,17 @@ describe('Side-view interactions', () => {
     expect(root.querySelector('[data-tab-id="checkout"] .driving')).not.toBeNull();
     expect(root.querySelector('.agent-cursor')).not.toBeNull();
     expect(root.querySelector('.driving-frame')).not.toBeNull();
+    const workflow = root.querySelector('.agent-step');
+    const sendErrors = vi.fn(); fixture.componentInstance.sendErrorsRequested.subscribe(sendErrors);
+    root.querySelector<HTMLButtonElement>('[aria-label="Send 2 error counts to agent"]')!.click();
+    expect(sendErrors).toHaveBeenCalledOnce();
     expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
     fixture.componentRef.setInput('driver', 'you');
     fixture.detectChanges();
     expect(root.querySelector('.agent-cursor, .driving-frame, .agent.driving')).toBeNull();
-    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(false);
-    expect(root.textContent).toContain('You’re driving; the agent waits');
+    expect(root.querySelector('.errors')?.closest('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(root.textContent).toContain('Agent blocked');
+    expect(root.querySelector('.agent-step')).toBe(workflow);
     fixture.componentRef.setInput('step', { n: 1, total: Infinity, text: 'Invalid total' });
     fixture.detectChanges();
     expect(root.querySelectorAll('.step-dots i')).toHaveLength(0);

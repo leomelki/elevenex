@@ -12,6 +12,9 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
+import { RuntimeBrowserController } from './desktop-browser/runtime-browser.controller.js';
+import { RuntimeBrowserStream } from './desktop-browser/runtime-stream.js';
+
 import { TerminalGateway } from './terminal/terminal.gateway.js';
 import { UserTerminalGateway } from './user-terminal/user-terminal.gateway.js';
 import { ActionsGateway } from './actions/actions.gateway.js';
@@ -71,6 +74,8 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
+  // The application, rather than a browser library, owns child-process shutdown.
+  app.enableShutdownHooks(['SIGINT', 'SIGTERM']);
   app.setGlobalPrefix('api');
 
   // A user-requested restart (Settings → Backend) exits with a code the
@@ -231,6 +236,8 @@ async function bootstrap() {
   // MaxListenersExceededWarning on stderr that ends up masking real errors.
   httpServer.setMaxListeners(0);
 
+  app.get(RuntimeBrowserStream).attachToServer(httpServer, app.get(RuntimeBrowserController));
+
   const terminalGateway = app.get(TerminalGateway);
   terminalGateway.attachToServer(httpServer);
 
@@ -270,7 +277,7 @@ async function bootstrap() {
 
   // Publish a harness-reachable MCP endpoint before module initialization can
   // bootstrap missions. Socket-only desktop transport has no public TCP API.
-  await app.get(McpAgentEndpointService).start();
+  await app.get(McpAgentEndpointService).prepare();
   await app.init();
 
   const edgeProxyServer = createEdgeProxyServer({

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { isMissingWorktreePath } from './worktree-path.js';
 import { releaseGitWorktreeCaches } from '../git/git-worktree-cache-lifecycle.js';
+import { readGitCapabilities } from '../config/git-capabilities.js';
 
 export interface BranchLastCommit {
   hash: string;
@@ -55,8 +56,14 @@ export class WorktreesService {
       }
     }
 
-    const output = await git.raw(['worktree', 'list', '--porcelain']);
-    const worktrees = this.parsePorcelainOutput(output);
+    const { worktreeListNull } = await readGitCapabilities(repoPath);
+    const output = await git.raw([
+      'worktree',
+      'list',
+      '--porcelain',
+      ...(worktreeListNull ? ['-z'] : []),
+    ]);
+    const worktrees = this.parsePorcelainOutput(output, worktreeListNull);
     // Git retains registrations for manually deleted directories until prune.
     const missing = await Promise.all(
       worktrees.map((worktree) => isMissingWorktreePath(worktree.path)),
@@ -174,8 +181,14 @@ export class WorktreesService {
     }
   }
 
-  async localBranchExists(repoPath: string, branchName: string): Promise<boolean> {
-    return this.localBranchExistsWithGit(worktreeSimpleGit(repoPath), branchName);
+  async localBranchExists(
+    repoPath: string,
+    branchName: string,
+  ): Promise<boolean> {
+    return this.localBranchExistsWithGit(
+      worktreeSimpleGit(repoPath),
+      branchName,
+    );
   }
 
   /**
@@ -190,16 +203,25 @@ export class WorktreesService {
         await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD'])
       ).trim();
       // out is e.g. "refs/remotes/origin/main" → strip "refs/remotes/"
-      return out.startsWith('refs/remotes/') ? out.slice('refs/remotes/'.length) : out || null;
+      return out.startsWith('refs/remotes/')
+        ? out.slice('refs/remotes/'.length)
+        : out || null;
     } catch {
       return null;
     }
   }
 
-  async remoteBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+  async remoteBranchExists(
+    repoPath: string,
+    branchName: string,
+  ): Promise<boolean> {
     const git = worktreeSimpleGit(repoPath);
     try {
-      const out = await git.raw(['show-ref', '--verify', `refs/remotes/origin/${branchName}`]);
+      const out = await git.raw([
+        'show-ref',
+        '--verify',
+        `refs/remotes/origin/${branchName}`,
+      ]);
       return out.trim().length > 0;
     } catch {
       return false;
@@ -212,7 +234,11 @@ export class WorktreesService {
    * refspec `branchName:branchName` so git creates a local tracking branch.
    * When false, fetches just the remote tracking ref.
    */
-  async fetchBranch(repoPath: string, branchName: string, createLocal: boolean): Promise<void> {
+  async fetchBranch(
+    repoPath: string,
+    branchName: string,
+    createLocal: boolean,
+  ): Promise<void> {
     const git = worktreeSimpleGit(repoPath);
     try {
       if (createLocal) {
@@ -222,7 +248,9 @@ export class WorktreesService {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Failed to fetch branch from origin: ${message}`);
+      throw new BadRequestException(
+        `Failed to fetch branch from origin: ${message}`,
+      );
     }
   }
 
@@ -266,7 +294,10 @@ export class WorktreesService {
    * Return ahead/behind counts vs origin and the tip commit for a local branch.
    * Does not require the branch to be checked out in a worktree.
    */
-  async getBranchSnapshot(repoPath: string, branchName: string): Promise<BranchSnapshot> {
+  async getBranchSnapshot(
+    repoPath: string,
+    branchName: string,
+  ): Promise<BranchSnapshot> {
     const git = worktreeSimpleGit(repoPath);
 
     let headSha: string | null = null;
@@ -286,7 +317,9 @@ export class WorktreesService {
           };
         }
       }
-    } catch { /* branch tip unresolvable */ }
+    } catch {
+      /* branch tip unresolvable */
+    }
 
     const remoteRef = `origin/${branchName}`;
     let ahead = 0;
@@ -296,12 +329,19 @@ export class WorktreesService {
       await git.raw(['rev-parse', '--verify', `refs/remotes/${remoteRef}`]);
       remoteExists = true;
       const counts = (
-        await git.raw(['rev-list', '--left-right', '--count', `${branchName}...${remoteRef}`])
+        await git.raw([
+          'rev-list',
+          '--left-right',
+          '--count',
+          `${branchName}...${remoteRef}`,
+        ])
       ).trim();
       const [aheadStr, behindStr] = counts.split(/\s+/);
       ahead = Number(aheadStr) || 0;
       behind = Number(behindStr) || 0;
-    } catch { /* remote ref unavailable */ }
+    } catch {
+      /* remote ref unavailable */
+    }
 
     return { ahead, behind, headSha, lastCommit, remoteExists };
   }
@@ -315,21 +355,29 @@ export class WorktreesService {
       // exists and exits non-zero (which simple-git throws on) otherwise. We
       // avoid `--quiet`: it suppresses output AND the error exit, so simple-git
       // would resolve with an empty string and we could not tell the two apart.
-      const out = await git.raw(['show-ref', '--verify', `refs/heads/${branchName}`]);
+      const out = await git.raw([
+        'show-ref',
+        '--verify',
+        `refs/heads/${branchName}`,
+      ]);
       return out.trim().length > 0;
     } catch {
       return false;
     }
   }
 
-  private parsePorcelainOutput(output: string): WorktreeInfo[] {
+  private parsePorcelainOutput(
+    output: string,
+    nulDelimited = false,
+  ): WorktreeInfo[] {
     const worktrees: WorktreeInfo[] = [];
-    const blocks = output.split('\n\n');
+    const separator = nulDelimited ? '\0' : '\n';
+    const blocks = output.split(separator + separator);
 
     for (const block of blocks) {
       if (!block.trim()) continue;
 
-      const lines = block.split('\n');
+      const lines = block.split(separator);
       const worktree: Partial<WorktreeInfo> = {
         isDetached: false,
         isBare: false,

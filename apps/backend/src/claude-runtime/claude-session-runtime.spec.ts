@@ -40,6 +40,9 @@ function createMockQuery() {
     stopTask: jest.fn().mockResolvedValue(undefined),
     backgroundTasks: jest.fn().mockResolvedValue(true),
     supportedModels: jest.fn().mockResolvedValue([]),
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: jest
+      .fn()
+      .mockResolvedValue({ rate_limits_available: false }),
     getContextUsage: jest.fn().mockResolvedValue({
       model: 'sonnet',
       totalTokens: 0,
@@ -135,6 +138,114 @@ async function waitForQuery(queries: MockQuery[], count = 1): Promise<void> {
 describe('ClaudeSessionRuntime', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('reads native usage without transcript scanning or starting a cold runtime', async () => {
+    const { runtime, queries } = createRuntime();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(queries).toHaveLength(0);
+    await runtime.ensureStarted('prewarm');
+    const read =
+      queries[0].usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    expect(await runtime.getUsage()).toEqual({ rate_limits_available: false });
+    expect(read).toHaveBeenCalledWith({ skipBehaviors: true });
+    await runtime.close();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves usage unavailable when the installed SDK lacks the optional operation', async () => {
+    const { runtime, queries } = createRuntime();
+    await runtime.ensureStarted('prewarm');
+    Reflect.deleteProperty(
+      queries[0],
+      'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET',
+    );
+    expect(await runtime.getUsage()).toBeUndefined();
+    await runtime.close();
+  });
+
+  describe('idle shutdown', () => {
+    const POST_TURN_IDLE_MS = 300_000;
+    const input = {
+      type: 'user',
+      message: { role: 'user', content: 'Start a background task' },
+      parent_tool_use_id: null,
+      session_id: '',
+    } as any;
+    const sessionState = (state: string) => ({
+      type: 'system',
+      subtype: 'session_state_changed',
+      state,
+    });
+
+    beforeEach(() => {
+      // The helpers flush the message pump with setImmediate.
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    async function finishSubmittedTurn() {
+      const harness = createRuntime();
+      const turn = harness.runtime.submitTurn(input);
+      await waitForQuery(harness.queries);
+      harness.queries[0].emit({ type: 'result', subtype: 'success' });
+      await turn;
+      return harness;
+    }
+
+    // Regression: a background task's completion notification starts a turn
+    // inside the CLI. Nothing was submitted, so the runtime looked idle and the
+    // post-turn timer closed it mid-turn, before the model said anything.
+    it('stays open while the CLI runs a turn it started itself', async () => {
+      const { runtime, queries, closed } = await finishSubmittedTurn();
+
+      queries[0].emit(sessionState('running'));
+      await flushAsync();
+      expect(runtime.isIdle).toBe(false);
+
+      jest.advanceTimersByTime(POST_TURN_IDLE_MS);
+      await flushAsync();
+      expect(queries[0].close).not.toHaveBeenCalled();
+
+      // The countdown restarts when the CLI reports the turn over.
+      queries[0].emit(sessionState('idle'));
+      await flushAsync();
+      expect(runtime.isIdle).toBe(true);
+      jest.advanceTimersByTime(POST_TURN_IDLE_MS - 1);
+      await flushAsync();
+      expect(queries[0].close).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1);
+      await flushAsync();
+      expect(queries[0].close).toHaveBeenCalledTimes(1);
+      expect(closed).toHaveLength(1);
+    });
+
+    it('treats a turn waiting on a permission decision as busy', async () => {
+      const { runtime, queries } = await finishSubmittedTurn();
+
+      queries[0].emit(sessionState('requires_action'));
+      await flushAsync();
+
+      expect(runtime.isIdle).toBe(false);
+      jest.advanceTimersByTime(POST_TURN_IDLE_MS);
+      await flushAsync();
+      expect(queries[0].close).not.toHaveBeenCalled();
+      await runtime.close();
+    });
+
+    it('still shuts down on schedule when the CLI never reports its state', async () => {
+      const { runtime, queries } = await finishSubmittedTurn();
+
+      expect(runtime.isIdle).toBe(true);
+      jest.advanceTimersByTime(POST_TURN_IDLE_MS);
+      await flushAsync();
+      expect(queries[0].close).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('keeps one streaming query across multiple turns', async () => {

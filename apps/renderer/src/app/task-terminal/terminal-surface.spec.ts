@@ -2,7 +2,7 @@ import { TerminalSurface } from './terminal-surface';
 
 // xterm installs media listeners at import time. The test runner's partial
 // matchMedia shim lacks these methods; establish them before static imports.
-vi.hoisted(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+vi.hoisted(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })));
 afterAll(() => vi.unstubAllGlobals());
 
 // Real ANSI parsing and buffer reflow; only container measurement needs a browser.
@@ -71,5 +71,68 @@ describe('Command navigation', () => {
       await surface.write('\x1b]133;C;aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\x07');
       expect(surface.navigateCommand(true)).toBe(false);
     } finally { surface.dispose(); }
+  });
+});
+
+describe('Terminal color query ownership', () => {
+  beforeEach(() => vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null));
+  afterEach(() => vi.restoreAllMocks());
+
+  function setup() {
+    const input = vi.fn();
+    const surface = new TerminalSurface(input, () => {}, () => { throw new Error('No style adapter needed'); });
+    vi.spyOn(surface, 'fit').mockImplementation(() => {});
+    // Color replies require a mounted xterm theme service, unlike CPR/DA.
+    const host = document.createElement('div');
+    document.body.append(host);
+    surface.terminal.open(host);
+    surface.setEnabled(true);
+    return { surface, input, dispose: () => { surface.dispose(); host.remove(); } };
+  }
+
+  it('leaves the OSC 11 / CPR probe to the server without sending a late color reply as keyboard input', async () => {
+    const { surface, input, dispose } = setup();
+    try {
+      surface.setServerProtocol(true);
+      // termenv (used by gh) stops waiting for color when the server's CPR
+      // arrives. The view may receive this output after gh starts its prompt.
+      await surface.write('\x1b]11;?\x1b\\\x1b[6n');
+      expect(input).not.toHaveBeenCalled();
+      surface.terminal.input('\x1b[B', true);
+      surface.terminal.input('\r', true);
+      expect(input.mock.calls).toEqual([['\x1b[B'], ['\r']]);
+    } finally { dispose(); }
+  });
+
+  it('suppresses palette, foreground, background and cursor queries across chunks and terminators', async () => {
+    const { surface, input, dispose } = setup();
+    try {
+      surface.setServerProtocol(true);
+      for (const query of ['4;0;?;255;?', '10;?', '11;?', '12;?', '10;?;?;?']) {
+        for (const end of ['\x07', '\x1b\\']) {
+          const data = `\x1b]${query}${end}`;
+          for (const char of data) await surface.write(char);
+        }
+      }
+      expect(input).not.toHaveBeenCalled();
+    } finally { dispose(); }
+  });
+
+  it('preserves color setters and legacy query replies when server ownership is disabled', async () => {
+    const { surface, input, dispose } = setup();
+    try {
+      surface.setServerProtocol(true);
+      await surface.write('\x1b]11;#123456\x07');
+      surface.setServerProtocol(false);
+      await surface.write('\x1b]11;?\x07\x1b[6n');
+      expect(input.mock.calls).toEqual([['\x1b]11;rgb:1212/3434/5656\x1b\\'], ['\x1b[1;1R']]);
+      input.mockClear();
+      await surface.write('\x1b]4;0;?\x07\x1b]10;?\x07\x1b]12;?\x07');
+      expect(input.mock.calls.map(([data]) => data)).toEqual([
+        expect.stringContaining('\x1b]4;0;rgb:'),
+        expect.stringContaining('\x1b]10;rgb:'),
+        expect.stringContaining('\x1b]12;rgb:'),
+      ]);
+    } finally { dispose(); }
   });
 });

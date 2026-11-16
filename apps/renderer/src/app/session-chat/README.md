@@ -307,6 +307,13 @@ without guessing its identity or thinking support. All changes use authoritative
 state with busy/error handling, retain the draft, and reject archived/historical
 edits. Harness changes retain the agent menu and its focus while the new catalog
 loads; settings and sending stay blocked until the new provider is confirmed.
+Engines advertising `presetCatalogs` also supply the selected harness's model
+list independently of a running conversation. One scoped catalog read starts
+when that session/harness becomes active; live runtime model capabilities take
+precedence, with the catalog filling a cold runtime's empty list. Discovery
+shows loading and retryable errors, and the agent menu's Refresh models action
+requests a fresh provider probe. Selection, machine changes and teardown cancel
+the read and discard late replies. This never submits or replays a prompt.
 Escape or an outside click dismisses the menu and restores its opener.
 Queue removal/steering restores composer focus before a row disappears.
 Enter sends or queues, Alt Enter steers, Shift Enter inserts a newline, Shift Tab
@@ -315,8 +322,9 @@ toggles mode, Cmd/Ctrl J opens agent settings and Cmd/Ctrl . stops a running age
 Optional `controls`, `fast` and model capability fields are additive for older
 engines. Thinking and fast changes use validated actions on the existing named,
 scoped command bridge. The backend checks the selected model before delegating,
-and advertises only installed provider operations. No extra catalogs, provider
-hydration or repository reads are added. Missing capability metadata hides the
+and advertises only installed provider operations. Catalog discovery probes only
+the selected provider, without starting its conversation or reading repositories.
+Missing capability metadata hides the
 new controls. Mentions, dictation and preset/fork integrations
 remain hidden until their corresponding platform operations are available.
 
@@ -324,6 +332,9 @@ remain hidden until their corresponding platform operations are available.
 permissions, multiline input, queue/remove/steer/stop, retained uncertain drafts,
 container-responsive layout and reduced motion in both themes. `session-harness`
 verifies changing harness inside the popover and locking after the first prompt.
+`session-model-discovery.mjs` covers a cold runtime, discovery loading/failure,
+explicit refresh, recovery without sending, retained drafts and restored focus
+in both themes, including a narrow layout with reduced motion.
 
 The agent menu follows the standalone ZIP’s fixed-column form and usage block.
 Live context/token values come from the selected session. Optional `planUsage`
@@ -334,8 +345,14 @@ cross the bridge. Their remaining percentages drive the clock ring, delayed
 hover/focus card, menu bars and low/exhausted notices above the composer.
 Reset times use the user's locale and refresh while mounted. Passing a reset
 does not invent replenished allowance: the display waits for a provider update.
-Claude data becomes available when its SDK emits subscription rate-limit events;
-Codex uses its existing coalesced account-limit refresh and notifications.
+Claude reads subscription windows through the optional native SDK usage API on
+prewarm, runtime reads and activity, with coalescing and a one-minute cache per
+runtime (including failures). The read skips behavioral transcript scans, never
+starts a process, and publishes independently of context/model reads. Its
+availability flag establishes subscription data before the first prompt; explicit
+API-key metadata suppresses it. Live subscription rate-limit events remain a
+fallback for older CLIs and supersede pending reads. Retired runtime replies are
+discarded. Codex uses its existing coalesced account-limit refresh and notifications.
 No extra repository reads, account credential access or renderer networking is added.
 The notice follows the design's context/quota priority and returns focus to the
 composer on dismissal. Automatic plan pausing/resume, Send at reset, cross-agent
@@ -606,3 +623,7 @@ at offset zero, cancel previous reads and reject stale responses. A message or
 an orphan result never displays an input tab for a missing call. The reader
 retains existing machine scope checks, bounded pages, inert text and cancellation
 on close/navigation.
+
+## Visual element mentions
+
+`stageBrowserContext` stages a picked element as a first-class attachment with its original browser crop. `SessionChatAttachments.addElement` assigns the lowest free pin (❶–❽) and `Composer.insertElement` places it at the caret; send rejects markers with no element. The additive `browserElements` chat and `elementSnapshots` browser capabilities preserve older hosts and gate the Composer pick entry points. See [capture, delivery and recovery](../../../../../docs/browser-element-mentions.md). Source hints remain optional.

@@ -65,3 +65,14 @@ footer {
   border-top: 1px solid var(--line);
   margin-top: var(--space-1);
 }
+.action {
+  margin-top: var(--space-1);
+  color: var(--accent);
+  box-shadow: 0 -1px 0 var(--line);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+.action > span {
+  margin-left: 0;
+  color: inherit;
+  font-size: var(--text-ui-size);
+}

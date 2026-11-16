@@ -15,9 +15,14 @@ const selection = { includeUnstaged: true, excluded: [], includedSecrets: [] };
 describe('desktop commit snapshot', () => {
   let path: string;
   let service: GitService;
+  const generate = jest.fn<
+    ReturnType<TextAgentGenerationService['generate']>,
+    Parameters<TextAgentGenerationService['generate']>
+  >();
   const git = async (...args: string[]) =>
     (await execute('git', args, { cwd: path, timeout: 10000 })).stdout;
   beforeEach(async () => {
+    generate.mockReset();
     path = await mkdtemp(join(tmpdir(), 'elevenex-commit-test-'));
     await git('init');
     await git('config', 'user.name', 'Test');
@@ -30,7 +35,7 @@ describe('desktop commit snapshot', () => {
     const module = await Test.createTestingModule({
       providers: [
         GitService,
-        { provide: TextAgentGenerationService, useValue: {} },
+        { provide: TextAgentGenerationService, useValue: { generate } },
       ],
     }).compile();
     service = module.get(GitService);
@@ -47,13 +52,16 @@ describe('desktop commit snapshot', () => {
     await git('add', '--all');
     const status = await service.getStatusSummary(path);
     const phase: string[] = [];
-    jest.spyOn(service, 'suggestCommitMessage').mockImplementation(async () => {
+    generate.mockImplementation(async (request) => {
+      expect(request.provider).toBe('codex');
+      expect(request.prompt).toContain('+chosen');
+      expect(request.prompt).not.toContain('staged but excluded');
+      expect(request.prompt).not.toContain('SECRET=value');
       await writeFile(join(path, 'work.txt'), 'later session edit\n');
       return {
-        subject: 'fix: save selected changes',
-        body: null,
-        source: 'codex',
-        confidence: 'high',
+        provider: 'codex',
+        model: null,
+        text: '{"subject":"fix: save selected changes","body":null}',
       };
     });
     await commitSnapshot(
@@ -63,6 +71,7 @@ describe('desktop commit snapshot', () => {
       { ...selection, excluded: ['keep.txt'] },
       '',
       (value) => phase.push(value),
+      'codex',
     );
     expect(await git('show', 'HEAD:work.txt')).toBe('chosen\n');
     expect(await readFile(join(path, 'work.txt'), 'utf8')).toBe(
@@ -105,18 +114,25 @@ describe('desktop commit snapshot', () => {
     await git('update-index', '--index-version', '4');
     await git('status', '--porcelain');
     expect(await commitRevision(path, status)).toBe(revision);
-    jest.spyOn(service, 'suggestCommitMessage').mockImplementation(async () => {
+    generate.mockImplementation(async () => {
       await git('update-index', '--index-version', '2');
       await writeFile(join(path, 'keep.txt'), 'another working edit\n');
       await git('status', '--porcelain');
       return {
-        subject: 'Save chosen changes',
-        body: null,
-        source: 'codex',
-        confidence: 'high',
+        provider: 'codex',
+        model: null,
+        text: '{"subject":"Save chosen changes","body":null}',
       };
     });
-    await commitSnapshot(path, service, status, selection, '', () => {});
+    await commitSnapshot(
+      path,
+      service,
+      status,
+      selection,
+      '',
+      () => {},
+      'codex',
+    );
     expect(await git('show', 'HEAD:work.txt')).toBe('chosen\n');
     expect(await git('diff', '--name-only')).toBe('keep.txt\n');
   });
@@ -140,14 +156,13 @@ describe('desktop commit snapshot', () => {
   it('rejects index changes during message generation without committing or losing staging', async () => {
     await writeFile(join(path, 'work.txt'), 'chosen\n');
     const before = await git('rev-parse', 'HEAD');
-    jest.spyOn(service, 'suggestCommitMessage').mockImplementation(async () => {
+    generate.mockImplementation(async () => {
       await writeFile(join(path, 'keep.txt'), 'another staged change\n');
       await git('add', '--', 'keep.txt');
       return {
-        subject: 'fix: selected',
-        body: null,
-        source: 'codex',
-        confidence: 'high',
+        provider: 'codex',
+        model: null,
+        text: '{"subject":"fix: selected","body":null}',
       };
     });
     await expect(
@@ -158,6 +173,7 @@ describe('desktop commit snapshot', () => {
         selection,
         '',
         () => {},
+        'codex',
       ),
     ).rejects.toThrow();
     expect(await git('rev-parse', 'HEAD')).toBe(before);
@@ -166,9 +182,7 @@ describe('desktop commit snapshot', () => {
   it('keeps the index and selected edits intact when message generation fails, then accepts a manual message', async () => {
     await writeFile(join(path, 'work.txt'), 'chosen\n');
     const head = await git('rev-parse', 'HEAD');
-    jest
-      .spyOn(service, 'suggestCommitMessage')
-      .mockRejectedValue(new Error('Provider unavailable'));
+    generate.mockResolvedValue(null);
     await expect(
       commitSnapshot(
         path,
@@ -177,8 +191,10 @@ describe('desktop commit snapshot', () => {
         selection,
         '',
         () => {},
+        'codex',
       ),
     ).rejects.toMatchObject({ response: { code: 'commit-message-failed' } });
+    expect(generate).toHaveBeenCalledTimes(1);
     expect(await git('rev-parse', 'HEAD')).toBe(head);
     expect(await git('diff', '--cached')).toBe('');
     await commitSnapshot(

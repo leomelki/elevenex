@@ -2,11 +2,13 @@
 import { EventEmitter } from 'node:events';
 import type { Readable, Writable } from 'node:stream';
 import { Socket, isIP } from 'node:net';
+import type { BrowserSocketTarget } from '@elevenex/browser-network';
 
 export type WireMessage =
-  | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean }
+  | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean; browserProxy?: true }
   | { type: 'ping' | 'pong'; id: number; ready?: boolean; instance?: string }
   | { type: 'open'; id: number; port: number; host?: string }
+  | { type: 'browser-open'; id: number; port: number; host: string }
   | { type: 'probe'; id: number; port: number; host?: string }
   | { type: 'probed'; id: number; available: boolean }
   | { type: 'opened' | 'end' | 'close' | 'error'; id: number }
@@ -21,9 +23,12 @@ function message(value: unknown): WireMessage {
   if (type === 'hello') {
     if (typeof input['version'] !== 'string' || !/^[a-f0-9]{40}$/.test(input['version'])
       || typeof input['instance'] !== 'string' || input['instance'].length > 64 || typeof input['ready'] !== 'boolean' || typeof input['agentForwarding'] !== 'boolean') throw new Error('Invalid bridge greeting');
+    if (input['browserProxy'] !== undefined && input['browserProxy'] !== true) throw new Error('Invalid browser proxy capability');
   } else {
     if (!Number.isSafeInteger(input['id']) || Number(input['id']) < 1) throw new Error('Invalid bridge sequence');
-    if (type === 'open' || type === 'probe') {
+    if (type === 'browser-open') {
+      if (!Number.isInteger(input['port']) || Number(input['port']) < 1 || Number(input['port']) > 65535 || typeof input['host'] !== 'string' || !input['host'].length || input['host'].length > 253 || (!isIP(input['host']) && !/^[a-zA-Z0-9._-]+$/.test(input['host']))) throw new Error('Invalid browser destination');
+    } else if (type === 'open' || type === 'probe') {
       if (!Number.isInteger(input['port']) || Number(input['port']) < 0 || Number(input['port']) > 65535) throw new Error('Invalid remote port');
       const host = input['host'];
       if (host !== undefined && (typeof host !== 'string' || (host !== '::1' && !(isIP(host) === 4 && host.startsWith('127.'))))) throw new Error('Invalid remote loopback address');
@@ -136,6 +141,32 @@ export class SocketChannels {
   open(socket: Socket, port: number, onOpen?: (available: boolean) => void, host?: string): void {
     const id = ++this.sequence;
     if (this.attach(id, socket, onOpen)) this.send({ type: 'open', id, port, ...(host === undefined ? {} : { host }) });
+  }
+  openBrowser(socket: Socket, host: string, port: number, onOpen: (available: boolean) => void): void {
+    const id = ++this.sequence;
+    if (this.attach(id, socket, onOpen)) this.send({ type: 'browser-open', id, host, port });
+  }
+  acceptBrowser(id: number, host: string, port: number, resolve: (host: string, port: number) => Promise<BrowserSocketTarget>): void {
+    if (this.channels.has(id)) { this.wire.close(); return; }
+    const socket = new Socket({ allowHalfOpen: true });
+    if (!this.attach(id, socket)) return;
+    void resolve(host, port).then(target => {
+      if (this.channels.get(id)?.socket !== socket) return;
+      socket.once('connect', () => {
+        const entry = this.channels.get(id); if (!entry) return;
+        clearTimeout(entry.timer); entry.opened = true;
+        this.send({ type: 'opened', id }); this.pump(id, entry);
+      });
+      socket.connect({ host: target.host, port: target.port, ...(target.addresses ? {
+        autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 200,
+        lookup: (_host, options, callback) => {
+          const addresses = target.addresses ?? [];
+          if (!addresses.length) { callback(new Error('No browser destination'), []); return; }
+          if (options.all) callback(null, [...addresses]);
+          else callback(null, addresses[0]!.address, addresses[0]!.family);
+        },
+      } : {}) });
+    }).catch(() => { if (this.channels.get(id)?.socket === socket) this.closeChannel(id); });
   }
   accept(id: number, port: number, backendSocket: string, host = '127.0.0.1'): void {
     if (this.channels.has(id)) { this.wire.close(); return; }

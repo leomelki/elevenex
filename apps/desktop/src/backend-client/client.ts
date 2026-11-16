@@ -180,7 +180,7 @@ export class BackendClient {
     key: string | null,
     mutation: boolean,
     operation: (endpoint: BackendEndpoint, signal: AbortSignal) => Promise<T>,
-    timeoutMs = 10000,
+    timeoutMs: number | null = 10000,
     ownerSignal?: AbortSignal,
   ): Promise<BackendResult<T>> {
     this.refresh(windowId);
@@ -204,7 +204,7 @@ export class BackendClient {
     const target = window.target;
     const abortOwner = () => controller.abort();
     ownerSignal?.addEventListener('abort', abortOwner, { once: true });
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = timeoutMs === null ? undefined : setTimeout(() => controller.abort(), timeoutMs);
     const result = (async (): Promise<BackendResult<T>> => {
       try {
         return { ok: true, value: await operation(target, controller.signal) };

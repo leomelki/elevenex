@@ -29,7 +29,16 @@ import {
 } from '@/shared/models/claude-runtime.model';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  untracked,
+} from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideChevronDown,
@@ -119,6 +128,7 @@ const REASONING_EFFORTS: { id: ClaudeReasoningEffort | ''; label: string; hint: 
 })
 export class ClaudeStatusBarComponent {
   readonly catalog = inject(AgentModelCatalogService);
+  readonly modelMenuOpen = inject(ZardDropdownService).isOpen;
   readonly phase = input<ClaudeStatusBarPhase>('ready');
   readonly providers = input<AgentRuntimeProviderInfo[]>([]);
   readonly currentProvider = input<AgentProviderId>('claude');
@@ -127,10 +137,21 @@ export class ClaudeStatusBarComponent {
   readonly reasoningEffort = input<ClaudeReasoningEffort | null>(null);
   readonly fastMode = input(false);
   readonly availableModels = input<ClaudeModelOption[]>([]);
+  readonly codexModelsReady = computed(
+    () =>
+      this.currentProvider() !== 'codex' ||
+      !!this.catalog.catalogs().find((catalog) => catalog.provider === 'codex')?.models.length,
+  );
   readonly pickerModels = computed(() => {
     const catalog = this.catalog
       .catalogs()
       .find((item) => item.provider === this.currentProvider());
+    // Only the account catalog establishes Codex model availability.
+    if (this.currentProvider() === 'codex') {
+      return catalog?.models.length
+        ? withPinnedModel(catalog.models, this.selectedModel() ?? '')
+        : [];
+    }
     if (!catalog || (catalog.unavailableReason && !catalog.models.length))
       return this.availableModels();
     // Session discovery can finish after the shared catalog read, and may
@@ -153,8 +174,23 @@ export class ClaudeStatusBarComponent {
     );
   });
 
+  readonly selectedModelUnavailable = computed(() => {
+    if (this.currentProvider() !== 'codex' || !this.selectedModel()) return false;
+    const catalog = this.catalog.catalogs().find((item) => item.provider === 'codex');
+    return (
+      !!catalog?.models.length && !catalog.models.some((model) => model.id === this.selectedModel())
+    );
+  });
+
+  constructor() {
+    effect(() => {
+      const provider = this.currentProvider();
+      untracked(() => void this.catalog.load(provider).catch(() => undefined));
+    });
+  }
+
   loadModels(): void {
-    void this.catalog.load(this.currentProvider()).catch(() => undefined);
+    void this.catalog.check(this.currentProvider()).catch(() => undefined);
   }
 
   readonly contextUsage = input<ClaudeContextUsage | null>(null);
@@ -296,6 +332,9 @@ export class ClaudeStatusBarComponent {
   });
 
   readonly selectedModelLabel = computed(() => {
+    if (!this.codexModelsReady()) {
+      return this.catalog.isLoading('codex') ? 'Loading Codex models…' : 'Codex models unavailable';
+    }
     const id = this.selectedModel();
     if (!id) {
       return (
@@ -361,6 +400,7 @@ export class ClaudeStatusBarComponent {
   );
 
   pickModel(id: string): void {
+    if (!this.codexModelsReady()) return;
     this.modelChange.emit(id);
   }
 

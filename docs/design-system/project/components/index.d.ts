@@ -480,7 +480,9 @@ export interface BrowserViewProps {
   tabs: BrowserTab[]; active?: string; onSelect?: (id: string) => void; onClose?: (id: string) => void; onNew?: () => void;
   /** who drives the active tab */ driver?: 'agent' | 'you' | 'needs'; onTakeOver?: () => void; onHandBack?: () => void; agentWaiting?: boolean;
   step?: { n: number; total?: number; text: string }; /** the element the agent acts on, in page coordinates */ action?: { x: number; y: number; w: number; h: number; label?: string };
-  picking?: boolean; onPick?: () => void; picked?: { x: number; y: number; w: number; h: number; label: string; file?: string }; onAsk?: (text: string) => void;
+  /** point and ask: choosing an element; the owner inspects the page */ picking?: boolean; /** start (true: also to pick another element) or cancel picking */ onPick?: (on: boolean) => void;
+  /** the element under the pointer while picking, when the page can be inspected on hover */ hovered?: { x: number; y: number; w: number; h: number; label: string; file?: string };
+  picked?: { x: number; y: number; w: number; h: number; label: string; file?: string }; onAsk?: (text: string) => void; /** the send button, e.g. "Add to composer" */ askLabel?: string; /** one short line on what the question carries */ askNote?: string;
   errors?: number; errorText?: string; onSendErrors?: () => void; width?: 'full' | 'phone'; onWidth?: () => void;
   needsTitle?: string; needsText?: string; onBack?: () => void; onReload?: () => void; children?: React.ReactNode; className?: string; style?: React.CSSProperties;
 }
@@ -743,6 +745,10 @@ export declare function EditMachine(props: { machine: Machine; step?: 'edit' | '
 export declare function AddMachine(props: AddMachineProps): React.ReactElement;
 export declare function HostField(props: { query?: string; hosts?: Array<{ name: string; detail: string }>; picked?: { name: string; user: string; port?: number; auth?: string; fromConfig?: boolean } | null }): React.ReactElement;
 export declare function HostKeyCheck(props: { host: string; fingerprint: string; type?: string; changed?: boolean }): React.ReactElement;
+/** A Browser site asks for a passkey or security key: one sheet that asks, waits for the key, picks an account and explains a failure. Implemented by the desktop process, not the renderer. */
+export declare function PasskeyAsk(props: { phase: 'confirm' | 'waiting' | 'accounts' | 'failed'; origin: string; operation: 'get' | 'create'; accounts?: Array<{ displayName?: string; name?: string }>; error?: string; platform?: 'win32' | 'other'; onChoice?: (choice: 'continue' | 'retry' | 'cancel' | `account:${number}`) => void }): React.ReactElement;
+/** A Browser page's alert, confirm, prompt or leave prompt (plus uploads and downloads): a request bar above the page, then one small dialog that names the site from the tab URL and quotes its message. A leave prompt never shows site text. */
+export declare function SiteDialog(props: { pageUrl: string; requests: Array<{ id: string; kind: 'dialog'; type: 'alert' | 'confirm' | 'prompt' | 'beforeunload'; message: string; defaultValue: string } | { id: string; kind: 'upload'; multiple: boolean } | { id: string; kind: 'download'; name: string; status: 'receiving' | 'ready' }>; onCommand?: (command: { kind: 'dialog-response'; requestId: string; accept: boolean; text: string } | { kind: 'choose-files' | 'save-download' | 'cancel-workflow'; requestId: string }) => void }): React.ReactElement;
 export declare function PairingText(props: { text: string; copied?: boolean; onCopy?: () => void }): React.ReactElement;
 export declare function PairPaste(props: { text?: string; found?: { name: string; detail: string } | null }): React.ReactElement;
 export declare const MACHINE_ICON: Record<MachineKind, string>;

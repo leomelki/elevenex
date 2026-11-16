@@ -342,6 +342,66 @@ describePosix('system-paths per-cwd env cache', () => {
 });
 
 describePosix('global shell environment replacement', () => {
+  it('uses the remote account shell agent for agents and restores the desktop proxy when removed', async () => {
+    const proxy = '/runtime/desktop/agent.sock';
+    process.env.ELEVENEX_BACKEND_MODE = 'remote';
+    process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
+    process.env.SSH_AUTH_SOCK = proxy;
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.buildAugmentedEnvAsync();
+    await closeShellProcess(
+      children[0],
+      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/account/agent.sock\0'),
+    );
+    expect((await first).SSH_AUTH_SOCK).toBe('/account/agent.sock');
+    expect(process.env.SSH_AUTH_SOCK).toBe('/account/agent.sock');
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
+      '/account/agent.sock',
+    );
+    // Callers with an explicit base still get the shell account agent rather
+    // than the app's managed default. Other explicit sockets keep precedence.
+    expect(
+      systemPaths.buildAugmentedEnv({ ...process.env, SSH_AUTH_SOCK: proxy })
+        .SSH_AUTH_SOCK,
+    ).toBe('/account/agent.sock');
+    expect(
+      systemPaths.buildAugmentedEnv({
+        ...process.env,
+        SSH_AUTH_SOCK: '/explicit/agent.sock',
+      }).SSH_AUTH_SOCK,
+    ).toBe('/explicit/agent.sock');
+
+    const removed = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(children[1], envOutput('/shell/bin'));
+    await removed;
+    expect(process.env.SSH_AUTH_SOCK).toBe(proxy);
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(proxy);
+  });
+
+  it('keeps later application overrides when refreshing a remote shell agent', async () => {
+    process.env.ELEVENEX_BACKEND_MODE = 'remote';
+    process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
+    process.env.SSH_AUTH_SOCK = '/runtime/desktop/agent.sock';
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[0],
+      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/account/agent.sock\0'),
+    );
+    await first;
+    process.env.SSH_AUTH_SOCK = '/application/agent.sock';
+    const refresh = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[1],
+      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/changed/agent.sock\0'),
+    );
+    await refresh;
+    expect(process.env.SSH_AUTH_SOCK).toBe('/application/agent.sock');
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
+      '/application/agent.sock',
+    );
+  });
+
   it('lets worktree exports and unsets replace projected globals while retaining explicit overrides', async () => {
     process.env.ELEVENEX_TEST_OVERRIDE = 'launch';
     mockSpawn.mockImplementation(() => createShellProcess());
@@ -1004,6 +1064,44 @@ describePosix('system-paths bounded shell refreshes', () => {
     await Promise.resolve();
     expect(process.kill).not.toHaveBeenCalled();
   });
+
+  it.each([undefined, '/configured/home'])(
+    'supplies HOME to global and cold worktree shells (inherited HOME=%s)',
+    async (home) => {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+      process.env.ELEVENEX_TEST_APPLICATION_EXPORT = 'application-only';
+      const environments: NodeJS.ProcessEnv[] = [];
+      mockSpawn.mockImplementation(
+        (
+          _command: string,
+          _args: string[],
+          options: { env: NodeJS.ProcessEnv },
+        ) => {
+          environments.push(options.env);
+          return createShellProcess();
+        },
+      );
+
+      const global = systemPaths.refreshLoginShellEnv(true);
+      systemPaths.buildAugmentedEnv({}, '/repo/cold-home');
+
+      expect(mockSpawn).toHaveBeenCalledTimes(2);
+      for (const environment of environments) {
+        expect(environment.HOME).toBe(home || os.homedir());
+        expect(environment.SHELL).toBe(process.env.SHELL);
+        expect(environment.ELEVENEX_TEST_APPLICATION_EXPORT).toBe('application-only');
+        expect(environment.PWD).toBeUndefined();
+        expect(environment.FNM_MULTISHELL_PATH).toBeUndefined();
+        expect(environment.PATH).toBeTruthy();
+        expect(environment.PS1).toBe('');
+      }
+
+      await closeShellProcess(children[0], envOutput('/global/bin'));
+      await closeShellProcess(children[1], envOutput('/local/bin'));
+      await global;
+    },
+  );
 
   it('preserves the user shell and captured user exports in cwd baselines', async () => {
     process.env.SHELL = '/custom/user-shell';

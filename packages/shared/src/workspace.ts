@@ -205,3 +205,20 @@ export interface WorkspaceMoveSession {
   readonly sessionId: number;
   readonly parentSessionId: number | null;
 }
+
+/** Optional capability retains compatibility with engines using revision polling. */
+export interface WorkspaceRevision {
+  readonly revision: number;
+  readonly version: 1;
+  readonly revisionWait?: true;
+  readonly sessionNesting?: true;
+  readonly sessionNestingOrder?: true;
+  readonly sessionArchive?: true;
+  readonly sessionArchiveHistory?: true;
+  readonly taskRequests?: true;
+  readonly commitPanel?: true;
+}
+export interface WorkspaceRevisionWait {
+  readonly after: number;
+  readonly requestId: string;
+}

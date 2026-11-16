@@ -71,7 +71,12 @@
                 [options]="presetModelOptions()"
                 [value]="presetModel()"
                 ariaLabel="Preset model"
-                [disabled]="!presetCatalog()?.supportsModelSelection || appSettings.saving()"
+                [disabled]="
+                  !presetModelsReady() ||
+                  !presetCatalog()?.supportsModelSelection ||
+                  appSettings.saving()
+                "
+                [placeholder]="presetModelsReady() ? 'Select a model' : 'Waiting for Codex models…'"
                 (valueChange)="onPresetModelChange($event)"
               />
               <p class="text-xs leading-relaxed text-muted-foreground">
@@ -120,9 +125,11 @@
               </div>
               <p class="min-h-8 text-xs leading-relaxed text-muted-foreground">
                 {{
-                  presetCanChooseEffort()
-                    ? selectedEffortHint()
-                    : 'This model has a fixed thinking level.'
+                  !presetModelsReady()
+                    ? 'Thinking levels will appear after Codex reports model capabilities.'
+                    : presetCanChooseEffort()
+                      ? selectedEffortHint()
+                      : 'This model has a fixed thinking level.'
                 }}
               </p>
             </div>
@@ -135,9 +142,11 @@
                   <div class="text-sm font-medium">Fast mode</div>
                   <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {{
-                      presetSupportsFastMode()
-                        ? 'Priority responses. May use more of your plan.'
-                        : 'Not available for this model.'
+                      !presetModelsReady()
+                        ? 'Availability will be checked when Codex connects.'
+                        : presetSupportsFastMode()
+                          ? 'Priority responses. May use more of your plan.'
+                          : 'Not available for this model.'
                     }}
                   </p>
                 </div>
@@ -245,7 +254,11 @@
           <button
             z-button
             type="submit"
-            [zDisabled]="appSettings.saving() || !catalog.loaded()"
+            [zDisabled]="
+              !presetModelsReady() ||
+              appSettings.saving() ||
+              (!catalog.loaded() && presetProvider() !== 'codex')
+            "
             [zLoading]="appSettings.saving()"
           >
             <ng-icon name="lucideCheck" size="14" />{{
@@ -400,7 +413,7 @@
           zType="outline"
           zSize="sm"
           type="button"
-          [zDisabled]="!catalog.loaded()"
+          [zDisabled]="!catalog.loaded() && !catalog.catalogs().length"
           (click)="openNewPreset()"
         >
           Create your first preset

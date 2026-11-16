@@ -179,7 +179,13 @@ export class CodexAppServerClient implements OnModuleDestroy {
     if (this.shuttingDown) {
       throw new Error('codex app-server client is shutting down');
     }
+    // Startup model discovery runs in onModuleInit, before ShellEnvService's
+    // bootstrap hook. Wait for the coalesced shell capture before resolving
+    // the CLI or spawning it with PATH, tool homes and credentials.
     const env = await buildAugmentedEnvAsync();
+    if (this.shuttingDown) {
+      throw new Error('codex app-server client is shutting down');
+    }
     const binary = await resolveCodexBinaryAsync();
     const identity = await codexBinaryIdentity(binary);
     if (this.shuttingDown) {

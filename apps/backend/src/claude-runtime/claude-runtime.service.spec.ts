@@ -27,6 +27,7 @@ import {
   getSubagentMessages,
   listSubagents,
   query,
+  type SDKControlGetUsageResponse,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
   ClaudeRuntimeService,
@@ -284,6 +285,226 @@ describe('ClaudeRuntimeService', () => {
     ).toEqual({ version: 'unknown' });
   });
 
+  describe('subscription usage reads', () => {
+    const usage: SDKControlGetUsageResponse = {
+      session: {
+        total_cost_usd: 0,
+        total_api_duration_ms: 0,
+        total_duration_ms: 0,
+        total_lines_added: 0,
+        total_lines_removed: 0,
+        model_usage: {},
+      },
+      subscription_type: 'max',
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 12, resets_at: '2026-11-15T12:00:00Z' },
+      },
+      behaviors: null,
+    };
+    function attachRuntime() {
+      const runtime = new ClaudeSessionRuntime({
+        sessionId: 7,
+        options: {},
+        onMessage: () => undefined,
+        onFatal: () => undefined,
+        onClosed: () => undefined,
+        prewarmIdleShutdownMs: 90_000,
+        postTurnIdleShutdownMs: 300_000,
+      });
+      service['sessionRuntimes'].set(7, runtime);
+      return {
+        runtime,
+        read: jest.spyOn(runtime, 'getUsage').mockResolvedValue(usage),
+      };
+    }
+    const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    it('publishes subscription usage on prewarm before a prompt or rate-limit event', async () => {
+      const { runtime, read } = attachRuntime();
+      jest.spyOn(runtime, 'ensureStarted').mockResolvedValue();
+      const events: unknown[] = [];
+      service.on('event', (event) => events.push(event));
+      await service.prewarmSession(7);
+      await settle();
+      expect(read).toHaveBeenCalledTimes(1);
+      const state = await service.getRuntimeState(7);
+      expect(state.planUsage).toMatchObject({
+        provider: 'claude',
+        planName: 'Max',
+        windows: [{ remainingPercentage: 88 }],
+      });
+      expect(events).toContainEqual({
+        type: 'plan_usage',
+        payload: {
+          sessionId: 7,
+          planUsage: state.planUsage,
+        },
+      });
+    });
+
+    it('coalesces concurrent reads, throttles successful reads and refreshes after the TTL', async () => {
+      const { read } = attachRuntime();
+      let resolve!: (value: SDKControlGetUsageResponse) => void;
+      read.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      await Promise.all(
+        Array.from({ length: 20 }, () => service.getRuntimeState(7)),
+      );
+      expect(read).toHaveBeenCalledTimes(1);
+      resolve(usage);
+      await settle();
+      expect(
+        (await service.getRuntimeState(7)).planUsage?.windows[0]
+          .remainingPercentage,
+      ).toBe(88);
+      expect(read).toHaveBeenCalledTimes(1);
+      const clock = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(Date.now() + 60_001);
+      try {
+        read.mockResolvedValue({
+          ...usage,
+          rate_limits: { seven_day: { utilization: 93, resets_at: null } },
+        });
+        await service.getRuntimeState(7);
+        await settle();
+        expect((await service.getRuntimeState(7)).planUsage).toMatchObject({
+          status: 'warning',
+          windows: [{ id: 'seven_day', remainingPercentage: 7 }],
+        });
+        expect(read).toHaveBeenCalledTimes(2);
+        service['handleRateLimitEvent'](7, {
+          type: 'rate_limit_event',
+          rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour' },
+          uuid: '11111111-1111-1111-1111-111111111111',
+          session_id: 'claude-session-1',
+        });
+        expect((await service.getRuntimeState(7)).planUsage).toMatchObject({
+          planName: 'Max',
+          status: 'exhausted',
+          windows: [
+            { id: 'five_hour', remainingPercentage: 0 },
+            { id: 'seven_day', remainingPercentage: 7 },
+          ],
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it('retains stream usage on old CLI failures and throttles failures', async () => {
+      const { read } = attachRuntime();
+      service['handleRateLimitEvent'](7, {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'allowed',
+          rateLimitType: 'five_hour',
+          utilization: 0.25,
+        },
+        uuid: '11111111-1111-1111-1111-111111111111',
+        session_id: 'claude-session-1',
+      });
+      read.mockRejectedValue(new Error('Unknown control request: get_usage'));
+      await service.getRuntimeState(7);
+      await settle();
+      expect(
+        (await service.getRuntimeState(7)).planUsage?.windows[0]
+          .remainingPercentage,
+      ).toBe(75);
+      expect(read).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['replacement', 'cleanup', 'stream', 'shutdown'] as const)(
+      'discards late usage after %s',
+      async (change) => {
+        const { read } = attachRuntime();
+        let resolve!: (value: SDKControlGetUsageResponse) => void;
+        read.mockReturnValue(
+          new Promise((r) => {
+            resolve = r;
+          }),
+        );
+        await service.getRuntimeState(7);
+        if (change === 'replacement') attachRuntime();
+        if (change === 'cleanup') await service.cleanupSession(7);
+        if (change === 'stream')
+          service['handleRateLimitEvent'](7, {
+            type: 'rate_limit_event',
+            rate_limit_info: {
+              status: 'allowed_warning',
+              utilization: 0.92,
+              rateLimitType: 'five_hour',
+            },
+            uuid: '22222222-2222-2222-2222-222222222222',
+            session_id: 'claude-session-1',
+          });
+        if (change === 'shutdown') service.onModuleDestroy();
+        resolve(usage);
+        await settle();
+        expect(
+          service['runtimeStates'].get(7)?.planUsage?.windows[0]
+            ?.remainingPercentage ?? null,
+        ).toBe(change === 'stream' ? 8 : null);
+      },
+    );
+
+    it('clears subscription data when the native runtime reports API-key auth', async () => {
+      const { read } = attachRuntime();
+      service['handleRateLimitEvent'](7, {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'allowed',
+          rateLimitType: 'five_hour',
+          utilization: 0.25,
+        },
+        uuid: '11111111-1111-1111-1111-111111111111',
+        session_id: 'claude-session-1',
+      });
+      read.mockResolvedValue({
+        ...usage,
+        rate_limits_available: false,
+        rate_limits: null,
+      });
+      await service.getRuntimeState(7);
+      await settle();
+      expect((await service.getRuntimeState(7)).planUsage).toBeNull();
+    });
+
+    it('keeps usage hidden when explicit API-key metadata arrives during a read', async () => {
+      const { read } = attachRuntime();
+      let resolve!: (value: SDKControlGetUsageResponse) => void;
+      read.mockReturnValue(
+        new Promise((r) => {
+          resolve = r;
+        }),
+      );
+      await service.getRuntimeState(7);
+      const state = service['runtimeStates'].get(7)!;
+      state.sessionMetadata = {
+        cwd: '/tmp/project',
+        model: 'sonnet',
+        permissionMode: 'default',
+        claudeCodeVersion: '2.1.296',
+        outputStyle: 'default',
+        apiKeySource: 'ANTHROPIC_API_KEY',
+        tools: [],
+        slashCommands: [],
+        skills: [],
+        agents: [],
+        fastModeState: null,
+        mcpServers: [],
+        plugins: [],
+      };
+      resolve(usage);
+      await settle();
+      expect((await service.getRuntimeState(7)).planUsage).toBeNull();
+    });
+  });
+
   it('returns a pending MCP URL elicitation for the requested server', () => {
     const state = (service as any).ensureRuntimeState(7);
     state.pendingUserInputRequest = {
@@ -479,7 +700,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingPermissionRequest = {
       requestId: 'perm-1',
@@ -496,7 +717,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: 'permission',
       actionLabel: 'Permission needed',
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = {
@@ -511,7 +732,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: 'user_input',
       actionLabel: 'Input needed',
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.pendingUserInputRequest = null;
     state.runPhase = 'running';
@@ -522,7 +743,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     state.runPhase = 'idle';
     state.sessionState = 'idle';
@@ -532,7 +753,7 @@ describe('ClaudeRuntimeService', () => {
       actionKind: null,
       actionLabel: null,
       backgroundActive: false,
-    });
+    }, { authoritative: true, provider: 'claude' });
 
     const runStates = emittedEvents.filter(
       (event) => event.type === 'run_state',
@@ -1518,6 +1739,21 @@ describe('ClaudeRuntimeService', () => {
     );
   });
 
+  it('sends element prose and image bytes together through the native Claude SDK stream', async () => {
+    const observed: unknown[] = [];
+    (query as jest.Mock).mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
+      supportedModels: jest.fn().mockResolvedValue([]),
+      getContextUsage: jest.fn().mockResolvedValue({ model: 'sonnet', totalTokens: 0, maxTokens: 0, percentage: 0 }),
+      close: jest.fn(),
+      async *[Symbol.asyncIterator]() {
+        for await (const message of prompt) { observed.push(message); yield successfulResultMessage(); break; }
+      },
+    }));
+    const prompt = 'Align ❶ (image 1).';
+    await service.submitPrompt(7, prompt, undefined, [{ mediaType: 'image/jpeg', data: '/9j/image' }]);
+    expect(observed).toEqual([expect.objectContaining({ message: { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/image' } }] } })]);
+  });
+
   it('uses the independently installed Claude CLI when submitting prompts', async () => {
     const environment = jest.replaceProperty(process, 'env', {
       ...process.env,
@@ -2389,17 +2625,37 @@ describe('ClaudeRuntimeService', () => {
         session_id: 'claude-session-1',
         content: 'Set model to fable',
       });
-      await service['handleSdkMessage'](7, {
-        type: 'system',
-        subtype: 'session_state_changed',
-        uuid: 'model-running',
-        session_id: 'claude-session-1',
-        state: 'running',
-      });
       expect(await service.getRuntimeState(7)).toMatchObject({
         runPhase: 'idle',
         canInterrupt: false,
         liveItems: [],
+        backgroundRunActive: false,
+      });
+      // Control receipts alone stay idle; an explicit CLI turn still owns
+      // a run until the CLI reports idle, even after changing models.
+      await service['handleSdkMessage'](7, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        uuid: 'cli-running',
+        session_id: 'claude-session-1',
+        state: 'running',
+      });
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        runPhase: 'running',
+        canInterrupt: true,
+        liveItems: [],
+        backgroundRunActive: true,
+      });
+      await service['handleSdkMessage'](7, {
+        type: 'system',
+        subtype: 'session_state_changed',
+        uuid: 'cli-idle',
+        session_id: 'claude-session-1',
+        state: 'idle',
+      });
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        runPhase: 'idle',
+        canInterrupt: false,
         backgroundRunActive: false,
       });
       const history = await service.normalizeTranscriptRecordsForSession(7, [
@@ -4847,13 +5103,40 @@ describe('ClaudeRuntimeService', () => {
       expect((service as any).isBackgroundWorkLive(SESSION_ID)).toBe(true);
     });
 
-    // Regression: after a background resume finished, a stray late 'running'
-    // from the SDK set runPhase with no run to own it — no result and no
-    // watchdog could ever clear it, so the session stuck on "running" and the
-    // user had to hit Stop before they could talk to it again.
-    it('ignores a session state of running when no run owns it', () => {
+    // Regression: a background task's completion notification starts a turn
+    // inside the CLI. Waiting for the model's first output to register it left
+    // the session idle long enough to be shut down mid-turn. The CLI's own
+    // 'running' arrives before any output, and its 'idle' always follows, so a
+    // run registered here never sticks.
+    it('registers a background run when the CLI starts a turn itself, until it reports idle', () => {
+      (service as any).sessionRuntimes.set(SESSION_ID, {});
       const state = (service as any).ensureRuntimeState(SESSION_ID);
-      startSubagent('agent-1');
+      state.runPhase = 'idle';
+      const sessionState = (value: string) => ({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: value,
+      });
+
+      (service as any).handleSessionStateChangedMessage(
+        SESSION_ID,
+        sessionState('running'),
+      );
+      expect((service as any).activeRuns.get(SESSION_ID)?.isBackground).toBe(
+        true,
+      );
+      expect(state.runPhase).toBe('running');
+
+      (service as any).handleSessionStateChangedMessage(
+        SESSION_ID,
+        sessionState('idle'),
+      );
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
+      expect(state.runPhase).toBe('idle');
+    });
+
+    it('ignores a session state of running once the runtime is gone', () => {
+      const state = (service as any).ensureRuntimeState(SESSION_ID);
       state.runPhase = 'idle';
 
       (service as any).handleSessionStateChangedMessage(SESSION_ID, {
@@ -4862,7 +5145,38 @@ describe('ClaudeRuntimeService', () => {
         state: 'running',
       });
 
+      expect((service as any).activeRuns.has(SESSION_ID)).toBe(false);
       expect(state.runPhase).toBe('idle');
+    });
+
+    it('never evicts a runtime that is mid-turn, and survives a failing close', async () => {
+      const busy = { isIdle: false, warmState: 'warm', close: jest.fn() };
+      const failing = Array.from({ length: 3 }, (_, index) => ({
+        isIdle: true,
+        warmState: 'warm',
+        lastUsedAtMs: index,
+        close: jest
+          .fn()
+          .mockRejectedValue(new Error('Query closed before response received')),
+      }));
+      const unhandled = jest.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        (service as any).sessionRuntimes.set(100, busy);
+        failing.forEach((runtime, index) =>
+          (service as any).sessionRuntimes.set(101 + index, runtime),
+        );
+
+        (service as any).enforceIdleRuntimeLimit();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(busy.close).not.toHaveBeenCalled();
+        expect(failing[0].close).toHaveBeenCalledTimes(1);
+        expect(unhandled).not.toHaveBeenCalled();
+        expect((service as any).sessionRuntimes.has(101)).toBe(false);
+      } finally {
+        process.off('unhandledRejection', unhandled);
+      }
     });
 
     // Regression: task bookkeeping routinely trails the result of the turn that

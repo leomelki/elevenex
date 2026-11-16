@@ -176,6 +176,10 @@ import {
 } from './claude-subagents.js';
 import { ClaudeSessionRuntime } from './claude-session-runtime.js';
 import {
+  allowsClaudePlanUsage,
+  claudeSubscriptionUsage,
+} from './claude-plan-usage.js';
+import {
   orderReasoningEfforts,
   resolveAgentStartupSelection,
 } from '../agent-runtime/agent-model-defaults.js';
@@ -576,6 +580,12 @@ const CLAUDE_PREWARM_COOLDOWN_MS = 30_000;
 const MAX_IDLE_CLAUDE_RUNTIMES = 2;
 const CLAUDE_MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 const CLAUDE_MODELS_BACKGROUND_REFRESH_MS = 10 * 60 * 1000;
+const CLAUDE_PLAN_USAGE_TTL_MS = 60_000;
+
+interface PlanUsageRead {
+  at: number;
+  pending: Promise<void> | null;
+}
 
 @Injectable()
 export class ClaudeRuntimeService
@@ -595,6 +605,12 @@ export class ClaudeRuntimeService
   private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
+  // Runtime-scoped: project settings can select different credentials. Weak
+  // keys release telemetry bookkeeping with the owning process.
+  private readonly planUsageReads = new WeakMap<
+    ClaudeSessionRuntime,
+    PlanUsageRead
+  >();
   private readonly sessionRuntimeCreateInFlight = new Map<
     number,
     Promise<ClaudeSessionRuntime>
@@ -764,6 +780,8 @@ export class ClaudeRuntimeService
     const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
 
     await this.recoverSubagents(sessionId, session, state);
+
+    void this.refreshClaudePlanUsage(sessionId);
 
     // No live Claude Code process for this session yet (e.g. before the
     // first prompt is sent): fall back to the globally cached model list
@@ -2113,6 +2131,7 @@ export class ClaudeRuntimeService
         state,
       );
       await runtime.ensureStarted('prewarm');
+      void this.refreshClaudePlanUsage(sessionId);
       this.lastPrewarmAt.set(sessionId, Date.now());
       this.enforceIdleRuntimeLimit(sessionId);
     })()
@@ -2366,11 +2385,18 @@ export class ClaudeRuntimeService
         : Math.max(0, MAX_IDLE_CLAUDE_RUNTIMES - 1);
     while (idleRuntimes.length > allowedIdleRuntimes) {
       const [sessionId, runtime] = idleRuntimes.shift()!;
-      void runtime.close().finally(() => {
-        if (this.sessionRuntimes.get(sessionId) === runtime) {
-          this.sessionRuntimes.delete(sessionId);
-        }
-      });
+      void runtime
+        .close()
+        .catch((error) => {
+          this.logger.debug(
+            `Claude idle runtime eviction failed session=${sessionId}: ${String(error)}`,
+          );
+        })
+        .finally(() => {
+          if (this.sessionRuntimes.get(sessionId) === runtime) {
+            this.sessionRuntimes.delete(sessionId);
+          }
+        });
     }
   }
 
@@ -4636,7 +4662,7 @@ export class ClaudeRuntimeService
       ?.setCliVersion(metadata.claudeCodeVersion);
     // The SDK only reports plan limits for claude.ai subscription auth. If a
     // session is backed by an API key, never carry a quota card into it.
-    if (metadata.apiKeySource !== 'oauth' && state.planUsage) {
+    if (!allowsClaudePlanUsage(metadata.apiKeySource) && state.planUsage) {
       state.planUsage = null;
       this.emitEvent({
         type: 'plan_usage',
@@ -4693,16 +4719,16 @@ export class ClaudeRuntimeService
     const state = this.ensureRuntimeState(sessionId);
     const run = this.activeRuns.get(sessionId);
 
-    // Only a registered run may put the session into 'running'. The SDK tracks
-    // its own session state independently of elevenex's run bookkeeping and can
-    // emit a stray/late 'running' after our turn already finished (lagging
-    // subagent bookkeeping, hook fallout). Honouring that here would set a
-    // phase with no owner: there is no run, so no result and no watchdog will
-    // ever arrive to clear it, and the session sticks on "running" until the
-    // user hits Stop. Genuine background wake-ups come through
-    // reconcileBackgroundResume, which registers a real run precisely so the
-    // phase has something that can end it.
+    // 'running' with no registered run is the CLI starting a turn on its own,
+    // typically to report a finished background task. Register a background
+    // run for it right away, before the model produces any output: until then
+    // the session would look idle and could be shut down mid-turn. The run
+    // always has an owner that ends it, because the CLI follows every
+    // 'running' with 'idle' (handled below), and process closure retires it
+    // too. Turns we submit are registered before their input is sent, so they
+    // never reach this branch.
     if (!run && message.state === 'running') {
+      this.ensureActiveRunForCallback(sessionId, state);
       return;
     }
 
@@ -5140,6 +5166,61 @@ export class ClaudeRuntimeService
     });
   }
 
+  private refreshClaudePlanUsage(sessionId: number): Promise<void> {
+    const runtime = this.sessionRuntimes.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      !runtime ||
+      !state ||
+      this.modelsRefreshDestroyed ||
+      this.invalidatedSessions.has(sessionId)
+    )
+      return Promise.resolve();
+    const previous = this.planUsageReads.get(runtime);
+    if (previous?.pending) return previous.pending;
+    if (previous && Date.now() - previous.at < CLAUDE_PLAN_USAGE_TTL_MS)
+      return Promise.resolve();
+
+    const usageAtStart = state.planUsage;
+    const read: PlanUsageRead = { at: Date.now(), pending: null };
+    this.planUsageReads.set(runtime, read);
+    read.pending = (async () => {
+      try {
+        const usage = await runtime.getUsage();
+        if (
+          usage === undefined ||
+          this.modelsRefreshDestroyed ||
+          this.invalidatedSessions.has(sessionId) ||
+          this.sessionRuntimes.get(sessionId) !== runtime ||
+          this.runtimeStates.get(sessionId) !== state ||
+          state.planUsage !== usageAtStart
+        )
+          return;
+        // The native availability flag proves subscription auth even before
+        // the first system:init. Explicit API-key metadata still wins.
+        const planUsage = allowsClaudePlanUsage(
+          state.sessionMetadata?.apiKeySource,
+        )
+          ? claudeSubscriptionUsage(usage)
+          : null;
+        if (planUsage === undefined) return;
+        if (!planUsage && !state.planUsage) return;
+        state.planUsage = planUsage;
+        this.emitEvent({
+          type: 'plan_usage',
+          payload: { sessionId, planUsage },
+        });
+      } catch {
+        // Optional UI: old CLIs and transient usage failures must not block
+        // chat or erase the last provider fact. Throttle failures as well.
+      } finally {
+        read.at = Date.now();
+        read.pending = null;
+      }
+    })();
+    return read.pending;
+  }
+
   private handleRateLimitEvent(
     sessionId: number,
     message: SDKRateLimitEvent,
@@ -5160,7 +5241,7 @@ export class ClaudeRuntimeService
     // rate_limit_event is explicitly subscription-only in the Claude Agent
     // SDK. The metadata guard also protects against a stale/malformed event
     // while API-key authentication is active.
-    if (state.sessionMetadata?.apiKeySource === 'oauth') {
+    if (allowsClaudePlanUsage(state.sessionMetadata?.apiKeySource)) {
       state.planUsage = this.toClaudePlanUsage(rateLimit, state.planUsage);
       this.emitEvent({
         type: 'plan_usage',
@@ -5177,29 +5258,18 @@ export class ClaudeRuntimeService
     rateLimit: ClaudeRateLimit,
     previous: AgentPlanUsage | null,
   ): AgentPlanUsage | null {
-    if (typeof rateLimit.utilization !== 'number') {
-      return rateLimit.status === 'rejected'
-        ? {
-            provider: 'claude',
-            planName: null,
-            status: 'exhausted',
-            windows: [
-              {
-                id: rateLimit.rateLimitType ?? 'plan',
-                label: 'Plan usage',
-                remainingPercentage: 0,
-                resetsAt: rateLimit.resetsAt ?? null,
-              },
-            ],
-            credits: null,
-            updatedAt: new Date().toISOString(),
-          }
-        : previous;
-    }
+    const utilization =
+      typeof rateLimit.utilization === 'number' &&
+      Number.isFinite(rateLimit.utilization)
+        ? rateLimit.utilization
+        : rateLimit.status === 'rejected'
+          ? 1
+          : null;
+    if (utilization === null) return previous;
     const id = rateLimit.rateLimitType ?? 'plan';
     const remainingPercentage = Math.max(
       0,
-      Math.min(100, Math.round((1 - rateLimit.utilization) * 100)),
+      Math.min(100, Math.round((1 - utilization) * 100)),
     );
     const labels: Record<string, string> = {
       five_hour: '5-hour limit',
@@ -5240,7 +5310,7 @@ export class ClaudeRuntimeService
 
     return {
       provider: 'claude',
-      planName: null,
+      planName: previous?.planName ?? null,
       status:
         rateLimit.status === 'rejected' || lowestRemaining <= 0
           ? 'exhausted'
@@ -5853,6 +5923,7 @@ export class ClaudeRuntimeService
     this.claudeHooksService.updateRuntimeActivity(
       sessionId,
       this.toSidebarActivity(state),
+      { authoritative: state.surface === 'session', provider: 'claude' },
     );
     this.emitEvent({
       type: 'run_state',
@@ -6389,6 +6460,11 @@ export class ClaudeRuntimeService
           environment,
         ),
         ELEVENEX_AGENT_TOKEN: mcpAgentToken,
+        // Ask the CLI to report its own turn state (`session_state_changed`:
+        // running / requires_action / idle). It is the only signal that covers
+        // turns the CLI starts by itself, such as reporting a finished
+        // background task, so idle shutdown and run tracking depend on it.
+        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
       },
     };
     return options;
@@ -6728,6 +6804,8 @@ export class ClaudeRuntimeService
     if (!runtime) {
       return;
     }
+
+    void this.refreshClaudePlanUsage(sessionId);
 
     const state = this.ensureRuntimeState(sessionId);
     if (state.metadataRefreshRuntime !== runtime) {

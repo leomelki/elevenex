@@ -38,6 +38,10 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
+        env:
+          # UI tests use the bundled CPU runtime, not optional CUDA binaries
+          # downloaded from NuGet by onnxruntime-node's install script.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: pnpm install --frozen-lockfile
 
       - name: Resolve Playwright version

@@ -14,7 +14,7 @@ import type { ConversationMention } from "../conversation.models";
       <ex-status-glyph [status]="mention().status || 'done'" [size]="12" />
     } @else {
       <ex-icon
-        [name]="mention().kind === 'file' ? 'file' : 'task'"
+        [name]="mention().kind === 'element' ? 'target' : mention().kind === 'file' ? 'file' : 'task'"
         [size]="12"
       />
     }
@@ -49,6 +49,11 @@ import type { ConversationMention } from "../conversation.models";
     }
     .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     ex-icon, ex-status-glyph, button { flex: none; }
+    .mention[data-kind="element"] {
+      padding-inline-start: 2px;
+      background: transparent;
+      color: var(--ink);
+    }
     .mention[data-kind="task"],
     .mention[data-kind="file"] {
       background: var(--surface-sunken);

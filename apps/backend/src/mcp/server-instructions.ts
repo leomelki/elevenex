@@ -23,6 +23,9 @@ Elevenex organizes coding work into projects, repositories, tasks, and conversat
 ## Finishing and cancelling tasks
 ${TASK_FINISH_INSTRUCTIONS}
 
+## Browser work
+- Read browser_run's API/host guide once, then maximize useful work per code call: acquire the tab, inspect only what you need, perform known actions, wait for real conditions and verify the outcome together. Stop for new reasoning, human input or deadlines. Keep Browser feedback current with browser.step (running/waiting/done/error) and browser.cursor.move for a visible target/highlight, inside the same call as the work; actual pointer input updates the cursor automatically. Never add sleeps just for animation, or split calls solely for progress, acquisition or one known click. Request screenshots only when useful. browser_reset clears code state and preserves tabs. Human Stop revokes reads/writes until Hand back; never reclaim a stopped tab or replay interrupted scripts.
+
 ## Working inside the current session
 - Prefer native coding tools for implementing the current task. File/search/diff/context and saved-command tools can default to the current checkout; session-scoped file tools validate task ownership and lifecycle. Historical read_session does not require reacquiring a checkout.
 - get_session_config discovers paged model IDs, selected/default model, reasoning levels and supported permission modes. Use before set_model/set_permission_mode; session_status remains the cheap liveness read.

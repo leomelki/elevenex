@@ -1,0 +1,115 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { BrowserWindow } from 'electron';
+
+const backendRequire = createRequire(new URL('../../../apps/backend/package.json', import.meta.url));
+const ffmpeg = backendRequire('ffmpeg-static');
+
+async function encode(jpeg) {
+  const child = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'image2pipe', '-i', 'pipe:0',
+    '-frames:v', '1', '-c:v', 'libx264', '-threads', '1', '-profile:v', 'baseline', '-level:v', '4.2',
+    '-pix_fmt', 'yuv420p', '-tune', 'zerolatency', '-f', 'h264', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const chunks = [];
+  let bytes = 0;
+  const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
+  child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 3000000) child.kill(); else chunks.push(chunk); });
+  child.stderr.resume();
+  child.stdin.on('error', () => undefined);
+  child.stdin.end(jpeg);
+  try {
+    await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error('Fixture encode failed'))); });
+    return [...Buffer.concat(chunks)];
+  } finally { clearTimeout(timer); child.kill(); }
+}
+
+// Actual Electron page pixels and FFmpeg access units; the stream component and
+// trusted DOM input are real. Transport/host input have separate integration tests.
+export default async function* (capture) {
+  const source = new BrowserWindow({ show: false, width: 800, height: 600, useContentSize: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true } });
+  try {
+    await source.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><meta charset="utf-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+      <style>:root{color-scheme:light dark}body{font:18px system-ui;margin:40px}input,button{font:inherit;padding:12px}p{line-height:1.6}</style>
+      <h1>Task browser</h1><p>A real Chromium page, encoded as H.264 and decoded in the renderer.</p>
+      <label>Search <input placeholder="Type here"></label><p><button>Continue</button></p>`));
+    await capture.evaluate(() => { location.href = '/browser-video'; });
+    await capture.waitFor(() => document.querySelector('ex-browser-stream canvas'));
+    await capture.viewport(1000, 780);
+    let sequence = 0;
+    const streamId = randomUUID();
+    for (const theme of ['light', 'dark']) {
+      await capture.theme(theme);
+      const displayEpoch = theme === 'light' ? 1 : 3;
+      await capture.component('ex-browser-video-demo', (component, epoch) => component.surface.update(surface => ({ ...surface, displayEpoch: epoch })), displayEpoch);
+      const jpeg = (await source.webContents.capturePage()).toJPEG(90);
+      const bootstrapSequence = ++sequence;
+      await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(frame.jpeg) }), {
+        scopeId: 'preview', taskId: 1, tabId: 'video-tab', streamId, sequence: bootstrapSequence, width: 800, height: 600, displayEpoch, jpeg: [...jpeg],
+      });
+      await capture.waitFor(expected => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.acknowledgments.at(-1)?.sequence === expected, bootstrapSequence);
+      assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), bootstrapSequence, 'JPEG bootstrap paints before video is even encoded');
+      const data = await encode(jpeg);
+      const packet = { scopeId: 'preview', taskId: 1, tabId: 'video-tab', streamId, sequence: ++sequence,
+        width: 800, height: 600, displayEpoch, jpeg: [], video: { epoch: randomUUID(), codec: 'avc1.42E02A', key: true, timestamp: sequence * 33333, data } };
+      await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(), video: { ...frame.video, data: new Uint8Array(frame.video.data) } }), packet);
+      await capture.waitFor(expected => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.acknowledgments.at(-1)?.sequence === expected, packet.sequence);
+      const receipt = await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1));
+      assert.equal(receipt.decoded, true, 'Real H.264 decoded and displayed');
+      if (theme === 'light') {
+        const future = { ...packet, sequence: ++sequence, displayEpoch: 2, video: { ...packet.video, epoch: randomUUID(), timestamp: sequence * 33333 } };
+        await capture.component('ex-browser-video-demo', (component, frame) => component.fixture.deliver({ ...frame, jpeg: new Uint8Array(), video: { ...frame.video, data: new Uint8Array(frame.video.data) } }), future);
+        assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), packet.sequence, 'A future static frame waits for its surface state');
+        await capture.component('ex-browser-video-demo', component => component.surface.update(surface => ({ ...surface, displayEpoch: 2 })));
+        assert.equal(await capture.component('ex-browser-video-demo', component => component.fixture.acknowledgments.at(-1).sequence), future.sequence, 'The retained frame paints once its surface arrives');
+      }
+      await capture.click('ex-browser-stream canvas');
+      await capture.press('a');
+      await capture.press('z', 4);
+      await capture.cdp('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
+      await capture.cdp('Input.insertText', { text: '日本語' });
+      const inputs = await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]));
+      assert.ok(inputs.some(input => input.kind === 'edit' && input.operation === 'undo'));
+      assert.ok(inputs.some(input => input.kind === 'key' && input.type === 'down' && input.text === 'a'), 'Native key text stays paired for cancellable browser editing');
+      assert.ok(inputs.some(input => input.kind === 'composition' && input.text === 'に'));
+      assert.equal(inputs.filter(input => input.kind === 'text' && input.text === '日本語').length, theme === 'light' ? 1 : 2);
+      await capture.hover('ex-browser-stream canvas');
+      const point = await capture.evaluate(() => {
+        const box = document.querySelector('ex-browser-stream canvas').getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      });
+      await capture.component('ex-browser-video-demo', component => component.fixture.interruptNextInput());
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: 40 });
+      await capture.waitFor(() => document.querySelector('ex-browser-stream [role="status"]')?.textContent.includes('Control changed'));
+      const beforeScroll = await capture.component('ex-browser-video-demo', component => component.fixture.inputs.length);
+      await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: 80 });
+      await capture.waitFor(count => globalThis.ng.getComponent(document.querySelector('ex-browser-video-demo')).fixture.inputs.length > count, beforeScroll);
+      assert.equal(await capture.component('ex-browser-video-demo', component => {
+        const input = component.fixture.inputs.at(-1);
+        return input.kind === 'wheel' && input.deltaY;
+      }), 80, 'Fresh wheel input resumes without a click or replaying the failed scroll');
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-browser-stream .stream-status')), false, 'Fresh scrolling clears stale interruption feedback before another frame');
+      await capture.hover('ex-browser-video-demo h1');
+      assert.ok(await capture.component('ex-browser-video-demo', component => component.fixture.inputs.flatMap(input => input.kind === 'batch' ? input.events : [input]).some(input => input.kind === 'pointer-exit')), 'Leaving the streamed page clears remote hover');
+      yield { name: `${theme}-h264-input`, selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };
+      const pointerLockEpoch = theme === 'light' ? 7 : 17;
+      await capture.component('ex-browser-video-demo', (component, pointerLockEpoch) => component.surface.update(surface => ({ ...surface, pointerLocked: true, pointerLockEpoch })), pointerLockEpoch);
+      yield { name: `${theme}-pointer-lock-consent`, selector: 'ex-browser-video-demo', inspect: ['canvas', '.pointer-lock-control'] };
+      // The preview host has no registered platform lock lease. The production
+      // permission policy must decline it; the component keeps consent explicit
+      // and reports the native rejection without emitting relative movement.
+      await capture.click('ex-browser-stream .pointer-lock-control button');
+      await capture.waitFor(() => document.querySelector('.pointer-lock-control')?.textContent.includes('Pointer lock was declined'));
+      yield { name: `${theme}-pointer-lock-declined`, selector: 'ex-browser-video-demo', inspect: ['canvas', '.pointer-lock-control'] };
+      await capture.component('ex-browser-video-demo', (component, pointerLockEpoch) => component.surface.update(surface => ({ ...surface, pointerLocked: false, pointerLockEpoch })), pointerLockEpoch + 1);
+    }
+    await capture.reducedMotion(true);
+    await capture.viewport(440, 760);
+    yield { name: 'narrow-reduced-motion', selector: 'ex-browser-video-demo', inspect: ['canvas', 'textarea'] };
+    await capture.component('ex-browser-video-demo', component => component.surface.update(surface => ({ ...surface, visible: false })));
+    await capture.waitFor(() => document.querySelector('ex-browser-stream [role="status"]')?.textContent.includes('paused'));
+    yield { name: 'display-paused', selector: 'ex-browser-video-demo' };
+  } finally { source.destroy(); }
+}

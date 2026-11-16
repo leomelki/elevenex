@@ -4,6 +4,7 @@ import { app, BrowserWindow, Menu, clipboard, dialog, net, nativeTheme, powerMon
 import { registerTerminalPorts } from './backend-client/terminal-ports';
 import { TerminalLifetime } from './backend-client/terminal-lifetime';
 import { TerminalPreferences } from './backend-client/terminal-preferences';
+import { registerTaskBrowser } from './browser/application';
 import { readFile, realpath } from 'node:fs/promises';
 import { extname, join, relative, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -67,6 +68,7 @@ const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
 const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
 const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
+let taskBrowser: ReturnType<typeof registerTaskBrowser> | undefined;
 const terminalPreferences = new TerminalPreferences(join(app.getPath('userData'), 'terminal-preferences.json'));
 let terminals = new TerminalLifetime();
 const machines = new MachineApplication(backend, remote, machinePreferences,
@@ -95,9 +97,9 @@ function openExternal(url: string): void {
   if (isExternalUrl(url)) void shell.openExternal(url).catch(console.error);
 }
 
-function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string): BrowserWindow {
+function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string, browserOnly = false): BrowserWindow {
   const window = new BrowserWindow({
-    ...state.options(),
+    ...(browserOnly ? { width: 1120, height: 800, minWidth: 400, minHeight: 320 } : state.options()),
     title: editorContext ? 'Code · ' + (editorContext.state.taskName ?? 'Task') : 'Elevenex',
     icon: applicationIcon,
     show: false,
@@ -113,24 +115,25 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      webviewTag: false,
+      webviewTag: true,
       devTools: !app.isPackaged,
     },
   });
-  state.attach(window);
+  const contents = window.webContents;
+  if (!browserOnly) state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);
   // Home is passive on launch. Restore domain context when a machine is chosen,
   // but do not open a saved SSH host merely because the app started.
-  remote.attach(window.webContents.id, launchSelection ?? null);
+  if (!browserOnly) remote.attach(window.webContents.id, launchSelection ?? null);
   const windowId = window.webContents.id;
-  machines.attach(windowId, launchSelection ?? null);
+  if (!browserOnly) machines.attach(windowId, launchSelection ?? null);
   if (editorContext && editorConfiguration) code.registerWindow(windowId, editorContext, editorConfiguration);
   if (launchSelection && (!editorConfiguration || remote.backendCacheIdentity(windowId) === editorConfiguration)) void remote.select(windowId, launchSelection).catch(() => {
     // The renderer can retry from Home; never abandon a newly created window.
     console.error('Could not select the requested machine');
   });
-  backendClient.client.attach(windowId);
+  if (!browserOnly) backendClient.client.attach(windowId);
   window.webContents.on('did-start-navigation', (_event, _url, inPlace, isMainFrame) => {
     if (isMainFrame && !inPlace) { code.detachWindow(windowId); backendClient.client.reset(windowId); }
   });
@@ -158,22 +161,25 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     void remote.detach(windowId).catch(() => console.error('Remote window cleanup failed'));
   }));
   window.once('ready-to-show', () => window.show());
-  window.webContents.setWindowOpenHandler(({ url }) => {
+  contents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
     return { action: 'deny' };
   });
-  window.webContents.on('will-navigate', (event, url) => {
+  contents.on('will-navigate', (event, url) => {
     if (!isAppUrl(url, devUrl)) {
       event.preventDefault();
       openExternal(url);
     }
   });
   // A redirect must never turn a trusted app window into an external site.
-  window.webContents.on('will-redirect', (event, url) => {
+  contents.on('will-redirect', (event, url) => {
     if (!isAppUrl(url, devUrl)) event.preventDefault();
   });
-  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  void window.loadURL(editorContext ? `${devUrl ?? APP_ORIGIN}/code-window` : devUrl ?? `${APP_ORIGIN}/`).catch((error: unknown) => {
+  contents.on('will-attach-webview', (event, _preferences, params) => { if (contents.isDestroyed() || !taskBrowser?.permitsGuest(windowId, params)) event.preventDefault(); });
+  const rendererUrl = new URL(devUrl ?? `${APP_ORIGIN}/`);
+  if (editorContext) rendererUrl.pathname = '/code-window';
+  if (browserOnly) rendererUrl.pathname = '/browser-window';
+  void window.loadURL(rendererUrl.href).catch((error: unknown) => {
     console.error('Could not load the renderer:', error);
     window.destroy();
   });
@@ -215,8 +221,14 @@ async function registerRendererProtocol(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  // Pointer lock is needed only by the trusted streamed-page canvas. Website
+  // guests and editor subframes keep their separate deny-by-default sessions.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => callback(
+    permission === 'pointerLock' && details.isMainFrame && isAppUrl(details.requestingUrl, devUrl) && trusted(contents.mainFrame, contents) && taskBrowser?.permitsPointerLock(contents.id) === true,
+  ));
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    permission === 'pointerLock' && details.isMainFrame && !!details.requestingUrl && isAppUrl(details.requestingUrl, devUrl) && !!contents && trusted(contents.mainFrame, contents) && taskBrowser?.permitsPointerLock(contents.id) === true,
+  );
   if (devUrl) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({ responseHeaders: {
@@ -235,6 +247,7 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unsubscribeBackend);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
+  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted, () => createWindow(null, undefined, undefined, true));
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted, {
     get owner() { return terminals.owner; },
     track: (endpoint, engine) => terminals.track(endpoint, engine),
@@ -305,5 +318,5 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); await terminals.close(); await Promise.allSettled([state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush(), terminalPreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
+  void code.dispose().then(async () => { disposeIdentity?.(); disposeIdentity = undefined; backendClient.dispose(); machines.dispose(); taskBrowser?.dispose(); await terminals.close(); await Promise.allSettled([taskBrowser?.flush(), state.save(), backend.dispose(), remote.dispose(), remoteArchives.dispose(), machinePreferences.flush(), terminalPreferences.flush()]); app.quit(); }, async error => { quitting = false; await dialog.showMessageBox({ type: 'warning', message: 'Editor changes are still retained in the open window', detail: error instanceof Error ? error.message : 'Finish backing up your editor changes before quitting.', buttons: ['Keep open'] }); });
 });

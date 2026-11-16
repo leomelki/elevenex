@@ -183,6 +183,64 @@ describe('Workspace resume', () => {
 });
 
 describe('WorkspaceStore', () => {
+  it('publishes live status and processes later revisions while archive history is still pending', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup(true); await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    let finish!: (result: BackendResult<WorkspacePage<WorkspaceSession>>) => void;
+    const archived = new Promise<BackendResult<WorkspacePage<WorkspaceSession>>>(resolve => { finish = resolve; });
+    let status = 'running';
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => query.state === 'archived' ? archived : ok(page([{ ...session, status }])));
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true, sessionArchiveHistory: true }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()?.status).toBe('running');
+    expect(store.loading()).toBe(false);
+    status = 'attention';
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 3, version: 1, sessionArchive: true, sessionArchiveHistory: true }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()?.status).toBe('attention');
+    finish(ok(page([]))); await settle();
+    expect(store.selectedSession()?.status).toBe('attention');
+  });
+
+  it.each([1, 5])('revalidates pinned conversation %s outside the latest bounded session page', async id => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    const selected = { ...session, id };
+    bridge.workspaceSessions.mockResolvedValueOnce(ok(page([selected]))); await start();
+    store.selectSession({ taskId: '3', sessionId: String(id) });
+    bridge.workspaceRevision.mockResolvedValue(ok({ revision: 2, version: 1, sessionArchive: true }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.limit === 1
+      ? [{ ...selected, status: 'attention' }] : [{ ...session, id: 500, status: 'running' }])));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()?.status).toBe('attention');
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, ...(id > 1 ? { cursor: String(id - 1) } : {}), limit: 1 });
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual([String(id), '500']);
+  });
+
+  it('revalidates a selected nested conversation and retains its parent outside the latest root page', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    const parent: WorkspaceSession = { ...session, id: 6, parentSessionId: null, childCount: 1 };
+    const child: WorkspaceSession = { ...session, parentSessionId: 6 };
+    let revision = 1;
+    bridge.workspaceRevision.mockImplementation(async () => ok({ revision, version: 1 as const, sessionArchive: true as const, sessionNesting: true as const, sessionNestingOrder: true as const }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.parentSessionId === 6 ? [child] : [parent])));
+    await start();
+    await store.loadSessionChildren({ taskId: '3', sessionId: '6' });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    revision++;
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.parentSessionId === 6 || query.cursor === '4'
+      ? [{ ...child, status: 'attention' }] : query.cursor === '5' ? [parent]
+        : Array.from({ length: 20 }, (_, index) => ({ ...session, id: 100 + index })))));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()).toMatchObject({ id: 5, status: 'attention', parentSessionId: 6 });
+    expect(store.tasks()[0]?.sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: '6' }), expect.objectContaining({ id: '5', parentId: '6' })]));
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, limit: 20, order: 'latest', parentSessionId: null });
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, cursor: '5', limit: 1, state: 'normal' });
+    expect(store.tasks()[0]?.sessions.length).toBeLessThanOrEqual(20);
+  });
+
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { store, bridge, start } = setup(); await start();

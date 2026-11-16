@@ -22,6 +22,7 @@ describe('tooltip ownership', () => {
     buttons[0]!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     vi.runOnlyPendingTimers(); fixture.detectChanges();
     expect(labels()).toEqual(['First title']);
+    expect((document.querySelector('ex-tooltip')?.closest('.cdk-overlay-pane') as HTMLElement).style.pointerEvents).toBe('none');
     buttons[1]!.dispatchEvent(new MouseEvent('mouseenter'));
     vi.runOnlyPendingTimers(); fixture.detectChanges();
     expect(labels()).toEqual(['Second title']);

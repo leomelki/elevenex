@@ -9,7 +9,9 @@ import {
   buildAugmentedEnv,
   worktreeSimpleGit,
 } from '../config/system-paths.js';
+import { refreshCommitGraphAfterFetch } from '../git/commit-graph-refresh.js';
 import { execFileAsync } from '../terminal/async-process.js';
+import { copyCacheString } from '../git/git-cache.js';
 import { isolateGitEnvironment } from '../config/git-environment.js';
 
 export interface WorktreeStatus {
@@ -39,12 +41,13 @@ export class TaskGitService {
   private readonly fetches = new Map<string, Promise<void>>();
 
   async repositoryKey(repoPath: string): Promise<string> {
-    // Older Git echoes unknown rev-parse options into stdout with exit code 0.
-    // Resolve the path ourselves instead of using --path-format=absolute.
-    const common = (
-      await worktreeSimpleGit(repoPath).raw(['rev-parse', '--git-common-dir'])
-    ).replace(/\r?\n$/, '');
-    return fs.realpath(path.resolve(repoPath, common));
+    const [common, physicalPath] = await Promise.all([
+      worktreeSimpleGit(repoPath).raw(['rev-parse', '--git-common-dir']),
+      fs.realpath(repoPath),
+    ]);
+    // Git before 2.31 echoes the unsupported --path-format option as output.
+    // Relative output uses the physical cwd, including through nested symlinks.
+    return fs.realpath(path.resolve(physicalPath, common.replace(/\r?\n$/, '')));
   }
 
   async exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -147,7 +150,9 @@ export class TaskGitService {
           timeout: 30_000,
           killSignal: 'SIGKILL',
         },
-      ).then(() => undefined);
+      ).then(() => {
+        refreshCommitGraphAfterFetch(repoPath, [target.ref]);
+      });
       this.fetches.set(key, pending);
     }
     try {
@@ -172,7 +177,27 @@ export class TaskGitService {
 
   async defaultBase(repoPath: string): Promise<string | null> {
     const git = worktreeSimpleGit(repoPath);
-    const remotes = (await git.getRemotes()).sort((a, b) =>
+    // Only inspect candidate defaults, without reading every branch's subject
+    // or launching a rev-parse process for each missing candidate.
+    const [configuredRemotes, output] = await Promise.all([
+      git.getRemotes(),
+      git.raw([
+        'for-each-ref',
+        '--format=%(refname)%00%(symref)%00%(objecttype)',
+        'refs/remotes/*/HEAD',
+        'refs/remotes/*/main',
+        'refs/remotes/*/master',
+        'refs/heads/main',
+        'refs/heads/master',
+      ]),
+    ]);
+    const candidates = new Map(
+      output.split('\n').flatMap((line) => {
+        const [ref, target, type] = line.split('\0');
+        return type === 'commit' ? [[ref, target] as const] : [];
+      }),
+    );
+    const remotes = configuredRemotes.sort((a, b) =>
       a.name === 'origin'
         ? -1
         : b.name === 'origin'
@@ -180,28 +205,15 @@ export class TaskGitService {
           : a.name.localeCompare(b.name),
     );
     for (const { name } of remotes) {
-      try {
-        const ref = (
-          await git.raw(['symbolic-ref', '-q', `refs/remotes/${name}/HEAD`])
-        ).trim();
-        await this.resolve(repoPath, ref);
-        return ref;
-      } catch {
-        /* Some clones lack a remote HEAD symref. */
-      }
+      const target = candidates.get(`refs/remotes/${name}/HEAD`);
+      if (target) return target;
       for (const branch of ['main', 'master']) {
         const ref = `refs/remotes/${name}/${branch}`;
-        try {
-          await this.resolve(repoPath, ref);
-          return ref;
-        } catch {
-          /* Try next default. */
-        }
+        if (candidates.has(ref)) return ref;
       }
     }
     for (const branch of ['main', 'master'])
-      if (await this.hasLocalBranch(repoPath, branch))
-        return `refs/heads/${branch}`;
+      if (candidates.has(`refs/heads/${branch}`)) return `refs/heads/${branch}`;
     return null;
   }
 
@@ -275,17 +287,46 @@ export class TaskGitService {
   ): Promise<WorktreeStatus> {
     const git = worktreeSimpleGit(worktreePath);
     if (options.persistIndex) git.env('GIT_OPTIONAL_LOCKS', '1');
-    const [status, branch, head] = await Promise.all([
-      git.raw(['status', '--porcelain=v1', '--untracked-files=normal']),
-      git.raw(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
-      this.resolve(worktreePath, 'HEAD'),
+    const output = await git.raw([
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '--no-ahead-behind',
+      // Task ownership needs dirty/conflict flags, not rename identities.
+      '--no-renames',
+      '-z',
+      '--untracked-files=normal',
     ]);
+    let branch: string | null = null;
+    let head: string | undefined;
+    let offset = 0;
+    // Headers precede file records. Read only those small fields instead of
+    // allocating one string per changed path in a very dirty repository.
+    while (output.startsWith('# ', offset)) {
+      const end = output.indexOf('\0', offset);
+      if (end === -1) throw new Error('Incomplete task status headers.');
+      const record = output.slice(offset, end);
+      if (record.startsWith('# branch.head ')) {
+        const value = record.slice('# branch.head '.length);
+        branch = value === '(detached)' ? null : copyCacheString(value);
+      } else if (record.startsWith('# branch.oid ')) {
+        head = copyCacheString(record.slice('# branch.oid '.length));
+      }
+      offset = end + 1;
+    }
+    if (!head || !/^[a-f0-9]{40,64}$/.test(head))
+      throw new BadRequestException(
+        'Could not find “HEAD”. Choose another branch or revision.',
+      );
+    const firstRecord = output.slice(offset, offset + 2);
+    // With --no-renames every pathname stays inside its prefixed record, so
+    // looking for a NUL-delimited unmerged prefix cannot match filename text.
+    if (offset < output.length && !/^[1u?] $/.test(firstRecord))
+      throw new Error('Unknown task status record.');
     return {
-      dirty: status.trim().length > 0,
-      conflicts: status
-        .split('\n')
-        .some((line) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(line)),
-      branch: branch.trim() || null,
+      dirty: offset < output.length,
+      conflicts: firstRecord === 'u ' || output.includes('\0u ', offset),
+      branch,
       head,
     };
   }

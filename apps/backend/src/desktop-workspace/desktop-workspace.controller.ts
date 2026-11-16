@@ -36,8 +36,37 @@ export class DesktopWorkspaceController {
     private readonly projects: ProjectsService,
     private readonly projectDeletion: DesktopProjectDeletionService,
   ) {}
-  @Get('revision') revision() {
-    return { revision: this.navigation.revision, version: 1, taskRequests: true, commitPanel: true, sessionArchive: true, sessionArchiveHistory: true, sessionNesting: true, sessionNestingOrder: true };
+  @Get('revision') async revision(
+    @Query('after') after: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    if (after !== undefined) {
+      if (
+        typeof after !== 'string' ||
+        !/^\d{1,16}$/.test(after) ||
+        !Number.isSafeInteger(Number(after))
+      )
+        throw new BadRequestException('Invalid navigation revision.');
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      response.once('close', abort);
+      try {
+        await this.navigation.wait(Number(after), controller.signal);
+      } finally {
+        response.off('close', abort);
+      }
+    }
+    return {
+      revision: this.navigation.revision,
+      version: 1,
+      revisionWait: true,
+      sessionNesting: true,
+      sessionNestingOrder: true,
+      taskRequests: true,
+      commitPanel: true,
+      sessionArchive: true,
+      sessionArchiveHistory: true,
+    };
   }
   private async changed<T>(operation: Promise<T>): Promise<T> {
     const value = await operation;
@@ -47,7 +76,10 @@ export class DesktopWorkspaceController {
   @Get('tasks/:id/close-preview') closePreview(@Param('id') id: string) {
     return this.git.closePreview(resourceId(id));
   }
-  @Post('tasks/:id/commit-preview') commitPreview(@Param('id') id: string, @Body() input: unknown) {
+  @Post('tasks/:id/commit-preview') commitPreview(
+    @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
     return this.git.commitPreview(resourceId(id), workspaceBody(input));
   }
   @Get('tasks/:id/git') gitSummary(@Param('id') id: string) {
@@ -70,7 +102,9 @@ export class DesktopWorkspaceController {
   @Get('projects') listProjects(@Query() query: PageQuery) {
     return this.workspace.listProjects(query);
   }
-  @Get('projects/name-availability') projectNameAvailability(@Query('name') name: unknown) {
+  @Get('projects/name-availability') projectNameAvailability(
+    @Query('name') name: unknown,
+  ) {
     return this.workspace.projectNameAvailability(name);
   }
   @Get('projects/:id') project(@Param('id') id: string) {
@@ -116,7 +150,10 @@ export class DesktopWorkspaceController {
   ) {
     return this.workspace.listTasks(query);
   }
-  @Get('task-requests') taskRequest(@Query('repoId') repoId: unknown, @Query('requestId') requestId: unknown) {
+  @Get('task-requests') taskRequest(
+    @Query('repoId') repoId: unknown,
+    @Query('requestId') requestId: unknown,
+  ) {
     return this.workspace.taskRequest(resourceId(repoId), requestId);
   }
   @Get('tasks/:id') task(@Param('id') id: string) {
@@ -173,14 +210,25 @@ export class DesktopWorkspaceController {
     return this.changed(this.workspace.moveSession(resourceId(taskId), resourceId(sessionId), workspaceBody(input).parentSessionId));
   }
   @Post('tasks/:taskId/sessions/:sessionId/archive') archiveSession(
-    @Param('taskId') taskId: string, @Param('sessionId') sessionId: string, @Body() input: unknown,
+    @Param('taskId') taskId: string,
+    @Param('sessionId') sessionId: string,
+    @Body() input: unknown,
   ) {
-    return this.changed(this.workspace.archiveSession(resourceId(taskId), resourceId(sessionId), workspaceBody(input).confirmStop));
+    return this.changed(
+      this.workspace.archiveSession(
+        resourceId(taskId),
+        resourceId(sessionId),
+        workspaceBody(input).confirmStop,
+      ),
+    );
   }
   @Post('tasks/:taskId/sessions/:sessionId/restore') restoreSession(
-    @Param('taskId') taskId: string, @Param('sessionId') sessionId: string,
+    @Param('taskId') taskId: string,
+    @Param('sessionId') sessionId: string,
   ) {
-    return this.changed(this.workspace.restoreSession(resourceId(taskId), resourceId(sessionId)));
+    return this.changed(
+      this.workspace.restoreSession(resourceId(taskId), resourceId(sessionId)),
+    );
   }
   @Post('sessions') createSession(
     @Body() input: Parameters<DesktopWorkspaceService['createSession']>[0],

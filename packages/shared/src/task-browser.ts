@@ -1,0 +1,248 @@
+/** Task-owned browser contracts. Page content never receives this bridge. */
+export interface BrowserRect { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
+/** Human picker presentation only; contains no page text, attributes or values. */
+export interface BrowserHover extends BrowserRect { readonly tag: string }
+/** Page-reported development metadata, never authority to read or open a file. */
+export interface BrowserSourceLocation {
+  readonly file: string;
+  readonly line: number;
+  readonly column?: number;
+  readonly kind: 'react-debug-source' | 'react-source-map' | 'angular-template' | 'svelte-metadata' | 'vue-inspector' | 'source-marker';
+  /** Omitted for the selected element; an ancestor location is explicitly less precise. */
+  readonly relation?: 'ancestor';
+}
+/** Component fallback, deliberately separate so older clients never receive a fabricated source.line. */
+export interface BrowserComponentSource {
+  readonly file: string;
+  readonly framework: 'angular' | 'vue';
+  readonly line?: number;
+  readonly column?: number;
+}
+export interface BrowserSourceResolution {
+  readonly source?: BrowserSourceLocation;
+  readonly componentSource?: BrowserComponentSource;
+}
+export interface BrowserElement extends BrowserRect, BrowserSourceResolution { readonly selector: string; readonly tag: string; readonly snapshot?: import('./browser-element-reference.js').BrowserElementSnapshot }
+/** Engine placement and task-server routing, independent of embedded/stream display. */
+export type TaskBrowserPlacement = 'desktop' | 'desktop-proxy' | 'machine';
+export interface TaskBrowserCapabilities {
+  readonly embedded: boolean;
+  readonly audio: boolean;
+  readonly accessibility: boolean;
+  readonly filePicker: boolean;
+  readonly downloads: boolean;
+}
+/** Trusted presentation descriptors. Never supplied to a website or agent tool. */
+export interface TaskBrowserSurface {
+  readonly cursor?: TaskBrowserCursor;
+  readonly pointerLocked?: boolean;
+  /** Present only when the host accepts lock identities on relative motion/unlock. */
+  readonly pointerLockEpoch?: number;
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly partition: string;
+  readonly bootstrap: string;
+  /** Native guest identity, absent for a machine stream. Legacy fields remain for older renderers. */
+  readonly guest?: { readonly partition: string; readonly bootstrap: string };
+  readonly bounds: BrowserRect;
+  readonly viewport?: { readonly width: number; readonly height: number };
+  readonly zoom: number;
+  readonly visible: boolean;
+  readonly generation: number;
+  /** Machine document/viewport identity, independent of driver handoff. */
+  readonly displayEpoch?: number;
+  /** The host accepts printable key events with their native default text. */
+  readonly keyText?: true;
+  /** Optional human-only hover exit; older hosts keep legacy pointer events. */
+  readonly pointerExit?: true;
+  readonly inputWindow?: 4;
+  readonly interactive: boolean;
+  readonly driver: 'you' | 'agent' | 'needs';
+  readonly presentation: 'embedded' | 'stream';
+}
+export interface TaskBrowserFrame {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly streamId: string;
+  readonly sequence: number;
+  readonly width: number;
+  readonly height: number;
+  readonly jpeg: Uint8Array;
+  readonly displayEpoch?: number;
+  /** Negotiated Annex B access unit. JPEG is empty for video packets. */
+  readonly video?: { readonly epoch: string; readonly codec: 'avc1.42E02A'; readonly key: boolean; readonly timestamp: number; readonly data: Uint8Array; readonly present?: boolean };
+}
+export type TaskBrowserStreamEvent =
+  | { readonly kind: 'release' }
+  | { readonly kind: 'pointer-exit' }
+  | { readonly kind: 'pointer-unlock'; readonly pointerLockEpoch?: number }
+  | { readonly kind: 'pointer-relative'; readonly deltaX: number; readonly deltaY: number; readonly buttons: number; readonly modifiers: number; readonly pointerLockEpoch?: number }
+  | { readonly kind: 'pointer'; readonly type: 'down' | 'up' | 'move'; readonly x: number; readonly y: number; readonly button: 'left' | 'middle' | 'right' | 'none'; readonly buttons: number; readonly clicks: number; readonly modifiers: number }
+  | { readonly kind: 'wheel'; readonly x: number; readonly y: number; readonly deltaX: number; readonly deltaY: number; readonly modifiers: number }
+  | { readonly kind: 'key'; readonly type: 'down' | 'up'; readonly key: string; readonly code: string; readonly keyCode: number; readonly modifiers: number; readonly text?: string }
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'composition'; readonly text: string; readonly selectionStart: number; readonly selectionEnd: number }
+  | { readonly kind: 'edit'; readonly operation: 'undo' | 'redo' }
+  | { readonly kind: 'clipboard'; readonly operation: 'copy' | 'cut' | 'paste' | 'selectAll' };
+/** Human-only ordered input. No nesting; clipboard operations travel separately. */
+export type TaskBrowserStreamInput = TaskBrowserStreamEvent | { readonly kind: 'batch'; readonly events: readonly TaskBrowserStreamEvent[] };
+/** Human-only site requests. No paths, bytes or dialog text enter agent replies. */
+export type TaskBrowserWorkflow =
+  | { readonly id: string; readonly kind: 'dialog'; readonly type: 'alert' | 'confirm' | 'prompt' | 'beforeunload'; readonly message: string; readonly defaultValue: string }
+  | { readonly id: string; readonly kind: 'upload'; readonly multiple: boolean }
+  | { readonly id: string; readonly kind: 'download'; readonly name: string; readonly status: 'receiving' | 'ready' };
+export const browserCursors = ['default', 'none', 'pointer', 'text', 'vertical-text', 'crosshair', 'move', 'grab', 'grabbing', 'wait', 'progress', 'help', 'not-allowed', 'no-drop', 'copy', 'alias', 'cell', 'context-menu', 'all-scroll', 'col-resize', 'row-resize', 'n-resize', 'e-resize', 's-resize', 'w-resize', 'ne-resize', 'nw-resize', 'se-resize', 'sw-resize', 'ew-resize', 'ns-resize', 'nesw-resize', 'nwse-resize', 'zoom-in', 'zoom-out'] as const;
+export type TaskBrowserCursor = typeof browserCursors[number];
+export interface TaskBrowserTab {
+  /** Main-issued engine/privacy metadata; older hosts omit these fields. */
+  readonly execution?: 'local' | 'remote';
+  readonly agentAccess?: 'unavailable';
+  readonly routing?: 'server' | 'device';
+  readonly workflows?: readonly TaskBrowserWorkflow[];
+  readonly cursor?: TaskBrowserCursor;
+  readonly pointerLocked?: boolean;
+  readonly pointerLockEpoch?: number;
+  readonly id: string;
+  readonly title: string;
+  readonly url: string;
+  readonly by: 'you' | 'agent';
+  readonly driver: 'you' | 'agent' | 'needs';
+  readonly agentSessionId: number | null;
+  readonly generation: number;
+  readonly displayEpoch?: number;
+  readonly loading: boolean;
+  readonly ready: boolean;
+  readonly canGoBack: boolean;
+  /** Omitted by older runtimes that do not support forward navigation. */
+  readonly canGoForward?: boolean;
+  readonly error: string | null;
+  readonly errors: number;
+  readonly width: 'full' | 'phone';
+  readonly theme: 'light' | 'dark' | 'system';
+  readonly slowNetwork: boolean;
+  readonly waiting: boolean;
+  readonly detached?: boolean;
+  readonly server?: string;
+  readonly step?: import('./browser-presentation.js').BrowserAgentStep;
+  readonly agentCursor?: import('./browser-presentation.js').BrowserAgentCursor;
+  readonly agentHighlight?: import('./browser-presentation.js').BrowserAgentHighlight;
+  readonly target?: BrowserElement;
+  /** Optional on older hosts. Never included in agent observations. */
+  readonly hovered?: BrowserHover;
+}
+export interface TaskBrowserState {
+  /** Explicit human recovery can replace a blocked machine page engine. */
+  readonly canRecover?: true;
+  /** Human-only local tabs can coexist with the task's remote browser. */
+  readonly canCreateLocalTabs?: true;
+  readonly webAuthn?: true;
+  readonly webAuthnRequest?: import('./browser-webauthn').BrowserWebAuthnRequest;
+  /** Popup adoption, dialogs and bounded native file relay. */
+  readonly workflows?: true;
+  readonly pointerLock?: true;
+  /** Independent panel/tab ordering; omitted by older machine hosts. */
+  readonly layoutLanes?: true;
+  /** Additive input capability; strict older hosts must receive legacy events. */
+  readonly keyText?: true;
+  /** Optional human-only hover exit; older hosts keep legacy pointer events. */
+  readonly pointerExit?: true;
+  /** Complete batches are ordered by the host; older hosts remain stop-and-wait. */
+  readonly inputWindow?: 4;
+  readonly placement?: TaskBrowserPlacement;
+  /** Main-issued location choices; older desktops omit this field. */
+  readonly availablePlacements?: readonly TaskBrowserPlacement[];
+  readonly capabilities?: TaskBrowserCapabilities;
+  /** Older remote runtimes omit this capability. */
+  readonly canDetach?: boolean;
+  /** Private persistent stream protocol; omitted by older runtime hosts. */
+  readonly streamVersion?: 1;
+  /** Optional push video; older clients continue to request JPEG frames. */
+  readonly videoStream?: 'h264';
+  /** Negotiated maximum video delivery window; older hosts use three. */
+  readonly videoWindow?: 8;
+  /** Human tab ordering; absent on older machine hosts. */
+  readonly canReorder?: boolean;
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly revision: number;
+  readonly surfaceEpoch: number;
+  readonly controlsFocus: number;
+  readonly attention?: { readonly kind: 'popup' | 'dialog' | 'file-picker' | 'download'; readonly message: string; readonly outside: boolean; readonly tabId?: string };
+  readonly connection?: { readonly phase: 'idle' | 'connecting' | 'ready' | 'blocked'; readonly message?: string };
+  readonly active: string | null;
+  readonly tabs: readonly TaskBrowserTab[];
+  readonly picked: BrowserElement | null;
+  readonly picking: boolean;
+  readonly capturePending?: boolean;
+  readonly pickerMessage: string | null;
+  readonly feedback: boolean;
+  readonly ports: readonly number[];
+  /** Code-first MCP can observe only tabs owned by its authenticated session. */
+  readonly agentCode?: 1;
+  readonly elementSnapshots?: 1;
+  readonly agentRequests?: readonly import('./browser-human.js').BrowserHumanRequest[];
+  /** Legacy metadata-only observation policy; agentCode advertises the new API. */
+  readonly privacy: 'content-withheld';
+}
+export type TaskBrowserCommand =
+  | { readonly kind: 'agent-request-complete'; readonly requestId: string }
+  | { readonly kind: 'agent-request-cancel'; readonly requestId: string }
+  | { readonly kind: 'agent-request-pick'; readonly requestId: string; readonly visual?: 1 }
+  | { readonly kind: 'dialog-response'; readonly tabId: string; readonly requestId: string; readonly accept: boolean; readonly text: string }
+  | { readonly kind: 'choose-files' | 'save-download' | 'cancel-workflow'; readonly tabId: string; readonly requestId: string }
+  | { readonly kind: 'dismiss-attention' }
+  | { readonly kind: 'new-tab'; readonly location?: 'local' | 'remote' }
+  | { readonly kind: 'open'; readonly url: string }
+  /** Move an existing tab before another, or to the end. Never replaces the tab set. */
+  | { readonly kind: 'move-tab'; readonly tabId: string; readonly beforeTabId: string | null }
+  | { readonly kind: 'select' | 'close' | 'back' | 'forward' | 'reload' | 'recover' | 'takeover' | 'outside' | 'focus'; readonly tabId: string }
+  | { readonly kind: 'handoff'; readonly tabId: string; readonly sessionId: number }
+  | { readonly kind: 'navigate'; readonly tabId: string; readonly url: string }
+  | { readonly kind: 'width'; readonly tabId: string; readonly width: 'full' | 'phone' }
+  | { readonly kind: 'pick'; readonly enabled: boolean; readonly visual?: 1 }
+  | { readonly kind: 'feedback'; readonly enabled: boolean }
+  | { readonly kind: 'theme'; readonly tabId: string; readonly theme: 'light' | 'dark' | 'system' }
+  | { readonly kind: 'network'; readonly tabId: string; readonly slow: boolean };
+export interface TaskBrowserLayout {
+  /** Monotonic document-local ordering prevents a late frame reattaching a hidden page. */
+  readonly sequence: number;
+  readonly surfaceEpoch: number;
+  readonly reducedMotion: boolean;
+  readonly visible: boolean;
+  readonly inputReady: boolean;
+  readonly ownerGeneration: number;
+  readonly bounds: BrowserRect;
+  readonly viewport?: { readonly width: number; readonly height: number };
+}
+export type BrowserAgentCommand =
+  | { readonly kind: 'list' }
+  | { readonly kind: 'open'; readonly url: string }
+  | { readonly kind: 'navigate'; readonly tabId: string; readonly generation: number; readonly url: string }
+  | { readonly kind: 'back' | 'reload' | 'needs-user' | 'select' | 'close'; readonly tabId: string; readonly generation: number }
+  | { readonly kind: 'click'; readonly tabId: string; readonly generation: number; readonly x: number; readonly y: number; readonly step: string; readonly n?: number; readonly total?: number }
+  | { readonly kind: 'scroll'; readonly tabId: string; readonly generation: number; readonly x: number; readonly y: number; readonly atX?: number; readonly atY?: number };
+export interface BrowserAgentState {
+  readonly active: string | null;
+  readonly tabs: readonly { readonly id: string; readonly by: 'you' | 'agent'; readonly agentSessionId: number | null; readonly driver: 'you' | 'agent' | 'needs'; readonly generation: number; readonly loading: boolean; readonly ready: boolean; readonly error: string | null; readonly errors?: number }[];
+  readonly observation: 'withheld';
+  readonly message: string;
+}
+
+/** Labels are presentation data, never authority to access a task or machine. */
+export interface TaskBrowserWindowContext {
+  readonly projectName: string;
+  readonly taskName: string;
+  readonly branchName: string;
+  readonly machineName: string;
+  readonly stage: 'planned' | 'active' | 'waiting' | 'closed';
+  readonly hue: 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
+}
+export interface TaskBrowserWindowInfo {
+  readonly scopeId: string;
+  readonly taskId: number;
+  readonly tabId: string;
+  readonly context: TaskBrowserWindowContext;
+  readonly available: boolean;
+}

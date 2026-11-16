@@ -1,0 +1,19 @@
+:host { display: block; min-width: 0; }
+.surface {
+  min-height: 44px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  outline: 0;
+  color: var(--ink);
+  font: var(--text-body-size)/var(--text-body-line) var(--font-sans);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.surface[aria-disabled="true"] { opacity: 0.45; }
+/* `:only-child` ignores text nodes, so the editor marks emptiness explicitly. */
+.surface.empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-muted);
+  pointer-events: none;
+}

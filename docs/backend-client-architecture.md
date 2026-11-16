@@ -157,10 +157,26 @@ Sidebar session activity uses the backend's existing in-memory hook snapshots
 and a bounded scalar provider-event cache. It does not hydrate runtimes, request
 model catalogs or read history for unselected sessions. Only semantic activity
 changes invalidate navigation; streamed text and tool progress do not reload
-the sidebar. Session pages supply authoritative activity for the visible window.
+the sidebar. Engines advertising `revisionWait` support a cancellable revision
+wait through the existing per-window HTTP transport. It wakes on changes or after
+25 seconds, uses a pre-read cursor to avoid missed updates, and never replays
+mutations. Hidden windows cancel the wait; visibility resumes reconciliation.
+Older engines keep five-second revision polling. Disconnects back off, and failed
+reconciliation retains its cursor for retry. Session pages supply authoritative
+activity for the visible window; live rows update before unrelated archive reads.
 
-The side views expose supplied-data boundaries. Terminal now connects real
-user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
+Activity normalization covers Claude (native and terminal), Codex, Pi and both
+OpenCode versions. Explicit decisions take precedence over work, errors over a
+stale interrupt flag, and independent background work remains running. Terminal
+Claude hooks publish activity before metadata persistence and clear provisional
+activity if persistence fails. Tool/elicitation results resume work; task and
+subagent completion do not complete the main turn. `StopFailure` publishes an
+optional failure flag while retaining the legacy three-value activity protocol.
+
+Browser uses narrow task-owned local guest and remote streaming adapters; see the
+[production browser guide](../apps/renderer/src/app/task-browser/README.md) for
+its mailbox, forwarding, ownership, bounded resources and conservative privacy
+policy. Terminal connects real user-owned task PTYs through the scoped bridge; its ownership is described below. The implementation does not
 introduce direct renderer networking, generic IPC, a second backend or a
 replacement persistence framework. Selected sessions compose the
 [connected chat adapter](../apps/renderer/src/app/session-chat/README.md) with
@@ -355,6 +371,16 @@ file rows, 20 running-session names and scalar totals. Filtering searches every
 changed file on the backend. A task-owned 4 MiB metadata cache reuses unchanged
 snapshots across filters/pages; its lifetime ends with the backend service.
 
+Desktop commits with a blank message use the same provider preference as session
+startup: explicit configured defaults take priority, otherwise the last-used
+provider is selected. Model selection remains with the text-generation service's
+provider defaults. Manual messages require no provider. Direct Git API/MCP callers
+continue to supply their own provider for generation. Provider failures are not
+retried automatically or replaced with heuristic messages; malformed AI output
+can be corrected within a limit of three generation attempts. Staged diff context
+is read as a bounded prefix with a deadline, without external diff drivers or
+text conversion.
+
 Commit exceptions are bounded to 1,000 paths / 64 KiB per list, and match only
 server-observed changed paths. Likely secret paths require explicit inclusion.
 The commit revision includes HEAD, changed paths and staged blob IDs/modes.
@@ -430,6 +456,12 @@ bounded main-owned network-interface/online-state observation resume that stop;
 authentication and host-trust failures always require a person. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
 
+Remote Browser viewer routes require the managed private IPC transport and a
+rotated exclusive viewer lease; they are unavailable on the legacy TCP API. Main
+owns credentials, frame transport and narrowly typed input. The renderer does
+not fetch remote frames or expose pixels to MCP. Disconnect invalidates driver
+generations and queued work; metadata reconciliation never replays an action.
+See [the browser host](../apps/backend/src/desktop-browser/README.md).
 ## User terminal slice
 
 Terminal replies optionally carry `portDiscovery` and at most 16 `services`.
@@ -516,3 +548,5 @@ Omitting the option preserves existing flat/root/child ordering and numeric
 cursors. Main validates the opt-in mode and its bounded cursor without changing
 other resource pagination. Older engines keep the group highlight and keyboard
 moves; the renderer withholds the dock's append-position promise.
+
+The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.

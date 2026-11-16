@@ -4,11 +4,12 @@ import { parseOptions, checkpoint } from '../options.mjs';
 import { escapeHtml } from '../report.mjs';
 
 test('capture CLI rejects remote URLs, incompatible modes and unbounded dimensions', () => {
-  for (const args of [['--url', 'https://example.com'], ['--url', 'http://user:pass@127.0.0.1:4300'], ['--width', '0'], ['--height', '8192'], ['--timeout', 'Infinity'], ['--theme', 'system'], ['--built', '--fixture'], ['--serve', 'scenario.mjs'], ['--unknown']]) {
+  for (const args of [['--url', 'https://example.com'], ['--url', 'http://user:pass@127.0.0.1:4300'], ['--width', '0'], ['--height', '8192'], ['--timeout', 'Infinity'], ['--theme', 'system'], ['--built', '--fixture'], ['--serve', 'scenario.mjs'], ['--unknown'], ['--backend-url', 'https://example.com'], ['--backend-url', 'http://user:secret@127.0.0.1:41273']]) {
     assert.throws(() => parseOptions(args), undefined, args.join(' '));
   }
   assert.equal(parseOptions(['--fixture', '--url', 'http://127.0.0.1:4310']).fixture, true);
   assert.equal(parseOptions(['--', '-', '--width', '900']).scenario, '-');
+  assert.equal(parseOptions(['--backend-url', 'http://127.0.0.1:41273'])['backend-url'], 'http://127.0.0.1:41273');
 });
 
 test('checkpoint names cannot overwrite outputs or escape their directory', () => {
