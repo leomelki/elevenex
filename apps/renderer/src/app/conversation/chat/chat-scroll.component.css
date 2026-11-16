@@ -40,31 +40,30 @@
   margin: 0 auto;
   padding: var(--space-6) var(--space-4) var(--space-8);
 }
+/* Pinned reminder of the prompt the reply in view answers: a centered glass
+   capsule that sizes to the prompt, echoing the title island. One line at rest;
+   the whole capsule is one control that scrolls back to the message. */
 .reminder {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   position: absolute;
   z-index: 5;
-  top: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(calc(100% - var(--space-8)), var(--chat-max));
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--glass);
-  backdrop-filter: blur(var(--blur-glass));
-  box-shadow: var(--shadow-raised);
-  box-sizing: border-box;
-  padding: var(--space-1) var(--space-3);
-  color: var(--ink);
-  font-size: var(--text-ui-size);
+  top: 0;
+  left: 0;
+  right: var(--scrollbar-width, 0px);
+  display: grid;
+  justify-items: center;
+  padding: var(--space-2) var(--space-4) 0;
+  pointer-events: none;
 }
-.reminder strong {
-  flex: none;
-  color: var(--ink-muted);
-  font-size: var(--text-caption-size);
-  font-weight: 500;
+.scrim {
+  position: absolute;
+  inset: 0 0 auto;
+  height: calc(100% + var(--space-4));
+  background: linear-gradient(
+    to bottom,
+    var(--surface) 0%,
+    color-mix(in oklab, var(--surface) 72%, transparent) 50%,
+    transparent 100%
+  );
 }
 button {
   background: transparent;
@@ -75,34 +74,176 @@ button {
   cursor: pointer;
   border-radius: var(--radius-xs);
 }
-button:hover {
-  color: var(--ink);
-}
 button:focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-.prompt {
+.surface {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
-  flex: 1;
+  box-sizing: border-box;
   min-width: 0;
-  min-height: var(--control-height);
+  max-width: min(520px, 100%);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--surface-raised) 80%, transparent);
+  backdrop-filter: blur(var(--blur-pop)) saturate(1.3);
+  box-shadow: var(--shadow-pop);
   color: var(--ink);
   text-align: left;
+  font-size: var(--text-ui-size);
   line-height: var(--text-ui-line);
+  pointer-events: auto;
+  transform-origin: top center;
+  /* Leaving the charge (or opening) springs back to rest. */
+  transition:
+    transform var(--dur-glide) var(--ease-spring),
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
-.prompt span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.surface:hover {
+  border-color: var(--line);
+  background: color-mix(in oklab, var(--surface-raised) 94%, transparent);
 }
-.prompt ex-icon { flex: none; }
-.hide {
+.surface:focus-visible {
+  box-shadow: var(--focus-ring), var(--shadow-pop);
+}
+.glyph {
+  display: grid;
   flex: none;
-  min-height: var(--control-height);
-  font-size: var(--text-caption-size);
+  place-items: center;
+  /* Inset equally from the top and left, so the well's curve is concentric
+     with the capsule's corner (12px + 4px padding = radius-lg) at any height. */
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition:
+    background var(--dur-base) var(--ease-out),
+    color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-spring);
+}
+.surface:hover .glyph,
+.surface:focus-visible .glyph {
+  transform: translateY(-1px);
+}
+.quote-stack {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Centers the first line on the 24px well; later lines follow below it. */
+  padding: 3px var(--space-1);
+}
+.quote {
+  grid-area: 1 / 1;
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+/* Peek. Resting the pointer on a clipped prompt charges the capsule for the
+   whole 320ms wait: it swells, its border warms and the ↑ well fills, so the
+   opening is expected rather than sudden. Then it releases: the box springs
+   open to three lines (a WAAPI morph owned by the component) while the swell
+   springs back. Leaving early lets the charge drain on the same spring. */
+.reminder.arming > .surface {
+  transform: scale(1.025);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  transition:
+    transform 320ms var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    border-color 320ms var(--ease-out);
+}
+/* Only the charge fills the well; opening spends it, so the open capsule
+   returns to the quiet tint instead of looking like a send button. */
+.reminder.arming .glyph {
+  background: var(--accent);
+  color: var(--ink-inverse);
+}
+.reminder.arming .glyph {
+  transform: scale(1.08);
+  transition:
+    background 320ms var(--ease-out),
+    color 320ms var(--ease-out),
+    transform 320ms var(--ease-out);
+}
+.reminder.peek .glyph {
+  transform: none;
+}
+.reminder.peek > .surface {
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--line));
+}
+.reminder.peek .quote {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* Motion. First paint carries no enter class. Angular tracks the aside's own
+   animation, so the aside fades for as long as the capsule moves: it un-blurs
+   and springs in from 88%, and leaves at about half that on ease-in. */
+.reminder-leave,
+.reminder-leave > * {
+  pointer-events: none;
+}
+.reminder-enter {
+  animation: reminder-in var(--dur-glide) var(--ease-out);
+}
+.reminder-leave {
+  animation: reminder-out var(--dur-fast) var(--ease-in) forwards;
+}
+@keyframes reminder-in { from { opacity: 0; } }
+@keyframes reminder-out { to { opacity: 0; } }
+.reminder-enter > .surface {
+  animation: island-in var(--dur-glide) var(--ease-spring);
+}
+.reminder-leave > .surface {
+  animation: island-out var(--dur-fast) var(--ease-in) forwards;
+}
+@keyframes island-in {
+  0% {
+    filter: blur(6px);
+    transform: translateY(calc(-1 * var(--space-2))) scale(0.88);
+  }
+  45% { filter: blur(0); }
+}
+@keyframes island-out {
+  to {
+    filter: blur(4px);
+    transform: translateY(calc(-1 * var(--space-1))) scale(0.94);
+  }
+}
+/* A different exchange un-blurs its text in place of the old one. The old
+   line leaves out of flow so the capsule can ease to the new width. */
+.quote-enter {
+  animation: quote-in var(--dur-base) var(--ease-out) 40ms backwards;
+}
+.quote-leave {
+  position: absolute;
+  inset: 3px var(--space-1) auto;
+  animation: quote-out var(--dur-fast) var(--ease-in) forwards;
+}
+@keyframes quote-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(3px);
+  }
+}
+@keyframes quote-out {
+  to {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateY(-3px);
+  }
 }
 .return {
   position: absolute;
@@ -149,6 +290,18 @@ button:focus-visible {
   box-shadow: var(--focus-ring), var(--shadow-pop);
 }
 @media (prefers-reduced-motion: reduce) {
+  .reminder-enter,
+  .reminder-enter > *,
+  .reminder-leave,
+  .reminder-leave > *,
+  .quote-enter,
+  .quote-leave {
+    animation: none;
+  }
+  .surface,
+  .glyph {
+    transition: none;
+  }
   .return,
   .return.visible {
     transform: translateX(-50%);

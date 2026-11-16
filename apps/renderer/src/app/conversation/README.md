@@ -47,16 +47,39 @@ range subscriptions are released with the rail. The `/conversation` preview has
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
-The contextual reminder is a single row with an ellipsized prompt, a return action
-on that prompt and Hide. It follows the legacy chat's reading probe, 28% down the
-viewport (clamped to 48–160px): context stays available while the next prompt is
-near the bottom, then clears as that prompt enters the upper reading area.
+The contextual reminder is a centered glass capsule sized to its prompt, echoing
+the title island: an ↑ in an accent well and the prompt on one ellipsized line.
+The whole capsule is one control that scrolls back to the message and rings it.
+Between exchanges its width eases to the new prompt's.
+
+Peek: resting a mouse on a clipped prompt charges the capsule for the 320ms wait
+(it swells to 102.5%, its border warms toward the accent and the ↑ well fills),
+then releases it: the box springs open to up to three lines (`dur-deliberate`,
+`ease-spring`) while the swell springs back and the well returns to its tint, so
+the open capsule never resembles the composer's Send button. The well is inset
+equally from the top and left, concentric with the capsule's corner at any
+height, and centered on the first line. Leaving early drains the charge on
+the same spring; leaving after it opened settles back on `ease-out`. Keyboard
+focus opens it at once (`aria-expanded` follows). Touch never peeks, and a prompt
+that already fits never charges, so nothing promises an opening that won't come.
+The component owns the width/height morph rather than `AutoHeight`, so a swap and
+a peek share one interruptible animation.
+
+A short scrim behind it fades the reply underneath. It follows the legacy chat's
+reading probe, 28% down the viewport (clamped to 48–160px): context stays
+available while the next prompt is near the bottom, then clears as that prompt
+enters the upper reading area.
 The source prompt must be fully above a 12%-of-height reading buffer (clamped to
 48–96px); the return threshold relaxes by 24px to avoid boundary flicker. This
 prevents a barely clipped prompt from immediately being repeated. Viewports
-below 240px and history loading/error states suppress it. Hide lasts for that
-prompt while it remains in the bounded history window. Removing a focused
+below 240px and history loading/error states suppress it. Removing a focused
 reminder hands focus to the transcript.
+
+Motion: on first paint the reminder is simply there. Later it un-blurs and
+springs in from 88% scale (`dur-glide`, `ease-spring`) and leaves on `ease-in`
+at `dur-fast`. Angular tracks the aside's own animation, so it always carries the
+longest one. Jumping straight into another exchange keeps the reminder and blurs
+the new prompt in over the old one. Under reduced motion no motion classes are applied and changes are immediate.
 
 Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 `historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity

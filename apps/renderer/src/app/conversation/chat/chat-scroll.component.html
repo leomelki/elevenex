@@ -22,13 +22,38 @@
   </div>
 }
 @if (pin(); as pin) {
-  <aside #reminderElement class="reminder" aria-label="Message reminder">
-    <strong>You asked</strong>
-    <button type="button" class="prompt" [attr.aria-label]="'Back to your message: ' + pin.text" (click)="scrollToMessage(pin.id)">
-      <span>{{ pin.text }}</span>
-      <ex-icon name="arrow-up" [size]="12" />
+  <aside
+    #reminderElement
+    class="reminder"
+    [class.arming]="arming()"
+    [class.peek]="peek()"
+    [animate.enter]="reminderMotion() ? 'reminder-enter' : ''"
+    animate.leave="reminder-leave"
+    aria-label="Your message for the reply in view"
+  >
+    <div class="scrim" aria-hidden="true"></div>
+    <button
+      type="button"
+      class="surface"
+      [attr.aria-label]="'Back to your message: ' + pin.text"
+      [attr.aria-expanded]="peek()"
+      (pointerenter)="startPeek($event)"
+      (pointerleave)="endPeek()"
+      (focus)="peekOnFocus($event)"
+      (blur)="endPeek()"
+      (click)="scrollToMessage(pin.id)"
+    >
+      <span class="glyph" aria-hidden="true"><ex-icon name="arrow-up" [size]="12" /></span>
+      <span class="quote-stack">
+        @for (quote of pinQuotes(); track quote.id) {
+          <span
+            class="quote"
+            [animate.enter]="quoteMotion() ? 'quote-enter' : ''"
+            [animate.leave]="quoteMotion() ? 'quote-leave' : ''"
+          >{{ quote.text }}</span>
+        }
+      </span>
     </button>
-    <button type="button" class="hide" aria-label="Hide message reminder" (click)="hideReminder()">Hide</button>
   </aside>
 }
 <div

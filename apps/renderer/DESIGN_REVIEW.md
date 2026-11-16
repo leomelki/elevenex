@@ -1,5 +1,14 @@
 # Component design review
 
+## ChatScroll reminder, 2026-11-16
+
+The design describes “You asked”, two lines, Back and Hide. The renderer shows
+one line that is itself Back to your message, and peeks at three lines when the
+pointer rests on it or it has keyboard focus. There is no Hide: a one-line
+reminder no longer needs dismissing, and the timing rules already withdraw it
+when it isn't useful. It is drawn as a centered glass capsule (an island) that
+charges before it opens.
+
 ## AgentPicker reference port, 2026-10-29
 
 The connected composer's initial settings form did not reproduce the standalone

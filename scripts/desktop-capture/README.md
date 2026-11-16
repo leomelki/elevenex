@@ -162,8 +162,10 @@ height cap and narrow reduced-motion layouts in both themes. Run it with
 `--url http://127.0.0.1:4310`.
 
 `scenarios/chat-reminder.mjs` checks the real conversation components for delayed
-context reminders, boundary reversals, visible neighbouring prompts, short
-replies, dismissal and keyboard return. It covers both themes, narrow layouts
+context reminders, one-line geometry, boundary reversals, visible neighbouring
+prompts, short replies, the charge-then-open peek and keyboard return. Wide runs
+scrub the entry, exchange swap, charge and spring release frame by frame. It
+covers both themes, narrow layouts
 and reduced motion against `pnpm desktop:preview` with
 `--url http://127.0.0.1:4310`.
 
@@ -333,7 +335,8 @@ await capture.motion.finish();
 await capture.motion.play();
 ```
 
-`freeze()` sets Chromium's animation playback rate to zero. `seek(ms)` gives
+`freeze()` sets Chromium's animation playback rate to zero and starts a new
+sample sequence, forgetting animations tracked before it. `seek(ms)` gives
 each currently tracked CSS transition/animation/WAAPI animation that elapsed
 age, including its delay; it rejects when no animation exists. Use one action
 per sample sequence. New animations created at different times are not a shared

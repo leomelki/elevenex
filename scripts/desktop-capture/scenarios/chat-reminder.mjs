@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 
-/** Real chat geometry: useful context, small reversals, neighbouring prompts and keyboard return. */
+/** Real chat geometry: useful context, small reversals, neighbouring prompts,
+ * exchange swaps, the island's charge and spring-open peek, motion frames and
+ * keyboard return. */
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/conversation'; });
   await capture.waitFor(() => document.querySelector('ex-conversation-demo ex-chat'));
@@ -22,7 +24,15 @@ export default async function* (capture) {
     }, { id, gap });
     await capture.settle();
   };
-  const shown = () => capture.evaluate(() => !!document.querySelector('.demo-chat .reminder'));
+  // A leaving reminder stays mounted for its exit; it no longer counts as shown.
+  const shown = () => capture.evaluate(() => !!document.querySelector('.demo-chat .reminder:not(.reminder-leave)'));
+  const rest = () => capture.waitFor(() => !document.querySelector(
+    '.demo-chat :is(.reminder-enter, .reminder-leave, .quote-enter, .quote-leave)'));
+  // Scrubbing tracks every running animation; let theme and hover transitions end first.
+  const quiet = async () => {
+    await rest();
+    await capture.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
+  };
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
     for (const narrow of [false, true]) {
@@ -33,21 +43,51 @@ export default async function* (capture) {
       const name = `${theme}-${narrow ? 'narrow-reduced' : 'wide'}`;
       await move('context', 8);
       assert.equal(await shown(), false, 'A barely clipped prompt needs no reminder');
+      await rest();
       yield { name: `${name}-slightly-scrolled`, selector: '.demo-chat', inspect: ['.demo-chat .viewport'] };
 
-      await move('context', 400);
+      if (!narrow) {
+        // Entry: slides down 8px and fades in on ease-out; frames are scrubbed.
+        await quiet();
+        await capture.motion.freeze();
+        await move('context', 400);
+        yield* capture.frames(`${name}-enter`, [0, 90, 180, 280], ['.demo-chat .reminder']);
+        await capture.motion.finish();
+        await capture.motion.play();
+      } else await move('context', 400);
+      await rest();
       assert.equal(await shown(), true, 'Deep into a long reply, context is useful');
       const geometry = await capture.evaluate(() => {
-        const reminder = document.querySelector('.demo-chat .reminder');
+        const card = document.querySelector('.demo-chat .reminder .surface');
         const viewport = document.querySelector('.demo-chat .viewport');
-        const prompt = reminder.querySelector('.prompt span');
-        return { height: reminder.getBoundingClientRect().height, viewport: viewport.clientHeight,
-          overflow: reminder.scrollWidth > reminder.clientWidth, ellipsis: getComputedStyle(prompt).textOverflow };
+        const quote = card.querySelector('.quote');
+        const column = document.querySelector('.demo-chat .content').getBoundingClientRect();
+        const bounds = card.getBoundingClientRect();
+        const style = getComputedStyle(quote);
+        return { height: bounds.height, viewport: viewport.clientHeight,
+          overflow: card.scrollWidth > card.clientWidth, clamp: style.webkitLineClamp,
+          lines: Math.round(quote.getBoundingClientRect().height / parseFloat(style.lineHeight)),
+          left: Math.round(bounds.left - column.left), right: Math.round(column.right - bounds.right) };
       });
-      assert.ok(geometry.height <= 42 && geometry.height < geometry.viewport / 8, JSON.stringify(geometry));
+      assert.ok(geometry.height <= 40, JSON.stringify(geometry));
       assert.equal(geometry.overflow, false);
-      assert.equal(geometry.ellipsis, 'ellipsis');
-      yield { name: `${name}-useful-context`, selector: '.demo-chat', metadata: geometry, inspect: ['.demo-chat .reminder', '.demo-chat .prompt'] };
+      assert.equal(geometry.clamp, '1');
+      assert.equal(geometry.lines, 1, JSON.stringify(geometry));
+      yield { name: `${name}-useful-context`, selector: '.demo-chat', metadata: geometry, inspect: ['.demo-chat .reminder', '.demo-chat .reminder .surface'] };
+
+      if (!narrow) {
+        // A jump straight into another exchange keeps the card and blurs its text over.
+        await quiet();
+        await capture.motion.freeze();
+        await move('following', 400);
+        yield* capture.frames(`${name}-swap`, [0, 80, 160, 240], ['.demo-chat .reminder .quote-stack']);
+        await capture.motion.finish();
+        await capture.motion.play();
+        await rest();
+        assert.equal(await capture.evaluate(() => document.querySelector('.demo-chat .reminder .quote').textContent), 'Show the recovery cases as well.');
+        await move('context', 400);
+        await rest();
+      }
 
       const distance = await capture.evaluate(() => Math.min(96, Math.max(48, document.querySelector('.demo-chat .viewport').clientHeight * 0.12)));
       await move('context', distance - 12);
@@ -68,6 +108,7 @@ export default async function* (capture) {
       });
       await capture.settle();
       assert.equal(await shown(), true, 'Keep context while the reader is still following the old response');
+      await rest();
       yield { name: `${name}-next-prompt-at-bottom`, selector: '.demo-chat', inspect: ['.demo-chat .reminder', '[data-user-message="short"]'] };
       await capture.evaluate(() => {
         const viewport = document.querySelector('.demo-chat .viewport');
@@ -78,23 +119,55 @@ export default async function* (capture) {
       });
       await capture.settle();
       assert.equal(await shown(), false, 'Visible prompts take over in the upper reading area');
+      await rest();
       yield { name: `${name}-next-prompt-at-top`, selector: '.demo-chat', inspect: ['[data-user-message="short"]'] };
 
       await move('short', 8);
       assert.equal(await shown(), false, 'A short reply should not acquire a reminder');
-      await move('following', 400);
-      assert.equal(await shown(), true);
-      await capture.evaluate(() => document.querySelector('.demo-chat .reminder .hide').focus());
-      await capture.press('Enter');
-      assert.equal(await shown(), false);
-      assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('.demo-chat .viewport')), true);
-      await move('following', 500);
-      assert.equal(await shown(), false, 'Hide lasts for this prompt');
-
-      // Dismissal of the following prompt does not affect an earlier exchange.
       await move('context', 400);
-      assert.equal(await shown(), true);
-      await capture.evaluate(() => document.querySelector('.demo-chat .reminder .prompt').focus());
+      await rest();
+      // Passing over it doesn't open it; resting on it charges, then opens.
+      const lines = () => capture.evaluate(() => {
+        const quote = document.querySelector('.demo-chat .reminder .quote');
+        return Math.round(quote.getBoundingClientRect().height / parseFloat(getComputedStyle(quote).lineHeight));
+      });
+      const classes = () => capture.evaluate(() => document.querySelector('.demo-chat .reminder').className);
+      if (!narrow) {
+        // The charge, scrubbed: swell, warm border, filling ↑ well. Set through
+        // the public signal so its 320ms transition can be sampled in isolation.
+        await quiet();
+        await capture.motion.freeze();
+        await capture.component('.demo-chat ex-chat-scroll', component => component.arming.set(true));
+        yield* capture.frames(`${name}-charge`, [0, 110, 220, 320], ['.demo-chat .reminder .surface']);
+        await capture.motion.finish();
+        await capture.motion.play();
+        await capture.component('.demo-chat ex-chat-scroll', component => component.arming.set(false));
+        await quiet();
+        // The release, scrubbed: the real pointer rests, the timer opens it,
+        // and the box springs to three lines.
+        await capture.motion.freeze();
+        await capture.hover('.demo-chat .reminder .surface');
+        await capture.waitFor(() => document.querySelector('.demo-chat .reminder.peek'));
+        yield* capture.frames(`${name}-release`, [0, 90, 180, 280, 420], ['.demo-chat .reminder .surface']);
+        await capture.motion.finish();
+        await capture.motion.play();
+      } else {
+        // Narrow runs use reduced motion: no charge, it simply opens after the wait.
+        await capture.hover('.demo-chat .reminder .surface');
+        assert.doesNotMatch(await classes(), /arming|peek/);
+        await capture.waitFor(() => document.querySelector('.demo-chat .reminder.peek'));
+      }
+      await rest();
+      await capture.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
+      assert.ok(await lines() > 1, 'Resting on the reminder peeks at more of a long prompt');
+      yield { name: `${name}-peek`, selector: '.demo-chat', inspect: ['.demo-chat .reminder .surface'] };
+      await capture.hover('.demo-chat .viewport');
+      await capture.waitFor(() => !document.querySelector('.demo-chat .reminder.peek'));
+      assert.equal(await lines(), 1);
+
+      await move('context', 400);
+      await rest();
+      await capture.evaluate(() => document.querySelector('.demo-chat .reminder .surface').focus());
       await capture.press('Enter');
       await capture.waitFor(() => {
         const viewport = document.querySelector('.demo-chat .viewport');
@@ -103,6 +176,7 @@ export default async function* (capture) {
       });
       assert.equal(await shown(), false);
       assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('.demo-chat .viewport')), true);
+      await rest();
       yield { name: `${name}-keyboard-return`, selector: '.demo-chat', inspect: ['.demo-chat .viewport', '[data-user-message="context"]'] };
     }
   }

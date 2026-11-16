@@ -149,25 +149,55 @@ describe("ChatScroll contextual reminder", () => {
     expect(reminder()).toBeNull();
   });
 
-  it("dismisses only this prompt and preserves keyboard focus when the reminder disappears", async () => {
+  it("jumps back as one control and returns focus to the transcript when it leaves", async () => {
     const { viewport, moveTo, reminder } = await setup();
-    await moveTo(400);
-    const hide = reminder()!.querySelector<HTMLButtonElement>(".hide")!;
-    hide.focus();
-    hide.click();
-    await moveTo(500);
-    expect(reminder()).toBeNull();
-    expect(document.activeElement).toBe(viewport);
     await moveTo(3400);
-    const prompt = reminder()!.querySelector<HTMLButtonElement>(".prompt")!;
-    expect(prompt.getAttribute("aria-label")).toContain("Back to your message: Check cancellation too");
-    prompt.focus();
-    prompt.click();
+    const surface = reminder()!.querySelector<HTMLButtonElement>(".surface")!;
+    expect(reminder()!.querySelectorAll("button")).toHaveLength(1);
+    expect(surface.getAttribute("aria-label")).toBe("Back to your message: Check cancellation too");
+    surface.focus();
+    surface.click();
     expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 2976, behavior: "instant" });
     await moveTo(3000);
     expect(reminder()).toBeNull();
     expect(document.activeElement).toBe(viewport);
+  });
+
+  it("charges while a mouse rests on a clipped prompt, then opens; touch and fitting prompts never do", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    const { fixture, moveTo, reminder, settle } = await setup();
     await moveTo(400);
-    expect(reminder()).toBeNull();
+    const surface = reminder()!.querySelector<HTMLButtonElement>(".surface")!;
+    const hover = (pointerType: string) => surface.dispatchEvent(new PointerEvent("pointerenter", { pointerType }));
+    const wait = async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      fixture.detectChanges();
+    };
+    // jsdom has no layout: a fitting prompt reports no clipped overflow.
+    hover("mouse");
+    await settle();
+    expect(reminder()!.classList).not.toContain("arming");
+    const quote = reminder()!.querySelector<HTMLElement>(".quote")!;
+    Object.defineProperties(quote, { scrollHeight: { value: 54 }, clientHeight: { value: 18 } });
+    hover("touch");
+    await wait();
+    expect(reminder()!.className).not.toMatch(/arming|peek/);
+    hover("mouse");
+    await settle();
+    expect(reminder()!.classList).toContain("arming");
+    expect(reminder()!.classList).not.toContain("peek");
+    await wait();
+    expect(reminder()!.classList).toContain("peek");
+    expect(reminder()!.classList).not.toContain("arming");
+    expect(surface.getAttribute("aria-expanded")).toBe("true");
+    surface.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    fixture.detectChanges();
+    expect(reminder()!.className).not.toMatch(/arming|peek/);
+    // Leaving during the charge drains it without opening.
+    hover("mouse");
+    await settle();
+    surface.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    await wait();
+    expect(reminder()!.className).not.toMatch(/arming|peek/);
   });
 });

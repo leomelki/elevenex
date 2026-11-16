@@ -8,19 +8,27 @@ import {
   DestroyRef,
   effect,
   inject,
+  Injector,
   input,
   output,
   signal,
   viewChild,
-  type ElementRef,
+  ElementRef,
 } from "@angular/core";
-import { ButtonComponent, IconComponent, TooltipDirective } from "../../ui";
+import {
+  ButtonComponent,
+  IconComponent,
+  TooltipDirective,
+} from "../../ui";
 import { MessageComponent } from "./message.component";
 import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
   readonly id: string;
   readonly text: string;
 }
+/** Resting on the reminder this long reads as intent; passing over it doesn't.
+ * The capsule's charge transition in CSS lasts exactly as long. */
+const PEEK_DELAY = 320;
 @Component({
   selector: "ex-chat-scroll",
   imports: [ButtonComponent, IconComponent, TooltipDirective],
@@ -130,6 +138,25 @@ export class ChatScrollComponent {
   readonly activeExchange = output<string>();
   readonly atEnd = signal(true);
   readonly pin = signal<Reminder | null>(null);
+  /** One line at rest; resting the pointer on it (or focusing it) reveals three. */
+  readonly peek = signal(false);
+  /** The pointer rests on a clipped prompt: the capsule charges before it opens. */
+  readonly arming = signal(false);
+  private peekTimer: ReturnType<typeof setTimeout> | null = null;
+  private surfaceMorph: Animation | null = null;
+  /** Keyed by prompt so a different exchange swaps its text instead of editing it. */
+  readonly pinQuotes = computed(() => {
+    const pin = this.pin();
+    return pin ? [pin] : [];
+  });
+  /** First paint is simply there; later appearances slide in. */
+  private readonly motionReady = signal(false);
+  /** Read when the reminder changes. Under reduced motion no motion class is
+   * applied at all, since an enter class without an animation never clears. */
+  private readonly motionAllowed = signal(true);
+  readonly reminderMotion = computed(() => this.motionReady() && this.motionAllowed());
+  /** Only a change between two exchanges blurs text; a fresh reminder slides as one. */
+  readonly quoteMotion = signal(false);
   readonly unread = signal(false);
   readonly returnLabel = computed(() =>
     this.unread() ? "New messages. Scroll to bottom" : "Scroll to bottom",
@@ -139,8 +166,10 @@ export class ChatScrollComponent {
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");
   private readonly reminderElement = viewChild<ElementRef<HTMLElement>>("reminderElement");
   private readonly destroy = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private messages: HTMLElement[] = [];
-  private readonly dismissed = new Set<string>();
+  private scrollbarWidth = -1;
   private frame: number | null = null;
   private lastActive = "";
   private lastScrollHeight = 0;
@@ -174,6 +203,8 @@ export class ChatScrollComponent {
       if (this.contentReady) this.rememberReadingAnchor();
     });
     this.destroy.onDestroy(() => {
+      this.endPeek();
+      this.surfaceMorph?.cancel();
       this.highlight?.cancel();
       this.sendScroll?.cancel();
       for (const message of this.arrivingMessages) message.finishArrival();
@@ -217,6 +248,7 @@ export class ChatScrollComponent {
         if (this.frame !== null) cancelAnimationFrame(this.frame);
       });
       this.measure();
+      afterNextRender(() => this.motionReady.set(true), { injector: this.injector });
     });
   }
   onScroll(): void {
@@ -232,10 +264,37 @@ export class ChatScrollComponent {
     );
     if (this.atEnd()) this.unread.set(false);
   }
-  hideReminder(): void {
-    const pin = this.pin();
-    if (pin) this.dismissed.add(pin.id);
-    this.setReminder(null);
+  startPeek(event: PointerEvent): void {
+    // Touch has no resting pointer; a tap is a jump, not a peek. A prompt that
+    // already fits has nothing to reveal, so it must not promise to open.
+    if (event.pointerType !== "mouse" || this.peekTimer !== null || this.peek() || !this.promptClipped()) return;
+    this.arming.set(!this.reducedMotion());
+    this.peekTimer = setTimeout(() => {
+      this.peekTimer = null;
+      this.setPeek(true);
+    }, PEEK_DELAY);
+  }
+  /** Keyboard focus opens at once; a click's focus doesn't. */
+  peekOnFocus(event: FocusEvent): void {
+    if (event.target instanceof HTMLElement && event.target.matches(":focus-visible") && this.promptClipped())
+      this.setPeek(true);
+  }
+  endPeek(): void {
+    if (this.peekTimer !== null) clearTimeout(this.peekTimer);
+    this.peekTimer = null;
+    this.setPeek(false);
+  }
+  private promptClipped(): boolean {
+    const quote = this.reminderElement()?.nativeElement.querySelector<HTMLElement>(".quote:not(.quote-leave)");
+    return !!quote && quote.scrollHeight > quote.clientHeight + 1;
+  }
+  private setPeek(open: boolean): void {
+    this.arming.set(false);
+    if (this.peek() === open) return;
+    // Opening releases the charge on a spring; closing settles without bounce.
+    if (this.pin() && !this.reducedMotion())
+      this.morphSurface(open ? "--dur-deliberate" : "--dur-base", open ? "--ease-spring" : "--ease-out");
+    this.peek.set(open);
   }
   scrollToMessage(id: string): void {
     this.interruptSendReveal();
@@ -312,11 +371,6 @@ export class ChatScrollComponent {
         "[data-user-message]",
       ),
     );
-    const present = new Set(
-      this.messages.map((message) => message.dataset["userMessage"] ?? ""),
-    );
-    for (const id of this.dismissed)
-      if (!present.has(id)) this.dismissed.delete(id);
   }
   private scheduleMeasure(): void {
     if (this.frame !== null) return;
@@ -333,6 +387,12 @@ export class ChatScrollComponent {
     else if (changed) this.unread.set(true);
     this.lastScrollHeight = viewport.scrollHeight;
     if (!this.sendScroll) this.updatePosition();
+    const scrollbar = viewport.offsetWidth - viewport.clientWidth;
+    if (scrollbar !== this.scrollbarWidth) {
+      // The reminder's scrim stops at the scrollbar instead of fading it.
+      this.scrollbarWidth = scrollbar;
+      this.host.style.setProperty("--scrollbar-width", `${scrollbar}px`);
+    }
     const bounds = viewport.getBoundingClientRect();
     const candidate = this.promptAt(bounds.top + 16);
     const id = candidate?.dataset["userMessage"] ?? "";
@@ -362,7 +422,7 @@ export class ChatScrollComponent {
     // A small buffer prevents a barely clipped prompt from immediately being
     // repeated. Relax it by 24px on return to avoid flickering at the boundary.
     const distance = Math.min(96, Math.max(48, viewport.height * 0.12));
-    const useful = this.reminder() && candidate && !this.dismissed.has(id) &&
+    const useful = this.reminder() && candidate &&
       !this.historyLoading() && !this.historyError() && viewport.height >= 240 &&
       viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 24 : 0);
     const text = useful
@@ -387,8 +447,40 @@ export class ChatScrollComponent {
   private setReminder(reminder: Reminder | null): void {
     if (!reminder && this.reminderElement()?.nativeElement.contains(document.activeElement))
       this.viewport().nativeElement.focus({ preventScroll: true });
-    if (this.pin()?.id !== reminder?.id || this.pin()?.text !== reminder?.text)
-      this.pin.set(reminder);
+    const current = this.pin();
+    if (current?.id === reminder?.id && current?.text === reminder?.text) return;
+    const motion = !this.reducedMotion();
+    const swap = !!current && !!reminder && current.id !== reminder.id;
+    this.motionAllowed.set(motion);
+    this.quoteMotion.set(motion && swap);
+    if (!reminder) this.endPeek();
+    if (motion && swap) this.morphSurface("--dur-slow", "--ease-out");
+    this.pin.set(reminder);
+  }
+  /** The capsule sizes to its prompt. Ease its box from the painted size to the
+   * next one: between two prompts' widths, or between one and three lines. */
+  private morphSurface(duration: string, easing: string): void {
+    const surface = this.reminderElement()?.nativeElement.querySelector<HTMLElement>(".surface");
+    if (!surface || typeof surface.animate !== "function") return;
+    // Layout sizes ignore the charge's scale but include a running morph.
+    const from = { width: surface.offsetWidth, height: surface.offsetHeight };
+    this.surfaceMorph?.cancel();
+    afterNextRender(() => {
+      const to = { width: surface.offsetWidth, height: surface.offsetHeight };
+      if (!surface.isConnected ||
+        (Math.abs(to.width - from.width) < 2 && Math.abs(to.height - from.height) < 2)) return;
+      const style = getComputedStyle(surface);
+      this.surfaceMorph = surface.animate(
+        [
+          { width: `${from.width}px`, height: `${from.height}px`, overflow: "clip" },
+          { width: `${to.width}px`, height: `${to.height}px`, overflow: "clip" },
+        ],
+        {
+          duration: parseFloat(style.getPropertyValue(duration)) || 280,
+          easing: style.getPropertyValue(easing).trim() || "ease-out",
+        },
+      );
+    }, { injector: this.injector });
   }
   private reducedMotion(): boolean {
     return matchMedia("(prefers-reduced-motion: reduce)").matches;
