@@ -26,6 +26,10 @@ export class SessionRowComponent implements OnChanges {
   /** Only the first visible title at the cap boundary is muted. */
   readonly muted = input(false);
   readonly depth = input(0);
+  /** Drag feedback: the row is the drop destination or the session being moved. */
+  readonly emphasis = input(false);
+  /** Drag feedback: the row cannot accept the dragged session. */
+  readonly receded = input(false);
   /** Task context for a shortcut outside the task outline. */
   readonly context = input<string | null>(null);
   readonly activated = output<string>();

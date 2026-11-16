@@ -882,6 +882,47 @@ test('named child history adapter confines reads to a trusted window and expecte
   stop(); assert.equal(handlers.size, 0);
 });
 
+test('session moves validate scope, input, reply identity and paginated children', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { readFile } = require('node:fs/promises');
+  const vm = require('node:vm');
+  let reply = {id:2,taskId:1,repoId:3,name:'Child',status:'done',provider:'codex',updatedAt:'',parentSessionId:4};
+  const requests = [];
+  const url = await server(context, (request,response) => {
+    requests.push(request.url); response.writeHead(200,json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url),()=>undefined);
+  context.after(()=>client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'),'utf8'),{exports:ipc,require:()=>({ipcMain:{handle:(channel,handler)=>handlers.set(channel,handler),removeHandler:channel=>handlers.delete(channel)}})});
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'),'utf8'),{exports:workspace,URLSearchParams,require:name=>name==='../ipc'?ipc:require('../dist/backend-client/transport')});
+  const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
+  const stop = workspace.registerWorkspaceIpc(client,(candidate,contents)=>candidate===frame && contents===sender); context.after(stop);
+  const move = input => handlers.get('workspace:move-session')(event,scope,input);
+  for (const parentSessionId of [undefined,'4',-1,0,1.2,2]) assert.throws(()=>move({taskId:1,sessionId:2,parentSessionId}));
+  assert.equal((await move({taskId:1,sessionId:2,parentSessionId:4})).value.parentSessionId,4);
+  assert.equal(requests[0],'/api/desktop-workspace/tasks/1/sessions/2/parent');
+  reply = {...reply,parentSessionId:5};
+  assert.equal((await move({taskId:1,sessionId:2,parentSessionId:4})).error.code,'outcome-unknown');
+  reply = {items:[{...reply,parentSessionId:4,childCount:0}],nextCursor:null};
+  const children = input => handlers.get('workspace:sessions')(event,scope,input);
+  assert.equal((await children({taskId:1,parentSessionId:4,limit:20})).ok,true);
+  assert.match(requests.at(-1),/parentSessionId=4/);
+  assert.equal((await children({taskId:1,parentSessionId:5})).ok,false);
+  reply.nextCursor = '2:12';
+  assert.equal((await children({taskId:1,parentSessionId:4,childOrder:'nested',cursor:'3:20'})).value.nextCursor,'2:12');
+  assert.match(requests.at(-1),/childOrder=nested/);
+  assert.match(requests.at(-1),/cursor=3%3A20/);
+  assert.equal((await children({taskId:1,parentSessionId:4})).ok,false); // unchanged legacy cursor validation
+  for (const input of [{taskId:1,childOrder:'nested'}, {taskId:1,parentSessionId:null,childOrder:'nested'}, {taskId:1,parentSessionId:4,childOrder:'other'}, {taskId:1,parentSessionId:4,childOrder:'nested',cursor:'1:2:3'}]) assert.throws(()=>children(input));
+  reply.nextCursor = null;
+  reply.items[0].childCount = -1;
+  assert.equal((await children({taskId:1,parentSessionId:4})).ok,false);
+  client.reset(42); const count = requests.length;
+  assert.equal((await move({taskId:1,sessionId:2,parentSessionId:null})).error.code,'stale-scope');
+  assert.equal(requests.length,count); stop(); assert.equal(handlers.size,0);
+});
+
 test('navigation waits bound and validate replies, coalesce per request and cancel only within the owning window and scope', async context => {
   const { URLSearchParams } = require('node:url');
   const { readFile } = require('node:fs/promises');
@@ -908,8 +949,9 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   // Neither another window nor an old scope can cancel the live read.
   handlers.get('workspace:cancel-wait')({senderFrame:frame,sender:{id:43}},scope,input.requestId);
   cancel(client.state(43).scope.id,input.requestId);
-  requests[0].response.writeHead(200,json); requests[0].response.end(JSON.stringify({revision:4,version:1,revisionWait:true,private:'omit'}));
+  requests[0].response.writeHead(200,json); requests[0].response.end(JSON.stringify({revision:4,version:1,revisionWait:true,sessionNesting:true,sessionNestingOrder:true,private:'omit'}));
   const result = await first; assert.equal(result.ok,true); assert.equal(result.value.revision,4); assert.equal(result.value.private,undefined);
+  assert.equal(result.value.sessionNesting,true); assert.equal(result.value.sessionNestingOrder,true);
   assert.deepEqual(await duplicate,result);
   const pending = wait(scope,{...input, after:4});
   cancel(scope,input.requestId); assert.equal((await pending).ok,false);

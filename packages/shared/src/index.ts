@@ -14,7 +14,7 @@ export type * from './session-chat';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
-import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
+import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
 import type { EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteDiagnostic, RemoteForwardInput, RemoteHost, RemoteHostInput } from './remote';
@@ -136,6 +136,7 @@ export interface InvokeContracts {
   'workspace:create-project': { args: [scopeId: string, input: WorkspaceCreateProject]; result: BackendResult<WorkspaceProjectDetail> };
   'workspace:create-task': { args: [scopeId: string, input: WorkspaceCreateTask]; result: BackendResult<WorkspaceTask> };
   'workspace:archive-session': { args: [scopeId: string, input: WorkspaceArchiveSession]; result: BackendResult<{ readonly accepted: true }> };
+  'workspace:move-session': { args: [scopeId: string, input: WorkspaceMoveSession]; result: BackendResult<WorkspaceSession> };
   'workspace:restore-session': { args: [scopeId: string, input: WorkspaceRestoreSession]; result: BackendResult<WorkspaceSession> };
   'workspace:create-session': { args: [scopeId: string, input: WorkspaceCreateSession]; result: BackendResult<WorkspaceSession> };
   'workspace:rename-task': { args: [scopeId: string, input: WorkspaceRenameTask]; result: BackendResult<WorkspaceTask> };
@@ -298,6 +299,7 @@ export interface ElevenexBridge {
   workspaceCreateProject(scopeId: string, input: WorkspaceCreateProject): Promise<BackendResult<WorkspaceProjectDetail>>;
   workspaceCreateTask(scopeId: string, input: WorkspaceCreateTask): Promise<BackendResult<WorkspaceTask>>;
   workspaceArchiveSession(scopeId: string, input: WorkspaceArchiveSession): Promise<BackendResult<{ readonly accepted: true }>>;
+  workspaceMoveSession(scopeId: string, input: WorkspaceMoveSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRestoreSession(scopeId: string, input: WorkspaceRestoreSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceCreateSession(scopeId: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRenameTask(scopeId: string, input: WorkspaceRenameTask): Promise<BackendResult<WorkspaceTask>>;

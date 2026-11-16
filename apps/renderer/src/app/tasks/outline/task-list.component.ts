@@ -95,6 +95,9 @@ export class TaskListComponent {
   readonly filter = input<SessionStatus | null>(null);
   readonly showProjects = input(true);
   readonly disabled = input(false);
+  readonly allowNesting = input(false);
+  readonly moveSessionRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }>();
+  readonly sessionChildrenRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly earlier?: boolean }>();
   readonly selectSession = output<{
     readonly taskId: string;
     readonly sessionId: string;

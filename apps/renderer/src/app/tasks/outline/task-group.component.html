@@ -1,5 +1,5 @@
-<article [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
-  <header>
+<article exSessionNestingDrag [dragSessions]="task().sessions" [dragTaskId]="task().id" [dragEnabled]="allowNesting() && !archiveDisabled()" (sessionDropped)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" [class.fresh]="task().fresh" [class.current]="current()" [attr.data-task-id]="task().id">
+  <header data-session-task-header>
     <button
       class="toggle"
       type="button"
@@ -57,7 +57,7 @@
   <ex-fold [open]="!collapsed()"
     ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
       <ex-working-sessions [taskId]="task().id" [sessions]="working()" [selected]="selected()" [filtered]="!!filter()"
-        [cap]="cap()" [capStep]="capStep()" [allowArchive]="allowArchive()" [(disclosure)]="sessionDisclosure"
+        [allowNesting]="allowNesting() && !archiveDisabled()" (moveRequested)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" (childrenRequested)="sessionChildrenRequested.emit({taskId:task().id,sessionId:$event.sessionId,earlier:$event.earlier})" [cap]="cap()" [capStep]="capStep()" [allowArchive]="allowArchive()" [(disclosure)]="sessionDisclosure"
         (activated)="selectSession.emit($event)" (archiveRequested)="archiveRequested.emit($event)" />
       @for (entry of presence.rows(); track entry.key) {
         @let row = entry.value;

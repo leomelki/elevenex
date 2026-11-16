@@ -367,3 +367,21 @@ active and one latest pending write. The private sidecar is bounded to 16 MiB,
 with one MiB per window/machine snapshot. Saving failures are visible and block
 queued dispatch. Restored sending claims become unknown. Opaque backend scopes,
 SSH credentials and authentication challenges are never saved with writing.
+
+## Session organization
+
+The optional `sessionNesting` capability enables two-level session groups.
+`workspaceSessions` retains flat paging when `parentSessionId` is omitted; null
+selects roots and an ID selects a bounded child page. Normal child windows contain
+20 conversations, replace rather than accumulate earlier pages, and are retained
+only for visible roots. `WorkspaceSessionHierarchy` owns pending reads, deduplication,
+errors and stale-result rejection. WorkspaceStore owns confirmed moves through
+`workspaceMoveSession`, task/scope validation and uncertain-outcome reconciliation.
+Moves do not restart agents or change tasks, workspaces or fork provenance.
+
+Archiving a parent affects that conversation only and returns its children to task
+level. Deleting a parent preserves children through `ON DELETE SET NULL`. Closing a
+task retains its organizational relationships for reopening. The automatic migration
+maps each old nonempty folder to its earliest active durable session (or earliest
+archived member), preserving names and archive states. Legacy folder tables and
+endpoints remain available for older clients; the new desktop does not create folders.

@@ -23,6 +23,27 @@ describe('DesktopWorkspaceService', () => {
   const activityStatus = jest.fn<string | undefined, []>();
   const archiveSession = jest.fn();
   const restoreSession = jest.fn();
+  it('appends older sessions with bounded nesting cursors while preserving legacy order', async () => {
+    const create = (name: string) => database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'main',worktreePath:'/repo/task',name}).returning().get();
+    database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId)).run();
+    const parent = create('Parent'), older = create('Older'), newer = create('Newer'), last = create('Last');
+    await service.moveSession(taskId,newer.id,parent.id);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id);
+    const query = {parentSessionId:String(parent.id),childOrder:'nested',order:'latest',limit:'2'};
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row=>row.id)).toEqual([older.id,last.id]);
+    expect(latest.nextCursor).toMatch(/^2:/);
+    // The cursor is self-contained even if its session is removed from the group.
+    await service.moveSession(taskId,older.id,null);
+    expect((await service.listSessions(taskId,{...query,cursor:latest.nextCursor!})).items.map(row=>row.id)).toEqual([newer.id]);
+    await service.moveSession(taskId,older.id,parent.id);
+    await service.moveSession(taskId,last.id,parent.id); // idempotent, does not reorder
+    expect((await service.listSessions(taskId,{...query,limit:'20'})).items.map(row=>row.id)).toEqual([newer.id,last.id,older.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:String(parent.id)})).items.map(row=>row.id)).toEqual([older.id,newer.id,last.id]);
+    for (const cursor of ['x','1:0','-1:2','1:2:3','99999999999999999999:1']) await expect(service.listSessions(taskId,{...query,cursor})).rejects.toThrow();
+    await expect(service.listSessions(taskId,{childOrder:'nested',parentSessionId:'root'})).rejects.toThrow();
+  });
   it('reconciles a creation by its indexed request identity without replaying setup', async () => {
     await database.db.update(schema.workspaces).set({ taskRequestId: 'desktop-stable-request' }).where(eq(schema.workspaces.id, taskId));
     expect((await service.taskRequest(repoId, 'desktop-stable-request')).task?.id).toBe(taskId);
@@ -136,6 +157,20 @@ describe('DesktopWorkspaceService', () => {
     expect(row.archivedByTask).toBe(false);
     await database.db.update(schema.workspaces).set({archivedAt:'now'}).where(eq(schema.workspaces.id,taskId));
     await expect(service.archiveSession(taskId,session.id,true)).rejects.toThrow('not ready');
+  });
+
+  it('pages roots independently from children and promotes children when their parent is archived', async () => {
+    await database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId));
+    const [parent, child, other] = await database.db.insert(schema.sessions).values(['Plan','Implement','Review'].map(name => ({repoId,workspaceId:taskId,branchName:'build',worktreePath:'/repo/task',name}))).returning();
+    await service.moveSession(taskId, child.id, parent.id);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([parent.id,other.id]);
+    const children = await service.listSessions(taskId,{parentSessionId:String(parent.id),limit:'1',order:'latest'});
+    expect(children.items.map(row=>row.id)).toEqual([child.id]);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items[0].childCount).toBe(1);
+    await service.archiveSession(taskId,parent.id,false);
+    expect((await service.listSessions(taskId,{parentSessionId:'root'})).items.map(row=>row.id)).toEqual([child.id,other.id]);
+    expect((await service.listSessions(taskId,{})).items.find(row=>row.id===child.id)?.parentSessionId).toBeNull();
+    await expect(service.listSessions(taskId,{parentSessionId:'invalid'})).rejects.toThrow();
   });
 
   it('requires authoritative running confirmation and reports cleanup failures', async () => {
@@ -257,8 +292,10 @@ describe('DesktopWorkspaceService', () => {
     expect(first.items).toHaveLength(1);
     expect(JSON.stringify(first)).not.toContain('private-token');
     expect(Object.keys(first.items[0]).sort()).toEqual([
+      'childCount',
       'id',
       'name',
+      'parentSessionId',
       'provider',
       'repoId',
       'status',

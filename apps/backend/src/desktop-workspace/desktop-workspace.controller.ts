@@ -60,6 +60,8 @@ export class DesktopWorkspaceController {
       revision: this.navigation.revision,
       version: 1,
       revisionWait: true,
+      sessionNesting: true,
+      sessionNestingOrder: true,
       taskRequests: true,
       commitPanel: true,
       sessionArchive: true,
@@ -198,9 +200,14 @@ export class DesktopWorkspaceController {
   }
   @Get('tasks/:id/sessions') listSessions(
     @Param('id') id: string,
-    @Query() query: PageQuery & { order?: string; state?: string },
+    @Query() query: PageQuery & { order?: string; state?: string; parentSessionId?: string; childOrder?: string },
   ) {
     return this.workspace.listSessions(resourceId(id), query);
+  }
+  @Post('tasks/:taskId/sessions/:sessionId/parent') moveSession(
+    @Param('taskId') taskId: string, @Param('sessionId') sessionId: string, @Body() input: unknown,
+  ) {
+    return this.changed(this.workspace.moveSession(resourceId(taskId), resourceId(sessionId), workspaceBody(input).parentSessionId));
   }
   @Post('tasks/:taskId/sessions/:sessionId/archive') archiveSession(
     @Param('taskId') taskId: string,

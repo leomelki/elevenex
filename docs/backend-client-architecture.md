@@ -537,4 +537,16 @@ engine-lifetime desktop shells. Cleanup waits for pending launches and strict PT
 termination; opening an empty Terminal pane creates a fresh shell through the
 existing explicit opening flow. There is no shutdown channel in the preload.
 
+The optional `sessionNestingOrder: true` workspace capability enables
+`workspaceSessions` child queries with `childOrder: 'nested'`. This mode orders
+by the persisted per-group nesting rank, then session ID. Successful moves append
+at the end; repeated moves to the same parent preserve order. Migrated children
+have rank zero and retain their ID order. A `(rank, ID)` keyset cursor remains
+usable after the cursor row is removed. Pages stay bounded to 100; the renderer
+keeps a 20-child window and reloads its latest page after a confirmed move.
+Omitting the option preserves existing flat/root/child ordering and numeric
+cursors. Main validates the opt-in mode and its bounded cursor without changing
+other resource pagination. Older engines keep the group highlight and keyboard
+moves; the renderer withholds the dock's append-position promise.
+
 The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.

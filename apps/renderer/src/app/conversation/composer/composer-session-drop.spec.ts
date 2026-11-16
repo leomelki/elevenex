@@ -47,7 +47,7 @@ describe('session drag to composer', () => {
     const { composer, row, textarea, data, mentions, activated } = setup();
     let sends = 0; composer.componentInstance.submitted.subscribe(() => sends++);
     expect(data.types).toEqual([SESSION_DRAG_TYPE]);
-    expect(data.effectAllowed).toBe('copy');
+    expect(data.effectAllowed).toBe('copyMove');
     expect(drag(textarea, 'dragover', data).defaultPrevented).toBe(true);
     composer.detectChanges();
     expect(composer.nativeElement.querySelector('.drop-label.visible')?.textContent).toContain('Drop to mention session');

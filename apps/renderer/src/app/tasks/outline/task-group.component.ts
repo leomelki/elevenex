@@ -38,6 +38,7 @@ import { SubtaskGlyphComponent } from "./subtask-glyph.component";
 import { TaskSignalComponent } from "./task-signal.component";
 import { subtaskLocations } from "./subtask-order";
 
+import { SessionNestingDragDirective } from './session-nesting-drag.directive';
 import { ArchivedSessionsComponent } from "./archived-sessions.component";
 
 type SessionOutlineRow =
@@ -72,6 +73,7 @@ type SessionOutlineRow =
 @Component({
   selector: "ex-task-group",
   imports: [
+    SessionNestingDragDirective,
     ArchivedSessionsComponent,
     TaskSignalComponent,
     TickerComponent,
@@ -105,6 +107,9 @@ export class TaskGroupComponent implements OnChanges {
   readonly restoreRequested = output<TaskSession>();
   readonly archivedSessionsRequested = output<'latest' | 'earlier'>();
   readonly archiveDisabled = input(false);
+  readonly allowNesting = input(false);
+  readonly moveSessionRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }>();
+  readonly sessionChildrenRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly earlier?: boolean }>();
   readonly allowAdd = input(true);
   readonly sessionDisclosure = model<TaskSessionDisclosure | null>(null);
   readonly allowAddSubtask = input(true);
@@ -178,7 +183,7 @@ export class TaskGroupComponent implements OnChanges {
       ? false
       : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
-  protected readonly working = computed(() => this.task().sessions.filter(session => matchesSessionFilter(session.status, this.filter())));
+  protected readonly working = computed(() => this.task().sessions.filter(session => matchesSessionFilter(session.status, this.filter()) || this.task().sessions.some(child => child.parentId === session.id && matchesSessionFilter(child.status, this.filter()))));
   protected readonly attention = computed(
     () =>
       this.everyone().filter(

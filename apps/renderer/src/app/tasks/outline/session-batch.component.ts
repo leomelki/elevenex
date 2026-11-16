@@ -2,12 +2,13 @@ import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, Elem
 import { FoldComponent } from '../../ui';
 import { ListPresence } from '../../ui/motion/list-presence';
 import type { TaskSession } from '../task.models';
-import { SessionRowComponent } from './session-row.component';
+import { SessionBranchComponent } from './session-branch.component';
+import type { SessionMoveIntent } from '../task.models';
 
 /** A single reveal owns its scroll animation; rows own only archive folds. */
 @Component({
   selector: 'ex-session-batch',
-  imports: [FoldComponent, SessionRowComponent],
+  imports: [FoldComponent, SessionBranchComponent],
   templateUrl: './session-batch.component.html',
   styleUrl: './session-batch.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -18,6 +19,10 @@ export class SessionBatchComponent implements OnChanges {
   readonly selected = input<string | null>(null);
   readonly muted = input<string | null>(null);
   readonly allowArchive = input(false);
+  readonly allowNesting = input(false);
+  readonly allSessions = input<readonly TaskSession[]>([]);
+  readonly moveRequested = output<SessionMoveIntent>();
+  readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
   readonly open = input(true);
   readonly initial = input(false);
   readonly closingDistance = input(0);

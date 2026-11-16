@@ -26,6 +26,7 @@
   background: var(--surface-sunken);
 }
 .select.dragging { opacity: 0.5; }
+.select.dragging.emphasis { opacity: 1; }
 .select[draggable="true"]:active { cursor: grabbing; }
 .select[aria-current="true"] {
   background: var(--surface-raised);
@@ -167,4 +168,7 @@
 }
 
 .muted .title { color: var(--ink-muted); }
+.emphasis .title { color: var(--accent); }
+.select > ex-status-glyph, .select > ex-icon, .label, .meta { transition: opacity var(--dur-base) var(--ease-out); }
+.receded > ex-status-glyph, .receded > ex-icon, .receded .label, .receded .meta { opacity: .4; }
 @media (prefers-reduced-motion: reduce) { .title { transition: none; } }

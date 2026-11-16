@@ -42,7 +42,7 @@
           @case ("task") {
             <ex-task-group
               [task]="row.task"
-              [archiveDisabled]="disabled()"
+              [archiveDisabled]="disabled()" [allowNesting]="allowNesting()" (moveSessionRequested)="moveSessionRequested.emit($event)" (sessionChildrenRequested)="sessionChildrenRequested.emit($event)"
               (archivedSessionsRequested)="archivedSessionsRequested.emit({ taskId: row.task.id, page: $event })"
               (restoreRequested)="restoreRequested.emit({ taskId: row.task.id, session: $event })"
               [cap]="sessionCap()"

@@ -1,7 +1,7 @@
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { TooltipDirective } from './tooltip.directive';
+import { TooltipDirective, TooltipTiming } from './tooltip.directive';
 
 @Component({
   imports: [TooltipDirective],
@@ -66,4 +66,75 @@ describe('tooltip ownership', () => {
     expect(readAnchor.mock.calls).toHaveLength(destroyedReads);
     readAnchor.mockRestore();
   });
+  it('closes an open tooltip on dragstart and blocks hover/focus tooltips until drop or cancellation', async () => {
+    vi.useFakeTimers();
+    await TestBed.configureTestingModule({ imports: [TooltipHostComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(TooltipHostComponent);
+    fixture.detectChanges();
+    const [source, target] = fixture.nativeElement.querySelectorAll('button') as NodeListOf<HTMLButtonElement>;
+    source!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    vi.advanceTimersByTime(40); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+    expect(source!.hasAttribute('aria-describedby')).toBe(true);
+    const pane = document.querySelector<HTMLElement>('.cdk-overlay-pane');
+    expect(pane?.style.pointerEvents).toBe('none');
+
+    source!.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+    expect(source!.hasAttribute('aria-describedby')).toBe(false);
+    target!.dispatchEvent(new MouseEvent('mouseenter'));
+    target!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    vi.advanceTimersByTime(800); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+
+    document.dispatchEvent(new Event('drop'));
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+    target!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    vi.advanceTimersByTime(40); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')?.textContent).toContain('Second title');
+    source!.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    source!.dispatchEvent(new Event('dragend', { bubbles: true }));
+    target!.dispatchEvent(new MouseEvent('mouseenter'));
+    vi.advanceTimersByTime(40); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+  });
+
+  it('cancels delayed tooltips and recovers when a dragstart is prevented or the window loses focus', async () => {
+    vi.useFakeTimers();
+    await TestBed.configureTestingModule({ imports: [TooltipHostComponent] }).compileComponents();
+    const fixture = TestBed.createComponent(TooltipHostComponent);
+    fixture.detectChanges();
+    const button = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    button.dispatchEvent(new MouseEvent('mouseenter'));
+    button.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    document.dispatchEvent(new Event('drop'));
+    vi.advanceTimersByTime(800); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+
+    const cancelled = new Event('dragstart', { bubbles: true, cancelable: true });
+    button.addEventListener('dragstart', event => event.preventDefault(), { once: true });
+    button.dispatchEvent(cancelled);
+    await Promise.resolve();
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    vi.advanceTimersByTime(40); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+    document.dispatchEvent(new Event('dragover'));
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+    window.dispatchEvent(new Event('blur'));
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    vi.advanceTimersByTime(40); fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).not.toBeNull();
+  });
+
+  it('removes shared drag listeners when the renderer injector is destroyed', () => {
+    const removeDocument = vi.spyOn(document, 'removeEventListener');
+    const removeWindow = vi.spyOn(window, 'removeEventListener');
+    TestBed.inject(TooltipTiming);
+    TestBed.resetTestingModule();
+    for (const type of ['dragstart','dragover','dragend','drop','pointerdown'])
+      expect(removeDocument).toHaveBeenCalledWith(type, expect.any(Function), true);
+    expect(removeWindow).toHaveBeenCalledWith('blur', expect.any(Function));
+    removeDocument.mockRestore(); removeWindow.mockRestore();
+  });
+
 });

@@ -19,6 +19,7 @@ async function settle(): Promise<void> { for (let index = 0; index < 15; index++
 function setup(history = false) {
   let listener!: (state: BackendClientState) => void;
   const bridge = {
+    workspaceMoveSession: vi.fn<(scope: string, input: import('@elevenex/shared').WorkspaceMoveSession) => Promise<BackendResult<WorkspaceSession>>>(async (_scope, input) => ok({...session, id: input.sessionId, parentSessionId: input.parentSessionId})),
     environmentStatus: vi.fn(async (): Promise<import('@elevenex/shared').EnvironmentSnapshot> => ({ selection: { kind: 'local' }, context: { projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, connection: null, challenge: null, forwards: [] })),
     saveEnvironmentContext: vi.fn(async (context: import('@elevenex/shared').EnvironmentContext, selection: import('@elevenex/shared').EnvironmentSelection) => ({ selection, context, connection: null, challenge: null, forwards: [] })),
     backendClientState: vi.fn(async () => ({ revision: 1, scope: { id: 'scope', environment: { kind: 'local' as const } } })),
@@ -42,7 +43,7 @@ function setup(history = false) {
     workspaceReopenTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok(task)),
     workspaceDeleteProject: vi.fn(async (): Promise<BackendResult<{readonly accepted: true}>> => ok({ accepted: true })),
     workspaceRevision: vi.fn(async () => ok({ revision: 1, version: 1 as const, sessionArchive: true as const, ...(history ? { sessionArchiveHistory: true as const } : {}) })),
-  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceArchiveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
+  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceArchiveSession' | 'workspaceMoveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
   TestBed.configureTestingModule({ providers: [WorkspaceStore, SessionChatDrafts, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
   const store = TestBed.inject(WorkspaceStore);
   store.connect({ id: 'local', name: 'This Mac', kind: 'local', conn: 'live' }, true);
@@ -215,6 +216,29 @@ describe('WorkspaceStore', () => {
     expect(store.selectedSession()?.status).toBe('attention');
     expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, ...(id > 1 ? { cursor: String(id - 1) } : {}), limit: 1 });
     expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual([String(id), '500']);
+  });
+
+  it('revalidates a selected nested conversation and retains its parent outside the latest root page', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    const parent: WorkspaceSession = { ...session, id: 6, parentSessionId: null, childCount: 1 };
+    const child: WorkspaceSession = { ...session, parentSessionId: 6 };
+    let revision = 1;
+    bridge.workspaceRevision.mockImplementation(async () => ok({ revision, version: 1 as const, sessionArchive: true as const, sessionNesting: true as const, sessionNestingOrder: true as const }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.parentSessionId === 6 ? [child] : [parent])));
+    await start();
+    await store.loadSessionChildren({ taskId: '3', sessionId: '6' });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    revision++;
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.parentSessionId === 6 || query.cursor === '4'
+      ? [{ ...child, status: 'attention' }] : query.cursor === '5' ? [parent]
+        : Array.from({ length: 20 }, (_, index) => ({ ...session, id: 100 + index })))));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()).toMatchObject({ id: 5, status: 'attention', parentSessionId: 6 });
+    expect(store.tasks()[0]?.sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: '6' }), expect.objectContaining({ id: '5', parentId: '6' })]));
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, limit: 20, order: 'latest', parentSessionId: null });
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, cursor: '5', limit: 1, state: 'normal' });
+    expect(store.tasks()[0]?.sessions.length).toBeLessThanOrEqual(20);
   });
 
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
@@ -952,5 +976,36 @@ describe('Workspace outages', () => {
     store.removeWaitingTask(store.waitingTasks()[0]!.id);
     emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick(); await settle();
     expect(bridge.workspaceCreateTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('session organization', () => {
+  it('uses bounded root and child pages, then keeps the selected child through a confirmed move', async () => {
+    const {store,bridge,start} = setup();
+    let parentSessionId: number | null = null;
+    const parent = {...session,id:6,name:'Plan',parentSessionId:null};
+    bridge.workspaceRevision.mockImplementation(async()=>ok({revision:1,version:1 as const,sessionArchive:true as const,sessionNesting:true as const,sessionNestingOrder:true as const}));
+    bridge.workspaceSessions.mockImplementation(async(_scope,query)=>ok(page(query.parentSessionId === 6 ? [{...session,parentSessionId}] : parentSessionId === null ? [{...session,parentSessionId},parent] : [{...parent,childCount:1}])));
+    bridge.workspaceMoveSession.mockImplementation(async(_scope,input)=>{ parentSessionId=input.parentSessionId; return ok({...session,parentSessionId}); });
+    await start(); await store.selectSession({taskId:'3',sessionId:'5'});
+    await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:'6'});
+    expect(bridge.workspaceMoveSession).toHaveBeenCalledWith('scope',{taskId:3,sessionId:5,parentSessionId:6});
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope',{taskId:3,parentSessionId:6,limit:20,order:'latest',childOrder:'nested'});
+    expect(store.selectedSession()?.parentSessionId).toBe(6);
+    expect(store.tasks()[0]?.sessions.find(row=>row.id==='5')?.parentId).toBe('6');
+    await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:null});
+    expect(store.selectedSession()?.parentSessionId).toBeNull();
+  });
+  it('does not replay or optimistically apply an uncertain move', async () => {
+    const {store,bridge,start}=setup();
+    bridge.workspaceRevision.mockImplementation(async()=>ok({revision:1,version:1 as const,sessionArchive:true as const,sessionNesting:true as const}));
+    bridge.workspaceSessions.mockResolvedValue(ok(page([session,{...session,id:6}])));
+    bridge.workspaceMoveSession.mockResolvedValue({ok:false,error:{code:'outcome-unknown',message:'Unknown'}});
+    await start();
+    await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:'6'});
+    await store.moveSession({taskId:'3',sessionId:'5',parentSessionId:'6'});
+    expect(bridge.workspaceMoveSession).toHaveBeenCalledTimes(1);
+    expect(store.tasks()[0]?.sessions.find(row=>row.id==='5')?.parentId).toBeNull();
+    expect(store.error()).toContain('could not be confirmed');
   });
 });

@@ -64,6 +64,25 @@ export class WorkspaceNavigationComponent {
       focus();
     }, { injector: this.injector });
   }
+  protected async moveSession(intent: { readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }): Promise<void> {
+    const scope = this.store.scopeId(), origin = this.root.ownerDocument.activeElement;
+    await this.store.moveSession(intent);
+    if (this.destroy.destroyed || this.store.scopeId() !== scope || this.store.error()) return;
+    afterNextRender(() => {
+      if (this.restoreFocusFrame !== undefined) cancelAnimationFrame(this.restoreFocusFrame);
+      let remainingFrames = 12;
+      const focus = () => {
+        this.restoreFocusFrame = undefined;
+        const document = this.root.ownerDocument;
+        if (this.destroy.destroyed || this.store.scopeId() !== scope || (document.activeElement !== origin && document.activeElement !== document.body && !origin?.contains(document.activeElement))) return;
+        const rows = this.root.querySelectorAll<HTMLButtonElement>(`[data-task-id="${Number(intent.taskId)}"] [data-session-id="${Number(intent.sessionId)}"] .select`);
+        const row = [...rows].find(row => !row.closest('[inert]'));
+        if (row) { row.focus({ preventScroll: true }); return; }
+        if (remainingFrames-- > 0) this.restoreFocusFrame = requestAnimationFrame(focus);
+      };
+      focus();
+    }, { injector: this.injector });
+  }
   protected projectAction(action: ProjectMenuAction): void {
     if (action === 'settings') void this.store.openSettings();
     if (action === 'add-repository') void this.store.openSettings(true);
