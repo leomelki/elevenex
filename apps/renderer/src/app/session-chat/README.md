@@ -59,6 +59,14 @@ Older engines omit the capability and retain their original send contract.
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
   incremental read path. Repeated visibility notifications share the active read.
+- Paging keeps at most 320 contiguous raw records. When hidden work leaves the
+  newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
+  context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
+  Source message boundaries keep a progress update from merging into the answer
+  and changing its mounted identity. Context never supplies pagination or delivery
+  cursors; following pages consume it without duplicate replies. Explicit history
+  replacement and session navigation release it. This keeps short collapsed turns
+  readable without retaining every tool record or fetching the full transcript.
 - `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
   scope. Unresolved writes are not evicted silently. A failed send restores its
   text ahead of any newly typed draft. An uncertain outcome requires checking

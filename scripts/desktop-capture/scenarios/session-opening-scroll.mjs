@@ -46,13 +46,20 @@ export default async function* (capture) {
       }
       yield { name: `${theme}-${narrow ? 'narrow-reduced' : 'full'}-opened-at-end`,
         inspect: ['ex-chat-scroll .viewport', 'ex-turn:last-of-type', 'ex-composer'] };
-      await capture.evaluate(() => {
+      const anchor = await capture.evaluate(() => {
         const viewport = document.querySelector('ex-chat-scroll .viewport');
         viewport.scrollTop = 100;
         viewport.dispatchEvent(new window.Event('scroll'));
+        const row = [...viewport.querySelectorAll('[data-chat-anchor]')]
+          .find(row => row.getBoundingClientRect().bottom > viewport.getBoundingClientRect().top);
+        return { id: row.getAttribute('data-chat-anchor'), top: row.getBoundingClientRect().top };
       });
       await capture.component('ex-session-chat', component => component.store.refresh());
-      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-scroll .viewport').scrollTop), 100);
+      // Edge prefetch can legitimately increase scrollTop by an entire page.
+      // The reader's content must retain its screen position through refresh.
+      const top = await capture.evaluate(id => [...document.querySelectorAll('[data-chat-anchor]')]
+        .find(row => row.getAttribute('data-chat-anchor') === id)?.getBoundingClientRect().top, anchor.id);
+      assert.ok(top !== undefined && Math.abs(top - anchor.top) < 2, 'Refresh moved the visible message');
     }
   }
 }

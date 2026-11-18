@@ -178,6 +178,11 @@ keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
+`scenarios/session-history-stability.mjs` checks short collapsed openings and
+repeated raw-window eviction across long turns, with trusted upward/downward
+wheel input, retained drafts and stable final-answer identities. It covers both
+themes and narrow reduced-motion layouts against the preview URL.
+
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
 ```

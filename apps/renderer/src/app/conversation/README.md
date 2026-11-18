@@ -108,7 +108,9 @@ Rows expose stable `data-chat-anchor` identities so the first visible row retain
 its offset after either operation. Within a long turn, `data-chat-row` identifies
 individual timeline rows so prepending work preserves the answer's offset as well.
 One in-flight request and a four-page automatic fill budget bound underfilled
-viewports. Overflowing conversations prefetch once per gesture, and a pinned,
+viewports; a page adding no visible height stops that fill immediately. Wheel
+and keyboard direction choose the edge, including when both edges fit on screen.
+Overflowing conversations prefetch once per gesture, and a pinned,
 overflowing tail does not prefetch older pages. This avoids draining collapsed
 work and evicting the reply still in view; wheel, pointer and keyboard input renew
 the budget. History failures retain readable content and offer a

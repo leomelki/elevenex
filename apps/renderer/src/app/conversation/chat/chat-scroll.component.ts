@@ -56,6 +56,13 @@ export class ChatScrollComponent {
   private historyPending = false;
   private lastHistoryDirection: "before" | "following" = "before";
   private historyBudget = 4;
+  private requestedHeight = 0;
+  private historyIntent: "before" | "following" = "before";
+  onViewportWheel(event: WheelEvent): void {
+    if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    this.historyIntent = event.deltaY < 0 ? "before" : "following";
+    this.onViewportInteraction();
+  }
   onViewportInteraction(): void {
     this.historyBudget = 4;
     this.interruptSendReveal();
@@ -130,8 +137,11 @@ export class ChatScrollComponent {
 
   onViewportKey(event: KeyboardEvent): void {
     if (event.target === event.currentTarget &&
-      ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+      ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+      this.historyIntent = ["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)
+        ? "before" : "following";
       this.onViewportInteraction();
+    }
   }
   readonly startAtEnd = input(true);
   readonly reminder = input(true);
@@ -205,6 +215,10 @@ export class ChatScrollComponent {
       }
       if (!this.historyLoading() && this.historyPending) {
         this.historyPending = false;
+        // Hidden work is not progress towards filling the viewport. Repeated
+        // reads here can walk an entire long turn without the reader moving.
+        if (this.viewport().nativeElement.scrollHeight <= this.requestedHeight)
+          this.historyBudget = 0;
         this.scheduleMeasure();
       }
       this.revealArrivals();
@@ -383,6 +397,7 @@ export class ChatScrollComponent {
     // that case can evict the answer still in view. Overflowing conversations
     // prefetch once per gesture; only an underfilled viewport chains pages.
     const viewport = this.viewport().nativeElement;
+    this.requestedHeight = viewport.scrollHeight;
     this.historyBudget = viewport.scrollHeight > viewport.clientHeight ? 0 : this.historyBudget - 1;
     // Loading above a pinned tail must not relinquish end following. An actual
     // reader scroll updates atEnd normally while the request is pending.
@@ -432,10 +447,12 @@ export class ChatScrollComponent {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
       const margin = Math.min(480, viewport.clientHeight * 0.75);
-      if (this.historyBefore() && viewport.scrollTop < margin &&
+      const underfilled = viewport.scrollHeight <= viewport.clientHeight;
+      if ((!underfilled || this.historyIntent === "before") && this.historyBefore() && viewport.scrollTop < margin &&
           (!this.atEnd() || viewport.scrollHeight <= viewport.clientHeight))
         this.requestHistory("before");
-      else if (this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
+      else if ((!underfilled || this.historyIntent === "following") && this.historyAfter() &&
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
         this.requestHistory("following");
     }
   }

@@ -18,6 +18,7 @@ import type {
 } from "@elevenex/shared";
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
+import { chatTailContext } from './session-chat-tail';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
@@ -68,6 +69,7 @@ export class SessionChatStore {
   readonly state = signal<SessionChatState | null>(null, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
   readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly leadingPrompt = signal<SessionChatItem | null>(null);
+  private readonly trailingContext = signal<readonly SessionChatItem[]>([]);
   readonly fresh = signal<ReadonlySet<string>>(new Set(), { equal: (a, b) => a.size === b.size && [...a].every(id => b.has(id)) });
   readonly loading = signal(true);
   /** A new local conversation stays on its welcome view through initial hydration. */
@@ -128,9 +130,12 @@ export class SessionChatStore {
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
     const leadingPrompt = this.leadingPrompt();
+    const items = this.items();
+    const ids = new Set(items.map(item => item.id));
+    const contextualItems = [...items, ...this.trailingContext().filter(item => !ids.has(item.id))];
     return chatExchanges(
-      leadingPrompt && this.items().length && this.items()[0]?.kind !== "user"
-        ? [leadingPrompt, ...this.items()] : this.items(),
+      leadingPrompt && items.length && items[0]?.kind !== "user"
+        ? [leadingPrompt, ...contextualItems] : contextualItems,
       this.state(),
       this.fresh(),
       pending && !pending.queue ? pending : undefined,
@@ -197,7 +202,7 @@ export class SessionChatStore {
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
-    this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
+    this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.trailingContext.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
@@ -238,7 +243,7 @@ export class SessionChatStore {
     this.pendingQueue.set(null);
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
     const cached = this.drafts.snapshot(selection.sessionId);
-    if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.state.set(cached?.state ?? null); }
+    if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.trailingContext.set([]); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
     if (!recovery) this.next.set(null);
     this.historyLoading.set(false); this.historyError.set('');
@@ -399,12 +404,23 @@ export class SessionChatStore {
           ]
         : [...next.values()];
     const items = older ? all.slice(0, 320) : all.slice(-320);
+    if (older && all.length > items.length) {
+      const contextIds = new Set(all.map(item => item.id));
+      this.trailingContext.set(chatTailContext([
+        ...all.slice(items.length),
+        ...this.trailingContext().filter(item => !contextIds.has(item.id)),
+      ]));
+    } else if (!direction && page.reset && !incremental) this.trailingContext.set([]);
+    else if (direction === 'following') {
+      const ids = new Set(items.map(item => item.id));
+      this.trailingContext.update(context => context.filter(item => !ids.has(item.id)));
+    }
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
       const arrivals = new Map(this.turnArrivals());
       if (delivered && pending) arrivals.set(delivered.id, { renderId: pending.id, sendOrigin: pending.sendOrigin });
-      const retained = new Set(items.map(item => item.id));
+      const retained = new Set([...items, ...this.trailingContext()].map(item => item.id));
       for (const id of arrivals.keys())
         if (!retained.has(id)) arrivals.delete(id);
       this.turnArrivals.set(arrivals);

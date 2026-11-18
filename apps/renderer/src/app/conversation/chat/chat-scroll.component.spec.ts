@@ -188,6 +188,26 @@ describe("ChatScroll return to bottom", () => {
     expect(requests).toHaveBeenCalledTimes(2);
   });
 
+  it('stops automatic filling when a short collapsed page adds no visible height', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    dimensions.height = 400;
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
+    moveTo(0);
+    const requests = vi.fn(() => fixture.componentRef.setInput('historyLoading', true));
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput('historyLoading', false);
+    fixture.componentRef.setInput('historyRevision', 1);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(1);
+  });
+
   for (const reading of [false, true]) it(`prefetches older history without ${reading ? 'overriding a reader who scrolls during the request' : 'dropping end following when the partial turn is replaced'}`, async () => {
     const { fixture, viewport, dimensions, moveTo } = await setup();
     dimensions.height = 400;

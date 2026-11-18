@@ -689,6 +689,64 @@ describe("session chat ownership", () => {
 
   });
 
+  it('retains a reconciled turn identity when only its compact context remains visible', async () => {
+    const { store, bridge } = setup(); await settle();
+    await store.submit({ text: 'Hi', intent: 'send', context: [] });
+    const temporaryId = store.exchanges().at(-1)!.id;
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'receipt', items: [
+      item('receipt', 'user', 'Hi'),
+      ...Array.from({ length: 318 }, (_, i) => item(`work-${i}`, 'system', 'Work')),
+      item('answer', 'assistant', 'Done'),
+    ] })));
+    await store.refresh();
+    for (let pageIndex = 0; pageIndex < 4; pageIndex++) {
+      bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: `older-${pageIndex}`, items:
+        Array.from({ length: 80 }, (_, i) => item(`older-${pageIndex}-${i}`, 'system', 'Earlier work')),
+      })));
+      await store.older();
+    }
+    expect(store.items().some(item => item.id === 'receipt')).toBe(false);
+    expect(store.exchanges().at(-1)?.renderId).toBe(temporaryId);
+    expect(store.exchanges().at(-1)?.answer).toBe('Done');
+  });
+
+  it('keeps collapsed replies, media and outcomes while hidden work leaves the raw window', async () => {
+    const { store, bridge } = setup(); await settle();
+    const first = item('prompt', 'user', 'Original request');
+    const answer = item('final', 'assistant', 'The finished answer');
+    const media = item('image', 'tool_result', '', { media: [{ id: 'image', path: '/capture.png', caption: 'Capture', inline: true }] });
+    const outcome = item('outcome', 'system', '', { changes: { total: 1, files: [{ path: 'fix.ts', status: 'M', add: 2, del: 1 }] } });
+    const history = [first, ...Array.from({ length: 1000 }, (_, i) => item(String(i), i % 30 ? 'system' : 'assistant', `Progress ${i}`)), media, answer, outcome];
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
+      const from = input.following ? history.findIndex(item => item.id === input.following) + 1
+        : Math.max(0, (input.before ? history.findIndex(item => item.id === input.before) : history.length) - 80);
+      const end = Math.min(history.length, from + 80);
+      return ok(page(2, { leadingPrompt: from ? first : null, items: history.slice(from, end),
+        before: from ? history[from]!.id : null, next: end < history.length ? history[end - 1]!.id : null }));
+    });
+    await store.refresh();
+    const original = store.exchanges()[0]!;
+    for (let i = 0; i < 11; i++) {
+      await store.older();
+      const exchange = store.exchanges()[0]!;
+      expect(exchange.answerId).toBe('final');
+      expect(exchange.answer).toBe(original.answer);
+      expect(exchange.files).toEqual(original.files);
+      expect(store.items().length).toBeLessThanOrEqual(320);
+    }
+    while (store.next()) {
+      await store.newer();
+      expect(store.exchanges()[0]?.answer).toBe(original.answer);
+      expect(store.items().length).toBeLessThanOrEqual(320);
+    }
+    // Context belongs to this reading window, never an explicit replacement or
+    // another session, and cannot duplicate replies when raw pages catch up.
+    expect(store.exchanges()[0]?.answer?.match(/finished answer/g)).toHaveLength(1);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [first, item('replacement', 'assistant', 'Replaced history')] })));
+    await store.refresh();
+    expect(store.exchanges()[0]?.answer).toBe('Replaced history');
+  });
+
   it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
     const { store, bridge } = setup(); await settle();
     const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));
