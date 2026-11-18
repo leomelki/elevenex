@@ -11,15 +11,13 @@
 >
   <div #content class="content"><ng-content /></div>
 </div>
-@if (historyLoading() || historyError()) {
+@if (historyError()) {
   <div class="history-status" role="status">
-    @if (historyError()) {
-      <span>{{ historyError() }}</span>
-      <button type="button" (click)="retryHistory()">Retry</button>
-    } @else {
-      <span>Loading messages…</span>
-    }
+    <span>{{ historyError() }}</span>
+    <button type="button" (click)="retryHistory()">Retry</button>
   </div>
+} @else if (historyLoading()) {
+  <span class="history-indicator" role="status" aria-label="Loading messages"></span>
 }
 @if (pin(); as pin) {
   <aside

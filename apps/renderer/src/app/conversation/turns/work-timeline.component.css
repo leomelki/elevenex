@@ -85,6 +85,11 @@ li {
 .answer.has-text {
   padding-block: var(--space-2);
 }
+.prose-content {
+  /* Markdown's last block can carry a margin (especially media). Contain it in
+     AutoHeight's observed wrapper so its measured and natural heights agree. */
+  display: flow-root;
+}
 .group:hover {
   color: var(--ink);
   background: var(--surface-sunken);

@@ -70,3 +70,38 @@ describe('bidirectional chat windows', () => {
     expect(page.items.length).toBeGreaterThan(0); expect(page.next).not.toBeNull();
   });
 });
+
+
+describe('prompt context outside contiguous pages', () => {
+  const history: AgentTranscriptItem[] = Array.from({ length: 4000 }, (_, index) => ({
+    id: String(index), kind: index % 1000 === 0 ? 'user' : 'assistant',
+    content: `Record ${index}`, timestamp: command.timestamp,
+  }));
+  it('carries the preceding prompt through every bounded page without skipping evidence', () => {
+    let page = chatWindow(history, [])!;
+    const ids = page.items.map(item => item.id);
+    while (true) {
+      const first = Number(page.items[0].id);
+      expect(page.leadingPrompt?.id ?? null).toBe(first % 1000 ? String(Math.floor(first / 1000) * 1000) : null);
+      expect(page.items.length).toBeLessThanOrEqual(80);
+      if (!page.before) break;
+      page = chatWindow(history, [], page.before)!;
+      ids.unshift(...page.items.map(item => item.id));
+    }
+    expect(ids).toEqual(history.map(item => item.id));
+    while (page.next) {
+      const prior = Number(page.items.at(-1)!.id);
+      page = chatWindow(history, [], undefined, undefined, undefined, page.next)!;
+      expect(Number(page.items[0].id)).toBe(prior + 1);
+      const first = Number(page.items[0].id);
+      expect(page.leadingPrompt?.id ?? null).toBe(first % 1000 ? String(Math.floor(first / 1000) * 1000) : null);
+    }
+    expect(page.items.at(-1)?.id).toBe('3999');
+  });
+  it('finds persisted context for a live-only tail and prefers a newer live prompt', () => {
+    const live = history.slice(-80).map(item => ({ ...item, id: `live-${item.id}` }));
+    expect(chatWindow(history, live)!.leadingPrompt?.id).toBe('3000');
+    live.unshift({ ...history[0], id: 'live-prompt', kind: 'user' });
+    expect(chatWindow(history, live)!.leadingPrompt?.id).toBe('live-prompt');
+  });
+});

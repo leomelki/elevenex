@@ -275,8 +275,25 @@ export function chatWindow(
     if (following) { start++; items.push(item); }
     else { start--; items.unshift(item); }
   }
+  // Context is separate from the contiguous page: inserting a distant prompt
+  // into items would make its exclusive cursor skip the intervening history.
+  const first = items[0];
+  let prompt: AgentTranscriptItem | undefined;
+  if (first && first.kind !== 'user') {
+    const liveIndex = live.findIndex(item => item.id === first.id);
+    for (let index = liveIndex - 1; index >= 0; index--) {
+      if (live[index].kind === 'user') { prompt = live[index]; break; }
+    }
+    if (!prompt) {
+      const historyIndex = history.findIndex(item => item.id === first.id);
+      for (let index = (historyIndex < 0 ? history.length : historyIndex) - 1; index >= 0; index--) {
+        if (history[index].kind === 'user') { prompt = history[index]; break; }
+      }
+    }
+  }
   return {
     items,
+    leadingPrompt: prompt ? chatItem(prompt, undefined, changesCache, mediaCache) : null,
     before:
       following || start > 0 || hEnd > 160 || liveEnd > 160 ? (items[0]?.id ?? null) : null,
     next: before || (following && start < all.length) ? (items.at(-1)?.id ?? null) : null,

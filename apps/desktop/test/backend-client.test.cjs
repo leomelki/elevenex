@@ -598,9 +598,14 @@ test('harness selection requires a known action shape and an expected current pr
   assert.equal(parseChatPage({ ...page, next: 'forward' }, 1, 2).next, 'forward');
   assert.equal(parseChatPage({ ...page, next: null }, 1, 2).next, null);
   assert.equal(parseChatPage(page, 1, 2).next, undefined);
+  assert.equal(parseChatPage(page, 1, 2).leadingPrompt, undefined);
+  assert.equal(parseChatPage({ ...page, leadingPrompt: null }, 1, 2).leadingPrompt, null);
   assert.throws(() => parseChatPage({ ...page, next: 7 }, 1, 2));
 
   const message = { id: 'u', kind: 'user', text: 'Compare', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  assert.deepEqual(parseChatPage({ ...page, leadingPrompt: { ...message, private: 'discard' } }, 1, 2).leadingPrompt, message);
+  assert.throws(() => parseChatPage({ ...page, leadingPrompt: { ...message, kind: 'assistant' } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, leadingPrompt: { ...message, text: 'x'.repeat(65000) } }, 1, 2));
   const mentions = [{ sessionId: 12, title: 'Other work', snapshot: 'must not cross IPC', path: '/private/export.md' }];
   assert.deepEqual(parseChatPage({ ...page, items: [{ ...message, mentions }] }, 1, 2).items[0].mentions, [{ sessionId: 12, title: 'Other work' }]);
   for (const invalid of [[{ sessionId: 0, title: 'A' }], [{ sessionId: '12', title: 'A' }], [{ sessionId: 12, title: '' }], [{ sessionId: 12, title: 'x'.repeat(1001) }], [...mentions, ...mentions], Array(9).fill(mentions[0])])

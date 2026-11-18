@@ -22,8 +22,8 @@ export interface StartingSession {
 @Injectable()
 export class SessionChatDrafts {
   private scope = "";
-  private readonly snapshots = new Map<number, { readonly items: readonly SessionChatItem[]; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }>();
-  remember(session: number, snapshot: { readonly items: readonly SessionChatItem[]; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }): void {
+  private readonly snapshots = new Map<number, { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }>();
+  remember(session: number, snapshot: { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }): void {
     this.snapshots.delete(session);
     // Five 1 MiB transcript snapshots, with the existing 320-item window cap.
     if (JSON.stringify(snapshot).length > 1_000_000) return;

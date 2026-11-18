@@ -51,7 +51,7 @@ export class ChatScrollComponent {
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();
   readonly latestRequested = output<void>();
-  private readingAnchor?: { element: Element; top: number };
+  private readingAnchor?: { element: Element; top: number; rowId: string | null };
   private paintedRevision = 0;
   private historyPending = false;
   private lastHistoryDirection: "before" | "following" = "before";
@@ -186,10 +186,18 @@ export class ChatScrollComponent {
       if (this.contentReady && this.paintedRevision !== this.historyRevision()) {
         const viewport = this.viewport().nativeElement;
         const anchor = this.readingAnchor;
-        if (anchor?.element.isConnected) {
+        const element = anchor?.element.isConnected ? anchor.element
+          : anchor?.rowId ? Array.from(this.content().nativeElement.querySelectorAll('[data-chat-row]'))
+            .find(row => row.getAttribute('data-chat-row') === anchor.rowId) : undefined;
+        if (this.atEnd() && !this.historyAfter()) {
+          // A short tail can prefetch older history while still pinned. Its
+          // first partial turn may be replaced when its prompt arrives, so no
+          // retained DOM anchor can keep the latest reply in place.
+          viewport.scrollTop = viewport.scrollHeight;
+        } else if (anchor && element) {
           // Account for native scroll anchoring instead of adding a height delta
           // twice. This also handles removing content at the opposite edge.
-          viewport.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+          viewport.scrollTop += element.getBoundingClientRect().top - anchor.top;
         }
         this.paintedRevision = this.historyRevision();
         this.lastScrollHeight = viewport.scrollHeight;
@@ -354,8 +362,16 @@ export class ChatScrollComponent {
       if (children[middle]!.getBoundingClientRect().bottom <= top) low = middle + 1;
       else high = middle;
     }
-    const element = children[low];
-    this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top } : undefined;
+    const turn = children[low];
+    // A turn may grow above the answer as older work arrives. Anchor the actual
+    // visible row inside it, rather than the turn's unchanged outer edge.
+    const row = turn && Array.from(turn.querySelectorAll('[data-chat-row]')).find(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.height > 0 && bounds.bottom > top;
+    });
+    const element = row ?? turn;
+    this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top,
+      rowId: element.getAttribute('data-chat-row') } : undefined;
   }
   private requestHistory(direction: "before" | "following"): void {
     if (this.historyLoading() || this.historyPending) return;
@@ -363,8 +379,14 @@ export class ChatScrollComponent {
     this.rememberReadingAnchor();
     this.lastHistoryDirection = direction;
     this.historyPending = true;
-    this.historyBudget--;
-    this.atEnd.set(false);
+    // A collapsed page may add no scrollable content. Chaining more reads in
+    // that case can evict the answer still in view. Overflowing conversations
+    // prefetch once per gesture; only an underfilled viewport chains pages.
+    const viewport = this.viewport().nativeElement;
+    this.historyBudget = viewport.scrollHeight > viewport.clientHeight ? 0 : this.historyBudget - 1;
+    // Loading above a pinned tail must not relinquish end following. An actual
+    // reader scroll updates atEnd normally while the request is pending.
+    if (direction === 'following') this.atEnd.set(false);
     this.historyRequested.emit(direction);
   }
   private refreshMessages(): void {
@@ -410,7 +432,8 @@ export class ChatScrollComponent {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
       const margin = Math.min(480, viewport.clientHeight * 0.75);
-      if (this.historyBefore() && viewport.scrollTop < margin)
+      if (this.historyBefore() && viewport.scrollTop < margin &&
+          (!this.atEnd() || viewport.scrollHeight <= viewport.clientHeight))
         this.requestHistory("before");
       else if (this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
         this.requestHistory("following");
@@ -427,7 +450,7 @@ export class ChatScrollComponent {
     // repeated. Relax it by 24px on return to avoid flickering at the boundary.
     const distance = Math.min(96, Math.max(48, viewport.height * 0.12));
     const useful = this.reminder() && candidate &&
-      !this.historyLoading() && !this.historyError() && viewport.height >= 240 &&
+      viewport.height >= 240 &&
       viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 24 : 0);
     const text = useful
       ? (candidate.querySelector(".content")?.textContent ?? candidate.textContent)?.trim() ?? ""

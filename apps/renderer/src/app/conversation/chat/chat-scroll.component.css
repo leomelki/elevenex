@@ -16,14 +16,15 @@
 .history-status {
   position: absolute;
   z-index: 7;
-  top: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: var(--space-3);
+  left: var(--space-4);
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: calc(100% - var(--space-8));
-  padding: var(--space-2) var(--space-3);
+  max-width: calc(50% - var(--space-8) - var(--space-4));
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-full);
   background: var(--surface-raised);
@@ -32,6 +33,31 @@
   font-size: var(--text-caption-size);
 }
 .history-status button { color: var(--accent); }
+/* Background paging is a quiet corner indicator, not a message: it appears
+   only after a short delay so quick pages never flash, and never takes space
+   from the reply or the pinned reminder. */
+.history-indicator {
+  position: absolute;
+  z-index: 4;
+  bottom: var(--space-3);
+  left: var(--space-4);
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  opacity: 0;
+  pointer-events: none;
+  animation:
+    history-indicator-in var(--dur-base, 200ms) var(--ease-out, ease-out) 300ms forwards,
+    history-indicator-spin 900ms linear infinite;
+}
+@keyframes history-indicator-in { to { opacity: .45; } }
+@keyframes history-indicator-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .history-indicator { animation: history-indicator-in 1ms 300ms forwards; border-right-color: currentColor; border-style: dotted; }
+}
 .content {
   display: flex;
   flex-direction: column;

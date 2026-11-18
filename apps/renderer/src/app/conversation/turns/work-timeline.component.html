@@ -5,6 +5,7 @@
       class="timeline-row"
       [class.reply]="step.id === replyId()"
       [attr.data-work-step]="step.id"
+      [attr.data-chat-row]="step.id"
       [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
     >
       <div class="row-clip">
@@ -58,7 +59,7 @@
               [class.prose]="step.id !== replyId()"
               exAutoHeight
             >
-              <div>
+              <div class="prose-content">
                 @if (
                   step.id === replyId() &&
                     answer() === undefined &&

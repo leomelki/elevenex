@@ -67,6 +67,7 @@ export class SessionChatStore {
   // Keep unchanged inputs stable so polling does not rebuild the conversation.
   readonly state = signal<SessionChatState | null>(null, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
   readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
+  readonly leadingPrompt = signal<SessionChatItem | null>(null);
   readonly fresh = signal<ReadonlySet<string>>(new Set(), { equal: (a, b) => a.size === b.size && [...a].every(id => b.has(id)) });
   readonly loading = signal(true);
   /** A new local conversation stays on its welcome view through initial hydration. */
@@ -126,8 +127,10 @@ export class SessionChatStore {
   });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
+    const leadingPrompt = this.leadingPrompt();
     return chatExchanges(
-      this.items(),
+      leadingPrompt && this.items().length && this.items()[0]?.kind !== "user"
+        ? [leadingPrompt, ...this.items()] : this.items(),
       this.state(),
       this.fresh(),
       pending && !pending.queue ? pending : undefined,
@@ -194,7 +197,7 @@ export class SessionChatStore {
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
-    this.state.set(null); this.items.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
+    this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
@@ -235,7 +238,7 @@ export class SessionChatStore {
     this.pendingQueue.set(null);
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
     const cached = this.drafts.snapshot(selection.sessionId);
-    if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
+    if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
     if (!recovery) this.next.set(null);
     this.historyLoading.set(false); this.historyError.set('');
@@ -255,7 +258,7 @@ export class SessionChatStore {
     // Opening always means the latest conversation. A paged reading window is
     // not a usable opening snapshot: showing it before the tail would jump.
     if (this.selection && state && !this.historical() && !this.next())
-      this.drafts.remember(this.selection.sessionId, { items: this.items(), state, cursor: this.cursor, before: this.before() });
+      this.drafts.remember(this.selection.sessionId, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, cursor: this.cursor, before: this.before() });
   }
   setDraft(value: string): void {
     this.entry.text.set(value);
@@ -421,6 +424,15 @@ export class SessionChatStore {
       );
     }
     if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
+    // Retain only the prompt owning the first item, even after its actual row
+    // is evicted. Context never participates in pagination or delivery receipts.
+    const cut = all.length - items.length;
+    const preceding = older ? [] : all.slice(0, cut);
+    const prompt = items[0]?.kind === 'user' ? null
+      : preceding.reverse().find(item => item.kind === 'user')
+        ?? (older || (page.reset && !incremental) || !previous.length
+          ? page.leadingPrompt : this.leadingPrompt());
+    this.leadingPrompt.set(prompt ?? null);
     this.items.set(items);
     this.state.set(page.state);
     if (!direction) this.cursor = page.cursor;
@@ -532,7 +544,8 @@ export class SessionChatStore {
       text,
       queue: submission.intent === "queue",
       timestamp: new Date().toISOString(),
-      knownIds: new Set(this.items().map((item) => item.id)),
+      knownIds: new Set([...this.items().map((item) => item.id),
+        ...(this.leadingPrompt() ? [this.leadingPrompt()!.id] : [])]),
       knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),
     };
     const entry = this.entry,

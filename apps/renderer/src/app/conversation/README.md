@@ -58,6 +58,12 @@ latest window renders and positions immediately while refreshing. A different
 session gets fresh scroll/disclosure ownership; same-session refresh and verified
 same-machine recovery retain the mounted view and reading position. Local session
 creation keeps its immediate editable welcome through the durable receipt.
+Reply and commentary wrappers contain Markdown's block margins inside the
+AutoHeight observation. In particular, a trailing image's margin remains part of
+the measured reply height, avoiding a shrink-and-snap on initial observation.
+Automatic older-page prefetch retains end following for short tails, including
+when an older prompt replaces the first partial turn. A reader scrolling during
+that request keeps ownership of their reading position.
 
 The contextual reminder is a centered glass capsule sized to its prompt, echoing
 the title island: an ↑ in an accent well and the prompt on one ellipsized line.
@@ -84,7 +90,8 @@ enters the upper reading area.
 The source prompt must be fully above a 12%-of-height reading buffer (clamped to
 48–96px); the return threshold relaxes by 24px to avoid boundary flicker. This
 prevents a barely clipped prompt from immediately being repeated. Viewports
-below 240px and history loading/error states suppress it. Removing a focused
+below 240px suppress it. Background history reads and failures retain the available reminder; their status
+sits at the lower left, clear of the reminder and return control. Removing a focused
 reminder hands focus to the transcript.
 
 Motion: on first paint the reminder is simply there. Later it un-blurs and
@@ -98,9 +105,13 @@ Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
 evicts the opposite edge and increments `historyRevision` in the same update.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
-its offset after either operation. One in-flight request and a four-page automatic
-fill budget prevent loops on short/collapsed content; wheel, pointer and keyboard
-input renew that budget. History failures retain readable content and offer a
+its offset after either operation. Within a long turn, `data-chat-row` identifies
+individual timeline rows so prepending work preserves the answer's offset as well.
+One in-flight request and a four-page automatic fill budget bound underfilled
+viewports. Overflowing conversations prefetch once per gesture, and a pinned,
+overflowing tail does not prefetch older pages. This avoids draining collapsed
+work and evicting the reply still in view; wheel, pointer and keyboard input renew
+the budget. History failures retain readable content and offer a
 focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
 before moving to the bottom. No history navigation buttons are needed.
 

@@ -362,6 +362,7 @@ export class DesktopChatService implements OnModuleDestroy {
       reset,
       items: reset || before || following ? items : [],
       events: reset || before || following ? [] : events,
+      leadingPrompt: reset || before || following ? window.leadingPrompt : undefined,
       before: window.before,
       next: window.next,
       state: this.state(session, raw),

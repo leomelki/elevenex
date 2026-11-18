@@ -195,7 +195,12 @@ work. Provider APIs still own source transcript reading; their `getHistory`
 interface currently returns full history inside the backend. Only bounded tails
 are copied/projected and transported to the renderer.
 
-History pages contain at most 80 items / 512 KiB; the visible live window retains
+History pages contain at most 80 contiguous items / 512 KiB, plus an optional
+bounded `leadingPrompt` when the first item belongs to an earlier user message.
+That prompt supplies the turn identity and reminder without moving the page cursor
+or claiming that the intervening evidence has loaded. It survives item eviction
+and cached reopening, and disappears when its actual user row enters the window.
+Older engines can omit it. The visible live window retains
 at most 320 items. Scrolling near either edge automatically loads an adjacent page and evicts
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional

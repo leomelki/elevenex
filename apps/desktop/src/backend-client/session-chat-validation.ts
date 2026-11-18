@@ -465,9 +465,12 @@ export function parseChatPage(
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
     throw invalid();
+  const leadingPrompt = raw['leadingPrompt'] == null ? raw['leadingPrompt'] : item(raw['leadingPrompt']);
+  if (leadingPrompt && leadingPrompt.kind !== 'user') throw invalid();
   return {
     taskId,
     sessionId,
+    ...(leadingPrompt !== undefined ? { leadingPrompt } : {}),
     cursor: chatText(raw["cursor"], 200),
     reset: bool(raw["reset"]),
     before: nullable(raw["before"]),

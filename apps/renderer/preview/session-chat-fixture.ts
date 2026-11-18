@@ -504,8 +504,8 @@ export class SessionChatFixture {
     if (!held) for (const done of [...this.heldReads.values()]) done();
   }
   /** Replay a bounded recorded page without importing task data into production. */
-  seed(id: number, page: Pick<SessionChatPage, 'items' | 'state'>): void {
-    this.sessions.set(id, { items: [...page.items].slice(-320), state: page.state });
+  seed(id: number, page: Pick<SessionChatPage, 'items' | 'state' | 'leadingPrompt'>): void {
+    this.sessions.set(id, { items: [...(page.leadingPrompt ? [page.leadingPrompt] : []), ...page.items], state: page.state });
     this.changed();
   }
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
@@ -544,6 +544,7 @@ export class SessionChatFixture {
         sessionId: input.sessionId,
         cursor: String(this.version),
         reset,
+        leadingPrompt: items[0]?.kind === 'user' ? null : session.items.slice(0, start >= 0 ? start : Math.max(0, end - 80)).reverse().find(item => item.kind === 'user') ?? null,
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
         before: (start > 0 || end > 80) ? (items[0]?.id ?? null) : null,

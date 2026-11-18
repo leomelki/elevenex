@@ -136,6 +136,9 @@ preview-only backend adapter. Its fixture never enters the production build.
   releases clipping after settling, and makes closed descendants inert.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
+  Block wrappers must contain descendant margins (for example with
+  `display: flow-root`); otherwise the observer excludes collapsed margins and
+  the animation's target height disagrees with the natural layout.
   Width-driven wrapping follows the panel/window resize directly and cancels
   competing height motion. The observer's delivered sizes establish the new
   baseline; subsequent content growth at that width still animates.

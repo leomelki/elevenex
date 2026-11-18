@@ -636,6 +636,59 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatRead.mock.calls.length).toBeGreaterThan(calls);
     expect(store.state()?.phase).toBe("running"); expect(store.draft()).toBe("A draft");
   });
+  it('keeps leading context before an optimistic prompt while its command is pending', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { leadingPrompt: item('old-user', 'user', 'Earlier request'),
+      items: [item('old-answer', 'assistant', 'Earlier answer')] })));
+    await store.refresh();
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockImplementationOnce(() => command.promise);
+    const submission = store.submit({ text: 'Next request', intent: 'send', context: [] });
+    await settle();
+    expect(store.exchanges().map(exchange => exchange.prompt)).toEqual(['Earlier request', 'Next request']);
+    expect(store.exchanges()[0]?.answer).toBe('Earlier answer');
+    command.resolve(ok({ accepted: true })); await submission;
+  });
+
+  it('retains a distant prompt through paging, eviction, cached reopening and live growth', async () => {
+    const { store, bridge } = setup(); await settle();
+    const prompt = item('prompt-context', 'user', 'Keep this prompt above the reply');
+    const history = Array.from({ length: 800 }, (_, i) => item(String(i), 'assistant', `Message ${i}`));
+    bridge.sessionChatRead.mockImplementation(async (_scope, input) => {
+      const from = input.following ? Number(input.following) + 1 : Math.max(0, Number(input.before ?? history.length) - 80);
+      const end = Math.min(history.length, from + 80);
+      return ok(page(2, { leadingPrompt: prompt, items: history.slice(from, end), before: from ? String(from) : null, next: end < history.length ? String(end - 1) : null }));
+    });
+    await store.refresh();
+    const assertContext = () => {
+      expect(store.items().some(item => item.id === prompt.id)).toBe(false);
+      expect(store.exchanges()[0]?.id).toBe(prompt.id);
+      expect(store.exchanges()[0]?.prompt).toBe(prompt.text);
+      expect(store.exchanges()[0]?.isNew).toBe(false);
+      expect(store.items().length).toBeLessThanOrEqual(320);
+    };
+    assertContext();
+    for (let i = 0; i < 6; i++) { await store.older(); assertContext(); }
+    while (store.next()) { await store.newer(); assertContext(); }
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
+    store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false);
+    assertContext(); await settle(); assertContext();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, events: [
+      { type: 'item', item: item('800', 'assistant', 'Live continuation') },
+    ] })));
+    await vi.advanceTimersByTimeAsync(80); assertContext();
+    expect(store.items().at(-1)?.id).toBe('800');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [prompt, ...history.slice(0, 79)] })));
+    await store.refresh();
+    expect(store.leadingPrompt()).toBeNull();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false,
+      events: history.slice(79, 399).map(item => ({ type: 'item', item })),
+    })));
+    await vi.advanceTimersByTimeAsync(80); assertContext();
+    expect(store.leadingPrompt()?.id).toBe(prompt.id);
+
+  });
+
   it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
     const { store, bridge } = setup(); await settle();
     const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));

@@ -567,6 +567,13 @@ geometry through loading, out-of-order readiness and errors, plus image-viewer
 keyboard navigation and focus restoration in both themes and narrow reduced
 motion. Run it against the same preview URL.
 
+`scenarios/session-reply-layout.mjs` measures reply and media positions, natural
+scroll height and unwanted reply height animations from the first painted frame
+of cold and cached openings. It covers normal motion at wide/narrow widths and
+narrow reduced motion in both themes. Its default generated-image reply catches
+collapsed Markdown margins; `ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
+recorded page through the same production components.
+
 `scenarios/chat-scroll-return.mjs` checks the floating return control without
 incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
 focus handoff, interrupted exits and unread indicators on the arrow-only button.
@@ -827,3 +834,12 @@ unconfirmed-write inspection without replay, completion after navigation and
 fast receipts before first paint. It covers both themes and compact reduced-motion
 layouts through the production owners with preview-controlled backend replies.
 Run sequentially with `--url http://127.0.0.1:4310/connected-workspace`.
+
+
+`scenarios/session-history-stress.mjs` covers a turn with 1,000 earlier records,
+held history requests, prompt-reminder retention, mounted-reply identity and
+frame-by-frame scroll offsets, then backward/forward eviction through the bounded
+window. It runs in both themes, with narrow reduced-motion layouts. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of recorded
+`{ id, items, state }` histories; replay data stays outside the product bundle.
+Run against the warm component preview with `--url http://127.0.0.1:4310`.

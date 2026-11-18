@@ -421,10 +421,12 @@ describe('selected session chat', () => {
   });
   it('pages history by stable identity and bounds payloads without hydrating other sessions', async () => {
     history = Array.from({ length: 240 }, (_, index) => item(String(index)));
+    history[0] = { ...history[0], kind: 'user' };
     const latest = (await read())!;
     expect(latest.items).toHaveLength(80);
     expect(latest.items[0].id).toBe('160');
     expect(latest.before).toBe('160');
+    expect(latest.leadingPrompt?.id).toBe('0');
     const older = (await read(undefined, latest.before!))!;
     expect(older.items[0].id).toBe('80');
     expect(older.items.at(-1)?.id).toBe('159');

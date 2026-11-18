@@ -232,6 +232,8 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly cursor: string;
   /** A reset replaces the visible tail after reconnect, log expiry or transcript rewrite. */
   readonly reset: boolean;
+  /** Prompt preceding a page that starts mid-turn; outside the contiguous item window. */
+  readonly leadingPrompt?: SessionChatItem | null;
   readonly items: readonly SessionChatItem[];
   readonly events: readonly SessionChatEvent[];
   readonly before: string | null;
