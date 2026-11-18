@@ -689,6 +689,34 @@ describe("session chat ownership", () => {
 
   });
 
+  it('reconciles Claude thought and answer blocks with split saved history after streaming', async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const prompt = item('prompt', 'user', 'What changed?');
+    const thought = item('msg_response:0', 'thinking', 'Check the result.');
+    const answer = item('msg_response:1', 'assistant', 'The change is ready');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [prompt, thought, answer],
+      state: { ...state, provider: 'claude', phase: 'running' },
+    })));
+    await store.refresh();
+    expect(store.exchanges()[0]?.answerId).toBe(answer.id);
+
+    const savedAnswer = { ...answer, id: 'msg_response:assistant:0', text: 'The change is ready.' };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [prompt, { ...thought, id: 'msg_response:thinking:0' }, savedAnswer],
+      state: { ...state, provider: 'claude' },
+    })));
+    await vi.advanceTimersByTimeAsync(80);
+    const [exchange] = store.exchanges();
+    expect(exchange?.status).toBe('done');
+    expect(exchange?.answer).toBe(savedAnswer.text);
+    expect(exchange?.answerId).toBe(answer.id);
+    expect(exchange?.steps.map(step => [step.id, step.kind, step.text])).toEqual([
+      [thought.id, 'think', thought.text],
+    ]);
+  });
+
   it('retains a reconciled turn identity when only its compact context remains visible', async () => {
     const { store, bridge } = setup(); await settle();
     await store.submit({ text: 'Hi', intent: 'send', context: [] });
@@ -1093,6 +1121,27 @@ describe("session chat ownership", () => {
   });
 });
 describe("provider-neutral transcript presentation", () => {
+  it('keeps distinct Claude blocks and repeated replies while pairing streamed and saved copies', () => {
+    const previous = item('msg_progress:0', 'assistant', 'Ready.');
+    const thought = item('msg_final:0', 'thinking', 'Check both results.');
+    const first = item('msg_final:1', 'assistant', 'Ready.');
+    const second = item('msg_final:2', 'assistant', 'Both results match.');
+    const [exchange, later] = chatExchanges([
+      item('u1', 'user', 'Check both results'), previous, thought, first, second,
+      item('u2', 'user', 'Check again'), item('msg_next:0', 'assistant', 'Ready.'),
+      { ...previous, id: 'msg_progress:assistant:0' },
+      { ...thought, id: 'msg_final:thinking:0' },
+      { ...first, id: 'msg_final:assistant:0' },
+      { ...second, id: 'msg_final:assistant:1' },
+    ], state, new Set());
+    expect(exchange?.steps.map(step => [step.id, step.text])).toEqual([
+      [previous.id, 'Ready.'], [thought.id, thought.text],
+    ]);
+    expect(exchange?.answerId).toBe(first.id);
+    expect(exchange?.answer).toBe('Ready.\n\nBoth results match.');
+    expect(later?.answer).toBe('Ready.');
+  });
+
   it('keeps successful generated media visible beside the final answer and deduplicates assistant embeds', () => {
     const media = [{ id: 'image', path: '/generated.png', caption: 'Result', inline: true }];
     const output = item('image-output', 'tool_result', 'Image attachment', { toolId: 'draw', media });

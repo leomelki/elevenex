@@ -7,6 +7,7 @@ function elementOf(elements: readonly BrowserElementContext[], caption: string) 
 }
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
 import type { ChatExchange, WorkStep } from "../conversation";
+import { reconcileClaudeBlocks } from "./session-chat-claude-blocks";
 import {
   presentSessionTool,
   sessionToolKind,
@@ -76,7 +77,9 @@ export function chatExchanges(
     startedAt?: number;
     items: SessionChatItem[];
   }[] = [];
-  for (const item of pending ? withPendingPrompt(items, pending) : items) {
+  const reconciled = reconcileClaudeBlocks(pending ? withPendingPrompt(items, pending) : items);
+  const renderId = (item: SessionChatItem) => reconciled.renderIds.get(item.id) ?? item.id;
+  for (const item of reconciled.items) {
     if (item.kind === "user") {
       const browser = parseBrowserElements(item.text);
       groups.push({
@@ -133,7 +136,7 @@ export function chatExchanges(
     while (finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
       finalStart--;
     const followingIds = new Set(
-      group.items.slice(finalEnd).map((item) => item.id),
+      group.items.slice(finalEnd).map(renderId),
     );
     const steps: WorkStep[] = group.items
       .filter((_item, index) => index < finalStart || index >= finalEnd)
@@ -188,7 +191,7 @@ export function chatExchanges(
         }
         return [
           {
-            id: item.id,
+            id: renderId(item),
             kind:
               item.kind === "thinking"
                 ? "think"
@@ -293,7 +296,7 @@ export function chatExchanges(
         finalEnd > 0
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
-      answerId: finalEnd > 0 ? group.items[finalStart]?.id : undefined,
+      answerId: finalEnd > 0 ? renderId(group.items[finalStart]!) : undefined,
       answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
       author:

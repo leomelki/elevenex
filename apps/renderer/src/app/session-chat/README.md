@@ -76,7 +76,10 @@ Older engines omit the capability and retain their original send contract.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
-  into entry motion; initial history stays still.
+  into entry motion; initial history stays still. Claude's streamed and saved
+  blocks can use different IDs and indexes. The view pairs corresponding blocks
+  within the same provider message, keeps their position and render identity,
+  and uses the saved content. Raw history and pagination keep their original IDs.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
