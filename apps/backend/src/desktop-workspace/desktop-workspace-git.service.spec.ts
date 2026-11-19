@@ -284,6 +284,51 @@ describe('desktop workspace git boundary', () => {
       );
     });
 
+    it('follows the branch the user checked out instead of the branch recorded at task creation', async () => {
+      await git(checkout, 'switch', '-c', 'user-choice');
+      const preview = await service.commitPreview(taskId, selection);
+      await service.action(taskId, {
+        type: 'commit',
+        message: 'On the chosen branch',
+        selection,
+        revision: preview.revision,
+      });
+      expect(
+        await git(checkout, 'log', '-1', '--format=%s', 'user-choice'),
+      ).toBe('On the chosen branch');
+      expect(await git(checkout, 'log', '-1', '--format=%s', 'task')).toBe(
+        'Initial',
+      );
+      await service.action(taskId, { type: 'push' });
+      expect(push).toHaveBeenCalledWith(checkout);
+      await service.action(taskId, {
+        type: 'rename-branch',
+        branchName: 'user-renamed',
+      });
+      expect(await git(checkout, 'branch', '--show-current')).toBe(
+        'user-renamed',
+      );
+      expect(await git(checkout, 'branch', '--list', 'task')).not.toBe('');
+    });
+
+    it('commits a selection on a detached checkout but cannot rename a missing branch', async () => {
+      await git(checkout, 'switch', '--detach');
+      const preview = await service.commitPreview(taskId, selection);
+      await service.action(taskId, {
+        type: 'commit',
+        message: 'Detached',
+        selection,
+        revision: preview.revision,
+      });
+      expect(await git(checkout, 'log', '-1', '--format=%s')).toBe('Detached');
+      expect(await git(checkout, 'show', 'HEAD:chosen.txt')).toBe(
+        'chosen change',
+      );
+      await expect(
+        service.action(taskId, { type: 'rename-branch', branchName: 'named' }),
+      ).rejects.toMatchObject({ response: { code: 'branch-detached' } });
+    });
+
     it('commits a manual message without loading settings or starting a provider', async () => {
       const findSettings = jest.spyOn(settings, 'findOne');
       const preview = await service.commitPreview(taskId, selection);
@@ -339,12 +384,6 @@ describe('desktop workspace git boundary', () => {
     await expect(
       service.action(taskId, { type: 'rename-branch', branchName: 'held' }),
     ).rejects.toBeInstanceOf(ConflictException);
-    await git(checkout, 'branch', '-m', 'external-change');
-    await expect(
-      service.action(taskId, { type: 'push' }),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect(push).not.toHaveBeenCalled();
-    await git(checkout, 'branch', '-m', 'task');
     await database.db
       .update(schema.projects)
       .set({ archivedAt: new Date().toISOString() })

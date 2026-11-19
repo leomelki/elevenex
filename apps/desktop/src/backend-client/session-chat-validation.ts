@@ -461,20 +461,24 @@ export function parseChatPage(
   value: unknown,
   taskId: number,
   sessionId: number,
+  loadingMode?: 'window' | 'progressive',
 ): SessionChatPage {
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
     throw invalid();
+  const leadingPrompt = raw['leadingPrompt'] == null ? raw['leadingPrompt'] : item(raw['leadingPrompt']);
+  if (leadingPrompt && leadingPrompt.kind !== 'user') throw invalid();
   return {
     taskId,
     sessionId,
+    ...(leadingPrompt !== undefined ? { leadingPrompt } : {}),
     cursor: chatText(raw["cursor"], 200),
     reset: bool(raw["reset"]),
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], 80, item),
-    events: array(raw["events"], 80, (value): SessionChatEvent => {
+    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, item),
+    events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };
       if (event["type"] === "item")

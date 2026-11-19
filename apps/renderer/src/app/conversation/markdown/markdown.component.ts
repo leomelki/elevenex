@@ -40,6 +40,7 @@ function finalBlock(
 export class MarkdownComponent {
   readonly source = input.required<string>();
   readonly streaming = input(false);
+  readonly active = input(true);
   readonly copiedCode = input<string | null>(null);
   readonly resolve = input<MarkdownAssetResolver>();
   readonly blocks = computed(() =>

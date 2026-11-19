@@ -23,6 +23,7 @@ import {
   ApprovalCardComponent,
   AgentUsageNoticeComponent,
   ChatComponent,
+  ChatLoadingComponent,
   ComposerComponent,
   QuestionCardComponent,
   PresetPickerComponent,
@@ -46,7 +47,6 @@ import {
   DropdownComponent,
   PresenceComponent,
   ToastComponent,
-  SkeletonComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -61,6 +61,12 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 
 const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
+// These bounded, serializable view models can arrive with new IPC identities.
+// Activity/token updates must not invalidate unchanged composer configuration.
+function equalViewData<T>(left: T, right: T): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
 @Component({
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
@@ -71,6 +77,7 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     SessionActivityComponent,
     SessionAgentComponent,
     ChatComponent,
+    ChatLoadingComponent,
     ComposerComponent,
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
@@ -79,7 +86,6 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     PresetCreatorComponent,
     ToolContentComponent,
     ButtonComponent,
-    SkeletonComponent,
     IconComponent,
     DropdownComponent,
     PresenceComponent,
@@ -135,6 +141,8 @@ export class SessionChatComponent {
   }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  /** One scroll/editor lifetime per selected session, retained through recovery. */
+  readonly chatViews = computed(() => [{ revision: this.store.viewRevision() }]);
   readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
   private readonly catalogTarget = computed(() => {
     const selection = this.selection();
@@ -232,8 +240,8 @@ export class SessionChatComponent {
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
     }));
-  });
-  readonly providers = computed(() => this.store.state()?.providers ?? []);
+  }, { equal: equalViewData });
+  readonly providers = computed(() => this.store.state()?.providers ?? [], { equal: equalViewData });
   readonly harnesses = computed<readonly AgentHarness[]>(() => {
     const state = this.store.state();
     if (!state) return [];
@@ -250,7 +258,7 @@ export class SessionChatComponent {
         )[provider.id] ?? provider.label.slice(0, 2),
       models: provider.id === state.provider ? this.models() : [],
     }));
-  });
+  }, { equal: equalViewData });
   readonly showWelcome = computed(
     () =>
       !this.archived() &&
@@ -284,6 +292,9 @@ export class SessionChatComponent {
         this.harnesses().find((harness) => harness.id === state.provider)
           ?.mark ?? "Ag",
       model: state.model ?? "",
+      // The closed control uses the first page's display data. A secondary
+      // model catalog may enrich the menu without resizing the toolbar.
+      modelLabel: state.models.find(model => model.id === state.model)?.label ?? state.model ?? '',
       thinking: state.reasoning ?? undefined,
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
@@ -292,7 +303,7 @@ export class SessionChatComponent {
         : undefined,
       plan: sessionPlanUsage(state.planUsage, this.usageTime()),
     };
-  });
+  }, { equal: equalViewData });
   readonly fastAvailable = computed(() => {
     const state = this.store.state();
     return (
@@ -371,6 +382,7 @@ export class SessionChatComponent {
           } as Readonly<Record<string, string>>
         )[id] ?? id,
     })),
+    { equal: equalViewData },
   );
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
@@ -379,6 +391,7 @@ export class SessionChatComponent {
       kind: q.multiple ? "multi" : "single",
       options: q.options.map((o) => ({ label: o.label, detail: o.detail })),
     })),
+    { equal: equalViewData },
   );
 
   dragOver(event: DragEvent): void {
@@ -422,7 +435,11 @@ export class SessionChatComponent {
       if (creation) this.store.openDraft(creation);
       else if (selection) this.store.open(selection, this.archived());
       untracked(() => this.attachments.open(creation ? null : selection));
-      this.media.update(creation ? null : selection, this.store.items());
+    });
+    effect(() => {
+      const selection = this.creation() ? null : this.selection();
+      const items = this.store.visibleItems();
+      untracked(() => this.media.update(selection, items));
     });
     effect(() => {
       this.identity();
@@ -449,7 +466,9 @@ export class SessionChatComponent {
         scrollIdentity = identity;
         opening = true;
       }
-      const ready = !this.store.loading() && !!this.store.state();
+      // Cached history is already usable while its refresh is pending. Position
+      // that first render too; a refresh must never pull an active reader down.
+      const ready = !!this.store.state();
       const scroll = this.chat()?.scroll();
       if (!opening || !ready || !scroll) return;
       opening = false;

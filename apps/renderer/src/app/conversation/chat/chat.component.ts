@@ -44,9 +44,12 @@ export class ChatComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
+  readonly progressiveLoading = input(false);
+  readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();
+  readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
   readonly exchanges = input<readonly ChatExchange[]>([]);
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);

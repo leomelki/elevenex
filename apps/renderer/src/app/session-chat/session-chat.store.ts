@@ -18,11 +18,14 @@ import type {
 } from "@elevenex/shared";
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
+import { chatTailContext } from './session-chat-tail';
+import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
 import {
-  chatExchanges,
+  ChatTranscriptProjection,
+  pendingPromptStart,
   type PendingChatPrompt,
 } from "./session-chat-transcript";
 
@@ -32,6 +35,18 @@ interface PendingSubmission extends PendingChatPrompt {
   readonly knownQueueIds: ReadonlySet<string>;
   confirmed: boolean;
 }
+interface TurnArrival {
+  readonly renderId: string;
+  readonly sendOrigin?: MessageSendOrigin;
+}
+
+function promptBefore(items: readonly SessionChatItem[], end: number): SessionChatItem | undefined {
+  for (let index = end - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item?.kind === 'user') return item;
+  }
+  return undefined;
+}
 
 export interface ChatSelection extends SessionChatTarget {
   readonly scopeId: string;
@@ -40,7 +55,10 @@ export interface ChatSelection extends SessionChatTarget {
 @Injectable()
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
+  private readonly transcript = new ChatTranscriptProjection();
   private readonly drafts = inject(SessionChatDrafts);
+  private readonly loadingPolicy = inject(SessionChatLoadingPolicy);
+  readonly progressiveLoading = this.loadingPolicy.progressive;
   private readonly backend = inject(BackendClientService);
   readonly outbox = inject(SessionChatOutbox, { optional: true });
   private readonly active = signal(true);
@@ -59,7 +77,9 @@ export class SessionChatStore {
   private readEpoch = 0;
   private cursor: string | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private slowOpenTimer: ReturnType<typeof setTimeout> | undefined;
   private request: string | undefined;
+  private requestMode: 'window' | 'progressive' | undefined;
   private disposed = false;
   private seenRequest: string | undefined;
   private readonly commands = new Map<string, string>();
@@ -67,6 +87,8 @@ export class SessionChatStore {
   // Keep unchanged inputs stable so polling does not rebuild the conversation.
   readonly state = signal<SessionChatState | null>(null, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
   readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
+  readonly leadingPrompt = signal<SessionChatItem | null>(null);
+  private readonly trailingContext = signal<readonly SessionChatItem[]>([]);
   readonly fresh = signal<ReadonlySet<string>>(new Set(), { equal: (a, b) => a.size === b.size && [...a].every(id => b.has(id)) });
   readonly loading = signal(true);
   /** A new local conversation stays on its welcome view through initial hydration. */
@@ -105,10 +127,12 @@ export class SessionChatStore {
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
   // Keep local entry identity and source through a receipt that beats first paint.
   // Pruned with the bounded transcript and cleared on selection changes.
-  private readonly turnArrivals = signal<ReadonlyMap<string, {
-    readonly renderId: string;
-    readonly sendOrigin?: MessageSendOrigin;
-  }>>(new Map());
+  private readonly turnArrivals = signal<ReadonlyMap<string, TurnArrival>>(new Map());
+  private readonly decoratedTurns = new WeakMap<ChatExchange, {
+    readonly arrival?: TurnArrival;
+    readonly pending: PendingSubmission | null;
+    readonly exchange: ChatExchange;
+  }>();
   private readonly queueRenderIds = signal<ReadonlyMap<string, string>>(new Map());
   readonly running = computed(
     () =>
@@ -124,25 +148,45 @@ export class SessionChatStore {
       });
     return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
   });
+  readonly visibleItems = computed<readonly SessionChatItem[]>(() => {
+    const leadingPrompt = this.leadingPrompt();
+    const items = this.items();
+    const context = this.trailingContext();
+    const leading = leadingPrompt && items.length > 0 && items[0]?.kind !== 'user'
+      ? [leadingPrompt] : [];
+    if (!context.length) return leading.length ? [...leading, ...items] : items;
+    const ids = new Set([...leading, ...items].map(item => item.id));
+    const trailing = context.filter(item => !ids.has(item.id));
+    return [...leading, ...items, ...trailing];
+  });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
-    return chatExchanges(
-      this.items(),
+    const items = this.visibleItems();
+    // A distant history window may no longer contain the send boundary.
+    const showPending = pending && (!this.historical() || pendingPromptStart(items, pending) > 0);
+    const exchanges = this.transcript.project(
+      items,
       this.state(),
       this.fresh(),
-      pending && !pending.queue ? pending : undefined,
-    ).map((exchange): ChatExchange => {
+      showPending ? pending : undefined,
+    );
+    if (!pending && !this.turnArrivals().size) return exchanges;
+    return exchanges.map((exchange): ChatExchange => {
       const arrival = this.turnArrivals().get(exchange.id);
-      if (exchange.id === pending?.id)
-        return {
+      const ownPending = exchange.id === pending?.id ? pending : null;
+      if (!arrival && !ownPending) return exchange;
+      const old = this.decoratedTurns.get(exchange);
+      if (old && old.arrival === arrival && old.pending === ownPending) return old.exchange;
+      const decorated = ownPending ? {
           ...exchange,
           isNew: true,
-          sendOrigin: pending.sendOrigin,
+          sendOrigin: ownPending.sendOrigin,
           status: this.running() ? "live" : exchange.status,
-        };
-      return arrival ? { ...exchange, ...arrival, isNew: true } : exchange;
+        } satisfies ChatExchange : { ...exchange, ...arrival, isNew: true };
+      this.decoratedTurns.set(exchange, { arrival, pending: ownPending, exchange: decorated });
+      return decorated;
     });
-  });
+  }, { equal: (left, right) => left.length === right.length && left.every((exchange, index) => exchange === right[index]) });
   readonly empty = computed(() => !this.exchanges().length && !this.running());
 
   /** Called only after the focused view has rendered its latest content. */
@@ -165,6 +209,16 @@ export class SessionChatStore {
   }
 
   constructor() {
+    effect(() => {
+      if (this.progressiveLoading()) untracked(() => {
+        // Another chat may have detected the slow connection while this one
+        // was opening. Replace only pending initial reads, never mutations.
+        if (this.request && this.requestMode === 'window' && !this.state()) {
+          this.stopRead();
+          void this.load(true);
+        }
+      });
+    });
     let wasPaused: boolean | undefined;
     effect(() => {
       const paused = this.offline() || !this.active();
@@ -183,6 +237,7 @@ export class SessionChatStore {
       this.disposed = true;
       this.epoch++;
       this.stopRead();
+      this.transcript.clear();
       document.removeEventListener("visibilitychange", visible);
     });
   }
@@ -192,9 +247,10 @@ export class SessionChatStore {
     this.outbox?.setEditing(null);
     this.remember(); this.stopRead(); this.epoch++;
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
+    this.transcript.clear();
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
-    this.state.set(null); this.items.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
+    this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.trailingContext.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
@@ -230,12 +286,13 @@ export class SessionChatStore {
     this.entry = this.drafts.entry(selection.scopeId, selection.sessionId);
     this.activeEntry.set(this.entry);
     const recovery = sameSession && previousEntry === this.entry;
+    if (!recovery) this.transcript.clear();
     this.readOnly.set(readOnly);
     this.pending.set(null);
     this.pendingQueue.set(null);
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
     const cached = this.drafts.snapshot(selection.sessionId);
-    if (!recovery) { this.items.set(cached?.items ?? []); this.state.set(cached?.state ?? null); }
+    if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.trailingContext.set([]); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
     if (!recovery) this.next.set(null);
     this.historyLoading.set(false); this.historyError.set('');
@@ -247,23 +304,30 @@ export class SessionChatStore {
     this.busy.set("");
     this.historical.set(recovery && historical);
     this.checked.set(false);
-    this.cursor = recovery ? previousCursor : undefined;
-    void this.load(!recovery);
+    this.cursor = recovery ? previousCursor : cached?.cursor;
+    this.loading.set(!this.state());
+    void this.load(!recovery && !cached);
   }
   private remember(): void {
     const state = this.state();
-    if (this.selection && state) this.drafts.remember(this.selection.sessionId, { items: this.items(), state, cursor: this.cursor, before: this.before() });
+    // Opening always means the latest conversation. A paged reading window is
+    // not a usable opening snapshot: showing it before the tail would jump.
+    if (this.selection && state && !this.historical() && !this.next())
+      this.drafts.remember(this.selection.sessionId, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, cursor: this.cursor, before: this.before() });
   }
   setDraft(value: string): void {
     this.entry.text.set(value);
   }
   private stopRead(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.slowOpenTimer);
+    this.slowOpenTimer = undefined;
     this.timer = undefined;
     this.readEpoch++;
     if (this.request && this.selection)
       this.client.cancel(this.selection.scopeId, this.request);
     this.request = undefined;
+    this.requestMode = undefined;
     this.historyLoading.set(false);
   }
   async refresh(): Promise<void> {
@@ -284,6 +348,11 @@ export class SessionChatStore {
     this.stopRead();
     await this.load(false, this.items().at(-1)?.id, "following");
   }
+  cancelHistory(): void {
+    if (!this.historyLoading()) return;
+    this.stopRead();
+    if (!this.readOnly()) void this.load(false);
+  }
   private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<void> {
     const selection = this.selection;
     if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;
@@ -293,12 +362,26 @@ export class SessionChatStore {
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
     this.request = requestId;
-    if (reset) this.loading.set(true);
+    this.requestMode = this.progressiveLoading() ? 'progressive' : 'window';
+    if (reset || !this.state()) this.loading.set(true);
     if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
+    // Only time an uncached opening, never an idle 8s long poll or history read.
+    // Keep the smaller-page choice for this app connection; it must not oscillate
+    // or let the cancelled larger response overwrite the replacement window.
+    if (!this.state() && !this.progressiveLoading()) {
+      this.slowOpenTimer = setTimeout(() => {
+        if (this.disposed || epoch !== this.epoch || readEpoch !== this.readEpoch ||
+            document.hidden || this.offline() || !this.active()) return;
+        if (!this.loadingPolicy.enableProgressive(selection.scopeId)) return;
+        this.stopRead();
+        void this.load(reset, position, direction);
+      }, SESSION_CHAT_SLOW_OPEN_MS);
+    }
     const result = await this.client.read(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       requestId,
+      loadingMode: this.requestMode,
       ...(position && direction
         ? { [direction]: position }
         : !reset && this.cursor
@@ -307,7 +390,10 @@ export class SessionChatStore {
     });
     if (this.disposed || epoch !== this.epoch || readEpoch !== this.readEpoch)
       return;
+    clearTimeout(this.slowOpenTimer);
+    this.slowOpenTimer = undefined;
     this.request = undefined;
+    this.requestMode = undefined;
     this.loading.set(false);
     this.historyLoading.set(false);
     if (result.ok) {
@@ -317,13 +403,6 @@ export class SessionChatStore {
       this.supportsFollowing = result.value.next !== undefined;
       if (this.historical() && !direction && !reset) {
         // Keep runtime state current without replacing the history being read.
-        this.state.set(result.value.state);
-        this.cursor = result.value.cursor;
-      } else if (!reset && !direction && result.value.reset && this.items().length && !result.value.items.some(item => this.items().some(old => old.id === item.id))) {
-        // A busy conversation may outgrow a feed tail while disconnected. Keep
-        // its contiguous history and fill the gap using the forward cursor.
-        this.next.set(this.items().at(-1)!.id);
-        this.historical.set(true);
         this.state.set(result.value.state);
         this.cursor = result.value.cursor;
       } else this.accept(result.value, direction, !reset);
@@ -349,61 +428,91 @@ export class SessionChatStore {
       );
   }
   private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
+    const previous = this.items();
+    if (!direction && !page.reset && !page.events.length) {
+      this.state.set(page.state);
+      this.cursor = page.cursor;
+      this.reconcileDelivery(page.state);
+      return;
+    }
     const older = direction === "before";
-    const previous = this.items(),
-      wasLoaded = !!this.cursor;
-    const base = older ? [...page.items, ...previous]
-      : direction || (page.reset && incremental) ? [...previous, ...page.items]
-      : page.reset ? page.items : previous;
-    const next = new Map<string, SessionChatItem>(
-      base.map((item) => [
-        item.id,
-        item,
-      ]),
+    const wasLoaded = !!this.cursor;
+    const replacesTail = !direction && page.reset;
+    // A reset is authoritative from its first row onward. A matching first
+    // row proves where a previously loaded prefix joins the new page.
+    const sharedStart = replacesTail && incremental && page.before
+      ? previous.findIndex(item => item.id === page.items[0]?.id) : -1;
+    const previousPrefix = sharedStart > 0 ? previous.slice(0, sharedStart) : [];
+    const priorOwner = promptBefore(previous, sharedStart) ?? this.leadingPrompt();
+    const keepsPrefix = previousPrefix.length > 0 && (
+      page.items[0]?.kind === 'user' || page.leadingPrompt === undefined ||
+      JSON.stringify(page.leadingPrompt) === JSON.stringify(priorOwner)
     );
+    const base = older ? [...page.items, ...previous]
+      : direction ? [...previous, ...page.items]
+      : keepsPrefix ? [...previousPrefix, ...page.items]
+      : replacesTail ? page.items : previous;
+    if (replacesTail && page.state.provider === 'claude' && this.state()?.provider === 'claude')
+      this.transcript.reconcileSavedBlocks(previous, base);
+    // Reset/paging replies cross IPC with fresh identities. Reuse equal records
+    // so overlapping windows and refreshed history preserve their OnPush inputs.
+    const known = direction || replacesTail ? new Map(previous.map(item => [item.id, item])) : undefined;
+    const next = new Map(base.map(item => {
+      const old = known?.get(item.id);
+      return [item.id, old && (old === item || JSON.stringify(old) === JSON.stringify(item)) ? old : item];
+    }));
     for (const event of page.events) {
-      if (event.type === "item") next.set(event.item.id, event.item);
+      if (event.type === "item") {
+        const old = next.get(event.item.id);
+        if (!old || (old !== event.item && JSON.stringify(old) !== JSON.stringify(event.item)))
+          next.set(event.item.id, event.item);
+      }
       else if (event.type === "delta") {
         const old = next.get(event.id);
         if (old) next.set(event.id, { ...old, text: old.text + event.text });
       }
     }
     const pending = this.pending();
-    const delivered =
-      pending && !pending.queue
-        ? [...next.values()].find(
-            (item) =>
-              item.kind === "user" &&
-              !pending.knownIds.has(item.id) &&
-              item.text === pending.text,
-          )
-        : undefined;
-    // A late receipt must precede output already shown under its optimistic turn.
-    const all =
-      delivered && pending
-        ? [
-            ...[...next.values()].filter((item) =>
-              pending.knownIds.has(item.id),
-            ),
-            delivered,
-            ...[...next.values()].filter(
-              (item) =>
-                !pending.knownIds.has(item.id) && item.id !== delivered.id,
-            ),
-          ]
-        : [...next.values()];
+    const records = [...next.values()];
+    const receiptIndex = (submission: PendingSubmission | null, start: number) =>
+      submission && !older && (!direction || !page.next || start > 0)
+        ? records.findIndex((item, index) => index >= start && item.kind === "user" && item.text === submission.text)
+        : -1;
+    const start = pending ? pendingPromptStart(records, pending) : records.length;
+    const deliveredIndex = receiptIndex(pending, start);
+    const delivered = records[deliveredIndex];
+    const queued = this.pendingQueue();
+    const deliveredQueued = records[receiptIndex(queued, queued ? pendingPromptStart(records, queued) : records.length)];
+    // Snapshots and history pages already have authoritative order. A late
+    // incremental receipt may need to precede output shown under its pending prompt.
+    const precedingPrompt = delivered ? promptBefore(records, deliveredIndex) : undefined;
+    const all = delivered && deliveredIndex > start && !direction && !page.reset &&
+      (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
+      ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
+      : records;
     const items = older ? all.slice(0, 320) : all.slice(-320);
+    if (older && all.length > items.length) {
+      const contextIds = new Set(all.map(item => item.id));
+      this.trailingContext.set(chatTailContext([
+        ...all.slice(items.length),
+        ...this.trailingContext().filter(item => !contextIds.has(item.id)),
+      ]));
+    } else if (replacesTail) this.trailingContext.set([]);
+    else if (direction === 'following') {
+      const ids = new Set(items.map(item => item.id));
+      this.trailingContext.update(context => context.filter(item => !ids.has(item.id)));
+    }
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
       const arrivals = new Map(this.turnArrivals());
       if (delivered && pending) arrivals.set(delivered.id, { renderId: pending.id, sendOrigin: pending.sendOrigin });
-      const retained = new Set(items.map(item => item.id));
+      const retained = new Set([...items, ...this.trailingContext()].map(item => item.id));
       for (const id of arrivals.keys())
         if (!retained.has(id)) arrivals.delete(id);
       this.turnArrivals.set(arrivals);
     }
-    if (!direction && wasLoaded) {
+    if (!direction && wasLoaded && (!page.reset || this.fresh().size)) {
       const known = new Set(previous.map((item) => item.id));
       this.fresh.set(
         new Set(
@@ -418,6 +527,15 @@ export class SessionChatStore {
       );
     }
     if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
+    // Retain only the prompt owning the first item, even after its actual row
+    // is evicted. Context never participates in pagination or delivery receipts.
+    const cut = older ? 0 : all.length - items.length;
+    const prompt = items[0]?.kind === 'user' ? null
+      : promptBefore(all, cut)
+        ?? (older || (replacesTail && !keepsPrefix) || !previous.length
+          ? page.leadingPrompt : this.leadingPrompt());
+    const oldPrompt = this.leadingPrompt();
+    this.leadingPrompt.set(oldPrompt && prompt && JSON.stringify(oldPrompt) === JSON.stringify(prompt) ? oldPrompt : prompt ?? null);
     this.items.set(items);
     this.state.set(page.state);
     if (!direction) this.cursor = page.cursor;
@@ -425,21 +543,23 @@ export class SessionChatStore {
       this.before.set(page.before);
       if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
     } else {
-      if (!direction && page.reset && (!incremental || !previous.length)) this.before.set(page.before);
+      if (replacesTail && !keepsPrefix) this.before.set(page.before);
       if (all.length > 320) this.before.set(items[0]?.id ?? null);
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
-    if (direction || all.length > 320) this.windowRevision.update(value => value + 1);
+    const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
+    if (direction || all.length > 320 || replacedRows)
+      this.windowRevision.update(value => value + 1);
+    this.reconcileDelivery(page.state, delivered, deliveredQueued);
+  }
+
+  private reconcileDelivery(state: SessionChatState, delivered?: SessionChatItem, deliveredQueued?: SessionChatItem): void {
+    const pending = this.pending();
     if (
       pending &&
-      (items.some(
-        (item) =>
-          item.kind === "user" &&
-          !pending.knownIds.has(item.id) &&
-          item.text === pending.text,
-      ) ||
-        page.state.queue.some(
+      (delivered ||
+        state.queue.some(
           (item) =>
             !pending.knownQueueIds.has(item.id) && item.text === pending.text,
         ))
@@ -448,7 +568,7 @@ export class SessionChatStore {
       this.pending.set(null);
     }
     const queued = this.pendingQueue();
-    const queueReceipt = queued && page.state.queue.find(
+    const queueReceipt = queued && state.queue.find(
       item => !queued.knownQueueIds.has(item.id) && item.text === queued.text,
     );
     if (queueReceipt || this.queueRenderIds().size) {
@@ -456,21 +576,12 @@ export class SessionChatStore {
       // add an extra row to the composer's measured height.
       const renderIds = new Map(this.queueRenderIds());
       if (queueReceipt && queued) renderIds.set(queueReceipt.id, queued.id);
-      const retained = new Set(page.state.queue.map(item => item.id));
+      const retained = new Set(state.queue.map(item => item.id));
       for (const id of renderIds.keys())
         if (!retained.has(id)) renderIds.delete(id);
       this.queueRenderIds.set(renderIds);
     }
-    if (
-      queued &&
-      (queueReceipt ||
-        items.some(
-          (item) =>
-            item.kind === "user" &&
-            !queued.knownIds.has(item.id) &&
-            item.text === queued.text,
-        ))
-    ) {
+    if (queued && (queueReceipt || deliveredQueued)) {
       queued.confirmed = true;
       this.pendingQueue.set(null);
     }
@@ -529,7 +640,7 @@ export class SessionChatStore {
       text,
       queue: submission.intent === "queue",
       timestamp: new Date().toISOString(),
-      knownIds: new Set(this.items().map((item) => item.id)),
+      knownIds: new Set(this.visibleItems().map(item => item.id)),
       knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),
     };
     const entry = this.entry,

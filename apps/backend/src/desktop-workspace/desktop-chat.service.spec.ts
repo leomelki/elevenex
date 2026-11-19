@@ -52,6 +52,73 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('keeps legacy pages unchanged and validates opt-in bounded windows', async () => {
+    history = Array.from({ length: 1000 }, (_, i) => ({ ...item(String(i)), content: `Message ${i}` }));
+    const signal = new AbortController().signal;
+    expect((await chat.read(1, 2, undefined, undefined, signal))!.items).toHaveLength(80);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!.items).toHaveLength(320);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive'))!.items).toHaveLength(80);
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'all')).rejects.toThrow('Invalid conversation loading mode');
+  });
+
+  it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const original = new AbortController();
+    const first = chat.read(1, 2, undefined, undefined, original.signal, undefined, 'window');
+    await settle(); original.abort();
+    const replacement = chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, 'progressive');
+    await settle();
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    release([item('latest')]);
+    expect(await first).toBeUndefined();
+    expect((await replacement)!.items.at(-1)!.id).toBe('latest');
+  });
+
+  it('also discards cancelled archived-session hydration without attaching its runtime', async () => {
+    status = 'archived';
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const controller = new AbortController();
+    const pending = chat.read(1, 2, undefined, undefined, controller.signal, undefined, 'window');
+    await settle(); controller.abort(); release([item('latest')]);
+    expect(await pending).toBeUndefined();
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
+
+  it('pages a long archived session with bounded cursor and prompt lookups', async () => {
+    status = 'archived';
+    let reads = 0;
+    history = new Proxy(Array.from({ length: 10_000 }, (_, i) => item(String(i))), {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    history[0] = { ...history[0], kind: 'user' };
+    const latest = (await chat.read(1, 2, undefined, undefined, new AbortController().signal))!;
+    expect(latest.items[0]?.id).toBe('9920');
+    reads = 0;
+    const older = (await chat.read(1, 2, undefined, latest.before!, new AbortController().signal))!;
+    expect(older.items[0]?.id).toBe('9840');
+    expect(older.leadingPrompt?.id).toBe('0');
+    expect(reads).toBeLessThan(320);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
+
+  it('serves a held poll from saved history if the session is archived while waiting', async () => {
+    history = [item('saved')];
+    const latest = (await read())!;
+    const waiting = read(latest.cursor);
+    await settle();
+    status = 'archived';
+    expect((await read())!.items.map(row => row.id)).toEqual(['saved']);
+    expect((await waiting)!.items.map(row => row.id)).toEqual(['saved']);
+    expect(runtime.getRuntimeState).toHaveBeenCalledTimes(1);
+    expect(runtime.onClientDetached).toHaveBeenCalledWith(2);
+  });
   it('does not pair a new completion marker with an older in-flight history read', async () => {
     let finish!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));
@@ -421,10 +488,12 @@ describe('selected session chat', () => {
   });
   it('pages history by stable identity and bounds payloads without hydrating other sessions', async () => {
     history = Array.from({ length: 240 }, (_, index) => item(String(index)));
+    history[0] = { ...history[0], kind: 'user' };
     const latest = (await read())!;
     expect(latest.items).toHaveLength(80);
     expect(latest.items[0].id).toBe('160');
     expect(latest.before).toBe('160');
+    expect(latest.leadingPrompt?.id).toBe('0');
     const older = (await read(undefined, latest.before!))!;
     expect(older.items[0].id).toBe('80');
     expect(older.items.at(-1)?.id).toBe('159');
@@ -452,6 +521,33 @@ describe('selected session chat', () => {
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
+  });
+
+  it('refreshes runtime state on an unchanged heartbeat without visiting transcript rows', async () => {
+    let reads = 0;
+    live = Array.from({ length: 360 }, (_, i) => ({
+      ...item(String(i)),
+      get content() { reads++; return `Live record ${i}`; },
+    }));
+    const readWindow = (after?: string) =>
+      chat.read(1, 2, after, undefined, new AbortController().signal, undefined, 'window');
+    const initial = (await readWindow())!;
+    expect(initial.items).toHaveLength(320);
+    reads = 0;
+    jest.useFakeTimers();
+    try {
+      runtime.getRuntimeState.mockResolvedValueOnce({ liveItems: live, selectedModel: 'updated' });
+      const waiting = readWindow(initial.cursor);
+      await jest.advanceTimersByTimeAsync(8000);
+      expect(await waiting).toMatchObject({
+        cursor: initial.cursor, reset: false, items: [], events: [],
+        before: initial.before, state: { model: 'updated' },
+      });
+      expect(reads).toBe(0);
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
   it('streams dequeued user receipts once and retains their identity through saved history', async () => {
     history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];

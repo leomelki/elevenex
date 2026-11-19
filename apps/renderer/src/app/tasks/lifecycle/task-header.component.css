@@ -43,6 +43,13 @@ h1 {
   gap: 6px;
   overflow: hidden;
 }
+.git-status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 45%;
+}
+.git-status:empty { display: none; }
 .meta {
   min-width: 0;
   overflow: hidden;

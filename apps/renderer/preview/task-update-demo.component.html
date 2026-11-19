@@ -39,7 +39,9 @@
       meta="Use integer cents · 2 sessions"
       (parentRequested)="intent.set('Open parent: ' + $event.title)"
       (gitAction)="intent.set('Git intent: ' + $event)"
-    />
+    >
+      <button gitStatus exButton size="sm" variant="ghost" (click)="intent.set('Refresh Git status requested')">Refresh status</button>
+    </ex-task-header>
   </div>
   <div class="controls draft-controls">
     <button exButton size="sm" (click)="chooseDraft('multiple')">

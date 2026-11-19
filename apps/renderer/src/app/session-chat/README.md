@@ -54,11 +54,24 @@ Older engines omit the capability and retain their original send contract.
   epochs and feedback. It cancels reads on navigation, hiding or destruction.
   Pending writes can finish on their original backend; their replies never
   change a different conversation. No write is replayed by reconnect or refresh.
-  Idle heartbeats retain unchanged conversation inputs. Transient background
+  Idle heartbeats retain unchanged conversation inputs. Backend resets
+  reconcile the authoritative suffix, including rewinds while a session
+  was cached. An overlapping first row lets the store retain its contiguous
+  prefix when the prompt context still matches. Transient background
   read failures retain the transcript and retry quietly; initial/explicit reads
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
   incremental read path. Repeated visibility notifications share the active read.
+  Leaving a history edge while its page is pending cancels the read and resumes
+  the live feed, preserving the window the reader scrolled back into.
+- Paging keeps at most 320 contiguous raw records. When hidden work leaves the
+  newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
+  context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
+  Source message boundaries keep a progress update from merging into the answer
+  and changing its mounted identity. Context never supplies pagination or delivery
+  cursors; following pages consume it without duplicate replies. Explicit history
+  replacement and session navigation release it. This keeps short collapsed turns
+  readable without retaining every tool record or fetching the full transcript.
 - `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
   scope. Unresolved writes are not evicted silently. A failed send restores its
   text ahead of any newly typed draft. An uncertain outcome requires checking
@@ -68,11 +81,24 @@ Older engines omit the capability and retain their original send contract.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
-  into entry motion; initial history stays still.
+  into entry motion; initial history stays still. Claude's streamed and saved
+  blocks can use different IDs and indexes. The view pairs corresponding blocks
+  within the same provider message, keeps their position and render identity,
+  and uses the saved content. Across a reset the projection keeps only matching
+  render identities from the prior page. Raw history and pagination use the
+  current provider IDs.
+- The conversation-owned `ChatTranscriptProjection` reuses completed exchanges
+  and unchanged tool steps, including parsed presentations. Runtime-only queue,
+  usage and activity changes do not replace transcript inputs. Reset/paging
+  replies reconcile equal records before projection; eviction and navigation
+  release their cached turns. Streaming text changes only its active turn.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
   the first paint also retains `isNew`, so the bubble and Working enter together.
+  Older pages retain transcript order during a send. The pending prompt starts
+  after the last visible record known at submit, and a matching saved receipt
+  keeps its authoritative position in history.
   Domain intents keep the durable ID, and origin data never crosses the bridge.
   Paging prunes this mapping and session/backend navigation clears it.
 - Queued messages retain their optimistic render IDs through saved receipts, too.
@@ -192,10 +218,57 @@ eight seconds for activity; the renderer spaces active reads by 80ms. Persisted
 history is read at entry, explicit paging and durable history invalidation,
 never for each streamed token. Simultaneous runtime/history reads share their
 work. Provider APIs still own source transcript reading; their `getHistory`
-interface currently returns full history inside the backend. Only bounded tails
-are copied/projected and transported to the renderer.
+interface currently returns full history inside the backend. The selected feed
+caches a bounded set of emitted cursor offsets and the last prompt span for its
+current history revision. Pages project and transport only bounded candidates,
+and idle heartbeats refresh state without projecting an unchanged transcript.
 
-History pages contain at most 80 items / 512 KiB; the visible live window retains
+`SESSION_CHAT_PROGRESSIVE_LOADING` is an injectable rollout flag, **false** by
+default. Normal reads request one recent window of at most **320 records / 2 MiB**;
+this disables small-page progressive opening without fetching an unbounded
+transcript. Older-window reads wait for scroll intent rather than prefilling a
+short collapsed conversation at startup. An uncached opening still pending after
+**3,000 ms** enables progressive loading for the **whole application connection**,
+cancels its larger request and requests
+**80 records / 512 KiB**. A small “Progressive” label accompanies the initial or
+history loading glyph while work is pending. This is a slow-open heuristic,
+not a diagnosis of network quality. It does not time idle long polls, cached
+revalidation or ordinary history navigation. Navigation, hiding, pausing and
+destruction cancel the deadline; stale replies cannot replace the current window.
+
+`SessionChatLoadingPolicy` is shared at application/window lifetime, independently
+of chat owners, selected tasks/projects and draft caches. Every chat inherits the
+fallback immediately, including newly mounted workspaces; other pending initial
+window reads switch to small pages too. Normal background long polls finish
+without interruption and use small pages on their next read. Backend scope IDs
+rotate on reconnect or engine restart, resetting the adaptive fallback even for
+a same-machine rebind. Application restart starts with a fresh policy. Old-scope
+timers/replies cannot enable fallback on the new connection. No per-chat choice
+or connection-health decision is persisted with drafts.
+
+Preview application boundaries that override `BackendClientService` also provide
+`SessionChatLoadingPolicy` at that boundary. Individual chat/workspace owners
+inherit it, so recreating those owners cannot reset the connection's fallback.
+There is no automatic mutation retry or full-history background drain.
+
+The optional `loadingMode: 'window' | 'progressive'` request selects these bounds
+for latest/live reads. Adjacent history pages remain at most 80 / 512 KiB in both
+modes so paging retains overlapping raw records and an inspected tool's anchor.
+Omission retains legacy 80-item pages; older engines may
+ignore the new option and continue returning those pages. Main validates the
+option and the corresponding reply bound. Active-session fallback hydration shares
+the backend's in-flight source/runtime reads; cancelled responses skip projection.
+Cached reopening renders immediately and revalidates from its saved incremental
+cursor, without blocking the composer or repeating an initial history read when
+the feed is still current. The backend provider's source-history API remains a
+full-history read, so a cold provider parse can still dominate initial latency.
+
+History windows also carry an optional
+bounded `leadingPrompt` when the first item belongs to an earlier user message.
+That prompt supplies the turn identity and reminder without moving the page cursor
+or claiming that the intervening evidence has loaded. It survives item eviction
+and cached reopening, and disappears when its actual user row enters the window.
+Older engines can omit it. The visible live window retains
 at most 320 items. Scrolling near either edge automatically loads an adjacent page and evicts
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional
@@ -495,14 +568,18 @@ content stay distinct; display normalizes CRLF and removes one terminal split
 sentinel without stripping meaningful spaces or blank lines.
 
 Chat images use optional, bounded `SessionChatItem.media` references and the named
-`sessionChatMedia` bridge operation. Inline Codex/native/MCP image results join the
-answer, while Markdown image paths resolve through the same selected-session
-owner. Binary image data never enters the transcript preview or triggers its raw
-output overflow control. Ordinary shortened text keeps the full-content reader.
+`sessionChatMedia` bridge operation. Inline Codex/native/MCP previews stay at the
+tool receipt's position in the work timeline, including results that arrive
+after later messages. Authored Markdown images remain in their original message.
+Both resolve through the selected-session media owner. Binary image data never
+enters transcript text or triggers the raw output overflow control. Ordinary
+shortened text keeps the full-content reader.
 
-`SessionChatMedia` owns the latest 12 image references in the mounted transcript,
-three concurrent reads, a 48 MiB source budget, cancellation and stale-selection
-rejection. It supplies the existing Markdown resolver; loading/read/decode errors
+`SessionChatMedia` owns the newest 12 distinct media paths in the displayed
+transcript, including its retained prompt and reply context. It preserves loaded
+sources across paging, limits reads to three in flight and caps source data at
+48 MiB. Evicted references cancel their reads, and replies are validated against
+the current reference and selection. Loading/read/decode errors
 are explicit. Leaving the session releases sources and queued work. Older engines
 can omit media metadata. This slice supports PNG, JPEG, GIF and WebP; it does not
 fetch external URLs or execute SVG/HTML.

@@ -369,6 +369,10 @@ an end-to-end `/api/info` response at the exact expected revision. Neither a liv
 SSH process nor an open listener qualifies. Health checks also run immediately
 after native resume/unlock notifications. Timeouts bound SSH authentication,
 setup stages, downloads, bridge requests and application health.
+Health replies share the SSH stream with forwarded data, so on a slow link they
+can queue behind a transcript or media transfer. While a connected transport
+keeps delivering bytes, a delayed health reply logs `delayed` and keeps the
+transport for up to 60 seconds; a silent transport or a longer delay reconnects.
 Intentional pause/disconnect publishes the owning window's state before socket
 cleanup or settings writes finish. That window reports no authenticated transport
 and its saved forwards report `stopped`; another window sharing the host can

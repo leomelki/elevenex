@@ -21,6 +21,7 @@ import {
 import type { WorkStep } from "../conversation.models";
 import type { ToolContentRequest } from "../tool-presentation";
 import { MarkdownComponent } from "../markdown/markdown.component";
+import { MarkdownMediaComponent } from "../markdown/markdown-media.component";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { NowLineComponent } from "./now-line.component";
 import { ToolStepComponent } from "./tool-step.component";
@@ -41,6 +42,7 @@ import { formatDuration, isProse, stepIcon, stepVerb } from "./work-summary";
     StatusGlyphComponent,
     TickerComponent,
     MarkdownComponent,
+    MarkdownMediaComponent,
     NowLineComponent,
     ToolStepComponent,
   ],
@@ -76,6 +78,7 @@ export class WorkTimelineComponent implements OnChanges {
   protected readonly arrivals = signal<ReadonlySet<string>>(new Set());
   private previousIds: ReadonlySet<string> | undefined;
   private previousLast: string | undefined;
+  private reportedInspection = false;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   protected readonly replyId = computed(() => this.answerId() ?? "$answer");
   private readonly ordered = computed<readonly WorkStep[]>(() => {
@@ -147,7 +150,6 @@ export class WorkTimelineComponent implements OnChanges {
     this.previousLast = steps
       .filter((step) => step.id !== "$answer")
       .at(-1)?.id;
-    const previousInspection = this.inspected().size + this.openGroups().size;
     this.inspected.update(
       (current) => new Set([...current].filter((id) => ids.has(id))),
     );
@@ -157,8 +159,7 @@ export class WorkTimelineComponent implements OnChanges {
     this.openGroups.update(
       (current) => new Set([...current].filter((id) => groups.has(id))),
     );
-    if (previousInspection !== this.inspected().size + this.openGroups().size)
-      this.reportInspection();
+    this.reportInspection();
   }
   protected visible(row: WorkTimelineRow): boolean {
     // The outer disclosure owns settled activity, including messages and
@@ -230,10 +231,15 @@ export class WorkTimelineComponent implements OnChanges {
     this.reportInspection();
   }
   private reportInspection(): void {
-    this.inspectionChanged.emit(
+    const focused = this.focused();
+    // The latest reply stays available with Worked closed. Its controls only
+    // need to pin the timeline if a later reply turns it into commentary.
+    const inspecting =
       this.inspected().size > 0 ||
-        this.focused() !== null ||
-        this.openGroups().size > 0,
-    );
+      (focused !== null && focused !== this.lastMessageId()) ||
+      this.openGroups().size > 0;
+    if (inspecting === this.reportedInspection) return;
+    this.reportedInspection = inspecting;
+    this.inspectionChanged.emit(inspecting);
   }
 }

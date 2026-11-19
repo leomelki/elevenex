@@ -5,6 +5,8 @@ export interface SessionChatTarget {
 }
 export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
+  /** Omitted by older clients: 80-item pages. Window mode requests up to 320. */
+  readonly loadingMode?: 'window' | 'progressive';
   readonly after?: string;
   readonly before?: string;
   /** Exclusive item cursor for continuing toward the live end of history. */
@@ -232,6 +234,8 @@ export interface SessionChatPage extends SessionChatTarget {
   readonly cursor: string;
   /** A reset replaces the visible tail after reconnect, log expiry or transcript rewrite. */
   readonly reset: boolean;
+  /** Prompt preceding a page that starts mid-turn; outside the contiguous item window. */
+  readonly leadingPrompt?: SessionChatItem | null;
   readonly items: readonly SessionChatItem[];
   readonly events: readonly SessionChatEvent[];
   readonly before: string | null;

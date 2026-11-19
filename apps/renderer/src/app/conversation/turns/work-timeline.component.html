@@ -5,6 +5,7 @@
       class="timeline-row"
       [class.reply]="step.id === replyId()"
       [attr.data-work-step]="step.id"
+      [attr.data-chat-row]="step.id"
       [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
     >
       <div class="row-clip">
@@ -50,7 +51,8 @@
             }
           }
         </ex-fold>
-        <ex-fold class="step-fold" [open]="visible(row)">
+        @let rowVisible = visible(row);
+        <ex-fold class="step-fold" [open]="rowVisible">
           @if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"
@@ -58,7 +60,7 @@
               [class.prose]="step.id !== replyId()"
               exAutoHeight
             >
-              <div>
+              <div class="prose-content">
                 @if (
                   step.id === replyId() &&
                     answer() === undefined &&
@@ -71,6 +73,7 @@
                     [source]="step.text || ''"
                     [streaming]="step.id === replyId() && streaming()"
                     [resolve]="resolve()"
+                    [active]="rowVisible"
                     [copiedCode]="copiedCode()"
                     (openFile)="openFile.emit($event)"
                     (openLink)="openLink.emit($event)"
@@ -91,7 +94,7 @@
                   step.kind === "think" && step.status === "running" && live()
                 ) {
                   <ex-now-line [step]="step" />
-                } @else {
+                } @else if (step.kind !== 'media') {
                   <ex-tool-step
                     [icon]="icon(step)"
                     [verb]="verb(step)"
@@ -122,6 +125,18 @@
                     [fullContent]="step.fullContent"
                     (expandedChange)="toolExpanded(step.id, $event)"
                     (contentRequested)="contentRequested.emit($event)"
+                  />
+                }
+                @for (media of step.media; track media.path) {
+                  <ex-markdown-media
+                    class="media-output"
+                    [path]="media.path"
+                    [caption]="media.caption"
+                    [showCaption]="media.caption !== 'Image'"
+                    [asset]="resolve()?.(media.path)"
+                    [active]="rowVisible"
+                    (openFile)="openFile.emit($event)"
+                    (openPage)="openPage.emit($event)"
                   />
                 }
               </div>

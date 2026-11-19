@@ -7,6 +7,7 @@ function elementOf(elements: readonly BrowserElementContext[], caption: string) 
 }
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
 import type { ChatExchange, WorkStep } from "../conversation";
+import { reconcileClaudeBlocks } from "./session-chat-claude-blocks";
 import {
   presentSessionTool,
   sessionToolKind,
@@ -21,6 +22,55 @@ export interface PendingChatPrompt {
   readonly media?: SessionChatItem["media"];
   readonly mentions?: SessionChatItem['mentions'];
   readonly attachments?: ChatExchange["attachments"];
+}
+
+interface ProjectedTurn {
+  readonly source: readonly SessionChatItem[];
+  readonly signature: string;
+  readonly pending?: PendingChatPrompt;
+  readonly exchange: ChatExchange;
+}
+interface ProjectedStep {
+  readonly result?: SessionChatItem;
+  readonly pairedResult: boolean;
+  readonly running: boolean;
+  readonly renderId: string;
+  readonly step: WorkStep;
+}
+interface ProjectionCache {
+  turns: ReadonlyMap<string, ProjectedTurn>;
+  readonly steps: WeakMap<SessionChatItem, ProjectedStep>;
+  claudeRenderIds: ReadonlyMap<string, string>;
+  exchanges: readonly ChatExchange[];
+}
+
+/** Owned by one conversation. Evicted turns release their source and view data. */
+export class ChatTranscriptProjection {
+  private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
+  project(items: readonly SessionChatItem[], state: SessionChatState | null,
+    fresh: ReadonlySet<string>, pending?: PendingChatPrompt): readonly ChatExchange[] {
+    return projectExchanges(items, state, fresh, pending, this.cache);
+  }
+  reconcileSavedBlocks(previous: readonly SessionChatItem[], current: readonly SessionChatItem[]): void {
+    const ids = new Set(current.map(item => item.id));
+    // Reuse identities of matching streamed blocks without carrying the raw
+    // records past an authoritative history replacement.
+    const aliases = reconcileClaudeBlocks([...previous.filter(item => !ids.has(item.id)), ...current]).renderIds;
+    const retained = new Map(this.cache.claudeRenderIds);
+    for (const [id, renderId] of aliases)
+      if (ids.has(id) && !ids.has(renderId)) retained.set(id, renderId);
+    this.cache.claudeRenderIds = retained;
+  }
+  clear(): void {
+    this.cache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
+  }
+}
+
+/** A history page can introduce unseen rows before the tail captured at send time. */
+export function pendingPromptStart(items: readonly SessionChatItem[], pending: PendingChatPrompt): number {
+  for (let index = items.length - 1; index >= 0; index--)
+    if (pending.knownIds.has(items[index]!.id)) return index + 1;
+  return 0;
 }
 
 /** Runtime output may precede the harness's durable user-message receipt. */
@@ -42,11 +92,8 @@ function withPendingPrompt(
     error: false,
     truncated: false,
   };
-  return [
-    ...items.filter((item) => pending.knownIds.has(item.id)),
-    prompt,
-    ...items.filter((item) => !pending.knownIds.has(item.id)),
-  ];
+  const start = pendingPromptStart(items, pending);
+  return [...items.slice(0, start), prompt, ...items.slice(start)];
 }
 function epoch(timestamp: string): number | undefined {
   const value = Date.parse(timestamp);
@@ -66,6 +113,16 @@ export function chatExchanges(
   fresh: ReadonlySet<string>,
   pending?: PendingChatPrompt,
 ): readonly ChatExchange[] {
+  return projectExchanges(items, state, fresh, pending);
+}
+
+function projectExchanges(
+  items: readonly SessionChatItem[],
+  state: SessionChatState | null,
+  fresh: ReadonlySet<string>,
+  pending?: PendingChatPrompt,
+  cache?: ProjectionCache,
+): readonly ChatExchange[] {
   const groups: {
     id: string;
     prompt: string;
@@ -74,12 +131,24 @@ export function chatExchanges(
     time: string;
     /** Epoch ms of the prompt; unknown for history that starts mid-turn. */
     startedAt?: number;
+    promptItem?: SessionChatItem;
     items: SessionChatItem[];
   }[] = [];
-  for (const item of pending ? withPendingPrompt(items, pending) : items) {
+  const reconciled = reconcileClaudeBlocks(pending ? withPendingPrompt(items, pending) : items);
+  const renderId = (item: SessionChatItem) =>
+    cache?.claudeRenderIds.get(item.id) ?? reconciled.renderIds.get(item.id) ?? item.id;
+  for (const item of reconciled.items) {
     if (item.kind === "user") {
+      const previous = cache?.turns.get(item.id);
+      if (previous?.source[0] === item) {
+        const { prompt, mentions, attachments, time, startedAt } = previous.exchange;
+        groups.push({ id: item.id, promptItem: item, prompt, mentions, attachments,
+          time: time ?? '', startedAt, items: [] });
+        continue;
+      }
       const browser = parseBrowserElements(item.text);
       groups.push({
+        promptItem: item,
         id: item.id,
         prompt: browser.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
         mentions: item.mentions?.map(mention => ({ id: String(mention.sessionId), kind: 'session', label: mention.title })),
@@ -102,10 +171,26 @@ export function chatExchanges(
       groups.at(-1)?.items.push(item);
     }
   }
-  return groups.map((group, index): ChatExchange => {
+  const retained = new Map<string, ProjectedTurn>();
+  const exchanges = groups.map((group, index): ChatExchange => {
     const live =
       index === groups.length - 1 &&
       (state?.phase === "running" || state?.phase === "waiting");
+    const source = group.promptItem ? [group.promptItem, ...group.items] : group.items;
+    const author = state?.providers?.find(provider => provider.id === state.provider)?.label ?? state?.provider ?? 'Agent';
+    const signature = JSON.stringify([
+      index === groups.length - 1 ? state?.phase : 'idle',
+      index === groups.length - 1 ? state?.error : '',
+      live && !!state?.permission, live && !!state?.question,
+      state?.provider, author, fresh.has(group.id), group.items.map(renderId),
+    ]);
+    const previous = cache?.turns.get(group.id);
+    const ownPending = group.id === pending?.id ? pending : undefined;
+    if (previous?.signature === signature && previous.pending === ownPending &&
+        previous.source.length === source.length && source.every((item, i) => item === previous.source[i])) {
+      retained.set(group.id, previous);
+      return previous.exchange;
+    }
     const toolIds = new Set(
       group.items
         .filter((item) => item.kind === "tool_use")
@@ -133,95 +218,111 @@ export function chatExchanges(
     while (finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
       finalStart--;
     const followingIds = new Set(
-      group.items.slice(finalEnd).map((item) => item.id),
+      group.items.slice(finalEnd).map(renderId),
     );
     const steps: WorkStep[] = group.items
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
-        if (
-          item.kind === "tool_result" &&
-          item.toolId &&
-          toolIds.has(item.toolId)
-        )
-          return [];
+        const pairedResult = item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
         if (item.kind === "system" && item.changes && !item.text.trim())
           return [];
-        if (item.kind === "tool_use") {
-          const result = results.get(item.toolId ?? item.id);
-          const presentation = presentSessionTool(item, result);
-          const outcome =
-            result?.error || item.error
-              ? "failed"
-              : !result && !live
-                ? "unknown"
-                : undefined;
+        const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
+        const running = live && ((item.kind === 'tool_use' && !result) ||
+          (item.kind === 'thinking' && item.id === group.items.at(-1)?.id));
+        const old = cache?.steps.get(item);
+        const id = renderId(item);
+        if (old && old.result === result && old.pairedResult === pairedResult &&
+          old.running === running && old.renderId === id)
+          return [old.step];
+        const project = (): WorkStep[] => {
+          if (item.kind === "tool_use") {
+            const presentation = presentSessionTool(item, result);
+            const outcome =
+              result?.error || item.error
+                ? "failed"
+                : !result && !live
+                  ? "unknown"
+                  : undefined;
+            return [
+              {
+                id: item.id,
+                kind: sessionToolKind(item),
+                detail: presentation.summary,
+                verb: sessionToolVerb(item, !result && live, outcome),
+                meta:
+                  outcome === "unknown"
+                    ? "Completion unknown"
+                    : presentation.meta,
+                presentation,
+                fullContent: item.truncated || result?.truncated
+                  ? {
+                      inputId: item.truncated ? item.id : undefined,
+                      outputId: result?.truncated ? result.id : undefined,
+                    }
+                  : undefined,
+                status: outcome ?? (result ? "done" : "running"),
+                output: [
+                  "Input",
+                  item.input || "(none)",
+                  result ? "\nOutput\n" + result.text : "",
+                  item.truncated || result?.truncated
+                    ? "\nDisplay shortened. Full output remains in the harness transcript."
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              },
+            ];
+          }
+          const media = item.kind === 'tool_result' && !item.error
+            ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
+              .map(({ path, caption }) => ({ path, caption }))
+            : undefined;
+          // Text receipts can update the call, but previews belong to the
+          // result's own position, even if it arrives after another message.
+          if (pairedResult)
+            return media?.length ? [{ id, kind: 'media', media }] : [];
           return [
             {
-              id: item.id,
-              kind: sessionToolKind(item),
-              detail: presentation.summary,
-              verb: sessionToolVerb(item, !result && live, outcome),
-              meta:
-                outcome === "unknown"
-                  ? "Completion unknown"
-                  : presentation.meta,
-              presentation,
-              fullContent: item.truncated || result?.truncated
-                ? {
-                    inputId: item.truncated ? item.id : undefined,
-                    outputId: result?.truncated ? result.id : undefined,
-                  }
+              id: renderId(item),
+              kind:
+                item.kind === "thinking"
+                  ? "think"
+                  : item.kind === "assistant"
+                    ? "say"
+                    : item.kind === "error" || item.kind === "tool_result"
+                      ? "tool"
+                      : "note",
+              text: item.kind === 'tool_result' ? undefined : messageText(item),
+              media,
+              detail:
+                item.kind === "error"
+                  ? item.text
+                  : item.kind === "tool_result"
+                    ? (item.toolName ?? "Tool result")
+                    : undefined,
+              output: item.kind === "tool_result" ? item.text : undefined,
+              presentation:
+                item.kind === "tool_result"
+                  ? presentSessionTool({ ...item, input: "" }, item)
+                  : undefined,
+              fullContent: item.kind === 'tool_result' && item.truncated
+                ? { outputId: item.id }
                 : undefined,
-              status: outcome ?? (result ? "done" : "running"),
-              output: [
-                "Input",
-                item.input || "(none)",
-                result ? "\nOutput\n" + result.text : "",
-                item.truncated || result?.truncated
-                  ? "\nDisplay shortened. Full output remains in the harness transcript."
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n"),
+              status:
+                item.error || item.kind === "error"
+                  ? "failed"
+                  : live &&
+                      item.kind === "thinking" &&
+                      item.id === group.items.at(-1)?.id
+                    ? "running"
+                    : "done",
             },
           ];
-        }
-        return [
-          {
-            id: item.id,
-            kind:
-              item.kind === "thinking"
-                ? "think"
-                : item.kind === "assistant"
-                  ? "say"
-                  : item.kind === "error" || item.kind === "tool_result"
-                    ? "tool"
-                    : "note",
-            text: messageText(item),
-            detail:
-              item.kind === "error"
-                ? item.text
-                : item.kind === "tool_result"
-                  ? (item.toolName ?? "Tool result")
-                  : undefined,
-            output: item.kind === "tool_result" ? item.text : undefined,
-            presentation:
-              item.kind === "tool_result"
-                ? presentSessionTool({ ...item, input: "" }, item)
-                : undefined,
-            fullContent: item.kind === 'tool_result' && item.truncated
-              ? { outputId: item.id }
-              : undefined,
-            status:
-              item.error || item.kind === "error"
-                ? "failed"
-                : live &&
-                    item.kind === "thinking" &&
-                    item.id === group.items.at(-1)?.id
-                  ? "running"
-                  : "done",
-          },
-        ];
+        };
+        const projected = project();
+        if (projected[0]) cache?.steps.set(item, { result, pairedResult, running, renderId: id, step: projected[0] });
+        return projected;
       });
     const captured = group.items
       .filter((item) => item.kind === "system" && item.changes)
@@ -246,7 +347,7 @@ export function chatExchanges(
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
     const answer = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
-    return {
+    const exchange: ChatExchange = {
       overflow: group.items
         // Tool evidence belongs in the work timeline, not below the answer.
         .filter(
@@ -273,26 +374,39 @@ export function chatExchanges(
         : index === groups.length - 1 && state?.phase === "error"
           ? "failed"
           : "done",
-      steps,
+      steps: previous?.exchange.steps.length === steps.length && steps.every((step, i) => step === previous.exchange.steps[i])
+        ? previous.exchange.steps : steps,
       duration,
       startedAt: group.startedAt,
-      files,
+      files: previous?.exchange.files?.length === files.length && files.every((file, i) => file === previous.exchange.files?.[i])
+        ? previous.exchange.files : files,
       filesTotal,
       answerBeforeStepId:
         finalEnd > 0
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
-      answerId: finalEnd > 0 ? group.items[finalStart]?.id : undefined,
+      answerId: finalEnd > 0 ? renderId(group.items[finalStart]!) : undefined,
       answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
-      author:
-        state?.providers?.find((provider) => provider.id === state.provider)
-          ?.label ??
-        state?.provider ??
-        "Agent",
+      author,
       harness: state?.provider,
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
       error: index === groups.length - 1 ? (state?.error ?? "") : "",
     };
+    retained.set(group.id, { source, signature, pending: ownPending, exchange });
+    return exchange;
   });
+  if (!cache) return exchanges;
+  cache.turns = retained;
+  if (cache.claudeRenderIds.size || reconciled.renderIds.size) {
+    const aliases = new Map<string, string>();
+    for (const item of reconciled.items) {
+      const id = renderId(item);
+      if (id !== item.id) aliases.set(item.id, id);
+    }
+    cache.claudeRenderIds = aliases;
+  }
+  if (cache.exchanges.length !== exchanges.length || exchanges.some((exchange, i) => exchange !== cache.exchanges[i]))
+    cache.exchanges = exchanges;
+  return cache.exchanges;
 }

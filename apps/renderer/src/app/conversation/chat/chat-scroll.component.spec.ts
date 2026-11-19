@@ -145,6 +145,117 @@ describe("ChatScroll return to bottom", () => {
     expect(viewport.scrollTop).toBe(1600);
   });
 
+  it('keeps the tail visible on viewport-only resize without marking a reader’s messages unread', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    moveTo(800);
+    dimensions.viewport = 300;
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(1200);
+    expect(fixture.componentInstance.atEnd()).toBe(true);
+    expect(fixture.componentInstance.unread()).toBe(false);
+    moveTo(200);
+    dimensions.viewport = 250;
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(200);
+    expect(fixture.componentInstance.atEnd()).toBe(false);
+    expect(fixture.componentInstance.unread()).toBe(false);
+  });
+
+  it('does not chain collapsed pages and evict the reply from an overflowing viewport', async () => {
+    const { fixture, viewport, moveTo } = await setup();
+    moveTo(200);
+    const requests = vi.fn(() => fixture.componentRef.setInput('historyLoading', true));
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(1);
+    // A page of hidden work changes the window but adds no visible height.
+    fixture.componentRef.setInput('historyLoading', false);
+    fixture.componentRef.setInput('historyRevision', 1);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(viewport.scrollTop).toBe(200);
+    expect(requests).toHaveBeenCalledTimes(1);
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops automatic filling when a short collapsed page adds no visible height', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    dimensions.height = 400;
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
+    moveTo(0);
+    const requests = vi.fn(() => fixture.componentRef.setInput('historyLoading', true));
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(1);
+    fixture.componentRef.setInput('historyLoading', false);
+    fixture.componentRef.setInput('historyRevision', 1);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for reader intent before paging an underfull normal window', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    dimensions.height = 300;
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
+    moveTo(0);
+    const requests = vi.fn();
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('initialHistoryPrefetch', false);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).not.toHaveBeenCalled();
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -60 }));
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+  });
+
+  for (const reading of [false, true]) it(`prefetches older history without ${reading ? 'overriding a reader who scrolls during the request' : 'dropping end following when the partial turn is replaced'}`, async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    dimensions.height = 400;
+    let top = 0;
+    // Match Chromium's clamping, including the short-tail prefetch threshold.
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true,
+      get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, dimensions.height - dimensions.viewport)); } });
+    moveTo(0);
+    const requests = vi.fn(() => fixture.componentRef.setInput('historyLoading', true));
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    fixture.detectChanges();
+    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+    expect(fixture.componentInstance.atEnd()).toBe(true);
+    if (reading) { dimensions.height = 600; moveTo(40); }
+    // The original partial turn has no retained DOM anchor after its prompt
+    // arrives. Follow the end only if the reader has not taken ownership.
+    dimensions.height = 716;
+    fixture.componentRef.setInput('historyBefore', false);
+    fixture.componentRef.setInput('historyLoading', false);
+    fixture.componentRef.setInput('historyRevision', 1);
+    fixture.detectChanges();
+    expect(viewport.scrollTop).toBe(reading ? 40 : 316);
+    expect(fixture.componentInstance.atEnd()).toBe(!reading);
+  });
+
   it("jumps directly with reduced motion and reconciles a viewport that no longer overflows", async () => {
     const { fixture, viewport, dimensions, scrollTo, moveTo, button, control } = await setup();
     moveTo(200);

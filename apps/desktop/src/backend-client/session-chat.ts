@@ -42,6 +42,10 @@ export function registerSessionChatIpc(
         sessionId = chatId(raw["sessionId"]);
       const key = "session-chat:" + requestId(raw["requestId"]),
         query = new URLSearchParams();
+      const loadingMode = raw['loadingMode'];
+      if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
+        throw new Error('Invalid conversation loading mode.');
+      if (loadingMode !== undefined) query.set('loadingMode', loadingMode);
       if (raw["after"] !== undefined)
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
@@ -67,6 +71,7 @@ export function registerSessionChatIpc(
             ),
             taskId,
             sessionId,
+            loadingMode,
           ),
         15000,
       );

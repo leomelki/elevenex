@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   input,
   output,
   signal,
@@ -22,6 +23,7 @@ export class MarkdownMediaComponent {
   readonly caption = input("");
   readonly showCaption = input(true);
   readonly compact = input(false);
+  readonly active = input(true);
   readonly asset = input<MarkdownAsset | null>();
   readonly openFile = output<string>();
   readonly openPage = output<string>();
@@ -35,7 +37,28 @@ export class MarkdownMediaComponent {
       ? safeMediaSource(asset.src ?? "")
       : "";
   });
+  readonly imageLoading = computed(() => { const asset = this.asset(); return asset?.kind === 'image' && !!asset.loading; });
+  readonly pageTitle = computed(() => {
+    const asset = this.asset();
+    return (asset?.kind === 'page' ? asset.title : '') || this.caption() || this.path();
+  });
+  readonly imageSource = computed(() => {
+    const asset = this.asset();
+    const source = this.safeSource();
+    return asset?.kind === 'image' && !asset.loading && !asset.error && source !== this.failedSource() ? source : '';
+  });
+  readonly imageStatus = computed(() => {
+    const asset = this.asset();
+    if (asset?.kind === 'image' && asset.loading) return 'Loading image…';
+    return asset?.kind === 'image' && asset.error ? asset.error : 'Image unavailable';
+  });
+  constructor() {
+    effect(() => {
+      if (!this.active()) this.viewerOpen.set(false);
+    });
+  }
   showViewer(from: HTMLElement): void {
+    if (!this.active()) return;
     this.viewer.set({ source: this.safeSource(), label: this.caption() || this.path(), from });
     this.viewerOpen.set(true);
   }

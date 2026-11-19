@@ -197,9 +197,9 @@ export class SessionChatFixture {
   private catalogFailure = false;
   catalogBehavior(delay: number, fail = false): void { this.catalogDelay = Math.min(5000, Math.max(0, delay)); this.catalogFailure = fail; }
   /** Cold conversation state must not prevent independent catalog discovery. */
-  coldModels(id = 102): void {
+  coldModels(id = 102, model: string | null = null): void {
     const session = this.session(id);
-    session.state = { ...session.state, model: null, models: [] };
+    session.state = { ...session.state, model, models: [] };
     this.changed();
   }
   private catalogData(provider: string): SessionChatCatalog {
@@ -243,6 +243,7 @@ export class SessionChatFixture {
   }
   constructor(destroy: DestroyRef) {
     destroy.onDestroy(() => {
+      this.holdReads(false);
       for (const done of this.waiting.values()) done();
       for (const timer of this.timers) clearTimeout(timer);
     });
@@ -492,9 +493,25 @@ export class SessionChatFixture {
     this.changed();
   }
   cancel(id: string): void {
+    this.heldReads.get(id)?.();
     this.waiting.get(id)?.();
   }
+  private readsHeld = false;
+  private readonly heldReads = new Map<string, () => void>();
+  /** Controlled transport latency for first-frame/session-switch regressions. */
+  holdReads(held: boolean): void {
+    this.readsHeld = held;
+    if (!held) for (const done of [...this.heldReads.values()]) done();
+  }
+  /** Replay a bounded recorded page without importing task data into production. */
+  seed(id: number, page: Pick<SessionChatPage, 'items' | 'state' | 'leadingPrompt'>): void {
+    this.sessions.set(id, { items: [...(page.leadingPrompt ? [page.leadingPrompt] : []), ...page.items], state: page.state });
+    this.changed();
+  }
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
+    if (this.readsHeld) await new Promise<void>(resolve => {
+      this.heldReads.set(input.requestId, () => { this.heldReads.delete(input.requestId); resolve(); });
+    });
     if (input.after === String(this.version))
       await new Promise<void>((resolve) => {
         const done = () => {
@@ -506,11 +523,12 @@ export class SessionChatFixture {
         this.waiting.set(input.requestId, done);
       });
     const session = this.session(input.sessionId),
+      limit = input.loadingMode === 'window' && !input.before && !input.following ? 320 : 80,
       start = input.following ? session.items.findIndex(item => item.id === input.following) + 1 : -1,
-      end = input.following ? Math.min(session.items.length, start + 80) : input.before
+      end = input.following ? Math.min(session.items.length, start + limit) : input.before
         ? session.items.findIndex((item) => item.id === input.before)
         : session.items.length;
-    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - 80), end).map((item) =>
+    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - limit), end).map((item) =>
       item.truncated
         ? {
             ...item,
@@ -527,9 +545,10 @@ export class SessionChatFixture {
         sessionId: input.sessionId,
         cursor: String(this.version),
         reset,
+        leadingPrompt: items[0]?.kind === 'user' ? null : session.items.slice(0, start >= 0 ? start : Math.max(0, end - limit)).reverse().find(item => item.kind === 'user') ?? null,
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
-        before: (start > 0 || end > 80) ? (items[0]?.id ?? null) : null,
+        before: (start > 0 || end > limit) ? (items[0]?.id ?? null) : null,
         next: end < session.items.length ? (items.at(-1)?.id ?? null) : null,
         state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
       },

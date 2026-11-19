@@ -2,7 +2,10 @@
   <ex-chat-scroll (activeExchange)="active.set($event)"
     [historyBefore]="historyBefore()" [historyAfter]="historyAfter()"
     [historyLoading]="historyLoading()" [historyError]="historyError()" [historyRevision]="historyRevision()"
-    (historyRequested)="historyRequested.emit($event)" (latestRequested)="latestRequested.emit()">
+    [progressiveLoading]="progressiveLoading()"
+    [initialHistoryPrefetch]="initialHistoryPrefetch()"
+    (historyRequested)="historyRequested.emit($event)" (historyCancelled)="historyCancelled.emit()"
+    (latestRequested)="latestRequested.emit()">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
       @if (

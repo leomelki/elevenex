@@ -5,21 +5,21 @@
   role="region"
   aria-label="Conversation"
   (scroll)="onScroll()"
-  (wheel)="onViewportInteraction()"
+  (wheel)="onViewportWheel($event)"
   (pointerdown)="onViewportInteraction()"
   (keydown)="onViewportKey($event)"
 >
-  <div #content class="content"><ng-content /></div>
-</div>
-@if (historyLoading() || historyError()) {
-  <div class="history-status" role="status">
-    @if (historyError()) {
-      <span>{{ historyError() }}</span>
-      <button type="button" (click)="retryHistory()">Retry</button>
-    } @else {
-      <span>Loading messages…</span>
-    }
+  <div #track class="track">
+    <div #content class="content"><ng-content /></div>
   </div>
+</div>
+@if (historyError()) {
+  <div class="history-status" role="status">
+    <span>{{ historyError() }}</span>
+    <button type="button" (click)="retryHistory()">Retry</button>
+  </div>
+} @else if (historyLoading()) {
+  <ex-chat-loading class="history-indicator" [compact]="true" [progressive]="progressiveLoading()" />
 }
 @if (pin(); as pin) {
   <aside

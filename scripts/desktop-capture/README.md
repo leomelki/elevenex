@@ -178,6 +178,26 @@ keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
+`scenarios/session-loading-policy.mjs` checks normal and adaptive slow openings,
+the small Progressive indicator, 10,000-record windowing, and retained turn/tool
+and composer identities through IPC-style updates. It also checks that fallback
+follows different chats/tasks and recreated workspace owners, then resets on
+reconnect and application reload. Its metadata records local
+preview opening/update timings; these exclude real backend hydration and WAN
+latency. It covers both themes and narrow/reduced-motion layouts.
+
+`scenarios/session-history-stability.mjs` checks short collapsed openings and
+repeated raw-window eviction across long turns, with trusted upward/downward
+wheel input, retained drafts and stable final-answer identities. It covers both
+themes and narrow reduced-motion layouts against the preview URL.
+
+`scenarios/session-history-scrollbar.mjs` samples visible reply offsets and
+native scrollbar geometry frame by frame as older and following pages swap
+into a bounded window. It checks a keyboard reversal during a held page and
+wheel input while the range settles. It also checks immediate range updates
+with a stable reading anchor in the narrow reduced-motion layout. Run both
+themes against the preview URL.
+
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
 ```
@@ -554,6 +574,30 @@ sessions starts at the end on the first rendered frame. It also checks reading
 position through refresh, both themes, narrow layouts and reduced motion using
 the connected workspace preview.
 
+`scenarios/session-loading-stability.mjs` holds cold and cached chat reads through
+the production owner, checks first-frame composer/editor geometry, end following,
+reading-position retention and inline Git feedback in both themes and narrow
+reduced motion. Run against the connected preview with `--url`. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of bounded
+`{id, items, state}` recorded pages for transcript replay; this is preview evidence,
+not a live backend or packaged-app test.
+
+`scenarios/session-media-loading.mjs` checks full-width image, gallery,
+comparison and recording geometry through loading, out-of-order readiness and errors, plus image-viewer
+keyboard navigation and focus restoration in both themes and narrow reduced
+motion. Run it against the same preview URL.
+
+`scenarios/session-reply-layout.mjs` measures reply and media positions, natural
+scroll height and unwanted reply height animations from the first painted frame
+of cold and cached openings. It covers normal motion at wide/narrow widths and
+narrow reduced motion in both themes. Its default generated-image reply catches
+collapsed Markdown margins; `ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
+recorded page through the same production components.
+
+`scenarios/session-tool-media.mjs` checks screenshots at the tool receipt's
+position between messages or after the answer. It verifies both work
+disclosures, image-viewer closure and a narrow reduced-motion layout.
+
 `scenarios/chat-scroll-return.mjs` checks the floating return control without
 incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
 focus handoff, interrupted exits and unread indicators on the arrow-only button.
@@ -814,3 +858,12 @@ unconfirmed-write inspection without replay, completion after navigation and
 fast receipts before first paint. It covers both themes and compact reduced-motion
 layouts through the production owners with preview-controlled backend replies.
 Run sequentially with `--url http://127.0.0.1:4310/connected-workspace`.
+
+
+`scenarios/session-history-stress.mjs` covers a turn with 1,000 earlier records,
+held history requests, prompt-reminder retention, mounted-reply identity and
+frame-by-frame scroll offsets, then backward/forward eviction through the bounded
+window. It runs in both themes, with narrow reduced-motion layouts. Optional
+`ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of recorded
+`{ id, items, state }` histories; replay data stays outside the product bundle.
+Run against the warm component preview with `--url http://127.0.0.1:4310`.

@@ -59,7 +59,7 @@ describe('Connected workspace composition', () => {
     expect(root.querySelector('ex-chat')).not.toBeNull();
     expect(root.querySelector('ex-composer')).not.toBeNull();
     expect(root.querySelector('textarea')).not.toBeNull();
-    expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('Codex');
+    expect(root.querySelector('ex-agent-picker button.trigger')?.getAttribute('aria-label')).toContain('Codex');
     fixture.componentRef.setInput('active', false);
     await settle(fixture);
     expect(component.store.selected()?.sessionId).toBe(101);

@@ -5,6 +5,7 @@ import type {
   BackendResult,
   SessionChatItem,
   SessionChatPage,
+  SessionChatRead,
   SessionChatState,
   SessionChatCommandReply,
   SessionChatContentRead,
@@ -83,7 +84,7 @@ async function settle<T>(fixture: ComponentFixture<T>): Promise<void> {
   await fixture.whenStable();
 }
 
-function setup(items: readonly SessionChatItem[] = [], chatState = state) {
+function setup(items: readonly SessionChatItem[] = [], chatState = state, initialRead?: Promise<BackendResult<SessionChatPage>>) {
   let page: SessionChatPage = {
     taskId: 1,
     sessionId: 2,
@@ -107,7 +108,10 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
       },
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
-    sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
+    sessionChatRead: vi.fn<(scope: string, input: SessionChatRead) => Promise<BackendResult<SessionChatPage>>>(async () => {
+      if (initialRead) { const pending = initialRead; initialRead = undefined; return pending; }
+      return { ok: true as const, value: page };
+    }),
     sessionChatContent: vi.fn(async (_scope: string, input: SessionChatContentRead) => ({ ok: true as const,
       value: { itemId: input.itemId, part: input.part, offset: input.offset, text: `Complete ${input.part} for ${input.itemId}`, total: 100, nextOffset: null } })),
     sessionChatCommand: vi.fn(
@@ -157,6 +161,100 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
 }
 
 describe("connected chat reply rendering", () => {
+  it('loads the leading prompt attachment outside the raw transcript page', async () => {
+    const { fixture, bridge } = setup([], state, Promise.resolve({ ok: true, value: {
+      taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'a1', events: [], state,
+      leadingPrompt: { ...item('u1', 'user', 'Inspect this screenshot'), media: [
+        { id: 'capture', path: '/capture.png', caption: 'Screenshot', inline: true },
+      ] },
+      items: [item('a1', 'assistant', 'I inspected it.')],
+    } }));
+    await settle(fixture);
+    expect(fixture.componentInstance.store.exchanges()[0]?.attachments?.[0]?.id).toBe('capture');
+    expect(bridge.sessionChatMedia).toHaveBeenCalledWith('scope', expect.objectContaining({ itemId: 'u1', mediaId: 'capture' }));
+  });
+
+  it('retains loaded media when history paging compacts the reply out of its raw window', async () => {
+    const clip = { ...item('video', 'tool_result', ''), media: [
+      { kind: 'video' as const, id: 'clip', path: '/clip.webm', caption: 'Recording', inline: true },
+    ] };
+    const prompt = item('u1', 'user', 'Record this flow');
+    const items = Array.from({ length: 320 }, (_, i) => item(`work-${i}`, 'system', 'Work'));
+    items.splice(-2, 2, clip, item('answer', 'assistant', 'Completed'));
+    const opening = { taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'work-0', events: [], state };
+    const { fixture, root, bridge, publish } = setup([], state,
+      Promise.resolve({ ok: true, value: { ...opening, leadingPrompt: prompt, items } }));
+    bridge.sessionChatMedia.mockImplementation(async (_scope, input) => ({
+      ok: true, value: { ...input, source: 'data:video/webm;base64,AAAA' },
+    }));
+    await settle(fixture);
+    const video = root.querySelector('video');
+    expect(video).not.toBeNull();
+    publish({ ...opening, items: [prompt, item('earlier-work', 'system', 'Earlier work')], before: null });
+    await fixture.componentInstance.store.older();
+    await settle(fixture);
+    expect(fixture.componentInstance.store.items().some(row => row.id === clip.id)).toBe(false);
+    expect(root.querySelector('video')).toBe(video);
+    expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains composer configuration and completed turn inputs through unrelated runtime activity', async () => {
+    const { fixture, root, publish } = setup([
+      item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Finished'),
+      item('u2', 'user', 'Latest'), item('a2', 'assistant', 'Working'),
+    ], { ...state, phase: 'running' });
+    await settle(fixture);
+    const owner = fixture.componentInstance;
+    const before = { models: owner.models(), harnesses: owner.harnesses(), agent: owner.agent(), permissions: owner.permissions(), exchange: owner.store.exchanges()[0], turn: root.querySelector('ex-turn') };
+    publish({ taskId: 1, sessionId: 2, cursor: 'updated', reset: false, before: null, items: [], events: [],
+      state: { ...state, phase: 'running', activity: [{ id: 'work', label: 'Reading', detail: 'Current file' }] } });
+    await owner.store.refresh(); await settle(fixture);
+    expect(owner.models()).toBe(before.models);
+    expect(owner.harnesses()).toBe(before.harnesses);
+    expect(owner.agent()).toBe(before.agent);
+    expect(owner.permissions()).toBe(before.permissions);
+    expect(owner.store.exchanges()[0]).toBe(before.exchange);
+    expect(root.querySelector('ex-turn')).toBe(before.turn);
+  });
+  it('mounts history and composer together after cold hydration, with retry after a failed read', async () => {
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    const { fixture, root, bridge, publish } = setup([], state, new Promise(yes => { resolve = yes; }));
+    await settle(fixture);
+    expect(root.querySelector('ex-composer')).toBeNull();
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('Loading conversation');
+    resolve({ ok: false, error: { code: 'transport', message: 'Connection interrupted' } });
+    await settle(fixture);
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Connection interrupted');
+    expect(root.querySelector('ex-composer')).toBeNull();
+    publish({ taskId: 1, sessionId: 2, cursor: 'loaded', reset: true, before: null, events: [],
+      state: { ...state, providerLocked: true }, items: [item('reply', 'assistant', 'Loaded reply')] });
+    (root.querySelector('.opening button') as HTMLButtonElement).click();
+    await settle(fixture);
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(2);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Loaded reply');
+  });
+
+  it('renders a cached session immediately with fresh scroll ownership while its refresh waits', async () => {
+    const { fixture, root, bridge } = setup([item('reply', 'assistant', 'Cached reply')]);
+    await settle(fixture);
+    const previous = fixture.componentInstance.chat()!.scroll();
+    fixture.componentInstance.store.setDraft('Retain my writing');
+    bridge.sessionChatRead.mockImplementation(() => new Promise(() => undefined));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    expect(root.querySelector('ex-composer')).toBeNull();
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+    await settle(fixture);
+    expect(fixture.componentInstance.store.loading()).toBe(false);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBe('cursor');
+    expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
+    expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
+  });
+
   it('releases seen-view foreground listeners on teardown', async () => {
     const windowAdded = vi.spyOn(window, 'addEventListener');
     const documentAdded = vi.spyOn(document, 'addEventListener');
@@ -340,16 +438,14 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector("ex-turn")).toBe(turn);
   });
   it("opens hydrated sessions at the end and preserves reading position on refresh", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root } = setup([
       item("prompt", "user", "An existing conversation"),
       item("reply", "assistant", "The latest reply"),
     ]);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 2000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
     await settle(fixture);
+    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(2000);
 
     viewport.scrollTop = 100;
@@ -360,13 +456,11 @@ describe("connected chat reply rendering", () => {
   });
 
   it("jumps to the end after a switched session's delayed history renders, including reopening", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(3000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root, bridge } = setup([item("first", "user", "First session")]);
     await settle(fixture);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 3000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
+    let viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     viewport.scrollTop = 100;
     viewport.dispatchEvent(new Event("scroll"));
     let resolveRead!: (reply: { ok: true; value: SessionChatPage }) => void;
@@ -379,12 +473,14 @@ describe("connected chat reply rendering", () => {
       items: [item("second", "user", "Second session")], events: [], state,
     } });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
 
     viewport.scrollTop = 200;
     viewport.dispatchEvent(new Event("scroll"));
     fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 2 });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
   });
 
@@ -990,14 +1086,43 @@ describe("connected subscription quota", () => {
 });
 
 
-it('shows generated images through the existing Markdown renderer without a full-output fallback', async () => {
+it('places images between their surrounding messages and hides them with their work disclosures', async () => {
   vi.stubGlobal('Image', class { src = ''; naturalWidth = 640; naturalHeight = 360; decode = async () => undefined; });
-  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'),
+  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'), toolId: 'capture',
     media: [{ id: '0', path: 'chat-image-generated-0', caption: 'Waving robot', inline: true }] };
-  const { fixture, root, bridge, publish } = setup([item('prompt', 'user', 'Draw a robot'), output, item('reply', 'assistant', 'Here is your robot.')]);
+  const { fixture, root, bridge, publish } = setup([
+    item('prompt', 'user', 'Draw a robot'),
+    { ...item('capture', 'tool_use', ''), toolId: 'capture' },
+    item('commentary', 'assistant', 'Rendering the robot.'),
+    output,
+    item('reply', 'assistant', 'Here is your robot.'),
+  ]);
   await settle(fixture);
   expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
-  expect(root.querySelector('ex-markdown-media img')?.getAttribute('src')).toContain('data:image/png;base64,');
+  const image = root.querySelector('ex-markdown-media img')!;
+  const fold = image.closest('ex-fold')!;
+  expect(image.getAttribute('src')).toContain('data:image/png;base64,');
+  expect([...root.querySelectorAll('[data-work-step]')].map(row => row.getAttribute('data-work-step')))
+    .toEqual(['capture', 'commentary', 'generated', 'reply']);
+  expect(root.querySelector('.answer img')).toBeNull();
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const work = root.querySelector<HTMLButtonElement>('button.work')!;
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const group = root.querySelector<HTMLButtonElement>('[data-work-step="generated"] button.group')!;
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(false);
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  group.click();
+  await settle(fixture);
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  expect(root.querySelector('.answer')?.textContent).toContain('Here is your robot.');
   expect(root.textContent).not.toContain('Read full tool output');
   expect(root.textContent).not.toContain("isn't in the workspace");
   publish({ taskId: 1, sessionId: 3, cursor: 'new', reset: true, before: null, items: [], events: [], state });

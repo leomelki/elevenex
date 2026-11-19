@@ -130,23 +130,24 @@ describe("ChatScroll contextual reminder", () => {
     expect(reminder()).not.toBeNull();
   });
 
-  it("reconciles reminder settings and competing history status without scrolling", async () => {
-    const { fixture, moveTo, reminder, settle } = await setup();
+  it("retains reminder identity and focus through background loading and failure", async () => {
+    const { fixture, viewport, moveTo, reminder, settle } = await setup();
     await moveTo(400);
-    for (const [state, suppressed] of [[fixture.componentInstance.loading, true], [fixture.componentInstance.enabled, false]] as const) {
-      state.set(suppressed);
-      fixture.detectChanges();
-      await settle();
-      expect(reminder()).toBeNull();
-      state.set(!suppressed);
-      fixture.detectChanges();
-      await settle();
-      expect(reminder()).not.toBeNull();
-    }
+    const surface = reminder()!.querySelector<HTMLButtonElement>('.surface')!;
+    surface.focus();
+    fixture.componentInstance.loading.set(true);
+    fixture.detectChanges(); await settle();
+    expect(reminder()!.querySelector('.surface')).toBe(surface);
+    expect(document.activeElement).toBe(surface);
+    fixture.componentInstance.loading.set(false);
     fixture.componentInstance.error.set("History unavailable");
-    fixture.detectChanges();
-    await settle();
+    fixture.detectChanges(); await settle();
+    expect(reminder()!.querySelector('.surface')).toBe(surface);
+    expect(document.activeElement).toBe(surface);
+    fixture.componentInstance.enabled.set(false);
+    fixture.detectChanges(); await settle();
     expect(reminder()).toBeNull();
+    expect(document.activeElement).toBe(viewport);
   });
 
   it("jumps back as one control and returns focus to the transcript when it leaves", async () => {

@@ -355,6 +355,27 @@ describe("message-delimited work sections", () => {
     expect(host.querySelectorAll(".prose, .answer")).toHaveLength(3);
   });
 
+  it("keeps Worked closed when the visible answer receives focus or a click", async () => {
+    const { host, fixture } = setup(exchange([tool("thought", { kind: "think" })], {
+      answer: "Finished.\n\n```ts\nconst retry = true;\n```",
+      status: "done",
+    }));
+    const work = host.querySelector<HTMLButtonElement>(".work")!;
+    const copy = host.querySelector<HTMLButtonElement>('[aria-label="Copy code"]')!;
+    const copied: string[] = [];
+    fixture.componentInstance.copyCode.subscribe(value => copied.push(value));
+    copy.focus();
+    copy.click();
+    await settle(fixture);
+    expect(work.getAttribute("aria-expanded")).toBe("false");
+    expect(group(host, "thought")).toBeNull();
+    expect(document.activeElement).toBe(copy);
+    expect(copied).toEqual(["const retry = true;"]);
+    work.click();
+    await settle(fixture);
+    expect(group(host, "thought")).not.toBeNull();
+  });
+
   it("retains Markdown controls and their intents when the latest reply becomes commentary", async () => {
     const text =
       "Read [the docs](https://example.com/docs).\n\n```ts\nconst retry = true;\n```";

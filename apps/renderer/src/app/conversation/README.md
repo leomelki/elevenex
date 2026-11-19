@@ -9,12 +9,17 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+  Focusing a link, code control or other content in the latest reply leaves Worked as it is. If a new reply turns that focused block into commentary, the timeline keeps it visible until focus leaves.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
 - Session drops emit the same `mentionInserted` intent as the @ picker. Supply `sessionMentionScope` for connected references, bounded `mentionItems` for keyboard discovery and controlled `context`; handle `contextRemoved` in the owner. Session references live only in their controlled context chips. Drops preserve the draft and its selection; choosing a session from the @ picker consumes the active query without inserting a text copy. Both restore editor focus and never submit or navigate. Removing the chip removes the session reference; ordinary message text stays independent. Duplicate session IDs and more than eight references are refused. Disabled/sending states reject drops. Cancellation/exit releases the indicator; drop transitions and chip entry respect reduced motion. Long chip labels truncate while retaining their full accessible removal name.
 - `AgentPicker.openPicker()` opens from a feature-owned action; `closePicker()` synchronously restores its opener before handing off to a modal such as PresetCreator.
 - `AgentPicker` consumes supported harness/model/thinking capabilities, never inventing provider options. A session locks its harness by default. Unsupported thinking levels remain disabled.
+- `AgentConfig.modelLabel` can supply the closed picker's authoritative display
+  label independently of its live menu catalog, so later model discovery does
+  not resize the composer toolbar. Without it the picker resolves the catalog
+  label, then the configured model ID as before.
 - `Composer` and `AgentPicker` accept `modelsRefreshAvailable` and `modelsError`, and emit `modelsRefreshRequested`. The owner supplies catalog loading through `settingsBusy` / `busy`, performs the scoped read, and retains authoritative choices during refresh. The menu owns no transport; refresh stays inside the open surface and preserves its focus.
 - `QuestionCard` owns unfinished answers and navigation. Listed single choices answer immediately; multiple questions emit one answer map only when complete. Custom answers remain selected as they are edited. Pass `answers` to render a resolved result. `ApprovalCard` remains controlled and emits the exact resolution intent.
 - `Chat.centerComposer` centers its existing composer region for an empty session, preserving the composer instance, draft and focus when the first turn starts. Keep it false when decisions or history need to be visible.
@@ -31,6 +36,18 @@ available row width.
 
 ## Scrolling and performance
 
+`Chat.progressiveLoading` forwards the owner's adaptive loading choice to
+`ChatScroll`. `ChatLoading` is the shared, noninteractive loading glyph with an
+optional small Progressive label; `compact` hides its ordinary visual text but
+retains its accessible status name. The initial connected opening and history
+corner use the same component. The owner supplies the policy; these views never
+measure network latency or request history themselves.
+`Chat.initialHistoryPrefetch` / `ChatScroll.initialHistoryPrefetch` retain the
+existing default of filling an underfull viewport. The connected session owner
+disables this in normal mode, waiting for scroll intent, and enables it for
+progressive mode. Other owners, including the agent inspector, keep their own
+prefetch behavior. The budget and no-height-growth guard prevent hidden-work drains.
+
 `TurnNav` shows the right-edge message selector from the first turn, regardless
 of session length. Empty sessions have no navigation targets and hide it.
 The rail is a small scrollable window: at most nine 24px targets, further capped
@@ -46,6 +63,20 @@ range subscriptions are released with the rail. The `/conversation` preview has
 1/9/1,000/10,000-message controls for this behavior.
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
+
+End following also reconciles viewport-only height changes, including composer
+growth, without marking existing messages unread. The connected session owner
+mounts history and configured controls together after its first page. A cached
+latest window renders and positions immediately while refreshing. A different
+session gets fresh scroll/disclosure ownership; same-session refresh and verified
+same-machine recovery retain the mounted view and reading position. Local session
+creation keeps its immediate editable welcome through the durable receipt.
+Reply and commentary wrappers contain Markdown's block margins inside the
+AutoHeight observation. In particular, a trailing image's margin remains part of
+the measured reply height, avoiding a shrink-and-snap on initial observation.
+Automatic older-page prefetch retains end following for short tails, including
+when an older prompt replaces the first partial turn. A reader scrolling during
+that request keeps ownership of their reading position.
 
 The contextual reminder is a centered glass capsule sized to its prompt, echoing
 the title island: an ↑ in an accent well and the prompt on one ellipsized line.
@@ -72,7 +103,8 @@ enters the upper reading area.
 The source prompt must be fully above a 12%-of-height reading buffer (clamped to
 48–96px); the return threshold relaxes by 24px to avoid boundary flicker. This
 prevents a barely clipped prompt from immediately being repeated. Viewports
-below 240px and history loading/error states suppress it. Removing a focused
+below 240px suppress it. Background history reads and failures retain the available reminder; their status
+sits at the lower left, clear of the reminder and return control. Removing a focused
 reminder hands focus to the transcript.
 
 Motion: on first paint the reminder is simply there. Later it un-blurs and
@@ -86,9 +118,23 @@ Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
 evicts the opposite edge and increments `historyRevision` in the same update.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
-its offset after either operation. One in-flight request and a four-page automatic
-fill budget prevent loops on short/collapsed content; wheel, pointer and keyboard
-input renew that budget. History failures retain readable content and offer a
+its offset after either operation. Within a long turn, `data-chat-row` identifies
+individual timeline rows so prepending work preserves the answer's offset as well.
+For a large range change, the viewport carries its previous scroll extent into
+the first paint and reconciles the native scrollbar in small steps. The range
+and scroll origin change together so the anchored text stays still. With reduced
+motion the viewport applies the final extent and anchored position in one paint.
+The transcript remains bounded.
+If the reader moves well away from the requested edge before the page arrives,
+`historyCancelled` lets the owner discard the read before it can evict the
+content now in view.
+One in-flight request and a four-page automatic fill budget bound underfilled
+viewports; a page adding no visible height stops that fill immediately. Wheel
+and keyboard direction choose the edge, including when both edges fit on screen.
+Overflowing conversations prefetch once per gesture, and a pinned,
+overflowing tail does not prefetch older pages. This avoids draining collapsed
+work and evicting the reply still in view; wheel, pointer and keyboard input renew
+the budget. History failures retain readable content and offer a
 focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
 before moving to the bottom. No history navigation buttons are needed.
 
@@ -109,7 +155,26 @@ content and viewport also reconciles the control after layout changes.
 
 Markdown becomes a typed AST rendered as text nodes and semantic Angular templates. Raw HTML is always inert text. Active link schemes and credential-bearing URLs are rejected. File and web links emit separate intents; copying code emits `copyCode`. Mermaid fences remain code until a future trusted diagram adapter is supplied.
 
-Local raster images have reserved dimensions and a keyboard-accessible native modal viewer. Grouped images provide a picture viewer with previous/next keyboard navigation. Before/after pairs have a keyboard-accessible comparison slider. Local recordings have playback, seek, speed, full-screen and timestamped step controls, and never autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
+Raster previews fill their available width with a height derived from 16:9 and
+capped at 380px (148px in compact attachment cards) through missing, loading,
+ready and error states. Natural image dimensions
+belong to the full-size viewer; decoding a tall image never expands the transcript.
+Gallery grid/strip and Before/After comparison geometry come from the embed list
+and captions before sources arrive. Resolved recordings and pages use regular
+gallery slots, including when their captions say Before and After. Slots stay keyed by path; partial failures
+retain their place, comparison controls remain disabled until both images are
+ready, and a gallery selection survives other images completing out of order.
+Grouped images retain previous/next keyboard navigation. Recordings reserve their
+preview and control row while loading or unavailable; `MarkdownRecording.loading`
+and `error` describe asynchronous resolver state. Playback, seek, speed,
+full-screen and timestamped steps remain available when ready, without autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
+
+`WorkTimeline` renders each receipt's ordered `WorkStep.media` through the same
+media component. A paired tool result can use a `media` step to retain its
+chronological position while the call owns the text result. These rows follow
+both work and activity disclosures. Closing a row makes its media controls
+inert. Its `active` binding deactivates the image viewer and recording, including
+media embedded in Markdown commentary.
 
 The production desktop forbids frame embedding and remote media. HTML documents therefore show a named page card and emit `openPage` for the Browser feature. `srcdoc` is never mounted or trusted. A future isolated page-preview adapter must preserve that desktop security boundary; the component does not weaken CSP or expose sandbox escape capabilities. Code highlighting is a text-only display lexer for JavaScript/TypeScript using the shared code palette. Code copy feedback is controlled through `copiedCode`, after the owner has handled the copy intent. Live page execution remains behind the future Browser adapter.
 
