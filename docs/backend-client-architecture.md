@@ -6,13 +6,20 @@ through the existing scope-bound `sessionChatRead`. Window mode caps records at
 pages use 80 / 512 KiB in either mode to preserve overlap in the rolling window.
 Main validates the mode and reply count and retains its 4 MiB transport limit. The
 renderer normally requests one recent window. An uncached opening still pending
-after three seconds enables smaller pages for every chat on the application
+after 1.75 seconds enables smaller pages for every chat on the application
 connection until reconnect or restart. The root `SessionChatLoadingPolicy` owns
 that transient choice, separate from connection state and per-chat drafts. Scope
-rotation resets it, including same-machine recovery; application restart creates
+rotation resets it, including same-machine recovery. Application restart creates
 a fresh policy. It cancels old initial window requests and rejects their
 stale results; backend in-flight hydration is shared across the replacement.
-This is additive for older clients/engines and never replays commands. See the
+The progressive profile also opts into completed-turn summaries with
+`summarizeCompleted`. A summary occupies one paging entry at the prompt and
+advances past the saved turn's last source item in the forward direction.
+Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
+history reads, including when a single turn spans hundreds of tool records.
+Main validates turn, revision, offset and reply bounds under the same cancellable
+window lease. Older clients and engines can continue exchanging raw windows.
+See the
 [session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
 cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.

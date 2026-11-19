@@ -7,6 +7,7 @@ function elementOf(elements: readonly BrowserElementContext[], caption: string) 
 }
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
 import type { ChatExchange, WorkStep } from "../conversation";
+import type { OpenTurnWork } from "./session-chat-turn-work";
 import { reconcileClaudeBlocks } from "./session-chat-claude-blocks";
 import {
   presentSessionTool,
@@ -28,6 +29,7 @@ interface ProjectedTurn {
   readonly source: readonly SessionChatItem[];
   readonly signature: string;
   readonly pending?: PendingChatPrompt;
+  readonly work?: OpenTurnWork;
   readonly exchange: ChatExchange;
 }
 interface ProjectedStep {
@@ -48,8 +50,9 @@ interface ProjectionCache {
 export class ChatTranscriptProjection {
   private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
   project(items: readonly SessionChatItem[], state: SessionChatState | null,
-    fresh: ReadonlySet<string>, pending?: PendingChatPrompt): readonly ChatExchange[] {
-    return projectExchanges(items, state, fresh, pending, this.cache);
+    fresh: ReadonlySet<string>, pending?: PendingChatPrompt,
+    work?: ReadonlyMap<string, OpenTurnWork>): readonly ChatExchange[] {
+    return projectExchanges(items, state, fresh, pending, this.cache, work);
   }
   reconcileSavedBlocks(previous: readonly SessionChatItem[], current: readonly SessionChatItem[]): void {
     const ids = new Set(current.map(item => item.id));
@@ -122,6 +125,7 @@ function projectExchanges(
   fresh: ReadonlySet<string>,
   pending?: PendingChatPrompt,
   cache?: ProjectionCache,
+  work?: ReadonlyMap<string, OpenTurnWork>,
 ): readonly ChatExchange[] {
   const groups: {
     id: string;
@@ -161,19 +165,34 @@ function projectExchanges(
         items: [],
       });
     } else {
-      if (!groups.length)
+      if (!groups.length || groups.at(-1)?.promptItem?.completedTurn)
         groups.push({
           id: "history-" + item.id,
           prompt: "",
           time: "",
           items: [],
         });
+      // Raw activity after a complete saved span can arrive before its new
+      // prompt receipt. Do not attribute it to the sealed turn.
       groups.at(-1)?.items.push(item);
     }
   }
   const retained = new Map<string, ProjectedTurn>();
   const exchanges = groups.map((group, index): ChatExchange => {
+    const completed = group.promptItem?.completedTurn;
+    const entry = work?.get(group.id);
+    const activity = completed && entry?.revision === completed.revision ? entry : undefined;
+    const page = activity?.page;
+    // The final reply is already mounted. Insert the evidence on its correct
+    // side even if a partial activity page ends on an earlier assistant block.
+    const replyStart = completed ? Math.max(0, Math.min(page?.items.length ?? 0, completed.beforeReply - (page?.offset ?? 0))) : 0;
+    if (completed) group.items = [
+      ...(page?.items.slice(0, replyStart) ?? []),
+      ...completed.reply,
+      ...(page?.items.slice(replyStart) ?? []),
+    ];
     const live =
+      !completed &&
       index === groups.length - 1 &&
       (state?.phase === "running" || state?.phase === "waiting");
     const source = group.promptItem ? [group.promptItem, ...group.items] : group.items;
@@ -186,7 +205,7 @@ function projectExchanges(
     ]);
     const previous = cache?.turns.get(group.id);
     const ownPending = group.id === pending?.id ? pending : undefined;
-    if (previous?.signature === signature && previous.pending === ownPending &&
+    if (previous?.signature === signature && previous.pending === ownPending && previous.work === activity &&
         previous.source.length === source.length && source.every((item, i) => item === previous.source[i])) {
       retained.set(group.id, previous);
       return previous.exchange;
@@ -203,9 +222,9 @@ function projectExchanges(
     );
     // Keep the latest text visible, with work on either side in source order.
     // Tool receipts stay paired with their calls, even when they arrive late.
-    let finalEnd = 0;
+    let finalEnd = completed ? replyStart + completed.reply.length : 0;
     let lastActivity: SessionChatItem | undefined;
-    for (let index = group.items.length - 1; index >= 0; index--) {
+    for (let index = completed ? -1 : group.items.length - 1; index >= 0; index--) {
       const item = group.items[index];
       if (!item) continue;
       if (!lastActivity && item.kind !== "system") lastActivity = item;
@@ -214,8 +233,8 @@ function projectExchanges(
         break;
       }
     }
-    let finalStart = finalEnd;
-    while (finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
+    let finalStart = completed ? replyStart : finalEnd;
+    while (!completed && finalStart > 0 && group.items[finalStart - 1]?.kind === "assistant")
       finalStart--;
     const followingIds = new Set(
       group.items.slice(finalEnd).map(renderId),
@@ -237,10 +256,12 @@ function projectExchanges(
         const project = (): WorkStep[] => {
           if (item.kind === "tool_use") {
             const presentation = presentSessionTool(item, result);
+            const receipt = !result ? item.receipt : undefined;
+            const hasResult = !!result || !!receipt;
             const outcome =
-              result?.error || item.error
+              result?.error || receipt?.error || item.error
                 ? "failed"
-                : !result && !live
+                : !hasResult && !live
                   ? "unknown"
                   : undefined;
             return [
@@ -248,19 +269,19 @@ function projectExchanges(
                 id: item.id,
                 kind: sessionToolKind(item),
                 detail: presentation.summary,
-                verb: sessionToolVerb(item, !result && live, outcome),
+                verb: sessionToolVerb(item, !hasResult && live, outcome),
                 meta:
                   outcome === "unknown"
                     ? "Completion unknown"
-                    : presentation.meta,
+                    : receipt ? "Result on another activity page" : presentation.meta,
                 presentation,
-                fullContent: item.truncated || result?.truncated
+                fullContent: item.truncated || result?.truncated || receipt
                   ? {
                       inputId: item.truncated ? item.id : undefined,
-                      outputId: result?.truncated ? result.id : undefined,
+                      outputId: result?.truncated ? result.id : receipt?.id,
                     }
                   : undefined,
-                status: outcome ?? (result ? "done" : "running"),
+                status: outcome ?? (hasResult ? "done" : "running"),
                 output: [
                   "Input",
                   item.input || "(none)",
@@ -324,10 +345,10 @@ function projectExchanges(
         if (projected[0]) cache?.steps.set(item, { result, pairedResult, running, renderId: id, step: projected[0] });
         return projected;
       });
-    const captured = group.items
+    const captured = completed ? completed.changes : group.items
       .filter((item) => item.kind === "system" && item.changes)
       .at(-1)?.changes;
-    const reported = new Map(
+    const reported = new Map(completed ? [] :
       group.items.flatMap((item) =>
         item.kind === "tool_result" && !item.error
           ? (item.changes?.files ?? []).map(
@@ -342,13 +363,13 @@ function projectExchanges(
       const at = epoch(item.timestamp);
       return at === undefined || (latest !== undefined && latest >= at) ? latest : at;
     }, undefined);
-    const duration =
+    const duration = completed ? completed.duration :
       !live && group.startedAt !== undefined && endedAt !== undefined
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
     const answer = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
     const exchange: ChatExchange = {
-      overflow: group.items
+      overflow: (completed && activity?.closing ? completed.reply : group.items)
         // Tool evidence belongs in the work timeline, not below the answer.
         .filter(
           (item) => item.truncated && item.kind !== "tool_use" && item.kind !== "tool_result",
@@ -374,6 +395,16 @@ function projectExchanges(
         : index === groups.length - 1 && state?.phase === "error"
           ? "failed"
           : "done",
+      ...(completed ? { deferredWork: {
+        counts: completed.counts,
+        failures: completed.failures,
+        busy: !!activity?.requested && !activity.error,
+        error: activity?.error,
+        window: page ? {
+          start: page.offset + 1, end: page.offset + page.items.length, total: page.total,
+          previous: !!activity?.previous.length, next: page.nextOffset !== null,
+        } : undefined,
+      } } : {}),
       steps: previous?.exchange.steps.length === steps.length && steps.every((step, i) => step === previous.exchange.steps[i])
         ? previous.exchange.steps : steps,
       duration,
@@ -382,10 +413,10 @@ function projectExchanges(
         ? previous.exchange.files : files,
       filesTotal,
       answerBeforeStepId:
-        finalEnd > 0
+        finalEnd > finalStart
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
-      answerId: finalEnd > 0 ? renderId(group.items[finalStart]!) : undefined,
+      answerId: finalEnd > finalStart ? renderId(group.items[finalStart]!) : undefined,
       answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
       author,
@@ -393,7 +424,7 @@ function projectExchanges(
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
       error: index === groups.length - 1 ? (state?.error ?? "") : "",
     };
-    retained.set(group.id, { source, signature, pending: ownPending, exchange });
+    retained.set(group.id, { source, signature, pending: ownPending, work: activity, exchange });
     return exchange;
   });
   if (!cache) return exchanges;

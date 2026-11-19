@@ -37,6 +37,33 @@ describe('incremental transcript projection', () => {
     expect(fourth).toEqual(chatExchanges(streamed, state, fresh));
   });
 
+  it('keeps the saved reply separate from paged commentary and its exiting controls', () => {
+    const projection = new ChatTranscriptProjection();
+    const revision = 'a'.repeat(64);
+    const earlier = item('commentary', 'assistant', 'Earlier explanation', { truncated: true });
+    const reply = item('final', 'assistant', 'Final answer', { truncated: true });
+    const command = { ...tool('test'), receipt: { id: 'receipt', error: false } };
+    const prompt = item('prompt', 'user', 'Verify the change', { completedTurn: {
+      revision, endId: 'receipt', reply: [reply], beforeReply: 1, total: 3,
+      counts: { run: 1 }, failures: 0,
+    } });
+    const work = {
+      revision, previous: [], page: {
+        taskId: 1, sessionId: 2, turnId: prompt.id, revision, offset: 0,
+        nextOffset: 2, total: 3, items: [earlier, command],
+      },
+    } as const;
+    const [expanded] = projection.project([prompt], state, fresh, undefined, new Map([[prompt.id, work]]));
+    expect(expanded).toMatchObject({
+      answer: 'Final answer', answerId: 'final', answerBeforeStepId: 'test',
+      steps: [{ id: 'commentary' }, { id: 'test', status: 'done', fullContent: { outputId: 'receipt' } }],
+      overflow: [{ id: 'commentary' }, { id: 'final' }],
+    });
+    const [closing] = projection.project([prompt], state, fresh, undefined, new Map([[prompt.id, { ...work, closing: true }]]));
+    expect(closing?.steps).toBe(expanded?.steps);
+    expect(closing?.overflow).toEqual([{ id: 'final', label: 'message' }]);
+  });
+
   it('ignores unrelated runtime updates and only changes the active turn for phase/decision updates', () => {
     const projection = new ChatTranscriptProjection();
     const items = [item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Done'),

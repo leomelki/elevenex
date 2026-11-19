@@ -1,4 +1,4 @@
-import type { SessionChatItem } from "@elevenex/shared";
+import { sessionChatToolCategory, type SessionChatItem } from "@elevenex/shared";
 import type {
   StepKind,
   ToolBlock,
@@ -103,22 +103,8 @@ function status(value: unknown): ToolListItem["status"] {
           ? "pending"
           : undefined;
 }
-const kinds: Readonly<Record<string, StepKind>> = {
-  read: "read",
-  write: "create",
-  edit: "edit",
-  file_changes: "edit",
-  notebook_edit: "edit",
-  bash: "run",
-  grep: "search",
-  glob: "list",
-  web_fetch: "web",
-  web_search: "web",
-  ask_user_question: "ask",
-};
 export function sessionToolKind(item: SessionChatItem): StepKind {
-  const kind = item.toolKind ?? "";
-  return Object.hasOwn(kinds, kind) ? kinds[kind]! : "tool";
+  return sessionChatToolCategory(item.toolKind);
 }
 export function sessionToolVerb(
   item: SessionChatItem,

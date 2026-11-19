@@ -58,6 +58,7 @@ export class WorkTimelineComponent implements OnChanges {
   readonly steps = input<readonly WorkStep[]>([]);
   readonly live = input(false);
   readonly expanded = input(true);
+  readonly revealWork = input(false);
   readonly maxVisible = input(5);
   readonly answer = input<string>();
   readonly answerId = input<string>();
@@ -76,6 +77,7 @@ export class WorkTimelineComponent implements OnChanges {
   private readonly inspected = signal<ReadonlySet<string>>(new Set());
   private readonly focused = signal<string | null>(null);
   protected readonly arrivals = signal<ReadonlySet<string>>(new Set());
+  protected readonly hydrated = signal<ReadonlySet<string>>(new Set());
   private previousIds: ReadonlySet<string> | undefined;
   private previousLast: string | undefined;
   private reportedInspection = false;
@@ -132,6 +134,12 @@ export class WorkTimelineComponent implements OnChanges {
       (step) => step.id === this.previousLast,
     );
     const ids = new Set(steps.map((step) => step.id));
+    if (this.revealWork() && this.expanded() && this.previousIds) {
+      this.hydrated.set(new Set(this.rows()
+        .filter(row => !this.previousIds?.has(row.step.id) &&
+          (this.visible(row) || this.groupVisible(row)))
+        .map(row => row.step.id)));
+    }
     if (this.previousIds && this.live()) {
       const incoming = steps.filter(
         (step, index) =>

@@ -70,6 +70,12 @@ export class ChatScrollComponent {
   private lastHistoryDirection: "before" | "following" = "before";
   private historyBudget = 0;
   private requestedHeight = 0;
+  private disclosure?: {
+    readonly anchor: HTMLElement;
+    readonly turn: Element;
+    readonly top: number;
+    settledFrames: number;
+  };
   private historyIntent: "before" | "following" = "before";
   onViewportWheel(event: WheelEvent): void {
     if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
@@ -77,9 +83,23 @@ export class ChatScrollComponent {
     this.onViewportInteraction();
   }
   onViewportInteraction(): void {
+    this.disclosure = undefined;
     this.historyBudget = 4;
     this.interruptSendReveal();
     if (this.contentReady) this.scheduleMeasure();
+  }
+
+  /** Inline evidence grows below its control, even when the reply was pinned
+   * to the end. Its layout is also independent of new-message indicators. */
+  keepDisclosurePosition(anchor: HTMLElement): void {
+    const turn = anchor.closest('ex-turn');
+    if (!this.contentReady || !turn || !this.host.contains(anchor)) return;
+    if (this.disclosure?.anchor === anchor) this.disclosure.settledFrames = 0;
+    else this.disclosure = {
+      anchor, turn, settledFrames: 0,
+      top: anchor.getBoundingClientRect().top - this.viewport().nativeElement.getBoundingClientRect().top,
+    };
+    this.scheduleMeasure();
   }
 
   private rememberPosition(): void {
@@ -102,6 +122,7 @@ export class ChatScrollComponent {
     if (!arrivals.length) return;
     const fresh = arrivals.filter(message => message.isNew() && message.role() === "user");
     if (fresh.length) {
+      this.disclosure = undefined;
       this.interruptSendReveal();
       this.historyScroll?.finish();
       const viewport = this.viewport().nativeElement;
@@ -348,6 +369,7 @@ export class ChatScrollComponent {
     this.peek.set(open);
   }
   scrollToMessage(id: string): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
     this.historyScroll?.finish();
     const target = this.messages.find(
@@ -372,6 +394,7 @@ export class ChatScrollComponent {
     }
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
     this.historyScroll?.finish();
     const viewport = this.viewport().nativeElement;
@@ -472,15 +495,16 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
+    const revealing = this.maintainDisclosurePosition(viewport);
     const height = this.historyScroll?.height ?? viewport.scrollHeight;
     const top = this.historyScroll?.top ?? viewport.scrollTop;
     const contentChanged = height !== this.lastScrollHeight;
     const resized = viewport.clientHeight !== this.lastViewportHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if ((contentChanged || resized) && this.atEnd()) {
+    else if ((resized || (contentChanged && !revealing)) && this.atEnd()) {
       this.historyScroll?.finish();
       viewport.scrollTop = viewport.scrollHeight;
-    } else if (contentChanged) this.unread.set(true);
+    } else if (contentChanged && !revealing) this.unread.set(true);
     this.lastScrollHeight = height;
     this.lastViewportHeight = viewport.clientHeight;
     if (!this.sendScroll) this.updatePosition();
@@ -511,6 +535,24 @@ export class ChatScrollComponent {
           height - top - viewport.clientHeight < margin)
         this.requestHistory("following");
     }
+  }
+  private maintainDisclosurePosition(viewport: HTMLDivElement): boolean {
+    const disclosure = this.disclosure;
+    if (!disclosure || !disclosure.anchor.isConnected || this.sendScroll) {
+      this.disclosure = undefined;
+      return false;
+    }
+    const top = disclosure.anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    if (Math.abs(top - disclosure.top) > 1) viewport.scrollTop += top - disclosure.top;
+    const animating = disclosure.turn.getAnimations?.({ subtree: true }).some(animation =>
+      animation.playState !== 'finished' && animation.playState !== 'idle' &&
+      Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    // Give newly rendered CSS transitions a paint to start. ResizeObserver
+    // drives the rest of the movement, including interrupted folds.
+    if (animating) disclosure.settledFrames = 0;
+    else if (++disclosure.settledFrames < 2) this.scheduleMeasure();
+    else this.disclosure = undefined;
+    return true;
   }
   private measureReminder(viewport: DOMRect): void {
     // Match the legacy chat's reading probe: keep the previous prompt's context

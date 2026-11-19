@@ -36,6 +36,7 @@ export class DesktopChatController {
     @Query('following') following: string | undefined,
     @Res() response: Response,
     @Query('loadingMode') loadingMode?: string,
+    @Query('summarizeCompleted') summarizeCompleted?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -49,6 +50,30 @@ export class DesktopChatController {
         abort.signal,
         following,
         loadingMode,
+        summarizeCompleted,
+      );
+      if (!abort.signal.aborted) response.json(result);
+    } finally {
+      response.off('close', close);
+    }
+  }
+  @Get('turn-work')
+  async turnWork(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Query('turnId') turnId: string,
+    @Query('revision') revision: string,
+    @Query('offset') offset: string,
+    @Res() response: Response,
+  ) {
+    const abort = new AbortController();
+    const close = () => abort.abort();
+    response.once('close', close);
+    try {
+      const result = await this.chat.turnWork(
+        resourceId(task), resourceId(session), turnId, revision,
+        typeof offset === 'string' && /^\d+$/.test(offset) ? Number(offset) : NaN,
+        abort.signal,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

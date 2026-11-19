@@ -59,6 +59,48 @@ describe('selected session chat', () => {
     expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!.items).toHaveLength(320);
     expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive'))!.items).toHaveLength(80);
     await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'all')).rejects.toThrow('Invalid conversation loading mode');
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'window', '1')).rejects.toThrow('Invalid completed turn view');
+  });
+
+  it('reads exact saved activity for a task-owned version, including archived sessions and cancelled reads', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      ...Array.from({ length: 60 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const open = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    const saved = open.items[0].completedTurn!;
+    expect((await chat.read(1, 2, undefined, undefined, signal))!.items.some(item => item.completedTurn)).toBe(false);
+    const page = (await chat.turnWork(1, 2, 'prompt', saved.revision, 40, signal))!;
+    expect(page).toMatchObject({ taskId: 1, sessionId: 2, turnId: 'prompt', offset: 40, total: 60, nextOffset: null });
+    expect(page.items[0].id).toBe('thought-40');
+    await expect(chat.turnWork(5, 2, 'prompt', saved.revision, 0, signal)).rejects.toThrow('does not belong');
+    await expect(chat.turnWork(1, 2, 'answer', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
+    await expect(chat.turnWork(1, 2, 'prompt', saved.revision, NaN, signal)).rejects.toThrow('Invalid turn activity');
+    expect(await chat.turnWork(1, 2, 'prompt', saved.revision, 0, AbortSignal.abort())).toBeUndefined();
+    history[1] = { ...history[1], content: 'Rewritten evidence' };
+    await expect(chat.turnWork(1, 2, 'prompt', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it('retains the streamed timeline at completion and compacts independent fresh openings', async () => {
+    const prompt: AgentTranscriptItem = { ...item('prompt'), kind: 'user' };
+    live = [prompt, ...Array.from({ length: 60 }, (_, index): AgentTranscriptItem => ({
+      ...item(`tool-${index}`), kind: 'tool_use', toolKind: 'read',
+    }))];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(initial.items[0].id).toBe(prompt.id);
+    history = [...live, item('answer')];
+    live = [];
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+    runtime.emit('event', { type: 'run_state', payload: { sessionId: 2, runPhase: 'idle' } });
+    const completion = (await chat.read(1, 2, initial.cursor, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(completion.items.map(item => item.id)).toEqual(history.map(item => item.id));
+    const fresh = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(fresh.items[0].completedTurn?.reply[0].id).toBe('answer');
   });
 
   it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {

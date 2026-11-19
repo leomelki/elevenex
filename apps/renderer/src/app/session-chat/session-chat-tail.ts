@@ -1,5 +1,20 @@
 import type { SessionChatItem } from '@elevenex/shared';
 
+const WINDOW_RECORD_LIMIT = 320;
+
+/** A compact turn is atomic for cursors. Its reply blocks still count toward
+ * the display window, keeping Markdown/media work bounded as history grows. */
+export function retainChatWindow(items: readonly SessionChatItem[], keepOlder: boolean): readonly SessionChatItem[] {
+  let records = 0;
+  let count = 0;
+  for (; count < items.length; count++) {
+    const item = items[keepOlder ? count : items.length - count - 1]!;
+    records += 1 + (item.completedTurn?.reply.length ?? 0);
+    if (records > WINDOW_RECORD_LIMIT) break;
+  }
+  return keepOlder ? items.slice(0, count) : items.slice(items.length - count);
+}
+
 /** Compact the discarded edge into bounded turn context. Hidden work must not
  * evict an on-screen prompt/reply merely because it occupies many raw records.
  * These records never become cursors; following pages still fill the raw gap. */
@@ -26,7 +41,8 @@ export function chatTailContext(discarded: readonly SessionChatItem[]): readonly
       ...turn.slice(start, end), ...media.slice(-8), ...(outcome ? [outcome] : []),
     ]);
     const records = turn.filter(item => retained.has(item));
-    const size = records.reduce((total, item) => total + item.text.length + item.input.length, 0);
+    const size = records.reduce((total, item) => total + item.text.length + item.input.length +
+      (item.completedTurn?.reply.reduce((sum, row) => sum + row.text.length + row.input.length, 0) ?? 0), 0);
     // Keep whole nearest turns. The farther tail stays reachable through next,
     // without an unbounded transcript cache or attaching replies to wrong users.
     if (context.length + records.length > 80 || characters + size > 256000) break;

@@ -109,12 +109,12 @@ export class SessionChatComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
-    const items = this.store.items();
-    const item = items.find(item => item.id === request.itemId);
+    const items = this.store.presentedItems();
+    const item = items.find(item => item.id === request.itemId) ?? items.find(item => item.receipt?.id === request.itemId);
     const toolId = item?.toolId ?? item?.id;
     this.contentSource.set(item?.kind === 'tool_use' || item?.kind === 'tool_result' ? {
       inputId: item.kind === 'tool_use' ? item.id : items.find(value => value.kind === 'tool_use' && (value.toolId ?? value.id) === toolId)?.id,
-      outputId: item.kind === 'tool_result' ? item.id : [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
+      outputId: item.kind === 'tool_result' ? item.id : item.receipt?.id ?? [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
     } : undefined);
     this.contentPart.set(request.part);
     this.contentId.set(request.itemId);
@@ -438,7 +438,7 @@ export class SessionChatComponent {
     });
     effect(() => {
       const selection = this.creation() ? null : this.selection();
-      const items = this.store.visibleItems();
+      const items = this.store.presentedItems();
       untracked(() => this.media.update(selection, items));
     });
     effect(() => {

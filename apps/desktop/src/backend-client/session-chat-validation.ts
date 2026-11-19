@@ -1,4 +1,10 @@
 import { parseChangeSummary } from "./session-chat-changes";
+import {
+  SESSION_CHAT_TOOL_CATEGORIES,
+  SESSION_CHAT_TURN_FILES_LIMIT,
+  SESSION_CHAT_TURN_REPLY_LIMIT,
+  SESSION_CHAT_TURN_WORK_LIMIT,
+} from "@elevenex/shared";
 import type {
   SessionChatAgentPage,
   SessionChatAgentContext,
@@ -6,6 +12,10 @@ import type {
   SessionChatAction,
   SessionChatEvent,
   SessionChatItem,
+  SessionChatRecord,
+  SessionChatCompletedTurn,
+  SessionChatTurnWorkPage,
+  SessionChatTurnWorkRead,
   SessionChatPage,
   SessionChatState,
   SessionChatPlanUsage,
@@ -130,7 +140,7 @@ function execution(value: unknown): NonNullable<SessionChatItem["execution"]> {
     ...(raw["interrupted"] !== undefined ? { interrupted: bool(raw["interrupted"]) } : {}),
   };
 }
-function item(value: unknown): SessionChatItem {
+function item(value: unknown): SessionChatRecord {
   const raw = chatObject(value),
     kind = raw["kind"];
   if (
@@ -170,6 +180,70 @@ function item(value: unknown): SessionChatItem {
     }) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
+  };
+}
+function turnRevision(value: unknown): string {
+  const revision = chatText(value, 64);
+  if (!/^[a-f0-9]{64}$/.test(revision)) throw invalid();
+  return revision;
+}
+export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
+  const raw = chatObject(value);
+  const turnId = chatText(raw['turnId']);
+  if (!turnId) throw invalid();
+  return {
+    taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
+    requestId: requestId(raw['requestId']), turnId,
+    revision: turnRevision(raw['revision']), offset: workCount(raw['offset']),
+  };
+}
+export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkPage {
+  const raw = chatObject(value);
+  const { taskId, sessionId, turnId, revision, offset } = input;
+  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
+    raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
+  const items = array(raw['items'], SESSION_CHAT_TURN_WORK_LIMIT, value => {
+    const raw = chatObject(value), row = item(raw);
+    if (raw['receipt'] === undefined) return row;
+    const receipt = chatObject(raw['receipt']);
+    const id = chatText(receipt['id']);
+    if (row.kind !== 'tool_use' || !id || id === row.id || id === turnId) throw invalid();
+    return { ...row, receipt: { id, error: bool(receipt['error']) } };
+  });
+  const total = workCount(raw['total']);
+  const end = offset + items.length;
+  const nextOffset = end < total ? end : null;
+  if (!items.length || end > total || raw['nextOffset'] !== nextOffset ||
+    items.some(row => row.kind === 'user' || !row.id || row.id === turnId) ||
+    new Set(items.map(row => row.id)).size !== items.length) throw invalid();
+  return { taskId, sessionId, turnId, revision, offset, items, total, nextOffset };
+}
+function historyItem(value: unknown, summaryAllowed: boolean): SessionChatItem {
+  const raw = chatObject(value), row = item(raw);
+  if (raw['completedTurn'] === undefined) return row;
+  if (!summaryAllowed || row.kind !== 'user') throw invalid();
+  const turn = chatObject(raw['completedTurn']);
+  const endId = chatText(turn['endId']);
+  const total = workCount(turn['total']);
+  const beforeReply = workCount(turn['beforeReply']);
+  const failures = workCount(turn['failures']);
+  const reply = array(turn['reply'], SESSION_CHAT_TURN_REPLY_LIMIT, item);
+  if (!row.id || !endId || endId === row.id || !total || beforeReply > total ||
+    reply.some(part => part.kind !== 'assistant' || !part.id || part.id === row.id) ||
+    new Set(reply.map(part => part.id)).size !== reply.length) throw invalid();
+  const categoryCounts = chatObject(turn['counts']);
+  const counts: SessionChatCompletedTurn['counts'] = Object.fromEntries(SESSION_CHAT_TOOL_CATEGORIES.flatMap(category => {
+    const value = categoryCounts[category];
+    return value === undefined ? [] : [[category, workCount(value)]];
+  }));
+  if (Object.values(counts).reduce((sum, count) => sum + count, 0) > total) throw invalid();
+  return {
+    ...row,
+    completedTurn: {
+      revision: turnRevision(turn['revision']), endId, total, beforeReply, failures, counts, reply,
+      ...(turn['duration'] === undefined ? {} : { duration: number(turn['duration']) }),
+      ...(turn['changes'] === undefined ? {} : { changes: parseChangeSummary(turn['changes'], SESSION_CHAT_TURN_FILES_LIMIT) }),
+    },
   };
 }
 function mediaKind(value: unknown): "image" | "video" | "file" {
@@ -462,6 +536,7 @@ export function parseChatPage(
   taskId: number,
   sessionId: number,
   loadingMode?: 'window' | 'progressive',
+  summarizeCompleted = false,
 ): SessionChatPage {
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
@@ -477,7 +552,7 @@ export function parseChatPage(
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, item),
+    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, value => historyItem(value, summarizeCompleted)),
     events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };

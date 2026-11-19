@@ -84,7 +84,7 @@ export default async function* (capture) {
       await capture.waitFor(() => !window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
 
       // Another task/chat inherits the connection-wide choice immediately,
-      // without waiting through another three-second slow-open deadline.
+      // without waiting through another slow-open deadline.
       await capture.component('ex-connected-workspace-demo', owner => {
         owner.fixture.chat.scenario('history', 103);
         owner.fixture.chat.holdReads(true);

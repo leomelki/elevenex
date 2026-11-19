@@ -12,6 +12,8 @@ import {
   parseChatCatalog,
   parseChatPage,
   parsePresetDefault,
+  parseTurnWorkPage,
+  parseTurnWorkRead,
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
@@ -46,6 +48,10 @@ export function registerSessionChatIpc(
       if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
         throw new Error('Invalid conversation loading mode.');
       if (loadingMode !== undefined) query.set('loadingMode', loadingMode);
+      const summarizeCompleted = raw['summarizeCompleted'];
+      if (summarizeCompleted !== undefined && (summarizeCompleted !== true || loadingMode !== 'progressive'))
+        throw new Error('Invalid completed turn view.');
+      if (summarizeCompleted) query.set('summarizeCompleted', '1');
       if (raw["after"] !== undefined)
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
@@ -72,11 +78,27 @@ export function registerSessionChatIpc(
             taskId,
             sessionId,
             loadingMode,
+            summarizeCompleted,
           ),
         15000,
       );
     },
   );
+  const turnWork = handleForWindow('session-chat:turn-work', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid turn activity arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseTurnWorkRead(args[1]);
+    const { taskId, sessionId, turnId, revision, offset, requestId } = input;
+    const query = new URLSearchParams({ turnId, revision, offset: String(offset) });
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
+      async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/turn-work?' + query,
+        limit: 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
   const catalog = handleForWindow(
     "session-chat:catalog",
     trusted,
@@ -344,6 +366,7 @@ export function registerSessionChatIpc(
     media();
     changes();
     read();
+    turnWork();
     catalog();
     command();
     cancel();

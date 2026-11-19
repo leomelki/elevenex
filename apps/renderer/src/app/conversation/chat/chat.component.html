@@ -54,6 +54,7 @@
         [stoppable]="stoppable()"
         [retryable]="retryable()"
         [steps]="exchange.steps"
+        [deferredWork]="exchange.deferredWork"
         [answer]="exchange.answer"
         [answerId]="exchange.answerId"
         [streaming]="exchange.streaming ?? exchange.status === 'live'"
@@ -74,6 +75,10 @@
         [mark]="exchange.mark || 'EX'"
         [harness]="exchange.harness"
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
+        (workToggled)="turnWorkToggled.emit({ id: exchange.id, open: $event })"
+        (workHint)="turnWorkHint.emit(exchange.id)"
+        (workRequested)="turnWorkRequested.emit({ id: exchange.id, action: $event })"
+        (workLayoutChanging)="scroll()?.keepDisclosurePosition($event)"
         (openFile)="
           openFile.emit($event);
           fileReview.emit({ id: exchange.id, path: $event })

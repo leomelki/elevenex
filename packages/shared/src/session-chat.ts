@@ -7,6 +7,10 @@ export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
   /** Omitted by older clients: 80-item pages. Window mode requests up to 320. */
   readonly loadingMode?: 'window' | 'progressive';
+  /** Older engines can ignore this option and return ordinary transcript items. */
+  readonly summarizeCompleted?: true;
+  /** Tool rows include display headings and versioned references to their evidence. */
+  readonly deferToolDetails?: true;
   readonly after?: string;
   readonly before?: string;
   /** Exclusive item cursor for continuing toward the live end of history. */
@@ -17,7 +21,7 @@ export interface SessionChatMention {
   readonly sessionId: number;
   readonly title: string;
 }
-export interface SessionChatItem {
+export interface SessionChatRecord {
   readonly id: string;
   readonly kind:
     | "user"
@@ -46,6 +50,89 @@ export interface SessionChatItem {
   };
   /** Bounded outcome metadata; captured net changes take precedence over tool edits. */
   readonly changes?: SessionChatChangeSummary;
+  /** Present on tool rows whose input and text are available through the detail read. */
+  readonly toolDetails?: SessionChatToolHeading;
+  /** Result identity and outcome for a call in a paged activity view. */
+  readonly receipt?: { readonly id: string; readonly error: boolean; readonly toolDetails?: SessionChatToolHeading };
+}
+export interface SessionChatToolHeading {
+  readonly revision: string;
+  readonly summary?: string;
+  readonly meta?: string;
+}
+export interface SessionChatToolReference {
+  readonly id: string;
+  readonly revision: string;
+}
+export interface SessionChatToolSource {
+  readonly item: SessionChatToolReference;
+  readonly result?: SessionChatToolReference;
+}
+export interface SessionChatToolDetailsRead extends SessionChatTarget, SessionChatToolSource {
+  readonly requestId: string;
+}
+export interface SessionChatToolEvidence extends SessionChatToolReference {
+  readonly record: SessionChatRecord;
+}
+export interface SessionChatToolDetails extends SessionChatTarget {
+  readonly item: SessionChatToolEvidence;
+  readonly result?: SessionChatToolEvidence;
+}
+export interface SessionChatItem extends SessionChatRecord {
+  /** A complete history entry at the user record. Its hidden rows page separately. */
+  readonly completedTurn?: SessionChatCompletedTurn;
+}
+export interface SessionChatCompletedTurn {
+  readonly revision: string;
+  /** Last source item, used as the exclusive cursor when paging forward. */
+  readonly endId: string;
+  readonly reply: readonly SessionChatRecord[];
+  /** Number of hidden records before the visible reply, for chronological playback. */
+  readonly beforeReply: number;
+  readonly total: number;
+  readonly counts: Readonly<Partial<Record<SessionChatToolCategory, number>>>;
+  readonly failures: number;
+  readonly duration?: number;
+  readonly changes?: SessionChatChangeSummary;
+}
+export interface SessionChatTurnWorkRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly deferToolDetails?: true;
+}
+export interface SessionChatTurnWorkPage extends SessionChatTarget {
+  readonly turnId: string;
+  readonly revision: string;
+  readonly offset: number;
+  readonly total: number;
+  readonly nextOffset: number | null;
+  readonly items: readonly SessionChatRecord[];
+}
+
+export const SESSION_CHAT_TURN_WORK_LIMIT = 40;
+export const SESSION_CHAT_TURN_REPLY_LIMIT = 8;
+export const SESSION_CHAT_TURN_FILES_LIMIT = 3;
+export const SESSION_CHAT_TOOL_CATEGORIES = [
+  'read', 'create', 'edit', 'run', 'search', 'list', 'web', 'ask', 'tool',
+] as const;
+export type SessionChatToolCategory = (typeof SESSION_CHAT_TOOL_CATEGORIES)[number];
+const toolCategories: Readonly<Record<string, SessionChatToolCategory>> = {
+  read: 'read',
+  write: 'create',
+  edit: 'edit',
+  file_changes: 'edit',
+  notebook_edit: 'edit',
+  bash: 'run',
+  grep: 'search',
+  glob: 'list',
+  web_fetch: 'web',
+  web_search: 'web',
+  ask_user_question: 'ask',
+};
+export function sessionChatToolCategory(toolKind: string | null | undefined): SessionChatToolCategory {
+  return toolKind && Object.hasOwn(toolCategories, toolKind) ? toolCategories[toolKind]! : 'tool';
 }
 export interface SessionChatQuestion {
   readonly id: string;

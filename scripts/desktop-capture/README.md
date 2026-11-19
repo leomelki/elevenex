@@ -728,6 +728,13 @@ reading above the end and inside an earlier-history window. It asserts retained
 scroll position, unread feedback for recovered output, stable history items and
 view identity in both themes through the production window with controlled transport.
 
+`scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
+turns against the preview transport. It checks the collapsed reply and counts,
+held activity, reversal, the frame-by-frame reveal, cached reopen, error retry
+and forward activity paging, with stable reply identity, keyboard focus and
+composer draft. Use the connected-workspace preview URL. The dark run uses a
+narrow viewport and reduced motion.
+
 `scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
 through production UI/IPC against a running disposable Nest backend. Supply
 `ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing

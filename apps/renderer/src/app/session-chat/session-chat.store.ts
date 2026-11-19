@@ -18,8 +18,9 @@ import type {
 } from "@elevenex/shared";
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
-import { chatTailContext } from './session-chat-tail';
+import { chatTailContext, retainChatWindow } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
+import { SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
@@ -55,6 +56,7 @@ export interface ChatSelection extends SessionChatTarget {
 @Injectable()
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
+  readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache));
   private readonly transcript = new ChatTranscriptProjection();
   private readonly drafts = inject(SessionChatDrafts);
   private readonly loadingPolicy = inject(SessionChatLoadingPolicy);
@@ -159,6 +161,16 @@ export class SessionChatStore {
     const trailing = context.filter(item => !ids.has(item.id));
     return [...leading, ...items, ...trailing];
   });
+  /** Include the mounted reply and inspected work for media and original-content resolution. */
+  readonly presentedItems = computed<readonly SessionChatItem[]>(() => {
+    const work = this.work.open();
+    return this.visibleItems().flatMap(item => {
+      if (!item.completedTurn) return [item];
+      const entry = work.get(item.id);
+      const details = entry?.revision === item.completedTurn.revision ? entry.page?.items ?? [] : [];
+      return [item, ...details, ...item.completedTurn.reply];
+    });
+  }, { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
     const items = this.visibleItems();
@@ -169,6 +181,7 @@ export class SessionChatStore {
       this.state(),
       this.fresh(),
       showPending ? pending : undefined,
+      this.work.open(),
     );
     if (!pending && !this.turnArrivals().size) return exchanges;
     return exchanges.map((exchange): ChatExchange => {
@@ -219,6 +232,11 @@ export class SessionChatStore {
         }
       });
     });
+    effect(() => {
+      const items = this.visibleItems();
+      const available = this.active() && !this.offline() && !document.hidden;
+      untracked(() => this.work.sync(items, available));
+    });
     let wasPaused: boolean | undefined;
     effect(() => {
       const paused = this.offline() || !this.active();
@@ -227,8 +245,13 @@ export class SessionChatStore {
       untracked(() => { if (paused) { this.stopRead(); this.loading.set(false); } else if (resumed && this.selection && !this.request) void this.load(false); });
     });
     const visible = () => {
-      if (document.hidden) this.stopRead();
-      else if (this.selection) void this.load(false);
+      if (document.hidden) {
+        this.stopRead();
+        this.work.pause();
+      } else if (this.selection) {
+        this.work.sync(this.visibleItems(), this.active() && !this.offline());
+        void this.load(false);
+      }
     };
     document.addEventListener("visibilitychange", visible);
     inject(DestroyRef).onDestroy(() => {
@@ -237,6 +260,7 @@ export class SessionChatStore {
       this.disposed = true;
       this.epoch++;
       this.stopRead();
+      this.work.select(null);
       this.transcript.clear();
       document.removeEventListener("visibilitychange", visible);
     });
@@ -247,6 +271,7 @@ export class SessionChatStore {
     this.outbox?.setEditing(null);
     this.remember(); this.stopRead(); this.epoch++;
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
+    this.work.select(null);
     this.transcript.clear();
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
@@ -286,6 +311,7 @@ export class SessionChatStore {
     this.entry = this.drafts.entry(selection.scopeId, selection.sessionId);
     this.activeEntry.set(this.entry);
     const recovery = sameSession && previousEntry === this.entry;
+    this.work.select(selection, recovery);
     if (!recovery) this.transcript.clear();
     this.readOnly.set(readOnly);
     this.pending.set(null);
@@ -346,7 +372,7 @@ export class SessionChatStore {
     if (!this.next() || this.loading() || this.historyLoading()) return;
     if (!this.supportsFollowing) { await this.refresh(); return; }
     this.stopRead();
-    await this.load(false, this.items().at(-1)?.id, "following");
+    await this.load(false, this.next()!, "following");
   }
   cancelHistory(): void {
     if (!this.historyLoading()) return;
@@ -362,7 +388,8 @@ export class SessionChatStore {
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
     this.request = requestId;
-    this.requestMode = this.progressiveLoading() ? 'progressive' : 'window';
+    const profile = this.loadingPolicy.profile();
+    this.requestMode = profile.loadingMode;
     if (reset || !this.state()) this.loading.set(true);
     if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
     // Only time an uncached opening, never an idle 8s long poll or history read.
@@ -381,7 +408,7 @@ export class SessionChatStore {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       requestId,
-      loadingMode: this.requestMode,
+      ...profile,
       ...(position && direction
         ? { [direction]: position }
         : !reset && this.cursor
@@ -490,8 +517,9 @@ export class SessionChatStore {
       (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
       ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
       : records;
-    const items = older ? all.slice(0, 320) : all.slice(-320);
-    if (older && all.length > items.length) {
+    const items = retainChatWindow(all, older);
+    const evicted = all.length > items.length;
+    if (older && evicted) {
       const contextIds = new Set(all.map(item => item.id));
       this.trailingContext.set(chatTailContext([
         ...all.slice(items.length),
@@ -541,15 +569,18 @@ export class SessionChatStore {
     if (!direction) this.cursor = page.cursor;
     if (older) {
       this.before.set(page.before);
-      if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
+      if (evicted) {
+        const last = items.at(-1);
+        this.next.set(last?.completedTurn?.endId ?? last?.id ?? null);
+      }
     } else {
       if (replacesTail && !keepsPrefix) this.before.set(page.before);
-      if (all.length > 320) this.before.set(items[0]?.id ?? null);
+      if (evicted) this.before.set(items[0]?.id ?? null);
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
     const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
-    if (direction || all.length > 320 || replacedRows)
+    if (direction || evicted || replacedRows)
       this.windowRevision.update(value => value + 1);
     this.reconcileDelivery(page.state, delivered, deliveredQueued);
   }

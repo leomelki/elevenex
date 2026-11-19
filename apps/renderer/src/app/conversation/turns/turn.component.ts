@@ -1,8 +1,10 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   type OnChanges,
+  type SimpleChanges,
   afterRenderEffect,
   computed,
   effect,
@@ -12,12 +14,15 @@ import {
   output,
   signal,
   viewChild,
+  untracked,
 } from "@angular/core";
 import { ButtonComponent, FoldComponent, IconComponent } from "../../ui";
 import type {
   ChangedFile,
+  DeferredTurnWork,
   TurnAction,
   TurnStatus,
+  TurnWorkAction,
   WorkStep,
 } from "../conversation.models";
 import { WorkTimelineComponent } from "./work-timeline.component";
@@ -27,6 +32,9 @@ import { formatDuration, isProse, summarizeWork } from "./work-summary";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import type { ToolContentRequest } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
+import { TurnWorkPanelComponent } from './turn-work-panel.component';
+
+const WORK_PRELOAD_INTENT_MS = 220;
 @Component({
   selector: "ex-turn",
   imports: [
@@ -37,6 +45,7 @@ import { ReplyMarkComponent } from "./reply-mark.component";
     OutcomeBarComponent,
     ReplyMarkComponent,
     TurnActsComponent,
+    TurnWorkPanelComponent,
   ],
   templateUrl: "./turn.component.html",
   styleUrl: "./turn.component.css",
@@ -45,6 +54,7 @@ import { ReplyMarkComponent } from "./reply-mark.component";
     "[class.live]": 'status() === "live"',
     "[class.expanded]": "expanded()",
     "[class.arriving]": "arriving()",
+    "[class.deferred]": "!!deferredWork()",
     tabindex: "0",
     "(keydown)": "onKey($event)",
     "(animationend)": "arrivalFinished($event)",
@@ -58,6 +68,13 @@ export class TurnComponent implements OnChanges {
   private initialized = false;
   readonly status = input<TurnStatus>("done");
   readonly steps = input<readonly WorkStep[]>([]);
+  readonly deferredWork = input<DeferredTurnWork>();
+  readonly workToggled = output<boolean>();
+  readonly workHint = output<void>();
+  readonly workRequested = output<TurnWorkAction>();
+  readonly workLayoutChanging = output<HTMLElement>();
+  protected readonly workId = 'work-' + crypto.randomUUID();
+  private intentTimer?: ReturnType<typeof setTimeout>;
   readonly answerBeforeStepId = input<string>();
   readonly answerId = input<string>();
   readonly answer = input<string>();
@@ -142,12 +159,12 @@ export class TurnComponent implements OnChanges {
     () => this.steps().filter((step) => !isProse(step)).length,
   );
   protected readonly timelineSteps = computed(() =>
-    this.stepCount()
+    this.deferredWork() || this.stepCount()
       ? this.steps()
       : this.steps().filter((step) => step.kind === "say"),
   );
   protected readonly showWork = computed(
-    () => this.status() === "live" || this.timelineSteps().length > 0,
+    () => !!this.deferredWork() || this.status() === "live" || this.timelineSteps().length > 0,
   );
   protected readonly facts = computed(() =>
     this.status() === "live"
@@ -156,6 +173,7 @@ export class TurnComponent implements OnChanges {
           this.steps().filter((step) => step.status !== "running"),
           this.files(),
           this.filesTotal() ?? this.files().length,
+          this.deferredWork(),
         ),
   );
   private readonly factsElement =
@@ -186,12 +204,21 @@ export class TurnComponent implements OnChanges {
   });
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
+  private readonly loadingPanel = viewChild<TurnWorkPanelComponent, ElementRef<HTMLElement>>('loadingPanel', { read: ElementRef });
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly workRegion = viewChild<unknown, ElementRef<HTMLElement>>(
     "workRegion",
     { read: ElementRef },
   );
   constructor() {
+    let open = false;
+    effect(() => {
+      const next = !!this.deferredWork() && this.expanded();
+      if (next === open) return;
+      open = next;
+      untracked(() => this.workToggled.emit(next));
+    });
+    inject(DestroyRef).onDestroy(() => this.clearWorkHint());
     afterRenderEffect((onCleanup) => {
       const element = this.factsElement()?.nativeElement;
       this.facts();
@@ -213,12 +240,17 @@ export class TurnComponent implements OnChanges {
     });
   }
 
-  ngOnChanges(): void {
+  ngOnChanges(changes: SimpleChanges): void {
     if (!this.initialized) {
       this.initialized = true;
       this.arriving.set(this.isNew());
     }
     const focused = this.host.nativeElement.ownerDocument.activeElement;
+    if (changes["deferredWork"] && this.deferredWork() && this.expanded()) {
+      this.notifyWorkLayout();
+      if (!this.deferredWork()?.window && this.loadingPanel()?.nativeElement.contains(focused))
+        this.workButton()?.nativeElement.focus({ preventScroll: true });
+    }
     if (
       !this.showWork() &&
       this.workRegion()?.nativeElement.contains(focused)
@@ -242,7 +274,35 @@ export class TurnComponent implements OnChanges {
 
   protected toggleWork(): void {
     const open = !this.expanded();
+    this.clearWorkHint();
+    if (this.deferredWork()) this.notifyWorkLayout();
     this.toggled.set(open);
+  }
+
+  protected notifyWorkLayout(): void {
+    const button = this.workButton()?.nativeElement;
+    if (button) this.workLayoutChanging.emit(button);
+  }
+
+  protected considerWorkHint(event: PointerEvent | FocusEvent): void {
+    if (!this.deferredWork() || this.expanded() || this.intentTimer !== undefined) return;
+    if ('pointerType' in event ? event.pointerType !== 'mouse'
+      : !this.workButton()?.nativeElement.matches(':focus-visible')) return;
+    this.intentTimer = setTimeout(() => {
+      this.intentTimer = undefined;
+      this.workHint.emit();
+    }, WORK_PRELOAD_INTENT_MS);
+  }
+
+  protected clearWorkHint(): void {
+    clearTimeout(this.intentTimer);
+    this.intentTimer = undefined;
+  }
+
+  protected requestWork(action: TurnWorkAction): void {
+    if (action === 'retry' || action === 'refresh')
+      this.workButton()?.nativeElement.focus({ preventScroll: true });
+    this.workRequested.emit(action);
   }
 
   protected arrivalFinished(event: AnimationEvent): void {

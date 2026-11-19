@@ -10,6 +10,7 @@ import {
 import type {
   ChatExchange,
   TurnAction,
+  TurnWorkAction,
   TurnNavigationItem,
 } from "../conversation.models";
 import type { ToolContentRequest } from '../tool-presentation';
@@ -61,6 +62,9 @@ export class ChatComponent {
   readonly toolContentRequested = output<ToolContentRequest>();
   readonly resolve = input<MarkdownAssetResolver>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
+  readonly turnWorkToggled = output<{ id: string; open: boolean }>();
+  readonly turnWorkHint = output<string>();
+  readonly turnWorkRequested = output<{ id: string; action: TurnWorkAction }>();
   readonly openFile = output<string>();
   readonly fileReview = output<{ readonly id: string; readonly path: string }>();
   readonly openLink = output<string>();

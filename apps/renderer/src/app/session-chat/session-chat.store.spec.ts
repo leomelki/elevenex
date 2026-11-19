@@ -16,7 +16,7 @@ import {
 } from "../backend/backend-client.service";
 import { createSessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
 import { SessionChatStore } from "./session-chat.store";
-import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING } from './session-chat-loading';
+import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
 import { chatExchanges } from "./session-chat-transcript";
 const state: SessionChatState = {
   provider: "codex",
@@ -183,12 +183,35 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCancel).not.toHaveBeenCalled();
   });
 
-  it('switches the app to progressive pages after a slow opening and rejects the cancelled window', async () => {
+  it('projects compact prompts and final replies without allowing live output to replace a saved answer', async () => {
+    const { store, bridge } = setup({ progressive: true }); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [
+      item('saved', 'user', 'Saved question', { completedTurn: {
+        revision: 'a'.repeat(64), endId: 'outcome', beforeReply: 108, total: 108,
+        counts: { read: 14, run: 3 }, failures: 1, duration: 98,
+        reply: [item('reply', 'assistant', 'Final answer', { truncated: true })],
+      } }),
+      item('incoming', 'assistant', 'A new run has started'),
+    ], state: { ...state, phase: 'running' } })));
+    await store.refresh();
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1]).toMatchObject({ loadingMode: 'progressive', summarizeCompleted: true });
+    expect(store.exchanges()).toMatchObject([
+      {
+        id: 'saved', status: 'done', answer: 'Final answer', answerId: 'reply', steps: [], duration: 98,
+        overflow: [{ id: 'reply', label: 'message' }],
+        deferredWork: { counts: { read: 14, run: 3 }, failures: 1, busy: false },
+      },
+      { status: 'live', answer: 'A new run has started' },
+    ]);
+    expect(store.presentedItems().map(row => row.id)).toEqual(['saved', 'reply', 'incoming']);
+  });
+
+  it('switches the app to progressive pages after 1.75 seconds and rejects the cancelled window', async () => {
     const first = deferred<BackendResult<SessionChatPage>>();
     const second = deferred<BackendResult<SessionChatPage>>();
     const { store, bridge, scope } = setup({ initial: first.promise });
     bridge.sessionChatRead.mockImplementationOnce(() => second.promise);
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(1749);
     expect(store.progressiveLoading()).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(store.progressiveLoading()).toBe(true);
@@ -219,7 +242,7 @@ describe("session chat ownership", () => {
     bridge.sessionChatRead.mockImplementationOnce(() => second.promise);
     const other = TestBed.runInInjectionContext(() => new SessionChatStore());
     other.open({ scopeId: 'scope', taskId: 2, sessionId: 3 }, false);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(SESSION_CHAT_SLOW_OPEN_MS);
     expect(store.progressiveLoading()).toBe(true);
     expect(other.progressiveLoading()).toBe(true);
     expect(bridge.sessionChatRead.mock.calls.filter(([, read]) => read.sessionId === 3).map(([, read]) => read.loadingMode))
@@ -239,7 +262,7 @@ describe("session chat ownership", () => {
   it('clears the opening deadline on success, navigation, hiding and destruction', async () => {
     const first = deferred<BackendResult<SessionChatPage>>();
     const { store, bridge } = setup({ initial: first.promise });
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(SESSION_CHAT_SLOW_OPEN_MS - 1);
     first.resolve(ok(page())); await settle();
     await vi.advanceTimersByTimeAsync(1);
     expect(store.progressiveLoading()).toBe(false);

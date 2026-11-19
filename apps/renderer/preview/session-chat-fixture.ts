@@ -3,6 +3,7 @@ import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
+import { SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   SessionChatAgentRead,
@@ -15,6 +16,9 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatRead,
+  SessionChatRecord,
+  SessionChatTurnWorkPage,
+  SessionChatTurnWorkRead,
   SessionChatState,
   SessionChatPreset,
   SessionChatCommandReply,
@@ -507,6 +511,42 @@ export class SessionChatFixture {
   seed(id: number, page: Pick<SessionChatPage, 'items' | 'state' | 'leadingPrompt'>): void {
     this.sessions.set(id, { items: [...(page.leadingPrompt ? [page.leadingPrompt] : []), ...page.items], state: page.state });
     this.changed();
+  }
+  private readonly turnActivities = new Map<string, readonly SessionChatRecord[]>();
+  private readonly heldActivity = new Set<() => void>();
+  private workBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  turnWorkReads = 0;
+
+  seedTurnWork(sessionId: number, turnId: string, records: readonly SessionChatRecord[]): void {
+    this.turnActivities.set(`${sessionId}/${turnId}`, records);
+  }
+
+  turnWorkBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.workBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldActivity) release();
+  }
+
+  async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkPage>> {
+    this.turnWorkReads++;
+    if (this.workBehavior === 'held') await new Promise<void>(resolve => {
+      const release = () => {
+        this.heldActivity.delete(release);
+        this.waiting.delete(input.requestId);
+        resolve();
+      };
+      this.heldActivity.add(release);
+      this.waiting.set(input.requestId, release);
+    });
+    if (this.workBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
+    const { taskId, sessionId, turnId, revision, offset } = input;
+    const work = this.turnActivities.get(`${sessionId}/${turnId}`);
+    const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
+    if (!work || revision !== summary?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Activity changed.' } };
+    const items = work.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT);
+    const end = offset + items.length;
+    return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+      items, total: work.length, nextOffset: end < work.length ? end : null } };
   }
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
     if (this.readsHeld) await new Promise<void>(resolve => {

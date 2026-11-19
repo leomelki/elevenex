@@ -68,6 +68,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   sessionChatCatalog: (scope, input) => invoke('session-chat:catalog', scope, input),
   sessionChatChanges: (scope, input) => invoke('session-chat:changes', scope, input),
   sessionChatRead: (scope, input) => invoke('session-chat:read', scope, input),
+  sessionChatTurnWork: (scope, input) => invoke('session-chat:turn-work', scope, input),
   sessionChatCommand: (scope, input) => invoke('session-chat:command', scope, input),
   sessionChatCancel: (scope, requestId) => invoke('session-chat:cancel', scope, requestId),
   sessionChatUpload: (scope, input) => invoke('session-chat:upload', scope, input),

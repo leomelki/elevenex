@@ -6,7 +6,7 @@
       [class.reply]="step.id === replyId()"
       [attr.data-work-step]="step.id"
       [attr.data-chat-row]="step.id"
-      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
+      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : hydrated().has(step.id) ? 'activity-reveal' : ''"
     >
       <div class="row-clip">
         <ex-fold class="group-fold" [open]="groupVisible(row)">

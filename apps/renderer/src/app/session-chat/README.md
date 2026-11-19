@@ -228,9 +228,10 @@ default. Normal reads request one recent window of at most **320 records / 2 MiB
 this disables small-page progressive opening without fetching an unbounded
 transcript. Older-window reads wait for scroll intent rather than prefilling a
 short collapsed conversation at startup. An uncached opening still pending after
-**3,000 ms** enables progressive loading for the **whole application connection**,
-cancels its larger request and requests
-**80 records / 512 KiB**. A small “Progressive” label accompanies the initial or
+**1,750 ms** enables progressive loading for the **whole application connection**,
+cancels its larger request and requests a recent window capped at
+**80 records / 512 KiB**, with compact completed turns on supporting engines.
+A small “Progressive” label accompanies the initial or
 history loading glyph while work is pending. This is a slow-open heuristic,
 not a diagnosis of network quality. It does not time idle long polls, cached
 revalidation or ordinary history navigation. Navigation, hiding, pausing and
@@ -262,6 +263,42 @@ Cached reopening renders immediately and revalidates from its saved incremental
 cursor, without blocking the composer or repeating an initial history read when
 the feed is still current. The backend provider's source-history API remains a
 full-history read, so a cold provider parse can still dominate initial latency.
+
+### Completed work in progressive history
+
+- A settled turn can occupy one saved entry with its prompt, latest reply
+  blocks, elapsed time, counts by tool category, failures and the first three
+  changed files plus the total. Review still opens the full paginated change
+  list. Earlier messages, reasoning, tool inputs/outputs and activity media
+  stay on the engine. Turns within the latest 32 source records can arrive
+  inline when the whole turn fits in eight records and 8 KiB. A prompt with
+  no hidden work stays inline. The engine selects at most 40 summaries
+  per history read and keeps the current live turn's raw stream
+  and saved completion handoff available. Replies exceeding eight blocks or
+  128 KiB stay in the ordinary history window so their visible text can be paged.
+- Summary selection occurs only at complete saved turn boundaries. Backward
+  paging uses the prompt ID and forward paging uses the last source ID. A
+  page starting or ending inside a turn uses ordinary rows at that seam.
+  The renderer counts visible reply blocks toward its 320-record window.
+- Opening Worked reads one versioned page of up to 40 activity records or
+  384 KiB. Earlier and Later page within the disclosure, so a large turn can
+  be inspected without retaining its entire trace in the renderer. A call
+  whose receipt falls on another page still reports its outcome and can open
+  the original output. The final reply keeps its identity while the activity
+  fills in around it.
+- The window-local cache retains up to 16 activity pages or 1.5 MiB of
+  serialized data, evicting least recently used pages first. Its key includes
+  the backend scope, task, session, turn revision and offset. One first page
+  of a turn with at most 40 hidden records can warm after 220ms of pointer or
+  keyboard focus intent. Opening the same turn joins that read. Collapsing,
+  hiding or switching the conversation cancels relevant reads. The tiny
+  inline turns and cached pages open directly.
+- The disclosure responds immediately. A slow read opens an inline loading
+  surface after 150ms, then reveals the timeline in place. A failure offers
+  retry while keeping the reply readable. Scope and revision changes invalidate
+  pending results. Activity and its loading surface respect reduced motion.
+
+### History window and related reads
 
 History windows also carry an optional
 bounded `leadingPrompt` when the first item belongs to an earlier user message.

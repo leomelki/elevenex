@@ -42,6 +42,10 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 8. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
 
+Elevenex starts Codex app-server with `model_context_window=1000000` for new
+and resumed conversations. Codex applies the selected model's advertised
+maximum and reserves headroom, so the usable window it reports can be smaller.
+
 ## Conversation Editing And Forking
 
 Both operations create a native Codex fork at a turn boundary and verify that

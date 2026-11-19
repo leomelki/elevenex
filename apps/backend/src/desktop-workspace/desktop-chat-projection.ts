@@ -28,7 +28,7 @@ const count = (value: unknown) =>
 export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatMedia>>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
 /** Keep execution facts separate from output without forwarding provider payloads. */
-function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
+export function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
   const source = item.kind === 'tool_use' ? item : call;
   const input = record(source?.toolInput);
   if (source?.toolKind !== 'bash' && !input.command && !input.cmd) return undefined;
@@ -45,6 +45,22 @@ function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem)
   };
   return Object.keys(execution).length ? execution : undefined;
 }
+export function chatItemFailed(item: AgentTranscriptItem, execution = commandExecution(item)) {
+  return item.isError === true || execution?.interrupted === true ||
+    (execution?.exitCode !== undefined && execution.exitCode !== 0);
+}
+
+export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
+  if (item.turnChanges) return changeSummary(item.turnChanges);
+  if (!call || !['write', 'edit', 'file_changes', 'notebook_edit', 'bash'].includes(call.toolKind ?? '')) return undefined;
+  const previous = cache?.get(call);
+  const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
+  const changes = previous?.result === item && previous.fingerprint === fingerprint
+    ? previous.changes : changeSummary(toolChanges(call, item));
+  cache?.set(call, { result: item, fingerprint, changes });
+  return changes;
+}
+
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
@@ -53,13 +69,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
   const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
   mediaCache?.set(item, projected);
   const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
-  let changes = changeSummary(item.turnChanges);
-  if (!item.turnChanges && call) {
-    const previous = cache?.get(call);
-    const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
-    changes = previous?.result === item && previous.fingerprint === fingerprint ? previous.changes : changeSummary(toolChanges(call, item));
-    cache?.set(call, { result: item, fingerprint, changes });
-  }
+  const changes = chatItemChanges(item, call, cache);
   return {
     ...(context?.mentions.length ? { mentions: context.mentions } : {}),
     ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
@@ -74,7 +84,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
       item.toolDisplayName ?? item.providerToolName ?? item.toolName ?? null,
     toolKind: item.toolKind ?? null,
     input,
-    error: item.isError === true || execution?.interrupted === true || (execution?.exitCode !== undefined && execution.exitCode !== 0),
+    error: chatItemFailed(item, execution),
     truncated:
       projected.shortened || text.endsWith('… [display shortened]') ||
       input.endsWith('… [display shortened]'),

@@ -982,3 +982,60 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   assert.equal((await wait(scope,input)).error.code,'stale-scope');
   stop(); assert.equal(handlers.size,0);
 });
+
+test('completed activity is opt-in and validates the exact scoped request and bounded records', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const revision = 'a'.repeat(64);
+  const record = (id, kind) => ({ id, kind, text: 'text', timestamp: '2026-11-19T10:00:00Z', toolId: null, toolKind: null, toolName: null, input: '', error: false, truncated: false });
+  const summary = { revision, endId: 'reply', beforeReply: 1, total: 1, counts: { run: 1 }, failures: 0, reply: [record('reply', 'assistant')] };
+  const page = { taskId: 5, sessionId: 9, cursor: 'cursor', reset: true, state, items: [{ ...record('prompt', 'user'), completedTurn: summary }], events: [], before: null };
+  assert.equal(parseChatPage(page, 5, 9, 'progressive', true).items[0].completedTurn.revision, revision);
+  assert.throws(() => parseChatPage(page, 5, 9, 'progressive'), /incompatible/);
+  for (const completedTurn of [{ ...summary, total: 0 }, { ...summary, beforeReply: 2 }, { ...summary, counts: { run: 2 } }, { ...summary, reply: [record('tool', 'tool_use')] }]) {
+    assert.throws(() => parseChatPage({ ...page, items: [{ ...page.items[0], completedTurn }] }, 5, 9, 'progressive', true), /incompatible/);
+  }
+
+  const { readFile } = require('node:fs/promises'), vm = require('node:vm');
+  const handlers = new Map(), ipc = {}, adapter = {}, requests = [];
+  let response = { taskId: 5, sessionId: 9, turnId: 'prompt', revision, offset: 0, total: 2, nextOffset: 1, items: [{ ...record('call', 'tool_use'), receipt: { id: 'result', error: false } }], private: 'discard' };
+  const url = await server(context, (request, reply) => {
+    requests.push(request.url);
+    reply.writeHead(200, json);
+    reply.end(JSON.stringify(response));
+  });
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, frame = {}, sender = { id: 42 };
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (key, handler) => handlers.set(key, handler), removeHandler: key => handlers.delete(key) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat'), 'utf8'), {
+    exports: adapter, URLSearchParams,
+    require: name => name === '../ipc' ? ipc : ({
+      './session-chat-agents': { registerChatAgents: () => () => undefined },
+      './session-chat-attachments': { registerChatAttachments: () => () => undefined },
+      './session-chat-media': { registerSessionChatMedia: () => () => undefined },
+    })[name] ?? require('../dist/backend-client/' + name.slice(2)),
+  });
+  const stop = adapter.registerSessionChatIpc(client, candidate => candidate === frame);
+  context.after(stop);
+  const work = handlers.get('session-chat:turn-work');
+  const input = { taskId: 5, sessionId: 9, turnId: 'prompt', revision, offset: 0, requestId: 'test' };
+  const read = (value = input) => work({ senderFrame: frame, sender }, scope, value);
+  assert.throws(() => work({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  assert.throws(() => read({ ...input, offset: 0.5 }));
+  assert.throws(() => read({ ...input, revision: 'old' }));
+  assert.equal((await work({ senderFrame: frame, sender }, 'b'.repeat(36), input)).error.code, 'stale-scope');
+  assert.equal(requests.length, 0);
+  const result = await read();
+  assert.equal(requests[0], `/api/desktop-workspace/tasks/5/sessions/9/chat/turn-work?turnId=prompt&revision=${revision}&offset=0`);
+  assert.equal(result.value.private, undefined);
+  assert.equal(result.value.items[0].receipt.id, 'result');
+  const valid = response;
+  for (const patch of [{ sessionId: 10 }, { turnId: 'another' }, { offset: 1 }, { nextOffset: 2 }, { items: [record('person', 'user')] }, { items: Array(41).fill(record('call', 'tool_use')) }]) {
+    response = { ...valid, ...patch };
+    assert.equal((await read()).error.code, 'invalid-response');
+  }
+  stop();
+  assert.equal(handlers.size, 0);
+});

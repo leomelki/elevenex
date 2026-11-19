@@ -31,6 +31,7 @@ import {
   record,
 } from './desktop-chat-projection.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
+import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
 
 interface ChatFeed {
   readonly id: string;
@@ -43,8 +44,10 @@ interface ChatFeed {
   >;
   readonly changesCache: ChatChangesCache;
   readonly mediaCache: ChatMediaCache;
-  readonly latestBounds: Map<'window' | 'progressive', { readonly revision: string; readonly before: string | null }>;
+  readonly latestBounds: Map<'window' | 'progressive' | 'summary', { readonly revision: string; readonly before: string | null }>;
   historyIndex?: { readonly revision: number; readonly index: ChatHistoryIndex };
+  completedTurns?: { readonly revision: number; readonly projector: ChatCompletedTurns };
+  livePrompt?: string;
   review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
   historyRevision: number;
@@ -249,6 +252,12 @@ export class DesktopChatService implements OnModuleDestroy {
     return feed.historyIndex.index;
   }
 
+  private completedTurns(feed: ChatFeed): ChatCompletedTurns {
+    if (feed.completedTurns?.revision !== feed.historyRevision)
+      feed.completedTurns = { revision: feed.historyRevision, projector: new ChatCompletedTurns(feed.changesCache, feed.mediaCache) };
+    return feed.completedTurns.projector;
+  }
+
   async read(
     taskId: number,
     sessionId: number,
@@ -257,10 +266,13 @@ export class DesktopChatService implements OnModuleDestroy {
     signal: AbortSignal,
     following?: string,
     loadingMode?: string,
+    summarizeCompleted?: string,
   ) {
     let session = await this.target(taskId, sessionId);
     if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
       throw new BadRequestException('Invalid conversation loading mode.');
+    if (summarizeCompleted !== undefined && (summarizeCompleted !== '1' || loadingMode !== 'progressive'))
+      throw new BadRequestException('Invalid completed turn view.');
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
       (before !== undefined && (typeof before !== 'string' || before.length > 1000 || !before)) ||
@@ -271,6 +283,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const paging = !!(before || following);
     const archived = () => session.status === 'archived' || !!session.workspaceArchivedAt;
     const mode = loadingMode ?? 'progressive';
+    const view = summarizeCompleted ? 'summary' : mode;
     const readArchived = async () => {
       if (this.feeds.get(sessionId)?.attached) this.release(sessionId);
       const archivedFeed = this.feed(sessionId, session.activeAgentProvider, false);
@@ -280,6 +293,7 @@ export class DesktopChatService implements OnModuleDestroy {
       const window = chatWindow(history, [], {
         before, following, loadingMode: mode, historyIndex,
         changesCache: archivedFeed.changesCache, mediaCache: archivedFeed.mediaCache,
+        completedTurns: summarizeCompleted ? this.completedTurns(archivedFeed) : undefined,
       });
       if (!window)
         throw new BadRequestException(
@@ -351,7 +365,7 @@ export class DesktopChatService implements OnModuleDestroy {
     if (signal.aborted) return;
     feed.touched = Date.now();
     const state = this.state(session, raw);
-    const bounds = feed.latestBounds.get(mode);
+    const bounds = feed.latestBounds.get(view);
     if (!paging && after === revision && bounds?.revision === revision) {
       // Runtime state can change independently of item events (for example,
       // configuration). The matching cursor already accounts for transcript rows.
@@ -361,10 +375,20 @@ export class DesktopChatService implements OnModuleDestroy {
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
+    const liveTurn = state.phase === 'running' || state.phase === 'waiting';
+    if (liveTurn) {
+      // A streamed turn keeps its timeline during the persisted handoff.
+      // A fresh opening can still compact that turn from saved history.
+      const prompt = live.findLast(item => item.kind === 'user')?.id;
+      if (prompt) feed.livePrompt = prompt;
+    }
     const fingerprints = paging ? undefined : new Map<string, string>();
     const window = chatWindow(history, live, {
       before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
       changesCache: feed.changesCache, mediaCache: feed.mediaCache,
+      completedTurns: summarizeCompleted && readsHistory ? this.completedTurns(feed) : undefined,
+      liveTurn,
+      keepTurnId: paging || prior?.[0] === feed.id ? feed.livePrompt : undefined,
     });
     if (!window)
       throw new BadRequestException(
@@ -381,7 +405,7 @@ export class DesktopChatService implements OnModuleDestroy {
         if (!old || old.revision <= version) feed.projections.set(item.id, { json, revision: itemVersion });
         if (!reset && itemVersion > priorVersion) events.push({ type: 'item', item });
       }
-      if (revision === cursor()) feed.latestBounds.set(mode, { revision, before: window.before });
+      if (revision === cursor()) feed.latestBounds.set(view, { revision, before: window.before });
     }
     for (const key of feed.projections.keys()) {
       if (feed.projections.size <= 320) break;
@@ -399,6 +423,26 @@ export class DesktopChatService implements OnModuleDestroy {
       next: window.next,
       state,
     };
+  }
+
+  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number, signal: AbortSignal) {
+    if (typeof turnId !== 'string' || !turnId || turnId.length > 1000 ||
+        typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) ||
+        !Number.isSafeInteger(offset) || offset < 0)
+      throw new BadRequestException('Invalid turn activity window.');
+    const session = await this.target(taskId, sessionId);
+    if (signal.aborted) return;
+    const feed = this.feed(sessionId, session.activeAgentProvider, false);
+    const index = this.historyWindowIndex(feed, true);
+    const projector = this.completedTurns(feed);
+    const history = await this.history(feed, sessionId);
+    if (signal.aborted) return;
+    index.align(history);
+    const start = index.position(history, turnId);
+    const page = start >= 0 && history[start].kind === 'user'
+      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset) : null;
+    if (!page) throw new ConflictException('This activity has changed. Refresh the conversation to see it.');
+    return { taskId, sessionId, turnId, revision, offset, ...page };
   }
 
   async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {
