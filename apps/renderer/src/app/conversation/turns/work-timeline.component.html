@@ -122,6 +122,8 @@
                         : step.output || step.hunk?.join('\n') || ''
                     "
                     [presentation]="step.presentation"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyCode.emit($event)"
                     [fullContent]="step.fullContent"
                     (expandedChange)="toolExpanded(step.id, $event)"
                     (contentRequested)="contentRequested.emit($event)"

@@ -6,7 +6,7 @@
   [attr.aria-label]="label()"
   [id]="listId()"
 >
-  @for (row of rows(); track row.kind + ":" + row.name; let i = $index) {
+  @for (row of rows(); track row.kind + ":" + ref(row); let i = $index) {
     <button
       type="button"
       role="option"
@@ -16,7 +16,7 @@
       [attr.aria-disabled]="!selectable(row)"
       [disabled]="!selectable(row)"
       [class.invalid]="row.kind === 'invalid'"
-      [class.used]="!!row.task"
+      [class.used]="!!row.task && !allowHeld()"
       (mousedown)="$event.preventDefault()"
       (click)="choose(row)"
     >
@@ -33,7 +33,7 @@
         @if (row.kind === "create") {
           <span class="verb">Create</span>
         }
-        <span class="mono grow">
+        <span class="mono grow" [title]="row.name">
           <!-- Inline elements keep template whitespace out of branch identifiers. -->
           @for (part of highlights(row.name, query()); track $index) {
             @if (part.match) {
@@ -46,13 +46,17 @@
         @if (row.isDefault) {
           <span class="tag">default</span>
         }
-        <span class="meta">{{ metadata(row) }}</span>
+        @if (metadata(row); as info) {
+          <span class="meta" [title]="info">{{ info }}</span>
+        }
         @if (highlighted() === i && selectable(row)) {
           <ex-kbd>↵</ex-kbd>
         }
       }
     </button>
   } @empty {
-    <div class="empty">No branch matches “{{ query() }}”</div>
+    @if (!disabled()) {
+      <div class="empty">{{ query().trim() ? 'No branch matches “' + query() + '”' : 'No branches available' }}</div>
+    }
   }
 </div>

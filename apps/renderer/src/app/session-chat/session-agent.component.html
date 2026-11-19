@@ -181,6 +181,8 @@
                     [meta]="row.tool!.meta || ''"
                     [status]="row.status"
                     [presentation]="row.tool!"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyRequested.emit($event)"
                     [output]="row.item.input || ''"
                   />
                 }
@@ -191,6 +193,8 @@
                     [detail]="row.item.toolName || 'Tool'"
                     [status]="row.status"
                     [presentation]="row.tool!"
+                    [copiedCode]="copiedCode()"
+                    (copyCode)="copyRequested.emit($event)"
                     [output]="row.item.text"
                   />
                 }

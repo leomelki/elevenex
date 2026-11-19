@@ -238,11 +238,18 @@ function projectExchanges(
           if (item.kind === "tool_use") {
             const presentation = presentSessionTool(item, result);
             const outcome =
-              result?.error || item.error
+              result?.error || item.error ||
+              presentation.shell?.failed || presentation.shell?.interrupted
                 ? "failed"
                 : !result && !live
                   ? "unknown"
                   : undefined;
+            const inputId = item.truncated || presentation.shell?.commandShortened
+              ? item.id
+              : undefined;
+            const outputId = result && (result.truncated || presentation.shell?.outputShortened)
+              ? result.id
+              : undefined;
             return [
               {
                 id: item.id,
@@ -254,12 +261,7 @@ function projectExchanges(
                     ? "Completion unknown"
                     : presentation.meta,
                 presentation,
-                fullContent: item.truncated || result?.truncated
-                  ? {
-                      inputId: item.truncated ? item.id : undefined,
-                      outputId: result?.truncated ? result.id : undefined,
-                    }
-                  : undefined,
+                fullContent: inputId || outputId ? { inputId, outputId } : undefined,
                 status: outcome ?? (result ? "done" : "running"),
                 output: [
                   "Input",

@@ -1,3 +1,4 @@
+import { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   InvokeContracts,
@@ -115,7 +116,7 @@ function repository(value: unknown): WorkspaceRepository {
     projectId: id(raw['projectId']),
     name: text(raw['name'], 256),
     path: text(raw['path']),
-    defaultBase: nullable(raw['defaultBase'], 240),
+    defaultBase: nullable(raw['defaultBase'], WORKSPACE_BRANCH_REF_LIMIT),
   };
 }
 function setupIssue(value: unknown): WorkspaceTaskSetupIssue {
@@ -715,10 +716,10 @@ export function registerWorkspaceIpc(
         mode,
         ...(raw['branchName'] === undefined
           ? {}
-          : { branchName: required(raw['branchName'], 240) }),
+          : { branchName: required(raw['branchName'], mode === 'existing' ? WORKSPACE_BRANCH_REF_LIMIT : WORKSPACE_BRANCH_NAME_LIMIT) }),
         ...(raw['baseRef'] === undefined
           ? {}
-          : { baseRef: required(raw['baseRef'], 240) }),
+          : { baseRef: required(raw['baseRef'], WORKSPACE_BRANCH_REF_LIMIT) }),
       },
       parseWorkspaceTask,
     );
@@ -820,22 +821,33 @@ export function registerWorkspaceIpc(
   register('workspace:branches', (window, scope, input) => {
     const raw = object(input),
       repoId = id(raw['repoId']),
-      limit = raw['limit'] === undefined ? 50 : id(raw['limit']);
+      limit = raw['limit'] === undefined ? 50 : id(raw['limit']),
+      includeRemote = raw['includeRemote'] === undefined ? undefined : boolean(raw['includeRemote']),
+      query = raw['query'] === undefined ? '' : text(raw['query'], includeRemote ? WORKSPACE_BRANCH_REF_LIMIT : WORKSPACE_BRANCH_NAME_LIMIT);
     if (limit > 100) throw new Error('Branch limit exceeds 100.');
     return read(
       window,
       scope,
-      `${base}/branches?${queryString({ repoId, query: raw['query'] === undefined ? '' : text(raw['query'], 240), limit })}`,
+      `${base}/branches?${queryString({ repoId, query, limit, includeRemote })}`,
       (value) => {
         if (!Array.isArray(value) || value.length > limit)
           throw invalidResponse();
         return value.map((value) => {
-          const branch = object(value);
+          const branch = object(value),
+            name = text(branch['name'], WORKSPACE_BRANCH_NAME_LIMIT),
+            ref = branch['ref'] === undefined ? undefined : text(branch['ref'], WORKSPACE_BRANCH_REF_LIMIT),
+            remoteBranch = branch['remoteBranch'] === undefined ? undefined : text(branch['remoteBranch'], WORKSPACE_BRANCH_NAME_LIMIT);
+          if (ref !== undefined && ref !== `refs/heads/${name}` && ref !== `refs/remotes/${name}`)
+            throw invalidResponse();
+          if (remoteBranch !== undefined && (!remoteBranch || !ref?.startsWith('refs/remotes/') || !name.endsWith(`/${remoteBranch}`)))
+            throw invalidResponse();
           return {
-            name: text(branch['name'], 240),
+            name,
+            ...(ref === undefined ? {} : { ref }),
+            ...(remoteBranch === undefined ? {} : { remoteBranch }),
             current: boolean(branch['current']),
             isDefault: boolean(branch['isDefault']),
-            defaultBase: nullable(branch['defaultBase'], 240),
+            defaultBase: nullable(branch['defaultBase'], WORKSPACE_BRANCH_REF_LIMIT),
             heldTaskName: nullable(branch['heldTaskName'], 160),
           };
         });

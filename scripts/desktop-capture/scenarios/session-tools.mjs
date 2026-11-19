@@ -73,14 +73,14 @@ export default async function* (capture) {
       }
       await finish();
       assert.equal(await capture.evaluate(selector => document.querySelector(selector + ' .head').getAttribute('aria-expanded'), selector), 'true');
-      const primary = await capture.evaluate(selector => [...document.querySelectorAll(selector + ' .tool-preview .tool-block')].map(block => block.textContent).join('\n'), selector);
+      const primary = await capture.evaluate(selector => [...document.querySelectorAll(selector + ' .tool-preview .tool-block, ' + selector + ' .tool-preview ex-shell-tool')].map(block => block.textContent).join('\n'), selector);
       assert.ok(primary.trim(), `${name}: missing primary preview`);
       assert.equal(await capture.evaluate(selector => document.querySelector(selector + ' .more-details')?.open, selector), false);
       const size = await capture.evaluate(selector => Math.ceil(document.querySelector(selector + ' .tool-content').getBoundingClientRect().height), selector);
-      assert.ok(size <= 220, `${name}: default content is ${size}px high`);
+      assert.ok(size <= (name.includes('command') ? 400 : 220), `${name}: default content is ${size}px high`);
       if (name === 'command') {
         assert.match(primary, /12 tests passed\./);
-        assert.doesNotMatch(primary, /Working directory|Purpose|pnpm test retry|\/workspace\/payments/);
+        assert.match(primary, /pnpm test retry/);
       }
       if (name === 'edit') {
         assert.match(primary, /const claim = await retries\.claim\(key\);/);

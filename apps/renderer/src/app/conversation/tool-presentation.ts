@@ -12,6 +12,8 @@ export interface ToolPresentation {
   readonly summary: string;
   readonly meta?: string;
   readonly blocks: readonly ToolBlock[];
+  /** Captured shell output; parsed lazily when the tool disclosure is mounted. */
+  readonly shell?: ShellToolPresentation;
   /** Curated primary evidence; complete parsed blocks remain under Details. */
   readonly preview?: readonly ToolBlock[];
   readonly previewNotice?: string;
@@ -51,3 +53,17 @@ export type ToolBlock =
       readonly title?: string;
       readonly items: readonly ToolListItem[];
     };
+
+/** Shell facts are provider-neutral; timeline status supplies running/unknown completion. */
+export interface ShellToolPresentation {
+  readonly command: string;
+  readonly directory: string;
+  readonly description: string;
+  readonly output: string;
+  readonly exitCode?: number;
+  readonly interrupted: boolean;
+  readonly failed: boolean;
+  readonly duration?: string;
+  readonly commandShortened: boolean;
+  readonly outputShortened: boolean;
+}

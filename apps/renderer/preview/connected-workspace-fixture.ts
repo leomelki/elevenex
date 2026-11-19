@@ -1,5 +1,5 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
-import type { BackendResult, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
+import type { BackendResult, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
 import { SessionChatFixture } from './session-chat-fixture';
 
@@ -206,7 +206,28 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     }
     return this.workspaceTask(scope, id);
   };
-  workspaceBranches = async () => success([{ name: 'main', current: true, isDefault: true, defaultBase: 'main', heldTaskName: null }, { name: 'release/stable', current: false, isDefault: false, defaultBase: 'main', heldTaskName: null }]);
+  private branchSearchFails = false;
+  setBranchSearchFailure(enabled: boolean): void { this.branchSearchFails = enabled; }
+  workspaceBranches = async (_scope: string, input: WorkspaceBranchQuery): Promise<BackendResult<readonly WorkspaceBranch[]>> => {
+    if (this.branchSearchFails) return { ok: false, error: { code: 'http', status: 503, message: 'Could not load branches.' } };
+    const defaultBase = input.repoId === 1 ? 'refs/remotes/origin/main' : 'refs/heads/main';
+    const refs = input.repoId === 1 ? [
+      defaultBase, 'refs/heads/main', 'refs/remotes/origin/release/candidate',
+      'refs/heads/fix/idempotent-retries', 'refs/heads/release/stable',
+      'refs/remotes/origin/fix/idempotent-retries', 'refs/remotes/upstream/review/payments',
+      'refs/remotes/upstream/review/settlement',
+      'refs/heads/release/maintenance', 'refs/heads/release/canary', 'refs/heads/release/next',
+    ] : [defaultBase, 'refs/heads/release/stable'];
+    const query = input.query?.trim().toLowerCase() ?? '';
+    const words = query.split(/[\s/_-]+/).filter(Boolean);
+    return success(refs.flatMap(ref => {
+      const name = ref.replace(/^refs\/(heads|remotes)\//, '');
+      if (query.startsWith('refs/') ? !ref.startsWith(query) : !words.every(word => name.includes(word))) return [];
+      const remoteBranch = ref.startsWith('refs/remotes/') ? name.slice(name.indexOf('/') + 1) : undefined;
+      const held = this.taskRows.find(task => task.repoId === input.repoId && !task.archivedAt && task.branchName === (remoteBranch ?? name));
+      return [{ name, ref, remoteBranch, current: ref === 'refs/heads/main', isDefault: ref === defaultBase, defaultBase, heldTaskName: held?.name ?? null }];
+    }).slice(0, input.limit ?? 50));
+  };
   override workspaceFolders = async (_scope?: string, input?: import('@elevenex/shared').WorkspaceFolderQuery) => {
     if (this.folderDelay) await new Promise<void>(resolve => {
       const finish = () => { clearTimeout(timer); this.pendingFolderReads.delete(finish); resolve(); };
@@ -236,7 +257,8 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceTaskRequest = async (_scope: string, input: { readonly requestId: string; readonly repoId: number }) => { const request = this.sentTaskCreates.findIndex(item => item.requestId === input.requestId && item.repoId === input.repoId); return success({ task: request < 0 ? null : this.taskRows.find(task => task.name === this.sentTaskCreates[request]?.name) ?? null }); };
   workspaceCreateTask = async (_scope: string, input: WorkspaceCreateTask) => {
     this.sentTaskCreates.push(input);
-    let task: WorkspaceTask = { id: Math.max(0, ...this.taskRows.map(task => task.id)) + 1, projectId: input.repoId, repoId: input.repoId, name: input.name, branchName: input.branchName ?? 'task/new-task', stage: 'active', state: 'ready', archivedAt: null, updatedAt: stamp };
+    const branchName = input.branchName?.replace(/^refs\/(heads\/|remotes\/[^/]+\/)/, '') ?? 'task/new-task';
+    let task: WorkspaceTask = { id: Math.max(0, ...this.taskRows.map(task => task.id)) + 1, projectId: input.repoId, repoId: input.repoId, name: input.name, branchName, stage: 'active', state: 'ready', archivedAt: null, updatedAt: stamp };
     if (this.taskSetupFailure === 'worktree-limit') {
       task = { ...task, state: 'failed', setupIssue: { code: 'other', message: 'This repository has 23 workspaces, meeting or exceeding the configured limit of 5. Your task has been saved. Free a workspace and retry, or create one above the limit for this task.', canUseSnapshot: false, canExceedWorktreeLimit: true } };
     } else if (this.taskSetupFailure && input.mode === 'existing') {

@@ -1777,6 +1777,28 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect(await gitService.resolve(repoPath, 'refs/heads/review')).toBe(
       remote.startingCommit,
     );
+
+    const basedOnRemote = await create('new-from-remote', {
+      baseRef: 'refs/remotes/upstream/review',
+    });
+    expect(basedOnRemote).toMatchObject({
+      taskState: 'ready',
+      taskBranch: 'new-from-remote',
+      startingCommit: await gitService.resolve(repoPath, 'refs/remotes/upstream/review'),
+    });
+  });
+
+  it('starts a new branch at the committed tip of a branch held by an active task', async () => {
+    const owner = await create('held-source');
+    await worktreeSimpleGit(owner.path).raw(['commit', '--allow-empty', '-m', 'Work on source']);
+    await writeFile(join(owner.path, 'pending-edit.txt'), 'Uncommitted work');
+    const source = await gitService.resolve(repoPath, 'refs/heads/held-source');
+
+    const child = await create('new-from-held', { baseRef: 'refs/heads/held-source' });
+    expect(child).toMatchObject({ taskState: 'ready', taskBranch: 'new-from-held', startingCommit: source });
+    expect(child.path).not.toBe(owner.path);
+    expect(await gitService.status(child.path)).toMatchObject({ branch: 'new-from-held', head: source, dirty: false });
+    expect(await gitService.status(owner.path)).toMatchObject({ branch: 'held-source', head: source, dirty: true });
   });
 
   it('does not release an environment when process cleanup fails, and can retry safely', async () => {

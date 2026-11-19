@@ -131,13 +131,21 @@ export interface WorkspaceAppearance {
   readonly emoji?: string;
   readonly icon?: string;
 }
+export const WORKSPACE_BRANCH_NAME_LIMIT = 240;
+export const WORKSPACE_BRANCH_REF_LIMIT = WORKSPACE_BRANCH_NAME_LIMIT + 'refs/remotes/'.length;
+
 export interface WorkspaceBranchQuery {
   readonly repoId: number;
   readonly query?: string;
   readonly limit?: number;
+  /** Also return remote-tracking refs and unambiguous branch identities. */
+  readonly includeRemote?: boolean;
 }
 export interface WorkspaceBranch {
   readonly name: string;
+  readonly ref?: string;
+  /** The local branch name that an existing-branch task would use. */
+  readonly remoteBranch?: string;
   readonly current: boolean;
   readonly isDefault: boolean;
   readonly defaultBase: string | null;

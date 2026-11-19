@@ -54,6 +54,7 @@
                 class="title-input"
                 [value]="titleValue()"
                 (input)="nameChanged(nameField.value)"
+                maxlength="160"
                 placeholder="What are you working on?"
                 aria-label="Task name"
                 autocomplete="off"
@@ -173,13 +174,13 @@
                   [value]="branchValue()"
                   (input)="branchChanged(branchField.value)"
                   aria-label="Branch: type to search or create"
+                  placeholder="Search local and remote branches"
                   role="combobox"
                   aria-autocomplete="list"
+                  [maxLength]="branchRefLimit"
                   [attr.aria-controls]="branchListId"
                   [attr.aria-expanded]="currentStep() === 'branch'"
-                  [attr.aria-activedescendant]="
-                    branchListId + '-' + highlighted()
-                  "
+                  [attr.aria-activedescendant]="activeOption('branch')"
                   spellcheck="false"
                 />
                 @if (branchQueryValue() !== null) {
@@ -187,6 +188,7 @@
                     class="reset"
                     type="button"
                     title="Back to the name from the task"
+                    aria-label="Reset branch name"
                     (click)="branchChanged(null)"
                   >
                     <ex-icon name="reset" [size]="12" />
@@ -198,7 +200,8 @@
                 [listId]="branchListId"
                 [items]="branchRows()"
                 [query]="branchValue()"
-                [base]="baseValue()"
+                [base]="baseLabel()"
+                [disabled]="branchLookupBlocked()"
                 [highlighted]="highlighted()"
                 (pick)="pickBranch($event)"
               /></div
@@ -223,9 +226,9 @@
                   >
                 } @else {
                   <ex-icon name="branch" [size]="13" /><span class="mono">{{
-                    baseValue()
+                    baseLabel()
                   }}</span>
-                  @if (baseValue() === defaultBase()) {
+                  @if (baseIsDefault()) {
                     <span class="tag">default</span>
                   }
                 }
@@ -249,16 +252,17 @@
                     aria-label="Start from"
                     role="combobox"
                     aria-autocomplete="list"
+                    [maxLength]="branchRefLimit"
                     [attr.aria-controls]="baseListId"
                     [attr.aria-expanded]="currentStep() === 'base'"
-                    [attr.aria-activedescendant]="
-                      baseListId + '-' + highlighted()
-                    "
+                    [attr.aria-activedescendant]="activeOption('base')"
                     spellcheck="false" /></label
                 ><ex-branch-picker
                   [listId]="baseListId"
                   [items]="baseRows()"
                   [query]="baseQueryValue()"
+                  [allowHeld]="true"
+                  [disabled]="branchLookupBlocked()"
                   [highlighted]="highlighted()"
                   label="Start from"
                   (pick)="pickBase($event)"
@@ -294,12 +298,19 @@
           </button>
         </div>
       </div>
-      @if (branchesLoading()) { <span class="muted" role="status">Finding branches…</span> }
+      @if (branchesLoading()) {
+        <span class="muted" role="status">Finding branches…</span>
+      } @else if (branchSearchFailed()) {
+        <div class="branch-search-error">
+          <span role="alert">Could not load branches.</span>
+          <button exButton variant="ghost" size="sm" (click)="retryBranchSearch()">Retry</button>
+        </div>
+      }
       <footer>
         <button
           exButton
           variant="ghost"
-          [disabled]="!titleValue().trim()"
+          [disabled]="!canPlan()"
           (click)="savePlanned()"
         >
           Save as planned

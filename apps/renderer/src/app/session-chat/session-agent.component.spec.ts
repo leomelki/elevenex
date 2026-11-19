@@ -220,3 +220,26 @@ it('keeps agent scrolling contiguous with at most 320 retained items and reloads
   expect(owner.page()!.items.at(-1)?.id).toBe('3999');
   expect(owner.page()!.items.length).toBeLessThanOrEqual(320);
 });
+
+
+it("forwards shell copies and reports native command failures in delegated work", async () => {
+  const call: SessionChatItem = { id: "shell", kind: "tool_use", text: "", timestamp: "", toolId: "shell", toolName: "Bash", toolKind: "bash", input: '{"command":"pnpm test"}', error: false, truncated: false };
+  const client = {
+    agent: vi.fn(async () => ({ ok: true as const, value: { ...page("child"), status: "completed" as const, availability: "available" as const, items: [call, { ...call, id: "result", kind: "tool_result" as const, text: "failure details", execution: { exitCode: 1 } }] } })),
+    cancel: vi.fn(),
+  };
+  TestBed.configureTestingModule({ providers: [{ provide: SessionChatClient, useValue: client }] });
+  const fixture = TestBed.createComponent(SessionAgentComponent);
+  fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 2 });
+  fixture.componentRef.setInput("agentId", "child");
+  fixture.detectChanges(); await fixture.whenStable(); fixture.detectChanges();
+  const dialog = document.querySelector<HTMLElement>(".agent-dialog")!;
+  expect(dialog.querySelector("ex-tool-step section.failed")).not.toBeNull();
+  dialog.querySelector<HTMLButtonElement>("ex-tool-step .head")!.click(); fixture.detectChanges();
+  const copies: string[] = []; fixture.componentInstance.copyRequested.subscribe(text => copies.push(text));
+  dialog.querySelector<HTMLButtonElement>('[aria-label="Copy captured output"]')!.click();
+  expect(copies).toEqual(["failure details"]);
+  fixture.componentRef.setInput("copiedCode", "failure details"); fixture.detectChanges();
+  expect(dialog.querySelector('[aria-label="Output copied"]')).not.toBeNull();
+  fixture.destroy();
+});

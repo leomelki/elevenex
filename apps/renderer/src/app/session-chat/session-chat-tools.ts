@@ -7,6 +7,7 @@ import type {
   ToolPresentation,
 } from "../conversation";
 import { focusSessionTool } from "./session-tool-focus";
+import { sessionShellTool } from "./session-shell-tool";
 
 type Data = Readonly<Record<string, unknown>>;
 const MAX_ROWS = 40;
@@ -459,6 +460,8 @@ export function presentSessionTool(
   let meta = "";
   const path = string(input, "file_path", "path", "filePath", "notebook_path");
   const output = result ? decode(result.text) : undefined;
+  const shell = item.toolKind === "bash"
+    ? sessionShellTool(item, result, decodedInput, output) : undefined;
   const succeeded = result !== undefined && !result.error;
   let outputHandled = false;
   switch (item.toolKind) {
@@ -479,14 +482,8 @@ export function presentSessionTool(
         field("Purpose", "description"),
       ]);
       const data = record(output);
-      const exit =
-        result?.execution?.exitCode ??
-        data["exit_code"] ??
-        data["exitCode"] ??
-        result?.text.match(
-          /(?:Process exited with code|Exit code:)\s*(-?\d+)/i,
-        )?.[1];
-      if (result?.execution?.interrupted) meta = "Interrupted";
+      const exit = shell?.exitCode;
+      if (shell?.interrupted) meta = "Interrupted";
       else if (typeof exit === "number" || typeof exit === "string")
         meta = `Exit ${exit}`;
       if (
@@ -917,6 +914,7 @@ export function presentSessionTool(
     summary: summary.slice(0, 500),
     ...(meta ? { meta: meta.slice(0, 100) } : {}),
     blocks,
+    ...(shell ? { shell } : {}),
     ...focusSessionTool(item, result, blocks, resultStart ?? blocks.length),
     ...(shortened
       ? {

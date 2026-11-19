@@ -38,6 +38,13 @@ describe('branch choices', () => {
       ),
     ).toEqual([{ kind: 'branch', name: 'feature/held', task: 'Other task' }]);
   });
+  it('recognizes exact remote names and keeps identical local and remote labels addressable', () => {
+    const local = { name: 'upstream/topic', ref: 'refs/heads/upstream/topic' };
+    const remote = { name: 'upstream/topic', ref: 'refs/remotes/upstream/topic', remote: true, remoteBranch: 'topic' };
+    expect(branchItems('upstream/topic', [local, remote], true).map(row => row.ref)).toEqual([local.ref, remote.ref]);
+    expect(branchItems(remote.ref, [local, remote], true)).toEqual([{ ...remote, kind: 'branch' }]);
+    expect(branchItems('topic', [local, remote], true)[0]).toEqual({ ...remote, kind: 'branch' });
+  });
   it.each([
     'bad name',
     'bad..name',

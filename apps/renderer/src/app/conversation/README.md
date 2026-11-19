@@ -607,3 +607,33 @@ again. Element mentions never emit `mentionInserted`. Capture, upload and browse
 authority remain with the owner. Snapshot outlines stay outside target borders;
 uploaded pixels and the [wire/lifetime contract](../../../../../docs/browser-element-mentions.md)
 remain unchanged. The `/element-mentions` preview stages actual host snapshots.
+
+
+## Captured shell results
+
+`ToolPresentation.shell` supplies provider-neutral command facts and captured
+output. `ShellToolComponent` renders it inside the existing ToolStep disclosure,
+with the renderer's theme, shared icon controls, wrap/copy actions and a bounded
+scroll region. This is a read-only receipt; it never starts or attaches to a PTY.
+The session adapter owns provider normalization. ANSI parsing happens only after
+that disclosure first mounts and is independent of live status or copy feedback.
+Standard ANSI colors follow semantic theme tokens; explicit RGB/256 colors are
+preserved. All output remains inert text; OSC links, clipboard escapes and other
+control sequences cannot invoke platform operations.
+
+The adapter retains at most 100,000 captured characters and 24,000 command
+characters. Initially 80 tail lines are mounted; Show more lines increases that
+window to at most 1,000. Copy captured output copies the normalized available
+capture, including lines outside that DOM window. Source shortening is disclosed;
+the existing full-input/output reader remains the path to provider-truncated
+transcripts. Scrolling up retains the captured lines being read, including when newer output
+would evict the tail. New output available signals pending text; Jump to latest
+resumes following.
+Expansion preserves distance from the bottom. Copy emits the existing code-copy
+intent through the timeline to the session owner, which uses native clipboard
+IPC, stale-result guards and acknowledged success/error feedback.
+
+`preview`'s `shell-results` scenario and
+`scripts/desktop-capture/scenarios/shell-tool-results.mjs` exercise these production
+components in both themes, with long, failed and empty receipts, keyboard
+controls, native copy feedback, wrapping and narrow reduced-motion layouts.
