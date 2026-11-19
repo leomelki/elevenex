@@ -271,8 +271,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
   changed files plus the total. Review still opens the full paginated change
   list. Earlier messages, reasoning, tool inputs/outputs and activity media
   stay on the engine. Turns within the latest 32 source records can arrive
-  inline when the whole turn fits in eight records and 8 KiB. A prompt with
-  no hidden work stays inline. The engine selects at most 40 summaries
+  inline when the projected rows fit in eight records and 8 KiB. Deferred
+  tool bodies do not count against that inline budget. A prompt with no hidden
+  work stays inline. The engine selects at most 40 summaries
   per history read and keeps the current live turn's raw stream
   and saved completion handoff available. Replies exceeding eight blocks or
   128 KiB stay in the ordinary history window so their visible text can be paged.

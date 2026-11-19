@@ -28,6 +28,11 @@ describe("tool evidence", () => {
     expect(button.getAttribute('aria-expanded')).toBe('true');
     expect(button.getAttribute('aria-busy')).toBe('true');
     expect(host.querySelector('.waiting')).toBeNull();
+    const [, abort] = inspect.mock.calls[0]!;
+    fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(abort.aborted).toBe(false);
     vi.advanceTimersByTime(160);
     fixture.detectChanges();
     expect(host.querySelector('.waiting')?.textContent).toContain('Loading tool details');
@@ -44,7 +49,6 @@ describe("tool evidence", () => {
     fixture.detectChanges();
     expect(host.querySelector('.tool-preview')?.textContent).toContain('12 tests passed.');
     expect(button.hasAttribute('aria-busy')).toBe(false);
-    const [, abort] = inspect.mock.calls[0]!;
     button.click();
     fixture.detectChanges();
     expect(abort.aborted).toBe(true);

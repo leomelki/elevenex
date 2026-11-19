@@ -25,7 +25,7 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatMedia>>;
+export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatDisplayContent>>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
 /** Keep execution facts separate from output without forwarding provider payloads. */
 export function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
@@ -65,23 +65,36 @@ export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscrip
   return changes;
 }
 
+function chatDisplayContent(item: AgentTranscriptItem) {
+  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
+  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
+  const projected = chatMedia(context ? { ...item, content: context.text } : item);
+  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
+  return {
+    text,
+    truncated: projected.shortened || text.endsWith('… [display shortened]'),
+    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
+    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+  };
+}
+
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
-  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
-  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
-  const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
-  mediaCache?.set(item, projected);
-  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
+  // Keep only bounded display data. Original text and media sources can be
+  // reconstructed from the transcript when their dedicated readers need them.
+  let projected = mediaCache?.get(item);
+  if (!projected) {
+    projected = chatDisplayContent(item);
+    mediaCache?.set(item, projected);
+  }
   const changes = chatItemChanges(item, call, cache);
   return {
-    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
-    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+    ...projected,
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
-    text,
     timestamp: item.timestamp,
     toolId: item.toolUseId ?? null,
     toolName:
@@ -89,9 +102,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     toolKind: item.toolKind ?? null,
     input,
     error: chatItemFailed(item, execution),
-    truncated:
-      projected.shortened || text.endsWith('… [display shortened]') ||
-      input.endsWith('… [display shortened]'),
+    truncated: projected.truncated || input.endsWith('… [display shortened]'),
   };
 }
 export function chatState(

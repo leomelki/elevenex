@@ -12,7 +12,7 @@ import {
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary, changeSummary } from './desktop-chat-changes.js';
 import { chatItem, chatItemChanges, chatItemFailed, commandExecution, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
-import { toolKey, type ChatToolDetails } from './desktop-chat-tool-details.js';
+import { toolKey, type ChatToolDetails, type ProjectChatTool } from './desktop-chat-tool-details.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
@@ -102,7 +102,7 @@ export class ChatCompletedTurns {
 
   summarize(
     history: readonly AgentTranscriptItem[], start: number, end: number,
-    liveIds: ReadonlySet<string>,
+    liveIds: ReadonlySet<string>, projectTool?: ProjectChatTool,
   ): SessionChatItem | undefined {
     if (end - start < 2) return undefined;
     const items = history.slice(start, end);
@@ -112,8 +112,10 @@ export class ChatCompletedTurns {
     if (!prepared) return undefined;
     const { reply, hidden, calls } = prepared;
     if (start >= history.length - RECENT_RECORDS && items.length <= INLINE_RECORDS) {
-      const bytes = Buffer.byteLength(JSON.stringify(items.map(item =>
-        this.project(item, item.kind === 'tool_result' ? calls.get(toolKey(item)) : undefined))));
+      const bytes = Buffer.byteLength(JSON.stringify(items.map(item => {
+        const call = item.kind === 'tool_result' ? calls.get(toolKey(item)) : undefined;
+        return projectTool?.(item, call) ?? this.project(item, call);
+      })));
       if (bytes <= INLINE_BYTES) return undefined;
     }
     const counts: Partial<Record<SessionChatToolCategory, number>> = {};
@@ -171,14 +173,15 @@ export class ChatCompletedTurns {
     const prepared = this.prepare(turn);
     if (!prepared || offset >= prepared.hidden.length || this.revision(turn) !== revision) return null;
     const { hidden, calls, results } = prepared;
+    const toolPage = toolDetails?.projectPage();
     const items: SessionChatRecord[] = [];
     let bytes = 0;
     for (const raw of hidden.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT)) {
       const key = toolKey(raw);
       const call = raw.kind === 'tool_result' ? calls.get(key) : undefined;
-      const projected = toolDetails?.project(raw, call) ?? this.project(raw, call);
+      const projected = toolPage?.project(raw, call) ?? this.project(raw, call);
       const result = raw.kind === 'tool_use' ? results.get(key) : undefined;
-      const heading = result ? toolDetails?.project(result, raw)?.toolDetails : undefined;
+      const heading = result ? toolPage?.project(result, raw)?.toolDetails : undefined;
       const item = result ? {
         ...projected,
         receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)), ...(heading ? { toolDetails: heading } : {}) },
@@ -188,6 +191,7 @@ export class ChatCompletedTurns {
       items.push(item);
     }
     if (!items.length) return null;
+    toolPage?.commit();
     const next = offset + items.length;
     return { items, nextOffset: next < hidden.length ? next : null, total: hidden.length };
   }

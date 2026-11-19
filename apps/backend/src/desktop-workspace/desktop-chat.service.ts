@@ -478,7 +478,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
     const projector = this.toolDetails(feed);
     let item = projector.recentEvidence(source.item);
-    let result = source.result && projector.recentEvidence(source.result);
+    let result = source.result && projector.recentEvidence(source.result, source.item.id);
     if (!item || (source.result && !result)) {
       const archived = session.status === 'archived' || !!session.workspaceArchivedAt;
       const [history, runtime] = await Promise.all([
@@ -489,7 +489,7 @@ export class DesktopChatService implements OnModuleDestroy {
       const live = Array.isArray(runtime?.liveItems) ? runtime.liveItems as AgentTranscriptItem[] : [];
       const index = this.historyWindowIndex(feed, true);
       index.align(history);
-      const find = (id: string) => live.find(value => value.id === id) ?? history[index.position(history, id)];
+      const find = (id: string) => live.findLast(value => value.id === id) ?? history[index.position(history, id)];
       const raw = find(source.item.id);
       const receipt = source.result ? find(source.result.id) : undefined;
       if (source.result && (raw?.kind !== 'tool_use' || receipt?.kind !== 'tool_result' || receipt.toolUseId !== toolKey(raw)))

@@ -2,7 +2,7 @@ import type { SessionChatItem } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary } from './desktop-chat-changes.js';
 import { chatItem, chatItemChanges, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
-import { toolKey, type ChatToolDetails } from './desktop-chat-tool-details.js';
+import { toolKey, type ChatToolDetails, type ProjectChatTool } from './desktop-chat-tool-details.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
 
 const SAVED_SUMMARY_LIMIT = 40;
@@ -86,6 +86,7 @@ interface Candidate {
 function historyCandidates(
   history: readonly AgentTranscriptItem[], start: number, end: number, forward: boolean,
   limit: number, index: ChatHistoryIndex, live: readonly AgentTranscriptItem[], options: ChatWindowOptions,
+  projectTool?: ProjectChatTool,
 ): readonly Candidate[] {
   const turns = options.completedTurns;
   const result: Candidate[] = [];
@@ -102,7 +103,7 @@ function historyCandidates(
       const first = forward ? position : index.promptIndexBefore(history, position + 1);
       if (first >= start && first !== lastPrompt && history[first].id !== options.keepTurnId) {
         const through = forward ? endOfChatTurn(history, position) : position + 1;
-        const summary = through <= end ? turns.summarize(history, first, through, liveIds) : undefined;
+        const summary = through <= end ? turns.summarize(history, first, through, liveIds, projectTool) : undefined;
         if (summary) {
           result.push({ item: history[first], summary, historyIndex: first, historyEnd: through - 1, liveIndex: -1 });
           summaryCount++;
@@ -138,10 +139,11 @@ export function chatWindow(
   if (cursor && historyPosition < 0 && livePosition < 0) return null;
 
   const historyEnd = historyPosition < 0 ? history.length : historyPosition;
+  const toolPage = options.toolDetails?.projectPage();
   const saved = historyCandidates(
     history, following ? (historyPosition < 0 ? history.length : historyPosition + 1) : 0,
     following ? history.length : historyEnd, !!following,
-    options.completedTurns ? limit : candidateLimit, historyIndex, live, options,
+    options.completedTurns ? limit : candidateLimit, historyIndex, live, options, toolPage?.project,
   );
   const candidates = new Map(saved.map(candidate => [candidate.item.id, candidate]));
   const addLive = (start: number, end: number, overlapOnly: boolean) => {
@@ -174,7 +176,7 @@ export function chatWindow(
     const position = following ? edge : edge - 1;
     const { item: raw, summary } = ordered[position];
     const call = raw.kind === 'tool_result' ? calls.get(toolKey(raw)) : undefined;
-    let item = summary ?? options.toolDetails?.project(raw, call) ?? chatItem(raw, call, changesCache, mediaCache);
+    let item = summary ?? toolPage?.project(raw, call) ?? chatItem(raw, call, changesCache, mediaCache);
     if (!summary && raw.turnChanges) {
       let turnStart = position - 1;
       while (turnStart >= 0 && ordered[turnStart].item.kind !== 'user') turnStart--;
@@ -200,6 +202,7 @@ export function chatWindow(
   const last = ordered[following ? edge - 1 : ordered.length - 1];
   let prompt: AgentTranscriptItem | undefined;
   if (items.length) {
+    toolPage?.commit();
     historyIndex.remember(first.item.id, first.historyIndex);
     historyIndex.remember(last.summary?.completedTurn?.endId ?? last.item.id, last.historyEnd);
     // Saved rows keep their saved order, including live overlays of their IDs.

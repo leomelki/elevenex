@@ -13,7 +13,7 @@ import {
   viewChild,
   type OnChanges,
 } from "@angular/core";
-import type { SessionChatToolSource } from "@elevenex/shared";
+import type { SessionChatToolReference, SessionChatToolSource } from "@elevenex/shared";
 import { AutoHeightDirective, ButtonComponent, IconComponent, FoldComponent, SkeletonComponent, StatusGlyphComponent } from "../../ui";
 import type {
   ToolContentRequest,
@@ -26,6 +26,10 @@ import type {
 import { ToolContentComponent } from "./tool-content.component";
 
 const LOADING_DELAY_MS = 140;
+
+function sameReference(left?: SessionChatToolReference, right?: SessionChatToolReference): boolean {
+  return left?.id === right?.id && left?.revision === right?.revision;
+}
 
 @Component({
   selector: "ex-tool-step",
@@ -69,13 +73,16 @@ export class ToolStepComponent implements OnChanges {
   private readonly head = viewChild<ElementRef<HTMLButtonElement>>('head');
   private readonly fold = viewChild.required<FoldComponent, ElementRef<HTMLElement>>('fold', { read: ElementRef });
   private readonly delayed = signal(false);
+  private readonly source = computed(() => this.deferred(), {
+    equal: (left, right) => sameReference(left?.item, right?.item) && sameReference(left?.result, right?.result),
+  });
   private readonly inspection = signal<{
     source: SessionChatToolSource; provider: ToolDetailsProvider; value: ToolDetailsInspection;
   } | null>(null);
   protected readonly visible = computed(() => this.active() && this.expanded());
   private readonly current = computed(() => {
     const inspection = this.inspection();
-    return this.visible() && inspection && inspection.source === this.deferred() && inspection.provider === this.inspect()
+    return this.visible() && inspection && inspection.source === this.source() && inspection.provider === this.inspect()
       ? inspection.value : undefined;
   });
   protected readonly waiting = computed(() => this.current()?.state().status === 'loading');
@@ -88,7 +95,7 @@ export class ToolStepComponent implements OnChanges {
   // different tool or backend provider never inherits the previous contents.
   protected readonly painted = linkedSignal({
     source: () => ({ visible: this.visible(), view: this.detailView(),
-      provider: this.inspect(), itemId: this.deferred()?.item.id }),
+      provider: this.inspect(), itemId: this.source()?.item.id }),
     computation: (current, previous): ToolDetailsState | null => {
       const last = previous?.value ?? null;
       if (!current.visible) return last;
@@ -103,7 +110,7 @@ export class ToolStepComponent implements OnChanges {
 
   constructor() {
     effect(cleanup => {
-      const source = this.deferred(), provider = this.inspect();
+      const source = this.source(), provider = this.inspect();
       if (!source || !provider || !this.visible()) {
         this.inspection.set(null);
         return;
