@@ -66,6 +66,13 @@ export class ChatTranscriptProjection {
   }
 }
 
+/** A history page can introduce unseen rows before the tail captured at send time. */
+export function pendingPromptStart(items: readonly SessionChatItem[], pending: PendingChatPrompt): number {
+  for (let index = items.length - 1; index >= 0; index--)
+    if (pending.knownIds.has(items[index]!.id)) return index + 1;
+  return 0;
+}
+
 /** Runtime output may precede the harness's durable user-message receipt. */
 function withPendingPrompt(
   items: readonly SessionChatItem[],
@@ -85,11 +92,8 @@ function withPendingPrompt(
     error: false,
     truncated: false,
   };
-  return [
-    ...items.filter((item) => pending.knownIds.has(item.id)),
-    prompt,
-    ...items.filter((item) => !pending.knownIds.has(item.id)),
-  ];
+  const start = pendingPromptStart(items, pending);
+  return [...items.slice(0, start), prompt, ...items.slice(start)];
 }
 function epoch(timestamp: string): number | undefined {
   const value = Date.parse(timestamp);

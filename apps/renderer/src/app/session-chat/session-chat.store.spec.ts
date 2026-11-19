@@ -1209,6 +1209,91 @@ describe("session chat ownership", () => {
     sending.resolve(ok({ accepted: true }));
     await operation;
   });
+  it("keeps older replies in their original turn when paging overlaps a send and its receipt", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const review = item("review", "user", "Review the branch");
+    const outcome = item("outcome", "system", "Review completed");
+    const latest = item("latest", "user", "What are these images?");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      before: outcome.id,
+      leadingPrompt: review,
+      items: [outcome, latest, item("latest-answer", "assistant", "They are captures.")],
+    })));
+    await store.refresh();
+
+    const older = deferred<BackendResult<SessionChatPage>>();
+    bridge.sessionChatRead.mockReturnValueOnce(older.promise);
+    const paging = store.older();
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(command.promise);
+    const sending = store.submit({ text: "Fix image placement", intent: "send", context: [] });
+    const localId = store.exchanges().at(-1)?.id;
+    older.resolve(ok(page(2, {
+      leadingPrompt: review,
+      items: [item("review-answer", "assistant", "I reviewed the branch.")],
+    })));
+    await paging;
+
+    const answers = () => store.exchanges().map(exchange => [exchange.prompt, exchange.answer]);
+    const previous = [["Review the branch", "I reviewed the branch."], ["What are these images?", "They are captures."]];
+    expect(answers()).toEqual([...previous, ["Fix image placement", ""]]);
+
+    const running = { ...state, phase: "running" as const };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false, state: running,
+      events: [{ type: "item", item: item("new-answer", "assistant", "I am tracing the images.") }],
+    })));
+    await vi.advanceTimersByTimeAsync(80);
+    const expected = [...previous, ["Fix image placement", "I am tracing the images."]];
+    expect(answers()).toEqual(expected);
+
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false, state: running,
+      events: [{ type: "item", item: item("new-prompt", "user", "Fix image placement") }],
+    })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(answers()).toEqual(expected);
+    expect(store.exchanges().at(-1)).toMatchObject({ id: "new-prompt", renderId: localId });
+
+    command.resolve(ok({ accepted: true }));
+    await sending;
+  });
+
+  it("preserves saved turn order and ignores an older matching prompt on a live reset", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const latest = item("latest", "user", "Latest saved request");
+    const latestReply = item("latest-reply", "assistant", "Latest saved reply");
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [latest, latestReply] })));
+    await store.refresh();
+
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(command.promise);
+    const sending = store.submit({ text: "Run the check", intent: "send", context: [] });
+    const localId = store.exchanges().at(-1)?.id;
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [
+      item("old-match", "user", "Run the check"),
+      item("old-reply", "assistant", "Old check result"),
+      latest, latestReply,
+      item("another-prompt", "user", "An intervening request"),
+      item("another-reply", "assistant", "Its reply"),
+      item("saved-prompt", "user", "Run the check"),
+      item("saved-reply", "assistant", "Current check result"),
+    ] })));
+    await store.refresh();
+
+    expect(store.exchanges().map(exchange => [exchange.id, exchange.answer])).toEqual([
+      ["old-match", "Old check result"],
+      ["latest", "Latest saved reply"],
+      ["another-prompt", "Its reply"],
+      ["saved-prompt", "Current check result"],
+    ]);
+    expect(store.exchanges().at(-1)?.renderId).toBe(localId);
+    command.resolve(ok({ accepted: true }));
+    await sending;
+  });
+
   it("retains the current optimistic turn when a follow-up is queued before its user receipt", async () => {
     const { store, bridge } = setup();
     await settle();

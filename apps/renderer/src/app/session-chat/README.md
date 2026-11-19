@@ -96,6 +96,9 @@ Older engines omit the capability and retain their original send contract.
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
   the first paint also retains `isNew`, so the bubble and Working enter together.
+  Older pages retain transcript order during a send. The pending prompt starts
+  after the last visible record known at submit, and a matching saved receipt
+  keeps its authoritative position in history.
   Domain intents keep the durable ID, and origin data never crosses the bridge.
   Paging prunes this mapping and session/backend navigation clears it.
 - Queued messages retain their optimistic render IDs through saved receipts, too.

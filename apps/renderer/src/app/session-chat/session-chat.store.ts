@@ -25,6 +25,7 @@ import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationM
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
 import {
   ChatTranscriptProjection,
+  pendingPromptStart,
   type PendingChatPrompt,
 } from "./session-chat-transcript";
 
@@ -160,11 +161,14 @@ export class SessionChatStore {
   });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
+    const items = this.visibleItems();
+    // A distant history window may no longer contain the send boundary.
+    const showPending = pending && (!this.historical() || pendingPromptStart(items, pending) > 0);
     const exchanges = this.transcript.project(
-      this.visibleItems(),
+      items,
       this.state(),
       this.fresh(),
-      pending && !pending.queue ? pending : undefined,
+      showPending ? pending : undefined,
     );
     if (!pending && !this.turnArrivals().size) return exchanges;
     return exchanges.map((exchange): ChatExchange => {
@@ -428,7 +432,7 @@ export class SessionChatStore {
     if (!direction && !page.reset && !page.events.length) {
       this.state.set(page.state);
       this.cursor = page.cursor;
-      this.reconcileDelivery(page.state, previous);
+      this.reconcileDelivery(page.state);
       return;
     }
     const older = direction === "before";
@@ -470,29 +474,22 @@ export class SessionChatStore {
     }
     const pending = this.pending();
     const records = [...next.values()];
-    const delivered =
-      pending && !pending.queue
-        ? records.find(
-            (item) =>
-              item.kind === "user" &&
-              !pending.knownIds.has(item.id) &&
-              item.text === pending.text,
-          )
-        : undefined;
-    // A late receipt must precede output already shown under its optimistic turn.
-    const all =
-      delivered && pending
-        ? [
-            ...records.filter((item) =>
-              pending.knownIds.has(item.id),
-            ),
-            delivered,
-            ...records.filter(
-              (item) =>
-                !pending.knownIds.has(item.id) && item.id !== delivered.id,
-            ),
-          ]
-        : records;
+    const receiptIndex = (submission: PendingSubmission | null, start: number) =>
+      submission && !older && (!direction || !page.next || start > 0)
+        ? records.findIndex((item, index) => index >= start && item.kind === "user" && item.text === submission.text)
+        : -1;
+    const start = pending ? pendingPromptStart(records, pending) : records.length;
+    const deliveredIndex = receiptIndex(pending, start);
+    const delivered = records[deliveredIndex];
+    const queued = this.pendingQueue();
+    const deliveredQueued = records[receiptIndex(queued, queued ? pendingPromptStart(records, queued) : records.length)];
+    // Snapshots and history pages already have authoritative order. A late
+    // incremental receipt may need to precede output shown under its pending prompt.
+    const precedingPrompt = delivered ? promptBefore(records, deliveredIndex) : undefined;
+    const all = delivered && deliveredIndex > start && !direction && !page.reset &&
+      (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
+      ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
+      : records;
     const items = older ? all.slice(0, 320) : all.slice(-320);
     if (older && all.length > items.length) {
       const contextIds = new Set(all.map(item => item.id));
@@ -554,19 +551,14 @@ export class SessionChatStore {
     const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
     if (direction || all.length > 320 || replacedRows)
       this.windowRevision.update(value => value + 1);
-    this.reconcileDelivery(page.state, items);
+    this.reconcileDelivery(page.state, delivered, deliveredQueued);
   }
 
-  private reconcileDelivery(state: SessionChatState, items: readonly SessionChatItem[]): void {
+  private reconcileDelivery(state: SessionChatState, delivered?: SessionChatItem, deliveredQueued?: SessionChatItem): void {
     const pending = this.pending();
     if (
       pending &&
-      (items.some(
-        (item) =>
-          item.kind === "user" &&
-          !pending.knownIds.has(item.id) &&
-          item.text === pending.text,
-      ) ||
+      (delivered ||
         state.queue.some(
           (item) =>
             !pending.knownQueueIds.has(item.id) && item.text === pending.text,
@@ -589,16 +581,7 @@ export class SessionChatStore {
         if (!retained.has(id)) renderIds.delete(id);
       this.queueRenderIds.set(renderIds);
     }
-    if (
-      queued &&
-      (queueReceipt ||
-        items.some(
-          (item) =>
-            item.kind === "user" &&
-            !queued.knownIds.has(item.id) &&
-            item.text === queued.text,
-        ))
-    ) {
+    if (queued && (queueReceipt || deliveredQueued)) {
       queued.confirmed = true;
       this.pendingQueue.set(null);
     }
@@ -657,8 +640,7 @@ export class SessionChatStore {
       text,
       queue: submission.intent === "queue",
       timestamp: new Date().toISOString(),
-      knownIds: new Set([...this.items().map((item) => item.id),
-        ...(this.leadingPrompt() ? [this.leadingPrompt()!.id] : [])]),
+      knownIds: new Set(this.visibleItems().map(item => item.id)),
       knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),
     };
     const entry = this.entry,
