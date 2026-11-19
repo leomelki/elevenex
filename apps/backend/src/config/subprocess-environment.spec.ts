@@ -1,29 +1,70 @@
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   assertSubprocessEnvironment,
   shellConfiguredSshAgentSocket,
   ShellEnvironmentProjection,
 } from './subprocess-environment.js';
 
-describe('remote shell SSH agent selection', () => {
+const describePosix = process.platform === 'win32' ? describe.skip : describe;
+
+describePosix('remote shell SSH agent selection', () => {
   const remote = {
     ELEVENEX_BACKEND_MODE: 'remote',
     ELEVENEX_DATA_ROOT: '/runtime/desktop/data',
     SSH_AUTH_SOCK: '/runtime/desktop/agent.sock',
   };
+  let folder: string;
+  let agent: string;
+  let server: Server;
 
-  it('honors a shell-selected agent over the desktop proxy without probing or copying keys', () => {
+  beforeAll(async () => {
+    folder = await mkdtemp(join(tmpdir(), 'evx-agent-'));
+    agent = join(folder, 'agent.sock');
+    server = createServer();
+    await new Promise<void>((resolve) => server.listen(agent, resolve));
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(folder, { recursive: true, force: true });
+  });
+
+  it('honors a shell-selected agent over the desktop proxy without connecting to it', async () => {
+    let connections = 0;
+    const count = () => connections++;
+    server.on('connection', count);
+    // A retargeted symlink, as exported by workspace profiles, is followed.
+    const link = join(folder, 'ssh_auth_sock');
+    await symlink(agent, link);
     expect(
-      shellConfiguredSshAgentSocket(remote, {
-        SSH_AUTH_SOCK: '/account/agent.sock',
-      }),
-    ).toBe('/account/agent.sock');
+      shellConfiguredSshAgentSocket(remote, { SSH_AUTH_SOCK: agent }),
+    ).toBe(agent);
+    expect(shellConfiguredSshAgentSocket(remote, { SSH_AUTH_SOCK: link })).toBe(
+      link,
+    );
     expect(shellConfiguredSshAgentSocket(remote, { SSH_AUTH_SOCK: '' })).toBe(
       '',
     );
+    server.off('connection', count);
+    expect(connections).toBe(0);
   });
 
   it('retains the stable proxy when the shell has no agent configuration', () => {
     expect(shellConfiguredSshAgentSocket(remote, {})).toBeUndefined();
+  });
+
+  it('retains the stable proxy while the shell-selected agent is unavailable', async () => {
+    const dangling = join(folder, 'dangling');
+    await symlink(join(folder, 'ended-session.sock'), dangling);
+    const regular = join(folder, 'not-a-socket');
+    await writeFile(regular, '');
+    for (const selected of [join(folder, 'missing.sock'), dangling, regular])
+      expect(
+        shellConfiguredSshAgentSocket(remote, { SSH_AUTH_SOCK: selected }),
+      ).toBeUndefined();
   });
 
   it.each([
