@@ -14,7 +14,9 @@ a fresh policy. It cancels old initial window requests and rejects their
 stale results; backend in-flight hydration is shared across the replacement.
 This is additive for older clients/engines and never replays commands. See the
 [session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
-cache ownership. Source history is still provider-owned and is not yet paged.
+cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
+within a history revision, and skips transcript projection on idle heartbeats.
+The provider still supplies the complete source snapshot for history reads.
 
 Terminal service URLs use the named `taskTerminalOpenPort` and
 `taskTerminalCopyPort` bridge operations. Both accept only a scoped

@@ -99,6 +99,29 @@ describe("selected chat images", () => {
       error: expect.stringContaining("Could not load"),
     });
   });
+  it('uses the newest reference at a shared path and discards an evicted read', async () => {
+    const { media, client, pending } = setup();
+    const original = items(1)[0]!;
+    const replacement = { ...original, id: 'new-receipt' };
+    media.update(selection, [original]);
+    media.update(selection, [original, replacement]);
+    expect(client.cancel).toHaveBeenCalledWith(selection.scopeId, pending[0]!.input.requestId);
+    expect(client.media).toHaveBeenCalledTimes(2);
+    pending[0]!.resolve({
+      ok: true, value: { itemId: original.id, mediaId: '0', source: 'data:image/png;base64,AA==' },
+    });
+    await settle();
+    expect(media.resolve('image-0')).toMatchObject({ loading: true });
+    pending[1]!.resolve({
+      ok: true, value: { itemId: replacement.id, mediaId: '0', source: 'data:image/png;base64,AQ==' },
+    });
+    await settle();
+    const asset = media.resolve('image-0');
+    expect(asset).toMatchObject({ src: 'data:image/png;base64,AQ==' });
+    media.update(selection, [original, { ...replacement, text: 'Streamed text' }]);
+    expect(media.resolve('image-0')).toBe(asset);
+    expect(client.media).toHaveBeenCalledTimes(2);
+  });
   it("cancels selection-owned work and rejects late replies; destruction releases requests", async () => {
     const { media, client, pending } = setup();
     media.update(selection, items(1));

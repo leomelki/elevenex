@@ -1,6 +1,6 @@
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import type { TurnChangeDetails } from '../agent-runtime/turn-change-stats.js';
-import { chatWindow } from './desktop-chat-projection.js';
+import { chatWindow } from './desktop-chat-window.js';
 import { turnChangesPage } from './desktop-chat-changes.js';
 
 const item = (

@@ -27,10 +27,10 @@ import {
   type ChatChangesCache,
   type ChatMediaCache,
   chatState,
-  chatWindow,
   display,
   record,
 } from './desktop-chat-projection.js';
+import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
 
 interface ChatFeed {
   readonly id: string;
@@ -43,6 +43,8 @@ interface ChatFeed {
   >;
   readonly changesCache: ChatChangesCache;
   readonly mediaCache: ChatMediaCache;
+  readonly latestBounds: Map<'window' | 'progressive', { readonly revision: string; readonly before: string | null }>;
+  historyIndex?: { readonly revision: number; readonly index: ChatHistoryIndex };
   review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
   historyRevision: number;
@@ -199,6 +201,7 @@ export class DesktopChatService implements OnModuleDestroy {
       projections: new Map(),
       changesCache: new WeakMap(),
       mediaCache: new WeakMap(),
+      latestBounds: new Map(),
       stop: () => {
         provider.off('event', changed);
         if (feed.attached) provider.onClientDetached?.(sessionId);
@@ -240,6 +243,12 @@ export class DesktopChatService implements OnModuleDestroy {
     return pending;
   }
 
+  private historyWindowIndex(feed: ChatFeed, paging: boolean): ChatHistoryIndex {
+    if (!paging || feed.historyIndex?.revision !== feed.historyRevision)
+      feed.historyIndex = { revision: feed.historyRevision, index: new ChatHistoryIndex() };
+    return feed.historyIndex.index;
+  }
+
   async read(
     taskId: number,
     sessionId: number,
@@ -259,19 +268,19 @@ export class DesktopChatService implements OnModuleDestroy {
       (following !== undefined && (after !== undefined || before !== undefined))
     )
       throw new BadRequestException('Invalid conversation cursor.');
-    if (session.status === 'archived' || session.workspaceArchivedAt) {
-      const provider = this.registry.getProvider(session.activeAgentProvider);
-      const history = await provider.getHistory(sessionId);
+    const paging = !!(before || following);
+    const archived = () => session.status === 'archived' || !!session.workspaceArchivedAt;
+    const mode = loadingMode ?? 'progressive';
+    const readArchived = async () => {
+      if (this.feeds.get(sessionId)?.attached) this.release(sessionId);
+      const archivedFeed = this.feed(sessionId, session.activeAgentProvider, false);
+      const historyIndex = this.historyWindowIndex(archivedFeed, paging);
+      const history = await this.history(archivedFeed, sessionId);
       if (signal.aborted) return;
-      const window = chatWindow(
-        history,
-        [],
-        before,
-        undefined,
-        undefined,
-        following,
-        loadingMode,
-      );
+      const window = chatWindow(history, [], {
+        before, following, loadingMode: mode, historyIndex,
+        changesCache: archivedFeed.changesCache, mediaCache: archivedFeed.mediaCache,
+      });
       if (!window)
         throw new BadRequestException(
           'History cursor expired. Return to latest messages.',
@@ -285,16 +294,16 @@ export class DesktopChatService implements OnModuleDestroy {
         events: [],
         state: this.state(session, {}),
       };
-    }
+    };
+    if (signal.aborted) return;
+    if (archived()) return readArchived();
     const feed = this.feed(
-      sessionId,
-      session.activeAgentProvider,
-      this.sessions.hasStartedAgentRuntime(session),
+      sessionId, session.activeAgentProvider, this.sessions.hasStartedAgentRuntime(session),
     );
     const cursor = () => `${feed.id}:${feed.revision}:${feed.historyRevision}`;
     if (feed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
-    if (after === cursor() && !before && !following && !signal.aborted)
+    if (after === cursor() && !paging)
       await new Promise<void>((resolve) => {
         const done = () => {
           clearTimeout(timer);
@@ -312,19 +321,21 @@ export class DesktopChatService implements OnModuleDestroy {
     // Read the marker before hydrating content so its version cannot get ahead
     // of the transcript delivered with it.
     session = await this.target(taskId, sessionId);
+    if (signal.aborted) return;
+    if (archived()) return readArchived();
     // Coalesce bursts without holding input or waiting for a full turn.
     const revision = cursor();
+    const version = feed.revision;
     const prior = after?.split(':');
     const reset =
-      !before && !following &&
+      !paging &&
       (!prior ||
         prior[0] !== feed.id ||
-        Number(prior[1]) > feed.revision ||
+        Number(prior[1]) > version ||
         Number(prior[2]) !== feed.historyRevision);
-    const historyPromise =
-      reset || before || following
-        ? this.history(feed, sessionId)
-        : Promise.resolve([]);
+    const readsHistory = reset || paging;
+    const historyIndex = readsHistory ? this.historyWindowIndex(feed, paging) : undefined;
+    const historyPromise = readsHistory ? this.history(feed, sessionId) : Promise.resolve([]);
     const runtime = (feed.runtime ??= feed.provider
       .getRuntimeState(
         sessionId,
@@ -338,26 +349,40 @@ export class DesktopChatService implements OnModuleDestroy {
       }));
     const [raw, history] = await Promise.all([runtime, historyPromise]);
     if (signal.aborted) return;
+    feed.touched = Date.now();
+    const state = this.state(session, raw);
+    const bounds = feed.latestBounds.get(mode);
+    if (!paging && after === revision && bounds?.revision === revision) {
+      // Runtime state can change independently of item events (for example,
+      // configuration). The matching cursor already accounts for transcript rows.
+      return { taskId, sessionId, cursor: revision, reset: false,
+        items: [], events: [], before: bounds.before, next: null, state };
+    }
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following, loadingMode);
+    const fingerprints = paging ? undefined : new Map<string, string>();
+    const window = chatWindow(history, live, {
+      before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
+      changesCache: feed.changesCache, mediaCache: feed.mediaCache,
+    });
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
       );
     const { items } = window;
-    feed.touched = Date.now();
-    const events = items.flatMap((item) => {
-      const json = JSON.stringify(item),
-        old = feed.projections.get(item.id);
-      const version =
-        old?.json === json ? old.revision : Number(revision.split(':')[1]);
-      if (!before && !following) feed.projections.set(item.id, { json, revision: version });
-      return !prior || version > Number(prior[1])
-        ? [{ type: 'item' as const, item }]
-        : [];
-    });
+    const events: { type: 'item'; item: (typeof items)[number] }[] = [];
+    if (fingerprints) {
+      const priorVersion = Number(prior?.[1]);
+      for (const item of items) {
+        const json = fingerprints.get(item.id)!;
+        const old = feed.projections.get(item.id);
+        const itemVersion = old?.json === json ? old.revision : version;
+        if (!old || old.revision <= version) feed.projections.set(item.id, { json, revision: itemVersion });
+        if (!reset && itemVersion > priorVersion) events.push({ type: 'item', item });
+      }
+      if (revision === cursor()) feed.latestBounds.set(mode, { revision, before: window.before });
+    }
     for (const key of feed.projections.keys()) {
       if (feed.projections.size <= 320) break;
       feed.projections.delete(key);
@@ -367,12 +392,12 @@ export class DesktopChatService implements OnModuleDestroy {
       sessionId,
       cursor: revision,
       reset,
-      items: reset || before || following ? items : [],
-      events: reset || before || following ? [] : events,
-      leadingPrompt: reset || before || following ? window.leadingPrompt : undefined,
+      items: readsHistory ? items : [],
+      events,
+      leadingPrompt: readsHistory ? window.leadingPrompt : undefined,
       before: window.before,
       next: window.next,
-      state: this.state(session, raw),
+      state,
     };
   }
 

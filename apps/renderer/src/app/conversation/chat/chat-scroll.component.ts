@@ -200,6 +200,7 @@ export class ChatScrollComponent {
   private lastScrollHeight = 0;
   private lastViewportHeight = 0;
   private highlight: Animation | null = null;
+  private readonly motion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
   constructor() {
     effect(() => {
       // The owner decides whether its opening window needs filling. Explicit
@@ -258,7 +259,7 @@ export class ChatScrollComponent {
       this.contentReady = true;
       const viewport = this.viewport().nativeElement;
       const content = this.content().nativeElement;
-      this.historyScroll = new ChatHistoryScroll(viewport, this.track().nativeElement, content);
+      this.historyScroll = new ChatHistoryScroll(viewport, this.track().nativeElement, content, this.motion);
       this.refreshMessages();
       this.atEnd.set(this.startAtEnd());
       if (this.startAtEnd()) viewport.scrollTop = viewport.scrollHeight;
@@ -582,6 +583,6 @@ export class ChatScrollComponent {
     }, { injector: this.injector });
   }
   private reducedMotion(): boolean {
-    return matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return this.motion?.matches ?? false;
   }
 }

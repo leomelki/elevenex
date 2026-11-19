@@ -39,17 +39,30 @@ interface ProjectedStep {
 interface ProjectionCache {
   turns: ReadonlyMap<string, ProjectedTurn>;
   readonly steps: WeakMap<SessionChatItem, ProjectedStep>;
+  claudeRenderIds: ReadonlyMap<string, string>;
   exchanges: readonly ChatExchange[];
 }
 
 /** Owned by one conversation. Evicted turns release their source and view data. */
 export class ChatTranscriptProjection {
-  private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), exchanges: [] };
+  private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
   project(items: readonly SessionChatItem[], state: SessionChatState | null,
     fresh: ReadonlySet<string>, pending?: PendingChatPrompt): readonly ChatExchange[] {
     return projectExchanges(items, state, fresh, pending, this.cache);
   }
-  clear(): void { this.cache = { turns: new Map(), steps: new WeakMap(), exchanges: [] }; }
+  reconcileSavedBlocks(previous: readonly SessionChatItem[], current: readonly SessionChatItem[]): void {
+    const ids = new Set(current.map(item => item.id));
+    // Reuse identities of matching streamed blocks without carrying the raw
+    // records past an authoritative history replacement.
+    const aliases = reconcileClaudeBlocks([...previous.filter(item => !ids.has(item.id)), ...current]).renderIds;
+    const retained = new Map(this.cache.claudeRenderIds);
+    for (const [id, renderId] of aliases)
+      if (ids.has(id) && !ids.has(renderId)) retained.set(id, renderId);
+    this.cache.claudeRenderIds = retained;
+  }
+  clear(): void {
+    this.cache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
+  }
 }
 
 /** Runtime output may precede the harness's durable user-message receipt. */
@@ -117,7 +130,8 @@ function projectExchanges(
     items: SessionChatItem[];
   }[] = [];
   const reconciled = reconcileClaudeBlocks(pending ? withPendingPrompt(items, pending) : items);
-  const renderId = (item: SessionChatItem) => reconciled.renderIds.get(item.id) ?? item.id;
+  const renderId = (item: SessionChatItem) =>
+    cache?.claudeRenderIds.get(item.id) ?? reconciled.renderIds.get(item.id) ?? item.id;
   for (const item of reconciled.items) {
     if (item.kind === "user") {
       const previous = cache?.turns.get(item.id);
@@ -385,6 +399,14 @@ function projectExchanges(
   });
   if (!cache) return exchanges;
   cache.turns = retained;
+  if (cache.claudeRenderIds.size || reconciled.renderIds.size) {
+    const aliases = new Map<string, string>();
+    for (const item of reconciled.items) {
+      const id = renderId(item);
+      if (id !== item.id) aliases.set(item.id, id);
+    }
+    cache.claudeRenderIds = aliases;
+  }
   if (cache.exchanges.length !== exchanges.length || exchanges.some((exchange, i) => exchange !== cache.exchanges[i]))
     cache.exchanges = exchanges;
   return cache.exchanges;

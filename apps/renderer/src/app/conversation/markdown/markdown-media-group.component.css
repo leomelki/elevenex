@@ -55,6 +55,7 @@ figcaption {
 }
 .compare-images {
   position: relative;
+  inline-size: 100%;
   aspect-ratio: 16 / 9;
   max-height: 380px;
 }
@@ -165,6 +166,7 @@ dialog img {
 
 .image-slot {
   position: relative;
+  inline-size: 100%;
   min-height: 148px;
   aspect-ratio: 16 / 9;
   max-height: 380px;

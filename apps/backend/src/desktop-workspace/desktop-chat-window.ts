@@ -1,0 +1,167 @@
+import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
+import { capturedChangeSummary } from './desktop-chat-changes.js';
+import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+
+/** Remember emitted page cursors and the last prompt span without retaining the provider's items. */
+export class ChatHistoryIndex {
+  private readonly positions = new Map<string, number>();
+  private source = { size: 0, first: '', last: '' };
+  private prompt?: { index: number; through: number; id?: string };
+
+  align(history: readonly AgentTranscriptItem[]): void {
+    const size = history.length, first = history[0]?.id ?? '', last = history.at(-1)?.id ?? '';
+    if (size === this.source.size && first === this.source.first && last === this.source.last) return;
+    this.source = { size, first, last };
+    this.positions.clear();
+    this.prompt = undefined;
+  }
+
+  position(history: readonly AgentTranscriptItem[], id: string): number {
+    const known = this.positions.get(id);
+    if (known !== undefined && history[known]?.id === id) return known;
+    const position = history.findIndex(item => item.id === id);
+    this.remember(id, position);
+    return position;
+  }
+
+  remember(id: string, position: number): void {
+    if (position < 0) return;
+    this.positions.delete(id);
+    this.positions.set(id, position);
+    if (this.positions.size > 256) this.positions.delete(this.positions.keys().next().value!);
+  }
+
+  promptBefore(history: readonly AgentTranscriptItem[], end: number): AgentTranscriptItem | undefined {
+    const cached = this.prompt;
+    const reusable = cached && end > cached.index &&
+      (cached.index < 0 || history[cached.index]?.id === cached.id) ? cached : undefined;
+    if (reusable && end <= reusable.through) return history[reusable.index];
+    const found = previousPromptIndex(history, end, reusable?.through);
+    const index = found >= 0 ? found : reusable?.index ?? -1;
+    this.prompt = { index, through: end, id: history[index]?.id };
+    return history[index];
+  }
+}
+
+function previousPromptIndex(items: readonly AgentTranscriptItem[], end: number, start = 0): number {
+  for (let index = end - 1; index >= start; index--)
+    if (items[index].kind === 'user') return index;
+  return -1;
+}
+
+interface ChatWindowOptions {
+  readonly before?: string;
+  readonly following?: string;
+  readonly loadingMode?: 'window' | 'progressive';
+  readonly changesCache?: ChatChangesCache;
+  readonly mediaCache?: ChatMediaCache;
+  readonly historyIndex?: ChatHistoryIndex;
+  readonly fingerprints?: Map<string, string>;
+  readonly includeLeadingPrompt?: boolean;
+}
+
+interface Candidate {
+  readonly item: AgentTranscriptItem;
+  readonly historyIndex: number;
+  readonly liveIndex: number;
+}
+
+/** Take bounded candidates before projecting. Keep source offsets so finding a
+ * page's prompt never requires scanning back from the end of the transcript. */
+export function chatWindow(
+  history: readonly AgentTranscriptItem[],
+  live: readonly AgentTranscriptItem[],
+  options: ChatWindowOptions = {},
+) {
+  const { before, following, loadingMode, changesCache, mediaCache, fingerprints } = options;
+  const historyIndex = options.historyIndex ?? new ChatHistoryIndex();
+  historyIndex.align(history);
+  const wideWindow = loadingMode === 'window' && !before && !following;
+  // Adjacent pages overlap the renderer's retained 320-record window.
+  const limit = wideWindow ? 320 : 80;
+  const byteLimit = wideWindow ? 2 * 1024 * 1024 : 512 * 1024;
+  const candidateLimit = limit * 2;
+  const cursor = following ?? before;
+  const historyPosition = cursor ? historyIndex.position(history, cursor) : history.length;
+  const livePosition = cursor ? live.findIndex(item => item.id === cursor) : live.length;
+  if (cursor && historyPosition < 0 && livePosition < 0) return null;
+
+  const candidates = new Map<string, Candidate>();
+  const addHistory = (start: number, end: number) => {
+    for (let index = start; index < end; index++) {
+      const item = history[index];
+      candidates.set(item.id, { item, historyIndex: index, liveIndex: -1 });
+    }
+  };
+  const addLive = (start: number, end: number, overlapOnly: boolean) => {
+    for (let index = start; index < end; index++) {
+      const item = live[index], saved = candidates.get(item.id);
+      if (!overlapOnly || saved)
+        candidates.set(item.id, { item, historyIndex: saved?.historyIndex ?? -1, liveIndex: index });
+    }
+  };
+  const historyEnd = historyPosition < 0 ? history.length : historyPosition;
+  if (following) {
+    const end = historyPosition + 1 + candidateLimit;
+    if (historyPosition >= 0) addHistory(historyPosition + 1, Math.min(end, history.length));
+    const start = Math.max(0, livePosition + 1);
+    addLive(start, Math.min(start + candidateLimit, live.length), livePosition < 0 && end < history.length);
+  } else {
+    addHistory(Math.max(0, historyEnd - candidateLimit), historyEnd);
+    if (livePosition >= 0) addLive(Math.max(0, livePosition - candidateLimit), livePosition, false);
+    else addLive(0, live.length, true);
+  }
+
+  const ordered = [...candidates.values()];
+  const calls = new Map<string, AgentTranscriptItem>();
+  for (const { item } of ordered)
+    if (item.kind === 'tool_use') calls.set(item.toolUseId ?? item.id, item);
+  const items: ReturnType<typeof chatItem>[] = [];
+  let bytes = 0;
+  let edge = following ? 0 : ordered.length;
+  while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
+    const position = following ? edge : edge - 1;
+    const raw = ordered[position].item;
+    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
+    if (raw.turnChanges) {
+      let turnStart = position - 1;
+      while (turnStart >= 0 && ordered[turnStart].item.kind !== 'user') turnStart--;
+      const changes = [];
+      for (let index = Math.max(0, turnStart); index < position; index++) {
+        const { item: result } = ordered[index];
+        if (result.kind !== 'tool_result') continue;
+        const call = calls.get(result.toolUseId ?? result.id);
+        if (call) changes.push(chatItem(result, call, changesCache, mediaCache).changes);
+      }
+      item.changes = capturedChangeSummary(raw, changes);
+    }
+    const fingerprint = JSON.stringify(item);
+    bytes += Buffer.byteLength(fingerprint);
+    if (bytes > byteLimit) break;
+    fingerprints?.set(item.id, fingerprint);
+    items.push(item);
+    edge += following ? 1 : -1;
+  }
+  if (!following) items.reverse();
+  const first = ordered[following ? 0 : edge];
+  const last = ordered[following ? edge - 1 : ordered.length - 1];
+  let prompt: AgentTranscriptItem | undefined;
+  if (items.length) {
+    historyIndex.remember(first.item.id, first.historyIndex);
+    historyIndex.remember(last.item.id, last.historyIndex);
+    // Saved rows keep their saved order, including live overlays of their IDs.
+    // For a live-only tail, look within live activity before falling back to
+    // the last saved prompt. Neither context record becomes a page cursor.
+    if (options.includeLeadingPrompt !== false && first.item.kind !== 'user')
+      prompt = first.historyIndex >= 0 ? historyIndex.promptBefore(history, first.historyIndex)
+        : live[previousPromptIndex(live, first.liveIndex)] ?? historyIndex.promptBefore(history, historyEnd);
+  }
+  return {
+    items,
+    leadingPrompt: prompt ? chatItem(prompt, undefined, changesCache, mediaCache) : null,
+    before:
+      following || edge > 0 || historyEnd > candidateLimit || livePosition > candidateLimit
+        ? items[0]?.id ?? null : null,
+    next: before || (following && edge < ordered.length) ? items.at(-1)?.id ?? null : null,
+  };
+}

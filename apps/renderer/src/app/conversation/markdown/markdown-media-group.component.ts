@@ -58,9 +58,12 @@ export class MarkdownMediaGroupComponent {
     return { ...item, asset, image, loading, status: loading ? 'Loading image…' : error || 'Image unavailable' };
   }));
   readonly images = computed<readonly GroupImage[]>(() => this.slots().flatMap(slot => slot.image ? [slot.image] : []));
-  readonly allImages = computed(() => this.images().length === this.items().length);
-  readonly comparison = computed(() => this.items().length === 2 &&
-    /^before\b/i.test(this.items()[0]?.caption ?? '') && /^after\b/i.test(this.items()[1]?.caption ?? ''));
+  readonly comparison = computed(() => {
+    const slots = this.slots();
+    return slots.length === 2 &&
+      /^before\b/i.test(slots[0]?.caption ?? '') && /^after\b/i.test(slots[1]?.caption ?? '') &&
+      slots.every(({ asset }) => !asset || asset.kind === 'image');
+  });
   readonly comparisonReady = computed(() => this.images().length === 2);
   readonly viewerIndex = computed(() => Math.max(0, this.images().findIndex(image => image.path === this.viewerPath())));
   readonly current = computed(() => this.images()[this.viewerIndex()]);

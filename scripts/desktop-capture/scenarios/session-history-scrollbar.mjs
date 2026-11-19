@@ -22,16 +22,19 @@ export default async function* (capture) {
     await capture.settle();
     return point;
   };
-  const measurePage = async () => {
+  const measurePage = async (reduced) => {
     const samples = await demo(async owner => {
       const viewport = document.querySelector('ex-chat-scroll .viewport');
       const composer = document.querySelector('ex-composer');
+      const store = window.ng.getComponent(document.querySelector('ex-session-chat')).store;
       const bounds = viewport.getBoundingClientRect();
       const row = [...viewport.querySelectorAll('[data-chat-row]')].find(el =>
         el.getBoundingClientRect().top > bounds.top && el.getBoundingClientRect().top < bounds.bottom);
       const sample = () => ({
         row: row.getBoundingClientRect().top - bounds.top, connected: row.isConnected,
         width: viewport.clientWidth, composerTop: composer.getBoundingClientRect().top,
+        reconciling: viewport.classList.contains('reconciling-history'),
+        pending: store.historyLoading(),
         thumb: viewport.scrollTop / viewport.scrollHeight * bounds.height,
         thumbEnd: (viewport.scrollTop + viewport.clientHeight) / viewport.scrollHeight * bounds.height,
       });
@@ -49,18 +52,28 @@ export default async function* (capture) {
     assert.ok(samples.every(sample => sample.connected) && rowShift <= 1, `Visible reply moved ${rowShift}px`);
     assert.ok(samples.every(sample => sample.width === samples[0].width && sample.composerTop === samples[0].composerTop),
       'Paging changed the reading width or composer position');
-    assert.ok(thumbJump <= 25, `Scrollbar thumb jumped ${thumbJump}px in one frame`);
+    if (reduced) {
+      assert.ok(samples.every(sample => !sample.reconciling), 'Reduced motion animated the scroll range');
+      const painted = samples.filter(sample => !sample.pending);
+      assert.ok(painted.length > 1 && painted.every(sample =>
+        sample.thumb === painted[0].thumb && sample.thumbEnd === painted[0].thumbEnd),
+      'Reduced motion did not settle the scrollbar on the first paint');
+    } else {
+      assert.ok(thumbJump <= 25, `Scrollbar thumb jumped ${thumbJump}px in one frame`);
+    }
     assert.equal(await capture.evaluate(() => !!document.querySelector('.viewport.reconciling-history')), false,
       'The scroll range did not settle');
     return { rowShift, thumbJump, samples };
   };
 
   for (const theme of ['light', 'dark']) {
-    await capture.evaluate(() => { location.href = '/connected-workspace'; });
-    await capture.waitFor(() => document.querySelector('ex-machine-workspace ex-task-list'));
+    const reduced = theme === 'dark';
+    await capture.evaluate(theme => { location.href = '/connected-workspace?captureTheme=' + theme; }, theme);
+    await capture.waitFor(theme => location.search === '?captureTheme=' + theme &&
+      document.querySelector('ex-machine-workspace ex-task-list'), theme);
     await capture.theme(theme);
     await capture.viewport(theme === 'light' ? 1440 : 1000, 900);
-    await capture.reducedMotion(theme === 'dark');
+    await capture.reducedMotion(reduced);
     await demo(async owner => {
       owner.fixture.chat.scenario('new', 101);
       const result = await owner.fixture.chat.read({ taskId: 11, sessionId: 101, requestId: window.crypto.randomUUID() });
@@ -86,12 +99,12 @@ export default async function* (capture) {
     assert.equal(await chat(owner => owner.store.next()), null, 'A cancelled page replaced the live edge');
 
     await holdPage('before');
-    const older = await measurePage();
+    const older = await measurePage(reduced);
     assert.equal(await chat(owner => !!owner.store.next()), true, 'The older page must evict the live edge');
     yield { name: theme + '-older-page', inspect: ['ex-chat-scroll .viewport', 'ex-composer'], metadata: older };
 
     await holdPage('following');
-    const following = await measurePage();
+    const following = await measurePage(reduced);
     assert.equal(await chat(owner => owner.store.next()), null, 'Following must restore the live edge');
     yield { name: theme + '-following-page', inspect: ['ex-chat-scroll .viewport', 'ex-composer'], metadata: following };
 
@@ -104,7 +117,10 @@ export default async function* (capture) {
       window.ng.getComponent(document.querySelector('ex-connected-workspace-demo')).fixture.chat.holdReads(false);
       return { id: row.getAttribute('data-chat-row'), top: row.getBoundingClientRect().top };
     });
-    await capture.waitFor(() => document.querySelector('.viewport.reconciling-history'));
+    if (!reduced)
+      await capture.waitFor(() => document.querySelector('.viewport.reconciling-history'));
+    else
+      await capture.waitFor(() => !window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
     await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -60 });
     await capture.waitFor(() => !document.querySelector('.viewport.reconciling-history'));
     await capture.settle();

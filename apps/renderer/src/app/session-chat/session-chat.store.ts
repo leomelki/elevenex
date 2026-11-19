@@ -39,6 +39,14 @@ interface TurnArrival {
   readonly sendOrigin?: MessageSendOrigin;
 }
 
+function promptBefore(items: readonly SessionChatItem[], end: number): SessionChatItem | undefined {
+  for (let index = end - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item?.kind === 'user') return item;
+  }
+  return undefined;
+}
+
 export interface ChatSelection extends SessionChatTarget {
   readonly scopeId: string;
 }
@@ -139,15 +147,21 @@ export class SessionChatStore {
       });
     return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
   });
-  readonly exchanges = computed<readonly ChatExchange[]>(() => {
-    const pending = this.pending();
+  readonly visibleItems = computed<readonly SessionChatItem[]>(() => {
     const leadingPrompt = this.leadingPrompt();
     const items = this.items();
-    const ids = new Set(items.map(item => item.id));
-    const contextualItems = [...items, ...this.trailingContext().filter(item => !ids.has(item.id))];
+    const context = this.trailingContext();
+    const leading = leadingPrompt && items.length > 0 && items[0]?.kind !== 'user'
+      ? [leadingPrompt] : [];
+    if (!context.length) return leading.length ? [...leading, ...items] : items;
+    const ids = new Set([...leading, ...items].map(item => item.id));
+    const trailing = context.filter(item => !ids.has(item.id));
+    return [...leading, ...items, ...trailing];
+  });
+  readonly exchanges = computed<readonly ChatExchange[]>(() => {
+    const pending = this.pending();
     const exchanges = this.transcript.project(
-      leadingPrompt && items.length && items[0]?.kind !== "user"
-        ? [leadingPrompt, ...contextualItems] : contextualItems,
+      this.visibleItems(),
       this.state(),
       this.fresh(),
       pending && !pending.queue ? pending : undefined,
@@ -387,13 +401,6 @@ export class SessionChatStore {
         // Keep runtime state current without replacing the history being read.
         this.state.set(result.value.state);
         this.cursor = result.value.cursor;
-      } else if (!reset && !direction && result.value.reset && this.items().length && !result.value.items.some(item => this.items().some(old => old.id === item.id))) {
-        // A busy conversation may outgrow a feed tail while disconnected. Keep
-        // its contiguous history and fill the gap using the forward cursor.
-        this.next.set(this.items().at(-1)!.id);
-        this.historical.set(true);
-        this.state.set(result.value.state);
-        this.cursor = result.value.cursor;
       } else this.accept(result.value, direction, !reset);
       if (this.uncertain()) this.checked.set(true);
     } else if (direction) this.historyError.set(result.error.message);
@@ -417,25 +424,39 @@ export class SessionChatStore {
       );
   }
   private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
+    const previous = this.items();
+    if (!direction && !page.reset && !page.events.length) {
+      this.state.set(page.state);
+      this.cursor = page.cursor;
+      this.reconcileDelivery(page.state, previous);
+      return;
+    }
     const older = direction === "before";
-    const previous = this.items(),
-      wasLoaded = !!this.cursor;
-    const base = older ? [...page.items, ...previous]
-      : direction || (page.reset && incremental) ? [...previous, ...page.items]
-      : page.reset ? page.items : previous;
-    const next = new Map<string, SessionChatItem>(
-      base.map((item) => [
-        item.id,
-        item,
-      ]),
+    const wasLoaded = !!this.cursor;
+    const replacesTail = !direction && page.reset;
+    // A reset is authoritative from its first row onward. A matching first
+    // row proves where a previously loaded prefix joins the new page.
+    const sharedStart = replacesTail && incremental && page.before
+      ? previous.findIndex(item => item.id === page.items[0]?.id) : -1;
+    const previousPrefix = sharedStart > 0 ? previous.slice(0, sharedStart) : [];
+    const priorOwner = promptBefore(previous, sharedStart) ?? this.leadingPrompt();
+    const keepsPrefix = previousPrefix.length > 0 && (
+      page.items[0]?.kind === 'user' || page.leadingPrompt === undefined ||
+      JSON.stringify(page.leadingPrompt) === JSON.stringify(priorOwner)
     );
+    const base = older ? [...page.items, ...previous]
+      : direction ? [...previous, ...page.items]
+      : keepsPrefix ? [...previousPrefix, ...page.items]
+      : replacesTail ? page.items : previous;
+    if (replacesTail && page.state.provider === 'claude' && this.state()?.provider === 'claude')
+      this.transcript.reconcileSavedBlocks(previous, base);
     // Reset/paging replies cross IPC with fresh identities. Reuse equal records
     // so overlapping windows and refreshed history preserve their OnPush inputs.
-    const known = new Map(previous.map(item => [item.id, item]));
-    for (const [id, item] of next) {
-      const old = known.get(id);
-      if (old && old !== item && JSON.stringify(old) === JSON.stringify(item)) next.set(id, old);
-    }
+    const known = direction || replacesTail ? new Map(previous.map(item => [item.id, item])) : undefined;
+    const next = new Map(base.map(item => {
+      const old = known?.get(item.id);
+      return [item.id, old && (old === item || JSON.stringify(old) === JSON.stringify(item)) ? old : item];
+    }));
     for (const event of page.events) {
       if (event.type === "item") {
         const old = next.get(event.item.id);
@@ -448,9 +469,10 @@ export class SessionChatStore {
       }
     }
     const pending = this.pending();
+    const records = [...next.values()];
     const delivered =
       pending && !pending.queue
-        ? [...next.values()].find(
+        ? records.find(
             (item) =>
               item.kind === "user" &&
               !pending.knownIds.has(item.id) &&
@@ -461,16 +483,16 @@ export class SessionChatStore {
     const all =
       delivered && pending
         ? [
-            ...[...next.values()].filter((item) =>
+            ...records.filter((item) =>
               pending.knownIds.has(item.id),
             ),
             delivered,
-            ...[...next.values()].filter(
+            ...records.filter(
               (item) =>
                 !pending.knownIds.has(item.id) && item.id !== delivered.id,
             ),
           ]
-        : [...next.values()];
+        : records;
     const items = older ? all.slice(0, 320) : all.slice(-320);
     if (older && all.length > items.length) {
       const contextIds = new Set(all.map(item => item.id));
@@ -478,7 +500,7 @@ export class SessionChatStore {
         ...all.slice(items.length),
         ...this.trailingContext().filter(item => !contextIds.has(item.id)),
       ]));
-    } else if (!direction && page.reset && !incremental) this.trailingContext.set([]);
+    } else if (replacesTail) this.trailingContext.set([]);
     else if (direction === 'following') {
       const ids = new Set(items.map(item => item.id));
       this.trailingContext.update(context => context.filter(item => !ids.has(item.id)));
@@ -493,7 +515,7 @@ export class SessionChatStore {
         if (!retained.has(id)) arrivals.delete(id);
       this.turnArrivals.set(arrivals);
     }
-    if (!direction && wasLoaded) {
+    if (!direction && wasLoaded && (!page.reset || this.fresh().size)) {
       const known = new Set(previous.map((item) => item.id));
       this.fresh.set(
         new Set(
@@ -510,11 +532,10 @@ export class SessionChatStore {
     if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
     // Retain only the prompt owning the first item, even after its actual row
     // is evicted. Context never participates in pagination or delivery receipts.
-    const cut = all.length - items.length;
-    const preceding = older ? [] : all.slice(0, cut);
+    const cut = older ? 0 : all.length - items.length;
     const prompt = items[0]?.kind === 'user' ? null
-      : preceding.reverse().find(item => item.kind === 'user')
-        ?? (older || (page.reset && !incremental) || !previous.length
+      : promptBefore(all, cut)
+        ?? (older || (replacesTail && !keepsPrefix) || !previous.length
           ? page.leadingPrompt : this.leadingPrompt());
     const oldPrompt = this.leadingPrompt();
     this.leadingPrompt.set(oldPrompt && prompt && JSON.stringify(oldPrompt) === JSON.stringify(prompt) ? oldPrompt : prompt ?? null);
@@ -525,12 +546,19 @@ export class SessionChatStore {
       this.before.set(page.before);
       if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
     } else {
-      if (!direction && page.reset && (!incremental || !previous.length)) this.before.set(page.before);
+      if (replacesTail && !keepsPrefix) this.before.set(page.before);
       if (all.length > 320) this.before.set(items[0]?.id ?? null);
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
-    if (direction || all.length > 320) this.windowRevision.update(value => value + 1);
+    const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
+    if (direction || all.length > 320 || replacedRows)
+      this.windowRevision.update(value => value + 1);
+    this.reconcileDelivery(page.state, items);
+  }
+
+  private reconcileDelivery(state: SessionChatState, items: readonly SessionChatItem[]): void {
+    const pending = this.pending();
     if (
       pending &&
       (items.some(
@@ -539,7 +567,7 @@ export class SessionChatStore {
           !pending.knownIds.has(item.id) &&
           item.text === pending.text,
       ) ||
-        page.state.queue.some(
+        state.queue.some(
           (item) =>
             !pending.knownQueueIds.has(item.id) && item.text === pending.text,
         ))
@@ -548,7 +576,7 @@ export class SessionChatStore {
       this.pending.set(null);
     }
     const queued = this.pendingQueue();
-    const queueReceipt = queued && page.state.queue.find(
+    const queueReceipt = queued && state.queue.find(
       item => !queued.knownQueueIds.has(item.id) && item.text === queued.text,
     );
     if (queueReceipt || this.queueRenderIds().size) {
@@ -556,7 +584,7 @@ export class SessionChatStore {
       // add an extra row to the composer's measured height.
       const renderIds = new Map(this.queueRenderIds());
       if (queueReceipt && queued) renderIds.set(queueReceipt.id, queued.id);
-      const retained = new Set(page.state.queue.map(item => item.id));
+      const retained = new Set(state.queue.map(item => item.id));
       for (const id of renderIds.keys())
         if (!retained.has(id)) renderIds.delete(id);
       this.queueRenderIds.set(renderIds);

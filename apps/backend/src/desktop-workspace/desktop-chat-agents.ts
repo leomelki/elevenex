@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { AgentRuntimeProvider } from '../agent-runtime/agent-runtime.types.js';
-import { chatWindow, display, record } from './desktop-chat-projection.js';
+import { display, record } from './desktop-chat-projection.js';
+import { chatWindow } from './desktop-chat-window.js';
 import { agentContext, agentStatus } from './desktop-chat-work.js';
 
 /** Cursor carries only provider message identities, never a transcript path. */
@@ -49,7 +50,7 @@ export async function readChatAgent(
   const agent = result.subagent;
   if (!agent || agent.agentId !== agentId)
     throw new BadRequestException('Agent identity changed.');
-  const window = chatWindow(result.history, [], position.before);
+  const window = chatWindow(result.history, [], { before: position.before, includeLeadingPrompt: false });
   if (!window)
     throw new BadRequestException(
       'Agent history changed. Refresh to read the latest messages.',

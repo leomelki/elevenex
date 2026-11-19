@@ -4,9 +4,9 @@ export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/conversation'; });
   await capture.waitFor(() => document.querySelector('.async-gallery .image-slot'));
   const phase = value => capture.component('ex-conversation-demo', (owner, value) => owner.mediaPhase.set(value), value);
-  const geometry = () => capture.evaluate(() => [...document.querySelectorAll('.async-media .image-slot, .async-media .compare-images, .async-media .media-window')].map(element => {
+  const geometry = () => capture.evaluate(() => [...document.querySelectorAll('.image-preview-demo .media-frame, .async-media .image-slot, .async-media .compare-images, .async-media .media-window')].map(element => {
     const rect = element.getBoundingClientRect();
-    return { width: rect.width, height: rect.height };
+    return { width: rect.width, height: rect.height, availableWidth: element.parentElement.clientWidth };
   }));
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
@@ -15,7 +15,10 @@ export default async function* (capture) {
       await capture.reducedMotion(narrow);
       await phase('loading');
       const before = await geometry();
-      assert.equal(before.length, 5, 'Three gallery slots, one comparison and one recording must be reserved');
+      assert.equal(before.length, 6, 'Reserve the standalone image, three gallery slots, the comparison and the recording');
+      for (const frame of before) {
+        assert.ok(Math.abs(frame.width - frame.availableWidth) <= 1, 'The height cap narrowed a media frame');
+      }
       for (const value of ['partial', 'ready', 'error', 'ready']) {
         await phase(value);
         assert.deepEqual(await geometry(), before, `${value} changed media geometry`);

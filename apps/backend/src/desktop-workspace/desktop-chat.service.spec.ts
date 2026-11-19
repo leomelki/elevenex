@@ -86,6 +86,39 @@ describe('selected session chat', () => {
     expect(runtime.getRuntimeState).not.toHaveBeenCalled();
     expect(runtime.onClientAttached).not.toHaveBeenCalled();
   });
+
+  it('pages a long archived session with bounded cursor and prompt lookups', async () => {
+    status = 'archived';
+    let reads = 0;
+    history = new Proxy(Array.from({ length: 10_000 }, (_, i) => item(String(i))), {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    history[0] = { ...history[0], kind: 'user' };
+    const latest = (await chat.read(1, 2, undefined, undefined, new AbortController().signal))!;
+    expect(latest.items[0]?.id).toBe('9920');
+    reads = 0;
+    const older = (await chat.read(1, 2, undefined, latest.before!, new AbortController().signal))!;
+    expect(older.items[0]?.id).toBe('9840');
+    expect(older.leadingPrompt?.id).toBe('0');
+    expect(reads).toBeLessThan(320);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
+
+  it('serves a held poll from saved history if the session is archived while waiting', async () => {
+    history = [item('saved')];
+    const latest = (await read())!;
+    const waiting = read(latest.cursor);
+    await settle();
+    status = 'archived';
+    expect((await read())!.items.map(row => row.id)).toEqual(['saved']);
+    expect((await waiting)!.items.map(row => row.id)).toEqual(['saved']);
+    expect(runtime.getRuntimeState).toHaveBeenCalledTimes(1);
+    expect(runtime.onClientDetached).toHaveBeenCalledWith(2);
+  });
   it('does not pair a new completion marker with an older in-flight history read', async () => {
     let finish!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));
@@ -488,6 +521,33 @@ describe('selected session chat', () => {
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
+  });
+
+  it('refreshes runtime state on an unchanged heartbeat without visiting transcript rows', async () => {
+    let reads = 0;
+    live = Array.from({ length: 360 }, (_, i) => ({
+      ...item(String(i)),
+      get content() { reads++; return `Live record ${i}`; },
+    }));
+    const readWindow = (after?: string) =>
+      chat.read(1, 2, after, undefined, new AbortController().signal, undefined, 'window');
+    const initial = (await readWindow())!;
+    expect(initial.items).toHaveLength(320);
+    reads = 0;
+    jest.useFakeTimers();
+    try {
+      runtime.getRuntimeState.mockResolvedValueOnce({ liveItems: live, selectedModel: 'updated' });
+      const waiting = readWindow(initial.cursor);
+      await jest.advanceTimersByTimeAsync(8000);
+      expect(await waiting).toMatchObject({
+        cursor: initial.cursor, reset: false, items: [], events: [],
+        before: initial.before, state: { model: 'updated' },
+      });
+      expect(reads).toBe(0);
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
   it('streams dequeued user receipts once and retains their identity through saved history', async () => {
     history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];

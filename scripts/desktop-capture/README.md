@@ -194,8 +194,9 @@ themes and narrow reduced-motion layouts against the preview URL.
 `scenarios/session-history-scrollbar.mjs` samples visible reply offsets and
 native scrollbar geometry frame by frame as older and following pages swap
 into a bounded window. It checks a keyboard reversal during a held page and
-wheel input while the range settles. It covers both themes and a narrow
-reduced-motion layout against the preview URL.
+wheel input while the range settles. It also checks immediate range updates
+with a stable reading anchor in the narrow reduced-motion layout. Run both
+themes against the preview URL.
 
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
@@ -581,8 +582,8 @@ reduced motion. Run against the connected preview with `--url`. Optional
 `{id, items, state}` recorded pages for transcript replay; this is preview evidence,
 not a live backend or packaged-app test.
 
-`scenarios/session-media-loading.mjs` checks reserved gallery/comparison/recording
-geometry through loading, out-of-order readiness and errors, plus image-viewer
+`scenarios/session-media-loading.mjs` checks full-width image, gallery,
+comparison and recording geometry through loading, out-of-order readiness and errors, plus image-viewer
 keyboard navigation and focus restoration in both themes and narrow reduced
 motion. Run it against the same preview URL.
 

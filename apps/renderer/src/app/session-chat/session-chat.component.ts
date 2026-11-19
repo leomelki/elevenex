@@ -435,7 +435,11 @@ export class SessionChatComponent {
       if (creation) this.store.openDraft(creation);
       else if (selection) this.store.open(selection, this.archived());
       untracked(() => this.attachments.open(creation ? null : selection));
-      this.media.update(creation ? null : selection, this.store.items());
+    });
+    effect(() => {
+      const selection = this.creation() ? null : this.selection();
+      const items = this.store.visibleItems();
+      untracked(() => this.media.update(selection, items));
     });
     effect(() => {
       this.identity();

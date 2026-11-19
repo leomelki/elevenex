@@ -122,8 +122,9 @@ its offset after either operation. Within a long turn, `data-chat-row` identifie
 individual timeline rows so prepending work preserves the answer's offset as well.
 For a large range change, the viewport carries its previous scroll extent into
 the first paint and reconciles the native scrollbar in small steps. The range
-and scroll origin change together so the anchored text stays still, including
-in reduced motion. The transcript remains bounded.
+and scroll origin change together so the anchored text stays still. With reduced
+motion the viewport applies the final extent and anchored position in one paint.
+The transcript remains bounded.
 If the reader moves well away from the requested edge before the page arrives,
 `historyCancelled` lets the owner discard the read before it can evict the
 content now in view.
@@ -154,11 +155,13 @@ content and viewport also reconciles the control after layout changes.
 
 Markdown becomes a typed AST rendered as text nodes and semantic Angular templates. Raw HTML is always inert text. Active link schemes and credential-bearing URLs are rejected. File and web links emit separate intents; copying code emits `copyCode`. Mermaid fences remain code until a future trusted diagram adapter is supplied.
 
-Raster previews reserve a bounded 16:9 well (148px high in compact attachment
-cards) through missing, loading, ready and error states. Natural image dimensions
+Raster previews fill their available width with a height derived from 16:9 and
+capped at 380px (148px in compact attachment cards) through missing, loading,
+ready and error states. Natural image dimensions
 belong to the full-size viewer; decoding a tall image never expands the transcript.
 Gallery grid/strip and Before/After comparison geometry come from the embed list
-and captions before sources arrive. Slots stay keyed by path; partial failures
+and captions before sources arrive. Resolved recordings and pages use regular
+gallery slots, including when their captions say Before and After. Slots stay keyed by path; partial failures
 retain their place, comparison controls remain disabled until both images are
 ready, and a gallery selection survives other images completing out of order.
 Grouped images retain previous/next keyboard navigation. Recordings reserve their

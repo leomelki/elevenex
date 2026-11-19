@@ -1,6 +1,6 @@
 import { chatMedia } from './desktop-chat-media.js';
 import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
-import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
+import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 
 export function record(value: unknown): Record<string, unknown> {
@@ -209,101 +209,5 @@ export function chatState(
           url: nullable(question.url),
         }
       : null,
-  };
-}
-
-/** Take bounded tails before merging; opening a long transcript never copies its full history. */
-export function chatWindow(
-  history: readonly AgentTranscriptItem[],
-  live: readonly AgentTranscriptItem[],
-  before?: string,
-  changesCache?: ChatChangesCache,
-  mediaCache?: ChatMediaCache,
-  following?: string,
-  loadingMode?: 'window' | 'progressive',
-) {
-  // Adjacent pages must overlap the retained 320-record window. Replacing a
-  // whole window would evict the tool/message the reader is anchored to.
-  const wideWindow = loadingMode === 'window' && !before && !following;
-  const limit = wideWindow ? 320 : 80;
-  const candidateLimit = limit * 2;
-  const historyEnd = before
-    ? history.findIndex((item) => item.id === before)
-    : history.length;
-  const liveEnd = before
-    ? live.findIndex((item) => item.id === before)
-    : live.length;
-  if (before && historyEnd < 0 && liveEnd < 0) return null;
-  const candidates = new Map<string, AgentTranscriptItem>();
-  const hEnd = historyEnd < 0 ? history.length : historyEnd;
-  if (following) {
-    const hStart = history.findIndex(item => item.id === following);
-    const lStart = live.findIndex(item => item.id === following);
-    if (hStart < 0 && lStart < 0) return null;
-    // Copy only the next bounded candidates, even for million-item histories.
-    if (hStart >= 0)
-      for (const item of history.slice(hStart + 1, hStart + candidateLimit + 1)) candidates.set(item.id, item);
-    if (lStart >= 0 || hStart >= 0)
-      for (const item of live.slice(Math.max(0, lStart + 1), Math.max(0, lStart + 1) + candidateLimit)) {
-        if (lStart >= 0 || hStart + candidateLimit + 1 >= history.length || candidates.has(item.id))
-          candidates.set(item.id, item);
-      }
-  } else {
-    for (const item of history.slice(Math.max(0, hEnd - candidateLimit), hEnd))
-      candidates.set(item.id, item);
-    if (!before || liveEnd >= 0)
-      for (const item of live.slice(Math.max(0, liveEnd - candidateLimit), liveEnd))
-        candidates.set(item.id, item);
-    else
-      for (const item of live)
-        if (candidates.has(item.id)) candidates.set(item.id, item);
-  }
-  const all = [...candidates.values()],
-    items: ReturnType<typeof chatItem>[] = [];
-  const calls = new Map(all.filter(item => item.kind === 'tool_use').map(item => [item.toolUseId ?? item.id, item]));
-  let bytes = 0,
-    start = following ? 0 : all.length;
-  while ((following ? start < all.length : start > 0) && items.length < limit) {
-    const rawIndex = following ? start : start - 1;
-    const raw = all[rawIndex];
-    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
-    if (raw.turnChanges) {
-      let turnStart = rawIndex - 1;
-      while (turnStart >= 0 && all[turnStart].kind !== 'user') turnStart--;
-      item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), rawIndex).filter(value => value.kind === 'tool_result').map(result => {
-        const call = calls.get(result.toolUseId ?? result.id);
-        return call ? chatItem(result, call, changesCache, mediaCache).changes : undefined;
-      }));
-    }
-    const size = Buffer.byteLength(JSON.stringify(item));
-    if (bytes + size > (wideWindow ? 2 * 1024 * 1024 : 512 * 1024)) break;
-    bytes += size;
-    if (following) { start++; items.push(item); }
-    else { start--; items.unshift(item); }
-  }
-  // Context is separate from the contiguous page: inserting a distant prompt
-  // into items would make its exclusive cursor skip the intervening history.
-  const first = items[0];
-  let prompt: AgentTranscriptItem | undefined;
-  if (first && first.kind !== 'user') {
-    let liveIndex = live.length - 1;
-    while (liveIndex >= 0 && live[liveIndex].id !== first.id) liveIndex--;
-    for (let index = liveIndex - 1; index >= 0; index--) {
-      if (live[index].kind === 'user') { prompt = live[index]; break; }
-    }
-    if (!prompt) {
-      let historyIndex = history.length - 1;
-      while (historyIndex >= 0 && history[historyIndex].id !== first.id) historyIndex--;
-      for (let index = (historyIndex < 0 ? history.length : historyIndex) - 1; index >= 0; index--) {
-        if (history[index].kind === 'user') { prompt = history[index]; break; }
-      }
-    }
-  }
-  return {
-    items,
-    leadingPrompt: prompt ? chatItem(prompt, undefined, changesCache, mediaCache) : null,
-    before:
-      following || start > 0 || hEnd > candidateLimit || liveEnd > candidateLimit ? (items[0]?.id ?? null) : null,
-    next: before || (following && start < all.length) ? (items.at(-1)?.id ?? null) : null,
   };
 }

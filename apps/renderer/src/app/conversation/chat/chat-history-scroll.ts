@@ -15,6 +15,7 @@ export class ChatHistoryScroll {
     private readonly viewport: HTMLDivElement,
     private readonly track: HTMLDivElement,
     private readonly content: HTMLDivElement,
+    private readonly motion: MediaQueryList | null,
   ) {}
 
   get top(): number {
@@ -31,6 +32,10 @@ export class ChatHistoryScroll {
     const viewportHeight = this.viewport.clientHeight;
     const top = Math.max(0, Math.min(position, height - viewportHeight));
     this.cancel();
+    if (this.motion?.matches) {
+      this.apply(top, 0, 0, height);
+      return;
+    }
     const travel = (from: number, to: number) =>
       Math.abs(from / previous.height - to / height) * viewportHeight;
     const distance = Math.max(travel(previous.top, top),
@@ -48,6 +53,10 @@ export class ChatHistoryScroll {
     let index = 0;
     this.apply(top, leading, trailing, height);
     const advance = () => {
+      if (this.motion?.matches) {
+        this.finish();
+        return;
+      }
       const nextTop = this.top;
       const nextHeight = this.height;
       const progress = ++index / frames;

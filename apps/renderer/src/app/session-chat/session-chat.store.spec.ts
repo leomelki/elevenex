@@ -826,6 +826,62 @@ describe("session chat ownership", () => {
     expect(exchange?.steps.map(step => [step.id, step.kind, step.text])).toEqual([
       [thought.id, 'think', thought.text],
     ]);
+    expect(store.items().map(row => row.id)).toEqual([prompt.id, 'msg_response:thinking:0', savedAnswer.id]);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, state: { ...state, provider: 'claude' } })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.exchanges()[0]?.answerId).toBe(answer.id);
+  });
+
+  it.each([false, true])('treats resets as authoritative when reopening from cache = %s', async cached => {
+    const prompt = item('u1', 'user', 'Keep this question');
+    const answer = item('a1', 'assistant', 'Keep this answer');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [
+      prompt, answer, item('u2', 'user', 'Removed by rewind'), item('a2', 'assistant', 'Obsolete reply'),
+    ] }))) });
+    await settle();
+    const selection = { scopeId: 'scope', taskId: 1, sessionId: 2 };
+    if (cached) {
+      store.open({ ...selection, sessionId: 3 }, false);
+      await settle();
+    }
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [prompt, answer], cursor: 'after-rewind', next: null })));
+    if (cached) { store.open(selection, false); await settle(); }
+    else await vi.advanceTimersByTimeAsync(80);
+    expect(store.items().map(row => row.id)).toEqual(['u1', 'a1']);
+    expect(store.historical()).toBe(false);
+
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [], cursor: 'empty-rewind', next: null })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items()).toEqual([]);
+    expect(store.historical()).toBe(false);
+  });
+
+  it('keeps a verified contiguous prefix when a bounded reset cuts through it', async () => {
+    const prompt = item('u', 'user', 'Prompt');
+    const older = item('work', 'system', 'Previous work');
+    const kept = item('answer', 'assistant', 'Reply');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [
+      prompt, older, kept, item('obsolete', 'user', 'Removed suffix'),
+    ] }))) });
+    await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [kept], before: kept.id, leadingPrompt: prompt })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items()).toEqual([prompt, older, kept]);
+    expect(store.before()).toBeNull();
+  });
+
+  it('takes the new prompt context when a reset changes the owner of an overlapping row', async () => {
+    const oldPrompt = item('old-prompt', 'user', 'Original prompt');
+    const newPrompt = item('new-prompt', 'user', 'Edited prompt');
+    const answer = item('answer', 'assistant', 'Reply');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [oldPrompt, answer] }))) });
+    await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [answer], before: answer.id, leadingPrompt: newPrompt,
+    })));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(store.items()).toEqual([answer]);
+    expect(store.exchanges()[0]?.prompt).toBe('Edited prompt');
   });
 
   it('retains a reconciled turn identity when only its compact context remains visible', async () => {
@@ -1415,8 +1471,10 @@ it('keeps the visible chat lifetime and incremental cursor across same-machine r
 });
 it('keeps an earlier-history window on screen instead of jumping to latest after recovery', async () => {
   const { store, bridge, scope } = setup(); await settle();
-  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'earlier', items: [item('latest', 'user', 'Latest')] }))); await store.refresh();
+  const items = Array.from({ length: 320 }, (_, index) => item(String(index), 'user', `Request ${index}`));
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: items[0]!.id, items }))); await store.refresh();
   bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Reading history')] }))); await store.older();
+  expect(store.historical()).toBe(true);
   const calls = bridge.sessionChatRead.mock.calls.length, view = store.viewRevision();
   TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered'); scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
   store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false); await settle();

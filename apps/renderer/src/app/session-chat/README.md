@@ -54,7 +54,10 @@ Older engines omit the capability and retain their original send contract.
   epochs and feedback. It cancels reads on navigation, hiding or destruction.
   Pending writes can finish on their original backend; their replies never
   change a different conversation. No write is replayed by reconnect or refresh.
-  Idle heartbeats retain unchanged conversation inputs. Transient background
+  Idle heartbeats retain unchanged conversation inputs. Backend resets
+  reconcile the authoritative suffix, including rewinds while a session
+  was cached. An overlapping first row lets the store retain its contiguous
+  prefix when the prompt context still matches. Transient background
   read failures retain the transcript and retry quietly; initial/explicit reads
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
@@ -81,7 +84,9 @@ Older engines omit the capability and retain their original send contract.
   into entry motion; initial history stays still. Claude's streamed and saved
   blocks can use different IDs and indexes. The view pairs corresponding blocks
   within the same provider message, keeps their position and render identity,
-  and uses the saved content. Raw history and pagination keep their original IDs.
+  and uses the saved content. Across a reset the projection keeps only matching
+  render identities from the prior page. Raw history and pagination use the
+  current provider IDs.
 - The conversation-owned `ChatTranscriptProjection` reuses completed exchanges
   and unchanged tool steps, including parsed presentations. Runtime-only queue,
   usage and activity changes do not replace transcript inputs. Reset/paging
@@ -210,8 +215,10 @@ eight seconds for activity; the renderer spaces active reads by 80ms. Persisted
 history is read at entry, explicit paging and durable history invalidation,
 never for each streamed token. Simultaneous runtime/history reads share their
 work. Provider APIs still own source transcript reading; their `getHistory`
-interface currently returns full history inside the backend. Only bounded tails
-are copied/projected and transported to the renderer.
+interface currently returns full history inside the backend. The selected feed
+caches a bounded set of emitted cursor offsets and the last prompt span for its
+current history revision. Pages project and transport only bounded candidates,
+and idle heartbeats refresh state without projecting an unchanged transcript.
 
 `SESSION_CHAT_PROGRESSIVE_LOADING` is an injectable rollout flag, **false** by
 default. Normal reads request one recent window of at most **320 records / 2 MiB**;
@@ -563,9 +570,11 @@ answer, while Markdown image paths resolve through the same selected-session
 owner. Binary image data never enters the transcript preview or triggers its raw
 output overflow control. Ordinary shortened text keeps the full-content reader.
 
-`SessionChatMedia` owns the latest 12 image references in the mounted transcript,
-three concurrent reads, a 48 MiB source budget, cancellation and stale-selection
-rejection. It supplies the existing Markdown resolver; loading/read/decode errors
+`SessionChatMedia` owns the newest 12 distinct media paths in the displayed
+transcript, including its retained prompt and reply context. It preserves loaded
+sources across paging, limits reads to three in flight and caps source data at
+48 MiB. Evicted references cancel their reads, and replies are validated against
+the current reference and selection. Loading/read/decode errors
 are explicit. Leaving the session releases sources and queued work. Older engines
 can omit media metadata. This slice supports PNG, JPEG, GIF and WebP; it does not
 fetch external URLs or execute SVG/HTML.

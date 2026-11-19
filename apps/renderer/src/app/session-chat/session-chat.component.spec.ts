@@ -161,6 +161,43 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
 }
 
 describe("connected chat reply rendering", () => {
+  it('loads the leading prompt attachment outside the raw transcript page', async () => {
+    const { fixture, bridge } = setup([], state, Promise.resolve({ ok: true, value: {
+      taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'a1', events: [], state,
+      leadingPrompt: { ...item('u1', 'user', 'Inspect this screenshot'), media: [
+        { id: 'capture', path: '/capture.png', caption: 'Screenshot', inline: true },
+      ] },
+      items: [item('a1', 'assistant', 'I inspected it.')],
+    } }));
+    await settle(fixture);
+    expect(fixture.componentInstance.store.exchanges()[0]?.attachments?.[0]?.id).toBe('capture');
+    expect(bridge.sessionChatMedia).toHaveBeenCalledWith('scope', expect.objectContaining({ itemId: 'u1', mediaId: 'capture' }));
+  });
+
+  it('retains loaded media when history paging compacts the reply out of its raw window', async () => {
+    const clip = { ...item('video', 'tool_result', ''), media: [
+      { kind: 'video' as const, id: 'clip', path: '/clip.webm', caption: 'Recording', inline: true },
+    ] };
+    const prompt = item('u1', 'user', 'Record this flow');
+    const items = Array.from({ length: 320 }, (_, i) => item(`work-${i}`, 'system', 'Work'));
+    items.splice(-2, 2, clip, item('answer', 'assistant', 'Completed'));
+    const opening = { taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'work-0', events: [], state };
+    const { fixture, root, bridge, publish } = setup([], state,
+      Promise.resolve({ ok: true, value: { ...opening, leadingPrompt: prompt, items } }));
+    bridge.sessionChatMedia.mockImplementation(async (_scope, input) => ({
+      ok: true, value: { ...input, source: 'data:video/webm;base64,AAAA' },
+    }));
+    await settle(fixture);
+    const video = root.querySelector('video');
+    expect(video).not.toBeNull();
+    publish({ ...opening, items: [prompt, item('earlier-work', 'system', 'Earlier work')], before: null });
+    await fixture.componentInstance.store.older();
+    await settle(fixture);
+    expect(fixture.componentInstance.store.items().some(row => row.id === clip.id)).toBe(false);
+    expect(root.querySelector('video')).toBe(video);
+    expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
+  });
+
   it('retains composer configuration and completed turn inputs through unrelated runtime activity', async () => {
     const { fixture, root, publish } = setup([
       item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Finished'),

@@ -104,6 +104,7 @@ figcaption {
 }
 .media-window {
   position: relative;
+  inline-size: 100%;
   aspect-ratio: 16 / 9;
   max-height: 380px;
 }
