@@ -55,7 +55,7 @@ uses the same rendering and disclosure. The shared Skeleton accepts local
 
 ## Scrolling and performance
 
-`Chat.progressiveLoading` forwards the owner's adaptive loading choice to
+`Chat.progressiveLoading` forwards the owner's loading mode to
 `ChatScroll`. `ChatLoading` is the shared, noninteractive loading glyph with an
 optional small Progressive label; `compact` hides its ordinary visual text but
 retains its accessible status name. The initial connected opening and history
@@ -63,8 +63,8 @@ corner use the same component. The owner supplies the policy; these views never
 measure network latency or request history themselves.
 `Chat.initialHistoryPrefetch` / `ChatScroll.initialHistoryPrefetch` retain the
 existing default of filling an underfull viewport. The connected session owner
-disables this in normal mode, waiting for scroll intent, and enables it for
-progressive mode. Other owners, including the agent inspector, keep their own
+enables this with default progressive loading. The window-mode override waits
+for scroll intent. Other owners, including the agent inspector, keep their own
 prefetch behavior. The budget and no-height-growth guard prevent hidden-work drains.
 
 `TurnNav` shows the right-edge message selector from the first turn, regardless

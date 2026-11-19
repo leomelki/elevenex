@@ -56,8 +56,9 @@ Older engines omit the capability and retain their original send contract.
   change a different conversation. No write is replayed by reconnect or refresh.
   Idle heartbeats retain unchanged conversation inputs. Backend resets
   reconcile the authoritative suffix, including rewinds while a session
-  was cached. An overlapping first row lets the store retain its contiguous
-  prefix when the prompt context still matches. Transient background
+  was cached. An overlapping first row lets both background resets and
+  explicit refreshes of the live tail retain the loaded prefix when the
+  prompt context still matches. Transient background
   read failures retain the transcript and retry quietly; initial/explicit reads
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
@@ -224,34 +225,25 @@ caches a bounded set of emitted cursor offsets and the last prompt span for its
 current history revision. Pages project and transport only bounded candidates,
 and idle heartbeats refresh state without projecting an unchanged transcript.
 
-`SESSION_CHAT_PROGRESSIVE_LOADING` is an injectable rollout flag, **false** by
-default. Normal reads request one recent window of at most **320 records / 2 MiB**;
-this disables small-page progressive opening without fetching an unbounded
-transcript. Older-window reads wait for scroll intent rather than prefilling a
-short collapsed conversation at startup. An uncached opening still pending after
-**1,750 ms** enables progressive loading for the **whole application connection**,
-cancels its larger request and requests a recent window capped at
-**80 records / 512 KiB**, with compact completed turns on supporting engines.
-A small “Progressive” label accompanies the initial or
-history loading glyph while work is pending. This is a slow-open heuristic,
-not a diagnosis of network quality. It does not time idle long polls, cached
-revalidation or ordinary history navigation. Navigation, hiding, pausing and
-destruction cancel the deadline; stale replies cannot replace the current window.
+Progressive loading is enabled by default through
+`SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
+**80 records / 512 KiB** with compact completed turns on supporting engines.
+The viewport can prefetch older pages to fill available space, within a
+four-page budget and while each page adds visible height. A small “Progressive”
+label accompanies the initial or history loading glyph while work is pending.
 
-`SessionChatLoadingPolicy` is shared at application/window lifetime, independently
-of chat owners, selected tasks/projects and draft caches. Every chat inherits the
-fallback immediately, including newly mounted workspaces; other pending initial
-window reads switch to small pages too. Normal background long polls finish
-without interruption and use small pages on their next read. Backend scope IDs
-rotate on reconnect or engine restart, resetting the adaptive fallback even for
-a same-machine rebind. Application restart starts with a fresh policy. Old-scope
-timers/replies cannot enable fallback on the new connection. No per-chat choice
-or connection-health decision is persisted with drafts.
+An override can start in window mode at **320 records / 2 MiB** and defer
+older pages until scroll intent. If an uncached opening takes more than
+**1,750 ms**, the application-wide `SessionChatLoadingPolicy` retries it in
+progressive mode and switches the other chats on that connection. The deadline
+applies only to uncached openings. Navigation, hiding, pausing and destruction
+cancel it. Backend scope rotation and app restart reset the adaptive choice.
 
 Preview application boundaries that override `BackendClientService` also provide
 `SessionChatLoadingPolicy` at that boundary. Individual chat/workspace owners
 inherit it, so recreating those owners cannot reset the connection's fallback.
-There is no automatic mutation retry or full-history background drain.
+The connected workspace preview accepts `?chatLoading=window` for exercising
+the window-mode override and its fallback.
 
 The optional `loadingMode: 'window' | 'progressive'` request selects these bounds
 for latest/live reads. Adjacent history pages remain at most 80 / 512 KiB in both

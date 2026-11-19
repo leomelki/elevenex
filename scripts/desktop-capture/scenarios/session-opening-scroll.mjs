@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-/** Opening history starts at its tail on the first rendered frame. */
+/** The default progressive page starts at the tail on its first rendered frame. */
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
@@ -8,6 +8,9 @@ export default async function* (capture) {
     component.fixture.chat.scenario('history', 101);
     component.fixture.chat.scenario('history', 102);
   });
+  // Session 101 may already be cached. Verify the untouched session's first
+  // page separately from later openings of windows expanded during browsing.
+  let coldOpen = true;
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme);
     for (const narrow of [false, true]) {
@@ -34,7 +37,8 @@ export default async function* (capture) {
               if (owner?.selection().sessionId === Number(sessionId) &&
                   !owner.store.loading() && owner.store.items().length && viewport) {
                 resolve({ gap: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
-                  height: viewport.scrollHeight, viewport: viewport.clientHeight, frames });
+                  height: viewport.scrollHeight, viewport: viewport.clientHeight, frames,
+                  progressive: owner.store.progressiveLoading(), records: owner.store.items().length });
               } else if (++frames > 180) reject(new Error('Session history did not render'));
               else requestAnimationFrame(check);
             };
@@ -43,9 +47,17 @@ export default async function* (capture) {
         }, sessionId);
         assert.ok(probe.height > probe.viewport, 'History must overflow for a meaningful scroll check');
         assert.ok(Math.abs(probe.gap) <= 1, JSON.stringify(probe));
+        assert.equal(probe.progressive, true);
+        assert.ok(probe.records <= 320);
+        if (coldOpen) assert.equal(probe.records, 80);
+        coldOpen = false;
       }
       yield { name: `${theme}-${narrow ? 'narrow-reduced' : 'full'}-opened-at-end`,
         inspect: ['ex-chat-scroll .viewport', 'ex-turn:last-of-type', 'ex-composer'] };
+      await capture.component('ex-session-chat', component => {
+        if (component.store.items().length < 160) return component.store.older();
+      });
+      await capture.waitFor(() => !document.querySelector('.viewport.reconciling-history'));
       const anchor = await capture.evaluate(() => {
         const viewport = document.querySelector('ex-chat-scroll .viewport');
         viewport.scrollTop = 100;
@@ -59,7 +71,8 @@ export default async function* (capture) {
       // The reader's content must retain its screen position through refresh.
       const top = await capture.evaluate(id => [...document.querySelectorAll('[data-chat-anchor]')]
         .find(row => row.getAttribute('data-chat-anchor') === id)?.getBoundingClientRect().top, anchor.id);
-      assert.ok(top !== undefined && Math.abs(top - anchor.top) < 2, 'Refresh moved the visible message');
+      assert.ok(top !== undefined && Math.abs(top - anchor.top) < 2,
+        `Refresh moved ${anchor.id} from ${anchor.top}px to ${top ?? 'outside the window'}`);
     }
   }
 }

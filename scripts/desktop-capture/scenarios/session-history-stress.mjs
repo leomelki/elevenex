@@ -33,8 +33,10 @@ export default async function* (capture) {
   for (const theme of ['light', 'dark']) {
     for (const narrow of [false, true]) {
       const prefix = `${theme}-${narrow ? 'narrow-reduced' : 'wide'}`;
-      await capture.evaluate(() => { location.href = '/connected-workspace'; });
-      await capture.waitFor(() => document.querySelector('ex-machine-workspace ex-task-list'));
+      const captureQuery = `?chatLoading=window&capture=${prefix}`;
+      await capture.evaluate(query => { location.href = '/connected-workspace' + query; }, captureQuery);
+      await capture.waitFor(query => location.search === query &&
+        document.querySelector('ex-machine-workspace ex-task-list'), captureQuery);
       await capture.theme(theme); await capture.viewport(narrow ? 1000 : 1440, narrow ? 760 : 960);
       await capture.reducedMotion(narrow);
       await fixture(async owner => {

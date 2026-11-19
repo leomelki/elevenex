@@ -4,15 +4,15 @@ Conversation reads optionally select `loadingMode: 'window' | 'progressive'`
 through the existing scope-bound `sessionChatRead`. Window mode caps records at
 320 / 2 MiB; progressive mode and omitted options retain 80 / 512 KiB. Adjacent
 pages use 80 / 512 KiB in either mode to preserve overlap in the rolling window.
-Main validates the mode and reply count and retains its 4 MiB transport limit. The
-renderer normally requests one recent window. An uncached opening still pending
-after 1.75 seconds enables smaller pages for every chat on the application
-connection until reconnect or restart. The root `SessionChatLoadingPolicy` owns
-that transient choice, separate from connection state and per-chat drafts. Scope
-rotation resets it, including same-machine recovery. Application restart creates
-a fresh policy. It cancels old initial window requests and rejects their
-stale results; backend in-flight hydration is shared across the replacement.
-The progressive profile also opts into completed-turn summaries with
+Main validates the mode and reply count and retains its 4 MiB transport limit.
+The renderer requests progressive pages from the first read. With the
+window-mode override, an uncached opening still pending after 1.75 seconds
+switches to progressive pages for the application connection. The root
+`SessionChatLoadingPolicy` owns that transient choice separately from connection
+state and per-chat drafts. Scope rotation and application restart reset it.
+The renderer cancels superseded reads and discards stale replies. The backend
+shares in-flight hydration with the replacement.
+The progressive profile opts into completed-turn summaries with
 `summarizeCompleted`. A summary occupies one paging entry at the prompt and
 advances past the saved turn's last source item in the forward direction.
 Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial

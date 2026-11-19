@@ -5,11 +5,11 @@ import type { BackendClientState } from '@elevenex/shared';
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING } from './session-chat-loading';
 
-function setup(enabledByDefault = false) {
+function setup(enabledByDefault?: boolean) {
   const state = signal<BackendClientState>({ revision: 1, scope: { id: 'connection', environment: { kind: 'local' } } });
   TestBed.configureTestingModule({ providers: [
     { provide: BackendClientService, useValue: { state } },
-    { provide: SESSION_CHAT_PROGRESSIVE_LOADING, useValue: enabledByDefault },
+    ...(enabledByDefault === undefined ? [] : [{ provide: SESSION_CHAT_PROGRESSIVE_LOADING, useValue: enabledByDefault }]),
   ] });
   return { policy: TestBed.inject(SessionChatLoadingPolicy), state };
 }
@@ -18,7 +18,7 @@ afterEach(() => TestBed.resetTestingModule());
 
 describe('application conversation loading policy', () => {
   it('retains the fallback for the same connection through ordinary lifecycle updates', () => {
-    const { policy, state } = setup();
+    const { policy, state } = setup(false);
     expect(policy.progressive()).toBe(false);
     expect(policy.enableProgressive('connection')).toBe(true);
     state.set({ revision: 2, scope: { id: 'connection', environment: { kind: 'local' } } });
@@ -27,7 +27,7 @@ describe('application conversation loading policy', () => {
   });
 
   it('resets on reconnect or machine change and rejects signals from the old connection', () => {
-    const { policy, state } = setup();
+    const { policy, state } = setup(false);
     policy.enableProgressive('connection');
     state.set({ revision: 2, scope: null });
     expect(policy.progressive()).toBe(false);
@@ -42,15 +42,15 @@ describe('application conversation loading policy', () => {
   });
 
   it('does not persist the fallback across application restart', () => {
-    const { policy } = setup();
+    const { policy } = setup(false);
     policy.enableProgressive('connection');
     TestBed.resetTestingModule();
-    expect(setup().policy.progressive()).toBe(false);
+    expect(setup(false).policy.progressive()).toBe(false);
   });
 
-  it('retains an explicit rollout flag override independently of adaptive connection state', () => {
-    const { policy, state } = setup(true);
-    expect(policy.progressive()).toBe(true);
+  it('uses progressive summaries by default independently of connection state', () => {
+    const { policy, state } = setup();
+    expect(policy.profile()).toEqual({ loadingMode: 'progressive', summarizeCompleted: true });
     state.set({ revision: 2, scope: null });
     expect(policy.progressive()).toBe(true);
   });

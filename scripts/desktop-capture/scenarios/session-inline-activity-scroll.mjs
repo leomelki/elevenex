@@ -26,8 +26,8 @@ export default async function* (capture) {
   };
 
   for (const theme of ['light', 'dark']) {
-    await capture.evaluate(theme => { location.href = '/connected-workspace?inline=' + theme; }, theme);
-    await capture.waitFor(theme => location.search === '?inline=' + theme &&
+    await capture.evaluate(theme => { location.href = '/connected-workspace?chatLoading=window&inline=' + theme; }, theme);
+    await capture.waitFor(theme => location.search === '?chatLoading=window&inline=' + theme &&
       document.querySelector('ex-machine-workspace ex-task-list'), theme);
     await capture.theme(theme);
     await capture.viewport(theme === 'light' ? 1260 : 850, 800);

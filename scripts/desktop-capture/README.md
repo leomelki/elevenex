@@ -178,7 +178,9 @@ keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
-`scenarios/session-loading-policy.mjs` checks normal and adaptive slow openings,
+`scenarios/session-opening-scroll.mjs` checks the first paint of the default
+progressive page during session switches. `scenarios/session-loading-policy.mjs`
+uses the preview's `?chatLoading=window` override to check window and adaptive slow openings,
 the small Progressive indicator, 10,000-record windowing, and retained turn/tool
 and composer identities through IPC-style updates. It also checks that fallback
 follows different chats/tasks and recreated workspace owners, then resets on

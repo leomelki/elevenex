@@ -443,7 +443,7 @@ export class SessionChatStore {
         // Keep runtime state current without replacing the history being read.
         this.state.set(result.value.state);
         this.cursor = result.value.cursor;
-      } else this.accept(result.value, direction, !reset);
+      } else this.accept(result.value, direction);
       if (this.uncertain()) this.checked.set(true);
     } else if (direction) this.historyError.set(result.error.message);
     else if (reset || !this.state() || result.error.status === 404)
@@ -466,7 +466,7 @@ export class SessionChatStore {
       );
     return result.ok;
   }
-  private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
+  private accept(page: SessionChatPage, direction?: "before" | "following"): void {
     const previous = this.items();
     if (!direction && !page.reset && !page.events.length) {
       this.state.set(page.state);
@@ -477,9 +477,9 @@ export class SessionChatStore {
     const older = direction === "before";
     const wasLoaded = !!this.cursor;
     const replacesTail = !direction && page.reset;
-    // A reset is authoritative from its first row onward. A matching first
-    // row proves where a previously loaded prefix joins the new page.
-    const sharedStart = replacesTail && incremental && page.before
+    // A reset is authoritative from its first row onward. In the live window,
+    // a matching first row shows where the loaded prefix joins the new page.
+    const sharedStart = replacesTail && !this.historical() && page.before
       ? previous.findIndex(item => item.id === page.items[0]?.id) : -1;
     const previousPrefix = sharedStart > 0 ? previous.slice(0, sharedStart) : [];
     const priorOwner = promptBefore(previous, sharedStart) ?? this.leadingPrompt();

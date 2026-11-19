@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 export default async function* (capture) {
   for (const theme of ['light', 'dark']) {
     for (const narrow of [false, true]) {
-      await capture.evaluate(() => { location.href = '/connected-workspace'; });
-      await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+      const captureQuery = `?chatLoading=window&capture=${theme}-${narrow}`;
+      await capture.evaluate(query => { location.href = '/connected-workspace' + query; }, captureQuery);
+      await capture.waitFor(query => location.search === query &&
+        document.querySelector('ex-workspace-navigation ex-task-list'), captureQuery);
       await capture.theme(theme);
       await capture.viewport(narrow ? 1000 : 1440, narrow ? 760 : 960);
       await capture.reducedMotion(narrow);
