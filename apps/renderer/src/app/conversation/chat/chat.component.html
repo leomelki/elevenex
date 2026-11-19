@@ -4,7 +4,8 @@
     [historyLoading]="historyLoading()" [historyError]="historyError()" [historyRevision]="historyRevision()"
     [progressiveLoading]="progressiveLoading()"
     [initialHistoryPrefetch]="initialHistoryPrefetch()"
-    (historyRequested)="historyRequested.emit($event)" (latestRequested)="latestRequested.emit()">
+    (historyRequested)="historyRequested.emit($event)" (historyCancelled)="historyCancelled.emit()"
+    (latestRequested)="latestRequested.emit()">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
       @if (

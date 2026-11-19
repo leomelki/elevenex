@@ -14,6 +14,7 @@
   [historyError]="store.historyError()"
   [historyRevision]="store.windowRevision()"
   (historyRequested)="$event === 'before' ? store.older() : store.newer()"
+  (historyCancelled)="store.cancelHistory()"
   (latestRequested)="latest()"
   [stoppable]="!archived() && !!store.state()?.canInterrupt"
   [retryable]="!blocked()"

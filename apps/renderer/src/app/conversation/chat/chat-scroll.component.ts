@@ -22,6 +22,7 @@ import {
 } from "../../ui";
 import { MessageComponent } from "./message.component";
 import { ChatLoadingComponent } from './chat-loading.component';
+import { ChatHistoryScroll } from "./chat-history-scroll";
 import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
   readonly id: string;
@@ -30,6 +31,7 @@ interface Reminder {
 /** Resting on the reminder this long reads as intent; passing over it doesn't.
  * The capsule's charge transition in CSS lasts exactly as long. */
 const PEEK_DELAY = 320;
+const historyMargin = (height: number) => Math.min(480, height * 0.75);
 @Component({
   selector: "ex-chat-scroll",
   imports: [ButtonComponent, IconComponent, TooltipDirective, ChatLoadingComponent],
@@ -53,8 +55,16 @@ export class ChatScrollComponent {
   readonly historyError = input("");
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();
+  readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
-  private readingAnchor?: { element: Element; top: number; rowId: string | null };
+  private readingAnchor?: {
+    readonly element: Element;
+    readonly top: number;
+    readonly rowId: string | null;
+    readonly anchorId: string | null;
+  };
+  private paintedScroll = { top: 0, height: 0 };
+  private historyScroll?: ChatHistoryScroll;
   private paintedRevision = 0;
   private historyPending = false;
   private lastHistoryDirection: "before" | "following" = "before";
@@ -93,6 +103,7 @@ export class ChatScrollComponent {
     const fresh = arrivals.filter(message => message.isNew() && message.role() === "user");
     if (fresh.length) {
       this.interruptSendReveal();
+      this.historyScroll?.finish();
       const viewport = this.viewport().nativeElement;
       const anchor = this.paintedTail;
       // A bounded history refresh can remove rows above us in the same render.
@@ -177,6 +188,7 @@ export class ChatScrollComponent {
   readonly viewport =
     viewChild.required<ElementRef<HTMLDivElement>>("viewport");
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");
+  private readonly track = viewChild.required<ElementRef<HTMLDivElement>>("track");
   private readonly reminderElement = viewChild<ElementRef<HTMLElement>>("reminderElement");
   private readonly destroy = inject(DestroyRef);
   private readonly injector = inject(Injector);
@@ -205,28 +217,28 @@ export class ChatScrollComponent {
       if (this.contentReady && this.paintedRevision !== this.historyRevision()) {
         const viewport = this.viewport().nativeElement;
         const anchor = this.readingAnchor;
-        const element = anchor?.element.isConnected ? anchor.element
-          : anchor?.rowId ? Array.from(this.content().nativeElement.querySelectorAll('[data-chat-row]'))
-            .find(row => row.getAttribute('data-chat-row') === anchor.rowId) : undefined;
+        const element = this.findReadingAnchor();
         if (this.atEnd() && !this.historyAfter()) {
           // A short tail can prefetch older history while still pinned. Its
           // first partial turn may be replaced when its prompt arrives, so no
           // retained DOM anchor can keep the latest reply in place.
+          this.historyScroll?.finish();
           viewport.scrollTop = viewport.scrollHeight;
-        } else if (anchor && element) {
+        } else if (anchor && element && this.historyScroll) {
           // Account for native scroll anchoring instead of adding a height delta
           // twice. This also handles removing content at the opposite edge.
-          viewport.scrollTop += element.getBoundingClientRect().top - anchor.top;
+          const top = this.historyScroll.top + element.getBoundingClientRect().top - anchor.top;
+          this.historyScroll.restore(this.paintedScroll, top);
         }
         this.paintedRevision = this.historyRevision();
-        this.lastScrollHeight = viewport.scrollHeight;
+        this.lastScrollHeight = this.historyScroll?.height ?? viewport.scrollHeight;
         this.updatePosition();
       }
       if (!this.historyLoading() && this.historyPending) {
         this.historyPending = false;
         // Hidden work is not progress towards filling the viewport. Repeated
         // reads here can walk an entire long turn without the reader moving.
-        if (this.viewport().nativeElement.scrollHeight <= this.requestedHeight)
+        if ((this.historyScroll?.height ?? this.viewport().nativeElement.scrollHeight) <= this.requestedHeight)
           this.historyBudget = 0;
         this.scheduleMeasure();
       }
@@ -238,6 +250,7 @@ export class ChatScrollComponent {
       this.endPeek();
       this.surfaceMorph?.cancel();
       this.highlight?.cancel();
+      this.historyScroll?.cancel();
       this.sendScroll?.cancel();
       for (const message of this.arrivingMessages) message.finishArrival();
     });
@@ -245,6 +258,7 @@ export class ChatScrollComponent {
       this.contentReady = true;
       const viewport = this.viewport().nativeElement;
       const content = this.content().nativeElement;
+      this.historyScroll = new ChatHistoryScroll(viewport, this.track().nativeElement, content);
       this.refreshMessages();
       this.atEnd.set(this.startAtEnd());
       if (this.startAtEnd()) viewport.scrollTop = viewport.scrollHeight;
@@ -286,14 +300,17 @@ export class ChatScrollComponent {
   }
   onScroll(): void {
     if (!this.sendScroll) this.updatePosition();
+    this.cancelDistantHistory();
     this.rememberPosition();
     this.rememberReadingAnchor();
     this.scheduleMeasure();
   }
   private updatePosition(): void {
     const viewport = this.viewport().nativeElement;
+    const height = this.historyScroll?.height ?? viewport.scrollHeight;
+    const top = this.historyScroll?.top ?? viewport.scrollTop;
     this.atEnd.set(
-      !this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40,
+      !this.historyAfter() && height - top - viewport.clientHeight < 40,
     );
     if (this.atEnd()) this.unread.set(false);
   }
@@ -331,6 +348,7 @@ export class ChatScrollComponent {
   }
   scrollToMessage(id: string): void {
     this.interruptSendReveal();
+    this.historyScroll?.finish();
     const target = this.messages.find(
       (message) => message.dataset["userMessage"] === id,
     );
@@ -354,6 +372,7 @@ export class ChatScrollComponent {
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
     this.interruptSendReveal();
+    this.historyScroll?.finish();
     const viewport = this.viewport().nativeElement;
     // Keep the return control present until native smooth scrolling arrives.
     // Claiming the end early would hide/reveal it on intermediate scroll events.
@@ -375,7 +394,9 @@ export class ChatScrollComponent {
     this.requestHistory(this.lastHistoryDirection);
   }
   private rememberReadingAnchor(): void {
-    const top = this.viewport().nativeElement.getBoundingClientRect().top;
+    const viewport = this.viewport().nativeElement;
+    this.paintedScroll = { top: viewport.scrollTop, height: viewport.scrollHeight };
+    const top = viewport.getBoundingClientRect().top;
     const children = this.content().nativeElement.querySelectorAll("[data-chat-anchor]");
     // The DOM is bounded by the connected owner's transcript window. Keep the
     // first visible stable row, including a reply whose prompt is off screen.
@@ -394,7 +415,16 @@ export class ChatScrollComponent {
     });
     const element = row ?? turn;
     this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top,
-      rowId: element.getAttribute('data-chat-row') } : undefined;
+      rowId: element.getAttribute('data-chat-row'),
+      anchorId: element.getAttribute('data-chat-anchor') } : undefined;
+  }
+  private findReadingAnchor(): Element | undefined {
+    const anchor = this.readingAnchor;
+    if (!anchor || anchor.element.isConnected) return anchor?.element;
+    const key = anchor.rowId ? 'data-chat-row' : 'data-chat-anchor';
+    const id = anchor.rowId ?? anchor.anchorId;
+    if (!id) return undefined;
+    return this.content().nativeElement.querySelector(`[${key}="${CSS.escape(id)}"]`) ?? undefined;
   }
   private requestHistory(direction: "before" | "following"): void {
     if (this.historyLoading() || this.historyPending) return;
@@ -406,12 +436,24 @@ export class ChatScrollComponent {
     // that case can evict the answer still in view. Overflowing conversations
     // prefetch once per gesture; only an underfilled viewport chains pages.
     const viewport = this.viewport().nativeElement;
-    this.requestedHeight = viewport.scrollHeight;
-    this.historyBudget = viewport.scrollHeight > viewport.clientHeight ? 0 : this.historyBudget - 1;
+    this.requestedHeight = this.historyScroll?.height ?? viewport.scrollHeight;
+    this.historyBudget = this.requestedHeight > viewport.clientHeight ? 0 : this.historyBudget - 1;
     // Loading above a pinned tail must not relinquish end following. An actual
     // reader scroll updates atEnd normally while the request is pending.
     if (direction === 'following') this.atEnd.set(false);
     this.historyRequested.emit(direction);
+  }
+  private cancelDistantHistory(): void {
+    if (!this.historyPending || !this.historyLoading() || !this.historyScroll) return;
+    const height = this.viewport().nativeElement.clientHeight;
+    const { top, height: contentHeight } = this.historyScroll;
+    const distance = this.lastHistoryDirection === "before" ? top : contentHeight - top - height;
+    // A quick reversal during a held read can put the reader inside the part
+    // of the window that the pending page would evict. Allow nearby scrolling.
+    if (distance <= height + historyMargin(height)) return;
+    this.historyPending = false;
+    this.historyBudget = 0;
+    this.historyCancelled.emit();
   }
   private refreshMessages(): void {
     this.messages = Array.from(
@@ -429,12 +471,16 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
-    const contentChanged = viewport.scrollHeight !== this.lastScrollHeight;
+    const height = this.historyScroll?.height ?? viewport.scrollHeight;
+    const top = this.historyScroll?.top ?? viewport.scrollTop;
+    const contentChanged = height !== this.lastScrollHeight;
     const resized = viewport.clientHeight !== this.lastViewportHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if ((contentChanged || resized) && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
-    else if (contentChanged) this.unread.set(true);
-    this.lastScrollHeight = viewport.scrollHeight;
+    else if ((contentChanged || resized) && this.atEnd()) {
+      this.historyScroll?.finish();
+      viewport.scrollTop = viewport.scrollHeight;
+    } else if (contentChanged) this.unread.set(true);
+    this.lastScrollHeight = height;
     this.lastViewportHeight = viewport.clientHeight;
     if (!this.sendScroll) this.updatePosition();
     const scrollbar = viewport.offsetWidth - viewport.clientWidth;
@@ -455,13 +501,13 @@ export class ChatScrollComponent {
     if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
-      const margin = Math.min(480, viewport.clientHeight * 0.75);
-      const underfilled = viewport.scrollHeight <= viewport.clientHeight;
-      if ((!underfilled || this.historyIntent === "before") && this.historyBefore() && viewport.scrollTop < margin &&
-          (!this.atEnd() || viewport.scrollHeight <= viewport.clientHeight))
+      const margin = historyMargin(viewport.clientHeight);
+      const underfilled = height <= viewport.clientHeight;
+      if ((!underfilled || this.historyIntent === "before") && this.historyBefore() && top < margin &&
+          (!this.atEnd() || underfilled))
         this.requestHistory("before");
       else if ((!underfilled || this.historyIntent === "following") && this.historyAfter() &&
-          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
+          height - top - viewport.clientHeight < margin)
         this.requestHistory("following");
     }
   }

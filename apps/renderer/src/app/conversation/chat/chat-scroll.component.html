@@ -9,7 +9,9 @@
   (pointerdown)="onViewportInteraction()"
   (keydown)="onViewportKey($event)"
 >
-  <div #content class="content"><ng-content /></div>
+  <div #track class="track">
+    <div #content class="content"><ng-content /></div>
+  </div>
 </div>
 @if (historyError()) {
   <div class="history-status" role="status">

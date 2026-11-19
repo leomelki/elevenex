@@ -120,6 +120,13 @@ evicts the opposite edge and increments `historyRevision` in the same update.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
 its offset after either operation. Within a long turn, `data-chat-row` identifies
 individual timeline rows so prepending work preserves the answer's offset as well.
+For a large range change, the viewport carries its previous scroll extent into
+the first paint and reconciles the native scrollbar in small steps. The range
+and scroll origin change together so the anchored text stays still, including
+in reduced motion. The transcript remains bounded.
+If the reader moves well away from the requested edge before the page arrives,
+`historyCancelled` lets the owner discard the read before it can evict the
+content now in view.
 One in-flight request and a four-page automatic fill budget bound underfilled
 viewports; a page adding no visible height stops that fill immediately. Wheel
 and keyboard direction choose the edge, including when both edges fit on screen.

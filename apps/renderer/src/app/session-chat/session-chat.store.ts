@@ -330,6 +330,11 @@ export class SessionChatStore {
     this.stopRead();
     await this.load(false, this.items().at(-1)?.id, "following");
   }
+  cancelHistory(): void {
+    if (!this.historyLoading()) return;
+    this.stopRead();
+    if (!this.readOnly()) void this.load(false);
+  }
   private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<void> {
     const selection = this.selection;
     if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;

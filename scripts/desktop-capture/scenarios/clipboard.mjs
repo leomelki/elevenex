@@ -45,8 +45,9 @@ export default async function* (capture) {
       // Same shared chat copy owner, reached from the bounded original-content reader.
       await capture.component('ex-connected-workspace-demo', c => c.fixture.chat.scenario('long-message'));
       await capture.waitFor(() => [...document.querySelectorAll('ex-chat button')].some(b => b.textContent.includes('Read full message')));
-      await capture.evaluate(() => document.querySelector('ex-chat-scroll > .viewport > .content > button:last-of-type').scrollIntoView({ block: 'center' }));
-      await capture.click('ex-chat-scroll > .viewport > .content > button:last-of-type');
+      const overflowButton = 'ex-chat-scroll > .viewport > .track > .content > button:last-of-type';
+      await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), overflowButton);
+      await capture.click(overflowButton);
       await capture.waitFor(() => document.querySelector('[aria-label="Full transcript content"] pre'));
       const page = await capture.evaluate(() => document.querySelector('[aria-label="Full transcript content"] pre').textContent);
       await capture.component('ex-session-chat', c => c.store.notice.set(''));

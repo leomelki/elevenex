@@ -191,6 +191,12 @@ repeated raw-window eviction across long turns, with trusted upward/downward
 wheel input, retained drafts and stable final-answer identities. It covers both
 themes and narrow reduced-motion layouts against the preview URL.
 
+`scenarios/session-history-scrollbar.mjs` samples visible reply offsets and
+native scrollbar geometry frame by frame as older and following pages swap
+into a bounded window. It checks a keyboard reversal during a held page and
+wheel input while the range settles. It covers both themes and a narrow
+reduced-motion layout against the preview URL.
+
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
 ```

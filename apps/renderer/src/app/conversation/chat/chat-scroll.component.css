@@ -13,6 +13,12 @@
   scrollbar-gutter: stable;
   overflow-anchor: auto;
 }
+.viewport.reconciling-history {
+  overflow-anchor: none;
+}
+.reconciling-history .track {
+  overflow: clip;
+}
 .history-status {
   position: absolute;
   z-index: 7;

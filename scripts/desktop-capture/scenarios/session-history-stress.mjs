@@ -50,7 +50,8 @@ export default async function* (capture) {
       await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '101' }));
       await capture.waitFor(() => document.querySelector('[data-user-message="distant-prompt"]'));
       await quiet();
-      assert.equal(await chat(owner => owner.store.items().length), 80, 'Opening at the end must not drain collapsed history');
+      const opening = await chat(owner => ({ size: owner.store.items().length, first: owner.store.items()[0]?.id }));
+      assert.deepEqual(opening, { size: 320, first: 'evidence-681' }, 'Opening at the end must not drain collapsed history');
       await capture.fill('ex-composer textarea', 'Retain this draft through every page');
       const initial = await position(); await quiet();
       assert.ok(await capture.evaluate(() => document.querySelector('.reminder .quote')?.textContent.includes('original request')));

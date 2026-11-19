@@ -59,6 +59,8 @@ Older engines omit the capability and retain their original send contract.
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
   incremental read path. Repeated visibility notifications share the active read.
+  Leaving a history edge while its page is pending cancels the read and resumes
+  the live feed, preserving the window the reader scrolled back into.
 - Paging keeps at most 320 contiguous raw records. When hidden work leaves the
   newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
   context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
