@@ -191,7 +191,7 @@ test('workspace IPC validates resources, page bounds, scopes and request bodies 
   const ipcExports = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipcExports, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
   const workspace = {};
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipcExports : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipcExports : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const client = { execute: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: {} }); }, cancel: (...args) => calls.push(args) };
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);

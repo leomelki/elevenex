@@ -313,7 +313,7 @@ test('project deletion explains cleanup failures using bounded known codes witho
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -342,6 +342,43 @@ test('project deletion explains cleanup failures using bounded known codes witho
   assert.equal(calls, cases.length + 1, 'rejected deletions are never automatically replayed');
 });
 
+test('workspace branch IPC preserves exact refs and accepts legacy branch replies', async context => {
+  const { readFile } = require('node:fs/promises');
+  const { URLSearchParams } = require('node:url');
+  const vm = require('node:vm');
+  const requests = [];
+  const legacy = { name: 'main', current: true, isDefault: true, defaultBase: 'main', heldTaskName: null };
+  const remote = { ...legacy, name: 'upstream/review', ref: 'refs/remotes/upstream/review', remoteBranch: 'review', current: false, isDefault: false, heldTaskName: 'Review task' };
+  let reply = [remote, legacy];
+  const url = await server(context, (request, response) => {
+    requests.push(request.url);
+    response.writeHead(200, json); response.end(JSON.stringify(reply));
+  });
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(42);
+  const handlers = new Map(), ipc = {}, workspace = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
+  context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
+  const search = handlers.get('workspace:branches');
+  const scope = client.state(42).scope.id;
+  const input = { repoId: 1, query: 'topic review', limit: 2, includeRemote: true };
+  assert.throws(() => search(event, scope, { ...input, includeRemote: 'true' }));
+  assert.throws(() => search(event, scope, { ...input, query: 'x'.repeat(254) }));
+  assert.equal(requests.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify((await search(event, scope, input)).value)), reply);
+  assert.deepEqual(requests, ['/api/desktop-workspace/branches?repoId=1&query=topic+review&limit=2&includeRemote=true']);
+  for (const invalid of [{ ...remote, ref: 'refs/heads/other' }, { ...remote, remoteBranch: 'other' }]) {
+    reply = [invalid];
+    assert.equal((await search(event, scope, input)).error.code, 'invalid-response');
+  }
+  reply = [legacy, legacy, legacy];
+  assert.equal((await search(event, scope, input)).error.code, 'invalid-response');
+  client.reset(42);
+  assert.equal((await search(event, scope, input)).error.code, 'stale-scope');
+});
+
 test('project name availability IPC validates names, replies, scope and sender', async context => {
   const { URLSearchParams } = require('node:url');
   const { readFile } = require('node:fs/promises');
@@ -358,7 +395,7 @@ test('project name availability IPC validates names, replies, scope and sender',
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
   const check = handlers.get('workspace:project-name-availability');
@@ -395,7 +432,7 @@ test('task recovery IPC preserves default retries and sends only named consent t
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -440,7 +477,7 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
   const selection = { includeUnstaged: true, excluded: [file.path], includedSecrets: [] };
@@ -507,7 +544,7 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   context.after(() => client.dispose()); client.attach(42);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -803,7 +840,7 @@ test('task request reconciliation is scoped, read-only and validates repository 
   context.after(() => client.dispose()); client.attach(42);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender); context.after(stop);
   const read = input => handlers.get('workspace:task-request')(event, scope, input);
@@ -894,7 +931,7 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   context.after(() => client.dispose()); client.attach(42); client.attach(43);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : require('../dist/backend-client/transport') });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
   const stop = workspace.registerWorkspaceIpc(client, candidate => candidate === frame); context.after(stop);
   const input = { after: 3, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };

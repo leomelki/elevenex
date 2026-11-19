@@ -30,7 +30,7 @@ function setup(history = false) {
     workspaceProject: vi.fn(async () => ok(detail)),
     workspaceCreateProject: vi.fn(async () => ok(detail)),
     workspaceFolders: vi.fn(async (): Promise<BackendResult<readonly import('@elevenex/shared').WorkspaceFolder[]>> => ok([])),
-    workspaceBranches: vi.fn(async () => ok([{ name: 'main', current: false, isDefault: true, defaultBase: 'main', heldTaskName: null }])),
+    workspaceBranches: vi.fn<ElevenexBridge['workspaceBranches']>(async () => ok([{ name: 'main', current: false, isDefault: true, defaultBase: 'main', heldTaskName: null }])),
     workspaceCreateTask: vi.fn<(scope: string, input: WorkspaceCreateTask) => Promise<BackendResult<WorkspaceTask>>>(async () => ok({ ...task, state: 'preparing' })),
     workspaceTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok(task)),
     workspaceRetryTask: vi.fn<(scope: string, taskId: number, recovery?: WorkspaceTaskRecovery) => Promise<BackendResult<WorkspaceTask>>>(async () => ok(task)),
@@ -649,13 +649,62 @@ describe('WorkspaceStore', () => {
     store.searchBranches({ repoId: '2', query: 'feature-299', kind: 'branch' });
     await vi.advanceTimersByTimeAsync(160);
     expect(bridge.workspaceBranches).toHaveBeenCalledTimes(1);
-    expect(bridge.workspaceBranches).toHaveBeenCalledWith('scope', { repoId: 2, query: 'feature-299', limit: 50 });
+    expect(bridge.workspaceBranches).toHaveBeenCalledWith('scope', { repoId: 2, query: 'feature-299', limit: 50, includeRemote: true });
     expect(store.taskRepositories()[0]?.base).toBe('main');
     const branches = store.branchesFor('2');
     store.searchBranches({ repoId: '2', query: 'main', kind: 'base' });
     await vi.advanceTimersByTimeAsync(160);
     expect(store.branchesFor('2')).toBe(branches);
     expect(store.basesFor('2')).toHaveLength(1);
+  });
+
+  it('loads the current task repository first and saves an existing remote branch as planned', async () => {
+    const { store, bridge, start } = setup();
+    const repository = detail.repositories.items[0]!;
+    bridge.workspaceProject.mockResolvedValue({ ok: true, value: {
+      ...detail, repositories: page([{ ...repository, id: 7, name: 'Other repository' }, repository]),
+    } });
+    bridge.workspaceBranches.mockResolvedValue(ok([
+      { name: 'origin/main', ref: 'refs/remotes/origin/main', remoteBranch: 'main', current: false, isDefault: true, defaultBase: 'refs/remotes/origin/main', heldTaskName: 'Base task' },
+    ]));
+    await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    await store.openNewTask();
+    expect(store.draftTaskRepository()).toBe('2');
+    expect(bridge.workspaceBranches).toHaveBeenCalledExactlyOnceWith('scope', { repoId: 2, limit: 50, includeRemote: true });
+    expect(store.basesFor('2')).toEqual([{ name: 'origin/main', ref: 'refs/remotes/origin/main', remote: true, remoteBranch: 'main', task: 'Base task', isDefault: true }]);
+    await store.planTask({ repo: '2', title: 'Continue review', branch: 'refs/remotes/origin/review', existing: true, workspace: 'auto' });
+    expect(bridge.workspaceCreateTask).toHaveBeenCalledWith('scope', {
+      repoId: 2, name: 'Continue review', branchName: 'refs/remotes/origin/review', mode: 'existing', requestId: expect.any(String),
+    });
+    expect(bridge.workspaceSetStage).toHaveBeenCalledWith('scope', { taskId: task.id, stage: 'planned' });
+  });
+
+  it('clears branch search on close, rejects the old reply and retries a failed lookup', async () => {
+    vi.useFakeTimers();
+    const { store, bridge, start } = setup(); await start(); await store.openNewTask();
+    let finish!: (reply: Awaited<ReturnType<ElevenexBridge['workspaceBranches']>>) => void;
+    bridge.workspaceBranches.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const lookup = { repoId: '2', query: 'upstream', kind: 'base' as const };
+    store.searchBranches(lookup);
+    await vi.advanceTimersByTimeAsync(160);
+    expect(store.branchLoading()).toBe(true);
+    store.closeDialog();
+    expect(store.branchLoading()).toBe(false);
+    await store.openNewTask();
+    finish(ok([{ name: 'old', current: false, isDefault: false, defaultBase: null, heldTaskName: null }]));
+    await settle();
+    expect(store.basesFor('2')[0]?.name).toBe('main');
+    bridge.workspaceBranches.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 500, message: 'Unavailable' } });
+    store.searchBranches(lookup);
+    await vi.advanceTimersByTimeAsync(160);
+    expect(store.branchLoading()).toBe(false);
+    expect(store.branchSearchFailed()).toBe(true);
+    bridge.workspaceBranches.mockResolvedValueOnce(ok([{ name: 'upstream/main', current: false, isDefault: false, defaultBase: 'main', heldTaskName: null }]));
+    store.searchBranches(lookup);
+    await vi.advanceTimersByTimeAsync(160);
+    expect(store.branchSearchFailed()).toBe(false);
+    expect(store.basesFor('2')[0]?.name).toBe('upstream/main');
   });
 
   it('retains the outgoing project draft and requests focus on the workspace action after closure', async () => {

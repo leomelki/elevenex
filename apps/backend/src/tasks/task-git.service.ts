@@ -35,6 +35,26 @@ export function taskBranchSlug(name: string): string {
   );
 }
 
+export function taskRemoteRef(
+  ref: string,
+  remotes: readonly string[],
+): { remote: string; branch: string; ref: string } | null {
+  if (ref.startsWith('refs/heads/')) return null;
+  const value = ref.replace(/^refs\/remotes\//, '');
+  let remote: string | undefined;
+  for (const name of remotes) {
+    if (value.startsWith(`${name}/`) && (!remote || name.length > remote.length))
+      remote = name;
+  }
+  return remote
+    ? {
+        remote,
+        branch: value.slice(remote.length + 1),
+        ref: `refs/remotes/${value}`,
+      }
+    : null;
+}
+
 @Injectable()
 export class TaskGitService {
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -107,19 +127,8 @@ export class TaskGitService {
     ref: string,
   ): Promise<{ remote: string; branch: string; ref: string } | null> {
     if (ref.startsWith('refs/heads/')) return null;
-    const value = ref.replace(/^refs\/remotes\//, '');
     const remotes = await worktreeSimpleGit(repoPath).getRemotes();
-    const remote = remotes
-      .map((entry) => entry.name)
-      .sort((a, b) => b.length - a.length)
-      .find((name) => value.startsWith(`${name}/`));
-    return remote
-      ? {
-          remote,
-          branch: value.slice(remote.length + 1),
-          ref: `refs/remotes/${value}`,
-        }
-      : null;
+    return taskRemoteRef(ref, remotes.map(({ name }) => name));
   }
 
   async refresh(
@@ -176,6 +185,12 @@ export class TaskGitService {
   }
 
   async defaultBase(repoPath: string): Promise<string | null> {
+    return (await this.branchDefaults(repoPath)).baseRef;
+  }
+
+  async branchDefaults(
+    repoPath: string,
+  ): Promise<{ baseRef: string | null; remotes: readonly string[] }> {
     const git = worktreeSimpleGit(repoPath);
     // Only inspect candidate defaults, without reading every branch's subject
     // or launching a rev-parse process for each missing candidate.
@@ -204,17 +219,19 @@ export class TaskGitService {
           ? 1
           : a.name.localeCompare(b.name),
     );
-    for (const { name } of remotes) {
+    const remoteNames = remotes.map(({ name }) => name);
+    for (const name of remoteNames) {
       const target = candidates.get(`refs/remotes/${name}/HEAD`);
-      if (target) return target;
+      if (target) return { baseRef: target, remotes: remoteNames };
       for (const branch of ['main', 'master']) {
         const ref = `refs/remotes/${name}/${branch}`;
-        if (candidates.has(ref)) return ref;
+        if (candidates.has(ref)) return { baseRef: ref, remotes: remoteNames };
       }
     }
-    for (const branch of ['main', 'master'])
-      if (candidates.has(`refs/heads/${branch}`)) return `refs/heads/${branch}`;
-    return null;
+    const local = ['refs/heads/main', 'refs/heads/master'].find((ref) =>
+      candidates.has(ref),
+    );
+    return { baseRef: local ?? null, remotes: remoteNames };
   }
 
   /** A clean index can still belong to a paused rebase, bisect, or sequencer. */

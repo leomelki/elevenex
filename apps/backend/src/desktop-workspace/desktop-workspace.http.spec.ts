@@ -13,6 +13,7 @@ import { DRIZZLE } from '../database/database.provider.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
+import { TaskGitService } from '../tasks/task-git.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { DesktopWorkspaceService } from './desktop-workspace.service.js';
@@ -80,11 +81,13 @@ describe('desktop workspace HTTP resource slice', () => {
         ProjectsService,
         ReposService,
         BranchesService,
+        TaskGitService,
         { provide: DRIZZLE, useValue: database.db },
         {
           provide: TasksService,
           useValue: {
             record: taskRecord,
+            defaults: async () => ({ baseRef: 'refs/heads/main' }),
             repo: async (id: number) =>
               (
                 await database.db
@@ -126,6 +129,53 @@ describe('desktop workspace HTTP resource slice', () => {
       headers: { 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+
+  it('browses and searches bounded local and remote task refs with accurate default and ownership metadata', async () => {
+    const repository = join(root, 'branch-picker');
+    const git = (...args: string[]) => execute('git', ['-C', repository, ...args]);
+    await execute('git', ['init', repository]);
+    await git('symbolic-ref', 'HEAD', 'refs/heads/main');
+    await git('-c', 'user.name=Branch Picker', '-c', 'user.email=picker@example.com', 'commit', '--allow-empty', '-m', 'Initial commit');
+    await git('remote', 'add', 'origin', repository);
+    await git('remote', 'add', 'fork/team', repository);
+    const localRefs = ['refs/heads/topic/held', 'refs/heads/fork/team/topic/held', ...Array.from({ length: 60 }, (_, index) => `refs/heads/change-${index}`)];
+    for (const ref of [...localRefs, 'refs/remotes/origin/main', 'refs/remotes/origin/change-remote', 'refs/remotes/fork/team/topic/held']) {
+      await git('update-ref', ref, 'HEAD');
+    }
+    await git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const [project] = await database.db.insert(schema.projects).values({ name: 'Branch choices' }).returning();
+    const [repo] = await database.db.insert(schema.repos).values({ projectId: project.id, name: 'Branches', path: repository }).returning();
+    try {
+      await database.db.insert(schema.workspaces).values([
+        { repoId: repo.id, name: 'Working on held', path: '', taskBranch: 'topic/held' },
+        { repoId: repo.id, name: 'Finished change', path: '', taskBranch: 'change-remote', archivedAt: '2026-01-01' },
+      ]);
+      const endpoint = `/branches?repoId=${repo.id}`;
+
+      const legacy = await (await request(`${endpoint}&query=topic%2Fheld`)).json();
+      expect(legacy).toEqual([
+        { name: 'topic/held', current: false, isDefault: false, defaultBase: 'refs/heads/main', heldTaskName: 'Working on held' },
+        { name: 'fork/team/topic/held', current: false, isDefault: false, defaultBase: 'refs/heads/main', heldTaskName: null },
+      ]);
+      const browse = await (await request(`${endpoint}&includeRemote=true&limit=5`)).json();
+      expect(browse).toHaveLength(5);
+      expect(browse[0]).toMatchObject({ name: 'origin/main', ref: 'refs/remotes/origin/main', defaultBase: 'refs/remotes/origin/main', isDefault: true });
+      expect(browse).toContainEqual(expect.objectContaining({ ref: 'refs/heads/main', isDefault: false }));
+      expect(browse).toContainEqual(expect.objectContaining({ ref: 'refs/remotes/origin/change-remote', heldTaskName: null }));
+      expect(browse).not.toContainEqual(expect.objectContaining({ name: 'origin/HEAD' }));
+      const matching = await (await request(`${endpoint}&includeRemote=true&query=held+topic`)).json();
+      expect(matching).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ref: 'refs/heads/topic/held', heldTaskName: 'Working on held' }),
+        expect.objectContaining({ ref: 'refs/heads/fork/team/topic/held', heldTaskName: null }),
+        expect.objectContaining({ ref: 'refs/remotes/fork/team/topic/held', remoteBranch: 'topic/held', heldTaskName: 'Working on held' }),
+      ]));
+      const fullRef = await (await request(`${endpoint}&includeRemote=true&query=refs%2Fremotes%2Ffork%2Fteam%2Ftopic%2Fheld`)).json();
+      expect(fullRef).toEqual([expect.objectContaining({ ref: 'refs/remotes/fork/team/topic/held' })]);
+      expect((await request(`${endpoint}&includeRemote=anything`)).status).toBe(400);
+    } finally {
+      await database.db.delete(schema.projects).where(eq(schema.projects.id, project.id));
+    }
+  });
 
   it('keeps revision reads compatible and wakes waiting HTTP clients without periodic polling', async () => {
     const initial = object(await (await request('/revision')).json());

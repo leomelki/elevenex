@@ -34,6 +34,12 @@ import { ReposService } from '../repos/repos.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
+import { TaskGitService } from '../tasks/task-git.service.js';
+import {
+  WORKSPACE_BRANCH_NAME_LIMIT,
+  WORKSPACE_BRANCH_REF_LIMIT,
+} from '@elevenex/shared';
+import { taskBranchWindow, type TaskBranchChoice } from './desktop-task-branches.js';
 
 type Appearance = {
   look?: 'letters' | 'emoji' | 'icon';
@@ -113,6 +119,7 @@ export class DesktopWorkspaceService {
     private readonly tasks: TasksService,
     private readonly sessions: SessionsService,
     private readonly branches: BranchesService,
+    private readonly taskGit: TaskGitService,
     @Optional() private readonly activity?: DesktopWorkspaceActivityService,
   ) {}
 
@@ -516,13 +523,18 @@ export class DesktopWorkspaceService {
       input.branchName === undefined
         ? await this.tasks.defaults(repoId, name)
         : undefined;
-    const branchName =
-      input.branchName === undefined
-        ? defaults!.branchName
-        : text(input.branchName, 240);
     const mode = input.mode ?? 'new';
     if (mode !== 'new' && mode !== 'existing')
       throw new BadRequestException('Invalid branch mode.');
+    const branchName =
+      input.branchName === undefined
+        ? defaults!.branchName
+        : text(
+            input.branchName,
+            mode === 'existing'
+              ? WORKSPACE_BRANCH_REF_LIMIT
+              : WORKSPACE_BRANCH_NAME_LIMIT,
+          );
     const task = await this.tasks.create(repoId, {
       name,
       requestId,
@@ -531,7 +543,7 @@ export class DesktopWorkspaceService {
       baseRef:
         input.baseRef === undefined
           ? (repo.taskBaseRef ?? defaults?.baseRef ?? undefined)
-          : text(input.baseRef, 240),
+          : text(input.baseRef, WORKSPACE_BRANCH_REF_LIMIT),
     });
     return this.task(task.id);
   }
@@ -600,15 +612,39 @@ export class DesktopWorkspaceService {
     });
     return this.task(id);
   }
-  async listBranches(repoId: number, query: string, limit: number) {
+  async listBranches(
+    repoId: number,
+    query: string,
+    limit: number,
+    includeRemote = false,
+  ) {
+    const queryLimit = includeRemote
+      ? WORKSPACE_BRANCH_REF_LIMIT
+      : WORKSPACE_BRANCH_NAME_LIMIT;
     if (
-      query.length > 240 ||
+      typeof query !== 'string' ||
+      query.length > queryLimit ||
       !Number.isInteger(limit) ||
       limit < 1 ||
       limit > 100
     )
       throw new BadRequestException('Invalid branch query.');
     const repo = await this.tasks.repo(repoId);
+    if (includeRemote) {
+      const [branches, { baseRef, remotes }] = await Promise.all([
+        this.branches.getBranches(repo.path, true),
+        this.taskGit.branchDefaults(repo.path),
+      ]);
+      const { choices, defaultBase } = taskBranchWindow(
+        branches,
+        remotes,
+        repo.taskBaseRef ?? baseRef,
+        query,
+        limit,
+      );
+      return this.branchViews(repoId, choices, defaultBase);
+    }
+
     const [rows, defaults] = await Promise.all([
       this.branches.searchBranches(repo.path, query, true),
       this.tasks.defaults(repoId),
@@ -632,7 +668,25 @@ export class DesktopWorkspaceService {
         hasWorktree: false,
         worktreePath: null,
       });
-    const names = selected.map((branch) => branch.name);
+    return this.branchViews(
+      repoId,
+      selected.map((branch) => ({
+        name: branch.name,
+        current: branch.current,
+        isDefault: branch.name === defaultName,
+      })),
+      defaultBase,
+    );
+  }
+
+  private async branchViews(
+    repoId: number,
+    selected: readonly TaskBranchChoice[],
+    defaultBase: string | null,
+  ) {
+    const names = [
+      ...new Set(selected.map((branch) => branch.remoteBranch ?? branch.name)),
+    ];
     const held = names.length
       ? await this.db
           .select({
@@ -650,12 +704,11 @@ export class DesktopWorkspaceService {
           )
       : [];
     return selected.map((branch) => ({
-      name: branch.name,
-      current: branch.current,
-      isDefault: branch.name === defaultName,
+      ...branch,
       defaultBase,
       heldTaskName:
-        held.find((task) => task.branch === branch.name)?.name ?? null,
+        held.find((task) => task.branch === (branch.remoteBranch ?? branch.name))
+          ?.name ?? null,
     }));
   }
 }

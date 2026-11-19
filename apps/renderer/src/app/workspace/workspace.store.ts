@@ -11,7 +11,7 @@ import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client
 import type { Machine } from '../machines';
 import type { ConversationMention } from '../conversation';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
-import type { BranchInfo, CreatedTask, PlannedTask, Project, StatusCounts, SummaryStatus, TaskOutline, TaskSessionDisclosure, TaskRepository, TaskStage } from '../tasks';
+import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
 import { workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
@@ -93,6 +93,8 @@ export class WorkspaceStore {
   readonly branches = signal<ReadonlyMap<string, readonly BranchInfo[]>>(new Map());
   readonly baseBranches = signal<ReadonlyMap<string, readonly BranchInfo[]>>(new Map());
   readonly branchLoading = signal(false);
+  readonly branchSearchFailed = signal(false);
+  readonly draftTaskRepository = signal<string | undefined>(undefined);
   private readonly defaultBranches = signal<ReadonlyMap<string, string>>(new Map());
   readonly machine = this.machineState.asReadonly();
   readonly selected = this.chosen.asReadonly();
@@ -139,7 +141,7 @@ export class WorkspaceStore {
     return selection ? this.sessionRecords().get(selection.taskId)?.find(session => session.id === selection.sessionId) ?? this.archives.pages().get(selection.taskId)?.sessions.find(session => session.id === selection.sessionId) ?? null : null;
   });
   readonly repositories = computed<readonly WorkspaceRepository[]>(() => this.detail()?.repositories.items ?? []);
-  readonly taskRepositories = computed<readonly TaskRepository[]>(() => this.repositories().map(repo => ({ id: String(repo.id), name: repo.name, path: repo.path, base: this.defaultBranches().get(String(repo.id)) })));
+  readonly taskRepositories = computed<readonly TaskRepository[]>(() => this.repositories().map(repo => ({ id: String(repo.id), name: repo.name, path: repo.path, base: this.defaultBranches().get(String(repo.id)) ?? repo.defaultBase ?? undefined })));
   readonly tasks = computed<readonly TaskOutline[]>(() => this.taskRecords().map(task => ({
     id: String(task.id), title: task.name, stage: workspaceTaskStage(task),
     ...(this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && this.hasArchivedSessions(task.id) ? { archive: {
@@ -217,7 +219,7 @@ export class WorkspaceStore {
       if (!scope || !environment || this.restoring() || this.loading() || this.busy()) return;
       this.saveView(scope, environment);
     });
-    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); clearTimeout(this.branchTimer); this.branchRevision++; this.observer?.dispose(); });
+    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); this.stopBranchSearch(); this.observer?.dispose(); });
   }
 
   private suspend(): void {
@@ -225,11 +227,11 @@ export class WorkspaceStore {
     this.suspended = true; this.asOf.set(Date.now()); this.outageTasks = this.taskRecords();
     this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
     this.closeUndo.set(null); this.archiveUndo.set(null); this.sessionArchiveUndo.set(null);
-    this.revision++; this.listRevision++; this.preparationRevision++; this.branchRevision++;
-    clearTimeout(this.preparationTimer); clearTimeout(this.branchTimer);
+    this.revision++; this.listRevision++; this.preparationRevision++;
+    clearTimeout(this.preparationTimer); this.stopBranchSearch();
     this.observer?.dispose(); this.observer = undefined;
     if (this.inFlightMutations) { this.mutationUncertain.set(true); this.error.set('The last change is unconfirmed. Check its outcome when the machine is back.'); }
-    this.busy.set(false); this.loading.set(false); this.branchLoading.set(false);
+    this.busy.set(false); this.loading.set(false);
   }
   private recover(scope: string): void {
     const previous = this.scopeId()!;
@@ -619,45 +621,73 @@ export class WorkspaceStore {
     const scope = this.scopeId();
     const selectionRevision = this.listRevision;
     if (!scope || !project || this.busy()) return;
+    this.stopBranchSearch();
     this.editingTask.set(null);
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
     this.error.set(null);
     if (this.offline()) {
       if (this.detail()?.project.id !== project.id || !this.repositories().length) { this.error.set(`New task opens when ${this.machine()?.name ?? 'the machine'} is back. Repository choices have not loaded yet.`); return; }
+      this.draftTaskRepository.set(this.initialTaskRepository(this.repositories()));
       this.taskRequestId = crypto.randomUUID(); this.editingTask.set(null); this.dialogKey.update(value => value + 1); this.dialog.set('task'); this.dialogOpen.set(true); return;
     }
     this.busy.set(true);
-    const detail = await this.read(scope, () => this.bridge.workspaceProject(scope, project.id));
-    if (detail && selectionRevision === this.listRevision) {
-      this.detail.set(detail);
-      const branches = new Map<string, readonly BranchInfo[]>();
-      for (const repo of detail.repositories.items.slice(0, 1)) {
-        const page = await this.read(scope, () => this.bridge.workspaceBranches(scope, { repoId: repo.id, limit: 50 }));
-        if (page) branches.set(String(repo.id), page.map(branchView));
+    const accept = () => this.valid(scope) && selectionRevision === this.listRevision;
+    const detail = await this.read(scope, () => this.bridge.workspaceProject(scope, project.id), accept);
+    if (detail && accept()) {
+      const repoId = this.initialTaskRepository(detail.repositories.items);
+      const page = repoId
+        ? await this.read(scope, () => this.bridge.workspaceBranches(scope, { repoId: Number(repoId), limit: 50, includeRemote: true }), accept, true).catch(() => null)
+        : null;
+      if (accept()) {
+        const branches = new Map<string, readonly BranchInfo[]>();
+        if (repoId && page) branches.set(repoId, page.map(branchView));
+        const base = page && defaultBranchRef(page);
+        this.detail.set(detail);
+        this.branches.set(branches);
+        this.baseBranches.set(branches);
+        this.defaultBranches.set(repoId && base ? new Map([[repoId, base]]) : new Map());
+        this.draftTaskRepository.set(repoId);
+        this.taskRequestId = crypto.randomUUID();
+        this.dialogKey.update(value => value + 1);
+        this.dialog.set('task');
+        this.dialogOpen.set(true);
       }
-      if (this.scopeId() === scope && selectionRevision === this.listRevision) { this.branches.set(branches); this.baseBranches.set(branches); this.defaultBranches.set(new Map(detail.repositories.items.flatMap(repo => { const base = repo.defaultBase ?? branches.get(String(repo.id))?.find(item => item.isDefault)?.name; return base ? [[String(repo.id), base] as const] : []; }))); this.taskRequestId = crypto.randomUUID(); this.dialogKey.update(value => value + 1); this.dialog.set('task'); this.dialogOpen.set(true); }
     }
     if (this.scopeId() === scope) this.busy.set(false);
   }
   readonly branchesFor = (repoId: string): readonly BranchInfo[] => this.branches().get(repoId) ?? [];
   readonly basesFor = (repoId: string): readonly BranchInfo[] => this.baseBranches().get(repoId) ?? [];
-  searchBranches(query: { readonly repoId: string; readonly query: string; readonly kind: 'branch' | 'base' }): void {
-    const scope = this.scopeId(), dialog = this.dialogKey(), revision = ++this.branchRevision;
-    clearTimeout(this.branchTimer);
-    if (!scope || !this.repositories().some(repo => String(repo.id) === query.repoId)) return;
+  searchBranches(query: TaskBranchSearch | null): void {
+    this.stopBranchSearch();
+    const scope = this.scopeId(), dialog = this.dialogKey(), revision = this.branchRevision;
+    if (!query || !scope || this.offline() || !this.dialogOpen() || !this.repositories().some(repo => String(repo.id) === query.repoId)) return;
+    const accept = () => this.valid(scope) && revision === this.branchRevision && this.dialogKey() === dialog && this.dialogOpen();
     this.branchLoading.set(true);
     this.branchTimer = setTimeout(() => {
       this.branchTimer = undefined;
-      void this.read(scope, () => this.bridge.workspaceBranches(scope, { repoId: Number(query.repoId), query: query.query, limit: 50 }), () => revision === this.branchRevision && this.dialogKey() === dialog && this.dialogOpen()).then(result => {
-        if (revision !== this.branchRevision || this.dialogKey() !== dialog || !this.dialogOpen()) return;
-        this.branchLoading.set(false);
-        if (!result) return;
+      void this.read(scope, () => this.bridge.workspaceBranches(scope, { repoId: Number(query.repoId), query: query.query.trim(), limit: 50, includeRemote: true }), accept, true).then(result => {
+        if (!result || !accept()) return;
         const target = query.kind === 'base' ? this.baseBranches : this.branches;
         target.update(choices => new Map(choices).set(query.repoId, result.map(branchView)));
-        const base = result[0]?.defaultBase;
+        const base = defaultBranchRef(result);
         if (base && this.defaultBranches().get(query.repoId) !== base) this.defaultBranches.update(bases => new Map(bases).set(query.repoId, base));
+      }, () => {
+        if (accept()) this.branchSearchFailed.set(true);
+      }).finally(() => {
+        if (accept()) this.branchLoading.set(false);
       });
     }, 160);
+  }
+  private initialTaskRepository(repos: readonly WorkspaceRepository[]): string | undefined {
+    const selected = this.selectedTask()?.repoId;
+    return (repos.find(repo => repo.id === selected) ?? repos[0])?.id.toString();
+  }
+  private stopBranchSearch(): void {
+    clearTimeout(this.branchTimer);
+    this.branchTimer = undefined;
+    this.branchRevision++;
+    this.branchLoading.set(false);
+    this.branchSearchFailed.set(false);
   }
   /** Provider identity bounds the picker's cache to one backend scope. */
   readonly folderProvider = computed<FolderProvider>(() => {
@@ -693,6 +723,7 @@ export class WorkspaceStore {
   readonly draftProjectMark = computed(() => { const project = this.draftProject(); return projectFace({ name: project?.name ?? '', ...project?.appearance }); });
   closeDialog(): void {
     if (this.busy()) return;
+    this.stopBranchSearch();
     if (this.editingWaitingTask) {
       this.taskOutbox.enqueue(this.editingWaitingTask);
       this.editingWaitingTask = null;
@@ -755,8 +786,10 @@ export class WorkspaceStore {
 
   async planTask(draft: PlannedTask): Promise<void> {
     const repo = this.repositories().find(repo => String(repo.id) === draft.repo) ?? this.repositories()[0];
-    const base = draft.base ?? (repo ? this.branchesFor(String(repo.id)).find(branch => branch.isDefault)?.name : undefined);
-    await this.createTask({ ...draft, branch: draft.branch || draft.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''), existing: false, base: base ?? null }, true);
+    const existing = !!draft.existing && !!draft.branch;
+    const base = draft.base ?? (repo ? this.defaultBranches().get(String(repo.id)) ?? repo.defaultBase : null);
+    const branch = draft.branch || branchFromTitle(draft.title) || 'task';
+    await this.createTask({ ...draft, branch, existing, base: existing ? null : base ?? null }, true);
   }
 
   async setStage(stage: TaskStage): Promise<void> {
@@ -995,9 +1028,21 @@ export class WorkspaceStore {
     this.stopPreparation();
     this.archiveUndo.set(null);
     this.mutationUncertain.set(false); this.uncertainSetup = null;
-    clearTimeout(this.branchTimer); this.branchRevision++; this.branchLoading.set(false); this.baseBranches.set(new Map()); this.defaultBranches.set(new Map());
+    this.stopBranchSearch(); this.baseBranches.set(new Map()); this.defaultBranches.set(new Map());
     this.revision++; this.listRevision++; this.scopeId.set(scope); this.projectRecords.set([]); this.taskRecords.set([]); this.sessionRecords.set(new Map()); this.sessionCursors.set(new Map()); this.detail.set(null); this.chosen.set(null); this.activeProject.set('all'); this.focused.set(false); this.dialogOpen.set(false); this.busy.set(false); this.error.set(null); this.loading.set(false); this.branches.set(new Map()); this.projectsCursor.set(null); this.tasksCursor.set(null); this.taskPage.set(false);
   }
 }
 
-function branchView(branch: WorkspaceBranch): BranchInfo { return { name: branch.name, isDefault: branch.isDefault, ...(branch.heldTaskName ? { task: branch.heldTaskName } : {}) }; }
+function branchView(branch: WorkspaceBranch): BranchInfo {
+  return {
+    name: branch.name,
+    isDefault: branch.isDefault,
+    ...(branch.ref ? { ref: branch.ref, remote: branch.ref.startsWith('refs/remotes/') } : {}),
+    ...(branch.remoteBranch ? { remoteBranch: branch.remoteBranch } : {}),
+    ...(branch.heldTaskName ? { task: branch.heldTaskName } : {}),
+  };
+}
+function defaultBranchRef(branches: readonly WorkspaceBranch[]): string | undefined {
+  const preferred = branches.find(branch => branch.isDefault);
+  return preferred?.ref ?? branches[0]?.defaultBase ?? preferred?.name;
+}

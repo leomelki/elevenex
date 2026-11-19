@@ -197,6 +197,10 @@ in both themes.
 `scenarios/new-task-existing.mjs` verifies existing-branch selection, the
 history-preserving From message, enabled Create focus and native Enter task
 creation in both themes.
+`scenarios/new-task-branches.mjs` checks disabled held targets, selectable held
+sources, the remote default, retry after a branch search failure and the full
+refs sent by the connected form. It covers both themes and a narrow
+reduced-motion viewport using the component preview.
 `scenarios/new-task-project-menu.mjs` checks direct header-menu opening with
 unchanged dialog/form geometry, keyboard project selection, Escape/focus and
 draft retention, same-project selection and cleanup on close in both themes,

@@ -8,6 +8,7 @@ import * as schema from '../database/schema/index.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ReposService } from '../repos/repos.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
+import { TaskGitService } from '../tasks/task-git.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
@@ -67,6 +68,7 @@ describe('DesktopWorkspaceService', () => {
     const module = await Test.createTestingModule({
       providers: [
         DesktopWorkspaceService,
+        TaskGitService,
         { provide: DesktopWorkspaceActivityService, useValue: {status: activityStatus} },
         ProjectsService,
         { provide: DRIZZLE, useValue: db },

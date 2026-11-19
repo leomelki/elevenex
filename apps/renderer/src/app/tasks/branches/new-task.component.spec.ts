@@ -51,12 +51,14 @@ describe("NewTask keyboard flow", () => {
     );
     fixture.detectChanges();
   }
-  function name(value: string): void {
-    const input = field("Task name");
+  function fill(label: string, value: string): HTMLInputElement {
+    const input = field(label);
     input.value = value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     fixture.detectChanges();
+    return input;
   }
+  const name = (value: string) => fill("Task name", value);
 
   it("creates a new branch from the project default with three Enter presses", () => {
     const created: CreatedTask[] = [];
@@ -80,7 +82,7 @@ describe("NewTask keyboard flow", () => {
   it('does not repeat a branch request when repository/default metadata is rebound with the same identity', () => {
     const requested: { readonly repoId: string; readonly query: string; readonly kind: 'branch' | 'base' }[] = [];
     fixture.componentRef.setInput('repos', [{ id: 'repo', name: 'Repository', base: 'main' }]);
-    fixture.componentInstance.branchQueryRequested.subscribe(request => requested.push(request));
+    fixture.componentInstance.branchQueryRequested.subscribe(request => { if (request) requested.push(request); });
     fixture.detectChanges(); name('New feature');
     key(field('Task name'), 'Enter');
     expect(requested).toEqual([{ repoId: 'repo', query: 'new-feature', kind: 'branch' }]);
@@ -125,6 +127,7 @@ describe("NewTask keyboard flow", () => {
     fixture.componentRef.setInput("branchQuery", "feature/existing");
     // Mirror the connected owner's loading state when a picker requests data.
     fixture.componentInstance.branchQueryRequested.subscribe(request => {
+      if (!request) return;
       requested.push(request);
       if (request.kind === "base") fixture.componentRef.setInput("branchesLoading", true);
     });
@@ -137,6 +140,101 @@ describe("NewTask keyboard flow", () => {
     expect(requested.map(request => request.kind)).toEqual(["branch"]);
     expect(create.disabled).toBe(false);
     expect(document.activeElement).toBe(create);
+  });
+
+  it("distinguishes identical local and remote branch names and keeps the chosen remote history", async () => {
+    const create = vi.fn();
+    const plan = vi.fn();
+    fixture.componentInstance.create.subscribe(create);
+    fixture.componentInstance.plan.subscribe(plan);
+    fixture.componentRef.setInput("title", "Continue release");
+    fixture.componentRef.setInput("branchQuery", "origin/release");
+    fixture.componentRef.setInput("step", "branch");
+    fixture.componentRef.setInput("branches", [
+      { name: "origin/release", ref: "refs/heads/origin/release", task: "Existing local task" },
+      { name: "origin/release", ref: "refs/remotes/origin/release", remote: true, remoteBranch: "release" },
+    ]);
+    fixture.detectChanges();
+
+    const input = field("Branch: type to search or create");
+    const rows: HTMLButtonElement[] = Array.from(input.closest(".body")!.querySelectorAll("[role=option]"));
+    expect(rows.map(row => row.disabled)).toEqual([true, false]);
+    expect(rows[1]?.textContent).toContain("remote");
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+    key(input, "ArrowDown");
+    expect(input.getAttribute("aria-activedescendant")).toBe(rows[1]?.id);
+    key(input, "Enter");
+    await fixture.whenStable();
+    const button = fixture.nativeElement.querySelector("footer .next") as HTMLButtonElement;
+    expect(document.activeElement).toBe(button);
+    key(button, "Enter", { altKey: true });
+    expect(plan).toHaveBeenCalledWith(expect.objectContaining({ existing: true, branch: "refs/remotes/origin/release", base: undefined }));
+    button.click();
+    expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ existing: true, branch: "refs/remotes/origin/release", base: null }));
+  });
+
+  it.each(["click", "enter", "shortcut"])("uses a task-held branch as the source by %s", method => {
+    const create = vi.fn();
+    fixture.componentInstance.create.subscribe(create);
+    fixture.componentRef.setInput("title", "Stack another change");
+    fixture.componentRef.setInput("step", "base");
+    fixture.componentRef.setInput("bases", [
+      { name: "origin/main", ref: "refs/remotes/origin/main", remote: true },
+      { name: "feature/held", ref: "refs/heads/feature/held", task: "Other task" },
+    ]);
+    fixture.componentRef.setInput("base", "refs/remotes/origin/main");
+    fixture.detectChanges();
+    const input = fill("Start from", "missing ref");
+    expect(fixture.nativeElement.querySelector("footer .next").disabled).toBe(true);
+    key(input, "Enter", { ctrlKey: true });
+    expect(create).not.toHaveBeenCalled();
+    fill("Start from", "held feature");
+    const row = input.closest(".body")!.querySelector<HTMLButtonElement>("[role=option]")!;
+    expect(row.textContent).toContain("Task · Other task");
+    expect(row.disabled).toBe(false);
+    if (method === "click") row.click();
+    else key(input, "Enter", { ctrlKey: method === "shortcut" });
+    expect(create).toHaveBeenCalledExactlyOnceWith({
+      title: "Stack another change", branch: "stack-another-change", existing: false, base: "refs/heads/feature/held", workspace: "auto",
+    });
+  });
+
+  it("shows and submits a remote default from the correct ref after browsing", () => {
+    const create = vi.fn();
+    fixture.componentInstance.create.subscribe(create);
+    fixture.componentRef.setInput("title", "Remote default");
+    fixture.componentRef.setInput("base", "refs/remotes/origin/main");
+    fixture.componentRef.setInput("step", "base");
+    fixture.componentRef.setInput("bases", [
+      { name: "origin/main", ref: "refs/heads/origin/main" },
+      { name: "origin/main", ref: "refs/remotes/origin/main", remote: true },
+    ]);
+    fixture.detectChanges();
+    const input = field("Start from");
+    const selected = input.closest(".body")!.querySelector('[aria-selected="true"]');
+    expect(selected?.textContent).toContain("default");
+    expect(selected?.textContent).toContain("remote");
+    key(input, "Enter");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ base: "refs/remotes/origin/main" }));
+  });
+
+  it("blocks stale choices after a failed search and lets the user retry the same query", () => {
+    fixture.componentRef.setInput("repos", [{ id: "repo", name: "Repository" }]);
+    fixture.componentRef.setInput("title", "Retry branch");
+    fixture.componentRef.setInput("step", "branch");
+    fixture.componentRef.setInput("branchSearchFailed", true);
+    const create = vi.fn();
+    const requests = vi.fn();
+    fixture.componentInstance.create.subscribe(create);
+    fixture.componentInstance.branchQueryRequested.subscribe(requests);
+    fixture.detectChanges();
+    const input = field("Branch: type to search or create");
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+    key(input, "Enter", { metaKey: true });
+    expect(create).not.toHaveBeenCalled();
+    fixture.nativeElement.querySelector(".branch-search-error button").click();
+    expect(requests).toHaveBeenCalledTimes(2);
+    expect(requests).toHaveBeenLastCalledWith({ repoId: "repo", kind: "branch", query: "retry-branch" });
   });
 
   it("uses the selected repository branches and default through four Enter presses", () => {

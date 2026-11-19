@@ -232,8 +232,20 @@ export class DesktopWorkspaceController {
     @Query('repoId') id: string,
     @Query('query') query = '',
     @Query('limit') limit = '50',
+    @Query('includeRemote') includeRemote?: string,
   ) {
-    return this.workspace.listBranches(resourceId(id), query, Number(limit));
+    if (
+      includeRemote !== undefined &&
+      includeRemote !== 'true' &&
+      includeRemote !== 'false'
+    )
+      throw new BadRequestException('Invalid remote branch option.');
+    return this.workspace.listBranches(
+      resourceId(id),
+      query,
+      Number(limit),
+      includeRemote === 'true',
+    );
   }
   @Get('folders') async folders(
     @Query('query') query = '',

@@ -10,6 +10,10 @@ export default async function* (capture) {
     await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
   };
   await capture.component('ex-connected-workspace-demo', component => component.fixture.setTaskSetupFailure(true));
+  const branches = {
+    light: { 'use-existing': 'release/stable', snapshot: 'release/maintenance' },
+    dark: { 'use-existing': 'release/canary', snapshot: 'release/next' },
+  };
   for (const theme of ['light', 'dark']) for (const recovery of ['use-existing', 'snapshot']) {
     await capture.theme(theme); await capture.viewport(1280, 900);
     await owner(component => component.store.openNewTask('1'));
@@ -19,7 +23,7 @@ export default async function* (capture) {
     await capture.press('Enter');
     await capture.waitFor(() => document.activeElement?.getAttribute('aria-label') === 'Branch: type to search or create');
     await finish();
-    await capture.fill('input[aria-label="Branch: type to search or create"]', 'release/stable');
+    await capture.fill('input[aria-label="Branch: type to search or create"]', branches[theme][recovery]);
     await capture.waitFor(() => !document.querySelector('ex-new-task [role="status"]'));
     await capture.press('Enter'); await finish(); await capture.press('Enter');
     await capture.waitFor(() => document.querySelector('ex-workspace-task-setup [role="alert"]')?.textContent.includes('already checked out'));

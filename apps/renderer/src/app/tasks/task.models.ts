@@ -37,8 +37,10 @@ export interface TaskLink {
 }
 export interface BranchInfo {
   readonly name: string;
+  readonly ref?: string;
   readonly when?: string;
   readonly remote?: boolean;
+  readonly remoteBranch?: string;
   readonly task?: string;
   readonly isDefault?: boolean;
 }
@@ -75,6 +77,7 @@ export interface PlannedTask {
   readonly repo?: string;
   readonly title: string;
   readonly branch?: string;
+  readonly existing?: boolean;
   readonly base?: string;
   readonly workspace: string;
 }

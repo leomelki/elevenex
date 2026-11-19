@@ -389,3 +389,10 @@ header .new-label {
 }
 
 .waiting-note { margin: var(--space-3) 0; color: var(--attention); font-size: var(--text-caption-size); }
+.branch-search-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--attention);
+  font-size: var(--text-ui-size);
+}

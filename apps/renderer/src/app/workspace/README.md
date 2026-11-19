@@ -134,8 +134,11 @@ starting runtimes or scanning all sessions at startup.
   count keep their existing repository hint.
 - New-task branch search uses `branchQueryRequested` and separate branch/base
   windows. The owner debounces requests for 160ms, asks the backend for at most
-  50 matches, and rejects stale replies. Actual default base and held-task
-  metadata come from the backend; the current checkout is not the default base.
+  50 matches, and rejects replies from a previous search or dialog. Search
+  includes local and fetched remote-tracking refs. Uses of an existing branch
+  and starting points for new branches carry their full Git ref into task setup.
+  The backend supplies the repository default and held-task metadata. A branch
+  held by a task is available as a starting point at its committed tip.
 - `WorkspaceTaskGitService`, provided by the selected header, owns one focused
   five-second git-status probe, visibility/focus listeners and mutation epochs.
   Unknown git state is not presented as “Up to date”. Commit and branch rename
