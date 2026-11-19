@@ -64,6 +64,22 @@ describe('incremental transcript projection', () => {
     expect(closing?.overflow).toEqual([{ id: 'final', label: 'message' }]);
   });
 
+  it('uses folded tool references through an off-page receipt and renders orphan results independently', () => {
+    const revision = 'a'.repeat(64), next = 'b'.repeat(64);
+    const call = { ...tool('test'), input: '', toolDetails: { revision, summary: 'pnpm test' },
+      receipt: { id: 'reply', error: true, toolDetails: { revision: next, meta: 'Exit 1' } } };
+    const [exchange] = chatExchanges([item('prompt', 'user'), call], state, fresh);
+    const step = exchange?.steps[0];
+    expect(step).toMatchObject({
+      id: 'test', status: 'failed', detail: 'pnpm test', meta: 'Exit 1',
+      deferredTool: { item: { id: 'test', revision }, result: { id: 'reply', revision: next } },
+    });
+    expect(step?.presentation).toBeUndefined();
+    expect(step?.output).toBeUndefined();
+    const [orphan] = chatExchanges([item('reply', 'tool_result', '', { toolId: 'test', toolDetails: { revision: next } })], state, fresh);
+    expect(orphan?.steps[0]?.deferredTool).toEqual({ item: { id: 'reply', revision: next } });
+  });
+
   it('ignores unrelated runtime updates and only changes the active turn for phase/decision updates', () => {
     const projection = new ChatTranscriptProjection();
     const items = [item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Done'),

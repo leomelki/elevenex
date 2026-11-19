@@ -62,6 +62,92 @@ describe('selected session chat', () => {
     await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'window', '1')).rejects.toThrow('Invalid completed turn view');
   });
 
+  it('sends only tool headings in opted-in history and resolves the exact paired evidence', async () => {
+    const command = 'pnpm test\n' + 'private command body'.repeat(100);
+    const output = 'private output'.repeat(1400);
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolUseId: 'operation', toolKind: 'bash', toolInput: { command, cwd: '/workspace' } },
+      { ...item('result', output), kind: 'tool_result', toolUseId: 'operation', providerToolResult: { exitCode: 2 } },
+      item('reply'),
+    ];
+    const signal = new AbortController().signal;
+    const inline = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!;
+    expect(inline.items[1].input).toContain('private command body');
+    expect(inline.items[2].text).toContain('private output');
+    const detail = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    expect(JSON.stringify(detail.items)).not.toMatch(/private (command|output)|\/workspace/);
+    const [, call, result] = detail.items;
+    expect(call).toMatchObject({ id: 'call', text: '', input: '', toolDetails: { summary: 'pnpm test' } });
+    expect(result).toMatchObject({ id: 'result', text: '', input: '', error: true, toolDetails: { meta: 'Exit 2' } });
+    const source = { item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: result.id, revision: result.toolDetails!.revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({
+      taskId: 1, sessionId: 2,
+      item: { ...source.item, record: { input: inline.items[1].input } },
+      result: { ...source.result, record: { text: inline.items[2].text, truncated: true, error: true } },
+    });
+    expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+    await expect(chat.readToolDetails(9, 2, source, signal)).rejects.toThrow('does not belong');
+    await expect(chat.readToolDetails(1, 2, { item: source.result, result: source.item }, signal)).rejects.toThrow('has changed');
+    await expect(chat.readToolDetails(1, 2, { item: { id: 'call', revision: 'invalid' } }, signal)).rejects.toThrow('Invalid tool details');
+    expect(await chat.readToolDetails(1, 2, source, AbortSignal.abort())).toBeUndefined();
+  });
+
+  it('resolves a result beyond the first activity page and rejects rewritten evidence after cache invalidation', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'read', toolUseId: 'operation', toolInput: { file_path: 'important.ts' } },
+      ...Array.from({ length: 41 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      { ...item('result', 'Important file contents'), kind: 'tool_result', toolUseId: 'operation' },
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    const version = initial.items[0].completedTurn!.revision;
+    const page = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1'))!;
+    const call = page.items[0];
+    const receipt = call.receipt!;
+    expect(call).toMatchObject({ id: 'call', input: '', toolDetails: { summary: 'important.ts' }, receipt: { id: 'result' } });
+    expect(page.items.some(row => row.id === receipt.id)).toBe(false);
+    const source = { item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: receipt.id, revision: receipt.toolDetails!.revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({
+      result: { record: { text: 'Important file contents' } },
+    });
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    // The same addresses work after the hot window has been invalidated.
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({ result: { record: { text: 'Important file contents' } } });
+    history[history.length - 2] = { ...history[history.length - 2], content: 'Rewritten file contents' };
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    await expect(chat.readToolDetails(1, 2, source, signal)).rejects.toThrow('has changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it('publishes fresh detail references when a compact live result changes', async () => {
+    live = [
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'bash', toolUseId: 'operation', toolInput: { command: 'pnpm test' } },
+      { ...item('result', 'Partial result'), kind: 'tool_result', toolUseId: 'operation' },
+    ];
+    const signal = new AbortController().signal;
+    const page = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    live = [live[0], { ...live[1], content: 'Complete result' }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const update = (await chat.read(1, 2, page.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
+    expect(update.events).toHaveLength(1);
+    const result = update.events[0].item;
+    expect(result).toMatchObject({ id: 'result', text: '', input: '' });
+    expect(result.toolDetails!.revision).not.toBe(page.items[1].toolDetails!.revision);
+    expect(await chat.readToolDetails(1, 2, { item: { id: 'result', revision: result.toolDetails!.revision } }, signal))
+      .toMatchObject({ item: { record: { text: 'Complete result' } } });
+    live = [live[0], { ...live[1], providerToolResult: { exitCode: 1 } }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const changed = (await chat.read(1, 2, update.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
+    expect(changed.events[0].item).toMatchObject({ error: true, toolDetails: { meta: 'Exit 1' } });
+    expect(changed.events[0].item.toolDetails!.revision).not.toBe(result.toolDetails!.revision);
+  });
+
   it('reads exact saved activity for a task-owned version, including archived sessions and cancelled reads', async () => {
     status = 'archived';
     history = [

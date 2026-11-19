@@ -283,9 +283,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
 - Opening Worked reads one versioned page of up to 40 activity records or
   384 KiB. Earlier and Later page within the disclosure, so a large turn can
   be inspected without retaining its entire trace in the renderer. A call
-  whose receipt falls on another page still reports its outcome and can open
-  the original output. The final reply keeps its identity while the activity
-  fills in around it.
+  whose receipt falls on another page still reports its outcome. Opening that
+  tool reads the call and receipt together. The final reply keeps its identity
+  while the activity fills in around it.
 - The window-local cache retains up to 16 activity pages or 1.5 MiB of
   serialized data, evicting least recently used pages first. Its key includes
   the backend scope, task, session, turn revision and offset. One first page
@@ -297,6 +297,29 @@ full-history read, so a cold provider parse can still dominate initial latency.
   surface after 150ms, then reveals the timeline in place. A failure offers
   retry while keeping the reply readable. Scope and revision changes invalidate
   pending results. Activity and its loading surface respect reduced motion.
+
+### Tool evidence
+
+Normal windows, live updates and saved activity pages opt into deferred tool
+details. Tool rows carry the heading, outcome and evidence revision. Counts,
+file-change metadata and existing inline media references remain available in
+the timeline. Older engines can send inline evidence with the same row UI.
+
+Opening a tool starts one bounded read for its call and its receipt when
+available. An orphan result opens by its own identity. Worked and group
+expansion, hover and keyboard focus alone do not read tool evidence. The
+conversation owner shares an in-flight request for matching open references and
+cancels it when the last observer closes, leaves the current page or changes
+session. A receipt arriving for an open call changes its reference and replaces
+the requested evidence in place. Hidden or disconnected chats pause pending
+reads. Closing the tool releases the mounted evidence after its exit.
+
+Successful reads are kept in a window-local LRU of 48 entries and 1 MiB of
+serialized evidence. Entries are scoped by machine, task, session and both
+item revisions. Cache hits reopen without a placeholder. Slow reads reveal a
+loading surface after 140ms, then ease to the evidence while preserving the
+header and reading position. Failed reads can be retried in place. Evidence
+uses the existing preview, Details and original transcript reader.
 
 ### History window and related reads
 

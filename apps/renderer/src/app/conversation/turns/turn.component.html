@@ -90,6 +90,7 @@
     [answerTemplate]="answerContent"
     [streaming]="streaming()"
     [resolve]="resolve()"
+    [inspectTool]="inspectTool()"
     [copiedCode]="copiedCode()"
     (inspectionChanged)="inspecting.set($event)"
     (openFile)="openFile.emit($event)"
@@ -97,6 +98,7 @@
     (openPage)="openPage.emit($event)"
     (copyCode)="copyCode.emit($event)"
     (contentRequested)="contentRequested.emit($event)"
+    (layoutChanging)="workLayoutChanging.emit($event)"
   />
   <ex-fold [open]="status() === 'live' && !!reach()"
     ><div class="reach-line" role="status">

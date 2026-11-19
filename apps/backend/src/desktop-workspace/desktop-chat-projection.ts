@@ -32,6 +32,10 @@ export function commandExecution(item: AgentTranscriptItem, call?: AgentTranscri
   const source = item.kind === 'tool_use' ? item : call;
   const input = record(source?.toolInput);
   if (source?.toolKind !== 'bash' && !input.command && !input.cmd) return undefined;
+  return commandFacts(item, input);
+}
+
+export function commandFacts(item: AgentTranscriptItem, input = record(item.toolInput)) {
   const result = record(item.providerToolResult);
   const exitCode = result.exitCode ?? result.exit_code;
   const cwd = input.cwd ?? input.workdir ?? result.cwd;

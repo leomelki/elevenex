@@ -983,7 +983,7 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   stop(); assert.equal(handlers.size,0);
 });
 
-test('completed activity is opt-in and validates the exact scoped request and bounded records', async context => {
+test('completed activity and tool details validate opted-in, scoped and bounded records', async context => {
   const { URLSearchParams } = require('node:url');
   const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
@@ -996,12 +996,24 @@ test('completed activity is opt-in and validates the exact scoped request and bo
   for (const completedTurn of [{ ...summary, total: 0 }, { ...summary, beforeReply: 2 }, { ...summary, counts: { run: 2 } }, { ...summary, reply: [record('tool', 'tool_use')] }]) {
     assert.throws(() => parseChatPage({ ...page, items: [{ ...page.items[0], completedTurn }] }, 5, 9, 'progressive', true), /incompatible/);
   }
+  const tool = { ...record('call', 'tool_use'), toolId: 'operation', text: '' };
+  const heading = { ...tool, toolDetails: { revision, summary: 'pnpm test', private: 'discard' } };
+  const compact = { ...page, items: [heading], events: [{ type: 'item', item: heading }] };
+  const parsed = parseChatPage(compact, 5, 9, 'window', false, true);
+  assert.deepEqual(parsed.items[0].toolDetails, { revision, summary: 'pnpm test' });
+  assert.deepEqual(parsed.events[0].item.toolDetails, parsed.items[0].toolDetails);
+  assert.throws(() => parseChatPage(compact, 5, 9, 'window'), /incompatible/);
+  for (const invalid of [{ ...heading, input: 'unexpected' }, { ...heading, kind: 'assistant' }, { ...heading, toolDetails: { revision: 'invalid' } }]) {
+    assert.throws(() => parseChatPage({ ...compact, items: [invalid] }, 5, 9, 'window', false, true), /incompatible/);
+  }
 
   const { readFile } = require('node:fs/promises'), vm = require('node:vm');
   const handlers = new Map(), ipc = {}, adapter = {}, requests = [];
+  let hold;
   let response = { taskId: 5, sessionId: 9, turnId: 'prompt', revision, offset: 0, total: 2, nextOffset: 1, items: [{ ...record('call', 'tool_use'), receipt: { id: 'result', error: false } }], private: 'discard' };
   const url = await server(context, (request, reply) => {
     requests.push(request.url);
+    if (hold) { hold(); return; }
     reply.writeHead(200, json);
     reply.end(JSON.stringify(response));
   });
@@ -1036,6 +1048,38 @@ test('completed activity is opt-in and validates the exact scoped request and bo
     response = { ...valid, ...patch };
     assert.equal((await read()).error.code, 'invalid-response');
   }
+  response = { ...valid, items: [{ ...heading, receipt: { id: 'result', error: false, toolDetails: { revision, meta: 'Exit 0' } } }] };
+  assert.equal((await read({ ...input, deferToolDetails: true })).value.items[0].receipt.toolDetails.meta, 'Exit 0');
+  assert.match(requests.at(-1), /deferToolDetails=1$/);
+
+  const item = { id: 'call', revision }, receipt = { id: 'result', revision };
+  const details = { taskId: 5, sessionId: 9, item, result: receipt, requestId: 'details' };
+  const body = { ...item, record: { ...tool, input: 'bounded command' } };
+  const output = { ...receipt, record: { ...record('result', 'tool_result'), toolId: 'operation' } };
+  const complete = { taskId: 5, sessionId: 9, item: body, result: output };
+  const inspect = (value = details, selected = scope, senderFrame = frame) => handlers.get('session-chat:tool-details')({ senderFrame, sender }, selected, value);
+  assert.throws(() => inspect(details, scope, {}), /Untrusted/);
+  assert.throws(() => inspect({ ...details, result: item }));
+  assert.throws(() => inspect({ ...details, item: { ...item, revision: 'short' } }));
+  assert.equal((await inspect(details, 'b'.repeat(36))).error.code, 'stale-scope');
+  response = complete;
+  assert.deepEqual(await inspect(), { ok: true, value: complete });
+  assert.equal(requests.at(-1), `/api/desktop-workspace/tasks/5/sessions/9/chat/tool-details?itemId=call&revision=${revision}&resultId=result&resultRevision=${revision}`);
+  for (const invalid of [
+    { ...complete, taskId: 6 },
+    { ...complete, result: undefined },
+    { ...complete, item: { ...body, revision: 'b'.repeat(64) } },
+    { ...complete, result: { ...output, record: { ...output.record, toolId: 'different-tool' } } },
+    { ...complete, item: { ...body, record: { ...body.record, input: 'x'.repeat(16001) } } },
+  ]) {
+    response = invalid;
+    assert.equal((await inspect()).error.code, 'invalid-response');
+  }
+  const arrived = new Promise(resolve => { hold = resolve; });
+  const pending = inspect();
+  await arrived;
+  handlers.get('session-chat:cancel')({ senderFrame: frame, sender }, scope, details.requestId);
+  assert.equal((await pending).ok, false);
   stop();
   assert.equal(handlers.size, 0);
 });

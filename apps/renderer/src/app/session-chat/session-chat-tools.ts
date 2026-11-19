@@ -1,9 +1,10 @@
-import { sessionChatToolCategory, type SessionChatItem } from "@elevenex/shared";
+import { sessionChatToolCategory, sessionChatToolHeading, type SessionChatItem } from "@elevenex/shared";
 import type {
   StepKind,
   ToolBlock,
   ToolField,
   ToolListItem,
+  ToolEvidence,
   ToolPresentation,
 } from "../conversation";
 import { focusSessionTool } from "./session-tool-focus";
@@ -429,22 +430,8 @@ export function presentSessionTool(
     if (Object.keys(data).length > MAX_ROWS) shortened = true;
   };
 
-  let summary =
-    string(
-      input,
-      "description",
-      "title",
-      "query",
-      "pattern",
-      "url",
-      "file_path",
-      "path",
-    ) ||
-    item.toolName ||
-    "Tool";
-  let meta = "";
-  const path = string(input, "file_path", "path", "filePath", "notebook_path");
   const output = result ? decode(result.text) : undefined;
+  const { summary, meta, exit } = sessionChatToolHeading(item, decodedInput, result, output);
   const succeeded = result !== undefined && !result.error;
   let outputHandled = false;
   switch (item.toolKind) {
@@ -452,7 +439,6 @@ export function presentSessionTool(
       const command =
         string(input, "command", "cmd", "input") ||
         (typeof decodedInput === "string" ? decodedInput : "");
-      summary = command.split("\n")[0] || summary;
       text("Command", command, true);
       fields([
         {
@@ -465,16 +451,6 @@ export function presentSessionTool(
         field("Purpose", "description"),
       ]);
       const data = record(output);
-      const exit =
-        result?.execution?.exitCode ??
-        data["exit_code"] ??
-        data["exitCode"] ??
-        result?.text.match(
-          /(?:Process exited with code|Exit code:)\s*(-?\d+)/i,
-        )?.[1];
-      if (result?.execution?.interrupted) meta = "Interrupted";
-      else if (typeof exit === "number" || typeof exit === "string")
-        meta = `Exit ${exit}`;
       if (
         Object.hasOwn(data, "stdout") ||
         Object.hasOwn(data, "stderr") ||
@@ -524,7 +500,6 @@ export function presentSessionTool(
       break;
     }
     case "read":
-      summary = path || summary;
       fields([
         field("File", "file_path", "path", "filePath"),
         {
@@ -551,7 +526,6 @@ export function presentSessionTool(
       }
       break;
     case "write":
-      summary = path || summary;
       fields([field("File", "file_path", "path", "filePath")]);
       text(
         succeeded ? "File content" : "Proposed content",
@@ -560,7 +534,6 @@ export function presentSessionTool(
       );
       break;
     case "edit": {
-      summary = path || summary;
       fields([
         field("File", "file_path", "path", "filePath"),
         {
@@ -591,9 +564,6 @@ export function presentSessionTool(
     }
     case "file_changes": {
       const changes = list(input["changes"]);
-      summary = changes.length
-        ? `${changes.length} ${changes.length === 1 ? "file" : "files"}`
-        : path || "File changes";
       rows(succeeded ? "Changed files" : "Proposed files", changes, (value) => {
         const change = record(value);
         const kind = record(change["kind"]);
@@ -664,7 +634,6 @@ export function presentSessionTool(
       break;
     }
     case "notebook_edit":
-      summary = path || "Notebook cell";
       fields([
         field("Notebook", "notebook_path", "file_path", "path"),
         field("Cell", "cell_id"),
@@ -679,8 +648,6 @@ export function presentSessionTool(
       break;
     case "grep":
     case "glob": {
-      summary =
-        string(input, "pattern", "query", "path") || "Repository search";
       fields([
         field("Pattern", "pattern", "query"),
         field("Search in", "path", "directory", "root"),
@@ -692,7 +659,6 @@ export function presentSessionTool(
         const lines = output.trim().split("\n").filter(Boolean);
         if (item.toolKind === "glob" && lines.length && !result?.error) {
           rows("Paths", lines, (value) => ({ label: String(value) }));
-          meta = `${lines.length}${result?.truncated ? "+" : ""} paths`;
         } else text(result?.error ? "Search error" : "Matches", output, true);
         outputHandled = true;
       }
@@ -702,11 +668,6 @@ export function presentSessionTool(
     case "web_fetch": {
       const queries = list(input["queries"]);
       const action = record(input["action"]);
-      summary =
-        string(input, "query", "url", "search_term") ||
-        string(action, "url", "pattern") ||
-        string(record(queries[0]), "q", "query") ||
-        "Web search";
       fields([
         field("Query", "query", "search_term"),
         field("URL", "url"),
@@ -748,14 +709,6 @@ export function presentSessionTool(
     }
     case "todo_write": {
       const todos = list(input["todos"] ?? input["items"] ?? input["plan"]);
-      const done = todos.filter(
-        (value) =>
-          status(record(value)["status"]) === "done" ||
-          record(value)["completed"] === true,
-      ).length;
-      summary = todos.length
-        ? `${done} of ${todos.length} complete`
-        : "Update plan";
       rows("Plan", todos, (value) => {
         const todo = record(value);
         return {
@@ -770,10 +723,6 @@ export function presentSessionTool(
     }
     case "task_agent":
     case "agent_collaboration": {
-      summary =
-        string(input, "description", "task_name", "target", "agent_id") ||
-        item.toolName ||
-        "Agent";
       fields([
         field("Agent", "subagent_type", "agent_type", "name"),
         field("Target", "target", "agent_id", "id"),
@@ -815,13 +764,6 @@ export function presentSessionTool(
       break;
     }
     case "ask_user_question":
-      summary =
-        string(
-          record(list(input["questions"])[0]),
-          "question",
-          "header",
-          "title",
-        ) || "Question";
       rows("Questions", list(input["questions"]), (value) => {
         const question = record(value);
         return {
@@ -838,16 +780,12 @@ export function presentSessionTool(
       break;
     case "enter_plan_mode":
     case "exit_plan_mode":
-      summary =
-        item.toolKind === "enter_plan_mode" ? "Enter plan mode" : "Review plan";
       text("Plan", string(input, "plan", "text", "content"));
       fields([
         field("Plan file", "planFilePath", "plan_file_path", "file_path"),
       ]);
       break;
     case "worktree":
-      summary =
-        string(input, "name", "branch", "path") || item.toolName || "Workspace";
       fields([
         field("Workspace", "name"),
         field("Branch", "branch"),
@@ -856,7 +794,6 @@ export function presentSessionTool(
       ]);
       break;
     case "lsp":
-      summary = string(input, "operation", "method") || "Code intelligence";
       fields([
         field("Operation", "operation", "method"),
         field("File", "filePath", "file_path", "path"),
@@ -868,17 +805,12 @@ export function presentSessionTool(
       ]);
       break;
     case "skill":
-      summary = string(input, "skill", "name") || "Skill";
       fields([field("Skill", "skill", "name")]);
       if (input["args"] !== undefined) showValue("Arguments", input["args"]);
       break;
     case "mcp": {
       const tool = string(input, "tool"),
         server = string(input, "server");
-      summary = tool
-        ? label(tool.replace(/^mcp__[^_]+__/, "").replace(/\./g, " "))
-        : item.toolName || "Connected tool";
-      meta = server;
       fields([
         { label: "Connection", value: server },
         { label: "Tool", value: tool },
@@ -900,8 +832,8 @@ export function presentSessionTool(
   if (result && !outputHandled)
     showValue(result.error ? "Error" : "Result", output);
   return {
-    summary: summary.slice(0, 500),
-    ...(meta ? { meta: meta.slice(0, 100) } : {}),
+    summary,
+    ...(meta ? { meta } : {}),
     blocks,
     ...focusSessionTool(item, result, blocks, resultStart ?? blocks.length),
     ...(shortened
@@ -910,5 +842,30 @@ export function presentSessionTool(
             "Some details are shortened. Original data shows the received content.",
         }
       : {}),
+  };
+}
+
+/** Both inline and on-demand calls open the same bounded evidence view. */
+export function presentSessionToolEvidence(item: SessionChatItem, result?: SessionChatItem, receiptId?: string): ToolEvidence {
+  if (item.kind === "tool_result") {
+    return {
+      presentation: presentSessionTool({ ...item, input: "" }, item),
+      output: item.text,
+      fullContent: item.truncated ? { outputId: item.id } : undefined,
+    };
+  }
+  const shortened = item.truncated || result?.truncated;
+  return {
+    presentation: presentSessionTool(item, result),
+    output: [
+      "Input",
+      item.input || "(none)",
+      result ? "\nOutput\n" + result.text : "",
+      shortened ? "\nDisplay shortened. Full output remains in the harness transcript." : "",
+    ].filter(Boolean).join("\n"),
+    fullContent: shortened || receiptId ? {
+      inputId: item.truncated ? item.id : undefined,
+      outputId: result?.truncated ? result.id : receiptId,
+    } : undefined,
   };
 }

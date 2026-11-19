@@ -5,15 +5,19 @@ function elementOf(elements: readonly BrowserElementContext[], caption: string) 
   const element = elements.find(row => row.attachment === caption);
   return element ? { element: element.reference, marker: element.marker } : {};
 }
-import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
+import type { SessionChatItem, SessionChatState, SessionChatToolReference } from "@elevenex/shared";
 import type { ChatExchange, WorkStep } from "../conversation";
 import type { OpenTurnWork } from "./session-chat-turn-work";
 import { reconcileClaudeBlocks } from "./session-chat-claude-blocks";
 import {
-  presentSessionTool,
+  presentSessionToolEvidence,
   sessionToolKind,
   sessionToolVerb,
 } from "./session-chat-tools";
+
+function toolReference(item: Pick<SessionChatItem, 'id' | 'toolDetails'> | undefined): SessionChatToolReference | undefined {
+  return item?.toolDetails ? { id: item.id, revision: item.toolDetails.revision } : undefined;
+}
 
 export interface PendingChatPrompt {
   readonly id: string;
@@ -246,7 +250,7 @@ function projectExchanges(
         if (item.kind === "system" && item.changes && !item.text.trim())
           return [];
         const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
-        const running = live && ((item.kind === 'tool_use' && !result) ||
+        const running = live && ((item.kind === 'tool_use' && !result && !item.receipt) ||
           (item.kind === 'thinking' && item.id === group.items.at(-1)?.id));
         const old = cache?.steps.get(item);
         const id = renderId(item);
@@ -255,8 +259,12 @@ function projectExchanges(
           return [old.step];
         const project = (): WorkStep[] => {
           if (item.kind === "tool_use") {
-            const presentation = presentSessionTool(item, result);
             const receipt = !result ? item.receipt : undefined;
+            const resultRef = toolReference(result ?? receipt);
+            const callRef = toolReference(item);
+            const deferredTool = callRef ? { item: callRef, result: resultRef }
+              : resultRef ? { item: resultRef } : undefined;
+            const evidence = deferredTool ? undefined : presentSessionToolEvidence(item, result, receipt?.id);
             const hasResult = !!result || !!receipt;
             const outcome =
               result?.error || receipt?.error || item.error
@@ -268,30 +276,16 @@ function projectExchanges(
               {
                 id: item.id,
                 kind: sessionToolKind(item),
-                detail: presentation.summary,
+                detail: item.toolDetails?.summary ?? evidence?.presentation.summary ?? item.toolName ?? 'Tool',
                 verb: sessionToolVerb(item, !hasResult && live, outcome),
                 meta:
                   outcome === "unknown"
                     ? "Completion unknown"
-                    : receipt ? "Result on another activity page" : presentation.meta,
-                presentation,
-                fullContent: item.truncated || result?.truncated || receipt
-                  ? {
-                      inputId: item.truncated ? item.id : undefined,
-                      outputId: result?.truncated ? result.id : receipt?.id,
-                    }
-                  : undefined,
+                    : result?.toolDetails?.meta ?? receipt?.toolDetails?.meta ?? item.toolDetails?.meta ??
+                      (receipt && !receipt.toolDetails ? "Result on another activity page" : evidence?.presentation.meta),
+                deferredTool,
+                ...evidence,
                 status: outcome ?? (hasResult ? "done" : "running"),
-                output: [
-                  "Input",
-                  item.input || "(none)",
-                  result ? "\nOutput\n" + result.text : "",
-                  item.truncated || result?.truncated
-                    ? "\nDisplay shortened. Full output remains in the harness transcript."
-                    : "",
-                ]
-                  .filter(Boolean)
-                  .join("\n"),
               },
             ];
           }
@@ -303,6 +297,7 @@ function projectExchanges(
           // result's own position, even if it arrives after another message.
           if (pairedResult)
             return media?.length ? [{ id, kind: 'media', media }] : [];
+          const orphan = item.kind === 'tool_result' ? toolReference(item) : undefined;
           return [
             {
               id: renderId(item),
@@ -322,14 +317,8 @@ function projectExchanges(
                   : item.kind === "tool_result"
                     ? (item.toolName ?? "Tool result")
                     : undefined,
-              output: item.kind === "tool_result" ? item.text : undefined,
-              presentation:
-                item.kind === "tool_result"
-                  ? presentSessionTool({ ...item, input: "" }, item)
-                  : undefined,
-              fullContent: item.kind === 'tool_result' && item.truncated
-                ? { outputId: item.id }
-                : undefined,
+              ...(orphan ? { deferredTool: { item: orphan }, meta: item.toolDetails?.meta }
+                : item.kind === 'tool_result' ? presentSessionToolEvidence(item) : {}),
               status:
                 item.error || item.kind === "error"
                   ? "failed"

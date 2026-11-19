@@ -94,10 +94,13 @@ export class ChatScrollComponent {
   keepDisclosurePosition(anchor: HTMLElement): void {
     const turn = anchor.closest('ex-turn');
     if (!this.contentReady || !turn || !this.host.contains(anchor)) return;
+    const view = this.viewport().nativeElement.getBoundingClientRect();
+    const bounds = anchor.getBoundingClientRect();
+    if (bounds.bottom <= view.top || bounds.top >= view.bottom) return;
     if (this.disclosure?.anchor === anchor) this.disclosure.settledFrames = 0;
     else this.disclosure = {
       anchor, turn, settledFrames: 0,
-      top: anchor.getBoundingClientRect().top - this.viewport().nativeElement.getBoundingClientRect().top,
+      top: bounds.top - view.top,
     };
     this.scheduleMeasure();
   }

@@ -60,6 +60,7 @@
         [streaming]="exchange.streaming ?? exchange.status === 'live'"
         [copiedCode]="copiedCode()"
         [resolve]="resolve()"
+        [inspectTool]="inspectTool()"
         (openLink)="openLink.emit($event)"
         (openPage)="openPage.emit($event)"
         (copyCode)="copyCode.emit($event)"

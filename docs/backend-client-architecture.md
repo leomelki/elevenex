@@ -19,6 +19,16 @@ Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
 history reads, including when a single turn spans hundreds of tool records.
 Main validates turn, revision, offset and reply bounds under the same cancellable
 window lease. Older clients and engines can continue exchanging raw windows.
+
+Both history modes and turn activity reads can opt into `deferToolDetails`.
+Tool records then carry headings and versioned evidence addresses while their
+input and output strings stay empty. `sessionChatToolDetails` fetches one tool
+record and an optional related receipt under the same scoped, cancellable
+lease. Main checks the exact task, session, item IDs, evidence revisions,
+pairing and payload sizes. The backend rechecks session ownership and serves
+matching evidence from a bounded per-feed cache or from the provider history
+and live overlay. History revision changes invalidate the engine cache.
+The original-content reader still pages the full transcript when requested.
 See the
 [session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
 cache ownership. The backend feed reuses emitted cursor offsets and prompt spans

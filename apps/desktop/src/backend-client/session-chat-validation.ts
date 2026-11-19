@@ -16,6 +16,11 @@ import type {
   SessionChatCompletedTurn,
   SessionChatTurnWorkPage,
   SessionChatTurnWorkRead,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
+  SessionChatToolEvidence,
+  SessionChatToolHeading,
+  SessionChatToolReference,
   SessionChatPage,
   SessionChatState,
   SessionChatPlanUsage,
@@ -182,11 +187,73 @@ function item(value: unknown): SessionChatRecord {
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
 }
-function turnRevision(value: unknown): string {
+function contentRevision(value: unknown): string {
   const revision = chatText(value, 64);
   if (!/^[a-f0-9]{64}$/.test(revision)) throw invalid();
   return revision;
 }
+export function deferredToolDetails(value: unknown): true | undefined {
+  if (value !== undefined && value !== true) throw invalid();
+  return value;
+}
+
+function toolHeading(value: unknown): SessionChatToolHeading {
+  const raw = chatObject(value);
+  return {
+    revision: contentRevision(raw['revision']),
+    ...(raw['summary'] === undefined ? {} : { summary: chatText(raw['summary'], 500) }),
+    ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], 100) }),
+  };
+}
+
+function activityItem(value: unknown, detailsAllowed: boolean): SessionChatRecord {
+  const raw = chatObject(value), row = item(raw);
+  if (raw['toolDetails'] === undefined) return row;
+  if (!detailsAllowed || !row.id || (row.kind !== 'tool_use' && row.kind !== 'tool_result') ||
+    row.input || row.text || row.execution !== undefined) throw invalid();
+  const details = toolHeading(raw['toolDetails']);
+  if (row.kind === 'tool_use' && !details.summary) throw invalid();
+  return { ...row, toolDetails: details };
+}
+
+function toolReference(value: unknown): SessionChatToolReference {
+  const raw = chatObject(value), id = chatText(raw['id']);
+  if (!id) throw invalid();
+  return { id, revision: contentRevision(raw['revision']) };
+}
+
+export function parseToolDetailsRead(value: unknown): SessionChatToolDetailsRead {
+  const raw = chatObject(value);
+  const item = toolReference(raw['item']);
+  const result = raw['result'] === undefined ? undefined : toolReference(raw['result']);
+  if (item.id === result?.id) throw invalid();
+  return {
+    taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
+    requestId: requestId(raw['requestId']), item, ...(result ? { result } : {}),
+  };
+}
+
+export function parseToolDetailsReply(value: unknown, input: SessionChatToolDetailsRead): SessionChatToolDetailsReply {
+  const raw = chatObject(value);
+  const { taskId, sessionId } = input;
+  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
+      !!input.result !== (raw['result'] !== undefined)) throw invalid();
+  const evidence = (value: unknown, expected: SessionChatToolReference): SessionChatToolEvidence => {
+    const valueRecord = chatObject(value);
+    const { id, revision } = toolReference(valueRecord);
+    const record = activityItem(valueRecord['record'], false);
+    if (id !== expected.id || revision !== expected.revision || record.id !== id ||
+      (record.kind !== 'tool_use' && record.kind !== 'tool_result') ||
+      record.media || record.changes || record.text.length > 16000 || record.input.length > 16000) throw invalid();
+    return { id, revision, record: { ...record, kind: record.kind } };
+  };
+  const call = evidence(raw['item'], input.item);
+  const result = input.result ? evidence(raw['result'], input.result) : undefined;
+  if (result && (call.record.kind !== 'tool_use' || result.record.kind !== 'tool_result' ||
+    result.record.toolId !== (call.record.toolId ?? call.id))) throw invalid();
+  return { taskId, sessionId, item: call, ...(result ? { result } : {}) };
+}
+
 export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
   const raw = chatObject(value);
   const turnId = chatText(raw['turnId']);
@@ -194,7 +261,8 @@ export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
   return {
     taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
     requestId: requestId(raw['requestId']), turnId,
-    revision: turnRevision(raw['revision']), offset: workCount(raw['offset']),
+    revision: contentRevision(raw['revision']), offset: workCount(raw['offset']),
+    ...(deferredToolDetails(raw['deferToolDetails']) ? { deferToolDetails: true } : {}),
   };
 }
 export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkPage {
@@ -203,12 +271,14 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
   if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
     raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
   const items = array(raw['items'], SESSION_CHAT_TURN_WORK_LIMIT, value => {
-    const raw = chatObject(value), row = item(raw);
+    const raw = chatObject(value), row = activityItem(raw, !!input.deferToolDetails);
     if (raw['receipt'] === undefined) return row;
     const receipt = chatObject(raw['receipt']);
     const id = chatText(receipt['id']);
     if (row.kind !== 'tool_use' || !id || id === row.id || id === turnId) throw invalid();
-    return { ...row, receipt: { id, error: bool(receipt['error']) } };
+    const details = receipt['toolDetails'] === undefined ? undefined : toolHeading(receipt['toolDetails']);
+    if (details && !row.toolDetails) throw invalid();
+    return { ...row, receipt: { id, error: bool(receipt['error']), ...(details ? { toolDetails: details } : {}) } };
   });
   const total = workCount(raw['total']);
   const end = offset + items.length;
@@ -218,8 +288,8 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
     new Set(items.map(row => row.id)).size !== items.length) throw invalid();
   return { taskId, sessionId, turnId, revision, offset, items, total, nextOffset };
 }
-function historyItem(value: unknown, summaryAllowed: boolean): SessionChatItem {
-  const raw = chatObject(value), row = item(raw);
+function historyItem(value: unknown, summaryAllowed: boolean, detailsAllowed: boolean): SessionChatItem {
+  const raw = chatObject(value), row = activityItem(raw, detailsAllowed);
   if (raw['completedTurn'] === undefined) return row;
   if (!summaryAllowed || row.kind !== 'user') throw invalid();
   const turn = chatObject(raw['completedTurn']);
@@ -240,7 +310,7 @@ function historyItem(value: unknown, summaryAllowed: boolean): SessionChatItem {
   return {
     ...row,
     completedTurn: {
-      revision: turnRevision(turn['revision']), endId, total, beforeReply, failures, counts, reply,
+      revision: contentRevision(turn['revision']), endId, total, beforeReply, failures, counts, reply,
       ...(turn['duration'] === undefined ? {} : { duration: number(turn['duration']) }),
       ...(turn['changes'] === undefined ? {} : { changes: parseChangeSummary(turn['changes'], SESSION_CHAT_TURN_FILES_LIMIT) }),
     },
@@ -537,6 +607,7 @@ export function parseChatPage(
   sessionId: number,
   loadingMode?: 'window' | 'progressive',
   summarizeCompleted = false,
+  deferToolDetails = false,
 ): SessionChatPage {
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
@@ -552,12 +623,12 @@ export function parseChatPage(
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, value => historyItem(value, summarizeCompleted)),
+    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, value => historyItem(value, summarizeCompleted, deferToolDetails)),
     events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };
       if (event["type"] === "item")
-        return { type: "item", item: item(event["item"]) };
+        return { type: "item", item: activityItem(event["item"], deferToolDetails) };
       if (event["type"] === "delta")
         return {
           type: "delta",

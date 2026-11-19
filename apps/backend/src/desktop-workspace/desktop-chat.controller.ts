@@ -37,6 +37,7 @@ export class DesktopChatController {
     @Res() response: Response,
     @Query('loadingMode') loadingMode?: string,
     @Query('summarizeCompleted') summarizeCompleted?: string,
+    @Query('deferToolDetails') deferToolDetails?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -51,6 +52,7 @@ export class DesktopChatController {
         following,
         loadingMode,
         summarizeCompleted,
+        deferToolDetails,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {
@@ -65,6 +67,7 @@ export class DesktopChatController {
     @Query('revision') revision: string,
     @Query('offset') offset: string,
     @Res() response: Response,
+    @Query('deferToolDetails') deferToolDetails?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -74,8 +77,32 @@ export class DesktopChatController {
         resourceId(task), resourceId(session), turnId, revision,
         typeof offset === 'string' && /^\d+$/.test(offset) ? Number(offset) : NaN,
         abort.signal,
+        deferToolDetails,
       );
       if (!abort.signal.aborted) response.json(result);
+    } finally {
+      response.off('close', close);
+    }
+  }
+  @Get('tool-details')
+  async toolDetails(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Query('itemId') itemId: string,
+    @Query('revision') revision: string,
+    @Query('resultId') resultId: string,
+    @Query('resultRevision') resultRevision: string,
+    @Res() response: Response,
+  ) {
+    const abort = new AbortController();
+    const close = () => abort.abort();
+    response.once('close', close);
+    try {
+      const details = await this.chat.readToolDetails(resourceId(task), resourceId(session), {
+        item: { id: itemId, revision },
+        ...(resultId !== undefined || resultRevision !== undefined ? { result: { id: resultId, revision: resultRevision } } : {}),
+      }, abort.signal);
+      if (!abort.signal.aborted) response.json(details);
     } finally {
       response.off('close', close);
     }

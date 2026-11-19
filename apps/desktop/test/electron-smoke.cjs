@@ -22,6 +22,13 @@ const chatWork = {
   items: [{ id: 'activity', kind: 'thinking', text: 'Saved reasoning', timestamp: '',
     toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false }],
 };
+const chatTool = {
+  taskId: 1, sessionId: 2,
+  item: { id: 'command', revision: 'b'.repeat(64), record: {
+    id: 'command', kind: 'tool_use', text: '', timestamp: '', toolId: 'command',
+    toolKind: 'bash', toolName: 'Command', input: '{"command":"pnpm test"}', error: false, truncated: false,
+  } },
+};
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -145,6 +152,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/folders': [],
         '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/turn-work': chatWork,
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/tool-details': chatTool,
       };
       assert.equal(request.method, 'GET');
       assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
@@ -223,7 +231,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -254,6 +262,10 @@ void (async () => {
   assert.deepEqual(await window.webContents.executeJavaScript(
     `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(workRequest)})`),
   { ok: true, value: chatWork });
+  const toolRequest = { taskId, sessionId, item: { id: chatTool.item.id, revision: chatTool.item.revision }, requestId: 'tool-details' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(toolRequest)})`),
+  { ok: true, value: chatTool });
   const deletedUnused = await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:2})`);
   assert.deepEqual(deletedUnused, {ok:true,value:{accepted:true}});
   assert.deepEqual(deletedUnusedSessions, [2]);

@@ -19,6 +19,9 @@ import type {
   SessionChatRecord,
   SessionChatTurnWorkPage,
   SessionChatTurnWorkRead,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
+  SessionChatToolEvidence,
   SessionChatState,
   SessionChatPreset,
   SessionChatCommandReply,
@@ -499,6 +502,11 @@ export class SessionChatFixture {
   cancel(id: string): void {
     this.heldReads.get(id)?.();
     this.waiting.get(id)?.();
+    const detail = this.heldToolDetails.get(id);
+    if (detail) {
+      this.toolDetailsCancelled++;
+      detail();
+    }
   }
   private readsHeld = false;
   private readonly heldReads = new Map<string, () => void>();
@@ -548,6 +556,39 @@ export class SessionChatFixture {
     return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
       items, total: work.length, nextOffset: end < work.length ? end : null } };
   }
+  private readonly toolEvidence = new Map<number, ReadonlyMap<string, SessionChatToolEvidence>>();
+  private readonly heldToolDetails = new Map<string, () => void>();
+  private detailBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  toolDetailsReads = 0;
+  toolDetailsCancelled = 0;
+
+  seedToolDetails(sessionId: number, records: readonly SessionChatToolEvidence[]): void {
+    this.toolEvidence.set(sessionId, new Map(records.map(value => [value.id, value])));
+  }
+
+  toolDetailsBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.detailBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldToolDetails.values()) release();
+  }
+
+  async toolDetails(input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>> {
+    this.toolDetailsReads++;
+    if (this.detailBehavior === 'held') await new Promise<void>(resolve => {
+      this.heldToolDetails.set(input.requestId, () => {
+        this.heldToolDetails.delete(input.requestId);
+        resolve();
+      });
+    });
+    if (this.detailBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Could not read tool details.' } };
+    const { taskId, sessionId, item, result } = input;
+    const records = this.toolEvidence.get(sessionId);
+    const primary = records?.get(item.id);
+    const output = result ? records?.get(result.id) : undefined;
+    if (!primary || primary.revision !== item.revision || output?.revision !== result?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Tool evidence changed.' } };
+    return { ok: true, value: { taskId, sessionId, item: primary, ...(output ? { result: output } : {}) } };
+  }
+
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
     if (this.readsHeld) await new Promise<void>(resolve => {
       this.heldReads.set(input.requestId, () => { this.heldReads.delete(input.requestId); resolve(); });

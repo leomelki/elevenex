@@ -1,3 +1,6 @@
+import type { Signal } from '@angular/core';
+import type { SessionChatToolSource } from '@elevenex/shared';
+
 /** Original transcript addresses; the connected owner performs bounded reads. */
 export interface ToolContentSource {
   readonly inputId?: string;
@@ -7,6 +10,22 @@ export interface ToolContentRequest {
   readonly itemId: string;
   readonly part: 'input' | 'text';
 }
+export interface ToolEvidence {
+  readonly presentation: ToolPresentation;
+  readonly output: string;
+  readonly fullContent?: ToolContentSource;
+}
+export type ToolDetailsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'ready'; readonly evidence: ToolEvidence }
+  | { readonly status: 'error'; readonly reason: 'unavailable' | 'changed' | 'failed' };
+export interface ToolDetailsInspection {
+  readonly state: Signal<ToolDetailsState>;
+  retry(): void;
+}
+/** The connected owner supplies evidence only while an expanded row observes it. */
+export type ToolDetailsProvider = (source: SessionChatToolSource, signal: AbortSignal) => ToolDetailsInspection;
+
 /** Bounded display data supplied by a tool adapter; all strings remain inert text. */
 export interface ToolPresentation {
   readonly summary: string;

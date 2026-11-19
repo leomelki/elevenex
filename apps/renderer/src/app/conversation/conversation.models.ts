@@ -1,4 +1,4 @@
-import type { BrowserElementReference, SessionChatToolCategory } from '@elevenex/shared';
+import type { BrowserElementReference, SessionChatToolCategory, SessionChatToolSource } from '@elevenex/shared';
 import type { ToolContentSource, ToolPresentation } from './tool-presentation';
 import type { MarkdownEmbed } from './markdown/markdown-parser';
 
@@ -160,6 +160,7 @@ export interface WorkStep {
   readonly output?: string;
   /** Parsed, bounded evidence. Original output stays separately inspectable. */
   readonly presentation?: ToolPresentation;
+  readonly deferredTool?: SessionChatToolSource;
   /** Inline previews from this receipt, in transcript order. */
   readonly media?: readonly MarkdownEmbed[];
   /** Optional bounded-reader targets for input/output shortened by transport. */

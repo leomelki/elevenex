@@ -2,6 +2,7 @@ import { Injectable, signal } from '@angular/core';
 import { SESSION_CHAT_TURN_WORK_LIMIT, type SessionChatCompletedTurn, type SessionChatItem, type SessionChatTurnWorkPage } from '@elevenex/shared';
 import type { SessionChatClient } from '../backend/session-chat-client.service';
 import type { ChatSelection } from './session-chat.store';
+import { ChatDisclosureCache } from './session-chat-disclosure-cache';
 
 const CACHE_PAGES = 16;
 const CACHE_BYTES = 1536 * 1024;
@@ -11,44 +12,18 @@ const DISCLOSURE_EXIT_MS = 280;
 /** Window-local LRU. Closing a turn releases its view data and retains only bounded pages. */
 @Injectable({ providedIn: 'root' })
 export class SessionChatWorkCache {
-  private scope: string | undefined;
-  private bytes = 0;
-  private readonly pages = new Map<string, { readonly page: SessionChatTurnWorkPage; readonly bytes: number }>();
-  private readonly encoder = new TextEncoder();
+  private readonly pages = new ChatDisclosureCache<SessionChatTurnWorkPage>(CACHE_PAGES, CACHE_BYTES);
 
   private key(selection: ChatSelection, turnId: string, revision: string, offset: number): string {
-    if (this.scope !== selection.scopeId) {
-      this.pages.clear();
-      this.bytes = 0;
-      this.scope = selection.scopeId;
-    }
     return JSON.stringify([selection.taskId, selection.sessionId, turnId, revision, offset]);
   }
 
   get(selection: ChatSelection, turnId: string, revision: string, offset: number): SessionChatTurnWorkPage | undefined {
-    const key = this.key(selection, turnId, revision, offset);
-    const entry = this.pages.get(key);
-    if (entry) {
-      this.pages.delete(key);
-      this.pages.set(key, entry);
-    }
-    return entry?.page;
+    return this.pages.get(selection.scopeId, this.key(selection, turnId, revision, offset));
   }
 
   put(selection: ChatSelection, page: SessionChatTurnWorkPage): void {
-    const key = this.key(selection, page.turnId, page.revision, page.offset);
-    const bytes = this.encoder.encode(JSON.stringify(page)).byteLength;
-    const previous = this.pages.get(key);
-    if (previous) this.bytes -= previous.bytes;
-    this.pages.delete(key);
-    if (bytes > CACHE_BYTES) return;
-    this.pages.set(key, { page, bytes });
-    this.bytes += bytes;
-    for (const [oldest, entry] of this.pages) {
-      if (this.pages.size <= CACHE_PAGES && this.bytes <= CACHE_BYTES) break;
-      this.pages.delete(oldest);
-      this.bytes -= entry.bytes;
-    }
+    this.pages.put(selection.scopeId, this.key(selection, page.turnId, page.revision, page.offset), page);
   }
 }
 
@@ -221,7 +196,7 @@ export class SessionChatTurnWork {
     const { turnId, revision, offset } = request;
     const result = await this.client.turnWork(selection.scopeId, {
       taskId: selection.taskId, sessionId: selection.sessionId,
-      turnId, revision, offset, requestId: request.id,
+      turnId, revision, offset, requestId: request.id, deferToolDetails: true,
     });
     if (this.pending.get(turnId) !== request || this.selection !== selection) return;
     this.pending.delete(turnId);

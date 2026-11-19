@@ -21,6 +21,7 @@ import { SessionChatOutbox } from './session-chat-outbox';
 import { chatTailContext, retainChatWindow } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
 import { SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
+import { SessionChatToolCache, SessionChatToolDetails } from './session-chat-tool-details';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
@@ -57,6 +58,7 @@ export interface ChatSelection extends SessionChatTarget {
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
   readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache));
+  readonly tools = new SessionChatToolDetails(this.client, inject(SessionChatToolCache), () => { void this.refresh(); });
   private readonly transcript = new ChatTranscriptProjection();
   private readonly drafts = inject(SessionChatDrafts);
   private readonly loadingPolicy = inject(SessionChatLoadingPolicy);
@@ -235,7 +237,10 @@ export class SessionChatStore {
     effect(() => {
       const items = this.visibleItems();
       const available = this.active() && !this.offline() && !document.hidden;
-      untracked(() => this.work.sync(items, available));
+      untracked(() => {
+        this.work.sync(items, available);
+        this.tools.setAvailable(available);
+      });
     });
     let wasPaused: boolean | undefined;
     effect(() => {
@@ -248,8 +253,11 @@ export class SessionChatStore {
       if (document.hidden) {
         this.stopRead();
         this.work.pause();
+        this.tools.setAvailable(false);
       } else if (this.selection) {
-        this.work.sync(this.visibleItems(), this.active() && !this.offline());
+        const available = this.active() && !this.offline();
+        this.work.sync(this.visibleItems(), available);
+        this.tools.setAvailable(available);
         void this.load(false);
       }
     };
@@ -261,6 +269,7 @@ export class SessionChatStore {
       this.epoch++;
       this.stopRead();
       this.work.select(null);
+      this.tools.select(null);
       this.transcript.clear();
       document.removeEventListener("visibilitychange", visible);
     });
@@ -272,6 +281,7 @@ export class SessionChatStore {
     this.remember(); this.stopRead(); this.epoch++;
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
     this.work.select(null);
+    this.tools.select(null);
     this.transcript.clear();
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
@@ -312,6 +322,7 @@ export class SessionChatStore {
     this.activeEntry.set(this.entry);
     const recovery = sameSession && previousEntry === this.entry;
     this.work.select(selection, recovery);
+    this.tools.select(selection);
     if (!recovery) this.transcript.clear();
     this.readOnly.set(readOnly);
     this.pending.set(null);
@@ -409,6 +420,7 @@ export class SessionChatStore {
       sessionId: selection.sessionId,
       requestId,
       ...profile,
+      deferToolDetails: true,
       ...(position && direction
         ? { [direction]: position }
         : !reset && this.cursor

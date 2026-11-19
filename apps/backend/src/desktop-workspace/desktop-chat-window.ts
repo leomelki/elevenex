@@ -1,7 +1,8 @@
 import type { SessionChatItem } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary } from './desktop-chat-changes.js';
-import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { chatItem, chatItemChanges, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { toolKey, type ChatToolDetails } from './desktop-chat-tool-details.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
 
 const SAVED_SUMMARY_LIMIT = 40;
@@ -67,6 +68,7 @@ interface ChatWindowOptions {
   readonly fingerprints?: Map<string, string>;
   readonly includeLeadingPrompt?: boolean;
   readonly completedTurns?: ChatCompletedTurns;
+  readonly toolDetails?: ChatToolDetails;
   readonly keepTurnId?: string;
   readonly liveTurn?: boolean;
 }
@@ -164,14 +166,15 @@ export function chatWindow(
   const ordered = [...candidates.values()];
   const calls = new Map<string, AgentTranscriptItem>();
   for (const { item } of ordered)
-    if (item.kind === 'tool_use') calls.set(item.toolUseId ?? item.id, item);
+    if (item.kind === 'tool_use') calls.set(toolKey(item), item);
   const items: SessionChatItem[] = [];
   let bytes = 0;
   let edge = following ? 0 : ordered.length;
   while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
     const position = following ? edge : edge - 1;
     const { item: raw, summary } = ordered[position];
-    let item = summary ?? chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
+    const call = raw.kind === 'tool_result' ? calls.get(toolKey(raw)) : undefined;
+    let item = summary ?? options.toolDetails?.project(raw, call) ?? chatItem(raw, call, changesCache, mediaCache);
     if (!summary && raw.turnChanges) {
       let turnStart = position - 1;
       while (turnStart >= 0 && ordered[turnStart].item.kind !== 'user') turnStart--;
@@ -179,8 +182,8 @@ export function chatWindow(
       for (let index = Math.max(0, turnStart); index < position; index++) {
         const { item: result } = ordered[index];
         if (result.kind !== 'tool_result') continue;
-        const call = calls.get(result.toolUseId ?? result.id);
-        if (call) changes.push(chatItem(result, call, changesCache, mediaCache).changes);
+        const call = calls.get(toolKey(result));
+        if (call) changes.push(chatItemChanges(result, call, changesCache));
       }
       item = { ...item, changes: capturedChangeSummary(raw, changes) };
     }

@@ -14,6 +14,9 @@ import {
   parsePresetDefault,
   parseTurnWorkPage,
   parseTurnWorkRead,
+  deferredToolDetails,
+  parseToolDetailsRead,
+  parseToolDetailsReply,
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
@@ -52,6 +55,8 @@ export function registerSessionChatIpc(
       if (summarizeCompleted !== undefined && (summarizeCompleted !== true || loadingMode !== 'progressive'))
         throw new Error('Invalid completed turn view.');
       if (summarizeCompleted) query.set('summarizeCompleted', '1');
+      const deferDetails = deferredToolDetails(raw['deferToolDetails']);
+      if (deferDetails) query.set('deferToolDetails', '1');
       if (raw["after"] !== undefined)
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
@@ -79,6 +84,7 @@ export function registerSessionChatIpc(
             sessionId,
             loadingMode,
             summarizeCompleted,
+            deferDetails,
           ),
         15000,
       );
@@ -90,11 +96,30 @@ export function registerSessionChatIpc(
     const input = parseTurnWorkRead(args[1]);
     const { taskId, sessionId, turnId, revision, offset, requestId } = input;
     const query = new URLSearchParams({ turnId, revision, offset: String(offset) });
+    if (input.deferToolDetails) query.set('deferToolDetails', '1');
     return client.execute(
       window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
       async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
         path: path(taskId, sessionId) + '/turn-work?' + query,
         limit: 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
+  const toolDetails = handleForWindow('session-chat:tool-details', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid tool detail arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseToolDetailsRead(args[1]);
+    const { taskId, sessionId, item, result, requestId } = input;
+    const query = new URLSearchParams({ itemId: item.id, revision: item.revision });
+    if (result) {
+      query.set('resultId', result.id);
+      query.set('resultRevision', result.revision);
+    }
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:tool-details:${query}`, false,
+      async (endpoint, signal) => parseToolDetailsReply(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/tool-details?' + query, limit: 512 * 1024,
       }, signal), input),
       15000,
     );
@@ -367,6 +392,7 @@ export function registerSessionChatIpc(
     changes();
     read();
     turnWork();
+    toolDetails();
     catalog();
     command();
     cancel();

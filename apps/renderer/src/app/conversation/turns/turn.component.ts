@@ -30,7 +30,7 @@ import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
 import { formatDuration, isProse, summarizeWork } from "./work-summary";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
-import type { ToolContentRequest } from "../tool-presentation";
+import type { ToolContentRequest, ToolDetailsProvider } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
 import { TurnWorkPanelComponent } from './turn-work-panel.component';
 
@@ -81,6 +81,7 @@ export class TurnComponent implements OnChanges {
   readonly streaming = input(false);
   readonly copiedCode = input<string | null>(null);
   readonly resolve = input<MarkdownAssetResolver>();
+  readonly inspectTool = input<ToolDetailsProvider>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();
   readonly copyCode = output<string>();

@@ -61,6 +61,76 @@ code.truncate-start {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.disclosure {
+  flex: none;
+  transition: transform var(--dur-glide) var(--ease-glide);
+}
+.disclosure.turned {
+  transform: rotate(90deg);
+}
+.body-content {
+  position: relative;
+  display: flow-root;
+  min-width: 0;
+}
+.detail-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 var(--space-2) var(--space-2) var(--space-6);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font: var(--text-caption-size)/var(--text-caption-line) var(--font-sans);
+}
+.detail-notice.waiting {
+  display: grid;
+  background: linear-gradient(105deg, color-mix(in oklab, var(--accent-soft) 32%, var(--surface-sunken)), var(--surface-sunken) 75%);
+}
+.waiting ex-skeleton {
+  --skeleton-fill: color-mix(in oklab, var(--ink-muted) 12%, var(--surface-sunken));
+  --skeleton-highlight: color-mix(in oklab, var(--ink-muted) 24%, var(--surface-sunken));
+  padding-inline-start: var(--space-4);
+}
+.detail-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-6);
+}
+.detail-status ex-icon,
+.detail-status ex-status-glyph {
+  flex: none;
+}
+.evidence-reveal {
+  animation: evidence-reveal var(--dur-base) var(--ease-out);
+}
+.placeholder-exit {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  pointer-events: none;
+  animation: placeholder-exit var(--dur-fast) var(--ease-out) both;
+}
+@keyframes evidence-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+  }
+}
+@keyframes placeholder-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+  }
+}
 pre {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-sunken);
@@ -99,8 +169,13 @@ pre {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .running::after {
+  .running::after,
+  .evidence-reveal,
+  .placeholder-exit {
     animation: none;
+  }
+  .disclosure {
+    transition: none;
   }
 }
 

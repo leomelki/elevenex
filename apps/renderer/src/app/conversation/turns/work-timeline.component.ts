@@ -19,7 +19,7 @@ import {
   TickerComponent,
 } from "../../ui";
 import type { WorkStep } from "../conversation.models";
-import type { ToolContentRequest } from "../tool-presentation";
+import type { ToolContentRequest, ToolDetailsProvider } from "../tool-presentation";
 import { MarkdownComponent } from "../markdown/markdown.component";
 import { MarkdownMediaComponent } from "../markdown/markdown-media.component";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
@@ -67,11 +67,13 @@ export class WorkTimelineComponent implements OnChanges {
   readonly streaming = input(false);
   readonly copiedCode = input<string | null>(null);
   readonly resolve = input<MarkdownAssetResolver>();
+  readonly inspectTool = input<ToolDetailsProvider>();
   readonly openFile = output<string>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();
   readonly copyCode = output<string>();
   readonly contentRequested = output<ToolContentRequest>();
+  readonly layoutChanging = output<HTMLElement>();
   readonly inspectionChanged = output<boolean>();
   readonly openGroups = signal<ReadonlySet<string>>(new Set());
   private readonly inspected = signal<ReadonlySet<string>>(new Set());

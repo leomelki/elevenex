@@ -1,9 +1,57 @@
+import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToolStepComponent } from "./tool-step.component";
-import type { ToolPresentation } from "../tool-presentation";
+import type { ToolDetailsProvider, ToolDetailsState, ToolPresentation } from "../tool-presentation";
+
+afterEach(() => vi.useRealTimers());
 
 describe("tool evidence", () => {
+  it("requests a folded tool on activation, delays its skeleton, and keeps the disclosure focused", () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const inspection = signal<ToolDetailsState>({ status: 'loading' });
+    const retry = vi.fn();
+    const inspect = vi.fn<ToolDetailsProvider>(() => ({ state: inspection, retry }));
+    fixture.componentRef.setInput("detail", "pnpm test");
+    fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
+    fixture.componentRef.setInput("inspect", inspect);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const button = host.querySelector<HTMLButtonElement>('.head')!;
+    button.focus();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    button.click();
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(host.querySelector('.waiting')).toBeNull();
+    vi.advanceTimersByTime(160);
+    fixture.detectChanges();
+    expect(host.querySelector('.waiting')?.textContent).toContain('Loading tool details');
+    inspection.set({ status: 'error', reason: 'failed' });
+    fixture.detectChanges();
+    const retryButton = host.querySelector<HTMLButtonElement>('.detail-notice button')!;
+    retryButton.focus();
+    retryButton.click();
+    expect(document.activeElement).toBe(button);
+    expect(retry).toHaveBeenCalledOnce();
+    inspection.set({ status: 'ready', evidence: {
+      output: '', presentation: { summary: 'pnpm test', blocks: [{ kind: 'code', text: '12 tests passed.' }] },
+    } });
+    fixture.detectChanges();
+    expect(host.querySelector('.tool-preview')?.textContent).toContain('12 tests passed.');
+    expect(button.hasAttribute('aria-busy')).toBe(false);
+    const [, abort] = inspect.mock.calls[0]!;
+    button.click();
+    fixture.detectChanges();
+    expect(abort.aborted).toBe(true);
+    expect(host.querySelector('ex-fold')?.hasAttribute('inert')).toBe(true);
+    fixture.destroy();
+  });
+
   it("colors literal whole-file contents and preserves whitespace without adding a terminal row", () => {
     const fixture = TestBed.createComponent(ToolStepComponent);
     fixture.componentRef.setInput("detail", "skill-test.txt");

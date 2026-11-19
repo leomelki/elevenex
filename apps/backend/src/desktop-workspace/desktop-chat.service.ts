@@ -32,21 +32,23 @@ import {
 } from './desktop-chat-projection.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
+import { ChatToolDetails, toolKey } from './desktop-chat-tool-details.js';
+import type { SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource } from '@elevenex/shared';
 
+type ChatReadView = `${'window' | 'progressive' | 'summary'}:${'inline' | 'deferred'}`;
+type ProjectionFingerprints = Map<string, { readonly json: string; readonly revision: number }>;
 interface ChatFeed {
   readonly id: string;
   readonly provider: AgentRuntimeProvider;
   readonly stop: () => void;
   readonly waiters: Set<() => void>;
-  readonly projections: Map<
-    string,
-    { readonly json: string; readonly revision: number }
-  >;
+  readonly projections: { readonly inline: ProjectionFingerprints; readonly deferred: ProjectionFingerprints };
   readonly changesCache: ChatChangesCache;
   readonly mediaCache: ChatMediaCache;
-  readonly latestBounds: Map<'window' | 'progressive' | 'summary', { readonly revision: string; readonly before: string | null }>;
+  readonly latestBounds: Map<ChatReadView, { readonly revision: string; readonly before: string | null }>;
   historyIndex?: { readonly revision: number; readonly index: ChatHistoryIndex };
   completedTurns?: { readonly revision: number; readonly projector: ChatCompletedTurns };
+  toolDetails?: { readonly revision: number; readonly projector: ChatToolDetails };
   livePrompt?: string;
   review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
@@ -55,6 +57,16 @@ interface ChatFeed {
   attached: boolean;
   runtime?: Promise<Record<string, unknown>>;
   history?: { readonly revision: number; readonly pending: Promise<AgentTranscriptItem[]> };
+}
+
+function toolDetailsRequested(value: unknown): boolean {
+  if (value !== undefined && value !== '1') throw new BadRequestException('Invalid tool detail view.');
+  return value === '1';
+}
+
+function validToolReference(reference: SessionChatToolReference): boolean {
+  return typeof reference.id === 'string' && !!reference.id && reference.id.length <= 1000 &&
+    typeof reference.revision === 'string' && /^[a-f0-9]{64}$/.test(reference.revision);
 }
 
 /** Only selected conversations are observed. Idle feeds expire and never hydrate sidebar sessions. */
@@ -201,7 +213,7 @@ export class DesktopChatService implements OnModuleDestroy {
       touched: Date.now(),
       attached: false,
       waiters: new Set(),
-      projections: new Map(),
+      projections: { inline: new Map(), deferred: new Map() },
       changesCache: new WeakMap(),
       mediaCache: new WeakMap(),
       latestBounds: new Map(),
@@ -246,6 +258,17 @@ export class DesktopChatService implements OnModuleDestroy {
     return pending;
   }
 
+  private runtime(feed: ChatFeed, sessionId: number, started: boolean) {
+    return feed.runtime ??= feed.provider.getRuntimeState(sessionId, started ? undefined : { initialize: false })
+      .then(record).finally(() => { feed.runtime = undefined; });
+  }
+
+  private toolDetails(feed: ChatFeed): ChatToolDetails {
+    if (feed.toolDetails?.revision !== feed.historyRevision)
+      feed.toolDetails = { revision: feed.historyRevision, projector: new ChatToolDetails(feed.changesCache, feed.mediaCache) };
+    return feed.toolDetails.projector;
+  }
+
   private historyWindowIndex(feed: ChatFeed, paging: boolean): ChatHistoryIndex {
     if (!paging || feed.historyIndex?.revision !== feed.historyRevision)
       feed.historyIndex = { revision: feed.historyRevision, index: new ChatHistoryIndex() };
@@ -267,6 +290,7 @@ export class DesktopChatService implements OnModuleDestroy {
     following?: string,
     loadingMode?: string,
     summarizeCompleted?: string,
+    deferToolDetails?: string,
   ) {
     let session = await this.target(taskId, sessionId);
     if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
@@ -283,17 +307,21 @@ export class DesktopChatService implements OnModuleDestroy {
     const paging = !!(before || following);
     const archived = () => session.status === 'archived' || !!session.workspaceArchivedAt;
     const mode = loadingMode ?? 'progressive';
-    const view = summarizeCompleted ? 'summary' : mode;
+    const deferDetails = toolDetailsRequested(deferToolDetails);
+    const evidence = deferDetails ? 'deferred' : 'inline';
+    const view: ChatReadView = `${summarizeCompleted ? 'summary' : mode}:${evidence}`;
     const readArchived = async () => {
       if (this.feeds.get(sessionId)?.attached) this.release(sessionId);
       const archivedFeed = this.feed(sessionId, session.activeAgentProvider, false);
       const historyIndex = this.historyWindowIndex(archivedFeed, paging);
+      const toolDetails = deferDetails ? this.toolDetails(archivedFeed) : undefined;
       const history = await this.history(archivedFeed, sessionId);
       if (signal.aborted) return;
       const window = chatWindow(history, [], {
         before, following, loadingMode: mode, historyIndex,
         changesCache: archivedFeed.changesCache, mediaCache: archivedFeed.mediaCache,
         completedTurns: summarizeCompleted ? this.completedTurns(archivedFeed) : undefined,
+        toolDetails,
       });
       if (!window)
         throw new BadRequestException(
@@ -349,18 +377,9 @@ export class DesktopChatService implements OnModuleDestroy {
         Number(prior[2]) !== feed.historyRevision);
     const readsHistory = reset || paging;
     const historyIndex = readsHistory ? this.historyWindowIndex(feed, paging) : undefined;
+    const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
     const historyPromise = readsHistory ? this.history(feed, sessionId) : Promise.resolve([]);
-    const runtime = (feed.runtime ??= feed.provider
-      .getRuntimeState(
-        sessionId,
-        this.sessions.hasStartedAgentRuntime(session)
-          ? undefined
-          : { initialize: false },
-      )
-      .then(record)
-      .finally(() => {
-        feed.runtime = undefined;
-      }));
+    const runtime = this.runtime(feed, sessionId, this.sessions.hasStartedAgentRuntime(session));
     const [raw, history] = await Promise.all([runtime, historyPromise]);
     if (signal.aborted) return;
     feed.touched = Date.now();
@@ -387,6 +406,7 @@ export class DesktopChatService implements OnModuleDestroy {
       before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
       changesCache: feed.changesCache, mediaCache: feed.mediaCache,
       completedTurns: summarizeCompleted && readsHistory ? this.completedTurns(feed) : undefined,
+      toolDetails,
       liveTurn,
       keepTurnId: paging || prior?.[0] === feed.id ? feed.livePrompt : undefined,
     });
@@ -396,20 +416,21 @@ export class DesktopChatService implements OnModuleDestroy {
       );
     const { items } = window;
     const events: { type: 'item'; item: (typeof items)[number] }[] = [];
+    const projections = feed.projections[evidence];
     if (fingerprints) {
       const priorVersion = Number(prior?.[1]);
       for (const item of items) {
         const json = fingerprints.get(item.id)!;
-        const old = feed.projections.get(item.id);
+        const old = projections.get(item.id);
         const itemVersion = old?.json === json ? old.revision : version;
-        if (!old || old.revision <= version) feed.projections.set(item.id, { json, revision: itemVersion });
+        if (!old || old.revision <= version) projections.set(item.id, { json, revision: itemVersion });
         if (!reset && itemVersion > priorVersion) events.push({ type: 'item', item });
       }
       if (revision === cursor()) feed.latestBounds.set(view, { revision, before: window.before });
     }
-    for (const key of feed.projections.keys()) {
-      if (feed.projections.size <= 320) break;
-      feed.projections.delete(key);
+    for (const key of projections.keys()) {
+      if (projections.size <= 320) break;
+      projections.delete(key);
     }
     return {
       taskId,
@@ -425,24 +446,63 @@ export class DesktopChatService implements OnModuleDestroy {
     };
   }
 
-  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number, signal: AbortSignal) {
+  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number, signal: AbortSignal, deferToolDetails?: string) {
     if (typeof turnId !== 'string' || !turnId || turnId.length > 1000 ||
         typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) ||
         !Number.isSafeInteger(offset) || offset < 0)
       throw new BadRequestException('Invalid turn activity window.');
+    const deferDetails = toolDetailsRequested(deferToolDetails);
     const session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
     const index = this.historyWindowIndex(feed, true);
     const projector = this.completedTurns(feed);
+    const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
     const history = await this.history(feed, sessionId);
     if (signal.aborted) return;
     index.align(history);
     const start = index.position(history, turnId);
     const page = start >= 0 && history[start].kind === 'user'
-      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset) : null;
+      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset, toolDetails) : null;
     if (!page) throw new ConflictException('This activity has changed. Refresh the conversation to see it.');
     return { taskId, sessionId, turnId, revision, offset, ...page };
+  }
+
+  async readToolDetails(taskId: number, sessionId: number, source: SessionChatToolSource, signal: AbortSignal): Promise<SessionChatToolDetailsReply | undefined> {
+    if (!validToolReference(source.item) ||
+        (source.result && (!validToolReference(source.result) || source.result.id === source.item.id)))
+      throw new BadRequestException('Invalid tool details reference.');
+    const changed = () => new ConflictException('This tool call has changed. Refresh the conversation to see the latest details.');
+    const session = await this.target(taskId, sessionId);
+    if (signal.aborted) return;
+    const feed = this.feed(sessionId, session.activeAgentProvider, false);
+    const projector = this.toolDetails(feed);
+    let item = projector.recentEvidence(source.item);
+    let result = source.result && projector.recentEvidence(source.result);
+    if (!item || (source.result && !result)) {
+      const archived = session.status === 'archived' || !!session.workspaceArchivedAt;
+      const [history, runtime] = await Promise.all([
+        this.history(feed, sessionId),
+        archived ? Promise.resolve(undefined) : this.runtime(feed, sessionId, false),
+      ]);
+      if (signal.aborted) return;
+      const live = Array.isArray(runtime?.liveItems) ? runtime.liveItems as AgentTranscriptItem[] : [];
+      const index = this.historyWindowIndex(feed, true);
+      index.align(history);
+      const find = (id: string) => live.find(value => value.id === id) ?? history[index.position(history, id)];
+      const raw = find(source.item.id);
+      const receipt = source.result ? find(source.result.id) : undefined;
+      if (source.result && (raw?.kind !== 'tool_use' || receipt?.kind !== 'tool_result' || receipt.toolUseId !== toolKey(raw)))
+        throw changed();
+      // Reconcile both addresses from the same source snapshot on a cache miss.
+      item = projector.resolve(source.item, raw);
+      result = source.result && projector.resolve(source.result, receipt, raw);
+    }
+    if (!item || (source.result && (!result ||
+        item.record.kind !== 'tool_use' || result.record.kind !== 'tool_result' ||
+        result.record.toolId !== (item.record.toolId ?? item.id))))
+      throw changed();
+    return { taskId, sessionId, item, ...(result ? { result } : {}) };
   }
 
   async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {

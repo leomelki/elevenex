@@ -42,6 +42,16 @@ for read tools so long paths retain their filename and trailing folders. The
 full detail remains in the text and hover title; truncation follows the
 available row width.
 
+Supply `WorkStep.deferredTool` for a tool with an addressable body and pass an
+`inspectTool` provider to Chat, Turn or WorkTimeline. ToolStep acquires the
+provider only while the row is visible and expanded, and aborts that observation
+on collapse, replacement or destruction. The feature owner handles transport and
+caching. ToolStep owns the delayed loading surface, retry focus, and disclosure
+animation. Fold owns opening and closing, and one AutoHeight wrapper owns
+changes in the open body as the placeholder fades into evidence. Inline evidence
+uses the same rendering and disclosure. The shared Skeleton accepts local
+`--skeleton-fill` and `--skeleton-highlight` overrides for contrast on sunken surfaces.
+
 ## Scrolling and performance
 
 `Chat.progressiveLoading` forwards the owner's adaptive loading choice to

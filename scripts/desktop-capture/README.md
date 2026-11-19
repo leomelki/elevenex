@@ -735,6 +735,12 @@ and forward activity paging, with stable reply identity, keyboard focus and
 composer draft. Use the connected-workspace preview URL. The dark run uses a
 narrow viewport and reduced motion.
 
+`scenarios/session-tool-details.mjs` expands Worked and its activity group
+before requesting tool evidence by keyboard. It checks request cancellation,
+the loading-to-evidence height transition, retry focus and cached reopen in the
+connected-workspace preview. The dark run uses a narrow viewport and reduced
+motion.
+
 `scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
 through production UI/IPC against a running disposable Nest backend. Supply
 `ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing

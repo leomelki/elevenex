@@ -12,16 +12,13 @@ import {
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary, changeSummary } from './desktop-chat-changes.js';
 import { chatItem, chatItemChanges, chatItemFailed, commandExecution, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { toolKey, type ChatToolDetails } from './desktop-chat-tool-details.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
 const INLINE_BYTES = 8 * 1024;
 const REPLY_BYTES = 128 * 1024;
 const WORK_PAGE_BYTES = 384 * 1024;
-
-function toolKey(item: AgentTranscriptItem): string {
-  return item.toolUseId ?? item.id;
-}
 
 function captureMarker(item: AgentTranscriptItem): boolean {
   return item.kind === 'system' && !!item.turnChanges && !item.content?.trim() && !item.agentMessage?.body;
@@ -170,7 +167,7 @@ export class ChatCompletedTurns {
     };
   }
 
-  page(turn: readonly AgentTranscriptItem[], revision: string, offset: number) {
+  page(turn: readonly AgentTranscriptItem[], revision: string, offset: number, toolDetails?: ChatToolDetails) {
     const prepared = this.prepare(turn);
     if (!prepared || offset >= prepared.hidden.length || this.revision(turn) !== revision) return null;
     const { hidden, calls, results } = prepared;
@@ -178,11 +175,13 @@ export class ChatCompletedTurns {
     let bytes = 0;
     for (const raw of hidden.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT)) {
       const key = toolKey(raw);
-      const projected = this.project(raw, raw.kind === 'tool_result' ? calls.get(key) : undefined);
+      const call = raw.kind === 'tool_result' ? calls.get(key) : undefined;
+      const projected = toolDetails?.project(raw, call) ?? this.project(raw, call);
       const result = raw.kind === 'tool_use' ? results.get(key) : undefined;
+      const heading = result ? toolDetails?.project(result, raw)?.toolDetails : undefined;
       const item = result ? {
         ...projected,
-        receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)) },
+        receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)), ...(heading ? { toolDetails: heading } : {}) },
       } : projected;
       bytes += Buffer.byteLength(JSON.stringify(item));
       if (bytes > WORK_PAGE_BYTES) break;

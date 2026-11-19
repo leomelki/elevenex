@@ -3,6 +3,7 @@
 <ex-chat
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
+  [inspectTool]="store.tools.provider()"
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"

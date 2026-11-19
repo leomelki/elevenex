@@ -71,10 +71,13 @@ export interface SessionChatToolSource {
 export interface SessionChatToolDetailsRead extends SessionChatTarget, SessionChatToolSource {
   readonly requestId: string;
 }
+export type SessionChatToolRecord = Omit<SessionChatRecord, 'kind' | 'media' | 'mentions' | 'changes' | 'receipt' | 'toolDetails'> & {
+  readonly kind: 'tool_use' | 'tool_result';
+};
 export interface SessionChatToolEvidence extends SessionChatToolReference {
-  readonly record: SessionChatRecord;
+  readonly record: SessionChatToolRecord;
 }
-export interface SessionChatToolDetails extends SessionChatTarget {
+export interface SessionChatToolDetailsReply extends SessionChatTarget {
   readonly item: SessionChatToolEvidence;
   readonly result?: SessionChatToolEvidence;
 }
