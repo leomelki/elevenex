@@ -1,7 +1,7 @@
 import { sessionActivityWork } from './session-activity-fixture';
 import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
-import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
+import { sessionCodexFileItems, sessionShellItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
 import type {
   BackendResult,
@@ -179,6 +179,15 @@ export class SessionChatFixture {
     this.changed();
     this.resetVersion = this.version;
   }
+  appendShellOutput(text: string, id = 101): void {
+    const session = this.session(id);
+    session.items = session.items.map(item => {
+      if (item.id !== "shell-3-result") return item;
+      const data = JSON.parse(item.text) as { stdout: string };
+      return { ...item, text: JSON.stringify({ ...data, stdout: data.stdout + text }) };
+    });
+    this.changed();
+  }
   private presets = [...savedPresets];
   private defaultProvider = 'codex';
   private defaultIds: readonly string[] = ['deep'];
@@ -295,6 +304,7 @@ export class SessionChatFixture {
       | "tools-running"
       | "tools-incomplete"
       | "tools-codex-files"
+      | "shell-results"
       | "reply-only"
       | "reply-only-running"
       | "reply-boundaries",
@@ -312,6 +322,7 @@ export class SessionChatFixture {
       }),
     ];
     if (mode === 'tools-codex-files') session.items = sessionCodexFileItems();
+    if (mode === 'shell-results') session.items = sessionShellItems();
     if (mode === "reply-only" || mode === "reply-only-running") {
       session.items = [
         item("reply-prompt", "user", "hi"),

@@ -41,6 +41,9 @@
       @if (presentation(); as content) {
         <ex-tool-content
           [presentation]="content"
+          [status]="status()"
+          [copiedCode]="copiedCode()"
+          (copyCode)="copyCode.emit($event)"
           [original]="output()"
           [fullContent]="fullContent()"
           (contentRequested)="contentRequested.emit($event)"

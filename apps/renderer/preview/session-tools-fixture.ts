@@ -140,3 +140,21 @@ export function sessionCodexFileItems(): SessionChatItem[] {
   items.push(base('codex-files-answer', 'assistant', 'Created `test-file.txt` and verified the native file-change receipts.'));
   return items;
 }
+
+
+export function sessionShellItems(): SessionChatItem[] {
+  const items = [base("shell-prompt", "user", "Run the focused checks and show the command output.")];
+  const examples = [
+    { command: "pnpm --filter @elevenex/renderer test --watch=false", description: "Verify the desktop changes", output: "\u001b[1mDesktop regression suite\u001b[0m\n\n\u001b[32m✓\u001b[0m Preserves command and result identity\n\u001b[32m✓\u001b[0m Copies through the native clipboard\n\u001b[32m✓\u001b[0m Keeps the reading position during updates\n\n\u001b[32m12 tests passed\u001b[0m in 2.4s", code: 0 },
+    { command: "pnpm test --offline", description: "Check the offline dependency cache", output: "\u001b[31mERR_PNPM_NO_OFFLINE_META\u001b[0m\nDependency cache is missing.\nRestore dependencies and try again.", code: 1 },
+    { command: "pnpm lint", description: "Check source formatting", output: "", code: 0 },
+    { command: "pnpm test --reporter=verbose", description: "Inspect the full regression log", output: Array.from({ length: 240 }, (_, i) => `\u001b[32m✓\u001b[0m Regression ${i + 1}: workspace state remains consistent`).join("\n"), code: 0 },
+  ];
+  examples.forEach((example, index) => {
+    const id = `shell-${index}`;
+    items.push(base(id, "tool_use", "", { toolId: id, toolKind: "bash", toolName: "Bash", input: JSON.stringify({ command: example.command, description: example.description, cwd: "/workspace/elevenex/desktop" }) }));
+    items.push(base(id + "-result", "tool_result", JSON.stringify({ stdout: example.output, exit_code: example.code, duration_ms: 2400 }), { toolId: id, toolKind: "bash", execution: { exitCode: example.code } }));
+  });
+  items.push(base("shell-answer", "assistant", "The desktop checks passed. The offline run needs its dependency cache restored."));
+  return items;
+}

@@ -37,6 +37,8 @@ export class ToolStepComponent implements OnChanges {
   readonly presentation = input<ToolPresentation>();
   readonly fullContent = input<ToolContentSource>();
   readonly contentRequested = output<ToolContentRequest>();
+  readonly copiedCode = input<string | null>(null);
+  readonly copyCode = output<string>();
   readonly expandedChange = output<boolean>();
   readonly hasContent = computed(
     () => !!this.output() || !!this.presentation(),

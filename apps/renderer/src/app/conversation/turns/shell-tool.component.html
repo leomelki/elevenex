@@ -1,0 +1,122 @@
+<section class="shell" aria-label="Shell command">
+  @if (shell().description || shell().directory) {
+    <div class="context">
+      @if (shell().description) {
+        <span class="purpose">{{ shell().description }}</span>
+      }
+      @if (shell().directory) {
+        <code class="directory" [title]="shell().directory"
+          ><bdi dir="ltr">{{ directory() }}</bdi></code
+        >
+      }
+    </div>
+  }
+  <div class="command-row">
+    <span class="prompt" aria-hidden="true">$</span>
+    <pre
+      tabindex="0"
+      aria-label="Command"
+    ><code>{{ shell().command || 'Command unavailable' }}</code></pre>
+    <ex-icon-button
+      size="sm"
+      [icon]="copiedCode() === shell().command ? 'check' : 'copy'"
+      [label]="
+        copiedCode() === shell().command ? 'Command copied' : 'Copy command'
+      "
+      [disabled]="!shell().command"
+      (pressed)="copyRequested.emit(shell().command)"
+    />
+  </div>
+  <div class="output-toolbar">
+    <span class="output-label">Output</span>
+    @if (count()) {
+      <span class="line-count"
+        >{{ count() }} {{ count() === 1 ? "line" : "lines" }}</span
+      >
+    }
+    @if (shell().duration) {
+      <span class="duration">{{ shell().duration }}</span>
+    }
+    <span class="grow"></span>
+    <ex-icon-button
+      icon="wrap"
+      label="Wrap output"
+      size="sm"
+      [active]="wrap()"
+      [disabled]="!count()"
+      (pressed)="wrap.set(!wrap())"
+    />
+    <ex-icon-button
+      size="sm"
+      [icon]="copiedCode() === plain() && !!plain() ? 'check' : 'copy'"
+      [label]="
+        copiedCode() === plain() && !!plain()
+          ? 'Output copied'
+          : 'Copy captured output'
+      "
+      [disabled]="!plain()"
+      (pressed)="copyRequested.emit(plain())"
+    />
+  </div>
+  @if (count()) {
+    <div
+      #screen
+      class="screen"
+      [class.wrap]="wrap()"
+      tabindex="0"
+      role="region"
+      aria-label="Command output"
+      (scroll)="onScroll()"
+    >
+      @for (line of window().lines; track $index) {
+        <div class="terminal-line">
+          @for (span of line; track $index) {
+            <span
+              [class]="span.decoration"
+              [style.color]="span.fg"
+              [style.background-color]="span.bg"
+              >{{ span.text }}</span
+            >
+          }
+        </div>
+      }
+    </div>
+  } @else {
+    <p class="empty" [class.running]="status() === 'running'">
+      {{ emptyMessage() }}
+    </p>
+  }
+  @if (
+    window().hidden ||
+    expanded() ||
+    !following() ||
+    shell().commandShortened ||
+    shell().outputShortened
+  ) {
+    <div class="output-footer">
+      @if (shell().commandShortened) {
+        <span>Command shortened</span>
+      }
+      @if (newOutput()) {
+        <span>New output available</span>
+      }
+      @if (window().hidden) {
+        <span>{{ window().hidden }} earlier lines hidden</span>
+      }
+      @if (shell().outputShortened) {
+        <span>Captured output shortened</span>
+      }
+      <span class="grow"></span>
+      @if (!following()) {
+        <button exButton variant="ghost" size="sm" (click)="jumpToEnd()">
+          Jump to latest
+        </button>
+      }
+      @if (window().hidden || expanded()) {
+        <button exButton variant="ghost" size="sm" (click)="showMore()">
+          {{ expanded() ? "Show tail" : "Show more lines" }}
+        </button>
+      }
+    </div>
+  }
+</section>

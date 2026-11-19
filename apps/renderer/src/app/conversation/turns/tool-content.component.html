@@ -1,8 +1,17 @@
 <div class="tool-content" exAutoHeight>
   <div>
     <div class="tool-preview">
-      @for (block of preview(); track $index) {
-        <ex-tool-block [block]="block" [compact]="true" />
+      @if (presentation().shell; as shell) {
+        <ex-shell-tool
+          [shell]="shell"
+          [status]="status()"
+          [copiedCode]="copiedCode()"
+          (copyRequested)="copyCode.emit($event)"
+        />
+      } @else {
+        @for (block of preview(); track $index) {
+          <ex-tool-block [block]="block" [compact]="true" />
+        }
       }
     </div>
     @if (fullContent(); as source) {
@@ -33,7 +42,7 @@
       <details class="more-details" (toggle)="showDetails($event)">
         <summary>
           Details
-          @if (presentation().previewNotice; as notice) {
+          @if (!presentation().shell && presentation().previewNotice; as notice) {
             <span class="detail-count"> · {{ notice }}</span>
           }
         </summary>

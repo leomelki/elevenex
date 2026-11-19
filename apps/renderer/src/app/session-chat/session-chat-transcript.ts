@@ -150,7 +150,10 @@ export function chatExchanges(
           const result = results.get(item.toolId ?? item.id);
           const presentation = presentSessionTool(item, result);
           const outcome =
-            result?.error || item.error
+            result?.error ||
+            item.error ||
+            presentation.shell?.failed ||
+            presentation.shell?.interrupted
               ? "failed"
               : !result && !live
                 ? "unknown"
@@ -166,12 +169,16 @@ export function chatExchanges(
                   ? "Completion unknown"
                   : presentation.meta,
               presentation,
-              fullContent: item.truncated || result?.truncated
-                ? {
-                    inputId: item.truncated ? item.id : undefined,
-                    outputId: result?.truncated ? result.id : undefined,
-                  }
-                : undefined,
+              fullContent:
+                item.truncated || result?.truncated ||
+                presentation.shell?.commandShortened || presentation.shell?.outputShortened
+                  ? {
+                      inputId: item.truncated || presentation.shell?.commandShortened
+                        ? item.id : undefined,
+                      outputId: result && (result.truncated || presentation.shell?.outputShortened)
+                        ? result.id : undefined,
+                    }
+                  : undefined,
               status: outcome ?? (result ? "done" : "running"),
               output: [
                 "Input",

@@ -12,12 +12,15 @@ import type {
   ToolContentSource,
   ToolPresentation,
 } from "../tool-presentation";
+import { ShellToolComponent } from "./shell-tool.component";
 import { ToolBlockComponent } from "./tool-block.component";
 
 /** A short result first; full evidence and original payloads are read on demand. */
 @Component({
   selector: "ex-tool-content",
-  imports: [ToolBlockComponent, ButtonComponent, AutoHeightDirective],
+  imports: [
+    ToolBlockComponent, ShellToolComponent, ButtonComponent, AutoHeightDirective,
+  ],
   templateUrl: "./tool-content.component.html",
   styleUrl: "./tool-content.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -25,8 +28,11 @@ import { ToolBlockComponent } from "./tool-block.component";
 export class ToolContentComponent {
   readonly presentation = input.required<ToolPresentation>();
   readonly original = input("");
+  readonly status = input<"running" | "done" | "failed" | "unknown">("done");
   readonly fullContent = input<ToolContentSource>();
   readonly contentRequested = output<ToolContentRequest>();
+  readonly copiedCode = input<string | null>(null);
+  readonly copyCode = output<string>();
   readonly detailsOpen = signal(false);
   readonly originalOpen = signal(false);
   readonly preview = computed(

@@ -157,15 +157,16 @@ export class SessionAgentComponent {
         .map((item): AgentRow => {
           if (item.kind === "tool_use") {
             const result = results.get(item.toolId ?? item.id);
+            const tool = presentSessionTool(item, result);
             const outcome =
-              result?.error || item.error
+              result?.error || item.error || tool.shell?.failed || tool.shell?.interrupted
                 ? "failed"
                 : !result && !live
                   ? "unknown"
                   : undefined;
             return {
               item,
-              tool: presentSessionTool(item, result),
+              tool,
               icon: stepIcon({ id: item.id, kind: sessionToolKind(item) }),
               verb: sessionToolVerb(item, !result && live, outcome),
               status: outcome ?? (result ? "done" : "running"),
