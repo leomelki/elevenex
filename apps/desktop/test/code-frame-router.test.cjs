@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { CodeFrameRouter } = require('../dist/code/frame-router');
+const { markdownPreviewEndpoint } = require('../dist/code/markdown-preview');
 
 function setup() {
   let request, filter, permission, check;
@@ -42,4 +43,51 @@ test('frame navigation, permissions and handler cleanup stay confined to owned e
   assert.equal(check({id:1},'camera',a),false);
   assert.equal(check({id:1},'persistent-storage',a),true);
   stop(); assert.equal(contents.listenerCount('will-frame-navigate'),0); router.dispose();
+});
+
+test('Markdown navigation and worker requests stay on the owning task’s preview origin', () => {
+  const {router,a,b,contents,filter}=setup();
+  const stop = router.attach(contents);
+  const base = markdownPreviewEndpoint(new URL(a).hostname).replace('{{uuid}}', 'a'.repeat(52));
+  const origin = new URL(base).origin;
+  const indexUrl = new URL('index.html', base);
+  indexUrl.searchParams.set('extensionId', 'vscode.markdown-language-features');
+  indexUrl.searchParams.set('parentOrigin', a);
+  const index = indexUrl.href;
+  const inner = `${base}fake.html?id=preview`;
+  const editor = { url: a + '/', parent: contents.mainFrame };
+  const preview = { url: index, parent: editor };
+  const navigationAllowed = (url, parent) => {
+    let allowed = true;
+    contents.emit('will-frame-navigate', { isMainFrame: false, url, frame: { parent }, preventDefault: () => { allowed = false; } });
+    return allowed;
+  };
+  try {
+    assert.equal(navigationAllowed(index, editor), true);
+    assert.equal(navigationAllowed(index, contents.mainFrame), false);
+    assert.equal(navigationAllowed(inner, preview), true);
+    assert.equal(navigationAllowed(inner, editor), false);
+    assert.equal(navigationAllowed(a + '/', preview), false);
+    const bootstrap = { url: index, webContentsId: 1, resourceType: 'subFrame', initiatorOrigin: a };
+    assert.equal(filter(bootstrap).cancel, false);
+    assert.equal(filter({ ...bootstrap, webContentsId: 2 }).cancel, true);
+    assert.equal(filter({ ...bootstrap, initiatorOrigin: b }).cancel, true);
+    assert.equal(filter({ ...bootstrap, url: index.replace('markdown-language-features', 'unrelated') }).cancel, true);
+    assert.equal(filter({ ...bootstrap, url: inner, initiatorOrigin: origin }).cancel, false);
+    assert.equal(filter({ ...bootstrap, url: a + '/api/read', initiatorOrigin: origin, resourceType: 'xhr' }).cancel, true);
+    const renderer = { url: a + '/assets/extensions/markdown-language-features/media/pre.js', webContentsId: 1, method: 'GET', resourceType: 'script', initiatorOrigin: origin };
+    assert.equal(filter(renderer).cancel, false);
+    assert.equal(filter({ ...renderer, url: renderer.url.replace(a, b) }).cancel, true);
+    assert.equal(filter({ ...renderer, url: a + '/assets/out/nls.messages.js' }).cancel, true);
+    assert.equal(filter({ ...renderer, resourceType: 'subFrame' }).cancel, true);
+    const local = { ...renderer, url: 'http://127.0.0.1:4300/', resourceType: 'image' };
+    assert.equal(filter(local).cancel, true);
+    assert.equal(filter({ ...local, initiatorOrigin: 'http://127.0.0.1:4300' }).cancel, false);
+    const worker = { url: `${base}service-worker.js?v=6`, method: 'GET', resourceType: 'script', initiatorOrigin: origin };
+    assert.equal(filter(worker).cancel, false);
+    assert.equal(filter({ ...worker, webContentsId: 2 }).cancel, true);
+    assert.equal(filter({ ...worker, initiatorOrigin: a }).cancel, true);
+    assert.equal(filter({ ...worker, initiatorOrigin: undefined }).cancel, true);
+    assert.equal(filter({ ...worker, url: base + 'arbitrary.js' }).cancel, true);
+  } finally { stop(); router.dispose(); }
 });

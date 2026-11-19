@@ -6,6 +6,7 @@ const { join } = require('node:path');
 const { BackendClient } = require('../dist/backend-client/client');
 const { CodeProtocol } = require('../dist/code/protocol');
 const { codePolicy, workbenchDocument } = require('../dist/code/document');
+const { markdownPreviewEndpoint } = require('../dist/code/markdown-preview');
 const validate = require('../dist/code/validation');
 const vm = require('node:vm');
 const { waitForCodeLayout } = require('../dist/code/layout-settlement');
@@ -124,6 +125,28 @@ test('Code HTTPS is confined to its task origin, rejects foreign origins, confin
     await symlink(join(root, '..'), join(root, 'out/escape'));
     assert.equal((await request('/assets/out/escape/not-a-runtime-file')).status, 404);
     assert.equal((await request('/assets/%2e%2e%2fsecret')).status, 403);
+
+    const preview = new URL(markdownPreviewEndpoint(host.authority).replace('{{uuid}}', 'a'.repeat(52)));
+    const previewDir = join(root, preview.pathname.slice('/assets/'.length));
+    await mkdir(previewDir, { recursive: true });
+    await writeFile(join(previewDir, 'service-worker.js'), '/* upstream preview worker */');
+    const worker = new URL('service-worker.js', preview);
+    const response = await host.handle(new globalThis.Request(worker));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'text/javascript');
+    assert.equal(await response.text(), '/* upstream preview worker */');
+    assert.equal((await host.handle(new globalThis.Request(worker, { method: 'POST' }))).status, 405);
+    assert.equal((await host.handle(new globalThis.Request(new URL('/api/read', preview)))).status, 403);
+    assert.equal((await request('/api/read', { method: 'POST', headers: { Origin: preview.origin, 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
+
+    const media = '/extensions/markdown-language-features/media';
+    await mkdir(join(root, media), { recursive: true });
+    await writeFile(join(root, media, 'pre.js'), '/* upstream Markdown renderer */');
+    const renderer = await request(`/assets${media}/pre.js`, { headers: { Origin: preview.origin } });
+    assert.equal(renderer.status, 200);
+    assert.equal(renderer.headers.get('Access-Control-Allow-Origin'), preview.origin);
+    assert.equal(renderer.headers.get('Vary'), 'Origin');
+    await renderer.text();
   } finally { host.dispose(); client.dispose(); await rm(root, { recursive: true, force: true }); }
 });
 

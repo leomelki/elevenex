@@ -31,10 +31,13 @@ app.whenReady().then(async () => {
   root = await mkdtemp(join(tmpdir(), 'elevenex-new-code-'));
   await mkdir(join(root, 'profile')); app.setPath('userData', join(root, 'profile'));
   const repository = join(root, 'repository'), worktree = join(root, 'task');
-  await mkdir(repository); await execute('git', ['init', '-b', 'main', repository]);
+  await mkdir(repository); await execute('git', ['init', repository]);
+  await execute('git', ['-C', repository, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   const large = process.argv.includes('--large');
   if (large) { for (let folder = 0; folder < 120; folder++) { const path = join(repository, `group-${folder}`); await mkdir(path); await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(join(path, `module-${folder * 100 + index}.ts`), `export const needle${folder * 100 + index} = ${folder * 100 + index};\n`))); } }
   await writeFile(join(repository, 'hello.ts'), 'export const message = "hello workbench";\n');
+  await writeFile(join(repository, 'README.md'), '# Task Markdown preview\n\n**Formatted text**\n\n![Task diagram](./diagram.svg)\n');
+  await writeFile(join(repository, 'diagram.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="teal"/></svg>');
   await execute('git', ['-C', repository, 'add', '.']);
   await execute('git', ['-C', repository, '-c', 'user.name=Code test', '-c', 'user.email=code@example.invalid', 'commit', '-m', 'fixture']);
   await execute('git', ['-C', repository, 'worktree', 'add', '-b', 'code-smoke', worktree]);
@@ -78,7 +81,7 @@ app.whenReady().then(async () => {
   client.attach(window.webContents.id);
   const target = { scopeId: client.state(window.webContents.id).scope.id, taskId: 1 };
   const runtimeRoot = process.argv.includes('--cold-install') ? join(root, 'runtimes') : process.env.ELEVENEX_CODE_SMOKE_CACHE || join(root, 'runtimes');
-  const metrics = { environment: { platform: process.platform, arch: process.arch, versions: process.versions, cpu: require('node:os').cpus()[0].model }, files: large ? 12001 : 1 };
+  const metrics = { environment: { platform: process.platform, arch: process.arch, versions: process.versions, cpu: require('node:os').cpus()[0].model }, files: large ? 12003 : 3 };
   const started = performance.now();
   await new CodeArtifact(runtimeRoot).prepare();
   metrics.artifactCache = process.argv.includes('--cold-install') ? 'cold' : 'warm'; metrics.artifactInstallMs = Math.round(performance.now() - started); console.log('Artifact prepared ms:', metrics.artifactInstallMs);
@@ -130,6 +133,25 @@ app.whenReady().then(async () => {
   await view.webContents.debugger.sendCommand('Input.insertText', { text: 'saved through Code OSS' });
   await wait(() => view.webContents.executeJavaScript('document.querySelector(".quick-input-list")?.textContent.includes("hello.ts")'), 'Compact text search did not find the real file');
   for (const type of ['keyDown', 'keyUp']) await view.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  const command = name => frame.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(name)}))`);
+  const markdownFrame = () => frame.frames.find(child => !child.detached && child.url.startsWith('https:')
+    && new URL(child.url).searchParams.get('extensionId') === 'vscode.markdown-language-features');
+  for (const mode of ['markdown.showPreview', 'markdown.showPreviewToSide', 'markdown.showLockedPreviewToSide', 'markdown.reopenAsPreview']) {
+    assert.equal((await code.openFile(window.webContents.id, target, { path: 'README.md' })).ok, true);
+    await command(mode);
+    const preview = await wait(markdownFrame, `Markdown preview frame did not load for ${mode}`, 12_000);
+    await wait(() => preview.executeJavaScript(`(() => {
+      const doc = document.querySelector('#active-frame')?.contentDocument;
+      return doc?.querySelector('h1')?.textContent === 'Task Markdown preview' &&
+        doc.querySelector('strong')?.textContent === 'Formatted text' &&
+        doc.querySelector('img[alt="Task diagram"]')?.naturalWidth === 40;
+    })()`), `Markdown preview content or task image did not render for ${mode}`, 12_000);
+    console.log('MARKDOWN_PREVIEW_RENDERED', mode);
+    await command('workbench.action.closeAllEditors');
+    await command('workbench.action.joinAllGroups');
+    await wait(() => !markdownFrame(), `Markdown preview did not close for ${mode}`, 12_000);
+  }
+  assert.equal((await code.openFile(window.webContents.id, target, { path: 'hello.ts' })).ok, true);
   await code.layout(window.webContents.id, target, { x: 60, y: 60, width: 1100, height: 780 });
   await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='1100px'");
   assert.equal(window.webContents.mainFrame.frames.find(f=>f.url===opened.value.frameUrl), frame, 'Expansion duplicated the compact editor');

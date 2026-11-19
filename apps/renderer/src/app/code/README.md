@@ -241,7 +241,9 @@ validated against visibility, window kind, checkout generation and transport;
 it never sends a backend mutation. The binding is disabled in a separate window.
 
 The workbench owns explorer, tabs, Quick Open, search, editing, language basics
-and backups. Chrome uses the upstream textarea/CPU editor paths for predictable
+and backups. Its built-in Markdown preview commands work in the side panel and
+separate Code window, including images resolved relative to a task file.
+Chrome uses the upstream textarea/CPU editor paths for predictable
 embedded input/rendering. The app supplies its local fonts and token-derived
 light/dark colors through supported configuration. No existing content animates
 on first paint; only supplied shell/feedback motion is used. Hidden frames are parked in a hidden, inert window-owned container.
@@ -291,6 +293,13 @@ clipboard writes; clipboard reads and browser filesystem pickers are denied.
 Task transfers use separate main-owned native dialogs, described below.
 HTTP/code caches are distinct from durable task writing. Editor content never
 receives transport credentials or a generic HTTP/filesystem/shell bridge.
+
+Markdown uses the pinned Code OSS webview bootstrap and service worker on a
+separate preview origin for the task. The router admits the built-in Markdown
+extension's preview frame under its owning workbench and serves only the pinned
+bootstrap, worker and bundled Markdown rendering assets to that preview.
+The upstream worker resolves local resources through the existing task file
+provider. Preview origins have no direct task API access or external network access.
 
 Filename and text-search registration use upstream's proposed provider APIs,
 explicitly enabled only for the bundled extension. Their installed definitions

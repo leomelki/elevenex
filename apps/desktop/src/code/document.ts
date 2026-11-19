@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { markdownPreviewEndpoint } from './markdown-preview';
 import type { WorkspaceDescriptor } from './validation';
 // v2 escapes immutable extension responses emitted by the original iframe host.
 // These app-owned assets are now no-store; pinned upstream assets stay cached.
@@ -58,6 +59,7 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
   // window.customTitleBarVisibility is a desktop-only setting.
   const options = {
     workspace: { folderUri: { scheme: 'elevenex-task', authority: workspace.storageIdentity, path: '/' } },
+    webviewEndpoint: markdownPreviewEndpoint(authority),
     additionalBuiltinExtensions: [{ scheme: 'https', authority, path: CODE_EXTENSION_PATH }],
     enabledExtensionProposedApi: ['elevenex.task-workspace'],
     productConfiguration: { nameShort: 'Code OSS', nameLong: 'Code OSS', applicationName: 'elevenex-code', quality: 'stable', commit: 'elevenex-code-oss-1.144.0', enableTelemetry: false, webEndpointUrlTemplate: `https://{{uuid}}.${authority}`, extensionEnabledApiProposals: { 'elevenex.task-workspace': ['fileSearchProvider', 'textSearchProvider'] } },

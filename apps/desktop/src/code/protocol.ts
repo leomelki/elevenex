@@ -8,11 +8,12 @@ import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
 import { codePolicy, CODE_EXTENSION_PATH, EXTENSION, workbenchDocument } from './document';
+import { isMarkdownPreviewOrigin, isMarkdownPreviewResource, markdownPreviewAsset, markdownPreviewPolicy } from './markdown-preview';
 import { codeTransferCall } from './transfer-client';
 import { CodeTransfers } from './transfers';
 import type { TransferDialogs } from './transfer-contracts';
 
-const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
+const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 /** A private session-local HTTPS handler, not an Internet or loopback listener. */
 export class CodeProtocol {
   readonly authority: string;
@@ -57,13 +58,24 @@ export class CodeProtocol {
   }
   dispose(): void { this.closed = true; this.transfers?.dispose(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
   async handle(request: Request): Promise<Response> {
-    if (this.closed || !this.allows(request.url)) return new Response(null, { status: 403 });
     const url = new URL(request.url);
+    const preview = markdownPreviewAsset(url, this.authority);
+    if (this.closed || !preview && !this.allows(request.url)) return new Response(null, { status: 403 });
     // Keep the former path as a compatible alias for retained old documents.
     const pathname = url.pathname.startsWith(CODE_EXTENSION_PATH + '/') ? '/extension/' + url.pathname.slice(CODE_EXTENSION_PATH.length + 1) : url.pathname;
     const origin = request.headers.get('origin');
-    if (origin && !this.allows(origin)) return new Response(null, { status: 403 });
-    const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-site', 'Access-Control-Allow-Origin': origin ?? 'https://' + this.authority, 'Access-Control-Allow-Headers': 'Content-Type', 'Cache-Control': 'no-store' };
+    const markdownResource = isMarkdownPreviewResource(url, this.authority);
+    const source = origin && URL.parse(origin);
+    const allowPreviewResource = markdownResource && request.method === 'GET' && !!source && isMarkdownPreviewOrigin(source, this.authority);
+    if (origin && (preview ? origin !== url.origin : !allowPreviewResource && !this.allows(origin))) return new Response(null, { status: 403 });
+    const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-site', 'Cache-Control': 'no-store' };
+    if (preview) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 405, headers });
+    } else {
+      headers['Access-Control-Allow-Origin'] = origin ?? 'https://' + this.authority;
+      headers['Access-Control-Allow-Headers'] = 'Content-Type';
+      if (markdownResource) headers['Vary'] = 'Origin';
+    }
     try {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
       if (url.pathname.startsWith('/api/')) return this.api(request, url.pathname.slice(5), headers);
@@ -87,15 +99,19 @@ export class CodeProtocol {
       if (child === '..' || child.startsWith('..' + sep) || isAbsolute(child) || !(await stat(actual)).isFile()) return new Response(null, { status: 403 });
       const extensionWorker = url.hostname !== this.authority;
       headers['Content-Type'] = MIME[extname(actual)] ?? 'application/octet-stream';
-      if (extname(actual) === '.html') {
+      if (preview) {
+        headers['Content-Security-Policy'] = markdownPreviewPolicy(this.authority, this.shellOrigin);
+      } else if (extname(actual) === '.html') {
         if (!extensionWorker || !actual.endsWith('webWorkerExtensionHostIframe.html')) return new Response(null, { status: 403 });
         const html = await readFile(actual, 'utf8');
         const hashes = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(match => createHash('sha256').update(match[1] ?? '').digest('base64'));
         headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', true, hashes, this.shellOrigin);
         return new Response(html, { headers });
       }
-      headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', extensionWorker);
-      headers['Cache-Control'] = path.startsWith('/extension/') ? 'no-store' : 'private, max-age=31536000, immutable';
+      if (!preview) {
+        headers['Content-Security-Policy'] = codePolicy(this.authority, 'static', extensionWorker);
+        headers['Cache-Control'] = path.startsWith('/extension/') ? 'no-store' : 'private, max-age=31536000, immutable';
+      }
       return new Response(request.method === 'HEAD' ? null : Readable.toWeb(createReadStream(actual)) as ReadableStream<Uint8Array>, { headers });
     } catch { return new Response(null, { status: 404, headers }); }
   }

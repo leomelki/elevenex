@@ -1,6 +1,7 @@
 import { type Session, type WebContents, type OnBeforeRequestListenerDetails } from 'electron';
 import { isAppUrl } from '../security';
 import type { CodeProtocol } from './protocol';
+import { isMarkdownPreviewOrigin, isMarkdownPreviewResource, markdownPreviewAsset } from './markdown-preview';
 
 /** One handler per shell session. Origins, not Electron partitions, isolate tasks.
  * Every request also checks its owning window and initiator; knowing another
@@ -12,7 +13,7 @@ export class CodeFrameRouter {
       const host = this.find(request.url);
       return host ? host.handle(request) : new Response(null, { status: 403 });
     });
-    session.webRequest.onBeforeRequest({ urls: ['https://*/*'] }, (details, callback) => callback({ cancel: !this.allowsRequest(details) }));
+    session.webRequest.onBeforeRequest({ urls: ['https://*/*', 'http://*/*'] }, (details, callback) => callback({ cancel: !this.allowsRequest(details) }));
     session.setPermissionRequestHandler((contents, permission, callback, details) => {
       const origin = details.requestingUrl;
       const host = this.find(origin);
@@ -31,6 +32,18 @@ export class CodeFrameRouter {
       if (event.isMainFrame) return;
       const frame = event.frame;
       const host = this.find(event.url);
+      if (host && frame?.parent && host.windowId === contents.id) {
+        const url = new URL(event.url);
+        const preview = markdownPreviewAsset(url, host.authority);
+        const parent = frame.parent;
+        if (preview) {
+          const allowed = preview === 'index.html'
+            ? parent.url === `https://${host.authority}/`
+            : preview === 'fake.html' && this.isPreviewParent(parent.url, url, host.authority);
+          if (!allowed) event.preventDefault();
+          return;
+        }
+      }
       // Root editor is a direct child of the trusted shell. Nested extension
       // worker frames must stay inside that editor's origin family.
       if (!host || host.windowId !== contents.id || !frame || (frame.parent === contents.mainFrame
@@ -41,9 +54,26 @@ export class CodeFrameRouter {
     return () => contents.removeListener('will-frame-navigate', navigate);
   }
   allowsRequest(details: OnBeforeRequestListenerDetails): boolean {
-    const host = this.find(details.url);
-    if (!host || host.windowId !== details.webContentsId || details.resourceType === 'mainFrame') return false;
+    const url = new URL(details.url);
     const initiator = details.initiatorOrigin;
+    const source = URL.parse(initiator ?? details.frame?.url ?? '');
+    // The upstream preview setting can allow insecure resources. Keep HTTP
+    // blocked for previews too, including localhost, without affecting the shell.
+    if (url.protocol === 'http:') return !source || ![...this.hosts].some(host => isMarkdownPreviewOrigin(source, host.authority));
+    const host = this.find(details.url);
+    if (!host || details.resourceType === 'mainFrame') return false;
+    const preview = markdownPreviewAsset(url, host.authority);
+    // Chromium omits the window for service worker registration and updates.
+    // Only the pinned script on the initiating preview origin can use this path.
+    if (preview === 'service-worker.js') return details.method === 'GET' && details.resourceType === 'script'
+      && initiator === url.origin && (details.webContentsId === undefined || details.webContentsId === host.windowId);
+    if (host.windowId !== details.webContentsId) return false;
+    switch (preview) {
+      case 'index.html': return details.resourceType === 'subFrame' && initiator === `https://${host.authority}`;
+      case 'fake.html': return details.resourceType === 'subFrame' && initiator === url.origin;
+    }
+    if (source && isMarkdownPreviewOrigin(source, host.authority)) return details.method === 'GET'
+      && details.resourceType !== 'subFrame' && isMarkdownPreviewResource(url, host.authority);
     if (initiator && host.allows(initiator)) return true;
     // Browser-created extension worker requests may omit initiator. Never infer
     // ownership from the destination alone when a frame is unavailable.
@@ -57,5 +87,12 @@ export class CodeFrameRouter {
     this.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.session.setPermissionCheckHandler(() => false);
   }
-  private find(url: string): CodeProtocol | undefined { return [...this.hosts].find(host => host.allows(url)); }
+  private isPreviewParent(value: string, child: URL, authority: string): boolean {
+    const parent = URL.parse(value);
+    return !!parent && parent.origin === child.origin && markdownPreviewAsset(parent, authority) === 'index.html';
+  }
+  private find(value: string): CodeProtocol | undefined {
+    const url = URL.parse(value);
+    return url ? [...this.hosts].find(host => host.allows(value) || markdownPreviewAsset(url, host.authority)) : undefined;
+  }
 }
