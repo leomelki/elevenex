@@ -3,8 +3,10 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
   type OnChanges,
   type TemplateRef,
+  afterNextRender,
   computed,
   inject,
   input,
@@ -28,6 +30,7 @@ import { ToolStepComponent } from "./tool-step.component";
 import {
   isUnfinishedWork,
   workTimelineRows,
+  type WorkSection,
   type WorkTimelineRow,
 } from "./work-timeline-layout";
 import { formatDuration, isProse, stepIcon, stepVerb } from "./work-summary";
@@ -82,8 +85,10 @@ export class WorkTimelineComponent implements OnChanges {
   protected readonly hydrated = signal<ReadonlySet<string>>(new Set());
   private previousIds: ReadonlySet<string> | undefined;
   private previousLast: string | undefined;
+  private previousSections = new Map<string, WorkSection>();
   private reportedInspection = false;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
   protected readonly replyId = computed(() => this.answerId() ?? "$answer");
   private readonly ordered = computed<readonly WorkStep[]>(() => {
     if (!this.answer()?.trim() && !this.answerTemplate()) return this.steps();
@@ -163,13 +168,43 @@ export class WorkTimelineComponent implements OnChanges {
     this.inspected.update(
       (current) => new Set([...current].filter((id) => ids.has(id))),
     );
-    const groups = new Set(
-      this.rows().flatMap((row) => (row.section ? [row.section.id] : [])),
-    );
-    this.openGroups.update(
-      (current) => new Set([...current].filter((id) => groups.has(id))),
-    );
+    const sections = new Map<string, WorkSection>();
+    const byStep = new Map<string, WorkSection>();
+    for (const { step, section } of this.rows()) {
+      if (!section) continue;
+      sections.set(section.id, section);
+      byStep.set(step.id, section);
+    }
+    const active = this.host.nativeElement.ownerDocument.activeElement;
+    const focusedGroup = active instanceof HTMLElement && active.matches('.group') &&
+      this.host.nativeElement.contains(active)
+      ? active.closest<HTMLElement>('[data-work-step]')?.dataset['workStep'] : undefined;
+    this.openGroups.update(current => {
+      const next = new Set<string>();
+      for (const id of current) {
+        if (sections.has(id)) next.add(id);
+        else {
+          // Prepending activity can change the first row of the same section.
+          const retained = this.previousSections.get(id)?.items.find(step => byStep.has(step.id));
+          if (!retained) continue;
+          const replacement = byStep.get(retained.id)!.id;
+          next.add(replacement);
+          if (id === focusedGroup) this.restoreGroupFocus(active, replacement);
+        }
+      }
+      return next.size === current.size && [...next].every(id => current.has(id)) ? current : next;
+    });
+    this.previousSections = sections;
     this.reportInspection();
+  }
+  private restoreGroupFocus(previous: Element | null, id: string): void {
+    afterNextRender(() => {
+      const host = this.host.nativeElement;
+      const document = host.ownerDocument;
+      if (previous?.isConnected || document.activeElement !== document.body) return;
+      host.querySelector<HTMLButtonElement>(`[data-work-step="${CSS.escape(id)}"] .group`)
+        ?.focus({ preventScroll: true });
+    }, { injector: this.injector });
   }
   protected visible(row: WorkTimelineRow): boolean {
     // The outer disclosure owns settled activity, including messages and
@@ -198,9 +233,10 @@ export class WorkTimelineComponent implements OnChanges {
   protected groupOpen(row: WorkTimelineRow): boolean {
     return !!row.section && this.openGroups().has(row.section.id);
   }
-  toggleGroup(id: string): void {
+  toggleGroup(id: string, control: HTMLButtonElement): void {
     const section = this.rows().find((row) => row.section?.id === id)?.section;
     if (!section) return;
+    this.layoutChanging.emit(control);
     const wasOpen = this.openGroups().has(id);
     this.openGroups.update((current) => {
       const next = new Set(current);

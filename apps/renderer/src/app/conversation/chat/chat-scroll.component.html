@@ -6,7 +6,8 @@
   aria-label="Conversation"
   (scroll)="onScroll()"
   (wheel)="onViewportWheel($event)"
-  (pointerdown)="onViewportInteraction()"
+  (pointerdown)="onViewportPointerDown($event)"
+  (pointerup)="clearPointerScroll()"
   (keydown)="onViewportKey($event)"
 >
   <div #track class="track">

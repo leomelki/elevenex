@@ -184,6 +184,7 @@ export class SessionChatStore {
       this.fresh(),
       showPending ? pending : undefined,
       this.work.open(),
+      !this.historical(),
     );
     if (!pending && !this.turnArrivals().size) return exchanges;
     return exchanges.map((exchange): ChatExchange => {
@@ -367,12 +368,10 @@ export class SessionChatStore {
     this.requestMode = undefined;
     this.historyLoading.set(false);
   }
-  async refresh(): Promise<void> {
-    this.historical.set(false);
-    this.next.set(null);
-    this.historyLoading.set(false); this.historyError.set('');
+  async refresh(): Promise<boolean> {
     this.stopRead();
-    await this.load(true);
+    this.historyError.set('');
+    return this.load(true);
   }
   async older(): Promise<void> {
     if (!this.before() || this.loading() || this.historyLoading()) return;
@@ -390,9 +389,9 @@ export class SessionChatStore {
     this.stopRead();
     if (!this.readOnly()) void this.load(false);
   }
-  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<void> {
+  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<boolean> {
     const selection = this.selection;
-    if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;
+    if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return false;
     clearTimeout(this.timer);
     this.timer = undefined;
     const epoch = this.epoch,
@@ -428,7 +427,7 @@ export class SessionChatStore {
           : {}),
     });
     if (this.disposed || epoch !== this.epoch || readEpoch !== this.readEpoch)
-      return;
+      return false;
     clearTimeout(this.slowOpenTimer);
     this.slowOpenTimer = undefined;
     this.request = undefined;
@@ -465,6 +464,7 @@ export class SessionChatStore {
         },
         result.ok ? 80 : 3000,
       );
+    return result.ok;
   }
   private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
     const previous = this.items();
@@ -539,8 +539,17 @@ export class SessionChatStore {
       ]));
     } else if (replacesTail) this.trailingContext.set([]);
     else if (direction === 'following') {
-      const ids = new Set(items.map(item => item.id));
-      this.trailingContext.update(context => context.filter(item => !ids.has(item.id)));
+      if (!page.next) this.trailingContext.set([]);
+      else {
+        // Nothing behind the following cursor can be missing from the gap
+        // anymore. Drop context that might have been removed during a rewind.
+        const pageIds = new Set(page.items.map(item => item.id));
+        this.trailingContext.update(context => {
+          let overlap = context.length;
+          while (overlap > 0 && !pageIds.has(context[overlap - 1]!.id)) overlap--;
+          return overlap ? context.slice(overlap) : context;
+        });
+      }
     }
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
@@ -634,8 +643,7 @@ export class SessionChatStore {
     if (this.loading()) return;
     if (this.historical()) {
       const epoch = this.epoch;
-      await this.refresh();
-      if (epoch !== this.epoch || this.error()) return;
+      if (!await this.refresh() || epoch !== this.epoch) return;
     }
     if (
       !this.selection || (!this.state() && !this.offline()) ||

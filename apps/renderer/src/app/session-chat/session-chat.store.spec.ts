@@ -987,8 +987,43 @@ describe("session chat ownership", () => {
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-80), next: null, state: { ...state, phase: "running" } })));
     await vi.advanceTimersByTimeAsync(80);
     expect(store.items()).toBe(pinned); expect(store.state()?.phase).toBe("running");
+    expect(store.exchanges().every(exchange => exchange.status !== 'live')).toBe(true);
     while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
     expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
+  });
+  it('keeps historical controls and rows available when returning to latest fails', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'latest', items:
+      Array.from({ length: 320 }, (_, i) => item(String(i), 'user', `Request ${i}`)),
+    })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Older')] })));
+    await store.older();
+    const pinned = store.exchanges();
+    const next = store.next();
+    expect(next).not.toBeNull();
+    bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Try again' } });
+    expect(await store.refresh()).toBe(false);
+    expect(store.exchanges()).toBe(pinned);
+    expect(store.next()).toBe(next);
+    expect(store.historical()).toBe(true);
+  });
+  it('drops compact replies removed from the live tail while reading older history', async () => {
+    const { store, bridge } = setup(); await settle();
+    const prompt = item('prompt', 'user', 'Request');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: prompt.id, items: [
+      prompt, ...Array.from({ length: 318 }, (_, i) => item(`activity-${i}`, 'system', 'Work')),
+      item('old-answer', 'assistant', 'Answer before rewind'),
+    ] })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Older')] })));
+    await store.older();
+    expect(store.exchanges().at(-1)?.answer).toBe('Answer before rewind');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { next: null, items: [
+      item('new-answer', 'assistant', 'Answer after rewind'),
+    ] })));
+    await store.newer();
+    expect(store.exchanges().at(-1)?.answer).toBe('Answer after rewind');
   });
   it('does not flash a paged historical window before loading the latest session', async () => {
     const { store, bridge } = setup(); await settle();

@@ -62,8 +62,9 @@ Older engines omit the capability and retain their original send contract.
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
   incremental read path. Repeated visibility notifications share the active read.
-  Leaving a history edge while its page is pending cancels the read and resumes
-  the live feed, preserving the window the reader scrolled back into.
+  Reversing direction, leaving a history edge, or inspecting visible work cancels
+  its pending page read and resumes the live feed. Returning to latest keeps the
+  historical window and its cursors until a fresh read succeeds.
 - Paging keeps at most 320 contiguous raw records. When hidden work leaves the
   newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
   context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
@@ -334,8 +335,9 @@ at most 320 items. Scrolling near either edge automatically loads an adjacent pa
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional
 `following`/`next` contract continues forward without gaps while live state keeps
-refreshing. Sending reconciles the live tail first; the draft stays editable while
-reading. Engines without forward cursors retain an automatic return to their tail
+refreshing. Live state changes update the composer without relabeling historical
+turns as live or failed. Sending reconciles the live tail first, and the draft
+stays editable while reading. Engines without forward cursors retain an automatic return to their tail
 when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
 with explicit access to the original paged content. State, queue, model and
 activity collections have separate finite bounds; main caps the complete reply

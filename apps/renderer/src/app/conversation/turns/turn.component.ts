@@ -67,6 +67,7 @@ export class TurnComponent implements OnChanges {
   protected readonly arriving = signal(false);
   private initialized = false;
   readonly status = input<TurnStatus>("done");
+  readonly keepWorkOnCompletion = input(false);
   readonly steps = input<readonly WorkStep[]>([]);
   readonly deferredWork = input<DeferredTurnWork>();
   readonly workToggled = output<boolean>();
@@ -246,6 +247,9 @@ export class TurnComponent implements OnChanges {
       this.initialized = true;
       this.arriving.set(this.isNew());
     }
+    if (changes["status"]?.previousValue === "live" && this.status() !== "live" &&
+        this.keepWorkOnCompletion() && this.toggled() === null)
+      this.toggled.set(true);
     const focused = this.host.nativeElement.ownerDocument.activeElement;
     if (changes["deferredWork"] && this.deferredWork() && this.expanded()) {
       this.notifyWorkLayout();
@@ -276,7 +280,7 @@ export class TurnComponent implements OnChanges {
   protected toggleWork(): void {
     const open = !this.expanded();
     this.clearWorkHint();
-    if (this.deferredWork()) this.notifyWorkLayout();
+    this.notifyWorkLayout();
     this.toggled.set(open);
   }
 

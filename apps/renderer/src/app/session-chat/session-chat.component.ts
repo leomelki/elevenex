@@ -5,11 +5,13 @@ import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import { SessionChatModels } from './session-chat-models';
 import {
+  afterNextRender,
   afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
   computed,
   effect,
   inject,
@@ -191,6 +193,7 @@ export class SessionChatComponent {
   }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
+  private readonly injector = inject(Injector);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(
     "request",
     {
@@ -496,8 +499,11 @@ export class SessionChatComponent {
     });
   }
   async latest(): Promise<void> {
-    await this.store.refresh();
-    this.chat()?.scroll()?.scrollToEnd("instant");
+    const revision = this.store.viewRevision();
+    if (!await this.store.refresh()) return;
+    afterNextRender(() => {
+      if (this.store.viewRevision() === revision) this.chat()?.scroll()?.scrollToEnd("instant");
+    }, { injector: this.injector });
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();

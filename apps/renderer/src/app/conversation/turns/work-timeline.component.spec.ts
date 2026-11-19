@@ -330,6 +330,39 @@ describe("message-delimited work sections", () => {
     expect(host.querySelectorAll("ex-work-timeline")).toHaveLength(1);
   });
 
+  it("keeps a section and its inspected tool open when an older page extends the section", async () => {
+    const steps = [tool("first"), tool("inspected")];
+    const done = { status: "done", answer: "Done." } as const;
+    const { host, fixture, update } = setup(exchange(steps, done));
+    host.querySelector<HTMLButtonElement>(".work")!.click();
+    await settle(fixture);
+    group(host, "first")!.click();
+    await settle(fixture);
+    const button = head(host, "inspected");
+    button.click();
+    button.focus();
+    update(exchange([tool("older"), ...steps], done));
+    await settle(fixture);
+    expect(group(host, "older")?.getAttribute("aria-expanded")).toBe("true");
+    expect(visible(host, "first")).toBe(true);
+    expect(head(host, "inspected")).toBe(button);
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("keeps activity visible when the turn being read finishes", async () => {
+    const steps = [say("reading"), tool("command")];
+    const { host, fixture, update } = setup(exchange(steps));
+    fixture.componentInstance.active.set("turn");
+    fixture.componentInstance.scroll()?.atEnd.set(false);
+    update(exchange(steps, { status: "done", answer: "Done." }));
+    await settle(fixture);
+    expect(host.querySelector(".work")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('[data-work-step="reading"] .step-fold')?.hasAttribute("inert")).toBe(false);
+    host.querySelector<HTMLButtonElement>(".work")!.click();
+    await settle(fixture);
+    expect(host.querySelector('[data-work-step="reading"] .step-fold')?.hasAttribute("inert")).toBe(true);
+  });
+
   it("reveals messages and section summaries without expanding tool disclosures", async () => {
     const { host, fixture } = setup(
       exchange([say("intro"), tool("first"), say("progress"), tool("last")], {

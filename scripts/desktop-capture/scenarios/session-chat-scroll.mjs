@@ -5,9 +5,12 @@ export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
   await capture.component('ex-machine-workspace', c => c.store.selectSession({ taskId: '11', sessionId: '101' }));
-  await capture.waitFor(() => document.querySelector('ex-agent-picker > button'));
+  await capture.waitFor(() => document.querySelector('ex-session-chat ex-agent-picker > button'));
   const chat = (fn, value) => capture.component('ex-session-chat', fn, value);
   const move = async (edge) => {
+    // Absolute scrollTop coordinates use the settled range. The dedicated
+    // scrollbar scenario covers relative wheel input during reconciliation.
+    await capture.waitFor(() => !document.querySelector('ex-session-chat .viewport.reconciling-history'));
     // Native scroll container plus trusted wheel input supplies direction/intent.
     await capture.evaluate(edge => {
       const viewport = document.querySelector('ex-session-chat ex-chat-scroll .viewport');

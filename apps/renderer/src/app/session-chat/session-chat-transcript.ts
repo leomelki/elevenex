@@ -55,8 +55,8 @@ export class ChatTranscriptProjection {
   private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), claudeRenderIds: new Map(), exchanges: [] };
   project(items: readonly SessionChatItem[], state: SessionChatState | null,
     fresh: ReadonlySet<string>, pending?: PendingChatPrompt,
-    work?: ReadonlyMap<string, OpenTurnWork>): readonly ChatExchange[] {
-    return projectExchanges(items, state, fresh, pending, this.cache, work);
+    work?: ReadonlyMap<string, OpenTurnWork>, atLiveTail = true): readonly ChatExchange[] {
+    return projectExchanges(items, state, fresh, pending, this.cache, work, atLiveTail);
   }
   reconcileSavedBlocks(previous: readonly SessionChatItem[], current: readonly SessionChatItem[]): void {
     const ids = new Set(current.map(item => item.id));
@@ -130,6 +130,7 @@ function projectExchanges(
   pending?: PendingChatPrompt,
   cache?: ProjectionCache,
   work?: ReadonlyMap<string, OpenTurnWork>,
+  atLiveTail = true,
 ): readonly ChatExchange[] {
   const groups: {
     id: string;
@@ -195,15 +196,15 @@ function projectExchanges(
       ...completed.reply,
       ...(page?.items.slice(replyStart) ?? []),
     ];
+    const current = atLiveTail && index === groups.length - 1;
     const live =
-      !completed &&
-      index === groups.length - 1 &&
+      !completed && current &&
       (state?.phase === "running" || state?.phase === "waiting");
     const source = group.promptItem ? [group.promptItem, ...group.items] : group.items;
     const author = state?.providers?.find(provider => provider.id === state.provider)?.label ?? state?.provider ?? 'Agent';
     const signature = JSON.stringify([
-      index === groups.length - 1 ? state?.phase : 'idle',
-      index === groups.length - 1 ? state?.error : '',
+      current ? state?.phase : 'idle',
+      current ? state?.error : '',
       live && !!state?.permission, live && !!state?.question,
       state?.provider, author, fresh.has(group.id), group.items.map(renderId),
     ]);
@@ -381,7 +382,7 @@ function projectExchanges(
         lastActivity?.kind === "assistant",
       status: live
         ? "live"
-        : index === groups.length - 1 && state?.phase === "error"
+        : current && state?.phase === "error"
           ? "failed"
           : "done",
       ...(completed ? { deferredWork: {
@@ -411,7 +412,7 @@ function projectExchanges(
       author,
       harness: state?.provider,
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
-      error: index === groups.length - 1 ? (state?.error ?? "") : "",
+      error: current ? (state?.error ?? "") : "",
     };
     retained.set(group.id, { source, signature, pending: ownPending, work: activity, exchange });
     return exchange;

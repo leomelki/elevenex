@@ -50,6 +50,7 @@
         [reach]="reach()"
         [isNew]="exchange.isNew || false"
         [status]="exchange.status"
+        [keepWorkOnCompletion]="active() === exchange.id && scroll()?.atEnd() === false"
         [actions]="actions()"
         [stoppable]="stoppable()"
         [retryable]="retryable()"

@@ -17,6 +17,7 @@ These standalone OnPush components consume renderer view models and emit typed i
   loading surface during its fold and leaves the reply and file chips available.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+  An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
   Focusing a link, code control or other content in the latest reply leaves Worked as it is. If a new reply turns that focused block into commentary, the timeline keeps it visible until focus leaves.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
@@ -143,16 +144,18 @@ the first paint and reconciles the native scrollbar in small steps. The range
 and scroll origin change together so the anchored text stays still. With reduced
 motion the viewport applies the final extent and anchored position in one paint.
 The transcript remains bounded.
-If the reader moves well away from the requested edge before the page arrives,
-`historyCancelled` lets the owner discard the read before it can evict the
-content now in view.
+If the reader reverses direction, moves well away from the requested edge, or
+opens visible work during a pending read, `historyCancelled` lets the owner
+discard the read before it can evict the content now in view. Worked, activity
+summaries and tool evidence keep their visible controls at the same offset as
+their contents expand or settle.
 One in-flight request and a four-page automatic fill budget bound underfilled
 viewports; a page adding no visible height stops that fill immediately. Wheel
 and keyboard direction choose the edge, including when both edges fit on screen.
 Overflowing conversations prefetch once per gesture, and a pinned,
 overflowing tail does not prefetch older pages. This avoids draining collapsed
-work and evicting the reply still in view; wheel, pointer and keyboard input renew
-the budget. History failures retain readable content and offer a
+work and evicting the reply still in view. Scroll gestures renew the budget.
+History failures retain readable content and offer a
 focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
 before moving to the bottom. No history navigation buttons are needed.
 

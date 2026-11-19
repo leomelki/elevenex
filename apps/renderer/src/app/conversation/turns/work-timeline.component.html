@@ -13,6 +13,7 @@
           @if (row.section; as group) {
             @if (group.id === step.id) {
               <button
+                #groupControl
                 type="button"
                 class="group"
                 [attr.aria-expanded]="groupOpen(row)"
@@ -21,7 +22,7 @@
                   (group.earlier ? 'earlier activity: ' : 'activity: ') +
                   group.label
                 "
-                (click)="toggleGroup(group.id)"
+                (click)="toggleGroup(group.id, groupControl)"
               >
                 <ex-icon
                   class="disclosure"
