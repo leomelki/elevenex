@@ -49,7 +49,9 @@ function message(value: unknown): WireMessage {
 export class Wire extends EventEmitter {
   private buffered = Buffer.alloc(0);
   private closed = false;
+  private received = 0;
   private readonly data = (chunk: Buffer) => {
+    this.received = Date.now();
     try {
       this.buffered = Buffer.concat([this.buffered, chunk]);
       while (true) {
@@ -65,6 +67,8 @@ export class Wire extends EventEmitter {
   };
   private readonly ended = () => this.close();
   private readonly drained = () => this.emit('drain');
+  /** Time of the latest inbound bytes, including bulk frames queued ahead of a reply. */
+  get receivedAt(): number { return this.received; }
   get writable(): boolean { return !this.closed && !this.output.writableNeedDrain; }
   constructor(private readonly input: Readable, private readonly output: Writable) {
     super();

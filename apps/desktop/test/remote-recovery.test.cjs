@@ -67,6 +67,47 @@ test('transport loss reports recovery, wake and Retry now bypass backoff, and da
   assert.equal(attempts, stopped); assert.equal(connection.snapshot().phase, 'disconnected');
 });
 
+test('delayed health keeps a transport that still delivers bytes, but a silent or prolonged delay reconnects', async t => {
+  const server = createServer((_req, res) => res.end(JSON.stringify({ backendSha: version })));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const open = delayedHealthWindow => {
+    const state = { stalled: false, delivering: false, connects: 0, closes: 0 };
+    const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+      changed: () => undefined, healthInterval: 10, backoff: 60000, delayedHealthWindow,
+      connect: async options => {
+        state.connects++; const exit = deferred();
+        options.progress('runtime');
+        return { instance: 'runtime', exited: exit.promise,
+          health: async () => { if (state.stalled && state.connects === 1) throw new Error('Health reply timed out'); return { ready: true, instance: 'runtime' }; },
+          // Bulk frames queued ahead of the reply keep arriving after each check starts.
+          receivedAt: () => state.delivering ? Date.now() + 1 : 0,
+          forward: async () => ({ port: server.address().port, reachable: true, authorization: null, close: async () => undefined }),
+          close: async () => { state.closes++; exit.resolve(); } };
+      },
+    });
+    t.after(() => connection.dispose());
+    connection.acquire(1, true);
+    return { connection, state };
+  };
+  const busy = open(60000);
+  await until(() => busy.connection.snapshot().phase === 'ready');
+  busy.state.stalled = true; busy.state.delivering = true;
+  await until(() => busy.connection.logs().some(entry => entry.code === 'delayed'));
+  await delay(100);
+  assert.equal(busy.state.closes, 0); assert.equal(busy.connection.snapshot().phase, 'ready'); assert.equal(busy.connection.snapshot().generation, 1);
+  assert.equal(busy.connection.logs().filter(entry => entry.code === 'delayed').length, 1);
+  busy.state.delivering = false;
+  await until(() => busy.state.closes === 1);
+  assert.equal(busy.connection.snapshot().failure.stage, 'application');
+
+  const prolonged = open(50);
+  await until(() => prolonged.connection.snapshot().phase === 'ready');
+  prolonged.state.stalled = true; prolonged.state.delivering = true;
+  await until(() => prolonged.state.closes === 1);
+  assert.equal(prolonged.connection.snapshot().failure.stage, 'application');
+});
+
 test('Retry now during background authentication promotes exactly one interactive attempt', async t => {
   const server = createServer((_req, res) => res.end(JSON.stringify({ backendSha: version })));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

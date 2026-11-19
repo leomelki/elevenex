@@ -18,6 +18,8 @@ export interface ConnectionOptions {
   readonly healthInterval?: number;
   readonly backoff?: number;
   readonly retryWindow?: number;
+  /** How long health may stay delayed while the transport still delivers bytes. */
+  readonly delayedHealthWindow?: number;
   readonly now?: () => number;
 }
 
@@ -201,6 +203,7 @@ export class RemoteConnection {
         const connectedAt = Date.now();
         const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
         void transportLost.catch(() => undefined);
+        let delayedSince: number | undefined;
         while (!signal.aborted) {
           this.wakeup = new AbortController();
           await Promise.race([
@@ -208,7 +211,22 @@ export class RemoteConnection {
             transportLost,
           ]);
           signal.throwIfAborted();
-          const current = await this.check(transport, url, release.version, signal);
+          const checkedAt = Date.now();
+          let current: { ready: boolean; instance: string };
+          try { current = await this.check(transport, url, release.version, signal); }
+          catch (error) {
+            // Health replies share the SSH stream with bulk frames. On a slow
+            // link they can queue behind a transcript or media transfer for
+            // longer than the check timeout. Closing that live transport would
+            // discard the transfer and repeat the resync that saturated it, so
+            // only a silent transport, or a delay past the grace window, is lost.
+            const delivering = (transport.receivedAt?.() ?? 0) > checkedAt;
+            delayedSince ??= checkedAt;
+            if (signal.aborted || !delivering || !asFailure(error, 'application').transient || Date.now() - delayedSince > (this.options.delayedHealthWindow ?? 60_000)) throw error;
+            if (delayedSince === checkedAt) this.log('application', 'delayed', 'The remote health reply was delayed behind other transfers. Keeping the active SSH transport.');
+            continue;
+          }
+          delayedSince = undefined;
           if (current.instance !== this.status.instanceId) throw failure('application', 'unavailable', 'The remote runtime restarted. Reconnect and reconcile the selected task and session.', 'retry', true);
           if (Date.now() - connectedAt > 60_000) attempt = 0;
         }

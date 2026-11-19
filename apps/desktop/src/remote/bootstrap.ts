@@ -21,6 +21,8 @@ export interface RemoteTransport {
   /** Optional for injected/older transports. Never falls back to device egress. */
   browserProxy?(authorize: (host: string, port: number) => void): Promise<{ readonly port: number; disconnect(): void; close(): Promise<void> }>;
   health(signal: AbortSignal): Promise<{ ready: boolean; instance: string }>;
+  /** Time of the latest bytes received from the bridge. Optional for injected/older transports. */
+  receivedAt?(): number;
   close(): Promise<void>;
 }
 export interface ConnectOptions {
@@ -208,7 +210,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
       if (closing) { await close(); throw new Error('Remote transport is closing'); }
       return { port: address.port, authorization, reachable, close };
     };
-    return { instance: hello.instance, exited: ssh.exited, health, forward,
+    return { instance: hello.instance, exited: ssh.exited, health, forward, receivedAt: () => channel.receivedAt,
       browserProxy: async (authorize: (host: string, port: number) => void) => {
         if (closing || !hello.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
         const proxy = await browserSocks(async (host, port) => {
