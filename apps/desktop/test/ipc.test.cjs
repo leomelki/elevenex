@@ -149,6 +149,49 @@ test('backend client IPC validates scope/arity, isolates window ownership and un
   stop(); assert.equal(handlers.size, 0);
 });
 
+test('conversation loading modes are validated, scope-bound and transported by the named read', async () => {
+  const handlers = new Map(), requests = [], paths = [];
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const ipc = {}, chat = {};
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
+    exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }),
+  });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat'), 'utf8'), {
+    exports: chat, URLSearchParams,
+    require: name => {
+      if (name === '../ipc') return ipc;
+      if (['./session-chat-agents', './session-chat-attachments', './session-chat-media'].includes(name))
+        return { registerChatAgents: () => () => {}, registerChatAttachments: () => () => {}, registerSessionChatMedia: () => () => {} };
+      if (name === './transport') return { requestBackendJson: async (_endpoint, request) => {
+        paths.push(request.path);
+        return { taskId: 1, sessionId: 2, cursor: 'cursor', reset: true, before: null, items: [], events: [], state };
+      } };
+      return require('../dist/backend-client/' + name.slice(2));
+    },
+  });
+  const frame = {}, sender = { id: 42 }, scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const target = { taskId: 1, sessionId: 2, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+  const client = { execute: async (window, selectedScope, key, write, operation) => {
+    assert.equal(window, 42); assert.equal(selectedScope, scope); assert.equal(write, false);
+    assert.match(key, /session-chat:/);
+    requests.push(key);
+    return operation({}, new AbortController().signal);
+  } };
+  const stop = chat.registerSessionChatIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const read = handlers.get('session-chat:read'), event = { senderFrame: frame, sender };
+  assert.throws(() => read({ senderFrame: {}, sender }, scope, { ...target, loadingMode: 'window' }), /Untrusted/);
+  for (const loadingMode of ['all', 320, true, null])
+    assert.throws(() => read(event, scope, { ...target, loadingMode }), /Invalid conversation loading mode/);
+  for (const loadingMode of ['window', 'progressive']) {
+    await read(event, scope, { ...target, loadingMode });
+    assert.ok(requests.at(-1).includes('loadingMode=' + loadingMode));
+    assert.equal(paths.at(-1), '/api/desktop-workspace/tasks/1/sessions/2/chat?loadingMode=' + loadingMode);
+  }
+  await read(event, scope, target);
+  assert.ok(!requests.at(-1).includes('loadingMode'));
+  stop(); assert.equal(handlers.size, 0);
+});
+
 test('machine IPC verifies main-frame ownership, bounds suggestions and validates new-window selection', async () => {
   const handlers = new Map(); const calls = [];
   const ipcExports = {};

@@ -39,6 +39,7 @@ export * from "./chat/attachments.component";
 export * from "./chat/chat-scroll.component";
 export * from "./chat/side-thread.component";
 export * from "./chat/chat.component";
+export * from './chat/chat-loading.component';
 
 export * from "./markdown/code-tokens";
 export * from "./markdown/markdown-code.component";

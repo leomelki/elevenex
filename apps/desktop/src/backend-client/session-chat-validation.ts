@@ -461,6 +461,7 @@ export function parseChatPage(
   value: unknown,
   taskId: number,
   sessionId: number,
+  loadingMode?: 'window' | 'progressive',
 ): SessionChatPage {
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
@@ -476,8 +477,8 @@ export function parseChatPage(
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], 80, item),
-    events: array(raw["events"], 80, (value): SessionChatEvent => {
+    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, item),
+    events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };
       if (event["type"] === "item")

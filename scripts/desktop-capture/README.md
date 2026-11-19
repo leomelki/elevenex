@@ -178,6 +178,14 @@ keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
+`scenarios/session-loading-policy.mjs` checks normal and adaptive slow openings,
+the small Progressive indicator, 10,000-record windowing, and retained turn/tool
+and composer identities through IPC-style updates. It also checks that fallback
+follows different chats/tasks and recreated workspace owners, then resets on
+reconnect and application reload. Its metadata records local
+preview opening/update timings; these exclude real backend hydration and WAN
+latency. It covers both themes and narrow/reduced-motion layouts.
+
 `scenarios/session-history-stability.mjs` checks short collapsed openings and
 repeated raw-window eviction across long turns, with trusted upward/downward
 wheel input, retained drafts and stable final-answer identities. It covers both

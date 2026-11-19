@@ -80,6 +80,11 @@ Older engines omit the capability and retain their original send contract.
   blocks can use different IDs and indexes. The view pairs corresponding blocks
   within the same provider message, keeps their position and render identity,
   and uses the saved content. Raw history and pagination keep their original IDs.
+- The conversation-owned `ChatTranscriptProjection` reuses completed exchanges
+  and unchanged tool steps, including parsed presentations. Runtime-only queue,
+  usage and activity changes do not replace transcript inputs. Reset/paging
+  replies reconcile equal records before projection; eviction and navigation
+  release their cached turns. Streaming text changes only its active turn.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
@@ -206,7 +211,47 @@ work. Provider APIs still own source transcript reading; their `getHistory`
 interface currently returns full history inside the backend. Only bounded tails
 are copied/projected and transported to the renderer.
 
-History pages contain at most 80 contiguous items / 512 KiB, plus an optional
+`SESSION_CHAT_PROGRESSIVE_LOADING` is an injectable rollout flag, **false** by
+default. Normal reads request one recent window of at most **320 records / 2 MiB**;
+this disables small-page progressive opening without fetching an unbounded
+transcript. Older-window reads wait for scroll intent rather than prefilling a
+short collapsed conversation at startup. An uncached opening still pending after
+**3,000 ms** enables progressive loading for the **whole application connection**,
+cancels its larger request and requests
+**80 records / 512 KiB**. A small “Progressive” label accompanies the initial or
+history loading glyph while work is pending. This is a slow-open heuristic,
+not a diagnosis of network quality. It does not time idle long polls, cached
+revalidation or ordinary history navigation. Navigation, hiding, pausing and
+destruction cancel the deadline; stale replies cannot replace the current window.
+
+`SessionChatLoadingPolicy` is shared at application/window lifetime, independently
+of chat owners, selected tasks/projects and draft caches. Every chat inherits the
+fallback immediately, including newly mounted workspaces; other pending initial
+window reads switch to small pages too. Normal background long polls finish
+without interruption and use small pages on their next read. Backend scope IDs
+rotate on reconnect or engine restart, resetting the adaptive fallback even for
+a same-machine rebind. Application restart starts with a fresh policy. Old-scope
+timers/replies cannot enable fallback on the new connection. No per-chat choice
+or connection-health decision is persisted with drafts.
+
+Preview application boundaries that override `BackendClientService` also provide
+`SessionChatLoadingPolicy` at that boundary. Individual chat/workspace owners
+inherit it, so recreating those owners cannot reset the connection's fallback.
+There is no automatic mutation retry or full-history background drain.
+
+The optional `loadingMode: 'window' | 'progressive'` request selects these bounds
+for latest/live reads. Adjacent history pages remain at most 80 / 512 KiB in both
+modes so paging retains overlapping raw records and an inspected tool's anchor.
+Omission retains legacy 80-item pages; older engines may
+ignore the new option and continue returning those pages. Main validates the
+option and the corresponding reply bound. Active-session fallback hydration shares
+the backend's in-flight source/runtime reads; cancelled responses skip projection.
+Cached reopening renders immediately and revalidates from its saved incremental
+cursor, without blocking the composer or repeating an initial history read when
+the feed is still current. The backend provider's source-history API remains a
+full-history read, so a cold provider parse can still dominate initial latency.
+
+History windows also carry an optional
 bounded `leadingPrompt` when the first item belongs to an earlier user message.
 That prompt supplies the turn identity and reminder without moving the page cursor
 or claiming that the intervening evidence has loaded. It survives item eviction

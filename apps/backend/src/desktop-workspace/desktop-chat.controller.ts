@@ -35,6 +35,7 @@ export class DesktopChatController {
     @Query('before') before: string | undefined,
     @Query('following') following: string | undefined,
     @Res() response: Response,
+    @Query('loadingMode') loadingMode?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -47,6 +48,7 @@ export class DesktopChatController {
         before,
         abort.signal,
         following,
+        loadingMode,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

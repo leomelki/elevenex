@@ -44,6 +44,8 @@ export class ChatComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
+  readonly progressiveLoading = input(false);
+  readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();

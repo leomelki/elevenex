@@ -172,6 +172,7 @@ describe("ChatScroll return to bottom", () => {
     fixture.componentInstance.historyRequested.subscribe(requests);
     fixture.componentRef.setInput('historyBefore', true);
     fixture.detectChanges();
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
     for (const callback of resizeCallbacks) callback();
     await new Promise(requestAnimationFrame); fixture.detectChanges();
     expect(requests).toHaveBeenCalledTimes(1);
@@ -206,6 +207,24 @@ describe("ChatScroll return to bottom", () => {
     for (const callback of resizeCallbacks) callback();
     await new Promise(requestAnimationFrame); fixture.detectChanges();
     expect(requests).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for reader intent before paging an underfull normal window', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    dimensions.height = 300;
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, get: () => 0, set: () => {} });
+    moveTo(0);
+    const requests = vi.fn();
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    fixture.componentRef.setInput('initialHistoryPrefetch', false);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.detectChanges();
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).not.toHaveBeenCalled();
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -60 }));
+    await new Promise(requestAnimationFrame); fixture.detectChanges();
+    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
   });
 
   for (const reading of [false, true]) it(`prefetches older history without ${reading ? 'overriding a reader who scrolls during the request' : 'dropping end following when the partial turn is replaced'}`, async () => {

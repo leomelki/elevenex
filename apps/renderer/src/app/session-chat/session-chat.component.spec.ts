@@ -5,6 +5,7 @@ import type {
   BackendResult,
   SessionChatItem,
   SessionChatPage,
+  SessionChatRead,
   SessionChatState,
   SessionChatCommandReply,
   SessionChatContentRead,
@@ -107,7 +108,7 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
       },
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
-    sessionChatRead: vi.fn(async () => {
+    sessionChatRead: vi.fn<(scope: string, input: SessionChatRead) => Promise<BackendResult<SessionChatPage>>>(async () => {
       if (initialRead) { const pending = initialRead; initialRead = undefined; return pending; }
       return { ok: true as const, value: page };
     }),
@@ -160,6 +161,24 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
 }
 
 describe("connected chat reply rendering", () => {
+  it('retains composer configuration and completed turn inputs through unrelated runtime activity', async () => {
+    const { fixture, root, publish } = setup([
+      item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Finished'),
+      item('u2', 'user', 'Latest'), item('a2', 'assistant', 'Working'),
+    ], { ...state, phase: 'running' });
+    await settle(fixture);
+    const owner = fixture.componentInstance;
+    const before = { models: owner.models(), harnesses: owner.harnesses(), agent: owner.agent(), permissions: owner.permissions(), exchange: owner.store.exchanges()[0], turn: root.querySelector('ex-turn') };
+    publish({ taskId: 1, sessionId: 2, cursor: 'updated', reset: false, before: null, items: [], events: [],
+      state: { ...state, phase: 'running', activity: [{ id: 'work', label: 'Reading', detail: 'Current file' }] } });
+    await owner.store.refresh(); await settle(fixture);
+    expect(owner.models()).toBe(before.models);
+    expect(owner.harnesses()).toBe(before.harnesses);
+    expect(owner.agent()).toBe(before.agent);
+    expect(owner.permissions()).toBe(before.permissions);
+    expect(owner.store.exchanges()[0]).toBe(before.exchange);
+    expect(root.querySelector('ex-turn')).toBe(before.turn);
+  });
   it('mounts history and composer together after cold hydration, with retry after a failed read', async () => {
     let resolve!: (result: BackendResult<SessionChatPage>) => void;
     const { fixture, root, bridge, publish } = setup([], state, new Promise(yes => { resolve = yes; }));
@@ -191,9 +210,10 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector('ex-composer')).toBeNull();
     fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
     await settle(fixture);
-    expect(fixture.componentInstance.store.loading()).toBe(true);
+    expect(fixture.componentInstance.store.loading()).toBe(false);
     expect(root.querySelector('.opening')).toBeNull();
     expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBe('cursor');
     expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
     expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
   });

@@ -19,7 +19,7 @@ ex-chat {
   text-align: center;
 }
 .opening-error { max-width: var(--chat-max); overflow-wrap: anywhere; }
-.opening > p { animation: opening-status 1ms linear 150ms both; }
+.opening > ex-chat-loading { animation: opening-status 1ms linear 150ms both; }
 @keyframes opening-status { from { opacity: 0; } to { opacity: 1; } }
 .start { padding-bottom: var(--space-6); }
 .start-content {

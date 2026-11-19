@@ -247,8 +247,11 @@ export class DesktopChatService implements OnModuleDestroy {
     before: string | undefined,
     signal: AbortSignal,
     following?: string,
+    loadingMode?: string,
   ) {
     let session = await this.target(taskId, sessionId);
+    if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
+      throw new BadRequestException('Invalid conversation loading mode.');
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
       (before !== undefined && (typeof before !== 'string' || before.length > 1000 || !before)) ||
@@ -258,13 +261,16 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new BadRequestException('Invalid conversation cursor.');
     if (session.status === 'archived' || session.workspaceArchivedAt) {
       const provider = this.registry.getProvider(session.activeAgentProvider);
+      const history = await provider.getHistory(sessionId);
+      if (signal.aborted) return;
       const window = chatWindow(
-        await provider.getHistory(sessionId),
+        history,
         [],
         before,
         undefined,
         undefined,
         following,
+        loadingMode,
       );
       if (!window)
         throw new BadRequestException(
@@ -331,10 +337,11 @@ export class DesktopChatService implements OnModuleDestroy {
         feed.runtime = undefined;
       }));
     const [raw, history] = await Promise.all([runtime, historyPromise]);
+    if (signal.aborted) return;
     const live = Array.isArray(raw.liveItems)
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
-    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following);
+    const window = chatWindow(history, live, before, feed.changesCache, feed.mediaCache, following, loadingMode);
     if (!window)
       throw new BadRequestException(
         'History cursor expired. Return to latest messages.',
@@ -352,7 +359,7 @@ export class DesktopChatService implements OnModuleDestroy {
         : [];
     });
     for (const key of feed.projections.keys()) {
-      if (feed.projections.size <= 80) break;
+      if (feed.projections.size <= 320) break;
       feed.projections.delete(key);
     }
     return {

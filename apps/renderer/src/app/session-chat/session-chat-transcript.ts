@@ -24,6 +24,34 @@ export interface PendingChatPrompt {
   readonly attachments?: ChatExchange["attachments"];
 }
 
+interface ProjectedTurn {
+  readonly source: readonly SessionChatItem[];
+  readonly signature: string;
+  readonly pending?: PendingChatPrompt;
+  readonly exchange: ChatExchange;
+}
+interface ProjectedStep {
+  readonly result?: SessionChatItem;
+  readonly running: boolean;
+  readonly renderId: string;
+  readonly step: WorkStep;
+}
+interface ProjectionCache {
+  turns: ReadonlyMap<string, ProjectedTurn>;
+  readonly steps: WeakMap<SessionChatItem, ProjectedStep>;
+  exchanges: readonly ChatExchange[];
+}
+
+/** Owned by one conversation. Evicted turns release their source and view data. */
+export class ChatTranscriptProjection {
+  private cache: ProjectionCache = { turns: new Map(), steps: new WeakMap(), exchanges: [] };
+  project(items: readonly SessionChatItem[], state: SessionChatState | null,
+    fresh: ReadonlySet<string>, pending?: PendingChatPrompt): readonly ChatExchange[] {
+    return projectExchanges(items, state, fresh, pending, this.cache);
+  }
+  clear(): void { this.cache = { turns: new Map(), steps: new WeakMap(), exchanges: [] }; }
+}
+
 /** Runtime output may precede the harness's durable user-message receipt. */
 function withPendingPrompt(
   items: readonly SessionChatItem[],
@@ -67,6 +95,16 @@ export function chatExchanges(
   fresh: ReadonlySet<string>,
   pending?: PendingChatPrompt,
 ): readonly ChatExchange[] {
+  return projectExchanges(items, state, fresh, pending);
+}
+
+function projectExchanges(
+  items: readonly SessionChatItem[],
+  state: SessionChatState | null,
+  fresh: ReadonlySet<string>,
+  pending?: PendingChatPrompt,
+  cache?: ProjectionCache,
+): readonly ChatExchange[] {
   const groups: {
     id: string;
     prompt: string;
@@ -75,14 +113,23 @@ export function chatExchanges(
     time: string;
     /** Epoch ms of the prompt; unknown for history that starts mid-turn. */
     startedAt?: number;
+    promptItem?: SessionChatItem;
     items: SessionChatItem[];
   }[] = [];
   const reconciled = reconcileClaudeBlocks(pending ? withPendingPrompt(items, pending) : items);
   const renderId = (item: SessionChatItem) => reconciled.renderIds.get(item.id) ?? item.id;
   for (const item of reconciled.items) {
     if (item.kind === "user") {
+      const previous = cache?.turns.get(item.id);
+      if (previous?.source[0] === item) {
+        const { prompt, mentions, attachments, time, startedAt } = previous.exchange;
+        groups.push({ id: item.id, promptItem: item, prompt, mentions, attachments,
+          time: time ?? '', startedAt, items: [] });
+        continue;
+      }
       const browser = parseBrowserElements(item.text);
       groups.push({
+        promptItem: item,
         id: item.id,
         prompt: browser.text.split('\n').filter(line => !line.startsWith('[') || !item.media?.some(media => line.endsWith(`](<${media.path}>)`))).join('\n').trim(),
         mentions: item.mentions?.map(mention => ({ id: String(mention.sessionId), kind: 'session', label: mention.title })),
@@ -105,10 +152,26 @@ export function chatExchanges(
       groups.at(-1)?.items.push(item);
     }
   }
-  return groups.map((group, index): ChatExchange => {
+  const retained = new Map<string, ProjectedTurn>();
+  const exchanges = groups.map((group, index): ChatExchange => {
     const live =
       index === groups.length - 1 &&
       (state?.phase === "running" || state?.phase === "waiting");
+    const source = group.promptItem ? [group.promptItem, ...group.items] : group.items;
+    const author = state?.providers?.find(provider => provider.id === state.provider)?.label ?? state?.provider ?? 'Agent';
+    const signature = JSON.stringify([
+      index === groups.length - 1 ? state?.phase : 'idle',
+      index === groups.length - 1 ? state?.error : '',
+      live && !!state?.permission, live && !!state?.question,
+      state?.provider, author, fresh.has(group.id), group.items.map(renderId),
+    ]);
+    const previous = cache?.turns.get(group.id);
+    const ownPending = group.id === pending?.id ? pending : undefined;
+    if (previous?.signature === signature && previous.pending === ownPending &&
+        previous.source.length === source.length && source.every((item, i) => item === previous.source[i])) {
+      retained.set(group.id, previous);
+      return previous.exchange;
+    }
     const toolIds = new Set(
       group.items
         .filter((item) => item.kind === "tool_use")
@@ -149,82 +212,93 @@ export function chatExchanges(
           return [];
         if (item.kind === "system" && item.changes && !item.text.trim())
           return [];
-        if (item.kind === "tool_use") {
-          const result = results.get(item.toolId ?? item.id);
-          const presentation = presentSessionTool(item, result);
-          const outcome =
-            result?.error || item.error
-              ? "failed"
-              : !result && !live
-                ? "unknown"
-                : undefined;
+        const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
+        const running = live && ((item.kind === 'tool_use' && !result) ||
+          (item.kind === 'thinking' && item.id === group.items.at(-1)?.id));
+        const old = cache?.steps.get(item);
+        const id = renderId(item);
+        if (old && old.result === result && old.running === running && old.renderId === id)
+          return [old.step];
+        const project = (): WorkStep[] => {
+          if (item.kind === "tool_use") {
+            const presentation = presentSessionTool(item, result);
+            const outcome =
+              result?.error || item.error
+                ? "failed"
+                : !result && !live
+                  ? "unknown"
+                  : undefined;
+            return [
+              {
+                id: item.id,
+                kind: sessionToolKind(item),
+                detail: presentation.summary,
+                verb: sessionToolVerb(item, !result && live, outcome),
+                meta:
+                  outcome === "unknown"
+                    ? "Completion unknown"
+                    : presentation.meta,
+                presentation,
+                fullContent: item.truncated || result?.truncated
+                  ? {
+                      inputId: item.truncated ? item.id : undefined,
+                      outputId: result?.truncated ? result.id : undefined,
+                    }
+                  : undefined,
+                status: outcome ?? (result ? "done" : "running"),
+                output: [
+                  "Input",
+                  item.input || "(none)",
+                  result ? "\nOutput\n" + result.text : "",
+                  item.truncated || result?.truncated
+                    ? "\nDisplay shortened. Full output remains in the harness transcript."
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              },
+            ];
+          }
           return [
             {
-              id: item.id,
-              kind: sessionToolKind(item),
-              detail: presentation.summary,
-              verb: sessionToolVerb(item, !result && live, outcome),
-              meta:
-                outcome === "unknown"
-                  ? "Completion unknown"
-                  : presentation.meta,
-              presentation,
-              fullContent: item.truncated || result?.truncated
-                ? {
-                    inputId: item.truncated ? item.id : undefined,
-                    outputId: result?.truncated ? result.id : undefined,
-                  }
+              id: renderId(item),
+              kind:
+                item.kind === "thinking"
+                  ? "think"
+                  : item.kind === "assistant"
+                    ? "say"
+                    : item.kind === "error" || item.kind === "tool_result"
+                      ? "tool"
+                      : "note",
+              text: messageText(item),
+              detail:
+                item.kind === "error"
+                  ? item.text
+                  : item.kind === "tool_result"
+                    ? (item.toolName ?? "Tool result")
+                    : undefined,
+              output: item.kind === "tool_result" ? item.text : undefined,
+              presentation:
+                item.kind === "tool_result"
+                  ? presentSessionTool({ ...item, input: "" }, item)
+                  : undefined,
+              fullContent: item.kind === 'tool_result' && item.truncated
+                ? { outputId: item.id }
                 : undefined,
-              status: outcome ?? (result ? "done" : "running"),
-              output: [
-                "Input",
-                item.input || "(none)",
-                result ? "\nOutput\n" + result.text : "",
-                item.truncated || result?.truncated
-                  ? "\nDisplay shortened. Full output remains in the harness transcript."
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n"),
+              status:
+                item.error || item.kind === "error"
+                  ? "failed"
+                  : live &&
+                      item.kind === "thinking" &&
+                      item.id === group.items.at(-1)?.id
+                    ? "running"
+                    : "done",
             },
           ];
-        }
-        return [
-          {
-            id: renderId(item),
-            kind:
-              item.kind === "thinking"
-                ? "think"
-                : item.kind === "assistant"
-                  ? "say"
-                  : item.kind === "error" || item.kind === "tool_result"
-                    ? "tool"
-                    : "note",
-            text: messageText(item),
-            detail:
-              item.kind === "error"
-                ? item.text
-                : item.kind === "tool_result"
-                  ? (item.toolName ?? "Tool result")
-                  : undefined,
-            output: item.kind === "tool_result" ? item.text : undefined,
-            presentation:
-              item.kind === "tool_result"
-                ? presentSessionTool({ ...item, input: "" }, item)
-                : undefined,
-            fullContent: item.kind === 'tool_result' && item.truncated
-              ? { outputId: item.id }
-              : undefined,
-            status:
-              item.error || item.kind === "error"
-                ? "failed"
-                : live &&
-                    item.kind === "thinking" &&
-                    item.id === group.items.at(-1)?.id
-                  ? "running"
-                  : "done",
-          },
-        ];
+        };
+        const projected = project();
+        if (projected[0]) cache?.steps.set(item, { result, running, renderId: id, step: projected[0] });
+        return projected;
       });
     const captured = group.items
       .filter((item) => item.kind === "system" && item.changes)
@@ -260,7 +334,7 @@ export function chatExchanges(
       }
     }
     const answer = [reply, ...generated.values()].filter(Boolean).join("\n\n");
-    return {
+    const exchange: ChatExchange = {
       overflow: group.items
         // Tool evidence belongs in the work timeline, not below the answer.
         .filter(
@@ -287,10 +361,12 @@ export function chatExchanges(
         : index === groups.length - 1 && state?.phase === "error"
           ? "failed"
           : "done",
-      steps,
+      steps: previous?.exchange.steps.length === steps.length && steps.every((step, i) => step === previous.exchange.steps[i])
+        ? previous.exchange.steps : steps,
       duration,
       startedAt: group.startedAt,
-      files,
+      files: previous?.exchange.files?.length === files.length && files.every((file, i) => file === previous.exchange.files?.[i])
+        ? previous.exchange.files : files,
       filesTotal,
       answerBeforeStepId:
         finalEnd > 0
@@ -299,14 +375,17 @@ export function chatExchanges(
       answerId: finalEnd > 0 ? renderId(group.items[finalStart]!) : undefined,
       answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
-      author:
-        state?.providers?.find((provider) => provider.id === state.provider)
-          ?.label ??
-        state?.provider ??
-        "Agent",
+      author,
       harness: state?.provider,
       mark: (state?.provider ?? "EX").slice(0, 2).toUpperCase(),
       error: index === groups.length - 1 ? (state?.error ?? "") : "",
     };
+    retained.set(group.id, { source, signature, pending: ownPending, exchange });
+    return exchange;
   });
+  if (!cache) return exchanges;
+  cache.turns = retained;
+  if (cache.exchanges.length !== exchanges.length || exchanges.some((exchange, i) => exchange !== cache.exchanges[i]))
+    cache.exchanges = exchanges;
+  return cache.exchanges;
 }

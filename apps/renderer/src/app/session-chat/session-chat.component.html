@@ -9,6 +9,8 @@
   [historyBefore]="!!store.before()"
   [historyAfter]="!!store.next()"
   [historyLoading]="store.historyLoading()"
+  [progressiveLoading]="store.progressiveLoading()"
+  [initialHistoryPrefetch]="store.progressiveLoading()"
   [historyError]="store.historyError()"
   [historyRevision]="store.windowRevision()"
   (historyRequested)="$event === 'before' ? store.older() : store.newer()"
@@ -328,7 +330,7 @@
         <button exButton variant="secondary" [disabled]="store.loading()" (click)="store.refresh()">Try again</button>
       </div>
     } @else {
-      <p role="status">Loading conversation…</p>
+      <ex-chat-loading label="Loading conversation…" [progressive]="store.progressiveLoading()" />
     }
   </div>
 }

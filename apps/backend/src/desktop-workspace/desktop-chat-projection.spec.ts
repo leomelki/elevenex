@@ -56,6 +56,22 @@ describe('bidirectional chat windows', () => {
     }
     expect(page.items.at(-1)!.id).toBe('9999');
   });
+  it.each(['window', 'progressive'] as const)('keeps %s windows contiguous and bounded across both edges', mode => {
+    const limit = mode === 'window' ? 320 : 80;
+    const tail = chatWindow(history, [], undefined, undefined, undefined, undefined, mode)!;
+    expect(tail.items).toHaveLength(limit);
+    const older = chatWindow(history, [], tail.before!, undefined, undefined, undefined, mode)!;
+    expect(older.items).toHaveLength(80);
+    expect(Number(older.items.at(-1)!.id) + 1).toBe(Number(tail.items[0]!.id));
+    const following = chatWindow(history, [], undefined, undefined, undefined, older.next!, mode)!;
+    expect(following.items).toEqual(tail.items.slice(0, 80));
+    expect(following.next).toBe(mode === 'window' ? following.items.at(-1)!.id : null);
+    const long = history.slice(0, 1000).map(item => ({ ...item, content: 'x'.repeat(32_000) }));
+    const page = chatWindow(long, [], undefined, undefined, undefined, undefined, mode)!;
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.length).toBeLessThanOrEqual(limit);
+    expect(Buffer.byteLength(JSON.stringify(page.items))).toBeLessThanOrEqual(mode === 'window' ? 2 * 1024 * 1024 : 512 * 1024);
+  });
   it('merges overlapping live records without duplicating or skipping the history seam', () => {
     const live = [...history.slice(-40), { ...history[0]!, id: '10000', content: 'New reply' }];
     const page = chatWindow(history, live, undefined, undefined, undefined, '9950')!;

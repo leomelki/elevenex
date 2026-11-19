@@ -21,6 +21,7 @@ import {
   TooltipDirective,
 } from "../../ui";
 import { MessageComponent } from "./message.component";
+import { ChatLoadingComponent } from './chat-loading.component';
 import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
   readonly id: string;
@@ -31,7 +32,7 @@ interface Reminder {
 const PEEK_DELAY = 320;
 @Component({
   selector: "ex-chat-scroll",
-  imports: [ButtonComponent, IconComponent, TooltipDirective],
+  imports: [ButtonComponent, IconComponent, TooltipDirective, ChatLoadingComponent],
   templateUrl: "./chat-scroll.component.html",
   styleUrl: "./chat-scroll.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -47,6 +48,8 @@ export class ChatScrollComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
+  readonly progressiveLoading = input(false);
+  readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
   readonly historyRequested = output<"before" | "following">();
@@ -55,7 +58,7 @@ export class ChatScrollComponent {
   private paintedRevision = 0;
   private historyPending = false;
   private lastHistoryDirection: "before" | "following" = "before";
-  private historyBudget = 4;
+  private historyBudget = 0;
   private requestedHeight = 0;
   private historyIntent: "before" | "following" = "before";
   onViewportWheel(event: WheelEvent): void {
@@ -186,6 +189,12 @@ export class ChatScrollComponent {
   private lastViewportHeight = 0;
   private highlight: Animation | null = null;
   constructor() {
+    effect(() => {
+      // The owner decides whether its opening window needs filling. Explicit
+      // scroll intent replenishes the budget independently of that policy.
+      this.historyBudget = this.initialHistoryPrefetch() ? 4 : 0;
+      if (this.contentReady) this.scheduleMeasure();
+    });
     effect(() => {
       this.reminder();
       this.historyLoading();

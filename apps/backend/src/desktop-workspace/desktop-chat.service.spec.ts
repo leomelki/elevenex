@@ -52,6 +52,40 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('keeps legacy pages unchanged and validates opt-in bounded windows', async () => {
+    history = Array.from({ length: 1000 }, (_, i) => ({ ...item(String(i)), content: `Message ${i}` }));
+    const signal = new AbortController().signal;
+    expect((await chat.read(1, 2, undefined, undefined, signal))!.items).toHaveLength(80);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!.items).toHaveLength(320);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive'))!.items).toHaveLength(80);
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'all')).rejects.toThrow('Invalid conversation loading mode');
+  });
+
+  it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const original = new AbortController();
+    const first = chat.read(1, 2, undefined, undefined, original.signal, undefined, 'window');
+    await settle(); original.abort();
+    const replacement = chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, 'progressive');
+    await settle();
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    release([item('latest')]);
+    expect(await first).toBeUndefined();
+    expect((await replacement)!.items.at(-1)!.id).toBe('latest');
+  });
+
+  it('also discards cancelled archived-session hydration without attaching its runtime', async () => {
+    status = 'archived';
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const controller = new AbortController();
+    const pending = chat.read(1, 2, undefined, undefined, controller.signal, undefined, 'window');
+    await settle(); controller.abort(); release([item('latest')]);
+    expect(await pending).toBeUndefined();
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
   it('does not pair a new completion marker with an older in-flight history read', async () => {
     let finish!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));

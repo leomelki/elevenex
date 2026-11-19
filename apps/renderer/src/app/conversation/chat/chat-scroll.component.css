@@ -41,22 +41,14 @@
   z-index: 4;
   bottom: var(--space-3);
   left: var(--space-4);
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
   color: var(--ink-muted);
   opacity: 0;
   pointer-events: none;
-  animation:
-    history-indicator-in var(--dur-base, 200ms) var(--ease-out, ease-out) 300ms forwards,
-    history-indicator-spin 900ms linear infinite;
+  animation: history-indicator-in var(--dur-base) var(--ease-out) 300ms forwards;
 }
-@keyframes history-indicator-in { to { opacity: .45; } }
-@keyframes history-indicator-spin { to { transform: rotate(360deg); } }
+@keyframes history-indicator-in { to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .history-indicator { animation: history-indicator-in 1ms 300ms forwards; border-right-color: currentColor; border-style: dotted; }
+  .history-indicator { animation: history-indicator-in 1ms 300ms forwards; }
 }
 .content {
   display: flex;

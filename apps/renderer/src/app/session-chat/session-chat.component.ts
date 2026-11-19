@@ -23,6 +23,7 @@ import {
   ApprovalCardComponent,
   AgentUsageNoticeComponent,
   ChatComponent,
+  ChatLoadingComponent,
   ComposerComponent,
   QuestionCardComponent,
   PresetPickerComponent,
@@ -60,6 +61,12 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 
 const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
+// These bounded, serializable view models can arrive with new IPC identities.
+// Activity/token updates must not invalidate unchanged composer configuration.
+function equalViewData<T>(left: T, right: T): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
 @Component({
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
@@ -70,6 +77,7 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     SessionActivityComponent,
     SessionAgentComponent,
     ChatComponent,
+    ChatLoadingComponent,
     ComposerComponent,
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
@@ -232,8 +240,8 @@ export class SessionChatComponent {
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
     }));
-  });
-  readonly providers = computed(() => this.store.state()?.providers ?? []);
+  }, { equal: equalViewData });
+  readonly providers = computed(() => this.store.state()?.providers ?? [], { equal: equalViewData });
   readonly harnesses = computed<readonly AgentHarness[]>(() => {
     const state = this.store.state();
     if (!state) return [];
@@ -250,7 +258,7 @@ export class SessionChatComponent {
         )[provider.id] ?? provider.label.slice(0, 2),
       models: provider.id === state.provider ? this.models() : [],
     }));
-  });
+  }, { equal: equalViewData });
   readonly showWelcome = computed(
     () =>
       !this.archived() &&
@@ -295,7 +303,7 @@ export class SessionChatComponent {
         : undefined,
       plan: sessionPlanUsage(state.planUsage, this.usageTime()),
     };
-  });
+  }, { equal: equalViewData });
   readonly fastAvailable = computed(() => {
     const state = this.store.state();
     return (
@@ -374,6 +382,7 @@ export class SessionChatComponent {
           } as Readonly<Record<string, string>>
         )[id] ?? id,
     })),
+    { equal: equalViewData },
   );
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
@@ -382,6 +391,7 @@ export class SessionChatComponent {
       kind: q.multiple ? "multi" : "single",
       options: q.options.map((o) => ({ label: o.label, detail: o.detail })),
     })),
+    { equal: equalViewData },
   );
 
   dragOver(event: DragEvent): void {

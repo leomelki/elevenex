@@ -32,7 +32,7 @@ export default async function* (capture) {
         }
         return samples;
       });
-      assert.ok(probe.every(frame => frame.last === 'answer-2' && frame.size <= 160 && Math.abs(frame.gap) <= 1), 'Opening drained hidden work or dropped end following');
+      assert.ok(probe.every(frame => frame.last === 'answer-2' && frame.size <= 320 && Math.abs(frame.gap) <= 1), 'Opening drained hidden work or dropped end following');
       const prefix = `${theme}-${narrow ? 'narrow-reduced' : 'wide'}`;
       yield { name: `${prefix}-short-opening`, inspect: ['ex-chat-scroll', 'ex-composer'], metadata: { probe } };
       // Each physical upward gesture can fetch one older page. Keep the final
@@ -40,6 +40,7 @@ export default async function* (capture) {
       const pages = [];
       for (let i = 0; i < 11; i++) {
         const before = await capture.component('ex-session-chat', owner => owner.store.before());
+        if (!before) break;
         const point = await capture.evaluate(() => {
           const rect = document.querySelector('ex-chat-scroll .viewport').getBoundingClientRect();
           return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };

@@ -589,6 +589,13 @@ test('harness selection requires a known action shape and an expected current pr
   for (const input of [{ type: 'provider', provider: 'claude' }, { type: 'provider', provider: '', expectedProvider: 'codex' }, { type: 'provider', provider: 'claude', expectedProvider: 1 }]) assert.throws(() => parseChatAction(input));
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
   const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const record = { id: 'row', kind: 'assistant', text: 'Reply', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const window = { ...page, items: Array.from({ length: 320 }, (_, i) => ({ ...record, id: String(i) })) };
+  assert.equal(parseChatPage(window, 1, 2, 'window').items.length, 320);
+  assert.throws(() => parseChatPage(window, 1, 2));
+  assert.throws(() => parseChatPage(window, 1, 2, 'progressive'));
+  assert.throws(() => parseChatPage({ ...window, items: [...window.items, record] }, 1, 2, 'window'));
+  assert.throws(() => parseChatPage({ ...page, events: Array(321).fill({ type: 'item', item: record }) }, 1, 2, 'window'));
   const completionAt = '2026-11-14T12:00:00.000Z';
   assert.equal(parseChatPage(page, 1, 2).state.unseenCompletionAt, undefined);
   for (const unseenCompletionAt of [completionAt, null])

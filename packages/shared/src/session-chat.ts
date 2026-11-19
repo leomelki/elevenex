@@ -5,6 +5,8 @@ export interface SessionChatTarget {
 }
 export interface SessionChatRead extends SessionChatTarget {
   readonly requestId: string;
+  /** Omitted by older clients: 80-item pages. Window mode requests up to 320. */
+  readonly loadingMode?: 'window' | 'progressive';
   readonly after?: string;
   readonly before?: string;
   /** Exclusive item cursor for continuing toward the live end of history. */

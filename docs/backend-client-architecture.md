@@ -1,5 +1,21 @@
 # Desktop backend client
 
+Conversation reads optionally select `loadingMode: 'window' | 'progressive'`
+through the existing scope-bound `sessionChatRead`. Window mode caps records at
+320 / 2 MiB; progressive mode and omitted options retain 80 / 512 KiB. Adjacent
+pages use 80 / 512 KiB in either mode to preserve overlap in the rolling window.
+Main validates the mode and reply count and retains its 4 MiB transport limit. The
+renderer normally requests one recent window. An uncached opening still pending
+after three seconds enables smaller pages for every chat on the application
+connection until reconnect or restart. The root `SessionChatLoadingPolicy` owns
+that transient choice, separate from connection state and per-chat drafts. Scope
+rotation resets it, including same-machine recovery; application restart creates
+a fresh policy. It cancels old initial window requests and rejects their
+stale results; backend in-flight hydration is shared across the replacement.
+This is additive for older clients/engines and never replays commands. See the
+[session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
+cache ownership. Source history is still provider-owned and is not yet paged.
+
 Terminal service URLs use the named `taskTerminalOpenPort` and
 `taskTerminalCopyPort` bridge operations. Both accept only a scoped
 task/terminal/port, freshly verify the owned listener and use the window's
