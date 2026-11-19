@@ -200,7 +200,7 @@ export function parseMarkdown(
       index++;
       continue;
     }
-    const embedPattern = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/;
+    const embedPattern = /^!\[([^\]]*)\]\((?:<([^<>\r\n]+)>|([^<>)\r\n]+))\)\s*$/;
     const embed = embedPattern.exec(line);
     if (embed) {
       const embeds: MarkdownEmbed[] = [];
@@ -208,7 +208,7 @@ export function parseMarkdown(
         const next = embedPattern.exec(lines[index] ?? "");
         if (!next) break;
         if (!(streaming && index === lines.length - 1))
-          embeds.push({ caption: next[1] ?? "", path: next[2] ?? "" });
+          embeds.push({ caption: next[1] ?? "", path: next[2] ?? next[3] ?? "" });
         index++;
       }
       if (embeds.length > 1) result.push({ kind: "embeds", items: embeds });

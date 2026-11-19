@@ -118,12 +118,14 @@ export function chatMedia(item: AgentTranscriptItem) {
     typeof cleaned === 'string' ? cleaned : JSON.stringify(cleaned, null, 2);
   // Only actual image embeds authorize a path read; links and tool input do not.
   if (item.kind === 'assistant' || item.kind === 'user')
-    for (const match of text.matchAll(/^!\[([^\]]*)\]\(([^)\r\n]+)\)\s*$/gm))
+    for (const match of text.matchAll(/^!\[([^\]]*)\]\((?:<([^<>\r\n]+)>|([^<>)\r\n]+))\)\s*$/gm)) {
+      const path = match[2] ?? match[3];
       if (
-        match[2].length <= 4000 &&
-        (isAbsolute(match[2]) || !/^[a-z][a-z\d+.-]*:|^\/\//i.test(match[2]))
+        path.length <= 4000 &&
+        (isAbsolute(path) || !/^[a-z][a-z\d+.-]*:|^\/\//i.test(path))
       )
-        add(match[2], match[2], match[1]);
+        add(path, path, match[1]);
+    }
   const uploaded: ChatMedia[] = [];
   if (item.kind === 'user') {
     for (const match of text.matchAll(

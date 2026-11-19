@@ -1,5 +1,6 @@
 import type { BrowserElementReference } from '@elevenex/shared';
 import type { ToolContentSource, ToolPresentation } from './tool-presentation';
+import type { MarkdownEmbed } from './markdown/markdown-parser';
 
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
 export type ConversationStatus =
@@ -141,6 +142,7 @@ export type StepKind =
   | "run"
   | "test"
   | "tool"
+  | "media"
   | "web"
   | "ask"
   | "say"
@@ -158,6 +160,8 @@ export interface WorkStep {
   readonly output?: string;
   /** Parsed, bounded evidence. Original output stays separately inspectable. */
   readonly presentation?: ToolPresentation;
+  /** Inline previews from this receipt, in transcript order. */
+  readonly media?: readonly MarkdownEmbed[];
   /** Optional bounded-reader targets for input/output shortened by transport. */
   readonly fullContent?: ToolContentSource;
   readonly hunk?: readonly string[];

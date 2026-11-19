@@ -3,6 +3,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   input,
   output,
   signal,
@@ -40,6 +41,7 @@ interface GroupImage {
 export class MarkdownMediaGroupComponent {
   readonly items = input.required<readonly MarkdownEmbed[]>();
   readonly resolve = input<MarkdownAssetResolver>();
+  readonly active = input(true);
   readonly openFile = output<string>();
   readonly openPage = output<string>();
   readonly viewer = viewChild<ElementRef<HTMLDialogElement>>("viewer");
@@ -67,10 +69,16 @@ export class MarkdownMediaGroupComponent {
   readonly comparisonReady = computed(() => this.images().length === 2);
   readonly viewerIndex = computed(() => Math.max(0, this.images().findIndex(image => image.path === this.viewerPath())));
   readonly current = computed(() => this.images()[this.viewerIndex()]);
+  constructor() {
+    effect(() => {
+      if (!this.active() && this.viewerOpen()) this.close();
+    });
+  }
   failed(source: string): void {
     this.failedSources.update(previous => new Set([...previous, source]));
   }
   open(value: number | string): void {
+    if (!this.active()) return;
     const path = typeof value === 'number' ? this.images()[value]?.path : value;
     if (!path || !this.images().some(image => image.path === path)) return;
     this.viewerPath.set(path);

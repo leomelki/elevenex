@@ -565,10 +565,12 @@ content stay distinct; display normalizes CRLF and removes one terminal split
 sentinel without stripping meaningful spaces or blank lines.
 
 Chat images use optional, bounded `SessionChatItem.media` references and the named
-`sessionChatMedia` bridge operation. Inline Codex/native/MCP image results join the
-answer, while Markdown image paths resolve through the same selected-session
-owner. Binary image data never enters the transcript preview or triggers its raw
-output overflow control. Ordinary shortened text keeps the full-content reader.
+`sessionChatMedia` bridge operation. Inline Codex/native/MCP previews stay at the
+tool receipt's position in the work timeline, including results that arrive
+after later messages. Authored Markdown images remain in their original message.
+Both resolve through the selected-session media owner. Binary image data never
+enters transcript text or triggers the raw output overflow control. Ordinary
+shortened text keeps the full-content reader.
 
 `SessionChatMedia` owns the newest 12 distinct media paths in the displayed
 transcript, including its retained prompt and reply context. It preserves loaded

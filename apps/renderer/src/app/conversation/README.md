@@ -169,6 +169,13 @@ preview and control row while loading or unavailable; `MarkdownRecording.loading
 and `error` describe asynchronous resolver state. Playback, seek, speed,
 full-screen and timestamped steps remain available when ready, without autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
 
+`WorkTimeline` renders each receipt's ordered `WorkStep.media` through the same
+media component. A paired tool result can use a `media` step to retain its
+chronological position while the call owns the text result. These rows follow
+both work and activity disclosures. Closing a row makes its media controls
+inert. Its `active` binding deactivates the image viewer and recording, including
+media embedded in Markdown commentary.
+
 The production desktop forbids frame embedding and remote media. HTML documents therefore show a named page card and emit `openPage` for the Browser feature. `srcdoc` is never mounted or trusted. A future isolated page-preview adapter must preserve that desktop security boundary; the component does not weaken CSP or expose sandbox escape capabilities. Code highlighting is a text-only display lexer for JavaScript/TypeScript using the shared code palette. Code copy feedback is controlled through `copiedCode`, after the owner has handled the copy intent. Live page execution remains behind the future Browser adapter.
 
 ## Motion and accessibility

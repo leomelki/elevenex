@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  effect,
   inject,
   computed,
   input,
@@ -22,6 +23,7 @@ import { safeMediaSource } from "./markdown-parser";
 })
 export class MarkdownRecordingComponent {
   readonly loading = input(false);
+  readonly active = input(true);
   readonly error = input('');
   readonly unavailable = computed(() => this.loading() || !!this.error() || this.mediaError() || !this.safeSource());
   readonly knownDuration = input(0);
@@ -53,13 +55,18 @@ export class MarkdownRecordingComponent {
       : 0,
   );
   constructor() {
+    effect(() => {
+      if (this.active()) return;
+      const video = this.video()?.nativeElement;
+      if (video && !video.paused) video.pause();
+    });
     inject(DestroyRef).onDestroy(() => {
       const video = this.video()?.nativeElement;
       if (video && !video.paused) video.pause();
     });
   }
   async toggle(): Promise<void> {
-    if (this.unavailable()) return;
+    if (!this.active() || this.unavailable()) return;
     const video = this.video()?.nativeElement;
     if (!video) return;
     if (video.paused) {

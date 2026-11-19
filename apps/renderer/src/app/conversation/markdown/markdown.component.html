@@ -43,6 +43,7 @@
         <ex-markdown-media-group
           [items]="block.items"
           [resolve]="resolve()"
+          [active]="active()"
           (openFile)="openFile.emit($event)"
           (openPage)="openPage.emit($event)"
         />
@@ -128,6 +129,7 @@
           [path]="block.path"
           [caption]="block.caption"
           [asset]="resolve()?.(block.path)"
+          [active]="active()"
           (openFile)="openFile.emit($event)"
           (openPage)="openPage.emit($event)"
         />

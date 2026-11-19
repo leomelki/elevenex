@@ -32,6 +32,9 @@ li {
   width: 1px;
   background: var(--line);
 }
+.media-output {
+  padding-block: var(--space-2);
+}
 .prose,
 .answer {
   min-width: 0;

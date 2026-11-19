@@ -1086,14 +1086,43 @@ describe("connected subscription quota", () => {
 });
 
 
-it('shows generated images through the existing Markdown renderer without a full-output fallback', async () => {
+it('places images between their surrounding messages and hides them with their work disclosures', async () => {
   vi.stubGlobal('Image', class { src = ''; naturalWidth = 640; naturalHeight = 360; decode = async () => undefined; });
-  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'),
+  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'), toolId: 'capture',
     media: [{ id: '0', path: 'chat-image-generated-0', caption: 'Waving robot', inline: true }] };
-  const { fixture, root, bridge, publish } = setup([item('prompt', 'user', 'Draw a robot'), output, item('reply', 'assistant', 'Here is your robot.')]);
+  const { fixture, root, bridge, publish } = setup([
+    item('prompt', 'user', 'Draw a robot'),
+    { ...item('capture', 'tool_use', ''), toolId: 'capture' },
+    item('commentary', 'assistant', 'Rendering the robot.'),
+    output,
+    item('reply', 'assistant', 'Here is your robot.'),
+  ]);
   await settle(fixture);
   expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
-  expect(root.querySelector('ex-markdown-media img')?.getAttribute('src')).toContain('data:image/png;base64,');
+  const image = root.querySelector('ex-markdown-media img')!;
+  const fold = image.closest('ex-fold')!;
+  expect(image.getAttribute('src')).toContain('data:image/png;base64,');
+  expect([...root.querySelectorAll('[data-work-step]')].map(row => row.getAttribute('data-work-step')))
+    .toEqual(['capture', 'commentary', 'generated', 'reply']);
+  expect(root.querySelector('.answer img')).toBeNull();
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const work = root.querySelector<HTMLButtonElement>('button.work')!;
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const group = root.querySelector<HTMLButtonElement>('[data-work-step="generated"] button.group')!;
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(false);
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  group.click();
+  await settle(fixture);
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  expect(root.querySelector('.answer')?.textContent).toContain('Here is your robot.');
   expect(root.textContent).not.toContain('Read full tool output');
   expect(root.textContent).not.toContain("isn't in the workspace");
   publish({ taskId: 1, sessionId: 3, cursor: 'new', reset: true, before: null, items: [], events: [], state });

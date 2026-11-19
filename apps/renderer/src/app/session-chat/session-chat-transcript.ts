@@ -32,6 +32,7 @@ interface ProjectedTurn {
 }
 interface ProjectedStep {
   readonly result?: SessionChatItem;
+  readonly pairedResult: boolean;
   readonly running: boolean;
   readonly renderId: string;
   readonly step: WorkStep;
@@ -218,12 +219,7 @@ function projectExchanges(
     const steps: WorkStep[] = group.items
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
-        if (
-          item.kind === "tool_result" &&
-          item.toolId &&
-          toolIds.has(item.toolId)
-        )
-          return [];
+        const pairedResult = item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
         if (item.kind === "system" && item.changes && !item.text.trim())
           return [];
         const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
@@ -231,7 +227,8 @@ function projectExchanges(
           (item.kind === 'thinking' && item.id === group.items.at(-1)?.id));
         const old = cache?.steps.get(item);
         const id = renderId(item);
-        if (old && old.result === result && old.running === running && old.renderId === id)
+        if (old && old.result === result && old.pairedResult === pairedResult &&
+          old.running === running && old.renderId === id)
           return [old.step];
         const project = (): WorkStep[] => {
           if (item.kind === "tool_use") {
@@ -273,6 +270,14 @@ function projectExchanges(
               },
             ];
           }
+          const media = item.kind === 'tool_result' && !item.error
+            ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
+              .map(({ path, caption }) => ({ path, caption }))
+            : undefined;
+          // Text receipts can update the call, but previews belong to the
+          // result's own position, even if it arrives after another message.
+          if (pairedResult)
+            return media?.length ? [{ id, kind: 'media', media }] : [];
           return [
             {
               id: renderId(item),
@@ -284,7 +289,8 @@ function projectExchanges(
                     : item.kind === "error" || item.kind === "tool_result"
                       ? "tool"
                       : "note",
-              text: messageText(item),
+              text: item.kind === 'tool_result' ? undefined : messageText(item),
+              media,
               detail:
                 item.kind === "error"
                   ? item.text
@@ -311,7 +317,7 @@ function projectExchanges(
           ];
         };
         const projected = project();
-        if (projected[0]) cache?.steps.set(item, { result, running, renderId: id, step: projected[0] });
+        if (projected[0]) cache?.steps.set(item, { result, pairedResult, running, renderId: id, step: projected[0] });
         return projected;
       });
     const captured = group.items
@@ -336,18 +342,7 @@ function projectExchanges(
       !live && group.startedAt !== undefined && endedAt !== undefined
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
-    const reply = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
-    // Generated artifacts are outcomes, so they must survive collapsed tool
-    // evidence. Assistant commentary keeps its own media in source order.
-    const generated = new Map<string, string>();
-    for (const item of group.items) {
-      if (item.kind !== 'tool_result' || item.error) continue;
-      for (const media of item.media ?? []) {
-        if (!media.inline || reply.includes(`](${media.path})`) || reply.includes(`](<${media.path}>)`)) continue;
-        generated.set(media.path, `![${media.caption.replace(/[[\]\r\n]/g, ' ')}](${media.path})`);
-      }
-    }
-    const answer = [reply, ...generated.values()].filter(Boolean).join("\n\n");
+    const answer = group.items.slice(finalStart, finalEnd).map(messageText).join("\n\n");
     const exchange: ChatExchange = {
       overflow: group.items
         // Tool evidence belongs in the work timeline, not below the answer.

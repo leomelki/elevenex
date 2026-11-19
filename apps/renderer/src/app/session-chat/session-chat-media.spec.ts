@@ -67,9 +67,10 @@ function setup() {
   return { media: TestBed.inject(SessionChatMedia), client, pending };
 }
 describe("selected chat images", () => {
-  it("renders tool images with the answer without an overflow button", () => {
+  it("keeps orphaned tool images on their receipt without an overflow button", () => {
     const [exchange] = chatExchanges(items(1), null, new Set());
-    expect(exchange?.answer).toContain("![Robot](image-0)");
+    expect(exchange?.answer).toBe("");
+    expect(exchange?.steps[0]?.media).toEqual([{ path: "image-0", caption: "Robot" }]);
     expect(exchange?.overflow).toEqual([]);
   });
   it("bounds concurrent reads and continues queued images across streaming updates", async () => {

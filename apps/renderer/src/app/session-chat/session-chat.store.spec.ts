@@ -921,11 +921,14 @@ describe("session chat ownership", () => {
     });
     await store.refresh();
     const original = store.exchanges()[0]!;
+    const preview = original.steps.find(step => step.id === media.id)?.media;
+    expect(preview).toEqual([{ path: '/capture.png', caption: 'Capture' }]);
     for (let i = 0; i < 11; i++) {
       await store.older();
       const exchange = store.exchanges()[0]!;
       expect(exchange.answerId).toBe('final');
       expect(exchange.answer).toBe(original.answer);
+      expect(exchange.steps.find(step => step.id === media.id)?.media).toEqual(preview);
       expect(exchange.files).toEqual(original.files);
       expect(store.items().length).toBeLessThanOrEqual(320);
     }
@@ -1309,18 +1312,24 @@ describe("provider-neutral transcript presentation", () => {
     expect(later?.answer).toBe('Ready.');
   });
 
-  it('keeps successful generated media visible beside the final answer and deduplicates assistant embeds', () => {
+  it('keeps tool previews at the result even when the call and result straddle commentary', () => {
     const media = [{ id: 'image', path: '/generated.png', caption: 'Result', inline: true }];
     const output = item('image-output', 'tool_result', 'Image attachment', { toolId: 'draw', media });
     const input = item('draw', 'tool_use', '', { toolId: 'draw', toolName: 'imagegen' });
     const prompt = item('prompt', 'user', 'Draw it');
-    const [exchange] = chatExchanges([prompt, input, output, item('again', 'tool_result', 'Same image', { media }), item('final', 'assistant', 'Done')], state, new Set());
-    expect(exchange?.answer).toBe('Done\n\n![Result](/generated.png)');
-    expect(exchange?.steps.some(step => step.id === 'draw')).toBe(true);
-    const [embedded] = chatExchanges([prompt, input, output, item('final', 'assistant', 'Done\n\n![Preview](</generated.png>)')], state, new Set());
-    expect(embedded?.answer).toBe('Done\n\n![Preview](</generated.png>)');
+    const commentary = item('commentary', 'assistant', 'Rendering now');
+    const reply = 'Done\n\n![Preview](</generated.png>)\n\nCaption below.';
+    const [exchange] = chatExchanges([prompt, input, commentary, output, item('final', 'assistant', reply)], state, new Set());
+    expect(exchange?.answer).toBe(reply);
+    expect(exchange?.steps.map(step => step.id)).toEqual(['draw', 'commentary', 'image-output']);
+    expect(exchange?.steps.at(-1)).toMatchObject({
+      kind: 'media', media: [{ path: '/generated.png', caption: 'Result' }],
+    });
+    const [late] = chatExchanges([prompt, input, commentary, output], state, new Set());
+    expect(late?.answer).toBe(commentary.text);
+    expect(late?.answerBeforeStepId).toBe(output.id);
     const [failed] = chatExchanges([prompt, input, { ...output, error: true }, item('final', 'assistant', 'Could not draw it')], state, new Set());
-    expect(failed?.answer).toBe('Could not draw it');
+    expect(failed?.steps.map(step => step.id)).toEqual(['draw']);
   });
 
   it("keeps inline images with their source commentary instead of appending them to the answer", () => {

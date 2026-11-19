@@ -34,7 +34,7 @@
               <img [src]="image.src" [alt]="image.caption" loading="lazy" (error)="failed(image.src)" />
             </button>
           } @else if (slot.asset?.kind === 'video' || slot.asset?.kind === 'page') {
-            <ex-markdown-media [path]="slot.path" [caption]="slot.caption" [showCaption]="false" [compact]="true" [asset]="slot.asset"
+            <ex-markdown-media [path]="slot.path" [caption]="slot.caption" [showCaption]="false" [compact]="true" [asset]="slot.asset" [active]="active()"
               (openFile)="openFile.emit($event)" (openPage)="openPage.emit($event)" />
           } @else {
             <div class="media-status" role="status">

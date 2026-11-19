@@ -63,6 +63,20 @@ describe("media presentation", () => {
     expect(root.querySelector('input')?.disabled).toBe(true);
   });
 
+  it('pauses the mounted recording when its owner hides the media', () => {
+    const fixture = TestBed.createComponent(MarkdownMediaComponent);
+    fixture.componentRef.setInput('path', '/recording.webm');
+    fixture.componentRef.setInput('asset', { kind: 'video', src: source, w: 0, h: 0 });
+    fixture.detectChanges();
+    const video = (fixture.nativeElement as HTMLElement).querySelector('video')!;
+    vi.spyOn(video, 'paused', 'get').mockReturnValue(false);
+    const pause = vi.spyOn(video, 'pause').mockImplementation(() => undefined);
+    fixture.componentRef.setInput('active', false);
+    fixture.detectChanges();
+    expect(pause).toHaveBeenCalledOnce();
+    expect(fixture.nativeElement.querySelector('video')).toBe(video);
+  });
+
   it("retains a video's accessible name when its surrounding card supplies the visible caption", async () => {
     await TestBed.configureTestingModule({ imports: [MarkdownMediaComponent] }).compileComponents();
     const fixture = TestBed.createComponent(MarkdownMediaComponent);

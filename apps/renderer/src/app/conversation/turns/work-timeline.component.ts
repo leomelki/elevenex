@@ -21,6 +21,7 @@ import {
 import type { WorkStep } from "../conversation.models";
 import type { ToolContentRequest } from "../tool-presentation";
 import { MarkdownComponent } from "../markdown/markdown.component";
+import { MarkdownMediaComponent } from "../markdown/markdown-media.component";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { NowLineComponent } from "./now-line.component";
 import { ToolStepComponent } from "./tool-step.component";
@@ -41,6 +42,7 @@ import { formatDuration, isProse, stepIcon, stepVerb } from "./work-summary";
     StatusGlyphComponent,
     TickerComponent,
     MarkdownComponent,
+    MarkdownMediaComponent,
     NowLineComponent,
     ToolStepComponent,
   ],

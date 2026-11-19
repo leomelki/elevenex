@@ -54,6 +54,12 @@ describe('chat image boundaries', () => {
     expect(chatMedia(raw).text).toBe('Here is your robot');
     expect(chatMedia(raw).media).toHaveLength(1);
   });
+  it('projects a bracketed local image path without moving its Markdown embed', () => {
+    const content = 'Before\n![Capture](<results/Capture (1).png>)\nAfter';
+    const projection = chatMedia({ ...item(content), kind: 'assistant' });
+    expect(projection.text).toBe(content);
+    expect(projection.media).toMatchObject([{ path: 'results/Capture (1).png', inline: false }]);
+  });
   it('loads workspace images and Codex generated images outside the checkout', async () => {
     await writeFile(join(workspace, 'image.png'), Buffer.from(png, 'base64'));
     const generated = join(root, 'codex', 'generated_images', 'robot.png');

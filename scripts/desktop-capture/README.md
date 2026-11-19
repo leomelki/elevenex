@@ -594,6 +594,10 @@ narrow reduced motion in both themes. Its default generated-image reply catches
 collapsed Markdown margins; `ELEVENEX_SESSION_CAPTURE_PAGES` can replay a bounded
 recorded page through the same production components.
 
+`scenarios/session-tool-media.mjs` checks screenshots at the tool receipt's
+position between messages or after the answer. It verifies both work
+disclosures, image-viewer closure and a narrow reduced-motion layout.
+
 `scenarios/chat-scroll-return.mjs` checks the floating return control without
 incoming content, scrubbed entrance frames, native smooth scrolling, keyboard
 focus handoff, interrupted exits and unread indicators on the arrow-only button.
