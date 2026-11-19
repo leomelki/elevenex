@@ -483,6 +483,7 @@ export function registerWorkspaceIpc(
       'POST',
       type === 'commit' ? 180000 : 30000,
       {
+        'branch-detached': 'This checkout is not on a branch. Check out or create a branch, then try again.',
         'commit-changes-moved': 'The staged changes or branch changed. Refresh files, review your selection, then commit again.',
         'commit-conflicts': 'Resolve the merge conflicts before committing.',
         'commit-index-locked': 'Another Git operation is using this workspace. Wait for it to finish, then try again.',
