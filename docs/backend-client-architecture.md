@@ -72,16 +72,9 @@ only) derived from saved prompt headers. Main validates these optional fields;
 older engines omit them. Snapshot contents and export paths remain outside this
 metadata. Saved history and incremental item events use the same projection.
 
-The new desktop supports the backend incrementally as frontend features are
-implemented. Build complete vertical slices for those features rather than
-mirroring every legacy endpoint in advance. The product model is **project →
-task → sessions**; a task owns its branch/workspace and conversations belong to
-that task. Repositories remain resources within projects, not a replacement for
-the task model.
-
-This design applies to `apps/renderer` and `apps/desktop`. The existing
-`apps/frontend` retains its HTTP/WebSocket clients and the backend retains their
-supported contracts.
+Add backend operations as each desktop feature needs them. The product model
+is **project → task → sessions**. A task owns its branch and workspace, and
+conversations belong to that task. Repositories are resources within projects.
 
 ## Boundaries
 
@@ -123,15 +116,15 @@ Main resolves the endpoint from `BackendManager` and `RemoteManager` for the
 verified sending window. A remote request uses `RemoteManager.backendAccess`,
 including its transient private capability. URLs, methods, headers, filesystem
 paths and credentials cannot be chosen through the client bridge. Keep the
-production CSP unchanged. Do not copy the legacy renderer's direct networking
-into this renderer, import backend implementation types into Angular, or expose
-a generic `request`, `fetch`, IPC dispatch or socket API.
+production CSP restrictive. Main owns HTTP and WebSocket traffic. Angular uses
+shared contracts and calls named domain operations through the bridge.
 
 Shared contains public contracts, not Nest, Drizzle, Electron, Angular or runtime
 validation code. Main validates untrusted arguments and server responses at
 runtime and maps wire DTOs explicitly into those contracts. Accept additive
-server fields without forwarding them by accident. Keep legacy naming and
-transport quirks in the adapter; expose the intended task/session model to views.
+server fields without forwarding them by accident. Normalize wire field names
+and transport details in the adapter before exposing the task/session model to
+views.
 
 ## Implemented slice
 
@@ -191,8 +184,8 @@ The reply advertises protocol version 1 and a monotonic navigation revision.
 An unsupported/older engine produces an explicit update message. Projects,
 tasks and sessions use bounded keyset pages; repositories, branch search and
 one-directory folder suggestions have separate bounds. Project appearance and
-task stages live in an additive desktop metadata table, independent of the
-legacy task preparation lifecycle. Existing endpoints remain compatible.
+task stages live in a desktop metadata table separate from task preparation
+state.
 
 The workspace owns navigation state and preparation polling. Conversation and
 git state have separate owners for the selected resource. Background updates
@@ -249,15 +242,15 @@ Session rows may include `canDelete`, an optional engine-owned eligibility flag.
 The named `workspaceDeleteSession(scope, {taskId, sessionId})` permanently removes
 only unstarted sessions in a ready active task. The backend rechecks lifecycle,
 provider identities, completion and live activity without yielding before claiming
-the row. The existing deletion lifecycle releases prewarmed runtimes and processes;
-cleanup failure restores the unused row for retry. Children return to task level. No archive or Undo is created. Missing flags retain
-archive behavior with older engines; legacy deletion/archive contracts are unchanged.
+the row. The deletion lifecycle releases prewarmed runtimes and processes. Cleanup
+failure restores the unused row for retry. Children return to task level. The
+desktop falls back to its archive action when an older engine omits the flag.
 
 ## Adding a frontend feature
 
-1. Read the backend controller, DTOs, service behavior, relevant legacy consumer
-   and tests. Establish the intended resource ownership and performance budget.
-   Use IDs, explicit bounds and cursors; avoid whole-repository payloads.
+1. Review the backend controller, DTOs, service behavior, tests and affected
+   supported consumers. Establish the resource ownership and performance budget.
+   Use IDs, explicit bounds and cursors to keep payloads bounded.
 2. Design the smallest named domain operation and public DTO needed by the UI.
    Define arguments/results/events in shared and extend `ElevenexBridge` and
    preload together. Reads and mutations must carry an expected backend scope.
@@ -337,7 +330,7 @@ failures keep project history for retry; concurrent task creation is checked
 again in the final delete transaction. Duplicate in-flight deletion requests for
 one project share the same backend operation. The desktop gives cleanup a
 three-minute deadline and retains unknown-outcome reconciliation on interruption.
-Existing legacy and MCP project-delete contracts keep their defaults and guards.
+The MCP project-delete contract uses its own defaults and guards.
 
 Reads may gain bounded retry only for classified transient errors while their
 scope is still current. Mutations need an explicit domain policy. If transport
@@ -356,21 +349,23 @@ and adjust internal architecture when that improves performance, correctness,
 or alignment with the intended product. The backend is not a frozen constraint.
 Prefer fixing a backend limitation to adding repeated client workarounds.
 
-Preserve backward compatibility for the active legacy app, desktop releases,
-remote runtimes and other supported API/MCP consumers. Prefer additive optional
-fields, new bounded endpoints, explicit capabilities and staged migrations;
-retain existing defaults, response shapes and semantics for existing callers.
-New desktop adapters may map old DTOs without renaming or removing their wire
-fields. When introducing capabilities, check them explicitly rather than assuming
-that a matching `/api/info` SHA implies a future optional protocol exists.
-An additive bounded endpoint can coexist with an existing unbounded legacy one.
+The legacy frontend in `apps/frontend` and its Electron shell in
+`apps/electron` are slated for removal. Agents are authorized to break or
+remove backend contracts used exclusively by those apps as part of the
+requested work.
 
-**If a breaking change would be useful, ask the developer whether it is allowed
-before implementing it**, unless that exact break was already authorized. State
-the concrete benefit, affected callers, migration/versioning plan and alternative
-that preserves compatibility. Do independent compatible work while awaiting the
-decision. Database changes follow the existing Drizzle migration workflow;
-client integration does not authorize data loss or destructive migrations.
+Preserve backward compatibility for supported `apps/desktop` releases, remote
+runtimes and API/MCP consumers. Prefer additive optional fields, bounded
+endpoints, explicit capabilities and staged migrations. Preserve the defaults,
+response shapes and semantics those consumers rely on. Check optional protocol
+support through the relevant capability. The `/api/info` SHA identifies the
+backend build.
+
+**Ask the developer before breaking a supported contract**, unless that break
+is already authorized. State the concrete benefit, affected callers, migration
+plan and compatible alternative. Do independent compatible work while awaiting
+the decision. Use the existing Drizzle workflow and preserve user data through
+migrations.
 
 ## Validation and current limits
 
@@ -564,10 +559,10 @@ validated domain packets. Credits span the socket and Electron IPC and are retur
 after xterm consumes output. Input is pipelined and never replayed. Scope/document
 changes abort both bounded reads and live leases.
 
-The edge proxy's shared `apps/frontend/proxy.conf.json` must expose the
-`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`. Runtime
-assembly copies this allowlist, so updating a desktop alone cannot repair an
-older remote runtime that omits the route; rebuild and install the backend too.
+Runtime assembly currently reads the edge proxy allowlist from
+`apps/frontend/proxy.conf.json`. The shipped allowlist must expose the
+`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`.
+Rebuild and install the backend runtime to update this allowlist.
 Unpackaged desktop launches log bounded WebSocket errors and close codes/reasons
 in main's console, with private capability values redacted. These diagnostics
 do not enter renderer events or change the no-replay input contract.

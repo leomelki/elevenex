@@ -1,8 +1,7 @@
 # Remote development backend
 
-This implements the new desktop's system and typed IPC boundary. It does not
-add frontend UI or port the legacy frontend/backend clients. The legacy app and
-the application-owned local backend keep their existing behavior.
+Electron main manages the desktop's SSH connections and remote backend
+lifecycle. The renderer accesses them through typed IPC.
 
 ## Ownership and transport
 

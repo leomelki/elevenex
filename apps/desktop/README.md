@@ -1,7 +1,6 @@
-# Elevenex desktop foundation
+# Elevenex desktop
 
-The new desktop lives alongside the existing application. Root `pnpm dev` and
-the existing frontend/backend/Electron scripts still run the existing app.
+Use `pnpm desktop:dev` from the repository root to develop the desktop app.
 
 The normal route now starts on machine Home and connects the local/SSH machine
 flow to the real lifecycle bridge. First-run completion is stored atomically in
@@ -24,10 +23,9 @@ see [code-first browser automation](../../docs/browser-agent.md) and
 [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
 Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
-The backend gains additive `desktop-workspace` routes;
-the existing app's routes and defaults remain available. A versioned capability
-probe reports an older engine clearly instead of assuming that readiness means
-it implements these features. The new metadata migration applies automatically.
+The app uses the backend's `desktop-workspace` routes. A versioned capability
+probe identifies engines that lack workspace support. The backend applies the
+metadata migration automatically.
 
 ## Run
 
@@ -179,7 +177,7 @@ Build, dev, preview and captures check source/tool/output hashes and regenerate
 only when necessary. `pnpm desktop:icons --force` forces a render;
 `pnpm desktop:icons --check` verifies freshness without changing files or
 launching Electron. Commit the source SVG and generator; assets and their manifest
-are generated locally. The existing app's `assets:icons` command stays separate.
+are generated locally.
 
 ## Layout
 
@@ -228,7 +226,7 @@ existing instance instead of opening a second database owner.
 - `data/elevenex.db`: the new desktop's database, separate from the legacy
   `~/.elevenex/elevenex.db`. Updates replace executable code, never this data.
   App-owned agent workspace, crash logs and model caches also live under `data/`
-  through `ELEVENEX_DATA_ROOT`; legacy launchers retain their existing defaults.
+  through `ELEVENEX_DATA_ROOT`.
   External tools' own authentication/session directories remain in the user's
   home, as they do when those tools run from a terminal.
 
@@ -257,7 +255,7 @@ native modules rebuilt for the old Electron ABI; they cannot run under this app.
 `pnpm desktop:backend` bundles the backend and produces the new host-platform
 archive and checksum in `dist-runtime/`. It reuses the curated assembly/pruning
 scripts with `ELEVENEX_EMBED_LOCAL_NODE=1` and an isolated staging directory under
-`apps/desktop/.stage/`. Existing legacy commands retain their original defaults.
+`apps/desktop/.stage/`.
 Use an official portable Node distribution (as provided by CI's setup-node),
 with dependencies installed for that same Node ABI. A Homebrew Node executable
 may depend on libraries outside its directory and fail the relocation smoke test.
@@ -379,9 +377,8 @@ ordering and a second stale-reply check. Future feature stores own domain data,
 pagination and task/session selection, with their own stale-selection guards.
 
 The guide covers incremental events, bounded caches, mutation outcomes and
-backward-compatible backend evolution. Agents may improve the backend to support
-the intended product and performance, and must ask the developer before useful
-breaking changes unless already authorized.
+the compatibility policy for supported desktop releases, remote runtimes and
+API/MCP consumers.
 
 To trace conversation requests, launch with `NODE_DEBUG=elevenex-chat pnpm desktop:dev`.
 Electron writes one dispatch and outcome line per HTTP request to stderr,
