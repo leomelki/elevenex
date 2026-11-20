@@ -1,5 +1,5 @@
 import type { BrowserElementReference, SessionChatToolCategory, SessionChatToolSource } from '@elevenex/shared';
-import type { ToolContentSource, ToolPresentation } from './tool-presentation';
+import type { ToolContentSource, ToolImage, ToolPresentation } from './tool-presentation';
 import type { MarkdownEmbed } from './markdown/markdown-parser';
 
 /** Renderer-owned view models. IDs are stable across streamed and incremental updates. */
@@ -163,6 +163,8 @@ export interface WorkStep {
   readonly deferredTool?: SessionChatToolSource;
   /** Inline previews from this receipt, in transcript order. */
   readonly media?: readonly MarkdownEmbed[];
+  /** Viewed images belong inside the tool disclosure. */
+  readonly images?: readonly ToolImage[];
   /** Optional bounded-reader targets for input/output shortened by transport. */
   readonly fullContent?: ToolContentSource;
   readonly hunk?: readonly string[];

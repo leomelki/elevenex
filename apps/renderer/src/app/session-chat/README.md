@@ -286,8 +286,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
   The renderer counts visible reply blocks toward its 320-record window.
 - Opening Worked requests a compact timeline. Each tool call carries the same
   heading and outcome as the ordinary timeline, plus an optional result ID.
-  Its paired receipt uses an empty source slot,
-  with inline image references kept at their original positions. Commentary and
+  Its paired receipt uses an empty source slot or carries bounded image
+  references. Viewed images render inside the matching tool disclosure. Other
+  inline previews retain their receipt positions. Commentary and
   the visible reply stay in order. The entire timeline appears in one update.
   Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
   order, independent of the chat's scroll direction. Older engines keep their
@@ -323,6 +324,11 @@ their call and receipt within that exact saved turn. Ordinary rows carry
 individual evidence revisions. Counts, file-change metadata and inline media
 references remain available. Older engines can send inline evidence with the
 same row UI.
+
+Viewed images load by receipt and media ID when the tool body opens. The same
+bounded media reader serves the live chat and saved timelines. Closing the
+tool releases the image after its exit. An image whose call is on another page
+opens in its Result row.
 
 Opening a tool starts one bounded read for its call and its receipt when
 available. A 100 ms hover or visible focus on a closed tool heading, or a press

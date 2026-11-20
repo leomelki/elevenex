@@ -49,9 +49,24 @@
     }
   </button>
   <ex-fold #fold [id]="bodyId" [open]="bodyOpen()">
-    @if (deferred() ? !!painted() : expanded() || contentMounted()) {
+    @if (imagePanel() || (deferred() ? !!painted() : expanded() || contentMounted())) {
       <div exAutoHeight>
         <div class="body-content">
+          @if (imagePanel(); as panel) {
+            <div class="tool-images">
+              @for (image of panel.images; track image.itemId + ':' + image.mediaId) {
+                <ex-markdown-media
+                  [path]="image.path"
+                  [caption]="image.caption"
+                  [showCaption]="image.caption !== 'Image'"
+                  [compact]="true"
+                  [asset]="imageAssets()?.(image)"
+                  [active]="visible()"
+                  (openFile)="openFile.emit($event)"
+                />
+              }
+            </div>
+          }
           @if (deferred()) {
             @let panel = painted();
             @switch (panel?.status) {
@@ -88,7 +103,7 @@
               (copyCode)="copyCode.emit($event)"
               (contentRequested)="contentRequested.emit($event)"
             />
-          } @else {
+          } @else if (output()) {
             <pre tabindex="0" aria-label="Tool output">{{ output() }}</pre>
           }
         </div>

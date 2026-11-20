@@ -6,10 +6,12 @@ function elementOf(elements: readonly BrowserElementContext[], caption: string) 
   return element ? { element: element.reference, marker: element.marker } : {};
 }
 import type { SessionChatItem, SessionChatState } from "@elevenex/shared";
-import type { ChatExchange, WorkStep } from "../conversation";
+import type { ChatExchange, ToolImage, WorkStep } from "../conversation";
 import { completedTurnRecords, type OpenTurnWork } from "./session-chat-turn-work";
 import { reconcileClaudeBlocks } from "./session-chat-claude-blocks";
 import {
+  imageViewCallIds,
+  isViewedImageResult,
   presentSessionToolEvidence,
   sessionToolDetailsSource,
   sessionToolKind,
@@ -109,6 +111,11 @@ function messageText(item: SessionChatItem): string {
     media.inline && !item.text.includes(`](${media.path})`) && !item.text.includes(`](<${media.path}>)`));
   return [item.text, ...images.map(media => `![${media.caption.replace(/[[\]\r\n]/g, " ")}](${media.path})`)]
     .filter(Boolean).join("\n\n");
+}
+function viewedImages(result: SessionChatItem): readonly ToolImage[] | undefined {
+  if (result.error || !result.media) return;
+  return result.media.filter(media => media.inline && (!media.kind || media.kind === 'image'))
+    .map(({ id, path, caption }) => ({ itemId: result.id, mediaId: id, path, caption }));
 }
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
@@ -216,6 +223,7 @@ function projectExchanges(
         .filter((item) => item.kind === "tool_result")
         .map((item) => [item.toolId ?? item.id, item]),
     );
+    const viewCalls = imageViewCallIds(records);
     // Keep the latest text visible, with work on either side in source order.
     // Tool receipts stay paired with their calls, even when they arrive late.
     let finalEnd = completed ? replyStart + completed.reply.length : 0;
@@ -239,6 +247,8 @@ function projectExchanges(
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
         const pairedResult = item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
+        const viewedResult = isViewedImageResult(item, viewCalls);
+        if (pairedResult && viewedResult) return [];
         if (item.kind === "system" && item.changes && !item.text.trim())
           return [];
         const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
@@ -272,12 +282,13 @@ function projectExchanges(
                     : result?.toolDetails?.meta ?? receipt?.toolDetails?.meta ?? item.toolDetails?.meta ?? evidence?.presentation.meta,
                 deferredTool,
                 ...evidence,
+                images: result && isViewedImageResult(result, viewCalls) ? viewedImages(result) : undefined,
                 status,
               },
             ];
           }
           if (item.kind === "tool_result") {
-            const media = !item.error
+            const media = !viewedResult && !item.error
               ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
                 .map(({ path, caption }) => ({ path, caption }))
               : undefined;
@@ -291,6 +302,7 @@ function projectExchanges(
               kind: invocation ? sessionToolKind(invocation) : "tool",
               detail: invocation?.toolDetails.summary ?? item.toolName ?? "Tool result",
               media,
+              images: viewedResult ? viewedImages(item) : undefined,
               status: item.error ? "failed" : "done",
               ...(deferredTool ? {
                 verb: invocation ? 'Result' : undefined,

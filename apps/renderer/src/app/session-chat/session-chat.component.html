@@ -5,6 +5,7 @@
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
   [inspectTool]="store.tools.provider()"
+  [toolImages]="media.toolImages()"
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"

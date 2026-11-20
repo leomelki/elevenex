@@ -129,6 +129,20 @@ function status(value: unknown): ToolListItem["status"] {
 export function sessionToolKind(item: Pick<SessionChatItem, 'toolKind'>): StepKind {
   return sessionChatToolCategory(item.toolKind);
 }
+export function imageViewCallIds(items: readonly SessionChatItem[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (item.kind === 'tool_use' && isImageView(item)) ids.add(item.toolId ?? item.id);
+  }
+  return ids;
+}
+function isImageView(item: SessionChatItem): boolean {
+  const kind = item.invocation?.toolKind ?? item.toolKind;
+  return kind === 'image_view' || (kind === null && /^view[ _-]?image$/i.test(item.toolName ?? ''));
+}
+export function isViewedImageResult(item: SessionChatItem, viewCalls: ReadonlySet<string>): boolean {
+  return item.kind === 'tool_result' && (isImageView(item) || (item.toolId !== null && viewCalls.has(item.toolId)));
+}
 export function sessionToolVerb(
   item: SessionChatItem,
   live: boolean,

@@ -62,6 +62,10 @@ evicts the oldest beyond that bound and lets the later observation join them; pl
 ToolStep keeps the heading in place until the evidence or a retry
 action is ready, pulsing it only when the read outlasts 120 ms. Fold owns opening and closing, and one AutoHeight wrapper
 owns updates to the already open body. Inline evidence uses the same disclosure.
+Supply `WorkStep.images` with transcript addresses and pass a `toolImages`
+provider to Chat, Turn or WorkTimeline for a viewed image. The tool disclosure
+requests a compact preview when opened and releases it after the fold closes.
+Activating the preview opens the full-size viewer.
 
 ## Scrolling and performance
 
@@ -205,9 +209,10 @@ preview and control row while loading or unavailable; `MarkdownRecording.loading
 and `error` describe asynchronous resolver state. Playback, seek, speed,
 full-screen and timestamped steps remain available when ready, without autoplay. Assets are provided by a synchronous confined resolver, without platform calls from presentational components. `safeMediaSource` admits root-relative/app assets and supported raster data URLs; it rejects external resources, SVG data URLs and active schemes.
 
-`WorkTimeline` renders each receipt's ordered `WorkStep.media` through the same
+`WorkTimeline` renders ordered `WorkStep.media` through the same
 media component. A paired tool result can use a `media` step to retain its
-chronological position while the call owns the text result. These rows follow
+chronological position while the call owns the text result. Viewed images use
+the corresponding tool disclosure. Standalone preview rows follow
 both work and activity disclosures. Closing a row makes its media controls
 inert. Its `active` binding deactivates the image viewer and recording, including
 media embedded in Markdown commentary.

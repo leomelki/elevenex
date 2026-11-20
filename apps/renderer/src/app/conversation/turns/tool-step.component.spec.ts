@@ -2,11 +2,39 @@ import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToolStepComponent } from "./tool-step.component";
-import type { ToolDetailsProvider, ToolDetailsState, ToolPresentation } from "../tool-presentation";
+import type { ToolDetailsProvider, ToolDetailsState, ToolImageProvider, ToolPresentation } from "../tool-presentation";
 
 afterEach(() => vi.useRealTimers());
 
 describe("tool evidence", () => {
+  it('mounts a viewed image inside the disclosure only after opening and releases it on close', async () => {
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const image = { itemId: 'receipt', mediaId: '0', caption: 'Capture', path: '/capture.png' };
+    const inspection = vi.fn<ToolImageProvider>(() => () => ({
+      kind: 'image', src: 'data:image/png;base64,AA==', w: 640, h: 360,
+    }));
+    fixture.componentRef.setInput('detail', image.path);
+    fixture.componentRef.setInput('images', [image]);
+    fixture.componentRef.setInput('inspectImages', inspection);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const button = host.querySelector<HTMLButtonElement>('.head')!;
+    expect(inspection).not.toHaveBeenCalled();
+    expect(host.querySelector('img')).toBeNull();
+    button.click();
+    fixture.detectChanges();
+    const [images, abort] = inspection.mock.calls[0]!;
+    expect(images).toEqual([image]);
+    expect(host.querySelector('ex-fold img')?.getAttribute('alt')).toBe('Capture');
+    button.click();
+    fixture.detectChanges();
+    expect(host.querySelector('ex-fold')?.hasAttribute('inert')).toBe(true);
+    await fixture.whenStable();
+    fixture.detectChanges();
+    expect(host.querySelector('ex-fold img')).toBeNull();
+    expect(abort.aborted).toBe(true);
+    fixture.destroy();
+  });
   it("keeps a pending read out of the layout and keeps the disclosure focused through retry", () => {
     vi.useFakeTimers();
     const fixture = TestBed.createComponent(ToolStepComponent);

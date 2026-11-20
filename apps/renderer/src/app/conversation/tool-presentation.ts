@@ -1,5 +1,14 @@
 import type { Signal } from '@angular/core';
 import type { SessionChatToolSource } from '@elevenex/shared';
+import type { MarkdownAsset, MarkdownEmbed } from './markdown/markdown-parser';
+
+/** A viewed image's address in the transcript, independent of its display path. */
+export interface ToolImage extends MarkdownEmbed {
+  readonly itemId: string;
+  readonly mediaId: string;
+}
+export type ToolImageResolver = (image: ToolImage) => MarkdownAsset | undefined;
+export type ToolImageProvider = (images: readonly ToolImage[], signal: AbortSignal) => ToolImageResolver;
 
 /** Original transcript addresses; the connected owner performs bounded reads. */
 export interface ToolContentSource {

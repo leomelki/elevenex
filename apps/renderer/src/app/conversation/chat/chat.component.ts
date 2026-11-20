@@ -14,7 +14,7 @@ import type {
   TurnWorkToggle,
   TurnNavigationItem,
 } from "../conversation.models";
-import type { ToolContentRequest, ToolDetailsProvider } from '../tool-presentation';
+import type { ToolContentRequest, ToolDetailsProvider, ToolImageProvider } from '../tool-presentation';
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
@@ -62,6 +62,7 @@ export class ChatComponent {
   readonly toolContentRequested = output<ToolContentRequest>();
   readonly resolve = input<MarkdownAssetResolver>();
   readonly inspectTool = input<ToolDetailsProvider>();
+  readonly toolImages = input<ToolImageProvider>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly turnWorkToggled = output<TurnWorkToggle & { readonly id: string }>();
   readonly turnWorkHint = output<string>();

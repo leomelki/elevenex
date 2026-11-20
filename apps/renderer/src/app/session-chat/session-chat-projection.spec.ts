@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionChatItem, SessionChatState } from '@elevenex/shared';
 import { ChatTranscriptProjection, chatExchanges } from './session-chat-transcript';
+import { timelineRecord } from './session-chat-turn-timeline';
 
 const state: SessionChatState = {
   provider: 'codex', phase: 'running', canInterrupt: true, error: null,
@@ -16,6 +17,38 @@ const item = (id: string, kind: SessionChatItem['kind'], text = '', extra: Parti
 const tool = (id: string) => item(id, 'tool_use', '', { toolId: id, toolKind: 'bash', input: '{"cmd":"pnpm test"}' });
 
 describe('incremental transcript projection', () => {
+  it('keeps viewed images in the matching tool disclosure for live receipts, compact timelines and split pages', () => {
+    const prompt = item('prompt', 'user');
+    const commentary = item('commentary', 'assistant', 'Opening the screenshot.');
+    const reply = item('answer', 'assistant', 'The toolbar is in the right place.');
+    const media = [{ id: '0', path: '/capture.png', caption: 'Capture', inline: true }];
+    const images = [{ itemId: 'result', mediaId: '0', path: '/capture.png', caption: 'Capture' }];
+    const call = item('call', 'tool_use', '', { toolId: 'view', toolKind: 'image_view', input: '{"path":"/capture.png"}' });
+    const result = item('result', 'tool_result', 'Image attachment', { toolId: 'view', media });
+    const projection = new ChatTranscriptProjection();
+    const [pending] = projection.project([prompt, call, commentary], state, fresh);
+    expect(pending?.steps).toMatchObject([{ id: 'call', status: 'running' }]);
+    expect(pending?.steps[0]?.images).toBeUndefined();
+    const [received] = projection.project([prompt, call, commentary, result, reply], state, fresh);
+    expect(received).toMatchObject({
+      answer: reply.text,
+      steps: [{ id: 'call', verb: 'Viewed image', status: 'done', images }, { id: 'commentary' }],
+    });
+
+    const revision = 'a'.repeat(64);
+    const saved = timelineRecord({ kind: 'call', id: 'call', toolKind: 'image_view', label: '/capture.png', resultId: 'result' }, revision);
+    const receipt = timelineRecord({ kind: 'media', id: 'result', callId: 'call', media }, revision);
+    const [compact] = chatExchanges([prompt, saved, commentary, receipt, reply], state, fresh);
+    expect(compact?.steps).toMatchObject([{ id: 'call', images }, { id: 'commentary' }]);
+    const [split] = chatExchanges([{ ...result, invocation: {
+      id: 'call', toolKind: 'image_view', toolDetails: { revision, summary: '/capture.png' },
+    }, toolDetails: { revision } }], state, fresh);
+    expect(split?.steps).toMatchObject([{ id: 'result', images, verb: 'Result' }]);
+    expect(split?.steps[0]?.media).toBeUndefined();
+    const [failed] = chatExchanges([prompt, call, { ...result, error: true }], state, fresh);
+    expect(failed?.steps).toMatchObject([{ id: 'call', status: 'failed' }]);
+    expect(failed?.steps[0]?.images).toBeUndefined();
+  });
   it('keeps completed turns and unchanged tools stable as new calls, results and text arrive', () => {
     const projection = new ChatTranscriptProjection();
     const items = [item('first', 'user', 'Earlier request'), item('reply', 'assistant', 'Finished'),

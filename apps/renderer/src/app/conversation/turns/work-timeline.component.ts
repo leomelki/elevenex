@@ -22,7 +22,7 @@ import {
   TickerComponent,
 } from "../../ui";
 import type { WorkStep } from "../conversation.models";
-import type { ToolContentRequest, ToolDetailsProvider } from "../tool-presentation";
+import type { ToolContentRequest, ToolDetailsProvider, ToolImageProvider } from "../tool-presentation";
 import { MarkdownComponent } from "../markdown/markdown.component";
 import { MarkdownMediaComponent } from "../markdown/markdown-media.component";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
@@ -73,6 +73,7 @@ export class WorkTimelineComponent implements OnChanges {
   readonly copiedCode = input<string | null>(null);
   readonly resolve = input<MarkdownAssetResolver>();
   readonly inspectTool = input<ToolDetailsProvider>();
+  readonly toolImages = input<ToolImageProvider>();
   readonly openFile = output<string>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();

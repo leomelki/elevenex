@@ -21,8 +21,12 @@ import type {
   ToolDetailsInspection,
   ToolDetailsProvider,
   ToolDetailsState,
+  ToolImage,
+  ToolImageProvider,
+  ToolImageResolver,
   ToolPresentation,
 } from "../tool-presentation";
+import { MarkdownMediaComponent } from '../markdown/markdown-media.component';
 import { ToolContentComponent } from "./tool-content.component";
 
 // Resting on a tool heading is deliberate; scanning a list passes each row faster.
@@ -41,6 +45,7 @@ function sameReference(left?: SessionChatToolReference, right?: SessionChatToolR
     IconComponent,
     FoldComponent,
     StatusGlyphComponent,
+    MarkdownMediaComponent,
     ToolContentComponent,
   ],
   templateUrl: "./tool-step.component.html",
@@ -59,14 +64,18 @@ export class ToolStepComponent implements OnChanges {
   readonly fullContent = input<ToolContentSource>();
   readonly deferred = input<SessionChatToolSource>();
   readonly inspect = input<ToolDetailsProvider>();
+  readonly images = input<readonly ToolImage[]>();
+  readonly inspectImages = input<ToolImageProvider>();
   readonly active = input(true);
   readonly contentRequested = output<ToolContentRequest>();
+  readonly openFile = output<string>();
   readonly copiedCode = input<string | null>(null);
   readonly copyCode = output<string>();
   readonly expandedChange = output<boolean>();
   readonly layoutChanging = output<HTMLElement>();
   readonly hasContent = computed(
-    () => this.deferred() ? !!this.inspect() : !!this.output() || !!this.presentation(),
+    () => (!!this.images()?.length && !!this.inspectImages()) ||
+      (this.deferred() ? !!this.inspect() : !!this.output() || !!this.presentation()),
   );
   readonly open = input(false);
   readonly toggled = signal<boolean | null>(null);
@@ -82,6 +91,16 @@ export class ToolStepComponent implements OnChanges {
     source: SessionChatToolSource; provider: ToolDetailsProvider; value: ToolDetailsInspection;
   } | null>(null);
   protected readonly visible = computed(() => this.active() && this.expanded());
+  protected readonly imagePanel = linkedSignal({
+    source: () => ({ visible: this.visible(), images: this.images(), provider: this.inspectImages() }),
+    computation: ({ visible, images, provider }, previous): { images: readonly ToolImage[]; provider: ToolImageProvider } | null => {
+      if (!images?.length || !provider) return null;
+      const last = previous?.value;
+      if (last?.images === images && last.provider === provider) return last;
+      return visible ? { images, provider } : null;
+    },
+  });
+  protected readonly imageAssets = signal<ToolImageResolver | undefined>(undefined);
   private readonly current = computed(() => {
     const inspection = this.inspection();
     return this.visible() && inspection && inspection.source === this.source() && inspection.provider === this.inspect()
@@ -109,7 +128,7 @@ export class ToolStepComponent implements OnChanges {
     },
   });
   protected readonly bodyOpen = computed(() => this.visible() &&
-    (this.deferred() ? !!this.painted() : this.hasContent()));
+    (!!this.imagePanel() || (this.deferred() ? !!this.painted() : this.hasContent())));
 
   constructor() {
     effect(cleanup => {
@@ -141,20 +160,34 @@ export class ToolStepComponent implements OnChanges {
       this.inspection.set({ source, provider, value });
       cleanup(() => abort.abort());
     });
+    effect(cleanup => {
+      const panel = this.imagePanel();
+      if (!panel) {
+        this.imageAssets.set(undefined);
+        return;
+      }
+      const abort = new AbortController();
+      this.imageAssets.set(untracked(() => panel.provider(panel.images, abort.signal)));
+      cleanup(() => abort.abort());
+    });
     effect(() => {
       const head = this.head()?.nativeElement;
       if (head && this.visible() && this.toggled() && this.painted()) untracked(() => this.layoutChanging.emit(head));
     });
     afterRenderEffect(cleanup => {
-      if (this.bodyOpen() || !this.painted()) return;
+      if (this.bodyOpen() || (!this.painted() && !this.imagePanel())) return;
+      const clear = () => {
+        this.painted.set(null);
+        this.imagePanel.set(null);
+      };
       const animations = this.fold().nativeElement.getAnimations?.() ?? [];
       if (!animations.length) {
-        this.painted.set(null);
+        clear();
         return;
       }
       let closing = true;
       void Promise.allSettled(animations.map(animation => animation.finished)).then(() => {
-        if (closing && !this.bodyOpen()) this.painted.set(null);
+        if (closing && !this.bodyOpen()) clear();
       });
       cleanup(() => { closing = false; });
     });

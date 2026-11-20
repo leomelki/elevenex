@@ -39,10 +39,12 @@ export default async function* (capture) {
       const photo = (id, caption) => ({ id: '0', path: id, caption, inline: true });
       owner.fixture.chat.seed(101, { state: reply.value.state, items: [
         item('prompt', 'user', 'Check the interface and capture each state.'),
-        item('first-call', 'tool_use', '', { toolId: 'first-call', toolName: 'view_image' }),
+        item('first-call', 'tool_use', '', {
+          toolId: 'view', toolName: 'View image', toolKind: 'image_view', input: '{"path":"first-image"}',
+        }),
         item('before-image', 'assistant', 'I am opening the first capture.'),
         item('first-result', 'tool_result', 'Image attachment', {
-          toolId: 'first-call', media: [photo('first-image', 'First capture')],
+          toolId: 'view', media: [photo('first-image', 'First capture')],
         }),
         item('after-image', 'assistant', 'The first capture confirms the toolbar position.'),
         item('second-result', 'tool_result', 'Image attachment', { media: [photo('second-image', 'Second capture')] }),
@@ -51,30 +53,49 @@ export default async function* (capture) {
       ] });
     });
     await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '101' }));
-    await capture.waitFor(selector => document.querySelector(selector + ' img'), row('first-result'));
-    for (const id of ['first-result', 'second-result', 'late-result'])
+    await capture.waitFor(selector => document.querySelector(selector + ' img'), row('second-result'));
+    for (const id of ['first-call', 'second-result', 'late-result'])
       assert.equal(await hidden(id), true, id + ' escaped its collapsed section');
-    assert.equal(await capture.evaluate(selector => document.querySelector(selector + ' img') === null, row('answer')), true);
-    yield { name: theme + '-collapsed', inspect: [work, row('answer'), row('first-result') + ' .step-fold'] };
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector) === null, row('first-result')), true);
 
     await reveal(work);
-    await reveal(group('first-result'));
-    await capture.waitFor(selector => document.querySelector(selector + ' .step-fold').getBoundingClientRect().height > 10, row('first-result'));
+    await reveal(group('first-call'));
+    const head = row('first-call') + ' ex-tool-step button.head';
+    const preview = row('first-call') + ' ex-tool-step .tool-images';
+    await capture.waitFor(selector => {
+      const button = document.querySelector(selector);
+      return button?.getAttribute('aria-expanded') === 'false' && !button.closest('[inert]');
+    }, head);
+    assert.equal(await capture.evaluate(selector => !document.querySelector(selector), preview), true);
+    yield { name: theme + '-tool-collapsed', inspect: [head, row('before-image')] };
+
+    await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.imageDelivery('held'));
+    await capture.evaluate(selector => document.querySelector(selector).focus(), head);
+    await capture.press('Enter');
+    await capture.waitFor(selector => document.querySelector(selector)?.textContent.includes('Loading image'), preview);
+    await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.imageDelivery('ready'));
+    await capture.waitFor(selector => document.querySelector(selector + ' img')?.naturalWidth > 0, preview);
+    await capture.settle();
+    yield { name: theme + '-tool-expanded', inspect: [head, preview, row('before-image')] };
+
+    await reveal(preview + ' button.image');
+    await capture.waitFor(() => document.querySelector('.image-viewer[aria-label="First capture"]'));
+    await capture.press('Escape');
+    await capture.waitFor(selector => !document.querySelector('.image-viewer') &&
+      document.activeElement === document.querySelector(selector), preview + ' button.image');
+    await reveal(head);
+    await capture.waitFor(selector => !document.querySelector(selector), preview);
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector)?.getAttribute('aria-expanded'), head), 'false');
+
     await reveal(group('second-result'));
     await reveal(group('late-result'));
     await capture.settle();
-    const tops = await capture.evaluate(selector => ['before-image', 'first-result', 'after-image', 'second-result', 'answer', 'late-result']
+    const tops = await capture.evaluate(selector => ['first-call', 'before-image', 'after-image', 'second-result', 'answer', 'late-result']
       .map(id => document.querySelector(selector + ' [data-work-step="' + id + '"] .step-fold').getBoundingClientRect().top), session);
     assert.ok(tops.every((top, index) => index === 0 || top > tops[index - 1]), 'Previews must stay in source order around messages');
-    await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), row('first-result') + ' img');
-    yield { name: theme + '-receipt-between-messages', inspect: [row('before-image'), row('first-result'), row('after-image')], metadata: { tops } };
+    await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), row('second-result') + ' img');
+    yield { name: theme + '-receipt-between-messages', inspect: [row('after-image'), row('second-result'), row('answer')], metadata: { tops } };
 
-    await reveal(row('first-result') + ' button.image');
-    await capture.waitFor(() => document.querySelector('.image-viewer[aria-label="First capture"]'));
-    await capture.component(session + ' ex-work-timeline', owner => owner.toggleGroup('first-result'));
-    await capture.waitFor(() => !document.querySelector('.image-viewer[aria-label="First capture"]'));
-    await capture.waitFor(selector => document.querySelector(selector + ' .step-fold').getBoundingClientRect().height <= 1, row('first-result'));
-    assert.equal(await hidden('first-result'), true);
     await reveal(work);
     await capture.waitFor(selector => document.querySelector(selector + ' .step-fold').getBoundingClientRect().height <= 1, row('late-result'));
     assert.equal(await hidden('second-result'), true);

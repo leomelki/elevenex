@@ -100,6 +100,29 @@ describe("selected chat images", () => {
       error: expect.stringContaining("Could not load"),
     });
   });
+  it('reads viewed images on inspection and cancels an interrupted read without changing a shared-path attachment', async () => {
+    const { media, client, pending } = setup();
+    const attachment = items(1)[0]!;
+    const call = { ...attachment, id: 'call', kind: 'tool_use' as const, toolId: 'view', toolKind: 'image_view', media: undefined };
+    const result = { ...attachment, id: 'result', toolId: 'view' };
+    const image = { itemId: result.id, mediaId: '0', path: 'image-0', caption: 'Screenshot' };
+    media.update(selection, [attachment, call, result]);
+    expect(pending.map(({ input }) => input.itemId)).toEqual([attachment.id]);
+    const abort = new AbortController();
+    const resolve = media.toolImages()!([image], abort.signal);
+    expect(pending.map(({ input }) => input.itemId)).toEqual([attachment.id, result.id]);
+    expect(resolve(image)).toMatchObject({ loading: true });
+    abort.abort();
+    expect(client.cancel).toHaveBeenCalledWith(selection.scopeId, pending[1]!.input.requestId);
+    pending[1]!.resolve({ ok: true, value: { itemId: result.id, mediaId: '0', source: 'data:image/png;base64,AA==' } });
+    await settle();
+    expect(resolve(image)).toBeUndefined();
+    expect(media.resolve(image.path)).toMatchObject({ loading: true });
+    const reopened = media.toolImages()!([image], new AbortController().signal);
+    pending[2]!.resolve({ ok: true, value: { itemId: result.id, mediaId: '0', source: 'data:image/png;base64,AQ==' } });
+    await settle();
+    expect(reopened(image)).toMatchObject({ src: 'data:image/png;base64,AQ==' });
+  });
   it('uses the newest reference at a shared path and discards an evicted read', async () => {
     const { media, client, pending } = setup();
     const original = items(1)[0]!;
