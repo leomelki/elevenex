@@ -17,10 +17,9 @@ const { backendRelease } = require('../dist/backend/release');
 const remoteContract = require('./remote-contract.cjs');
 const machineContract = require('./machine-contract.cjs');
 const workspaceContract = require('./workspace-contract.cjs');
-const chatWork = {
-  taskId: 1, sessionId: 2, turnId: 'prompt', revision: 'a'.repeat(64), offset: 0, total: 1, nextOffset: null,
-  items: [{ id: 'activity', kind: 'thinking', text: 'Saved reasoning', timestamp: '',
-    toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false }],
+const outputRow = {
+  id: 'output', kind: 'tool_result', text: '', timestamp: '', toolId: 'command',
+  toolKind: null, toolName: null, input: '', error: false, truncated: false,
 };
 const chatTool = {
   taskId: 1, sessionId: 2,
@@ -28,6 +27,14 @@ const chatTool = {
     id: 'command', kind: 'tool_use', text: '', timestamp: '', toolId: 'command',
     toolKind: 'bash', toolName: 'Command', input: '{"command":"pnpm test"}', error: false, truncated: false,
   } },
+  result: { id: 'output', revision: 'c'.repeat(64), record: {
+    ...outputRow, text: 'Tests passed', execution: { exitCode: 0 },
+  } },
+};
+const chatWork = {
+  taskId: 1, sessionId: 2, turnId: 'prompt', revision: 'a'.repeat(64), offset: 1, total: 2, nextOffset: null,
+  items: [{ ...outputRow, toolDetails: { revision: chatTool.result.revision },
+    invocation: { id: chatTool.item.id, toolKind: 'bash', toolDetails: { revision: chatTool.item.revision, summary: 'pnpm test' } } }],
 };
 
 // Replace only the composition boundary in this test process. Native IPC and
@@ -258,11 +265,12 @@ void (async () => {
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
   const { taskId, sessionId, turnId, revision: turnRevision, offset } = chatWork;
-  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity' };
+  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true };
   assert.deepEqual(await window.webContents.executeJavaScript(
     `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(workRequest)})`),
   { ok: true, value: chatWork });
-  const toolRequest = { taskId, sessionId, item: { id: chatTool.item.id, revision: chatTool.item.revision }, requestId: 'tool-details' };
+  const toolRequest = { taskId, sessionId, item: { id: chatTool.item.id, revision: chatTool.item.revision },
+    result: { id: chatTool.result.id, revision: chatTool.result.revision }, requestId: 'tool-details' };
   assert.deepEqual(await window.webContents.executeJavaScript(
     `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(toolRequest)})`),
   { ok: true, value: chatTool });

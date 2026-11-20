@@ -92,6 +92,7 @@ export class TurnComponent implements OnChanges {
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
   readonly filesTotal = input<number>();
+  readonly sharedChanges = input(false);
   readonly error = input("");
   readonly open = input(false);
   readonly maxVisible = input(5);
@@ -176,6 +177,7 @@ export class TurnComponent implements OnChanges {
           this.files(),
           this.filesTotal() ?? this.files().length,
           this.deferredWork(),
+          this.sharedChanges(),
         ),
   );
   private readonly factsElement =

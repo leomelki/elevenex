@@ -32,7 +32,8 @@ import {
 } from './desktop-chat-projection.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
-import { ChatToolDetails, toolKey } from './desktop-chat-tool-details.js';
+import { ChatToolDetails } from './desktop-chat-tool-details.js';
+import { toolKey } from './desktop-chat-tool-links.js';
 import type { SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource } from '@elevenex/shared';
 
 type ChatReadView = `${'window' | 'progressive' | 'summary'}:${'inline' | 'deferred'}`;
@@ -269,8 +270,8 @@ export class DesktopChatService implements OnModuleDestroy {
     return feed.toolDetails.projector;
   }
 
-  private historyWindowIndex(feed: ChatFeed, paging: boolean): ChatHistoryIndex {
-    if (!paging || feed.historyIndex?.revision !== feed.historyRevision)
+  private historyWindowIndex(feed: ChatFeed): ChatHistoryIndex {
+    if (feed.historyIndex?.revision !== feed.historyRevision)
       feed.historyIndex = { revision: feed.historyRevision, index: new ChatHistoryIndex() };
     return feed.historyIndex.index;
   }
@@ -313,7 +314,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const readArchived = async () => {
       if (this.feeds.get(sessionId)?.attached) this.release(sessionId);
       const archivedFeed = this.feed(sessionId, session.activeAgentProvider, false);
-      const historyIndex = this.historyWindowIndex(archivedFeed, paging);
+      const historyIndex = this.historyWindowIndex(archivedFeed);
       const toolDetails = deferDetails ? this.toolDetails(archivedFeed) : undefined;
       const history = await this.history(archivedFeed, sessionId);
       if (signal.aborted) return;
@@ -376,7 +377,7 @@ export class DesktopChatService implements OnModuleDestroy {
         Number(prior[1]) > version ||
         Number(prior[2]) !== feed.historyRevision);
     const readsHistory = reset || paging;
-    const historyIndex = readsHistory ? this.historyWindowIndex(feed, paging) : undefined;
+    const historyIndex = readsHistory ? this.historyWindowIndex(feed) : undefined;
     const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
     const historyPromise = readsHistory ? this.history(feed, sessionId) : Promise.resolve([]);
     const runtime = this.runtime(feed, sessionId, this.sessions.hasStartedAgentRuntime(session));
@@ -455,7 +456,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
-    const index = this.historyWindowIndex(feed, true);
+    const index = this.historyWindowIndex(feed);
     const projector = this.completedTurns(feed);
     const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
     const history = await this.history(feed, sessionId);
@@ -487,7 +488,7 @@ export class DesktopChatService implements OnModuleDestroy {
       ]);
       if (signal.aborted) return;
       const live = Array.isArray(runtime?.liveItems) ? runtime.liveItems as AgentTranscriptItem[] : [];
-      const index = this.historyWindowIndex(feed, true);
+      const index = this.historyWindowIndex(feed);
       index.align(history);
       const find = (id: string) => live.findLast(value => value.id === id) ?? history[index.position(history, id)];
       const raw = find(source.item.id);

@@ -2,7 +2,7 @@ import { CodexHistoryService } from './codex-history.service.js';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { chatWindow } from '../desktop-workspace/desktop-chat-projection.js';
+import { chatWindow } from '../desktop-workspace/desktop-chat-window.js';
 
 describe('CodexHistoryService', () => {
   it('restores native tools inside exec with stable live IDs, readable output and individual failures', async () => {

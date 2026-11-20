@@ -998,12 +998,22 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   }
   const tool = { ...record('call', 'tool_use'), toolId: 'operation', text: '' };
   const heading = { ...tool, toolDetails: { revision, summary: 'pnpm test', private: 'discard' } };
-  const compact = { ...page, items: [heading], events: [{ type: 'item', item: heading }] };
+  const callWithReceipt = { ...heading, receipt: { id: 'result', error: true, toolDetails: { revision, meta: 'Exit 1' } } };
+  const linkedResult = { ...record('result', 'tool_result'), text: '', toolId: 'operation', error: true,
+    toolDetails: { revision, meta: 'Exit 1' }, invocation: { id: 'call', toolKind: 'bash', toolDetails: heading.toolDetails } };
+  const compact = { ...page, items: [callWithReceipt, linkedResult], events: [{ type: 'item', item: callWithReceipt }] };
   const parsed = parseChatPage(compact, 5, 9, 'window', false, true);
   assert.deepEqual(parsed.items[0].toolDetails, { revision, summary: 'pnpm test' });
   assert.deepEqual(parsed.events[0].item.toolDetails, parsed.items[0].toolDetails);
+  assert.deepEqual(parsed.events[0].item.receipt, callWithReceipt.receipt);
+  assert.deepEqual(parsed.items[1].invocation, { id: 'call', toolKind: 'bash', toolDetails: { revision, summary: 'pnpm test' } });
   assert.throws(() => parseChatPage(compact, 5, 9, 'window'), /incompatible/);
-  for (const invalid of [{ ...heading, input: 'unexpected' }, { ...heading, kind: 'assistant' }, { ...heading, toolDetails: { revision: 'invalid' } }]) {
+  for (const invalid of [
+    { ...heading, input: 'unexpected' }, { ...heading, kind: 'assistant' }, { ...heading, toolDetails: { revision: 'invalid' } },
+    { ...linkedResult, invocation: { ...linkedResult.invocation, id: 'result' } },
+    { ...linkedResult, toolDetails: undefined },
+    { ...heading, receipt: { ...callWithReceipt.receipt, id: 'call' } },
+  ]) {
     assert.throws(() => parseChatPage({ ...compact, items: [invalid] }, 5, 9, 'window', false, true), /incompatible/);
   }
 

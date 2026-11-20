@@ -206,14 +206,33 @@ function toolHeading(value: unknown): SessionChatToolHeading {
   };
 }
 
-function activityItem(value: unknown, detailsAllowed: boolean): SessionChatRecord {
+function activityItem(value: unknown, detailsAllowed: boolean, inlineReceipt = false): SessionChatRecord {
   const raw = chatObject(value), row = item(raw);
-  if (raw['toolDetails'] === undefined) return row;
-  if (!detailsAllowed || !row.id || (row.kind !== 'tool_use' && row.kind !== 'tool_result') ||
-    row.input || row.text || row.execution !== undefined) throw invalid();
-  const details = toolHeading(raw['toolDetails']);
-  if (row.kind === 'tool_use' && !details.summary) throw invalid();
-  return { ...row, toolDetails: details };
+  const details = raw['toolDetails'] === undefined ? undefined : toolHeading(raw['toolDetails']);
+  if (details && (!detailsAllowed || !row.id || (row.kind !== 'tool_use' && row.kind !== 'tool_result') ||
+    row.input || row.text || row.execution !== undefined || (row.kind === 'tool_use' && !details.summary))) throw invalid();
+  const peerId = (value: unknown): string => {
+    const id = chatText(value);
+    if (!id || id === row.id) throw invalid();
+    return id;
+  };
+  let receipt: SessionChatRecord['receipt'];
+  if (raw['receipt'] !== undefined) {
+    const peer = chatObject(raw['receipt']);
+    if (row.kind !== 'tool_use' || (!details && !inlineReceipt)) throw invalid();
+    const toolDetails = peer['toolDetails'] === undefined ? undefined : toolHeading(peer['toolDetails']);
+    if (toolDetails && !details) throw invalid();
+    receipt = { id: peerId(peer['id']), error: bool(peer['error']), ...(toolDetails ? { toolDetails } : {}) };
+  }
+  let invocation: SessionChatRecord['invocation'];
+  if (raw['invocation'] !== undefined) {
+    const peer = chatObject(raw['invocation']);
+    const toolDetails = toolHeading(peer['toolDetails']);
+    if (row.kind !== 'tool_result' || !details || !row.toolId || !toolDetails.summary) throw invalid();
+    invocation = { id: peerId(peer['id']), toolKind: nullable(peer['toolKind']), toolDetails };
+  }
+  return { ...row, ...(details ? { toolDetails: details } : {}),
+    ...(receipt ? { receipt } : {}), ...(invocation ? { invocation } : {}) };
 }
 
 function toolReference(value: unknown): SessionChatToolReference {
@@ -270,21 +289,12 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
   const { taskId, sessionId, turnId, revision, offset } = input;
   if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
     raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
-  const items = array(raw['items'], SESSION_CHAT_TURN_WORK_LIMIT, value => {
-    const raw = chatObject(value), row = activityItem(raw, !!input.deferToolDetails);
-    if (raw['receipt'] === undefined) return row;
-    const receipt = chatObject(raw['receipt']);
-    const id = chatText(receipt['id']);
-    if (row.kind !== 'tool_use' || !id || id === row.id || id === turnId) throw invalid();
-    const details = receipt['toolDetails'] === undefined ? undefined : toolHeading(receipt['toolDetails']);
-    if (details && !row.toolDetails) throw invalid();
-    return { ...row, receipt: { id, error: bool(receipt['error']), ...(details ? { toolDetails: details } : {}) } };
-  });
+  const items = array(raw['items'], SESSION_CHAT_TURN_WORK_LIMIT, value => activityItem(value, !!input.deferToolDetails, true));
   const total = workCount(raw['total']);
   const end = offset + items.length;
   const nextOffset = end < total ? end : null;
   if (!items.length || end > total || raw['nextOffset'] !== nextOffset ||
-    items.some(row => row.kind === 'user' || !row.id || row.id === turnId) ||
+    items.some(row => row.kind === 'user' || !row.id || row.id === turnId || row.receipt?.id === turnId || row.invocation?.id === turnId) ||
     new Set(items.map(row => row.id)).size !== items.length) throw invalid();
   return { taskId, sessionId, turnId, revision, offset, items, total, nextOffset };
 }

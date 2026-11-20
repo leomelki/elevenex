@@ -83,11 +83,12 @@ describe('finished turn activity', () => {
     const { work, client } = setup();
     work.toggle('turn', true);
     await Promise.resolve();
-    client.turnWork.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Could not connect' } });
+    client.turnWork.mockResolvedValueOnce({ ok: true, value: { ...page('turn', 1), sessionId: 102 } });
     work.navigate('turn', 'next');
     expect(work.open().get('turn')?.page?.offset).toBe(0);
     await Promise.resolve();
     expect(work.open().get('turn')?.error).toBe('failed');
+    expect(work.open().get('turn')?.page).toEqual(page());
     work.navigate('turn', 'retry');
     await Promise.resolve();
     expect(work.open().get('turn')?.page?.offset).toBe(1);

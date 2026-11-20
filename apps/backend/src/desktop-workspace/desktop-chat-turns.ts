@@ -12,7 +12,8 @@ import {
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary, changeSummary } from './desktop-chat-changes.js';
 import { chatItem, chatItemChanges, chatItemFailed, commandExecution, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
-import { toolKey, type ChatToolDetails, type ProjectChatTool } from './desktop-chat-tool-details.js';
+import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
+import { ChatToolLinks, toolKey } from './desktop-chat-tool-links.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
@@ -91,13 +92,7 @@ export class ChatCompletedTurns {
     const hidden = items.slice(1).filter((item, index) =>
       (index + 1 < reply.start || index + 1 >= reply.end) && !captureMarker(item));
     if (!hidden.length) return null;
-    const calls = new Map<string, AgentTranscriptItem>();
-    const results = new Map<string, AgentTranscriptItem>();
-    for (const item of hidden) {
-      if (item.kind === 'tool_use') calls.set(toolKey(item), item);
-      else if (item.kind === 'tool_result') results.set(toolKey(item), item);
-    }
-    return { reply, hidden, calls, results };
+    return { reply, hidden, links: new ChatToolLinks(hidden) };
   }
 
   summarize(
@@ -110,10 +105,10 @@ export class ChatCompletedTurns {
     if (items.some(item => liveIds.has(item.id))) return undefined;
     const prepared = this.prepare(items);
     if (!prepared) return undefined;
-    const { reply, hidden, calls } = prepared;
+    const { reply, hidden, links } = prepared;
     if (start >= history.length - RECENT_RECORDS && items.length <= INLINE_RECORDS) {
       const bytes = Buffer.byteLength(JSON.stringify(items.map(item => {
-        const call = item.kind === 'tool_result' ? calls.get(toolKey(item)) : undefined;
+        const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
         return projectTool?.(item, call) ?? this.project(item, call);
       })));
       if (bytes <= INLINE_BYTES) return undefined;
@@ -123,17 +118,18 @@ export class ChatCompletedTurns {
     const changes = new Map<string, NonNullable<SessionChatCompletedTurn['changes']>['files'][number]>();
     const edits: ReturnType<typeof chatItemChanges>[] = [];
     let captured: AgentTranscriptItem | undefined;
+    let shared: true | undefined;
     let ended = -Infinity;
     let beforeReply = 0;
     for (let index = 1; index < items.length; index++) {
       const item = items[index];
       const key = toolKey(item);
-      const call = item.kind === 'tool_result' ? calls.get(key) : undefined;
+      const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
       const at = Date.parse(item.timestamp);
       if (Number.isFinite(at)) ended = Math.max(ended, at);
       if (item.kind === 'system' && item.turnChanges) captured = item;
       if (index < reply.start && !captureMarker(item)) beforeReply++;
-      if (item.kind === 'tool_use' && calls.get(key) === item) {
+      if (!call && links.isLatest(item)) {
         const category = sessionChatToolCategory(item.toolKind);
         counts[category] = (counts[category] ?? 0) + 1;
       }
@@ -143,6 +139,7 @@ export class ChatCompletedTurns {
       } else if (item.kind === 'tool_result') {
         const edit = chatItemChanges(item, call, this.changesCache);
         if (!edit?.files.length) continue;
+        shared ??= edit.shared;
         // Only metadata is needed here. Retain the same net-change precedence
         // as the regular timeline while limiting fallback work on long traces.
         if (edits.length < 200) edits.push(edit);
@@ -151,7 +148,7 @@ export class ChatCompletedTurns {
       }
     }
     const outcome = captured ? capturedChangeSummary(captured, edits)
-      : changes.size ? { files: [...changes.values()], total: changes.size } : undefined;
+      : changes.size ? { files: [...changes.values()], total: changes.size, ...(shared ? { shared } : {}) } : undefined;
     const started = Date.parse(items[0].timestamp);
     return {
       ...this.project(items[0]),
@@ -172,20 +169,18 @@ export class ChatCompletedTurns {
   page(turn: readonly AgentTranscriptItem[], revision: string, offset: number, toolDetails?: ChatToolDetails) {
     const prepared = this.prepare(turn);
     if (!prepared || offset >= prepared.hidden.length || this.revision(turn) !== revision) return null;
-    const { hidden, calls, results } = prepared;
+    const { hidden, links } = prepared;
     const toolPage = toolDetails?.projectPage();
     const items: SessionChatRecord[] = [];
     let bytes = 0;
     for (const raw of hidden.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT)) {
-      const key = toolKey(raw);
-      const call = raw.kind === 'tool_result' ? calls.get(key) : undefined;
-      const projected = toolPage?.project(raw, call) ?? this.project(raw, call);
-      const result = raw.kind === 'tool_use' ? results.get(key) : undefined;
-      const heading = result ? toolPage?.project(result, raw)?.toolDetails : undefined;
-      const item = result ? {
-        ...projected,
-        receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)), ...(heading ? { toolDetails: heading } : {}) },
-      } : projected;
+      const peer = links.peer(raw);
+      const call = raw.kind === 'tool_result' ? peer : undefined;
+      const result = raw.kind === 'tool_use' ? peer : undefined;
+      const item = toolPage?.activity(raw, peer) ?? {
+        ...this.project(raw, call),
+        ...(result ? { receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)) } } : {}),
+      };
       bytes += Buffer.byteLength(JSON.stringify(item));
       if (bytes > WORK_PAGE_BYTES) break;
       items.push(item);

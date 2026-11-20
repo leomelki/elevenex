@@ -64,7 +64,7 @@ describe('incremental transcript projection', () => {
     expect(closing?.overflow).toEqual([{ id: 'final', label: 'message' }]);
   });
 
-  it('uses folded tool references through an off-page receipt and renders orphan results independently', () => {
+  it('keeps the same evidence pair accessible at either paging edge and suppresses a redundant on-page result', () => {
     const revision = 'a'.repeat(64), next = 'b'.repeat(64);
     const call = { ...tool('test'), input: '', toolDetails: { revision, summary: 'pnpm test' },
       receipt: { id: 'reply', error: true, toolDetails: { revision: next, meta: 'Exit 1' } } };
@@ -76,8 +76,31 @@ describe('incremental transcript projection', () => {
     });
     expect(step?.presentation).toBeUndefined();
     expect(step?.output).toBeUndefined();
+    const output = item('reply', 'tool_result', '', { toolId: 'test', error: true,
+      toolDetails: { revision: next, meta: 'Exit 1' },
+      invocation: { id: call.id, toolKind: 'bash', toolDetails: call.toolDetails } });
+    const [resultOnly] = chatExchanges([item('prompt', 'user'), output], state, fresh);
+    expect(resultOnly?.steps).toMatchObject([{
+      id: 'reply', verb: 'Result', kind: 'run', detail: 'pnpm test', status: 'failed',
+      deferredTool: step?.deferredTool,
+    }]);
+    const [joined] = chatExchanges([item('prompt', 'user'), call, output], state, fresh);
+    expect(joined?.steps).toEqual([step]);
     const [orphan] = chatExchanges([item('reply', 'tool_result', '', { toolId: 'test', toolDetails: { revision: next } })], state, fresh);
     expect(orphan?.steps[0]?.deferredTool).toEqual({ item: { id: 'reply', revision: next } });
+  });
+
+  it('preserves shared change attribution in inline and compact turns', () => {
+    const reply = item('reply', 'assistant', 'Explained the implementation.');
+    const changes = { total: 1, shared: true, files: [{ path: 'capture.log', status: 'M', add: 2, del: 0 }] } as const;
+    const prompt = item('prompt', 'user');
+    const [inline] = chatExchanges([prompt, reply, item('capture', 'system', '', { changes })], state, fresh);
+    const [compact] = chatExchanges([{ ...prompt, completedTurn: {
+      revision: 'a'.repeat(64), endId: 'capture', beforeReply: 1, total: 1,
+      reply: [reply], counts: { run: 1 }, failures: 0, changes,
+    } }], state, fresh);
+    for (const turn of [inline, compact])
+      expect(turn).toMatchObject({ sharedChanges: true, files: changes.files, filesTotal: 1 });
   });
 
   it('ignores unrelated runtime updates and only changes the active turn for phase/decision updates', () => {

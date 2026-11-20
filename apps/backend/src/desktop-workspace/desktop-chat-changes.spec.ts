@@ -41,6 +41,14 @@ const captured = (count = 1, lines = 1): TurnChangeDetails => ({
 });
 
 describe('desktop reply changes', () => {
+  it('carries shared capture attribution through history and review', () => {
+    const details = captured(2);
+    details.capture!.shared = true;
+    const rows = [item('u', 'user'), item('a', 'assistant', { content: 'Read the implementation.' }),
+      item('capture', 'system', { turnChanges: details })];
+    expect(chatWindow(rows, [])?.items.at(-1)?.changes).toMatchObject({ total: 2, shared: true });
+    expect(turnChangesPage(rows, 'u', 0)).toMatchObject({ total: 2, shared: true });
+  });
   it('keeps captured shell changes separate from truncated display text in live and saved history', () => {
     const rows = [
       item('u', 'user'),

@@ -21,13 +21,13 @@ export function summarizeWork(
   files: readonly ChangedFile[],
   fileCount = files.length,
   saved?: Pick<DeferredTurnWork, 'counts' | 'failures'>,
+  sharedChanges = false,
 ): readonly WorkFact[] {
   let failures = saved?.failures ?? 0;
   const counts: Partial<Record<WorkStep['kind'], number>> = { ...saved?.counts };
   let testResult = "";
   let testFailed = false;
   for (const step of saved ? [] : steps) {
-    if (step.status === 'unknown') continue;
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
     counts[step.kind] = (counts[step.kind] ?? 0) + 1;
@@ -57,7 +57,9 @@ export function summarizeWork(
     const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
     facts.push({
       kind: "files",
-      label: `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
+      label: sharedChanges
+        ? `${fileCount} workspace ${fileCount === 1 ? "change" : "changes"}`
+        : `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
       icon: "changes",
       diff: fileCount === files.length ? { add: added, del: removed } : undefined,
     });
@@ -73,15 +75,15 @@ export function summarizeWork(
     facts.push({
       kind: "commands",
       icon: "terminal",
-      label: `Ran ${commands} ${commands === 1 ? "command" : "commands"}`,
+      label: `${commands} ${commands === 1 ? "command" : "commands"}`,
     });
   if (reads)
     facts.push({
       kind: "reads",
       icon: "file",
-      label: `Read ${reads} ${reads === 1 ? "file" : "files"}`,
+      label: `${reads} ${reads === 1 ? "read" : "reads"}`,
     });
-  if (edits && (saved || !files.length))
+  if (edits && (saved || sharedChanges || !files.length))
     facts.push({
       kind: "edits", icon: "changes",
       label: `${edits} ${edits === 1 ? "edit" : "edits"}`,

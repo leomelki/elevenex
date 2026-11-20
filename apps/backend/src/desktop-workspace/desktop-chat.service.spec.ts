@@ -142,8 +142,16 @@ describe('selected session chat', () => {
     const latest = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
     const result = latest.items.find(row => row.id === 'result')!;
     expect(latest.items.some(row => row.id === 'call')).toBe(false);
+    expect(result).toMatchObject({
+      error: true,
+      toolDetails: { meta: 'Exit 1' },
+      invocation: { id: 'call', toolKind: 'bash', toolDetails: { summary: 'pnpm test' } },
+    });
     const older = (await chat.read(1, 2, undefined, 'note-0', signal, undefined, 'progressive', undefined, '1'))!;
     const call = older.items.find(row => row.id === 'call')!;
+    expect(call.receipt).toEqual({ id: result.id, error: true, toolDetails: result.toolDetails });
+    expect(result.invocation?.toolDetails).toEqual(call.toolDetails);
+    expect(older.items.some(row => row.id === result.id)).toBe(false);
     expect(await chat.readToolDetails(1, 2, {
       item: { id: call.id, revision: call.toolDetails!.revision },
       result: { id: result.id, revision: result.toolDetails!.revision },
@@ -167,6 +175,9 @@ describe('selected session chat', () => {
     const receipt = call.receipt!;
     expect(call).toMatchObject({ id: 'call', input: '', toolDetails: { summary: 'important.ts' }, receipt: { id: 'result' } });
     expect(page.items.some(row => row.id === receipt.id)).toBe(false);
+    const later = (await chat.turnWork(1, 2, 'prompt', version, page.nextOffset!, signal, '1'))!;
+    expect(later.items.find(row => row.id === receipt.id)?.invocation)
+      .toEqual({ id: call.id, toolKind: 'read', toolDetails: call.toolDetails });
     const source = { item: { id: call.id, revision: call.toolDetails!.revision },
       result: { id: receipt.id, revision: receipt.toolDetails!.revision } };
     expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({
@@ -191,17 +202,40 @@ describe('selected session chat', () => {
     live = [live[0], { ...live[1], content: 'Complete result' }];
     runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
     const update = (await chat.read(1, 2, page.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
-    expect(update.events).toHaveLength(1);
-    const result = update.events[0].item;
+    expect(update.events).toHaveLength(2);
+    const result = update.events.find(event => event.item.id === 'result')!.item;
     expect(result).toMatchObject({ id: 'result', text: '', input: '' });
     expect(result.toolDetails!.revision).not.toBe(page.items[1].toolDetails!.revision);
+    expect(update.events.find(event => event.item.id === 'call')?.item.receipt?.toolDetails).toEqual(result.toolDetails);
     expect(await chat.readToolDetails(1, 2, { item: { id: 'result', revision: result.toolDetails!.revision } }, signal))
       .toMatchObject({ item: { record: { text: 'Complete result' } } });
     live = [live[0], { ...live[1], providerToolResult: { exitCode: 1 } }];
     runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
     const changed = (await chat.read(1, 2, update.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
-    expect(changed.events[0].item).toMatchObject({ error: true, toolDetails: { meta: 'Exit 1' } });
-    expect(changed.events[0].item.toolDetails!.revision).not.toBe(result.toolDetails!.revision);
+    const failed = changed.events.find(event => event.item.id === 'result')!.item;
+    expect(failed).toMatchObject({ error: true, toolDetails: { meta: 'Exit 1' } });
+    expect(failed.toolDetails!.revision).not.toBe(result.toolDetails!.revision);
+  });
+
+  it('keeps a live receipt actionable when the call has left the progressive window', async () => {
+    live = [
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'bash', toolInput: { command: 'pnpm test' } },
+      ...Array.from({ length: 190 }, (_, index) => item(`progress-${index}`)),
+    ];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    expect(initial.items.some(row => row.id === 'call')).toBe(false);
+    live = [...live, { ...item('result', 'Completed tests'), kind: 'tool_result', toolUseId: 'call' }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const update = (await chat.read(1, 2, initial.cursor, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    expect(update.events.map(event => event.item.id)).toEqual(['result']);
+    const { invocation, toolDetails } = update.events[0].item;
+    expect(invocation).toMatchObject({ id: 'call', toolDetails: { summary: 'pnpm test' } });
+    expect(await chat.readToolDetails(1, 2, {
+      item: { id: invocation!.id, revision: invocation!.toolDetails.revision },
+      result: { id: 'result', revision: toolDetails!.revision },
+    }, signal)).toMatchObject({ result: { record: { text: 'Completed tests' } } });
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
   });
 
   it('reads exact saved activity for a task-owned version, including archived sessions and cancelled reads', async () => {

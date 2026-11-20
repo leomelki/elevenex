@@ -334,7 +334,9 @@ Each section opens independently and retains that choice through streaming and
 completion. The work line shows status/time and expands or collapses all sections;
 category totals remain available in the section summaries.
 Settled turns also reveal up to four work facts beside the duration on turn
-hover, keyboard focus or expansion (for example, Edited 2 files · Ran 3 commands).
+hover, keyboard focus or expansion (for example, Edited 2 files · 3 commands).
+When a worktree capture overlaps another turn, `ChatExchange.sharedChanges`
+carries that attribution to the Worked header as workspace changes.
 They enter with a short stagger and spring, and fade/slide out together on a
 shorter curve; reduced motion removes movement and touch keeps them visible.
 Unrecovered failure facts stay visible. Narrow headings clip the facts with a

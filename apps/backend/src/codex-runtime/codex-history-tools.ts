@@ -1,4 +1,4 @@
-import { codexImageResult } from './codex-image-result.js';
+import { codexImageResult, codexImageViewInput, codexImageViewResult } from './codex-image-result.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import { record } from './codex-subagents.js';
@@ -67,6 +67,15 @@ function codexHistoryTool(
       content = resultText(item.result);
       isError ||= Boolean(item.failure);
       break;
+    case 'ImageView': {
+      name = 'ViewImage';
+      const image = codexImageViewInput(item.path);
+      input = image;
+      content = text(record(item.error).message) || text(item.error);
+      isError ||= Boolean(item.error);
+      if (!isError) item = { ...item, result: codexImageViewResult(image.path) };
+      break;
+    }
     case 'DynamicToolCall':
       name = text(item.tool) || 'Tool';
       input = record(item.arguments);
@@ -86,7 +95,7 @@ function codexHistoryTool(
       if (item.kind !== 'web.search') return [];
       name = 'WebSearch';
       input = codexWebSearchInput(item);
-      content = resultText(item.results);
+      content = item.results === undefined ? '' : resultText(item.results);
       break;
     default:
       return [];
@@ -159,7 +168,10 @@ export function codexHistoryTools(records: readonly Record<string, unknown>[]) {
       if (response.type === 'custom_tool_call_output')
         activeWrappers.delete(callId);
     }
-    if (entry.type !== 'event_msg' || payload.type !== 'item_completed')
+    if (entry.type !== 'event_msg') continue;
+    if (payload.type === 'task_started' || payload.type === 'task_complete' || payload.type === 'turn_aborted')
+      activeWrappers.clear();
+    if (payload.type !== 'item_completed')
       continue;
     const items = codexHistoryTool(
       record(payload.item),
@@ -169,7 +181,9 @@ export function codexHistoryTools(records: readonly Record<string, unknown>[]) {
     if (!items.length) continue;
     native.set(index, items);
     nativeToolIds.add(items[0].toolUseId!);
-    for (const id of activeWrappers) wrappers.add(id);
+    // Native receipts have no wrapper ID. Only suppress an envelope when a
+    // single active call can own the receipt.
+    if (activeWrappers.size === 1) wrappers.add(activeWrappers.values().next().value!);
   }
   return { native, nativeToolIds, wrappers };
 }

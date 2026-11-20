@@ -13,10 +13,6 @@ interface CachedEvidence {
   readonly bytes: number;
 }
 
-export function toolKey(item: AgentTranscriptItem): string {
-  return item.toolUseId ?? item.id;
-}
-
 function decode(value: string): unknown {
   try {
     return JSON.parse(value);
@@ -34,7 +30,7 @@ export class ChatToolDetails {
 
   constructor(private readonly changes: ChatChangesCache, private readonly media: ChatMediaCache) {}
 
-  projectPage(): { project: ProjectChatTool; commit: () => void } {
+  projectPage() {
     const retained = new Map<string, CachedEvidence>();
     let bytes = 0;
     const retain = (entry: CachedEvidence) => {
@@ -43,8 +39,19 @@ export class ChatToolDetails {
       retained.set(entry.evidence.id, entry);
       bytes += entry.bytes;
     };
+    const project: ProjectChatTool = (raw, call) => this.project(raw, call, retain);
     return {
-      project: (raw, call) => this.project(raw, call, retain),
+      project,
+      activity: (raw: AgentTranscriptItem, peer?: AgentTranscriptItem): SessionChatRecord | undefined => {
+        const row = project(raw, raw.kind === 'tool_result' ? peer : undefined);
+        if (!row || !peer) return row;
+        if (raw.kind === 'tool_use') {
+          const result = project(peer, raw);
+          return result ? { ...row, receipt: { id: result.id, error: result.error, toolDetails: result.toolDetails } } : row;
+        }
+        const call = project(peer);
+        return call?.toolDetails ? { ...row, invocation: { id: call.id, toolKind: call.toolKind, toolDetails: call.toolDetails } } : row;
+      },
       commit: () => {
         // The window starts from the requested edge. Keep that edge hottest,
         // even when a newest-first walk is larger than the cache.

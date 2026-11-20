@@ -1,3 +1,15 @@
+<ng-template #errorFeedback let-error>
+  <div class="status error" role="status">
+    <ex-icon name="clock" [size]="14" />
+    <span>{{ errorMessage(error) }}</span>
+  </div>
+  @if (error !== 'unavailable') {
+    <button exButton variant="ghost" size="sm" type="button"
+      (click)="request(error === 'changed' ? 'refresh' : 'retry')">
+      {{ error === 'changed' ? 'Return to latest' : 'Retry' }}
+    </button>
+  }
+</ng-template>
 <ex-fold #fold [open]="expanded() && !!view()">
   @if (painted(); as panel) {
     <div class="frame" exAutoHeight>
@@ -11,17 +23,7 @@
             <ex-skeleton variant="message" [count]="2" aria-hidden="true" />
           }
           @case ('error') {
-            <div class="status error" role="status">
-              <ex-icon name="clock" [size]="14" />
-              <span>{{ panel.error === 'changed' ? 'This activity has changed.' :
-                panel.error === 'unavailable' ? 'Activity is waiting for the connection.' : 'Couldn’t load activity.' }}</span>
-            </div>
-            @if (panel.error !== 'unavailable') {
-              <button exButton variant="ghost" size="sm" type="button"
-                (click)="request(panel.error === 'changed' ? 'refresh' : 'retry')">
-                {{ panel.error === 'changed' ? 'Return to latest' : 'Retry' }}
-              </button>
-            }
+            <ng-container [ngTemplateOutlet]="errorFeedback" [ngTemplateOutletContext]="{ $implicit: panel.error }" />
           }
           @case ('pager') {
             <div class="status" role="status">
@@ -35,12 +37,17 @@
             </div>
             <div class="pagination" role="group" aria-label="Activity pages">
               <button exButton variant="ghost" size="sm" type="button"
-                [attr.aria-disabled]="!panel.window.previous || panel.busy"
-                (click)="panel.window.previous && request('previous')">Earlier</button>
+                [attr.aria-disabled]="!panel.window.previous || !panel.canNavigate"
+                (click)="panel.canNavigate && panel.window.previous && request('previous')">Earlier</button>
               <button exButton variant="secondary" size="sm" type="button"
-                [attr.aria-disabled]="!panel.window.next || panel.busy"
-                (click)="panel.window.next && request('next')">Later</button>
+                [attr.aria-disabled]="!panel.window.next || !panel.canNavigate"
+                (click)="panel.canNavigate && panel.window.next && request('next')">Later</button>
             </div>
+            @if (panel.error) {
+              <div class="page-error">
+                <ng-container [ngTemplateOutlet]="errorFeedback" [ngTemplateOutletContext]="{ $implicit: panel.error }" />
+              </div>
+            }
           }
         }
       </div>

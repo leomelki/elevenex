@@ -34,6 +34,7 @@ export type ClaudeTranscriptItemKind =
 
 export type AgentToolKind =
   | 'read'
+  | 'image_view'
   | 'write'
   | 'edit'
   | 'notebook_edit'

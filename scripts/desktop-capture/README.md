@@ -732,10 +732,11 @@ view identity in both themes through the production window with controlled trans
 
 `scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
 turns against the preview transport. It checks the collapsed reply and counts,
-held activity, reversal, the frame-by-frame reveal, cached reopen, error retry
-and forward activity paging, with stable reply identity, keyboard focus and
-composer draft. Use the connected-workspace preview URL. The dark run uses a
-narrow viewport and reduced motion.
+held activity, reversal, the frame-by-frame reveal, cached reopen, error retry,
+and forward activity paging with a receipt separated from its call. It checks
+stable reply identity, keyboard focus during a failed page read, the composer
+draft, and shared workspace change labeling. Use the connected-workspace preview
+URL. The dark run uses a narrow viewport and reduced motion.
 
 `scenarios/session-tool-details.mjs` expands Worked and its activity group
 before requesting tool evidence by keyboard. It checks request cancellation,

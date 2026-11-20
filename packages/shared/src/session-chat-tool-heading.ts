@@ -42,10 +42,27 @@ export function sessionChatToolHeading(tool: Tool, decodedInput: unknown, result
       else if (exit !== undefined) meta = `Exit ${exit}`;
       break;
     }
-    case 'read':
+    case 'read': {
+      const paths = new Set(path ? [path] : []);
+      for (const value of list(input['commandActions'] ?? input['command_actions'])) {
+        const action = object(value);
+        if (action['type'] !== 'read') continue;
+        const file = text(action, 'path', 'name');
+        if (file) paths.add(file);
+      }
+      const more = paths.size > 1 ? ` +${paths.size - 1} more` : '';
+      const first = paths.values().next().value ?? defaultTitle;
+      summary = first.slice(0, 500 - more.length) + more;
+      if (result?.execution?.interrupted) meta = 'Interrupted';
+      else if (result?.execution?.exitCode) meta = `Exit ${result.execution.exitCode}`;
+      break;
+    }
     case 'write':
     case 'edit':
       summary = path || defaultTitle;
+      break;
+    case 'image_view':
+      summary = path || 'Image';
       break;
     case 'file_changes': {
       const count = list(input['changes']).length;

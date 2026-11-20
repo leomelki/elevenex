@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import type { SessionChatChangeSummary } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import {
   computeTurnChangeDetailsFromItems,
@@ -21,11 +22,17 @@ export function changedFile(file: TurnChangedFile) {
     del: file.deletions,
   };
 }
-export function changeSummary(details: TurnChangeDetails | null | undefined) {
+function sharedChanges(details: TurnChangeDetails) {
+  return details.capture?.shared || details.filesChanged.some(file => file.attribution === 'shared')
+    ? { shared: true as const } : {};
+}
+
+export function changeSummary(details: TurnChangeDetails | null | undefined): SessionChatChangeSummary | undefined {
   return details
     ? {
         files: details.filesChanged.slice(0, 200).map(changedFile),
         total: details.filesChanged.length,
+        ...sharedChanges(details),
       }
     : undefined;
 }
@@ -73,7 +80,7 @@ export function capturedChangeSummary(
       });
     }
   const filesChanged = [...files.values()];
-  return (
+  const summary = (
     changeSummary(
       reconcileCapturedChanges(
         {
@@ -86,6 +93,7 @@ export function capturedChangeSummary(
       ),
     ) ?? { files: [], total: 0 }
   );
+  return summaries.some(edit => edit?.shared) ? { ...summary, shared: true as const } : summary;
 }
 
 function nativeChanges(turn: readonly AgentTranscriptItem[]) {
@@ -187,6 +195,7 @@ export interface PreparedTurnChanges {
   readonly turnId: string;
   readonly revision: string;
   readonly files: readonly TurnChangedFile[];
+  readonly shared?: true;
 }
 
 export function prepareTurnChanges(
@@ -211,7 +220,7 @@ export function prepareTurnChanges(
     .update(turn.findLast((item) => item.turnChanges)?.id ?? '')
     .update(JSON.stringify(native))
     .digest('hex');
-  return { turnId, revision, files };
+  return { turnId, revision, files, ...(details ? sharedChanges(details) : {}) };
 }
 
 export function turnChangesPage(
@@ -238,7 +247,7 @@ export function preparedChangesPage(
   lineOffset = 0,
   expectedRevision?: string,
 ) {
-  const { turnId, revision, files } = prepared;
+  const { turnId, revision, files, shared } = prepared;
   if (expectedRevision && revision !== expectedRevision)
     throw new BadRequestException(
       'These changes were updated. Reopen the review.',
@@ -274,6 +283,7 @@ export function preparedChangesPage(
     offset: pageOffset,
     files: files.slice(pageOffset, pageOffset + 100).map(changedFile),
     total: files.length,
+    ...(shared ? { shared } : {}),
     nextOffset: pageOffset + 100 < files.length ? pageOffset + 100 : null,
     content: selected
       ? {

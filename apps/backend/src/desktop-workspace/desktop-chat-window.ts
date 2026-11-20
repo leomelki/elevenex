@@ -2,7 +2,8 @@ import type { SessionChatItem } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { capturedChangeSummary } from './desktop-chat-changes.js';
 import { chatItem, chatItemChanges, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
-import { toolKey, type ChatToolDetails, type ProjectChatTool } from './desktop-chat-tool-details.js';
+import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
+import { ChatToolLinks, type ChatToolPositions } from './desktop-chat-tool-links.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
 
 const SAVED_SUMMARY_LIMIT = 40;
@@ -10,6 +11,7 @@ const SAVED_SUMMARY_LIMIT = 40;
 /** Remember emitted page cursors and the last prompt span without retaining the provider's items. */
 export class ChatHistoryIndex {
   private readonly positions = new Map<string, number>();
+  private readonly tools: ChatToolPositions = new Map();
   private source = { size: 0, first: '', last: '' };
   private prompt?: { index: number; through: number; id?: string };
 
@@ -18,7 +20,12 @@ export class ChatHistoryIndex {
     if (size === this.source.size && first === this.source.first && last === this.source.last) return;
     this.source = { size, first, last };
     this.positions.clear();
+    this.tools.clear();
     this.prompt = undefined;
+  }
+
+  fillTools(history: readonly AgentTranscriptItem[], links: ChatToolLinks): void {
+    links.findMissing(history, this.tools);
   }
 
   position(history: readonly AgentTranscriptItem[], id: string): number {
@@ -166,17 +173,20 @@ export function chatWindow(
   }
 
   const ordered = [...candidates.values()];
-  const calls = new Map<string, AgentTranscriptItem>();
-  for (const { item } of ordered)
-    if (item.kind === 'tool_use') calls.set(toolKey(item), item);
+  const links = new ChatToolLinks(ordered.map(({ item }) => item));
+  if (toolPage) {
+    links.findMissing(live);
+    historyIndex.fillTools(history, links);
+  }
   const items: SessionChatItem[] = [];
   let bytes = 0;
   let edge = following ? 0 : ordered.length;
   while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
     const position = following ? edge : edge - 1;
     const { item: raw, summary } = ordered[position];
-    const call = raw.kind === 'tool_result' ? calls.get(toolKey(raw)) : undefined;
-    let item = summary ?? toolPage?.project(raw, call) ?? chatItem(raw, call, changesCache, mediaCache);
+    const peer = links.peer(raw);
+    const call = raw.kind === 'tool_result' ? peer : undefined;
+    let item = summary ?? toolPage?.activity(raw, peer) ?? chatItem(raw, call, changesCache, mediaCache);
     if (!summary && raw.turnChanges) {
       let turnStart = position - 1;
       while (turnStart >= 0 && ordered[turnStart].item.kind !== 'user') turnStart--;
@@ -184,7 +194,7 @@ export function chatWindow(
       for (let index = Math.max(0, turnStart); index < position; index++) {
         const { item: result } = ordered[index];
         if (result.kind !== 'tool_result') continue;
-        const call = calls.get(toolKey(result));
+        const call = links.peer(result);
         if (call) changes.push(chatItemChanges(result, call, changesCache));
       }
       item = { ...item, changes: capturedChangeSummary(raw, changes) };

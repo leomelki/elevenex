@@ -52,8 +52,14 @@ export interface SessionChatRecord {
   readonly changes?: SessionChatChangeSummary;
   /** Present on tool rows whose input and text are available through the detail read. */
   readonly toolDetails?: SessionChatToolHeading;
-  /** Result identity and outcome for a call in a paged activity view. */
+  /** Result identity and outcome, including when a page only contains the call. */
   readonly receipt?: { readonly id: string; readonly error: boolean; readonly toolDetails?: SessionChatToolHeading };
+  /** The matching call's heading on a deferred result that may be paged separately. */
+  readonly invocation?: {
+    readonly id: string;
+    readonly toolKind: string | null;
+    readonly toolDetails: SessionChatToolHeading;
+  };
 }
 export interface SessionChatToolHeading {
   readonly revision: string;
@@ -71,7 +77,7 @@ export interface SessionChatToolSource {
 export interface SessionChatToolDetailsRead extends SessionChatTarget, SessionChatToolSource {
   readonly requestId: string;
 }
-export type SessionChatToolRecord = Omit<SessionChatRecord, 'kind' | 'media' | 'mentions' | 'changes' | 'receipt' | 'toolDetails'> & {
+export type SessionChatToolRecord = Omit<SessionChatRecord, 'kind' | 'media' | 'mentions' | 'changes' | 'receipt' | 'invocation' | 'toolDetails'> & {
   readonly kind: 'tool_use' | 'tool_result';
 };
 export interface SessionChatToolEvidence extends SessionChatToolReference {
@@ -123,6 +129,7 @@ export const SESSION_CHAT_TOOL_CATEGORIES = [
 export type SessionChatToolCategory = (typeof SESSION_CHAT_TOOL_CATEGORIES)[number];
 const toolCategories: Readonly<Record<string, SessionChatToolCategory>> = {
   read: 'read',
+  image_view: 'read',
   write: 'create',
   edit: 'edit',
   file_changes: 'edit',
@@ -463,6 +470,8 @@ export interface SessionChatChangedFile {
 export interface SessionChatChangeSummary {
   readonly files: readonly SessionChatChangedFile[];
   readonly total: number;
+  /** The worktree capture includes changes observed during overlapping work. */
+  readonly shared?: true;
 }
 export interface SessionChatChangesRead extends SessionChatTarget {
   readonly requestId: string;
@@ -479,12 +488,10 @@ export interface SessionChatChangeLine {
   readonly newNumber?: number;
   readonly text: string;
 }
-export interface SessionChatChangesPage {
+export interface SessionChatChangesPage extends SessionChatChangeSummary {
   readonly turnId: string;
   readonly revision: string;
   readonly offset: number;
-  readonly files: readonly SessionChatChangedFile[];
-  readonly total: number;
   readonly nextOffset: number | null;
   readonly content: {
     readonly path: string;

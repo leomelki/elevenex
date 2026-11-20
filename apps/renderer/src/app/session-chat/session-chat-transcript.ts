@@ -260,15 +260,15 @@ function projectExchanges(
           return [old.step];
         const project = (): WorkStep[] => {
           if (item.kind === "tool_use") {
-            const receipt = !result ? item.receipt : undefined;
-            const resultRef = toolReference(result ?? receipt);
+            const receipt = item.receipt;
+            const resultRef = toolReference(result) ?? toolReference(receipt);
             const callRef = toolReference(item);
             const deferredTool = callRef ? { item: callRef, result: resultRef }
               : resultRef ? { item: resultRef } : undefined;
-            const evidence = deferredTool ? undefined : presentSessionToolEvidence(item, result, receipt?.id);
+            const evidence = deferredTool ? undefined : presentSessionToolEvidence(item, result, result ? undefined : receipt?.id);
             const hasResult = !!result || !!receipt;
             const outcome =
-              result?.error || receipt?.error || item.error
+              (result?.error ?? receipt?.error) || item.error
                 ? "failed"
                 : !hasResult && !live
                   ? "unknown"
@@ -290,36 +290,43 @@ function projectExchanges(
               },
             ];
           }
-          const media = item.kind === 'tool_result' && !item.error
-            ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
-              .map(({ path, caption }) => ({ path, caption }))
-            : undefined;
-          // Text receipts can update the call, but previews belong to the
-          // result's own position, even if it arrives after another message.
-          if (pairedResult)
-            return media?.length ? [{ id, kind: 'media', media }] : [];
-          const orphan = item.kind === 'tool_result' ? toolReference(item) : undefined;
+          if (item.kind === "tool_result") {
+            const media = !item.error
+              ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
+                .map(({ path, caption }) => ({ path, caption }))
+              : undefined;
+            // Text receipts update the call. Previews stay at the result's
+            // position, including when it arrives after another message.
+            if (pairedResult) return media?.length ? [{ id, kind: 'media', media }] : [];
+            const resultRef = toolReference(item);
+            const invocation = item.invocation;
+            const callRef = toolReference(invocation);
+            return [{
+              id,
+              kind: invocation ? sessionToolKind(invocation) : "tool",
+              detail: invocation?.toolDetails.summary ?? item.toolName ?? "Tool result",
+              media,
+              status: item.error ? "failed" : "done",
+              ...(resultRef ? {
+                verb: callRef ? 'Result' : undefined,
+                deferredTool: callRef ? { item: callRef, result: resultRef } : { item: resultRef },
+                meta: item.toolDetails?.meta,
+              } : presentSessionToolEvidence(item)),
+            }];
+          }
           return [
             {
-              id: renderId(item),
+              id,
               kind:
                 item.kind === "thinking"
                   ? "think"
                   : item.kind === "assistant"
                     ? "say"
-                    : item.kind === "error" || item.kind === "tool_result"
+                    : item.kind === "error"
                       ? "tool"
                       : "note",
-              text: item.kind === 'tool_result' ? undefined : messageText(item),
-              media,
-              detail:
-                item.kind === "error"
-                  ? item.text
-                  : item.kind === "tool_result"
-                    ? (item.toolName ?? "Tool result")
-                    : undefined,
-              ...(orphan ? { deferredTool: { item: orphan }, meta: item.toolDetails?.meta }
-                : item.kind === 'tool_result' ? presentSessionToolEvidence(item) : {}),
+              text: messageText(item),
+              detail: item.kind === "error" ? item.text : undefined,
               status:
                 item.error || item.kind === "error"
                   ? "failed"
@@ -338,15 +345,15 @@ function projectExchanges(
     const captured = completed ? completed.changes : group.items
       .filter((item) => item.kind === "system" && item.changes)
       .at(-1)?.changes;
-    const reported = new Map(completed ? [] :
-      group.items.flatMap((item) =>
-        item.kind === "tool_result" && !item.error
-          ? (item.changes?.files ?? []).map(
-              (file) => [file.path, file] as const,
-            )
-          : [],
-      ),
-    );
+    const reported = new Map<string, NonNullable<SessionChatItem['changes']>['files'][number]>();
+    let sharedChanges = captured?.shared;
+    if (!completed && !captured) {
+      for (const item of group.items) {
+        if (item.kind !== 'tool_result' || item.error || !item.changes) continue;
+        for (const file of item.changes.files) reported.set(file.path, file);
+        sharedChanges ??= item.changes.shared;
+      }
+    }
     const files = captured?.files ?? [...reported.values()];
     const filesTotal = captured?.total ?? files.length;
     const endedAt = group.items.reduce<number | undefined>((latest, item) => {
@@ -402,6 +409,7 @@ function projectExchanges(
       files: previous?.exchange.files?.length === files.length && files.every((file, i) => file === previous.exchange.files?.[i])
         ? previous.exchange.files : files,
       filesTotal,
+      sharedChanges,
       answerBeforeStepId:
         finalEnd > finalStart
           ? steps.find((step) => followingIds.has(step.id))?.id

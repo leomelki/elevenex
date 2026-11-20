@@ -289,8 +289,10 @@ full-history read, so a cold provider parse can still dominate initial latency.
   inline turns and cached pages open directly.
 - The disclosure responds immediately. A slow read opens an inline loading
   surface after 150ms, then reveals the timeline in place. A failure offers
-  retry while keeping the reply readable. Scope and revision changes invalidate
-  pending results. Activity and its loading surface respect reduced motion.
+  retry while keeping the reply readable. When a page is already visible, its
+  rows and paging controls stay in place through loading and failure. Scope
+  and revision changes invalidate pending results. Activity and its loading
+  surface respect reduced motion.
 
 ### Tool evidence
 
@@ -300,8 +302,9 @@ file-change metadata and existing inline media references remain available in
 the timeline. Older engines can send inline evidence with the same row UI.
 
 Opening a tool starts one bounded read for its call and its receipt when
-available. An orphan result opens by its own identity. Worked and group
-expansion, hover and keyboard focus alone do not read tool evidence. The
+available. A page that contains only the receipt shows a named Result row and
+opens that same pair. A result without a known call opens by its own identity.
+Worked and group expansion, hover and keyboard focus alone do not read tool evidence. The
 conversation owner shares an in-flight request for matching open references and
 cancels it when the last observer closes, leaves the current page or changes
 session. A receipt arriving for an open call changes its reference and replaces
@@ -314,6 +317,10 @@ item revisions. Cache hits reopen without a placeholder. Slow reads reveal a
 loading surface after 140ms, then ease to the evidence while preserving the
 header and reading position. Failed reads can be retried in place. Evidence
 uses the existing preview, Details and original transcript reader.
+Counts describe observed operations, including calls whose completion is
+unknown. Codex compound reads show their other paths and reported command steps
+in the evidence. Saved image views are tool operations with recorded paths and
+use the same confined media reader as other transcript images.
 
 ### History window and related reads
 

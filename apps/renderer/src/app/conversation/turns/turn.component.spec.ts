@@ -335,7 +335,7 @@ describe("turn evidence", () => {
     expect(host.querySelector(".work-label")?.textContent?.trim()).toBe("Worked for 12s");
     expect(Array.from(host.querySelectorAll(".fact"), fact =>
       fact.textContent?.replace(/\s+/g, " ").trim(),
-    )).toEqual(["Edited 1 file +83−12", "Ran 1 command", "Read 1 file"]);
+    )).toEqual(["Edited 1 file +83−12", "1 command", "2 reads"]);
     const work = host.querySelector<HTMLButtonElement>(".work")!;
     expect(work.getAttribute("aria-expanded")).toBe("false");
     work.click();

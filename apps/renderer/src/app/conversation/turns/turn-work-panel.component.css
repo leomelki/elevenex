@@ -45,6 +45,16 @@ ex-fold {
 .status.error ex-icon {
   color: var(--attention);
 }
+.page-error {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  padding-block-start: var(--space-1);
+  border-block-start: 1px solid var(--line);
+}
 .waiting .status {
   color: var(--ink);
   font-weight: 500;

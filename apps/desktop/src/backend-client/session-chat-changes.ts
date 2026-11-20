@@ -37,7 +37,8 @@ export function parseChangeSummary(
     throw invalid();
   const total = count(raw["total"]);
   if (total < files.length) throw invalid();
-  return { files, total };
+  if (raw["shared"] !== undefined && raw["shared"] !== true) throw invalid();
+  return { files, total, ...(raw["shared"] ? { shared: true } : {}) };
 }
 export function parseChangesPage(
   value: unknown,

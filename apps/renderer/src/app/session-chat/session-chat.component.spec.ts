@@ -569,7 +569,7 @@ describe("connected chat reply rendering", () => {
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       if (phase === "idle") {
-        expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+        expect(turn.querySelector(".facts")?.textContent).toContain("1 command");
       } else {
         expect(turn.querySelector(".facts")).toBeNull();
       }

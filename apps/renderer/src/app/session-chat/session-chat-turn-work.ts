@@ -205,8 +205,9 @@ export class SessionChatTurnWork {
     if (turn?.revision !== revision) return;
     const open = this.open().get(turnId);
     const position = open?.requested;
-    if (result.ok && result.value.total === turn.total) {
-      const page = result.value;
+    const page = result.ok ? result.value : undefined;
+    if (page?.taskId === selection.taskId && page.sessionId === selection.sessionId &&
+        page.turnId === turnId && page.revision === revision && page.offset === offset && page.total === turn.total) {
       this.cache.put(selection, page);
       if (open?.revision === revision && position?.offset === offset)
         this.set(turnId, { revision, page, previous: position.previous });

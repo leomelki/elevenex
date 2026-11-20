@@ -104,7 +104,7 @@ function status(value: unknown): ToolListItem["status"] {
           ? "pending"
           : undefined;
 }
-export function sessionToolKind(item: SessionChatItem): StepKind {
+export function sessionToolKind(item: Pick<SessionChatItem, 'toolKind'>): StepKind {
   return sessionChatToolCategory(item.toolKind);
 }
 export function sessionToolVerb(
@@ -115,6 +115,7 @@ export function sessionToolVerb(
   if (outcome) {
     const actions: Readonly<Record<string, string>> = {
       read: "read",
+      image_view: "view image",
       write: "write",
       edit: "edit",
       file_changes: "apply changes",
@@ -141,6 +142,7 @@ export function sessionToolVerb(
   }
   const verbs: Readonly<Record<string, readonly [string, string]>> = {
     read: ["Read", "Reading"],
+    image_view: ["Viewed image", "Viewing image"],
     write: ["Wrote", "Writing"],
     edit: ["Edited", "Editing"],
     file_changes: ["Patched", "Patching"],
@@ -499,9 +501,11 @@ export function presentSessionTool(
       }
       break;
     }
-    case "read":
+    case "read": {
+      const actions = list(input["commandActions"] ?? input["command_actions"]);
+      const command = string(input, "command", "cmd");
       fields([
-        field("File", "file_path", "path", "filePath"),
+        ...(!actions.length ? [field("File", "file_path", "path", "filePath")] : []),
         {
           label: "Start line",
           value: scalar(input["offset"] ?? input["start_line"]),
@@ -515,15 +519,31 @@ export function presentSessionTool(
       rows("Files", list(input["paths"] ?? input["files"]), (value) => ({
         label: scalar(value),
       }));
+      rows("Command steps", actions, value => {
+        const action = record(value);
+        const type = string(action, "type");
+        const description = string(action, "path", "name", "query", "cmd");
+        return {
+          label: description
+            ? `${type && type !== "unknown" ? label(type) : "Command"} · ${description}`
+            : "",
+        };
+      });
+      text("Command", command, true);
       if (result) {
         beginOutput();
+        fields([{ label: "Exit code", value: scalar(result.execution?.exitCode) }]);
         text(
-          result.error ? "Read error" : "File content",
+          result.error ? "Read error" : command ? "Command output" : "File content",
           result.text,
           !result.error,
         );
         outputHandled = true;
       }
+      break;
+    }
+    case "image_view":
+      fields([field("Image", "path", "file_path")]);
       break;
     case "write":
       fields([field("File", "file_path", "path", "filePath")]);

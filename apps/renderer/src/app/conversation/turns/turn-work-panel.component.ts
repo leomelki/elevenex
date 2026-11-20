@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy, Component, ElementRef, afterRenderEffect, computed, effect, input, linkedSignal, output, signal, untracked, viewChild,
 } from '@angular/core';
@@ -5,14 +6,21 @@ import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, Ske
 import type { DeferredTurnWork, TurnWorkAction } from '../conversation.models';
 
 const PLACEHOLDER_DELAY_MS = 150;
+type WorkError = NonNullable<DeferredTurnWork['error']>;
 type PanelView =
   | { readonly mode: 'loading' }
-  | { readonly mode: 'error'; readonly error: NonNullable<DeferredTurnWork['error']> }
-  | { readonly mode: 'pager'; readonly window: NonNullable<DeferredTurnWork['window']>; readonly busy: boolean };
+  | { readonly mode: 'error'; readonly error: WorkError }
+  | {
+      readonly mode: 'pager';
+      readonly window: NonNullable<DeferredTurnWork['window']>;
+      readonly busy: boolean;
+      readonly canNavigate: boolean;
+      readonly error?: WorkError;
+    };
 
 @Component({
   selector: 'ex-turn-work-panel',
-  imports: [AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent],
+  imports: [NgTemplateOutlet, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent],
   templateUrl: './turn-work-panel.component.html',
   styleUrl: './turn-work-panel.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,10 +32,17 @@ export class TurnWorkPanelComponent {
   readonly layoutChanging = output<void>();
   private readonly fold = viewChild<FoldComponent, ElementRef<HTMLElement>>('fold', { read: ElementRef });
   private readonly delayed = signal(false);
+  private readonly errorMessages: Readonly<Record<WorkError, string>> = {
+    changed: 'This activity has changed.',
+    unavailable: 'Waiting for the connection…',
+    failed: 'Couldn’t load activity.',
+  };
   protected readonly view = computed<PanelView | null>(() => {
     const { busy, error, window } = this.work();
+    if (window && (window.previous || window.next || busy || error)) {
+      return { mode: 'pager', window, busy, error, canNavigate: !busy && error !== 'changed' };
+    }
     if (error) return { mode: 'error', error };
-    if (window && (window.previous || window.next || busy)) return { mode: 'pager', window, busy };
     if (busy && this.delayed()) return { mode: 'loading' };
     return null;
   });
@@ -68,5 +83,9 @@ export class TurnWorkPanelComponent {
 
   protected request(action: TurnWorkAction): void {
     if (this.expanded() && !this.work().busy) this.requested.emit(action);
+  }
+
+  protected errorMessage(error: WorkError): string {
+    return this.errorMessages[error];
   }
 }
