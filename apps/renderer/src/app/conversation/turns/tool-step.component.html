@@ -10,7 +10,14 @@
     [attr.aria-expanded]="hasContent() ? expanded() : null"
     [attr.aria-controls]="hasContent() ? bodyId : null"
     [attr.aria-busy]="waiting() || null"
+    [class.pending]="pending()"
     (click)="toggle()"
+    (pointerdown)="press($event)"
+    (keydown)="press($event)"
+    (pointerenter)="hover($event, true)"
+    (pointerleave)="hover($event, false)"
+    (focus)="focusHead(true)"
+    (blur)="focusHead(false)"
   >
     <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
     ><code [class.truncate-start]="detailTruncation() === 'start'" [title]="detail()"

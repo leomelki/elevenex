@@ -2,7 +2,7 @@ import { Component, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { TurnStatus, WorkStep } from "../conversation.models";
-import { TurnComponent } from "./turn.component";
+import { TurnComponent, WORK_PENDING_CUE_MS } from "./turn.component";
 
 @Component({
   imports: [TurnComponent],
@@ -37,9 +37,10 @@ describe("turn work disclosure", () => {
       host.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
       fixture.detectChanges();
       vi.advanceTimersByTime(150);
+      // Resting on Worked itself is stronger intent than the reply's dwell.
       button.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
       fixture.detectChanges();
-      vi.advanceTimersByTime(69);
+      vi.advanceTimersByTime(59);
       expect(hint).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1);
       expect(hint).toHaveBeenCalledOnce();
@@ -52,6 +53,77 @@ describe("turn work disclosure", () => {
       button.dispatchEvent(new FocusEvent('blur'));
       fixture.detectChanges();
       expect(ended).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts warming on a mouse or keyboard press, but not on a touch press that may scroll', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn(), ended = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.componentInstance.workHintEnded.subscribe(ended);
+      const press = (pointerType: string) =>
+        button.dispatchEvent(Object.assign(new Event('pointerdown'), { pointerType, button: 0 }));
+
+      press('touch');
+      fixture.detectChanges();
+      expect(hint).not.toHaveBeenCalled();
+      press('mouse');
+      fixture.detectChanges();
+      expect(hint).toHaveBeenCalledOnce();
+      button.click();
+      fixture.detectChanges();
+      expect(ended).toHaveBeenCalledOnce();
+      button.click();
+      fixture.detectChanges();
+
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+      fixture.detectChanges();
+      expect(hint).toHaveBeenCalledTimes(2);
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('cues a pending read only after an instant-feeling interval', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      const work = { counts: {}, failures: 0, busy: false, ready: false };
+      fixture.componentRef.setInput('deferredWork', work);
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      host.querySelector<HTMLButtonElement>('button.work')!.click();
+      fixture.componentRef.setInput('deferredWork', { ...work, busy: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(WORK_PENDING_CUE_MS - 1);
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
+      vi.advanceTimersByTime(1);
+      fixture.detectChanges();
+      expect(host.classList).toContain('pending');
+      fixture.componentRef.setInput('deferredWork', { ...work, ready: true });
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
+
+      // A read answering within the interval never shows the cue.
+      fixture.componentRef.setInput('deferredWork', { ...work, busy: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(WORK_PENDING_CUE_MS - 20);
+      fixture.componentRef.setInput('deferredWork', { ...work, ready: true });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(100);
+      fixture.detectChanges();
+      expect(host.classList).not.toContain('pending');
     } finally {
       fixture.destroy();
       vi.useRealTimers();

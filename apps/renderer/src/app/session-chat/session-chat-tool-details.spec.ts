@@ -47,6 +47,68 @@ describe('on-demand tool evidence', () => {
     mounted.abort();
   });
 
+  it('warms one closed tool at a time and lets an open join the warmed read', async () => {
+    const { tools, client } = setup();
+    const replies: ((value: BackendResult<SessionChatToolDetailsReply>) => void)[] = [];
+    client.toolDetails.mockImplementation(() => new Promise(resolve => { replies.push(resolve); }));
+    const inspect = tools.provider()!;
+    const other = { item: { id: 'other', revision: item.revision } };
+    inspect.prefetch!(other);
+    inspect.prefetch!(other);
+    expect(client.toolDetails).toHaveBeenCalledOnce();
+    const superseded = client.toolDetails.mock.calls[0]![1];
+    inspect.prefetch!(source);
+    expect(client.cancel).toHaveBeenCalledWith(target.scopeId, superseded.requestId);
+    expect(client.toolDetails).toHaveBeenCalledTimes(2);
+
+    const opened = new AbortController();
+    const view = inspect(source, opened.signal);
+    expect(view.state().status).toBe('loading');
+    // The adopted read is no longer speculative, so a newer intent keeps it.
+    inspect.prefetch!(other);
+    expect(client.cancel).toHaveBeenCalledOnce();
+    expect(client.toolDetails).toHaveBeenCalledTimes(3);
+    replies[1]!(success(client.toolDetails.mock.calls[1]![1]));
+    replies[2]!(success(client.toolDetails.mock.calls[2]![1]));
+    await Promise.resolve();
+    expect(view.state().status).toBe('ready');
+    opened.abort();
+
+    // A completed warm-up opens from the cache without another request.
+    const warmed = inspect(other, new AbortController().signal);
+    expect(warmed.state().status).toBe('ready');
+    expect(client.toolDetails).toHaveBeenCalledTimes(3);
+    tools.select(null);
+  });
+
+  it('keeps failed warm-ups uncached and drops unobserved reads while unavailable', async () => {
+    const { tools, client } = setup();
+    client.toolDetails.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Temporary failure' } });
+    const inspect = tools.provider()!;
+    inspect.prefetch!(source);
+    await Promise.resolve();
+    const view = inspect(source, new AbortController().signal);
+    expect(client.toolDetails).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    expect(view.state().status).toBe('ready');
+
+    let hold!: (value: BackendResult<SessionChatToolDetailsReply>) => void;
+    client.toolDetails.mockImplementationOnce(() => new Promise(resolve => { hold = resolve; }));
+    const other = { item: { id: 'other', revision: item.revision } };
+    inspect.prefetch!(other);
+    const request = client.toolDetails.mock.calls[2]![1];
+    tools.setAvailable(false);
+    expect(client.cancel).toHaveBeenCalledWith(target.scopeId, request.requestId);
+    inspect.prefetch!(other);
+    tools.setAvailable(true);
+    expect(client.toolDetails).toHaveBeenCalledTimes(3);
+    hold(success(request));
+    await Promise.resolve();
+    inspect(other, new AbortController().signal);
+    expect(client.toolDetails).toHaveBeenCalledTimes(4);
+    tools.select(null);
+  });
+
   it('coalesces open observers and reopens cached evidence without a request', async () => {
     const { tools, client } = setup();
     const inspect = tools.provider()!;

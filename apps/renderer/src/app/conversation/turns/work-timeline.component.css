@@ -134,7 +134,9 @@ ex-fold.step-fold {
   animation: activity-ink var(--dur-slow) var(--ease-out) both;
 }
 @keyframes activity-ink {
-  0%, 42% {
+  /* Ink follows the growing edge closely (as Fold's 40ms content delay does);
+     a longer blank hold reads as latency even when the rows were cached. */
+  0%, 15% {
     opacity: 0;
     transform: translateY(calc(-1 * var(--space-1)));
   }

@@ -68,6 +68,16 @@ code.truncate-start {
 .disclosure.turned {
   transform: rotate(90deg);
 }
+/* An opened read outlasting an instant response pulses its heading in place. */
+.head.pending .verb,
+.head.pending .disclosure {
+  animation: tool-pending calc(2 * var(--dur-deliberate)) var(--ease-in-out) infinite alternate;
+}
+@keyframes tool-pending {
+  to {
+    opacity: 0.45;
+  }
+}
 .body-content {
   position: relative;
   display: flow-root;
@@ -138,6 +148,11 @@ pre {
   }
   .disclosure {
     transition: none;
+  }
+  .head.pending .verb,
+  .head.pending .disclosure {
+    animation: none;
+    opacity: 0.6;
   }
 }
 

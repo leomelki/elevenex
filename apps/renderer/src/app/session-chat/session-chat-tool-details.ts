@@ -34,10 +34,15 @@ function keyFor(selection: ChatSelection, source: SessionChatToolSource): string
 export class SessionChatToolDetails {
   private readonly selection = signal<ChatSelection | null>(null);
   private readonly open = new Map<string, Inspection>();
+  /** At most one unobserved read warmed by hover, focus or press intent. */
+  private speculative?: Inspection;
   private available = false;
   readonly provider = computed<ToolDetailsProvider | undefined>(() => {
     const selection = this.selection();
-    return selection ? (source, signal) => this.observe(selection, source, signal) : undefined;
+    return selection ? Object.assign(
+      (source: SessionChatToolSource, signal: AbortSignal) => this.observe(selection, source, signal),
+      { prefetch: (source: SessionChatToolSource) => this.prefetch(selection, source) },
+    ) : undefined;
   });
 
   constructor(
@@ -52,6 +57,7 @@ export class SessionChatToolDetails {
       entry.state.set(unavailable);
     }
     this.open.clear();
+    this.speculative = undefined;
     this.selection.set(selection);
   }
 
@@ -60,7 +66,8 @@ export class SessionChatToolDetails {
     this.available = available;
     for (const entry of this.open.values()) {
       const state = entry.state();
-      if (!available && entry.request) {
+      if (!available && !entry.observers) this.discard(entry);
+      else if (!available && entry.request) {
         this.cancel(entry);
         entry.state.set(unavailable);
       } else if (available && state.status === 'error' && state.reason === 'unavailable') {
@@ -90,6 +97,24 @@ export class SessionChatToolDetails {
     }));
   }
 
+  /** Warm one closed tool into the cache. A newer intent supersedes an unobserved read. */
+  private prefetch(selection: ChatSelection, source: SessionChatToolSource): void {
+    if (!this.available || this.selection() !== selection) return;
+    const key = keyFor(selection, source);
+    if (this.open.has(key) || this.cache.get(selection.scopeId, key)) return;
+    if (this.speculative) this.discard(this.speculative);
+    const entry: Inspection = { selection, source, key, observers: 0, state: signal<ToolDetailsState>(unavailable) };
+    this.open.set(key, entry);
+    this.speculative = entry;
+    this.load(entry);
+  }
+
+  private discard(entry: Inspection): void {
+    if (this.open.get(entry.key) === entry) this.open.delete(entry.key);
+    if (this.speculative === entry) this.speculative = undefined;
+    this.cancel(entry);
+  }
+
   private observe(selection: ChatSelection, source: SessionChatToolSource, signalToRelease: AbortSignal): ToolDetailsInspection {
     const inspection = this.retain(selection, source, signalToRelease);
     if (!inspection) return closed;
@@ -117,6 +142,8 @@ export class SessionChatToolDetails {
       if (!evidence) this.load(entry);
     }
     const inspection = entry;
+    // An observer adopts a warmed read, so the next intent cannot cancel it.
+    if (this.speculative === inspection) this.speculative = undefined;
     inspection.observers++;
     signalToRelease.addEventListener('abort', () => {
       inspection.observers--;
@@ -143,6 +170,9 @@ export class SessionChatToolDetails {
     if (this.open.get(key) !== entry || entry.request !== requestId || this.selection() !== selection) return;
     entry.request = undefined;
     entry.pending = undefined;
+    // An unobserved warm-up leaves only its cached evidence. A failure stays
+    // uncached, so an explicit open reads again.
+    if (!entry.observers) this.discard(entry);
     if (!result.ok) {
       entry.state.set({ status: 'error', reason: result.error.status === 409 ? 'changed' : 'failed' });
       return;

@@ -17,6 +17,10 @@
           [attr.aria-expanded]="expanded()"
           [attr.aria-controls]="workId"
           (click)="toggleWork()"
+          (pointerdown)="pressWork($event)"
+          (keydown)="pressWork($event)"
+          (pointerenter)="trackWorkButton($event, true)"
+          (pointerleave)="trackWorkButton($event, false)"
           (focus)="focusWork()"
           (blur)="workFocused.set(false)"
         >

@@ -57,6 +57,57 @@ describe("tool evidence", () => {
     fixture.destroy();
   });
 
+  it("warms closed evidence on a hover dwell or press and cues only a slow open", () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const inspection = signal<ToolDetailsState>({ status: 'loading' });
+    const prefetch = vi.fn();
+    const inspect = Object.assign(vi.fn(() => ({ state: inspection, retry: () => undefined })), { prefetch });
+    const deferred = { item: { id: 'call', revision: 'a'.repeat(64) } };
+    fixture.componentRef.setInput("detail", "pnpm test");
+    fixture.componentRef.setInput("deferred", deferred);
+    fixture.componentRef.setInput("inspect", inspect);
+    fixture.detectChanges();
+    const head = fixture.nativeElement.querySelector('.head') as HTMLButtonElement;
+    const pointer = (type: string, pointerType = 'mouse') =>
+      head.dispatchEvent(Object.assign(new Event(type), { pointerType, button: 0 }));
+
+    pointer('pointerenter');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(60);
+    pointer('pointerleave');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(200);
+    expect(prefetch).not.toHaveBeenCalled();
+    pointer('pointerenter');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    expect(prefetch).toHaveBeenCalledOnce();
+    expect(prefetch).toHaveBeenCalledWith(deferred);
+
+    pointer('pointerdown', 'touch');
+    fixture.detectChanges();
+    expect(prefetch).toHaveBeenCalledOnce();
+    pointer('pointerdown');
+    fixture.detectChanges();
+    expect(prefetch).toHaveBeenCalledTimes(2);
+
+    head.click();
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(119);
+    fixture.detectChanges();
+    expect(head.classList).not.toContain('pending');
+    vi.advanceTimersByTime(1);
+    fixture.detectChanges();
+    expect(head.classList).toContain('pending');
+    inspection.set({ status: 'ready', evidence: { output: 'ok', presentation: { summary: 'pnpm test', blocks: [] } } });
+    fixture.detectChanges();
+    expect(head.classList).not.toContain('pending');
+    expect(prefetch).toHaveBeenCalledTimes(2);
+    fixture.destroy();
+  });
+
   it("colors literal whole-file contents and preserves whitespace without adding a terminal row", () => {
     const fixture = TestBed.createComponent(ToolStepComponent);
     fixture.componentRef.setInput("detail", "skill-test.txt");

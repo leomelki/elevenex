@@ -202,6 +202,17 @@ footer {
 :host.expanded .chevron ex-icon {
   transform: rotate(90deg);
 }
+/* Opened activity still reading after an instant-feeling interval. The heading
+   pulses in place, so a fast read never flashes and nothing shifts. */
+:host.pending .work-label,
+:host.pending .chevron {
+  animation: work-pending calc(2 * var(--dur-deliberate)) var(--ease-in-out) infinite alternate;
+}
+@keyframes work-pending {
+  to {
+    opacity: 0.45;
+  }
+}
 .failure,
 .failed {
   color: var(--danger);
@@ -273,6 +284,11 @@ footer ex-turn-acts {
   .chevron ex-icon,
   footer ex-turn-acts {
     transition: none;
+  }
+  :host.pending .work-label,
+  :host.pending .chevron {
+    animation: none;
+    opacity: 0.6;
   }
   .work-item {
     transform: none;

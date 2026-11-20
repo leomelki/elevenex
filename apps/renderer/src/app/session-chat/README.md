@@ -290,8 +290,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
   retain their first position and latest value.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
-  A 220 ms mouse dwell over the reply or Worked, or keyboard focus on Worked,
-  can warm one activity batch even while another disclosure is loading.
+  A 220 ms mouse dwell over the reply, keyboard focus on Worked, a 60 ms dwell
+  on Worked itself or a press on it (before the click lands) can warm one
+  activity batch even while another disclosure is loading.
   Moving within the same turn preserves the dwell. Opening joins an active read,
   continues a warmed first batch from its cursor, or uses the complete snapshot
   immediately. A newer uncached dwell can replace speculative work. Closing the
@@ -315,7 +316,11 @@ references remain available. Older engines can send inline evidence with the
 same row UI.
 
 Opening a tool starts one bounded read for its call and its receipt when
-available. A raw history page that contains only the receipt shows a named
+available. A 100 ms hover or visible focus on a closed tool heading, or a press
+on it, warms that same read first. One unobserved warm-up runs at a time; a
+newer intent cancels it, an open adopts it, and a completed warm-up leaves only
+its cached evidence. Failed warm-ups stay uncached, and hidden or disconnected
+chats drop them. A raw history page that contains only the receipt shows a named
 Result row and opens that same pair. A result without a known call opens by
 its own identity. Collapsed tool bodies stay deferred while the reader scans
 the timeline or expands a group. The

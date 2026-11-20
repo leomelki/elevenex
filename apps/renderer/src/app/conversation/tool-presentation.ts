@@ -24,7 +24,15 @@ export interface ToolDetailsInspection {
   retry(): void;
 }
 /** The connected owner supplies evidence only while an expanded row observes it. */
-export type ToolDetailsProvider = (source: SessionChatToolSource, signal: AbortSignal) => ToolDetailsInspection;
+export interface ToolDetailsProvider {
+  (source: SessionChatToolSource, signal: AbortSignal): ToolDetailsInspection;
+  /**
+   * Optionally warm a closed row's evidence on hover, focus or press intent.
+   * The owner bounds speculative reads, cancels superseded ones and lets a
+   * later observer join the read. Plain provider functions omit it.
+   */
+  readonly prefetch?: (source: SessionChatToolSource) => void;
+}
 
 /** Bounded display data supplied by a tool adapter; all strings remain inert text. */
 export interface ToolPresentation {

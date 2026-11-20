@@ -25,6 +25,10 @@ import type {
 } from "../tool-presentation";
 import { ToolContentComponent } from "./tool-content.component";
 
+// Resting on a tool heading is deliberate; scanning a list passes each row faster.
+const TOOL_INTENT_MS = 100;
+const TOOL_PENDING_CUE_MS = 120;
+
 function sameReference(left?: SessionChatToolReference, right?: SessionChatToolReference): boolean {
   return left?.id === right?.id && left?.revision === right?.revision;
 }
@@ -82,6 +86,9 @@ export class ToolStepComponent implements OnChanges {
       ? inspection.value : undefined;
   });
   protected readonly waiting = computed(() => this.current()?.state().status === 'loading');
+  /** A read that outlasts an instant-feeling interval shows a cue on the heading. */
+  protected readonly pending = signal(false);
+  private readonly intent = signal<'dwell' | 'press' | null>(null);
   private readonly detailView = computed<ToolDetailsState | null>(() => {
     const state = this.current()?.state();
     return state?.status === 'ready' || (state?.status === 'error' && state.reason !== 'unavailable') ? state : null;
@@ -103,6 +110,24 @@ export class ToolStepComponent implements OnChanges {
     (this.deferred() ? !!this.painted() : this.hasContent()));
 
   constructor() {
+    effect(cleanup => {
+      const intent = this.intent(), source = this.source(), prefetch = this.inspect()?.prefetch;
+      if (!intent || !source || !prefetch || this.expanded()) return;
+      if (intent === 'press') {
+        untracked(() => prefetch(source));
+        return;
+      }
+      const timer = setTimeout(() => prefetch(source), TOOL_INTENT_MS);
+      cleanup(() => clearTimeout(timer));
+    });
+    effect(cleanup => {
+      if (!this.waiting()) {
+        this.pending.set(false);
+        return;
+      }
+      const timer = setTimeout(() => this.pending.set(true), TOOL_PENDING_CUE_MS);
+      cleanup(() => clearTimeout(timer));
+    });
     effect(cleanup => {
       const source = this.source(), provider = this.inspect();
       if (!source || !provider || !this.visible()) {
@@ -136,11 +161,31 @@ export class ToolStepComponent implements OnChanges {
   ngOnChanges(): void {
     if (this.open()) this.contentMounted.set(true);
   }
+  protected hover(event: PointerEvent, inside: boolean): void {
+    if (event.pointerType !== 'mouse') return;
+    if (!inside) this.intent.set(null);
+    else if (!this.intent()) this.intent.set('dwell');
+  }
+
+  protected focusHead(focused: boolean): void {
+    if (!focused) this.intent.set(null);
+    else if (!this.intent() && this.head()?.nativeElement.matches(':focus-visible')) this.intent.set('dwell');
+  }
+
+  /** Start reading on press rather than release. A touch press may begin a scroll. */
+  protected press(event: PointerEvent | KeyboardEvent): void {
+    if (event instanceof KeyboardEvent
+      ? !event.repeat && (event.key === 'Enter' || event.key === ' ')
+      : event.pointerType !== 'touch' && event.button === 0) this.intent.set('press');
+  }
+
   protected toggle(): void {
     const expanded = !this.expanded();
     const head = this.head()?.nativeElement;
     if (head) this.layoutChanging.emit(head);
     if (expanded) this.contentMounted.set(true);
+    // A fresh hover or press warms a closed tool again.
+    else this.intent.set(null);
     this.toggled.set(expanded);
     this.expandedChange.emit(expanded);
   }

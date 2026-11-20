@@ -9,11 +9,16 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work
   steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint`, `turnWorkHintEnded` and
-  `turnWorkRequested` with the turn identity. The hint starts after 220 ms of
-  mouse hover over the assistant turn or visible keyboard focus on Worked. It
-  ends when both inputs leave or the turn expands. The open intent carries the
+  `turnWorkRequested` with the turn identity. Intent is tiered: the hint starts
+  after 220 ms of mouse hover over the assistant turn or visible keyboard focus
+  on Worked, after 60 ms of hover on Worked itself, and immediately on a mouse,
+  pen or Enter/Space press so the read overlaps the click. A touch press, which
+  can begin a scroll, does not hint. One hint spans an escalating dwell; it
+  ends when intent leaves or the turn expands. The open intent carries the
   IDs of previously visible expanded tools. The owner supplies pending, ready
-  or error state and publishes the chronological steps together. Preserve `answerId` and set
+  or error state and publishes the chronological steps together. An open read
+  that is still busy after 120 ms pulses the Worked heading in place (a static
+  dim with reduced motion); faster reads never show it. Preserve `answerId` and set
   `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
   focus and leaves the reply and file chips available while the activity loads.
   `filesTotal` and `filesDiff` preserve complete work facts with a bounded file
@@ -50,8 +55,12 @@ Supply `WorkStep.deferredTool` for a tool with an addressable body and pass an
 `inspectTool` provider to Chat, Turn or WorkTimeline. ToolStep acquires the
 provider only while the row is visible and expanded, and aborts that observation
 on collapse, replacement or destruction. The feature owner handles transport and
-caching. ToolStep keeps the heading in place until the evidence or a retry
-action is ready. Fold owns opening and closing, and one AutoHeight wrapper
+caching. A provider may also expose `prefetch(source)`: ToolStep calls it for a
+closed row after a 100 ms mouse hover or visible focus on its heading, or
+immediately on a non-touch press. The owner bounds and cancels those warm-ups
+and lets the later observation join them; plain provider functions omit it.
+ToolStep keeps the heading in place until the evidence or a retry
+action is ready, pulsing it only when the read outlasts 120 ms. Fold owns opening and closing, and one AutoHeight wrapper
 owns updates to the already open body. Inline evidence uses the same disclosure.
 
 ## Scrolling and performance
