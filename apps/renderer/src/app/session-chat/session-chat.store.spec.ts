@@ -86,11 +86,13 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
   });
   const bridge = {
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
+    sessionChatTurnWork: vi.fn<ElevenexBridge['sessionChatTurnWork']>(async () =>
+      ({ ok: false, error: { code: 'transport', message: 'No activity fixture.' } })),
     sessionChatCommand: vi.fn<NonNullable<ElevenexBridge["sessionChatCommand"]>>(async () => ok({ accepted: true as const })),
     sessionChatCancel: vi.fn(async () => undefined),
   } satisfies Pick<
     ElevenexBridge,
-    "sessionChatRead" | "sessionChatCommand" | "sessionChatCancel"
+    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatCommand" | "sessionChatCancel"
   >;
   if (options.initial) bridge.sessionChatRead.mockImplementationOnce(() => options.initial!);
   TestBed.configureTestingModule({
@@ -1628,6 +1630,38 @@ it('keeps the visible chat lifetime and incremental cursor across same-machine r
   expect(store.viewRevision()).toBe(view); expect(store.items()[0]?.id).toBe('kept');
   expect(bridge.sessionChatRead).toHaveBeenLastCalledWith('recovered', expect.objectContaining({ after: 'cursor' }));
 });
+
+it('warms a hovered saved turn on the recovered scope while history is still pending', async () => {
+  const activityRevision = 'a'.repeat(64);
+  const prompt = item('saved', 'user', 'Saved question', { completedTurn: {
+    revision: activityRevision, endId: 'reply', reply: [item('reply', 'assistant', 'Saved answer')],
+    beforeReply: 1, total: 1, counts: {}, failures: 0,
+  } });
+  const { store, bridge, scope } = setup({ initial: Promise.resolve(ok(page(2, { items: [prompt] }))) });
+  await settle();
+  TestBed.tick();
+  const activity = item('activity', 'assistant', 'Previous work');
+  bridge.sessionChatTurnWork.mockImplementation(async (_scope, { taskId, sessionId, turnId, revision, offset }) =>
+    ok({ taskId, sessionId, turnId, revision, offset, total: 1, nextOffset: null, timeline: [activity] }));
+  store.work.hint(prompt.id);
+  await settle();
+  expect(bridge.sessionChatTurnWork.mock.calls.map(([scope]) => scope)).toEqual(['scope']);
+
+  const history = deferred<BackendResult<SessionChatPage>>();
+  bridge.sessionChatRead.mockReturnValueOnce(history.promise);
+  TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered');
+  scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
+  store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false);
+  TestBed.tick();
+  await settle();
+  expect(bridge.sessionChatTurnWork.mock.calls.map(([scope]) => scope)).toEqual(['scope', 'recovered']);
+  store.work.toggle(prompt.id, true);
+  expect(store.work.open().get(prompt.id)?.items).toEqual([activity]);
+  expect(bridge.sessionChatTurnWork).toHaveBeenCalledTimes(2);
+  history.resolve(ok(page(2, { reset: false })));
+  await settle();
+});
+
 it('keeps an earlier-history window on screen instead of jumping to latest after recovery', async () => {
   const { store, bridge, scope } = setup(); await settle();
   const items = Array.from({ length: 320 }, (_, index) => item(String(index), 'user', `Request ${index}`));

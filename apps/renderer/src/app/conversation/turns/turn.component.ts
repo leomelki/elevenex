@@ -59,6 +59,8 @@ const WORK_PRELOAD_INTENT_MS = 220;
     "(keydown)": "onKey($event)",
     "(animationend)": "arrivalFinished($event)",
     "(focusin)": "arriving.set(false)",
+    "(pointerenter)": "trackWorkPointer($event, true)",
+    "(pointerleave)": "trackWorkPointer($event, false)",
   },
 })
 export class TurnComponent implements OnChanges {
@@ -72,10 +74,12 @@ export class TurnComponent implements OnChanges {
   readonly deferredWork = input<DeferredTurnWork>();
   readonly workToggled = output<TurnWorkToggle>();
   readonly workHint = output<void>();
+  readonly workHintEnded = output<void>();
   readonly workRequested = output<TurnWorkAction>();
   readonly workLayoutChanging = output<HTMLElement>();
   protected readonly workId = 'work-' + crypto.randomUUID();
-  private intentTimer?: ReturnType<typeof setTimeout>;
+  private readonly workHovered = signal(false);
+  protected readonly workFocused = signal(false);
   private reopenToolIds: readonly string[] = [];
   readonly answerBeforeStepId = input<string>();
   readonly answerId = input<string>();
@@ -133,6 +137,8 @@ export class TurnComponent implements OnChanges {
       this.toggled() ??
       (this.status() === "live" || this.open() || this.inspecting()),
   );
+  private readonly workHintActive = computed(() =>
+    !!this.deferredWork() && !this.expanded() && (this.workHovered() || this.workFocused()));
   /** Epoch ms when a live turn began; it then counts its own elapsed time. */
   readonly startedAt = input<number>();
   private readonly now = signal(Date.now());
@@ -226,7 +232,20 @@ export class TurnComponent implements OnChanges {
       open = next;
       untracked(() => this.workToggled.emit({ open: next, toolIds: next ? this.reopenToolIds : [] }));
     });
-    inject(DestroyRef).onDestroy(() => this.clearWorkHint());
+    const destroy = inject(DestroyRef);
+    effect(cleanup => {
+      if (!this.workHintActive()) return;
+      let started = false;
+      const timer = setTimeout(() => {
+        if (!this.workHintActive()) return;
+        started = true;
+        this.workHint.emit();
+      }, WORK_PRELOAD_INTENT_MS);
+      cleanup(() => {
+        clearTimeout(timer);
+        if (started && !destroy.destroyed) untracked(() => this.workHintEnded.emit());
+      });
+    });
     afterRenderEffect((onCleanup) => {
       const element = this.factsElement()?.nativeElement;
       this.facts();
@@ -287,8 +306,12 @@ export class TurnComponent implements OnChanges {
 
   protected toggleWork(): void {
     const open = !this.expanded();
-    if (!open && this.deferredWork()?.ready) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
-    this.clearWorkHint();
+    if (!open) {
+      if (this.deferredWork()?.ready) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
+      // Closing cancels the read. Require fresh hover or focus before warming it again.
+      this.workHovered.set(false);
+      this.workFocused.set(false);
+    }
     this.notifyWorkLayout();
     this.toggled.set(open);
   }
@@ -298,19 +321,12 @@ export class TurnComponent implements OnChanges {
     if (button) this.workLayoutChanging.emit(button);
   }
 
-  protected considerWorkHint(event: PointerEvent | FocusEvent): void {
-    if (!this.deferredWork() || this.expanded() || this.intentTimer !== undefined) return;
-    if ('pointerType' in event ? event.pointerType !== 'mouse'
-      : !this.workButton()?.nativeElement.matches(':focus-visible')) return;
-    this.intentTimer = setTimeout(() => {
-      this.intentTimer = undefined;
-      this.workHint.emit();
-    }, WORK_PRELOAD_INTENT_MS);
+  protected trackWorkPointer(event: PointerEvent, inside: boolean): void {
+    if (event.pointerType === 'mouse') this.workHovered.set(inside);
   }
 
-  protected clearWorkHint(): void {
-    clearTimeout(this.intentTimer);
-    this.intentTimer = undefined;
+  protected focusWork(): void {
+    this.workFocused.set(!!this.workButton()?.nativeElement.matches(':focus-visible'));
   }
 
   protected requestWork(action: TurnWorkAction): void {

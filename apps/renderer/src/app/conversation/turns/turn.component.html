@@ -17,10 +17,8 @@
           [attr.aria-expanded]="expanded()"
           [attr.aria-controls]="workId"
           (click)="toggleWork()"
-          (pointerenter)="considerWorkHint($event)"
-          (pointerleave)="clearWorkHint()"
-          (focus)="considerWorkHint($event)"
-          (blur)="clearWorkHint()"
+          (focus)="focusWork()"
+          (blur)="workFocused.set(false)"
         >
           <span class="work-label" [class.failed]="status() === 'failed'"
             >{{ header.verb

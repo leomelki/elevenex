@@ -8,10 +8,12 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work
-  steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint` and `turnWorkRequested`
-  with the turn identity. The open intent carries the IDs of previously visible
-  expanded tools. The owner supplies pending, ready or error state and publishes
-  the chronological steps together. Preserve `answerId` and set
+  steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint`, `turnWorkHintEnded` and
+  `turnWorkRequested` with the turn identity. The hint starts after 220 ms of
+  mouse hover over the assistant turn or visible keyboard focus on Worked. It
+  ends when both inputs leave or the turn expands. The open intent carries the
+  IDs of previously visible expanded tools. The owner supplies pending, ready
+  or error state and publishes the chronological steps together. Preserve `answerId` and set
   `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
   focus and leaves the reply and file chips available while the activity loads.
   `filesTotal` and `filesDiff` preserve complete work facts with a bounded file

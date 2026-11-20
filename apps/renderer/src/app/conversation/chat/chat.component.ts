@@ -65,6 +65,7 @@ export class ChatComponent {
   readonly turnAction = output<{ id: string; action: TurnAction }>();
   readonly turnWorkToggled = output<TurnWorkToggle & { readonly id: string }>();
   readonly turnWorkHint = output<string>();
+  readonly turnWorkHintEnded = output<string>();
   readonly turnWorkRequested = output<{ id: string; action: TurnWorkAction }>();
   readonly openFile = output<string>();
   readonly fileReview = output<{ readonly id: string; readonly path: string }>();

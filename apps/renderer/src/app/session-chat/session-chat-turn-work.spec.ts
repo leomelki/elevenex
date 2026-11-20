@@ -52,7 +52,8 @@ describe('finished turn activity', () => {
     vi.useFakeTimers();
     const { work, client } = setup();
     work.hint('turn');
-    work.hint('another');
+    work.hint('turn');
+    work.endHint('turn');
     expect(work.open().size).toBe(0);
     work.toggle('turn', true);
     expect(client.turnWork).toHaveBeenCalledOnce();
@@ -71,7 +72,101 @@ describe('finished turn activity', () => {
     expect(client.turnWork).toHaveBeenCalledOnce();
   });
 
-  it('assembles older engine pages before publishing the first or last row', async () => {
+  it('preloads a small turn while another disclosure is waiting and uses the result on the first open', async () => {
+    const { work, client } = setup();
+    const slow = deferred<BackendResult<SessionChatTurnWorkReply>>();
+    client.turnWork.mockReturnValueOnce(slow.promise);
+    work.toggle('another', true);
+    work.hint('turn');
+    await settle();
+
+    expect(work.open().get('another')?.busy).toBe(true);
+    expect(work.open().has('turn')).toBe(false);
+    expect(client.turnWork.mock.calls.map(([, input]) => input.turnId)).toEqual(['another', 'turn']);
+    work.toggle('turn', true);
+    expect(work.open().get('turn')?.items).toEqual(page().items);
+    expect(work.open().get('turn')?.busy).toBeUndefined();
+    expect(client.turnWork).toHaveBeenCalledTimes(2);
+    expect(client.cancel).not.toHaveBeenCalled();
+    slow.resolve({ ok: true, value: page('another') });
+    await settle();
+  });
+
+  it('gives a new dwell the speculative slot and drops the superseded reply', async () => {
+    const { work, client } = setup();
+    const superseded = deferred<BackendResult<SessionChatTurnWorkReply>>();
+    client.turnWork.mockReturnValueOnce(superseded.promise);
+    work.hint('turn');
+    work.endHint('turn');
+    work.hint('another');
+    expect(client.cancel).toHaveBeenCalledExactlyOnceWith(selection.scopeId, client.turnWork.mock.calls[0]![1].requestId);
+    superseded.resolve({ ok: true, value: page() });
+    await settle();
+
+    work.toggle('another', true);
+    expect(work.open().get('another')?.items).toEqual(page('another').items);
+    expect(client.turnWork).toHaveBeenCalledTimes(2);
+    work.toggle('turn', true);
+    expect(client.turnWork).toHaveBeenCalledTimes(3);
+    await settle();
+  });
+
+  it('keeps a matching preload reusable when another turn is opened after it starts', async () => {
+    const { work, client } = setup();
+    const held = deferred<BackendResult<SessionChatTurnWorkReply>>();
+    client.turnWork.mockReturnValueOnce(held.promise);
+    work.hint('turn');
+    work.endHint('turn');
+    work.toggle('another', true);
+    await settle();
+    expect(work.open().get('another')?.items).toEqual(page('another').items);
+
+    work.toggle('turn', true);
+    held.resolve({ ok: true, value: page() });
+    await settle();
+    expect(work.open().get('turn')?.items).toEqual(page().items);
+    expect(client.turnWork).toHaveBeenCalledTimes(2);
+    expect(client.cancel).not.toHaveBeenCalled();
+  });
+
+  it('rechecks a sustained hint on availability and revision changes', async () => {
+    const { work, client } = setup();
+    const held = deferred<BackendResult<SessionChatTurnWorkReply>>();
+    client.turnWork.mockReturnValueOnce(held.promise);
+    work.sync([turn(), turn('another')], false);
+    work.hint('another');
+    work.endHint('another');
+    work.hint('turn');
+    expect(client.turnWork).not.toHaveBeenCalled();
+
+    work.sync([turn(), turn('another')], true);
+    expect(client.turnWork.mock.calls.map(([, input]) => input.turnId)).toEqual(['turn']);
+    const replacement = 'b'.repeat(64);
+    work.sync([turn('turn', 2, replacement)], true);
+    expect(client.cancel).toHaveBeenCalledExactlyOnceWith(selection.scopeId, client.turnWork.mock.calls[0]![1].requestId);
+    held.resolve({ ok: true, value: page() });
+    await settle();
+
+    work.toggle('turn', true);
+    expect(work.open().get('turn')).toMatchObject({ revision: replacement, items: page().items });
+    expect(client.turnWork.mock.calls.map(([, input]) => input.revision)).toEqual([revision, replacement]);
+  });
+
+  it('releases a suspended page on selection change without requesting its remaining pages', async () => {
+    const { work, client } = setup();
+    work.sync([turn('turn', 105)], true);
+    client.turnWork.mockResolvedValueOnce({ ok: true, value: page('turn', 0, revision, 105, 40) });
+    work.hint('turn');
+    await settle();
+
+    work.select({ ...selection, sessionId: 102 });
+    await settle();
+    expect(client.turnWork).toHaveBeenCalledOnce();
+    expect(client.cancel).not.toHaveBeenCalled();
+    expect(work.open().size).toBe(0);
+  });
+
+  it.each(['on open', 'after a preload'] as const)('assembles older engine pages %s before publishing rows', async mode => {
     const { work, client } = setup();
     const last = deferred<BackendResult<SessionChatTurnWorkPage>>();
     work.sync([turn('turn', 105)], true);
@@ -79,6 +174,13 @@ describe('finished turn activity', () => {
       .mockResolvedValueOnce({ ok: true, value: page('turn', 0, revision, 105, 40) })
       .mockResolvedValueOnce({ ok: true, value: page('turn', 40, revision, 105, 40) })
       .mockReturnValueOnce(last.promise);
+    if (mode === 'after a preload') {
+      work.hint('turn');
+      await settle();
+      work.endHint('turn');
+      expect(client.turnWork.mock.calls.map(([, input]) => input.offset)).toEqual([0]);
+      expect(work.open().size).toBe(0);
+    }
     work.toggle('turn', true);
     await settle();
     expect(client.turnWork.mock.calls.map(([, input]) => input.offset)).toEqual([0, 40, 80]);

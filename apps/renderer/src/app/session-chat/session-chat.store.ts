@@ -243,7 +243,9 @@ export class SessionChatStore {
     });
     effect(() => {
       const items = this.visibleItems();
-      const available = this.active() && !this.offline() && !document.hidden;
+      // A verified rebind can preserve both the visible items and online state.
+      const available = !!this.selectedTarget() && !!this.selectedScope() &&
+        this.active() && !this.offline() && !document.hidden;
       untracked(() => {
         this.tools.setAvailable(available);
         this.work.sync(items, available);

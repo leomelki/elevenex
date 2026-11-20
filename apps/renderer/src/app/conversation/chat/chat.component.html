@@ -80,6 +80,7 @@
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
         (workToggled)="turnWorkToggled.emit({ id: exchange.id, ...$event })"
         (workHint)="turnWorkHint.emit(exchange.id)"
+        (workHintEnded)="turnWorkHintEnded.emit(exchange.id)"
         (workRequested)="turnWorkRequested.emit({ id: exchange.id, action: $event })"
         (workLayoutChanging)="scroll()?.keepDisclosurePosition($event)"
         (openFile)="

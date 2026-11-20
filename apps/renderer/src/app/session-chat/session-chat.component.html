@@ -25,6 +25,7 @@
   (turnAction)="turnAction($event)"
   (turnWorkToggled)="store.work.toggle($event.id, $event.open, $event.toolIds)"
   (turnWorkHint)="store.work.hint($event)"
+  (turnWorkHintEnded)="store.work.endHint($event)"
   (turnWorkRequested)="$event.action === 'refresh' ? latest() : store.work.retry($event.id)"
   (copyCode)="copy($event, true)"
   (openLink)="openLink($event)"

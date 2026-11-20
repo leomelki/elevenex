@@ -290,10 +290,15 @@ full-history read, so a cold provider parse can still dominate initial latency.
   retain their first position and latest value.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
-  A turn with at most 40 hidden records can warm after 220 ms of pointer or
-  keyboard focus intent, and opening it joins that read. Closing the disclosure,
-  hiding the chat or switching conversations cancels pending reads. Scope and
-  revision changes discard stale results.
+  A 220 ms mouse dwell over the reply or Worked, or keyboard focus on Worked,
+  can warm one activity batch even while another disclosure is loading.
+  Moving within the same turn preserves the dwell. Opening joins an active read,
+  continues a warmed first batch from its cursor, or uses the complete snapshot
+  immediately. A newer uncached dwell can replace speculative work. Closing the
+  disclosure cancels its read until a fresh interaction. Hiding the chat or
+  switching conversations cancels pending reads.
+  Scope and revision changes discard stale results. A sustained dwell can warm
+  the current revision when the conversation is available again.
 - The reply and counts stay available throughout. Open sections and tool
   disclosures survive releasing a turn's rows after collapse. Reopening
   stages previously visible tool evidence alongside the compact timeline.

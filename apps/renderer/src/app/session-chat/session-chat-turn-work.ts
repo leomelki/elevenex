@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import {
-  SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+  SESSION_CHAT_TURN_WORK_MAX_LIMIT,
   type SessionChatCompletedTurn, type SessionChatItem, type SessionChatRecord,
 } from '@elevenex/shared';
 import type { SessionChatClient } from '../backend/session-chat-client.service';
@@ -48,6 +48,11 @@ interface WorkRequest {
   readonly turnId: string;
   readonly revision: string;
   readonly controller: AbortController;
+  resume?: () => void;
+}
+interface WorkHint {
+  readonly turnId: string;
+  attemptedRevision?: string;
 }
 interface TurnToolPreparation {
   prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal, turnId?: string): Promise<void>;
@@ -68,6 +73,7 @@ export class SessionChatTurnWork {
   private turns = new Map<string, SessionChatCompletedTurn>();
   private readonly pending = new Map<string, WorkRequest>();
   private readonly closing = new Map<string, ReturnType<typeof setTimeout>>();
+  private hinted?: WorkHint;
   private prefetch?: WorkRequest;
 
   constructor(
@@ -78,6 +84,7 @@ export class SessionChatTurnWork {
 
   select(selection: ChatSelection | null, retainDisclosures = false): void {
     this.pause();
+    if (!retainDisclosures) this.hinted = undefined;
     for (const id of this.closing.keys()) this.clearClosing(id);
     this.selection = selection;
     this.turns.clear();
@@ -90,6 +97,7 @@ export class SessionChatTurnWork {
     this.turns = new Map(items.flatMap(item => item.completedTurn ? [[item.id, item.completedTurn]] : []));
     if (!available) this.pause();
     this.available = available;
+    if (this.hinted && !this.turns.has(this.hinted.turnId)) this.hinted = undefined;
     for (const request of this.pending.values())
       if (this.turns.get(request.turnId)?.revision !== request.revision) this.cancel(request);
     for (const [id, open] of this.open()) {
@@ -102,10 +110,12 @@ export class SessionChatTurnWork {
         this.load(id);
       }
     }
+    this.prefetchHint();
   }
 
   pause(): void {
     this.available = false;
+    if (this.hinted) this.hinted.attemptedRevision = undefined;
     for (const request of this.pending.values()) this.cancel(request);
     for (const [id, open] of this.open())
       if (open.busy) this.set(id, { ...open, busy: undefined });
@@ -123,6 +133,7 @@ export class SessionChatTurnWork {
         this.closing.set(id, setTimeout(() => {
           this.closing.delete(id);
           this.set(id, undefined);
+          this.prefetchHint();
         }, DISCLOSURE_EXIT_MS));
       }
       return;
@@ -138,11 +149,12 @@ export class SessionChatTurnWork {
   }
 
   hint(id: string): void {
-    const turn = this.turns.get(id);
-    const selection = this.selection;
-    if (!turn || !selection || !this.available || this.pending.size || this.open().has(id) ||
-      turn.total > SESSION_CHAT_TURN_WORK_LIMIT || this.cache.get(selection, id, turn.revision)) return;
-    this.prefetch = this.request(selection, id, turn);
+    if (this.hinted?.turnId !== id) this.hinted = { turnId: id };
+    this.prefetchHint();
+  }
+
+  endHint(id: string): void {
+    if (this.hinted?.turnId === id) this.hinted = undefined;
   }
 
   retry(id: string): void {
@@ -162,6 +174,20 @@ export class SessionChatTurnWork {
     });
   }
 
+  private prefetchHint(): void {
+    const hint = this.hinted;
+    const selection = this.selection;
+    if (!hint || !selection || !this.available) return;
+    const id = hint.turnId;
+    const turn = this.turns.get(id);
+    if (!turn || hint.attemptedRevision === turn.revision || this.open().has(id) || this.pending.has(id)) return;
+    hint.attemptedRevision = turn.revision;
+    if (this.cache.get(selection, id, turn.revision)) return;
+    // Keep one speculative batch. A newer dwell takes the slot even while another turn is open.
+    if (this.prefetch) this.cancel(this.prefetch);
+    this.prefetch = this.request(selection, id, turn);
+  }
+
   private load(id: string): void {
     const selection = this.selection;
     const turn = this.turns.get(id);
@@ -175,13 +201,14 @@ export class SessionChatTurnWork {
     if (!this.available && !cached) return;
     if (!open.busy) this.set(id, { ...open, busy: true });
     const active = this.pending.get(id);
-    // A click takes ownership of matching speculation. Speculation for a
-    // different turn yields to a requested read.
+    // A click on the same turn takes ownership of its speculative read.
     if (active) {
-      if (this.prefetch === active) this.prefetch = undefined;
+      if (this.prefetch === active) {
+        this.prefetch = undefined;
+        active.resume?.();
+      }
       return;
     }
-    if (this.prefetch) this.cancel(this.prefetch);
     this.request(selection, id, turn, cached);
   }
 
@@ -245,6 +272,12 @@ export class SessionChatTurnWork {
         items.push(timelineRecord(row, revision));
         if (beforeReply) replyOffset++;
       }
+      if (offset < turn.total && this.prefetch === request) {
+        // Hold the validated first page and its cursor until an explicit open.
+        await new Promise<void>(resume => { request.resume = resume; });
+        request.resume = undefined;
+        if (!this.current(selection, request)) return;
+      }
     }
     return items.length ? { items, ...(timeline ? { replyOffset } : {}) } : { error: 'failed' };
   }
@@ -256,7 +289,8 @@ export class SessionChatTurnWork {
 
   private cancel(request: WorkRequest): void {
     request.controller.abort();
-    if (this.selection) this.client.cancel(this.selection.scopeId, request.id);
+    if (request.resume) request.resume();
+    else if (this.selection) this.client.cancel(this.selection.scopeId, request.id);
     this.pending.delete(request.turnId);
     if (this.prefetch === request) this.prefetch = undefined;
   }

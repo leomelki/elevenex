@@ -742,6 +742,11 @@ it, along with reply identity, keyboard focus and draft retention. Use the
 connected-workspace preview URL. The dark run uses a narrow viewport and reduced
 motion.
 
+`scenarios/session-turn-work-hover.mjs` uses trusted pointer input to warm a
+reply while another turn is loading, opens it from the finished cache while
+the transport is held, and joins an in-flight preload for a larger turn. Run
+it against the connected-workspace preview URL in both themes.
+
 `scenarios/session-tool-details.mjs` expands Worked and its activity group
 before requesting tool evidence by keyboard. It checks request cancellation,
 the direct evidence reveal, retry focus and cached reopen in the

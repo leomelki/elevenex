@@ -16,6 +16,103 @@ class ReplyHostComponent {
 }
 
 describe("turn work disclosure", () => {
+  it('keeps a dwell across the reply and Worked, and retains independent keyboard focus', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.componentRef.setInput('answer', 'Final reply');
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn(), ended = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.componentInstance.workHintEnded.subscribe(ended);
+
+      host.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'touch' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      host.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(150);
+      button.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(69);
+      expect(hint).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(hint).toHaveBeenCalledOnce();
+
+      vi.spyOn(button, 'matches').mockImplementation(selector => selector === ':focus-visible');
+      button.dispatchEvent(new FocusEvent('focus'));
+      host.dispatchEvent(Object.assign(new Event('pointerleave'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      expect(ended).not.toHaveBeenCalled();
+      button.dispatchEvent(new FocusEvent('blur'));
+      fixture.detectChanges();
+      expect(ended).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('warms a turn that becomes deferred while the mouse is already over its reply', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('answer', 'Final reply');
+      fixture.detectChanges();
+      const hint = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      fixture.nativeElement.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      vi.advanceTimersByTime(220);
+      expect(hint).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('requires a fresh interaction to warm work again after an explicit close', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TurnComponent);
+    try {
+      fixture.componentRef.setInput('deferredWork', { counts: {}, failures: 0, busy: false, ready: false });
+      fixture.detectChanges();
+      const host: HTMLElement = fixture.nativeElement;
+      const button = host.querySelector<HTMLButtonElement>('button.work')!;
+      const hint = vi.fn();
+      fixture.componentInstance.workHint.subscribe(hint);
+      const pointer = (type: string) => host.dispatchEvent(Object.assign(new Event(type), { pointerType: 'mouse' }));
+
+      pointer('pointerenter');
+      fixture.detectChanges();
+      button.click();
+      fixture.detectChanges();
+      button.click();
+      fixture.detectChanges();
+      vi.advanceTimersByTime(250);
+      expect(hint).not.toHaveBeenCalled();
+
+      pointer('pointerleave');
+      pointer('pointerenter');
+      fixture.detectChanges();
+      vi.advanceTimersByTime(220);
+      expect(hint).toHaveBeenCalledOnce();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
   it("animates a fresh turn once, retaining entry through receipt and streaming updates", () => {
     const fixture = TestBed.createComponent(TurnComponent);
     fixture.componentRef.setInput("isNew", true);
