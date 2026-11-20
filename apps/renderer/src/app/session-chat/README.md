@@ -56,14 +56,16 @@ Older engines omit the capability and retain their original send contract.
   change a different conversation. No write is replayed by reconnect or refresh.
   Idle heartbeats retain unchanged conversation inputs. Backend resets
   reconcile the authoritative suffix, including rewinds while a session
-  was cached. An overlapping first row lets the store retain its contiguous
-  prefix when the prompt context still matches. Transient background
+  was cached. An overlapping first row lets both background resets and
+  explicit refreshes of the live tail retain the loaded prefix when the
+  prompt context still matches. Transient background
   read failures retain the transcript and retry quietly; initial/explicit reads
   and unsupported-engine errors still expose recovery feedback.
   Confirmed non-configuration actions reconcile through that same quiet,
   incremental read path. Repeated visibility notifications share the active read.
-  Leaving a history edge while its page is pending cancels the read and resumes
-  the live feed, preserving the window the reader scrolled back into.
+  Reversing direction, leaving a history edge, or inspecting visible work cancels
+  its pending page read and resumes the live feed. Returning to latest keeps the
+  historical window and its cursors until a fresh read succeeds.
 - Paging keeps at most 320 contiguous raw records. When hidden work leaves the
   newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
   context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
@@ -229,33 +231,30 @@ caches a bounded set of emitted cursor offsets and the last prompt span for its
 current history revision. Pages project and transport only bounded candidates,
 and idle heartbeats refresh state without projecting an unchanged transcript.
 
-`SESSION_CHAT_PROGRESSIVE_LOADING` is an injectable rollout flag, **false** by
-default. Normal reads request one recent window of at most **320 records / 2 MiB**;
-this disables small-page progressive opening without fetching an unbounded
-transcript. Older-window reads wait for scroll intent rather than prefilling a
-short collapsed conversation at startup. An uncached opening still pending after
-**3,000 ms** enables progressive loading for the **whole application connection**,
-cancels its larger request and requests
-**80 records / 512 KiB**. A small “Progressive” label accompanies the initial or
-history loading glyph while work is pending. This is a slow-open heuristic,
-not a diagnosis of network quality. It does not time idle long polls, cached
-revalidation or ordinary history navigation. Navigation, hiding, pausing and
-destruction cancel the deadline; stale replies cannot replace the current window.
+Progressive loading is enabled by default through
+`SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
+**80 records / 512 KiB** with compact completed turns on supporting engines.
+The viewport can prefetch older pages to fill available space, within a
+four-page budget and while each page adds visible height. A cold conversation
+open shows a transcript and composer skeleton after 150 ms. The real chat
+renders as soon as the page is ready, with the latest reply positioned before
+paint. The placeholder surface crossfades to that view over 140 ms while the
+composer stays interactive. Reduced motion swaps the surface immediately.
+Cached opens, new-session drafts and background history reads use their
+existing content immediately. History prefetch preserves the reading position.
 
-`SessionChatLoadingPolicy` is shared at application/window lifetime, independently
-of chat owners, selected tasks/projects and draft caches. Every chat inherits the
-fallback immediately, including newly mounted workspaces; other pending initial
-window reads switch to small pages too. Normal background long polls finish
-without interruption and use small pages on their next read. Backend scope IDs
-rotate on reconnect or engine restart, resetting the adaptive fallback even for
-a same-machine rebind. Application restart starts with a fresh policy. Old-scope
-timers/replies cannot enable fallback on the new connection. No per-chat choice
-or connection-health decision is persisted with drafts.
+An override can start in window mode at **320 records / 2 MiB** and defer
+older pages until scroll intent. If an uncached opening takes more than
+**1,750 ms**, the application-wide `SessionChatLoadingPolicy` retries it in
+progressive mode and switches the other chats on that connection. The deadline
+applies only to uncached openings. Navigation, hiding, pausing and destruction
+cancel it. Backend scope rotation and app restart reset the adaptive choice.
 
 Preview application boundaries that override `BackendClientService` also provide
 `SessionChatLoadingPolicy` at that boundary. Individual chat/workspace owners
 inherit it, so recreating those owners cannot reset the connection's fallback.
-There is no automatic mutation retry or full-history background drain.
+The connected workspace preview accepts `?chatLoading=window` for exercising
+the window-mode override and its fallback.
 
 The optional `loadingMode: 'window' | 'progressive'` request selects these bounds
 for latest/live reads. Adjacent history pages remain at most 80 / 512 KiB in both
@@ -269,6 +268,89 @@ cursor, without blocking the composer or repeating an initial history read when
 the feed is still current. The backend provider's source-history API remains a
 full-history read, so a cold provider parse can still dominate initial latency.
 
+### Saved turn activity
+
+- A settled turn can occupy one saved entry with its prompt, latest reply
+  blocks, elapsed time, counts by tool category, failures and the first three
+  changed files plus the full file and line totals. Complete saved turns in an
+  ordinary window and the paginated Changes review use the same reconciliation.
+  The default profile requests compact entries for recent saved turns too.
+  Older engines may return small recent turns inline. A prompt with no hidden
+  work stays inline. The engine selects at most 40 summaries per history read
+  and keeps the current live turn's stream and saved completion handoff
+  available. Replies exceeding eight blocks or 128 KiB use the ordinary
+  history window so all their visible text stays accessible.
+- Summary selection occurs only at complete saved turn boundaries. Backward
+  paging uses the prompt ID and forward paging uses the last source ID. A
+  page starting or ending inside a turn uses ordinary rows at that seam.
+  The renderer counts visible reply blocks toward its 320-record window.
+- Opening Worked requests a compact timeline. Each tool call carries the same
+  heading and outcome as the ordinary timeline, plus an optional result ID.
+  Its paired receipt uses an empty source slot,
+  with inline image references kept at their original positions. Commentary and
+  the visible reply stay in order. The entire timeline appears in one update.
+  Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
+  order, independent of the chat's scroll direction. Older engines keep their
+  ordinary work pages. Every batch must match the turn revision and advance
+  contiguously before the view publishes the timeline. Repeated provider row IDs
+  retain their first position and latest value.
+- The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
+  serialized data, keyed by backend scope, task, session and turn revision.
+  A 220 ms mouse dwell over the reply, keyboard focus on Worked, a 60 ms dwell
+  on Worked itself or a press on it (before the click lands) can warm an
+  activity batch even while another disclosure is loading.
+  Moving within the same turn preserves the dwell. Opening joins an active read,
+  continues a warmed first batch from its cursor, or uses the complete snapshot
+  immediately. Up to three unopened warm-ups (one batch each) keep running, so
+  moving between turns lets earlier reads finish into the cache; returning to
+  an in-flight turn reuses its read. A fourth uncached dwell cancels the oldest
+  warm-up, including a held first batch of a large turn. Closing the
+  disclosure cancels its read until a fresh interaction. Hiding the chat or
+  switching conversations cancels pending reads.
+  Scope and revision changes discard stale results. A sustained dwell can warm
+  the current revision when the conversation is available again.
+- The reply and counts stay available throughout. Open sections and tool
+  disclosures survive releasing a turn's rows after collapse. Reopening
+  stages previously visible tool evidence alongside the compact timeline.
+  Unopened groups mount their count controls and defer their folded tool rows.
+  A failed read offers retry in place. The reveal respects reduced motion.
+
+### Tool evidence
+
+Normal windows, live updates and saved activity pages opt into deferred tool
+details. Compact timeline tools share their enclosing turn revision and resolve
+their call and receipt within that exact saved turn. Ordinary rows carry
+individual evidence revisions. Counts, file-change metadata and inline media
+references remain available. Older engines can send inline evidence with the
+same row UI.
+
+Opening a tool starts one bounded read for its call and its receipt when
+available. A 100 ms hover or visible focus on a closed tool heading, or a press
+on it, warms that same read first. Up to four unobserved warm-ups run at once;
+a newer intent beyond them cancels the oldest, an open adopts its warm-up and
+frees that slot, and a completed warm-up leaves only its cached evidence. Failed warm-ups stay uncached, and hidden or disconnected
+chats drop them. A raw history page that contains only the receipt shows a named
+Result row and opens that same pair. A result without a known call opens by
+its own identity. Collapsed tool bodies stay deferred while the reader scans
+the timeline or expands a group. The
+conversation owner shares an in-flight request for matching open references and
+cancels it when the last observer closes, leaves the current page or changes
+session. A receipt arriving for an open call changes its reference and replaces
+the requested evidence in place. Hidden or disconnected chats pause pending
+reads. Closing the tool releases the mounted evidence after its exit.
+
+Successful reads are kept in a window-local LRU of 48 entries and 1 MiB of
+serialized evidence. Entries are scoped by machine, task, session and either the
+saved turn revision or the individual item revisions. The heading stays in place during a read, then the evidence
+opens in one fold. Failed reads can be retried in place. Evidence
+uses the existing preview, Details and original transcript reader.
+Counts describe observed operations, including calls whose completion is
+unknown. Codex compound reads show their other paths and reported command steps
+in the evidence. Saved image views are tool operations with recorded paths and
+use the same confined media reader as other transcript images.
+
+### History window and related reads
+
 History windows also carry an optional
 bounded `leadingPrompt` when the first item belongs to an earlier user message.
 That prompt supplies the turn identity and reminder without moving the page cursor
@@ -279,8 +361,9 @@ at most 320 items. Scrolling near either edge automatically loads an adjacent pa
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional
 `following`/`next` contract continues forward without gaps while live state keeps
-refreshing. Sending reconciles the live tail first; the draft stays editable while
-reading. Engines without forward cursors retain an automatic return to their tail
+refreshing. Live state changes update the composer without relabeling historical
+turns as live or failed. Sending reconciles the live tail first, and the draft
+stays editable while reading. Engines without forward cursors retain an automatic return to their tail
 when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
 with explicit access to the original paged content. State, queue, model and
 activity collections have separate finite bounds; main caps the complete reply
@@ -537,6 +620,9 @@ older engines can omit it. Persisted net captures include shell edits and surviv
 history reloads. Successful native edits provide a fallback; failed/pending calls
 do not claim changed files. Captured unchanged paths remove reverted edits, while
 explicit edits outside the captured repository survive reconciliation.
+An ignored file observed without a starting state only contributes when a
+successful tool supplies evidence for that path. Verified binary and mode-only
+changes still contribute to the file count.
 
 `SessionChat.reviewRequested` carries the selected scope/task/session, stable
 reply ID and optional file path. `MachineWorkspace` owns that selection and
@@ -638,10 +724,12 @@ Provider history retains ordinary named Markdown links. Projection recognizes on
 our private upload namespace, emits bounded image/video/file metadata, and avoids
 duplicating provider-native image blocks. The transcript shows supplied images in
 the existing accessible image viewer, videos in the existing recording player,
-and documents as named cards with Copy path. Media reads select a recorded item
-and attachment ID, validate signatures, and confine real paths to that session's
-upload directory. Video data is limited to MP4/WebM/Ogg; codec failures remain
-readable. The desktop CSP permits local data media, with no external media hosts.
+and documents as named cards with Copy path. A standalone Markdown embed such as
+`![Walkthrough](artifacts/run.webm)` can also show a recording from the session
+workspace in an agent reply. Media reads select a recorded item and attachment ID,
+validate signatures, and confine recordings to the workspace or that session's
+upload directory. Video data is limited to MP4/WebM/Ogg and 20 MiB per file. Codec
+failures remain readable. The desktop CSP permits local data media.
 
 The preview adapter and `session-attachments.mjs` exercise native file selection,
 DOM paste/drop, files-only sends, retry/removal, viewer focus, playback and both

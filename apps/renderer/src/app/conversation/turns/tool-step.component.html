@@ -3,11 +3,21 @@
   [class.failed]="status() === 'failed'"
 >
   <button
+    #head
     type="button"
     class="head"
     [disabled]="!hasContent()"
     [attr.aria-expanded]="hasContent() ? expanded() : null"
+    [attr.aria-controls]="hasContent() ? bodyId : null"
+    [attr.aria-busy]="waiting() || null"
+    [class.pending]="pending()"
     (click)="toggle()"
+    (pointerdown)="press($event)"
+    (keydown)="press($event)"
+    (pointerenter)="hover($event, true)"
+    (pointerleave)="hover($event, false)"
+    (focus)="focusHead(true)"
+    (blur)="focusHead(false)"
   >
     <ex-icon [name]="icon()" [size]="14" /><span class="verb">{{ verb() }}</span
     ><code [class.truncate-start]="detailTruncation() === 'start'" [title]="detail()"
@@ -31,26 +41,58 @@
     }
     @if (hasContent()) {
       <ex-icon
-        [name]="expanded() ? 'chevron-down' : 'chevron-right'"
+        class="disclosure"
+        name="chevron-right"
+        [class.turned]="expanded()"
         [size]="12"
       />
     }
   </button>
-  <ex-fold [open]="expanded() && hasContent()">
-    @if (expanded() || contentMounted()) {
-      @if (presentation(); as content) {
-        <ex-tool-content
-          [presentation]="content"
-          [status]="status()"
-          [copiedCode]="copiedCode()"
-          (copyCode)="copyCode.emit($event)"
-          [original]="output()"
-          [fullContent]="fullContent()"
-          (contentRequested)="contentRequested.emit($event)"
-        />
-      } @else {
-        <pre tabindex="0" aria-label="Tool output">{{ output() }}</pre>
-      }
+  <ex-fold #fold [id]="bodyId" [open]="bodyOpen()">
+    @if (deferred() ? !!painted() : expanded() || contentMounted()) {
+      <div exAutoHeight>
+        <div class="body-content">
+          @if (deferred()) {
+            @let panel = painted();
+            @switch (panel?.status) {
+              @case ('error') {
+                <div class="detail-notice">
+                  <span class="detail-status" role="status">
+                    <ex-icon name="clock" [size]="14" />
+                    {{ panel.reason === 'changed' ? 'Tool details have changed.' : 'Couldn’t load tool details.' }}
+                  </span>
+                  <button exButton variant="ghost" size="sm" type="button" (click)="retry()">
+                    {{ panel.reason === 'changed' ? 'Refresh conversation' : 'Retry' }}
+                  </button>
+                </div>
+              }
+              @case ('ready') {
+                <ex-tool-content
+                  [presentation]="panel.evidence.presentation"
+                  [status]="status()"
+                  [copiedCode]="copiedCode()"
+                  [original]="panel.evidence.output"
+                  [fullContent]="panel.evidence.fullContent"
+                  (copyCode)="copyCode.emit($event)"
+                  (contentRequested)="contentRequested.emit($event)"
+                />
+              }
+            }
+          } @else if (presentation(); as content) {
+            <ex-tool-content
+              [presentation]="content"
+              [status]="status()"
+              [copiedCode]="copiedCode()"
+              [original]="output()"
+              [fullContent]="fullContent()"
+              (copyCode)="copyCode.emit($event)"
+              (contentRequested)="contentRequested.emit($event)"
+            />
+          } @else {
+            <pre tabindex="0" aria-label="Tool output">{{ output() }}</pre>
+          }
+        </div>
+      </div>
     }
   </ex-fold>
 </section>

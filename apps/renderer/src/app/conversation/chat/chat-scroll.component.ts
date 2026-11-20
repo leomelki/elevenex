@@ -21,7 +21,6 @@ import {
   TooltipDirective,
 } from "../../ui";
 import { MessageComponent } from "./message.component";
-import { ChatLoadingComponent } from './chat-loading.component';
 import { ChatHistoryScroll } from "./chat-history-scroll";
 import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
@@ -34,7 +33,7 @@ const PEEK_DELAY = 320;
 const historyMargin = (height: number) => Math.min(480, height * 0.75);
 @Component({
   selector: "ex-chat-scroll",
-  imports: [ButtonComponent, IconComponent, TooltipDirective, ChatLoadingComponent],
+  imports: [ButtonComponent, IconComponent, TooltipDirective],
   templateUrl: "./chat-scroll.component.html",
   styleUrl: "./chat-scroll.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -50,7 +49,6 @@ export class ChatScrollComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
-  readonly progressiveLoading = input(false);
   readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
@@ -70,16 +68,72 @@ export class ChatScrollComponent {
   private lastHistoryDirection: "before" | "following" = "before";
   private historyBudget = 0;
   private requestedHeight = 0;
+  private disclosure?: {
+    readonly anchor: HTMLElement;
+    readonly turn: Element;
+    readonly top: number;
+    settledFrames: number;
+  };
   private historyIntent: "before" | "following" = "before";
+  private nativeScrollOrigin: number | undefined;
   onViewportWheel(event: WheelEvent): void {
-    if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-    this.historyIntent = event.deltaY < 0 ? "before" : "following";
-    this.onViewportInteraction();
+    if (event.defaultPrevented || event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    const viewport = this.viewport().nativeElement;
+    // Code, tool output and media can own their own scroll area inside a turn.
+    // Only use the wheel for history when it can reach the outer viewport.
+    let target = event.target instanceof Element ? event.target : null;
+    while (target && target !== viewport) {
+      const remaining = target.scrollHeight - target.clientHeight;
+      if (remaining > 0) {
+        const style = getComputedStyle(target);
+        const scrollable = style.overflowY === "auto" || style.overflowY === "scroll";
+        const canMove = event.deltaY < 0 ? target.scrollTop > 0 : remaining - target.scrollTop > 1;
+        if (scrollable && (canMove || style.overscrollBehaviorY === "contain" || style.overscrollBehaviorY === "none")) return;
+      }
+      target = target.parentElement;
+    }
+    this.beginHistoryScroll(event.deltaY < 0 ? "before" : "following");
   }
-  onViewportInteraction(): void {
+  onViewportPointerDown(event: PointerEvent): void {
+    const viewport = this.viewport().nativeElement;
+    const gutter = viewport.getBoundingClientRect().left + viewport.clientWidth;
+    // A disclosure click must not arm paging. Touch and scrollbar gestures
+    // get their direction from the first actual movement of the viewport.
+    this.nativeScrollOrigin = undefined;
+    if (event.pointerType === "mouse" && event.clientX < gutter) return;
+    this.nativeScrollOrigin = this.historyScroll?.top ?? viewport.scrollTop;
+    this.disclosure = undefined;
+    this.interruptSendReveal();
+  }
+  clearPointerScroll(): void {
+    this.nativeScrollOrigin = undefined;
+  }
+  private beginHistoryScroll(direction: "before" | "following"): void {
+    this.nativeScrollOrigin = undefined;
+    this.disclosure = undefined;
+    this.historyIntent = direction;
+    if (direction !== this.lastHistoryDirection) this.cancelPendingHistory();
     this.historyBudget = 4;
     this.interruptSendReveal();
     if (this.contentReady) this.scheduleMeasure();
+  }
+
+  /** Inline evidence grows below its control, even when the reply was pinned
+   * to the end. Its layout is also independent of new-message indicators. */
+  keepDisclosurePosition(anchor: HTMLElement): void {
+    const turn = anchor.closest('ex-turn');
+    if (!this.contentReady || !turn || !this.host.contains(anchor)) return;
+    const view = this.viewport().nativeElement.getBoundingClientRect();
+    const bounds = anchor.getBoundingClientRect();
+    if (bounds.bottom <= view.top || bounds.top >= view.bottom) return;
+    this.cancelPendingHistory();
+    this.historyBudget = 0;
+    if (this.disclosure?.anchor === anchor) this.disclosure.settledFrames = 0;
+    else this.disclosure = {
+      anchor, turn, settledFrames: 0,
+      top: bounds.top - view.top,
+    };
+    this.scheduleMeasure();
   }
 
   private rememberPosition(): void {
@@ -102,6 +156,7 @@ export class ChatScrollComponent {
     if (!arrivals.length) return;
     const fresh = arrivals.filter(message => message.isNew() && message.role() === "user");
     if (fresh.length) {
+      this.disclosure = undefined;
       this.interruptSendReveal();
       this.historyScroll?.finish();
       const viewport = this.viewport().nativeElement;
@@ -152,9 +207,8 @@ export class ChatScrollComponent {
   onViewportKey(event: KeyboardEvent): void {
     if (event.target === event.currentTarget &&
       ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-      this.historyIntent = ["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)
-        ? "before" : "following";
-      this.onViewportInteraction();
+      this.beginHistoryScroll(["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)
+        ? "before" : "following");
     }
   }
   readonly startAtEnd = input(true);
@@ -300,6 +354,9 @@ export class ChatScrollComponent {
     });
   }
   onScroll(): void {
+    const top = this.historyScroll?.top ?? this.viewport().nativeElement.scrollTop;
+    if (this.nativeScrollOrigin !== undefined && top !== this.nativeScrollOrigin)
+      this.beginHistoryScroll(top < this.nativeScrollOrigin ? "before" : "following");
     if (!this.sendScroll) this.updatePosition();
     this.cancelDistantHistory();
     this.rememberPosition();
@@ -348,6 +405,7 @@ export class ChatScrollComponent {
     this.peek.set(open);
   }
   scrollToMessage(id: string): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
     this.historyScroll?.finish();
     const target = this.messages.find(
@@ -372,6 +430,7 @@ export class ChatScrollComponent {
     }
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
     this.historyScroll?.finish();
     const viewport = this.viewport().nativeElement;
@@ -417,15 +476,21 @@ export class ChatScrollComponent {
     const element = row ?? turn;
     this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top,
       rowId: element.getAttribute('data-chat-row'),
-      anchorId: element.getAttribute('data-chat-anchor') } : undefined;
+      anchorId: turn?.getAttribute('data-chat-anchor') ?? null } : undefined;
   }
   private findReadingAnchor(): Element | undefined {
     const anchor = this.readingAnchor;
-    if (!anchor || anchor.element.isConnected) return anchor?.element;
-    const key = anchor.rowId ? 'data-chat-row' : 'data-chat-anchor';
-    const id = anchor.rowId ?? anchor.anchorId;
-    if (!id) return undefined;
-    return this.content().nativeElement.querySelector(`[${key}="${CSS.escape(id)}"]`) ?? undefined;
+    if (!anchor) return undefined;
+    if (anchor.element.isConnected && anchor.element.getBoundingClientRect().height > 0) return anchor.element;
+    const content = this.content().nativeElement;
+    const turn = anchor.anchorId
+      ? content.querySelector(`[data-chat-anchor="${CSS.escape(anchor.anchorId)}"]`) : null;
+    if (!anchor.rowId) return turn ?? undefined;
+    const selector = `[data-chat-row="${CSS.escape(anchor.rowId)}"]`;
+    const row = turn?.querySelector(selector) ??
+      // Hydrating the prompt can change a partial turn's outer identity.
+      (anchor.rowId === '$answer' ? null : content.querySelector(selector));
+    return row && row.getBoundingClientRect().height > 0 ? row : undefined;
   }
   private requestHistory(direction: "before" | "following"): void {
     if (this.historyLoading() || this.historyPending) return;
@@ -452,9 +517,14 @@ export class ChatScrollComponent {
     // A quick reversal during a held read can put the reader inside the part
     // of the window that the pending page would evict. Allow nearby scrolling.
     if (distance <= height + historyMargin(height)) return;
-    this.historyPending = false;
-    this.historyBudget = 0;
-    this.historyCancelled.emit();
+    this.cancelPendingHistory();
+  }
+  private cancelPendingHistory(): void {
+    if (this.historyPending && this.historyLoading()) {
+      this.historyPending = false;
+      this.historyBudget = 0;
+      this.historyCancelled.emit();
+    }
   }
   private refreshMessages(): void {
     this.messages = Array.from(
@@ -472,15 +542,16 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
+    const revealing = this.maintainDisclosurePosition(viewport);
     const height = this.historyScroll?.height ?? viewport.scrollHeight;
     const top = this.historyScroll?.top ?? viewport.scrollTop;
     const contentChanged = height !== this.lastScrollHeight;
     const resized = viewport.clientHeight !== this.lastViewportHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if ((contentChanged || resized) && this.atEnd()) {
+    else if (!revealing && (resized || contentChanged) && this.atEnd()) {
       this.historyScroll?.finish();
       viewport.scrollTop = viewport.scrollHeight;
-    } else if (contentChanged) this.unread.set(true);
+    } else if (height > this.lastScrollHeight && !revealing) this.unread.set(true);
     this.lastScrollHeight = height;
     this.lastViewportHeight = viewport.clientHeight;
     if (!this.sendScroll) this.updatePosition();
@@ -499,18 +570,36 @@ export class ChatScrollComponent {
     }
     this.rememberPosition();
     this.measureReminder(bounds);
-    if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
+    if (!this.historyError() && !this.sendScroll && !revealing && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
       const margin = historyMargin(viewport.clientHeight);
       const underfilled = height <= viewport.clientHeight;
-      if ((!underfilled || this.historyIntent === "before") && this.historyBefore() && top < margin &&
+      if (this.historyIntent === "before" && this.historyBefore() && top < margin &&
           (!this.atEnd() || underfilled))
         this.requestHistory("before");
-      else if ((!underfilled || this.historyIntent === "following") && this.historyAfter() &&
+      else if (this.historyIntent === "following" && this.historyAfter() &&
           height - top - viewport.clientHeight < margin)
         this.requestHistory("following");
     }
+  }
+  private maintainDisclosurePosition(viewport: HTMLDivElement): boolean {
+    const disclosure = this.disclosure;
+    if (!disclosure || !disclosure.anchor.isConnected || this.sendScroll) {
+      this.disclosure = undefined;
+      return false;
+    }
+    const top = disclosure.anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    if (Math.abs(top - disclosure.top) > 1) viewport.scrollTop += top - disclosure.top;
+    const animating = disclosure.turn.getAnimations?.({ subtree: true }).some(animation =>
+      animation.playState !== 'finished' && animation.playState !== 'idle' &&
+      Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    // Give newly rendered CSS transitions a paint to start. ResizeObserver
+    // drives the rest of the movement, including interrupted folds.
+    if (animating) disclosure.settledFrames = 0;
+    else if (++disclosure.settledFrames < 2) this.scheduleMeasure();
+    else this.disclosure = undefined;
+    return true;
   }
   private measureReminder(viewport: DOMRect): void {
     // Match the legacy chat's reading probe: keep the previous prompt's context

@@ -19,6 +19,64 @@ function local(url, identity = url) {
   return { identity, url, version, headers: {}, environment: { kind: 'local' } };
 }
 
+test('chat request diagnostics are opt-in, correlate HTTP outcomes and keep transcript data private', async () => {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const program = `
+    const assert = require('node:assert/strict');
+    const { requestBackendJson } = require(process.argv[1]);
+    const privateValue = 'for-tests-only-private-data';
+    const endpoint = { url: 'http://127.0.0.1:12345', headers: { Authorization: privateValue } };
+    const chat = '/api/desktop-workspace/tasks/5/sessions/9/chat';
+    globalThis.fetch = async (url, { signal }) => {
+      signal.throwIfAborted();
+      const status = url.pathname.endsWith('/tool-details') ? 409 : 200;
+      const body = url.pathname.endsWith('/turn-work')
+        ? { items: Array.from({ length: 105 }, () => ({ text: privateValue })), total: 105, nextOffset: null }
+        : { items: [{ completedTurn: {}, text: privateValue }], events: [], reset: true, before: privateValue };
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    };
+    const read = (path, signal = new AbortController().signal) => requestBackendJson(endpoint, { path }, signal);
+    (async () => {
+      await read(chat + '?before=' + privateValue + '&loadingMode=progressive&summarizeCompleted=1&summarizeRecent=1&deferToolDetails=1');
+      await read(chat + '/turn-work?offset=0&limit=512&deferToolDetails=1&turnId=' + privateValue);
+      await assert.rejects(read(chat + '/tool-details?resultId=' + privateValue), error => error.detail.status === 409);
+      await assert.rejects(read(chat + '?after=' + privateValue, AbortSignal.abort()), { name: 'AbortError' });
+      await read('/api/info');
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `;
+  const run = options => promisify(execFile)(process.execPath, ['-e', program, require.resolve('../dist/backend-client/transport')], {
+    env: { ...process.env, NODE_DEBUG: options },
+  });
+  assert.equal((await run('')).stderr, '');
+  const { stderr } = await run('elevenex-chat');
+  assert.doesNotMatch(stderr, /for-tests-only-private-data|127\.0\.0\.1|Authorization/);
+  const entries = stderr.trim().split('\n').map(line => {
+    const entry = /^ELEVENEX-CHAT \d+: (request|response) (.*)$/.exec(line);
+    assert.ok(entry, line);
+    const [, phase, json] = entry;
+    return { phase, ...JSON.parse(json) };
+  });
+  assert.equal(entries.length, 8);
+  for (let index = 0; index < entries.length; index += 2) {
+    const [request, response] = entries.slice(index, index + 2);
+    assert.equal(request.phase, 'request');
+    assert.equal(response.phase, 'response');
+    assert.equal(request.id, response.id);
+    assert.ok(response.elapsedMs >= 0);
+    assert.equal(request.taskId, 5);
+    assert.equal(request.sessionId, 9);
+  }
+  const [history, work, details, poll] = entries.filter(entry => entry.phase === 'response');
+  assert.deepEqual([history.operation, history.direction, history.mode, history.items, history.completedTurns, history.hasOlder],
+    ['history', 'before', 'progressive', 1, 1, true]);
+  assert.ok(history.summarizeCompleted && history.summarizeRecent && history.deferToolDetails && history.responseBytes > 0);
+  assert.deepEqual([work.operation, work.offset, work.limit, work.status, work.items, work.total, work.nextOffset],
+    ['turn-work', 0, 512, 200, 105, 105, null]);
+  assert.deepEqual([details.operation, details.withResult, details.outcome, details.status], ['tool-details', true, 'http', 409]);
+  assert.deepEqual([poll.direction, poll.outcome, poll.status], ['poll', 'aborted', undefined]);
+});
+
 test('named info adapter coalesces reads within a window and isolates scopes across windows', async context => {
   let calls = 0;
   let respond;
@@ -1018,4 +1076,174 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   const late = wait(scope,{...input, after:5}); client.reset(42); assert.equal((await late).error.code,'stale-scope');
   assert.equal((await wait(scope,input)).error.code,'stale-scope');
   stop(); assert.equal(handlers.size,0);
+});
+
+test('completed activity and tool details validate opted-in, scoped and bounded records', async context => {
+  const { URLSearchParams } = require('node:url');
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const revision = 'a'.repeat(64);
+  const record = (id, kind) => ({ id, kind, text: 'text', timestamp: '2026-11-19T10:00:00Z', toolId: null, toolKind: null, toolName: null, input: '', error: false, truncated: false });
+  const summary = { revision, endId: 'reply', beforeReply: 1, total: 1, counts: { run: 1 }, failures: 0, reply: [record('reply', 'assistant')] };
+  const page = { taskId: 5, sessionId: 9, cursor: 'cursor', reset: true, state, items: [{ ...record('prompt', 'user'), completedTurn: summary }], events: [], before: null };
+  assert.equal(parseChatPage(page, 5, 9, 'progressive', true).items[0].completedTurn.revision, revision);
+  assert.throws(() => parseChatPage(page, 5, 9, 'progressive'), /incompatible/);
+  for (const completedTurn of [{ ...summary, total: 0 }, { ...summary, beforeReply: 2 }, { ...summary, counts: { run: 2 } }, { ...summary, reply: [record('tool', 'tool_use')] }]) {
+    assert.throws(() => parseChatPage({ ...page, items: [{ ...page.items[0], completedTurn }] }, 5, 9, 'progressive', true), /incompatible/);
+  }
+  const changes = { total: 14, files: [{ path: 'retry.ts', status: 'M', add: 2, del: 1 }], lineTotals: { add: 216, del: 339 } };
+  const fullHistory = { ...page, items: [{ ...record('prompt', 'user'), turnChanges: changes }] };
+  assert.deepEqual(parseChatPage(fullHistory, 5, 9, 'window').items[0].turnChanges, changes);
+  const compactHistory = { ...page, items: [{ ...page.items[0], completedTurn: { ...summary, changes } }] };
+  assert.deepEqual(parseChatPage(compactHistory, 5, 9, 'progressive', true).items[0].completedTurn.changes, changes);
+  for (const turnChanges of [
+    { ...changes, lineTotals: { add: 1, del: 10 } },
+    { ...changes, total: 1 },
+    { ...changes, lineTotals: { add: 5, del: -1 } },
+  ]) {
+    assert.throws(() => parseChatPage({ ...fullHistory, items: [{ ...fullHistory.items[0], turnChanges }] }, 5, 9, 'window'), /incompatible/);
+  }
+  const tool = { ...record('call', 'tool_use'), toolId: 'operation', text: '' };
+  const heading = { ...tool, toolDetails: { revision, summary: 'pnpm test', private: 'discard' } };
+  const callWithReceipt = { ...heading, receipt: { id: 'result', error: true, toolDetails: { revision, meta: 'Exit 1' } } };
+  const linkedResult = { ...record('result', 'tool_result'), text: '', toolId: 'operation', error: true,
+    toolDetails: { revision, meta: 'Exit 1' }, invocation: { id: 'call', toolKind: 'bash', toolDetails: heading.toolDetails } };
+  const compact = { ...page, items: [callWithReceipt, linkedResult], events: [{ type: 'item', item: callWithReceipt }] };
+  const parsed = parseChatPage(compact, 5, 9, 'window', false, true);
+  assert.deepEqual(parsed.items[0].toolDetails, { revision, summary: 'pnpm test' });
+  assert.deepEqual(parsed.events[0].item.toolDetails, parsed.items[0].toolDetails);
+  assert.deepEqual(parsed.events[0].item.receipt, callWithReceipt.receipt);
+  assert.deepEqual(parsed.items[1].invocation, { id: 'call', toolKind: 'bash', toolDetails: { revision, summary: 'pnpm test' } });
+  assert.throws(() => parseChatPage(compact, 5, 9, 'window'), /incompatible/);
+  for (const invalid of [
+    { ...heading, input: 'unexpected' }, { ...heading, kind: 'assistant' }, { ...heading, toolDetails: { revision: 'invalid' } },
+    { ...linkedResult, invocation: { ...linkedResult.invocation, id: 'result' } },
+    { ...linkedResult, toolDetails: undefined },
+    { ...heading, receipt: { ...callWithReceipt.receipt, id: 'call' } },
+  ]) {
+    assert.throws(() => parseChatPage({ ...compact, items: [invalid] }, 5, 9, 'window', false, true), /incompatible/);
+  }
+
+  const { readFile } = require('node:fs/promises'), vm = require('node:vm');
+  const handlers = new Map(), ipc = {}, adapter = {}, requests = [];
+  let hold;
+  let response = { taskId: 5, sessionId: 9, turnId: 'prompt', revision, offset: 0, total: 2, nextOffset: 1, items: [{ ...record('call', 'tool_use'), receipt: { id: 'result', error: false } }], private: 'discard' };
+  const url = await server(context, (request, reply) => {
+    requests.push(request.url);
+    if (hold) { hold(); return; }
+    reply.writeHead(200, json);
+    reply.end(JSON.stringify(response));
+  });
+  const client = new BackendClient(() => local(url), () => {});
+  context.after(() => client.dispose()); client.attach(42);
+  const scope = client.state(42).scope.id, frame = {}, sender = { id: 42 };
+  vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (key, handler) => handlers.set(key, handler), removeHandler: key => handlers.delete(key) } }) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/session-chat'), 'utf8'), {
+    exports: adapter, URLSearchParams,
+    require: name => name === '../ipc' ? ipc : ({
+      './session-chat-agents': { registerChatAgents: () => () => undefined },
+      './session-chat-attachments': { registerChatAttachments: () => () => undefined },
+      './session-chat-media': { registerSessionChatMedia: () => () => undefined },
+    })[name] ?? require(name.startsWith('./') ? '../dist/backend-client/' + name.slice(2) : name),
+  });
+  const stop = adapter.registerSessionChatIpc(client, candidate => candidate === frame);
+  context.after(stop);
+  const work = handlers.get('session-chat:turn-work');
+  const input = { taskId: 5, sessionId: 9, turnId: 'prompt', revision, offset: 0, requestId: 'test' };
+  const read = (value = input) => work({ senderFrame: frame, sender }, scope, value);
+  assert.throws(() => work({ senderFrame: {}, sender }, scope, input), /Untrusted/);
+  assert.throws(() => read({ ...input, offset: 0.5 }));
+  assert.throws(() => read({ ...input, revision: 'old' }));
+  assert.equal((await work({ senderFrame: frame, sender }, 'b'.repeat(36), input)).error.code, 'stale-scope');
+  assert.equal(requests.length, 0);
+  const result = await read();
+  assert.equal(requests[0], `/api/desktop-workspace/tasks/5/sessions/9/chat/turn-work?turnId=prompt&revision=${revision}&offset=0`);
+  assert.equal(result.value.private, undefined);
+  assert.equal(result.value.items[0].receipt.id, 'result');
+  const valid = response;
+  for (const patch of [{ sessionId: 10 }, { turnId: 'another' }, { offset: 1 }, { nextOffset: 2 }, { items: [record('person', 'user')] }, { items: Array(41).fill(record('call', 'tool_use')) }]) {
+    response = { ...valid, ...patch };
+    assert.equal((await read()).error.code, 'invalid-response');
+  }
+  response = { ...valid, items: [{ ...heading, receipt: { id: 'result', error: false, toolDetails: { revision, meta: 'Exit 0' } } }] };
+  assert.equal((await read({ ...input, deferToolDetails: true })).value.items[0].receipt.toolDetails.meta, 'Exit 0');
+  assert.match(requests.at(-1), /deferToolDetails=1$/);
+  const largeRead = { ...input, deferToolDetails: true, limit: 512 };
+  response = { ...valid, total: 105, nextOffset: null,
+    items: Array.from({ length: 105 }, (_, index) => record(`activity-${index}`, 'assistant')) };
+  assert.equal((await read(largeRead)).value.items.length, 105);
+  assert.match(requests.at(-1), /deferToolDetails=1&limit=512$/);
+  assert.equal((await read({ ...input, deferToolDetails: true })).error.code, 'invalid-response');
+  for (const invalid of [{ ...input, limit: 512 }, { ...largeRead, limit: 513 }, { ...largeRead, limit: 0 }])
+    assert.throws(() => read(invalid));
+
+  const timelineRead = { ...largeRead, timeline: true };
+  assert.throws(() => read({ ...input, timeline: true }));
+  const shortCall = { kind: 'call', id: 'call', toolKind: 'bash', label: 'pnpm test', resultId: 'result' };
+  const timeline = { ...valid, items: undefined, nextOffset: null, timeline: [{ ...shortCall, input: 'discard' }, null] };
+  response = timeline;
+  assert.deepEqual((await read(timelineRead)).value.timeline, [shortCall, null]);
+  assert.match(requests.at(-1), /limit=512&timeline=1$/);
+  assert.equal((await read(largeRead)).error.code, 'invalid-response');
+  for (const invalid of [
+    { ...timeline, timeline: [{ ...shortCall, label: 'x'.repeat(121) }, null] },
+    { ...timeline, timeline: [{ ...shortCall, fullLabel: 'x'.repeat(501) }, null] },
+    { ...timeline, timeline: [{ ...shortCall, resultId: 'prompt' }, null] },
+    { ...timeline, timeline: [shortCall, shortCall] },
+    { ...timeline, nextOffset: 2 },
+  ]) {
+    response = invalid;
+    assert.equal((await read(timelineRead)).error.code, 'invalid-response');
+  }
+  const fullLabel = 'src/' + 'long-directory/'.repeat(12) + 'index.ts';
+  const fullMeta = 'long-connection-name-'.repeat(3);
+  response = { ...timeline, timeline: [{ ...shortCall, fullLabel, meta: fullMeta.slice(0, 40), fullMeta }, null] };
+  assert.deepEqual((await read(timelineRead)).value.timeline, [{ ...shortCall, label: fullLabel, meta: fullMeta }, null]);
+  response = valid;
+  assert.equal((await read(timelineRead)).value.items.length, 1, 'A legacy engine may return ordinary work rows');
+
+  const chatRead = value => handlers.get('session-chat:read')({ senderFrame: frame, sender }, scope, value);
+  const recent = { taskId: 5, sessionId: 9, requestId: 'recent', loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true };
+  assert.throws(() => chatRead({ ...recent, summarizeCompleted: undefined }));
+  response = page;
+  assert.equal((await chatRead({ ...recent, deferToolDetails: true })).ok, true);
+  assert.match(requests.at(-1), /loadingMode=progressive&summarizeCompleted=1&summarizeRecent=1&deferToolDetails=1$/);
+
+  const item = { id: 'call', revision }, receipt = { id: 'result', revision };
+  const details = { taskId: 5, sessionId: 9, item, result: receipt, requestId: 'details' };
+  const body = { ...item, record: { ...tool, input: 'bounded command' } };
+  const output = { ...receipt, record: { ...record('result', 'tool_result'), toolId: 'operation' } };
+  const complete = { taskId: 5, sessionId: 9, item: body, result: output };
+  const inspect = (value = details, selected = scope, senderFrame = frame) => handlers.get('session-chat:tool-details')({ senderFrame, sender }, selected, value);
+  assert.throws(() => inspect(details, scope, {}), /Untrusted/);
+  assert.throws(() => inspect({ ...details, result: item }));
+  assert.throws(() => inspect({ ...details, item: { ...item, revision: 'short' } }));
+  assert.equal((await inspect(details, 'b'.repeat(36))).error.code, 'stale-scope');
+  response = complete;
+  assert.deepEqual(await inspect(), { ok: true, value: complete });
+  assert.equal(requests.at(-1), `/api/desktop-workspace/tasks/5/sessions/9/chat/tool-details?itemId=call&revision=${revision}&resultId=result&resultRevision=${revision}`);
+  const savedDetails = { ...details, turnId: 'prompt' };
+  response = { ...complete, turnId: 'prompt' };
+  assert.equal((await inspect(savedDetails)).value.turnId, 'prompt');
+  assert.match(requests.at(-1), /turnId=prompt/);
+  assert.throws(() => inspect({ ...savedDetails, result: { ...receipt, revision: 'b'.repeat(64) } }));
+  response = { ...complete, turnId: 'other' };
+  assert.equal((await inspect(savedDetails)).error.code, 'invalid-response');
+  for (const invalid of [
+    { ...complete, taskId: 6 },
+    { ...complete, result: undefined },
+    { ...complete, item: { ...body, revision: 'b'.repeat(64) } },
+    { ...complete, result: { ...output, record: { ...output.record, toolId: 'different-tool' } } },
+    { ...complete, item: { ...body, record: { ...body.record, input: 'x'.repeat(16001) } } },
+  ]) {
+    response = invalid;
+    assert.equal((await inspect()).error.code, 'invalid-response');
+  }
+  const arrived = new Promise(resolve => { hold = resolve; });
+  const pending = inspect();
+  await arrived;
+  handlers.get('session-chat:cancel')({ senderFrame: frame, sender }, scope, details.requestId);
+  assert.equal((await pending).ok, false);
+  stop();
+  assert.equal(handlers.size, 0);
 });

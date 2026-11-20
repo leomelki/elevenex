@@ -3,6 +3,7 @@ import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionShellItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
+import { SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   SessionChatAgentRead,
@@ -15,6 +16,13 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatRead,
+  SessionChatRecord,
+  SessionChatTurnTimelineRow,
+  SessionChatTurnWorkRead,
+  SessionChatTurnWorkReply,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
+  SessionChatToolEvidence,
   SessionChatState,
   SessionChatPreset,
   SessionChatCommandReply,
@@ -506,6 +514,11 @@ export class SessionChatFixture {
   cancel(id: string): void {
     this.heldReads.get(id)?.();
     this.waiting.get(id)?.();
+    const detail = this.heldToolDetails.get(id);
+    if (detail) {
+      this.toolDetailsCancelled++;
+      detail();
+    }
   }
   private readsHeld = false;
   private readonly heldReads = new Map<string, () => void>();
@@ -519,6 +532,87 @@ export class SessionChatFixture {
     this.sessions.set(id, { items: [...(page.leadingPrompt ? [page.leadingPrompt] : []), ...page.items], state: page.state });
     this.changed();
   }
+  private readonly turnActivities = new Map<string, readonly SessionChatRecord[]>();
+  private readonly turnTimelines = new Map<string, readonly SessionChatTurnTimelineRow[]>();
+  private readonly heldActivity = new Set<() => void>();
+  private workBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  turnWorkReads = 0;
+
+  seedTurnWork(sessionId: number, turnId: string, records: readonly SessionChatRecord[]): void {
+    this.turnActivities.set(`${sessionId}/${turnId}`, records);
+  }
+  seedTurnTimeline(sessionId: number, turnId: string, timeline: readonly SessionChatTurnTimelineRow[]): void {
+    this.turnTimelines.set(`${sessionId}/${turnId}`, timeline);
+  }
+
+  turnWorkBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.workBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldActivity) release();
+  }
+
+  async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
+    this.turnWorkReads++;
+    if (this.workBehavior === 'held') await new Promise<void>(resolve => {
+      const release = () => {
+        this.heldActivity.delete(release);
+        this.waiting.delete(input.requestId);
+        resolve();
+      };
+      this.heldActivity.add(release);
+      this.waiting.set(input.requestId, release);
+    });
+    if (this.workBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
+    const { taskId, sessionId, turnId, revision, offset } = input;
+    const key = `${sessionId}/${turnId}`;
+    const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
+    const timeline = input.timeline ? this.turnTimelines.get(key) : undefined;
+    if (timeline && revision === summary?.revision) {
+      const rows = timeline.slice(offset, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
+      const end = offset + rows.length;
+      return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+        timeline: rows, total: timeline.length, nextOffset: end < timeline.length ? end : null } };
+    }
+    const work = this.turnActivities.get(key);
+    if (!work || revision !== summary?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Activity changed.' } };
+    const items = work.slice(offset, offset + (input.limit ?? SESSION_CHAT_TURN_WORK_LIMIT));
+    const end = offset + items.length;
+    return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+      items, total: work.length, nextOffset: end < work.length ? end : null } };
+  }
+  private readonly toolEvidence = new Map<number, ReadonlyMap<string, SessionChatToolEvidence>>();
+  private readonly heldToolDetails = new Map<string, () => void>();
+  private detailBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  toolDetailsReads = 0;
+  toolDetailsCancelled = 0;
+
+  seedToolDetails(sessionId: number, records: readonly SessionChatToolEvidence[]): void {
+    this.toolEvidence.set(sessionId, new Map(records.map(value => [value.id, value])));
+  }
+
+  toolDetailsBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.detailBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldToolDetails.values()) release();
+  }
+
+  async toolDetails(input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>> {
+    this.toolDetailsReads++;
+    if (this.detailBehavior === 'held') await new Promise<void>(resolve => {
+      this.heldToolDetails.set(input.requestId, () => {
+        this.heldToolDetails.delete(input.requestId);
+        resolve();
+      });
+    });
+    if (this.detailBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Could not read tool details.' } };
+    const { taskId, sessionId, item, result, turnId } = input;
+    const records = this.toolEvidence.get(sessionId);
+    const primary = records?.get(item.id);
+    const output = result ? records?.get(result.id) : undefined;
+    if (!primary || primary.revision !== item.revision || output?.revision !== result?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Tool evidence changed.' } };
+    return { ok: true, value: { taskId, sessionId, item: primary, ...(output ? { result: output } : {}), ...(turnId ? { turnId } : {}) } };
+  }
+
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
     if (this.readsHeld) await new Promise<void>(resolve => {
       this.heldReads.set(input.requestId, () => { this.heldReads.delete(input.requestId); resolve(); });

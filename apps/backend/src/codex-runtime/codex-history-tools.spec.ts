@@ -36,3 +36,31 @@ describe('Codex generated image history', () => {
     }
   });
 });
+
+describe('Codex viewed images', () => {
+  it('restores image operations alongside commands and keeps an interrupted wrapper from another turn', () => {
+    const record = (type: string, payload: Record<string, unknown>) => ({
+      timestamp: '2026-11-19T12:00:00Z', type, payload,
+    });
+    const wrapper = (call_id: string) =>
+      record('response_item', { type: 'custom_tool_call', call_id, name: 'exec' });
+    const { native, wrappers } = codexHistoryTools([
+      wrapper('interrupted'),
+      record('event_msg', { type: 'turn_aborted' }),
+      wrapper('preview'),
+      record('event_msg', { type: 'item_completed', item: {
+        type: 'ImageView', id: 'image', path: 'file:///repo/my%20preview.png',
+      } }),
+      record('event_msg', { type: 'item_completed', item: {
+        type: 'CommandExecution', id: 'command', status: 'completed', command: 'pnpm test',
+      } }),
+    ]);
+    expect(wrappers).toEqual(new Set(['preview']));
+    expect(native.get(3)).toMatchObject([
+      { id: 'image:tool_use', toolKind: 'image_view', toolInput: { path: '/repo/my preview.png' } },
+      { id: 'image:tool_result', toolUseId: 'image', isError: false,
+        providerToolResult: { content: [{ type: 'image', image_url: '/repo/my preview.png' }] } },
+    ]);
+    expect(native.get(4)?.[0]?.id).toBe('command:tool_use');
+  });
+});

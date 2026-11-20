@@ -33,8 +33,10 @@ export default async function* (capture) {
   for (const theme of ['light', 'dark']) {
     for (const narrow of [false, true]) {
       const prefix = `${theme}-${narrow ? 'narrow-reduced' : 'wide'}`;
-      await capture.evaluate(() => { location.href = '/connected-workspace'; });
-      await capture.waitFor(() => document.querySelector('ex-machine-workspace ex-task-list'));
+      const captureQuery = `?chatLoading=window&capture=${prefix}`;
+      await capture.evaluate(query => { location.href = '/connected-workspace' + query; }, captureQuery);
+      await capture.waitFor(query => location.search === query &&
+        document.querySelector('ex-machine-workspace ex-task-list'), captureQuery);
       await capture.theme(theme); await capture.viewport(narrow ? 1000 : 1440, narrow ? 760 : 960);
       await capture.reducedMotion(narrow);
       await fixture(async owner => {
@@ -59,15 +61,8 @@ export default async function* (capture) {
       await chat(owner => { void owner.store.older(); });
       assert.equal(await chat(owner => owner.store.historyLoading()), true);
       assert.ok(await capture.evaluate(() => document.querySelector('.reminder .quote')?.textContent.includes('original request')), 'Loading hid the prompt context');
-      const overlaps = await capture.evaluate(() => {
-        const status = document.querySelector('.history-indicator').getBoundingClientRect();
-        return ['.reminder .surface', '.return button'].some(selector => {
-          const rect = document.querySelector(selector).getBoundingClientRect();
-          return status.left < rect.right && status.right > rect.left && status.top < rect.bottom && status.bottom > rect.top;
-        });
-      });
-      assert.equal(overlaps, false, 'Loading status covers the prompt or return control');
-      yield { name: `${prefix}-pending-context`, inspect: ['ex-chat-scroll .viewport', '.reminder', '.history-indicator'] };
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading .skeleton, .history-indicator')), null);
+      yield { name: `${prefix}-pending-context`, inspect: ['ex-chat-scroll .viewport', '.reminder'] };
       // Sample release and the following natural frames together.
       const samples = await fixture(async owner => {
         const row = [...document.querySelectorAll('[data-chat-row]')].at(-1);

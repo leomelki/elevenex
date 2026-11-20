@@ -47,6 +47,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container-type: inline-size;
 }
 ex-fold.work-region {
   /* Give the answer's 36px handoff a full, interruptible settling curve. */
@@ -174,11 +175,43 @@ footer {
   flex: none;
   margin-left: calc(-1 * var(--space-1));
 }
+@container (max-width: 560px) {
+  .work:has(.fact:nth-child(3)) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: var(--space-2);
+    row-gap: var(--space-1);
+    padding-block: var(--space-1);
+  }
+  .work:has(.fact:nth-child(3)) .facts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    mask-image: none;
+  }
+  .work:has(.fact:nth-child(3)) .chevron {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+  }
+}
 .chevron ex-icon {
   transition: transform var(--dur-glide) var(--ease-glide);
 }
 :host.expanded .chevron ex-icon {
   transform: rotate(90deg);
+}
+/* Opened activity still reading after an instant-feeling interval. The heading
+   pulses in place, so a fast read never flashes and nothing shifts. */
+:host.pending .work-label,
+:host.pending .chevron {
+  animation: work-pending calc(2 * var(--dur-deliberate)) var(--ease-in-out) infinite alternate;
+}
+@keyframes work-pending {
+  to {
+    opacity: 0.45;
+  }
 }
 .failure,
 .failed {
@@ -251,6 +284,11 @@ footer ex-turn-acts {
   .chevron ex-icon,
   footer ex-turn-acts {
     transition: none;
+  }
+  :host.pending .work-label,
+  :host.pending .chevron {
+    animation: none;
+    opacity: 0.6;
   }
   .work-item {
     transform: none;

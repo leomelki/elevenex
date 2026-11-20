@@ -4,15 +4,46 @@ Conversation reads optionally select `loadingMode: 'window' | 'progressive'`
 through the existing scope-bound `sessionChatRead`. Window mode caps records at
 320 / 2 MiB; progressive mode and omitted options retain 80 / 512 KiB. Adjacent
 pages use 80 / 512 KiB in either mode to preserve overlap in the rolling window.
-Main validates the mode and reply count and retains its 4 MiB transport limit. The
-renderer normally requests one recent window. An uncached opening still pending
-after three seconds enables smaller pages for every chat on the application
-connection until reconnect or restart. The root `SessionChatLoadingPolicy` owns
-that transient choice, separate from connection state and per-chat drafts. Scope
-rotation resets it, including same-machine recovery; application restart creates
-a fresh policy. It cancels old initial window requests and rejects their
-stale results; backend in-flight hydration is shared across the replacement.
-This is additive for older clients/engines and never replays commands. See the
+Main validates the mode and reply count and retains its 4 MiB transport limit.
+The renderer requests progressive pages from the first read. With the
+window-mode override, an uncached opening still pending after 1.75 seconds
+switches to progressive pages for the application connection. The root
+`SessionChatLoadingPolicy` owns that transient choice separately from connection
+state and per-chat drafts. Scope rotation and application restart reset it.
+The renderer cancels superseded reads and discards stale replies. The backend
+shares in-flight hydration with the replacement.
+The progressive profile opts into completed-turn summaries with
+`summarizeCompleted` and also requests summaries for small recent turns with
+`summarizeRecent`. A summary occupies one paging entry at the prompt and
+advances past the saved turn's last source item in the forward direction.
+Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
+history reads, including when a single turn spans hundreds of tool records.
+An optional `limit` up to 512 increases the compact activity batch size to at
+most 1 MiB. Main validates the turn, revision, offset and reply bounds under the
+same cancellable window lease. The renderer collects the batches before showing
+the complete timeline. Older clients keep their 40-record activity pages, and
+older engines can keep returning those pages or raw history windows.
+Completed turns reconcile repeated row identities before computing the visible
+reply, counts and activity offsets. Both history formats use the same saved
+change reconciliation as Review and can carry full line totals with their
+three-file preview.
+
+Both history modes and turn activity reads can opt into `deferToolDetails`.
+Tool records then carry headings and versioned evidence addresses while their
+input and output strings stay empty. `sessionChatToolDetails` fetches one tool
+record and an optional related receipt under the same scoped, cancellable
+lease. Main checks the exact task, session, item IDs, evidence revisions,
+pairing and payload sizes. The backend rechecks session ownership and serves
+matching evidence from a bounded per-feed cache or from the provider history
+and live overlay. Optional call and receipt references keep the same evidence
+pair accessible when a history window or activity page splits the operation.
+The engine resolves missing peers in one pass over the available source and
+caches up to 1,024 saved offsets per feed without retaining their payloads.
+The evidence cache favors the requested paging edge, including the
+newest rows on the initial open. It retains up to 256 records and 1 MiB of
+UTF-8 string data per feed. History revision changes invalidate the engine cache.
+The original-content reader still pages the full transcript when requested.
+See the
 [session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
 cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.

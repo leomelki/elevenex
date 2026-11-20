@@ -7,8 +7,25 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `ChatComponent` composes `ChatScroll`, user messages, turns, Markdown and turn navigation from `readonly ChatExchange[]`. Project a composer with `chatComposer`, and optional decision cards with `chatContent`.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
+- Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work
+  steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint`, `turnWorkHintEnded` and
+  `turnWorkRequested` with the turn identity. Intent is tiered: the hint starts
+  after 220 ms of mouse hover over the assistant turn or visible keyboard focus
+  on Worked, after 60 ms of hover on Worked itself, and immediately on a mouse,
+  pen or Enter/Space press so the read overlaps the click. A touch press, which
+  can begin a scroll, does not hint. One hint spans an escalating dwell; it
+  ends when intent leaves or the turn expands. The open intent carries the
+  IDs of previously visible expanded tools. The owner supplies pending, ready
+  or error state and publishes the chronological steps together. An open read
+  that is still busy after 120 ms pulses the Worked heading in place (a static
+  dim with reduced motion); faster reads never show it. Preserve `answerId` and set
+  `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
+  focus and leaves the reply and file chips available while the activity loads.
+  `filesTotal` and `filesDiff` preserve complete work facts with a bounded file
+  preview. Loaded and deferred turns share the same heading and fact priority.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
+  An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
   Focusing a link, code control or other content in the latest reply leaves Worked as it is. If a new reply turns that focused block into commentary, the timeline keeps it visible until focus leaves.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
@@ -34,18 +51,35 @@ for read tools so long paths retain their filename and trailing folders. The
 full detail remains in the text and hover title; truncation follows the
 available row width.
 
+Supply `WorkStep.deferredTool` for a tool with an addressable body and pass an
+`inspectTool` provider to Chat, Turn or WorkTimeline. ToolStep acquires the
+provider only while the row is visible and expanded, and aborts that observation
+on collapse, replacement or destruction. The feature owner handles transport and
+caching. A provider may also expose `prefetch(source)`: ToolStep calls it for a
+closed row after a 100 ms mouse hover or visible focus on its heading, or
+immediately on a non-touch press. The owner bounds the concurrent warm-ups,
+evicts the oldest beyond that bound and lets the later observation join them; plain provider functions omit it.
+ToolStep keeps the heading in place until the evidence or a retry
+action is ready, pulsing it only when the read outlasts 120 ms. Fold owns opening and closing, and one AutoHeight wrapper
+owns updates to the already open body. Inline evidence uses the same disclosure.
+
 ## Scrolling and performance
 
-`Chat.progressiveLoading` forwards the owner's adaptive loading choice to
-`ChatScroll`. `ChatLoading` is the shared, noninteractive loading glyph with an
-optional small Progressive label; `compact` hides its ordinary visual text but
-retains its accessible status name. The initial connected opening and history
-corner use the same component. The owner supplies the policy; these views never
-measure network latency or request history themselves.
+`ChatLoading` lays out two placeholder exchanges above a pinned composer.
+Keep it mounted for the selected view so its live status is present before its
+text changes. Set `pending` only for a cold open. Both the placeholders and
+the status text appear after 150 ms. Layer it over the ready chat and set
+`--chat-loading-exit-duration` on successful hydration. Its surface fades out
+in place, revealing the already positioned transcript and a matching composer
+frame. Input reaches the ready chat during the fade. Reduced motion keeps the
+placeholders static and swaps them immediately. A new view identity restarts
+the delay.
+
+Background history reads preserve the current viewport and surface a retry if they fail.
 `Chat.initialHistoryPrefetch` / `ChatScroll.initialHistoryPrefetch` retain the
 existing default of filling an underfull viewport. The connected session owner
-disables this in normal mode, waiting for scroll intent, and enables it for
-progressive mode. Other owners, including the agent inspector, keep their own
+enables this with default progressive loading. The window-mode override waits
+for scroll intent. Other owners, including the agent inspector, keep their own
 prefetch behavior. The budget and no-height-growth guard prevent hidden-work drains.
 
 `TurnNav` shows the right-edge message selector from the first turn, regardless
@@ -125,16 +159,18 @@ the first paint and reconciles the native scrollbar in small steps. The range
 and scroll origin change together so the anchored text stays still. With reduced
 motion the viewport applies the final extent and anchored position in one paint.
 The transcript remains bounded.
-If the reader moves well away from the requested edge before the page arrives,
-`historyCancelled` lets the owner discard the read before it can evict the
-content now in view.
+If the reader reverses direction, moves well away from the requested edge, or
+opens visible work during a pending read, `historyCancelled` lets the owner
+discard the read before it can evict the content now in view. Worked, activity
+summaries and tool evidence keep their visible controls at the same offset as
+their contents expand or settle.
 One in-flight request and a four-page automatic fill budget bound underfilled
 viewports; a page adding no visible height stops that fill immediately. Wheel
 and keyboard direction choose the edge, including when both edges fit on screen.
 Overflowing conversations prefetch once per gesture, and a pinned,
 overflowing tail does not prefetch older pages. This avoids draining collapsed
-work and evicting the reply still in view; wheel, pointer and keyboard input renew
-the budget. History failures retain readable content and offer a
+work and evicting the reply still in view. Scroll gestures renew the budget.
+History failures retain readable content and offer a
 focused Retry. `latestRequested` lets the owner reconcile an evicted live tail
 before moving to the bottom. No history navigation buttons are needed.
 
@@ -300,7 +336,7 @@ passes `answer`, `streaming`, `copiedCode` and `resolve` to the same Markdown
 instance as earlier commentary. File/link/page/copy intents work in both places.
 `Turn` still supports projected answer content for existing standalone callers.
 
-The timeline retains every step’s component in its original keyed list. Nonempty
+The timeline keys mounted steps by ID and retains their component instances. Nonempty
 messages delimit activity sections; empty streaming replies do not close work.
 A new message or completion folds settled work in the preceding section into a
 summary at that location (“5 reads · 3 commands · 2 edits”), with a shared icon
@@ -315,12 +351,14 @@ Each section opens independently and retains that choice through streaming and
 completion. The work line shows status/time and expands or collapses all sections;
 category totals remain available in the section summaries.
 Settled turns also reveal up to four work facts beside the duration on turn
-hover, keyboard focus or expansion (for example, Edited 2 files · Ran 3 commands).
+hover, keyboard focus or expansion (for example, Edited 2 files · 3 commands).
+When a worktree capture overlaps another turn, `ChatExchange.sharedChanges`
+carries that attribution to the Worked header as workspace changes.
 They enter with a short stagger and spring, and fade/slide out together on a
 shorter curve; reduced motion removes movement and touch keeps them visible.
-Unrecovered failure facts stay visible. Narrow headings clip the facts with a
-trailing fade while retaining the duration and disclosure. Counts exclude
-running/unknown tools; partial file windows omit aggregate line counts.
+Unrecovered failure facts stay visible. Narrow headings wrap larger fact sets
+while retaining the duration and disclosure. Counts cover observed calls with
+unknown completion. Partial file windows show aggregate line counts when supplied.
 Live counts use the shared Ticker, with still initial history and reduced motion.
 Inspected results and focused controls remain mounted and visible.
 Explicit section collapse releases its inspection pins; focusing a summary alone
@@ -329,9 +367,11 @@ does not open it. Commentary stays visible even when the turn’s work is closed
 starts as soon as a completed step falls outside that window. That
 partial summary leads with “Earlier” (accessible name “Show earlier activity: …”)
 so the visible recent window is not mistaken for its contents. A new
-message starts a fresh budget. Closed folds are inert immediately and retain
-disclosure state through exit and reopening. History is still on mount; appended
-rows grow before their ink appears. When a message closes a section, the step
+message starts a fresh budget. The first expansion of a saved group mounts its
+tool rows and gives their folds the same opening transition as later expansions.
+Closed folds are inert immediately and retain disclosure state through exit and
+reopening. Initial history stays still. Appended rows grow before their ink
+appears. When a message closes a section, the step
 and its summary share one row and one `dur-slow` curve, so the row keeps its
 height and the swap crossfades. Fold and AutoHeight own reversible height
 transitions and reduced-motion behavior.

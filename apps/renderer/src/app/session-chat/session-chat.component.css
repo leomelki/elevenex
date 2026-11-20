@@ -8,7 +8,16 @@
 }
 ex-chat {
   flex: 1;
+  z-index: 0;
 }
+/* Fade the complete placeholder surface over the already positioned chat.
+   The layer stays outside the scroll layout and passes input to the ready view. */
+ex-chat-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
 .opening {
   display: grid;
   flex: 1;
@@ -19,8 +28,6 @@ ex-chat {
   text-align: center;
 }
 .opening-error { max-width: var(--chat-max); overflow-wrap: anywhere; }
-.opening > ex-chat-loading { animation: opening-status 1ms linear 150ms both; }
-@keyframes opening-status { from { opacity: 0; } to { opacity: 1; } }
 .start { padding-bottom: var(--space-6); }
 .start-content {
   display: flex;

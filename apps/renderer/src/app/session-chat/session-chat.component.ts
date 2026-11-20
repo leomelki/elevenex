@@ -5,11 +5,13 @@ import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import { SessionChatModels } from './session-chat-models';
 import {
+  afterNextRender,
   afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
   computed,
   effect,
   inject,
@@ -110,12 +112,12 @@ export class SessionChatComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
-    const items = this.store.items();
-    const item = items.find(item => item.id === request.itemId);
+    const items = this.store.presentedItems();
+    const item = items.find(item => item.id === request.itemId) ?? items.find(item => item.receipt?.id === request.itemId);
     const toolId = item?.toolId ?? item?.id;
     this.contentSource.set(item?.kind === 'tool_use' || item?.kind === 'tool_result' ? {
       inputId: item.kind === 'tool_use' ? item.id : items.find(value => value.kind === 'tool_use' && (value.toolId ?? value.id) === toolId)?.id,
-      outputId: item.kind === 'tool_result' ? item.id : [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
+      outputId: item.kind === 'tool_result' ? item.id : item.receipt?.id ?? [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
     } : undefined);
     this.contentPart.set(request.part);
     this.contentId.set(request.itemId);
@@ -192,6 +194,7 @@ export class SessionChatComponent {
   }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
+  private readonly injector = inject(Injector);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(
     "request",
     {
@@ -201,6 +204,8 @@ export class SessionChatComponent {
   readonly message = computed(
     () => this.store.error() || this.store.uncertain() || this.store.state()?.error || "",
   );
+  protected readonly opening = computed(() => !!this.selection() && this.active() && this.store.loading() &&
+    !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
   /** The inspected agent's live Activity record, while it is still listed. */
@@ -439,7 +444,7 @@ export class SessionChatComponent {
     });
     effect(() => {
       const selection = this.creation() ? null : this.selection();
-      const items = this.store.visibleItems();
+      const items = this.store.presentedItems();
       untracked(() => this.media.update(selection, items));
     });
     effect(() => {
@@ -497,8 +502,11 @@ export class SessionChatComponent {
     });
   }
   async latest(): Promise<void> {
-    await this.store.refresh();
-    this.chat()?.scroll()?.scrollToEnd("instant");
+    const revision = this.store.viewRevision();
+    if (!await this.store.refresh()) return;
+    afterNextRender(() => {
+      if (this.store.viewRevision() === revision) this.chat()?.scroll()?.scrollToEnd("instant");
+    }, { injector: this.injector });
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();

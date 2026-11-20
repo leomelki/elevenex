@@ -134,6 +134,8 @@ preview-only backend adapter. Its fixture never enters the production build.
   opt-in `unroll` API remains available for compatibility; caps no longer use it.
 - `FoldComponent` animates unknown height in place, preserves local state,
   releases clipping after settling, and makes closed descendants inert.
+  Use `animateOpenOnMount` when an explicit disclosure mounts a fold open.
+  The default keeps initial history still.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
   Block wrappers must contain descendant margins (for example with

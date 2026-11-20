@@ -1,18 +1,19 @@
 <ol>
-  @for (row of rows(); track row.step.id) {
+  @for (row of renderedRows(); track row.step.id) {
     @let step = row.step;
     <li
       class="timeline-row"
       [class.reply]="step.id === replyId()"
       [attr.data-work-step]="step.id"
       [attr.data-chat-row]="step.id"
-      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
+      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : hydrated().has(step.id) ? 'activity-reveal' : ''"
     >
       <div class="row-clip">
         <ex-fold class="group-fold" [open]="groupVisible(row)">
           @if (row.section; as group) {
             @if (group.id === step.id) {
               <button
+                #groupControl
                 type="button"
                 class="group"
                 [attr.aria-expanded]="groupOpen(row)"
@@ -21,7 +22,7 @@
                   (group.earlier ? 'earlier activity: ' : 'activity: ') +
                   group.label
                 "
-                (click)="toggleGroup(group.id)"
+                (click)="toggleGroup(group.id, groupControl)"
               >
                 <ex-icon
                   class="disclosure"
@@ -52,7 +53,11 @@
           }
         </ex-fold>
         @let rowVisible = visible(row);
-        <ex-fold class="step-fold" [open]="rowVisible">
+        <ex-fold
+          class="step-fold"
+          [open]="rowVisible"
+          [animateOpenOnMount]="revealWork() && groupOpen(row) && !hydrated().has(step.id)"
+        >
           @if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"
@@ -83,65 +88,73 @@
                 }
               </div>
             </div>
-          } @else {
+          } @else if (!revealWork() || mountedWorkRows().has(step.id)) {
             <div
               class="tool-row"
               [class.recovered]="step.recovered"
-              exAutoHeight
             >
-              <div>
-                @if (
-                  step.kind === "think" && step.status === "running" && live()
-                ) {
+              @if (
+                step.kind === "think" && step.status === "running" && live()
+              ) {
+                <div exAutoHeight>
                   <ex-now-line [step]="step" />
-                } @else if (step.kind !== 'media') {
-                  <ex-tool-step
-                    [icon]="icon(step)"
-                    [verb]="verb(step)"
-                    [detail]="step.title || step.detail || ''"
-                    [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
-                    [status]="
-                      step.recovered || step.expected
-                        ? 'done'
-                        : step.status || 'done'
-                    "
-                    [meta]="
-                      step.recovered
-                        ? 'fixed'
-                        : step.expected
-                          ? 'reproduced'
-                          : step.result ||
-                            step.meta ||
-                            (step.duration && step.duration > 1
-                              ? duration(step.duration)
-                              : '')
-                    "
-                    [output]="
-                      step.kind === 'think'
-                        ? step.text || ''
-                        : step.output || step.hunk?.join('\n') || ''
-                    "
-                    [presentation]="step.presentation"
-                    [copiedCode]="copiedCode()"
-                    (copyCode)="copyCode.emit($event)"
-                    [fullContent]="step.fullContent"
-                    (expandedChange)="toolExpanded(step.id, $event)"
-                    (contentRequested)="contentRequested.emit($event)"
-                  />
-                }
-                @for (media of step.media; track media.path) {
-                  <ex-markdown-media
-                    class="media-output"
-                    [path]="media.path"
-                    [caption]="media.caption"
-                    [showCaption]="media.caption !== 'Image'"
-                    [asset]="resolve()?.(media.path)"
-                    [active]="rowVisible"
-                    (openFile)="openFile.emit($event)"
-                    (openPage)="openPage.emit($event)"
-                  />
-                }
-              </div>
+                </div>
+              } @else if (step.kind !== 'media') {
+                <ex-tool-step
+                  [icon]="icon(step)"
+                  [verb]="verb(step)"
+                  [detail]="step.title || step.detail || ''"
+                  [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
+                  [status]="
+                    step.recovered || step.expected
+                      ? 'done'
+                      : step.status || 'done'
+                  "
+                  [meta]="
+                    step.recovered
+                      ? 'fixed'
+                      : step.expected
+                        ? 'reproduced'
+                        : step.result ||
+                          step.meta ||
+                          (step.duration && step.duration > 1
+                            ? duration(step.duration)
+                            : '')
+                  "
+                  [output]="
+                    step.kind === 'think'
+                      ? step.text || ''
+                      : step.output || step.hunk?.join('\n') || ''
+                  "
+                  [presentation]="step.presentation"
+                  [fullContent]="step.fullContent"
+                  [deferred]="step.deferredTool"
+                  [inspect]="inspectTool()"
+                  [open]="openTools().has(step.id)"
+                  [active]="rowVisible"
+                  [copiedCode]="copiedCode()"
+                  (copyCode)="copyCode.emit($event)"
+                  (expandedChange)="toolExpanded(step.id, $event)"
+                  (contentRequested)="contentRequested.emit($event)"
+                  (layoutChanging)="layoutChanging.emit($event)"
+                />
+              }
+              @if (step.media?.length) {
+                <div exAutoHeight><div>
+                  @for (media of step.media; track media.path) {
+                    <ex-markdown-media
+                      class="media-output"
+                      [path]="media.path"
+                      [caption]="media.caption"
+                      [showCaption]="media.caption !== 'Image'"
+                      [asset]="resolve()?.(media.path)"
+                      [active]="rowVisible"
+                      (openFile)="openFile.emit($event)"
+                      (openPage)="openPage.emit($event)"
+                    />
+                  }
+                </div></div>
+              }
             </div>
           }
         </ex-fold>

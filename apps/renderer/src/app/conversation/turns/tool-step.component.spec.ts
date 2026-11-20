@@ -1,9 +1,145 @@
+import { signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToolStepComponent } from "./tool-step.component";
-import type { ToolPresentation } from "../tool-presentation";
+import type { ToolDetailsProvider, ToolDetailsState, ToolPresentation } from "../tool-presentation";
+
+afterEach(() => vi.useRealTimers());
 
 describe("tool evidence", () => {
+  it("keeps a pending read out of the layout and keeps the disclosure focused through retry", () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const inspection = signal<ToolDetailsState>({ status: 'loading' });
+    const retry = vi.fn();
+    const inspect = vi.fn<ToolDetailsProvider>(() => ({ state: inspection, retry }));
+    fixture.componentRef.setInput("detail", "pnpm test");
+    fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
+    fixture.componentRef.setInput("inspect", inspect);
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const button = host.querySelector<HTMLButtonElement>('.head')!;
+    button.focus();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    button.click();
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(host.querySelector('.detail-notice')).toBeNull();
+    const [, abort] = inspect.mock.calls[0]!;
+    fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(abort.aborted).toBe(false);
+    vi.advanceTimersByTime(1000);
+    fixture.detectChanges();
+    expect(host.querySelector('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(host.querySelector('.detail-notice')).toBeNull();
+    inspection.set({ status: 'error', reason: 'failed' });
+    fixture.detectChanges();
+    const retryButton = host.querySelector<HTMLButtonElement>('.detail-notice button')!;
+    retryButton.focus();
+    retryButton.click();
+    expect(document.activeElement).toBe(button);
+    expect(retry).toHaveBeenCalledOnce();
+    inspection.set({ status: 'ready', evidence: {
+      output: '', presentation: { summary: 'pnpm test', blocks: [{ kind: 'code', text: '12 tests passed.' }] },
+    } });
+    fixture.detectChanges();
+    expect(host.querySelector('.tool-preview')?.textContent).toContain('12 tests passed.');
+    expect(button.hasAttribute('aria-busy')).toBe(false);
+    button.click();
+    fixture.detectChanges();
+    expect(abort.aborted).toBe(true);
+    expect(host.querySelector('ex-fold')?.hasAttribute('inert')).toBe(true);
+    fixture.destroy();
+  });
+
+  it("copies plain text when deferred shell output becomes available", () => {
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const inspection = signal<ToolDetailsState>({ status: 'loading' });
+    const copy = vi.fn();
+    fixture.componentInstance.copyCode.subscribe(copy);
+    fixture.componentRef.setInput("detail", "pnpm test");
+    fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
+    fixture.componentRef.setInput("inspect", () => ({ state: inspection, retry: () => undefined }));
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    host.querySelector<HTMLButtonElement>('.head')!.click();
+    fixture.detectChanges();
+    expect(host.querySelector('ex-shell-tool')).toBeNull();
+
+    const output = '\u001b[32m12 tests passed\u001b[0m';
+    inspection.set({ status: 'ready', evidence: {
+      output, presentation: {
+        summary: 'pnpm test', blocks: [],
+        shell: { command: 'pnpm test', output, directory: '', description: '',
+          interrupted: false, failed: false, commandShortened: false, outputShortened: false },
+      },
+    } });
+    fixture.detectChanges();
+    expect(host.querySelector('ex-shell-tool .screen')?.textContent).toContain('12 tests passed');
+    host.querySelector<HTMLButtonElement>('button[aria-label="Copy captured output"]')!.click();
+    expect(copy).toHaveBeenCalledExactlyOnceWith('12 tests passed');
+    fixture.componentRef.setInput("copiedCode", '12 tests passed');
+    fixture.detectChanges();
+    expect(host.querySelector('button[aria-label="Output copied"]')).not.toBeNull();
+    fixture.destroy();
+  });
+
+  it("warms closed evidence on a hover dwell or press and cues only a slow open", () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(ToolStepComponent);
+    const inspection = signal<ToolDetailsState>({ status: 'loading' });
+    const prefetch = vi.fn();
+    const inspect = Object.assign(vi.fn(() => ({ state: inspection, retry: () => undefined })), { prefetch });
+    const deferred = { item: { id: 'call', revision: 'a'.repeat(64) } };
+    fixture.componentRef.setInput("detail", "pnpm test");
+    fixture.componentRef.setInput("deferred", deferred);
+    fixture.componentRef.setInput("inspect", inspect);
+    fixture.detectChanges();
+    const head = fixture.nativeElement.querySelector('.head') as HTMLButtonElement;
+    const pointer = (type: string, pointerType = 'mouse') =>
+      head.dispatchEvent(Object.assign(new Event(type), { pointerType, button: 0 }));
+
+    pointer('pointerenter');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(60);
+    pointer('pointerleave');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(200);
+    expect(prefetch).not.toHaveBeenCalled();
+    pointer('pointerenter');
+    fixture.detectChanges();
+    vi.advanceTimersByTime(100);
+    expect(prefetch).toHaveBeenCalledOnce();
+    expect(prefetch).toHaveBeenCalledWith(deferred);
+
+    pointer('pointerdown', 'touch');
+    fixture.detectChanges();
+    expect(prefetch).toHaveBeenCalledOnce();
+    pointer('pointerdown');
+    fixture.detectChanges();
+    expect(prefetch).toHaveBeenCalledTimes(2);
+
+    head.click();
+    fixture.detectChanges();
+    expect(inspect).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(119);
+    fixture.detectChanges();
+    expect(head.classList).not.toContain('pending');
+    vi.advanceTimersByTime(1);
+    fixture.detectChanges();
+    expect(head.classList).toContain('pending');
+    inspection.set({ status: 'ready', evidence: { output: 'ok', presentation: { summary: 'pnpm test', blocks: [] } } });
+    fixture.detectChanges();
+    expect(head.classList).not.toContain('pending');
+    expect(prefetch).toHaveBeenCalledTimes(2);
+    fixture.destroy();
+  });
+
   it("colors literal whole-file contents and preserves whitespace without adding a terminal row", () => {
     const fixture = TestBed.createComponent(ToolStepComponent);
     fixture.componentRef.setInput("detail", "skill-test.txt");

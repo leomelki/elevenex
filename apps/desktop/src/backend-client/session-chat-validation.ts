@@ -1,4 +1,16 @@
 import { parseChangeSummary } from "./session-chat-changes";
+import {
+  SESSION_CHAT_TOOL_CATEGORIES,
+  SESSION_CHAT_TURN_FILES_LIMIT,
+  SESSION_CHAT_TURN_REPLY_LIMIT,
+  SESSION_CHAT_TURN_TIMELINE_SLOTS,
+  SESSION_CHAT_TOOL_LABEL_LIMIT,
+  SESSION_CHAT_TOOL_META_LIMIT,
+  SESSION_CHAT_TURN_TOOL_LABEL_LIMIT,
+  SESSION_CHAT_TURN_TOOL_META_LIMIT,
+  SESSION_CHAT_TURN_WORK_LIMIT,
+  SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+} from "@elevenex/shared";
 import type {
   SessionChatAgentPage,
   SessionChatAgentContext,
@@ -6,6 +18,16 @@ import type {
   SessionChatAction,
   SessionChatEvent,
   SessionChatItem,
+  SessionChatRecord,
+  SessionChatCompletedTurn,
+  SessionChatTurnTimelineRow,
+  SessionChatTurnWorkReply,
+  SessionChatTurnWorkRead,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
+  SessionChatToolEvidence,
+  SessionChatToolHeading,
+  SessionChatToolReference,
   SessionChatPage,
   SessionChatState,
   SessionChatPlanUsage,
@@ -130,7 +152,7 @@ function execution(value: unknown): NonNullable<SessionChatItem["execution"]> {
     ...(raw["interrupted"] !== undefined ? { interrupted: bool(raw["interrupted"]) } : {}),
   };
 }
-function item(value: unknown): SessionChatItem {
+function item(value: unknown): SessionChatRecord {
   const raw = chatObject(value),
     kind = raw["kind"];
   if (
@@ -162,14 +184,212 @@ function item(value: unknown): SessionChatItem {
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
     ...(mentions === undefined ? {} : { mentions }),
-    ...(raw["media"] !== undefined ? { media: array(raw["media"], 12, value => {
-      const media = chatObject(value);
-      const id = chatText(media["id"], 2);
-      if (!/^\d{1,2}$/.test(id)) throw invalid();
-      return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]), ...(media["kind"] === undefined ? {} : { kind: mediaKind(media["kind"]) }) };
-    }) } : {}),
+    ...(raw["media"] !== undefined ? { media: mediaReferences(raw["media"]) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
+  };
+}
+function mediaReferences(value: unknown) {
+  return array(value, 12, value => {
+    const media = chatObject(value);
+    const id = chatText(media["id"], 2);
+    if (!/^\d{1,2}$/.test(id)) throw invalid();
+    return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]), ...(media["kind"] === undefined ? {} : { kind: mediaKind(media["kind"]) }) };
+  });
+}
+function contentRevision(value: unknown): string {
+  const revision = chatText(value, 64);
+  if (!/^[a-f0-9]{64}$/.test(revision)) throw invalid();
+  return revision;
+}
+export function deferredToolDetails(value: unknown): true | undefined {
+  if (value !== undefined && value !== true) throw invalid();
+  return value;
+}
+
+function toolHeading(value: unknown): SessionChatToolHeading {
+  const raw = chatObject(value);
+  return {
+    revision: contentRevision(raw['revision']),
+    ...(raw['summary'] === undefined ? {} : { summary: chatText(raw['summary'], SESSION_CHAT_TOOL_LABEL_LIMIT) }),
+    ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], SESSION_CHAT_TOOL_META_LIMIT) }),
+  };
+}
+
+function activityItem(value: unknown, detailsAllowed: boolean, inlineReceipt = false): SessionChatRecord {
+  const raw = chatObject(value), row = item(raw);
+  const details = raw['toolDetails'] === undefined ? undefined : toolHeading(raw['toolDetails']);
+  if (details && (!detailsAllowed || !row.id || (row.kind !== 'tool_use' && row.kind !== 'tool_result') ||
+    row.input || row.text || row.execution !== undefined || (row.kind === 'tool_use' && !details.summary))) throw invalid();
+  const peerId = (value: unknown): string => {
+    const id = chatText(value);
+    if (!id || id === row.id) throw invalid();
+    return id;
+  };
+  let receipt: SessionChatRecord['receipt'];
+  if (raw['receipt'] !== undefined) {
+    const peer = chatObject(raw['receipt']);
+    if (row.kind !== 'tool_use' || (!details && !inlineReceipt)) throw invalid();
+    const toolDetails = peer['toolDetails'] === undefined ? undefined : toolHeading(peer['toolDetails']);
+    if (toolDetails && !details) throw invalid();
+    receipt = { id: peerId(peer['id']), error: bool(peer['error']), ...(toolDetails ? { toolDetails } : {}) };
+  }
+  let invocation: SessionChatRecord['invocation'];
+  if (raw['invocation'] !== undefined) {
+    const peer = chatObject(raw['invocation']);
+    const toolDetails = toolHeading(peer['toolDetails']);
+    if (row.kind !== 'tool_result' || !details || !row.toolId || !toolDetails.summary) throw invalid();
+    invocation = { id: peerId(peer['id']), toolKind: nullable(peer['toolKind']), toolDetails };
+  }
+  return { ...row, ...(details ? { toolDetails: details } : {}),
+    ...(receipt ? { receipt } : {}), ...(invocation ? { invocation } : {}) };
+}
+
+function toolReference(value: unknown): SessionChatToolReference {
+  const raw = chatObject(value), id = chatText(raw['id']);
+  if (!id) throw invalid();
+  return { id, revision: contentRevision(raw['revision']) };
+}
+
+export function parseToolDetailsRead(value: unknown): SessionChatToolDetailsRead {
+  const raw = chatObject(value);
+  const item = toolReference(raw['item']);
+  const result = raw['result'] === undefined ? undefined : toolReference(raw['result']);
+  const turnId = raw['turnId'] === undefined ? undefined : chatText(raw['turnId']);
+  if (item.id === result?.id || (turnId !== undefined && (!turnId || turnId === item.id || turnId === result?.id ||
+    (result && result.revision !== item.revision)))) throw invalid();
+  return {
+    taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
+    requestId: requestId(raw['requestId']), item, ...(result ? { result } : {}), ...(turnId ? { turnId } : {}),
+  };
+}
+
+export function parseToolDetailsReply(value: unknown, input: SessionChatToolDetailsRead): SessionChatToolDetailsReply {
+  const raw = chatObject(value);
+  const { taskId, sessionId } = input;
+  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId || raw['turnId'] !== input.turnId ||
+      !!input.result !== (raw['result'] !== undefined)) throw invalid();
+  const evidence = (value: unknown, expected: SessionChatToolReference): SessionChatToolEvidence => {
+    const valueRecord = chatObject(value);
+    const { id, revision } = toolReference(valueRecord);
+    const record = activityItem(valueRecord['record'], false);
+    if (id !== expected.id || revision !== expected.revision || record.id !== id ||
+      (record.kind !== 'tool_use' && record.kind !== 'tool_result') ||
+      record.media || record.changes || record.text.length > 16000 || record.input.length > 16000) throw invalid();
+    return { id, revision, record: { ...record, kind: record.kind } };
+  };
+  const call = evidence(raw['item'], input.item);
+  const result = input.result ? evidence(raw['result'], input.result) : undefined;
+  if (result && (call.record.kind !== 'tool_use' || result.record.kind !== 'tool_result' ||
+    result.record.toolId !== (call.record.toolId ?? call.id))) throw invalid();
+  return { taskId, sessionId, item: call, ...(result ? { result } : {}), ...(input.turnId ? { turnId: input.turnId } : {}) };
+}
+
+export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
+  const raw = chatObject(value);
+  const turnId = chatText(raw['turnId']);
+  const deferToolDetails = deferredToolDetails(raw['deferToolDetails']);
+  const timeline = raw['timeline'];
+  const limit = raw['limit'] === undefined ? undefined : workCount(raw['limit']);
+  if (!turnId || (timeline !== undefined && (timeline !== true || !deferToolDetails)) || (limit !== undefined && (limit < 1 ||
+    limit > (deferToolDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT)))) throw invalid();
+  return {
+    taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
+    requestId: requestId(raw['requestId']), turnId,
+    revision: contentRevision(raw['revision']), offset: workCount(raw['offset']),
+    ...(deferToolDetails ? { deferToolDetails } : {}),
+    ...(timeline === true ? { timeline } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  };
+}
+
+function timelineRow(value: unknown, turnId: string): SessionChatTurnTimelineRow {
+  if (value === null) return null;
+  const raw = chatObject(value);
+  const kind = raw['kind'], id = chatText(raw['id']);
+  if (!id || id === turnId) throw invalid();
+  if (kind === 'call' || kind === 'result' || kind === 'media') {
+    const media = raw['media'] === undefined ? undefined : mediaReferences(raw['media']);
+    if (media?.some(value => !value.inline || value.kind === 'file')) throw invalid();
+    if (kind === 'media') {
+      const callId = chatText(raw['callId']);
+      if (!callId || callId === id || callId === turnId || !media?.length) throw invalid();
+      return { kind, id, callId, media };
+    }
+    const resultId = raw['resultId'] === undefined ? undefined : chatText(raw['resultId']);
+    const shortLabel = chatText(raw['label'], SESSION_CHAT_TURN_TOOL_LABEL_LIMIT);
+    const label = raw['fullLabel'] === undefined ? shortLabel : chatText(raw['fullLabel'], kind === 'call' ? SESSION_CHAT_TOOL_LABEL_LIMIT : undefined);
+    const shortMeta = raw['meta'] === undefined ? undefined : chatText(raw['meta'], SESSION_CHAT_TURN_TOOL_META_LIMIT);
+    const meta = raw['fullMeta'] === undefined ? shortMeta : chatText(raw['fullMeta'], SESSION_CHAT_TOOL_META_LIMIT);
+    const error = raw['error'];
+    if (!shortLabel.trim() || (error !== undefined && error !== true) ||
+        (resultId !== undefined && (kind !== 'call' || !resultId || resultId === turnId || resultId === id))) throw invalid();
+    return {
+      kind, id, label, toolKind: nullable(raw['toolKind']),
+      ...(resultId ? { resultId } : {}), ...(error ? { error } : {}), ...(media ? { media } : {}),
+      ...(meta === undefined ? {} : { meta }),
+    };
+  }
+  const row = activityItem(raw, false);
+  if (row.kind === 'user' || row.kind === 'tool_use' || row.kind === 'tool_result') throw invalid();
+  return row;
+}
+
+export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkReply {
+  const raw = chatObject(value);
+  const { taskId, sessionId, turnId, revision, offset } = input;
+  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
+    raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
+  const total = workCount(raw['total']);
+  if (raw['timeline'] !== undefined) {
+    if (!input.timeline || raw['items'] !== undefined) throw invalid();
+    const timeline = array(raw['timeline'], SESSION_CHAT_TURN_TIMELINE_SLOTS, value => timelineRow(value, turnId));
+    const end = offset + timeline.length;
+    const nextOffset = end < total ? end : null;
+    const ids = timeline.flatMap(row => row ? [row.id] : []);
+    if (!timeline.length || end > total || raw['nextOffset'] !== nextOffset || new Set(ids).size !== ids.length) throw invalid();
+    return { taskId, sessionId, turnId, revision, offset, timeline, total, nextOffset };
+  }
+  // A legacy engine may ignore the limit and return its ordinary 40-row page.
+  const items = array(raw['items'], Math.max(SESSION_CHAT_TURN_WORK_LIMIT, input.limit ?? 0),
+    value => activityItem(value, !!input.deferToolDetails, true));
+  const end = offset + items.length;
+  const nextOffset = end < total ? end : null;
+  if (!items.length || end > total || raw['nextOffset'] !== nextOffset ||
+    items.some(row => row.kind === 'user' || !row.id || row.id === turnId || row.receipt?.id === turnId || row.invocation?.id === turnId) ||
+    new Set(items.map(row => row.id)).size !== items.length) throw invalid();
+  return { taskId, sessionId, turnId, revision, offset, items, total, nextOffset };
+}
+function historyItem(value: unknown, summaryAllowed: boolean, detailsAllowed: boolean): SessionChatItem {
+  const raw = chatObject(value), row = activityItem(raw, detailsAllowed);
+  if (raw['completedTurn'] === undefined) {
+    if (raw['turnChanges'] === undefined) return row;
+    if (row.kind !== 'user') throw invalid();
+    return { ...row, turnChanges: parseChangeSummary(raw['turnChanges'], SESSION_CHAT_TURN_FILES_LIMIT) };
+  }
+  if (!summaryAllowed || row.kind !== 'user') throw invalid();
+  const turn = chatObject(raw['completedTurn']);
+  const endId = chatText(turn['endId']);
+  const total = workCount(turn['total']);
+  const beforeReply = workCount(turn['beforeReply']);
+  const failures = workCount(turn['failures']);
+  const reply = array(turn['reply'], SESSION_CHAT_TURN_REPLY_LIMIT, item);
+  if (!row.id || !endId || endId === row.id || !total || beforeReply > total ||
+    reply.some(part => part.kind !== 'assistant' || !part.id || part.id === row.id) ||
+    new Set(reply.map(part => part.id)).size !== reply.length) throw invalid();
+  const categoryCounts = chatObject(turn['counts']);
+  const counts: SessionChatCompletedTurn['counts'] = Object.fromEntries(SESSION_CHAT_TOOL_CATEGORIES.flatMap(category => {
+    const value = categoryCounts[category];
+    return value === undefined ? [] : [[category, workCount(value)]];
+  }));
+  if (Object.values(counts).reduce((sum, count) => sum + count, 0) > total) throw invalid();
+  return {
+    ...row,
+    completedTurn: {
+      revision: contentRevision(turn['revision']), endId, total, beforeReply, failures, counts, reply,
+      ...(turn['duration'] === undefined ? {} : { duration: number(turn['duration']) }),
+      ...(turn['changes'] === undefined ? {} : { changes: parseChangeSummary(turn['changes'], SESSION_CHAT_TURN_FILES_LIMIT) }),
+    },
   };
 }
 function mediaKind(value: unknown): "image" | "video" | "file" {
@@ -462,6 +682,8 @@ export function parseChatPage(
   taskId: number,
   sessionId: number,
   loadingMode?: 'window' | 'progressive',
+  summarizeCompleted = false,
+  deferToolDetails = false,
 ): SessionChatPage {
   const raw = chatObject(value);
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
@@ -477,12 +699,12 @@ export function parseChatPage(
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
     state: state(raw["state"]),
-    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, item),
+    items: array(raw["items"], loadingMode === 'window' ? 320 : 80, value => historyItem(value, summarizeCompleted, deferToolDetails)),
     events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);
       if (event["type"] === "reset") return { type: "reset" };
       if (event["type"] === "item")
-        return { type: "item", item: item(event["item"]) };
+        return { type: "item", item: activityItem(event["item"], deferToolDetails) };
       if (event["type"] === "delta")
         return {
           type: "delta",

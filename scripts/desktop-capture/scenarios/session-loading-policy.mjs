@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 
 /** Adaptive opening, bounded history and mounted identities through real updates. */
 export default async function* (capture) {
+  const waitForSkeleton = () => capture.waitFor(() => {
+    const skeleton = document.querySelector('ex-chat-loading .skeleton');
+    return skeleton && getComputedStyle(skeleton).opacity === '1';
+  });
   for (const theme of ['light', 'dark']) {
     for (const narrow of [false, true]) {
-      await capture.evaluate(() => { location.href = '/connected-workspace'; });
-      await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+      const captureQuery = `?chatLoading=window&capture=${theme}-${narrow}`;
+      await capture.evaluate(query => { location.href = '/connected-workspace' + query; }, captureQuery);
+      await capture.waitFor(query => location.search === query &&
+        document.querySelector('ex-workspace-navigation ex-task-list'), captureQuery);
       await capture.theme(theme);
       await capture.viewport(narrow ? 1000 : 1440, narrow ? 760 : 960);
       await capture.reducedMotion(narrow);
@@ -66,25 +72,76 @@ export default async function* (capture) {
         owner.fixture.chat.holdReads(true);
       });
       await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '102' }));
-      await capture.waitFor(() => document.querySelector('.opening ex-chat-loading small')?.textContent === 'Progressive');
-      yield { name: `${prefix}-slow-opening`, inspect: ['.opening', 'ex-chat-loading'] };
+      await capture.waitFor(() => {
+        const chat = document.querySelector('ex-session-chat');
+        return chat && window.ng.getComponent(chat).store.progressiveLoading();
+      });
+      await waitForSkeleton();
+      const skeleton = await capture.evaluate(() => {
+        const loading = document.querySelector('ex-chat-loading');
+        const surface = loading.querySelector('.composer-surface').getBoundingClientRect();
+        return { status: loading.querySelector('[role="status"]').textContent.trim(),
+          pointerEvents: getComputedStyle(loading).pointerEvents,
+          animating: loading.querySelector('.exchanges').getAnimations().length > 0,
+          composer: { x: surface.x, y: surface.y, width: surface.width, height: surface.height } };
+      });
+      assert.equal(skeleton.status, 'Loading conversation…');
+      assert.equal(skeleton.pointerEvents, 'none');
+      assert.equal(skeleton.animating, !narrow);
+      yield { name: `${prefix}-slow-opening`, inspect: ['ex-chat-loading .skeleton', 'ex-chat-loading .composer-surface'], metadata: skeleton };
+      if (!narrow) await capture.motion.freeze();
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => document.querySelector('ex-composer'));
+      const composer = await capture.evaluate(() => {
+        const { x, y, width, height } = document.querySelector('ex-composer').getBoundingClientRect();
+        return { x, y, width, height };
+      });
+      assert.deepEqual(composer, skeleton.composer, 'The composer should take the placeholder’s place');
+      if (narrow) {
+        assert.ok(await capture.evaluate(() => {
+          const layer = document.querySelector('ex-chat-loading .skeleton');
+          return !layer || (getComputedStyle(layer).opacity === '0' && layer.getAnimations().length === 0);
+        }), 'Reduced motion should reveal the ready chat immediately');
+      } else {
+        await capture.motion.seek(70);
+        const handoff = await capture.evaluate(() => {
+          const layer = document.querySelector('ex-chat-loading .skeleton-leave');
+          const editor = document.querySelector('ex-composer textarea');
+          const viewport = document.querySelector('ex-chat-scroll .viewport');
+          const { x, y } = editor.getBoundingClientRect();
+          const editorTakesInput = document.elementFromPoint(x + 8, y + 8) === editor && !editor.disabled;
+          // Probe the painted stacking order by briefly opting the layer into hit testing.
+          layer.style.pointerEvents = 'auto';
+          const coversComposer = layer.contains(document.elementFromPoint(x + 8, y + 8));
+          layer.style.removeProperty('pointer-events');
+          return { opacity: Number(getComputedStyle(layer).opacity), coversComposer, editorTakesInput,
+            backdrop: getComputedStyle(layer).backgroundColor,
+            surface: getComputedStyle(layer.closest('main')).backgroundColor,
+            endGap: viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop };
+        });
+        assert.ok(handoff.opacity > 0.4 && handoff.opacity < 0.6);
+        assert.equal(handoff.backdrop, handoff.surface);
+        assert.equal(handoff.coversComposer, true);
+        assert.equal(handoff.editorTakesInput, true);
+        assert.ok(Math.abs(handoff.endGap) <= 1);
+        yield { name: `${prefix}-crossfade`, inspect: ['ex-chat-loading .skeleton-leave', 'ex-chat-scroll .viewport', 'ex-composer'], metadata: handoff };
+        await capture.motion.finish();
+        await capture.motion.play();
+      }
+      await capture.waitFor(() => !document.querySelector('ex-chat-loading .skeleton'));
       assert.equal(await capture.component('ex-session-chat', owner => owner.store.progressiveLoading()), true);
       assert.ok(await capture.component('ex-session-chat', owner => owner.store.items().length <= 160));
-      // Small history requests expose the same unobtrusive mode indicator.
+      // Background history reads leave the mounted chat unchanged.
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(true));
       await capture.component('ex-session-chat', owner => { void owner.store.older(); });
-      await capture.waitFor(() => {
-        const indicator = document.querySelector('.history-indicator');
-        return indicator?.querySelector('small') && Number(getComputedStyle(indicator).opacity) > 0.9;
-      });
-      yield { name: `${prefix}-progressive-history`, inspect: ['.history-indicator', 'ex-chat-scroll'] };
+      await capture.waitFor(() => window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading .skeleton, .history-indicator')), null);
+      yield { name: `${prefix}-background-history`, inspect: ['ex-chat-scroll'] };
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => !window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
 
       // Another task/chat inherits the connection-wide choice immediately,
-      // without waiting through another three-second slow-open deadline.
+      // without waiting through another slow-open deadline.
       await capture.component('ex-connected-workspace-demo', owner => {
         owner.fixture.chat.scenario('history', 103);
         owner.fixture.chat.holdReads(true);
@@ -95,8 +152,8 @@ export default async function* (capture) {
         return chat && window.ng.getComponent(chat).selection()?.sessionId === 103;
       });
       assert.equal(await capture.component('ex-session-chat', owner => owner.store.progressiveLoading()), true);
-      await capture.waitFor(() => document.querySelector('.opening ex-chat-loading small'));
-      yield { name: `${prefix}-shared-fallback`, inspect: ['.opening', 'ex-chat-loading'] };
+      await waitForSkeleton();
+      yield { name: `${prefix}-shared-fallback`, inspect: ['ex-chat-loading .skeleton'] };
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => document.querySelector('ex-composer'));
       await capture.component('ex-connected-workspace-demo', owner => owner.workspaceVisible.set(false));

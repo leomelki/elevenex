@@ -6,7 +6,7 @@ import {
   output,
   signal,
 } from "@angular/core";
-import { AutoHeightDirective, ButtonComponent } from "../../ui";
+import { ButtonComponent } from "../../ui";
 import type {
   ToolContentRequest,
   ToolContentSource,
@@ -18,9 +18,7 @@ import { ToolBlockComponent } from "./tool-block.component";
 /** A short result first; full evidence and original payloads are read on demand. */
 @Component({
   selector: "ex-tool-content",
-  imports: [
-    ToolBlockComponent, ShellToolComponent, ButtonComponent, AutoHeightDirective,
-  ],
+  imports: [ToolBlockComponent, ShellToolComponent, ButtonComponent],
   templateUrl: "./tool-content.component.html",
   styleUrl: "./tool-content.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,

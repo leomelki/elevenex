@@ -1,4 +1,4 @@
-import type { BrowserElementReference } from '@elevenex/shared';
+import type { BrowserElementReference, SessionChatToolCategory, SessionChatToolSource } from '@elevenex/shared';
 import type { ToolContentSource, ToolPresentation } from './tool-presentation';
 import type { MarkdownEmbed } from './markdown/markdown-parser';
 
@@ -160,6 +160,7 @@ export interface WorkStep {
   readonly output?: string;
   /** Parsed, bounded evidence. Original output stays separately inspectable. */
   readonly presentation?: ToolPresentation;
+  readonly deferredTool?: SessionChatToolSource;
   /** Inline previews from this receipt, in transcript order. */
   readonly media?: readonly MarkdownEmbed[];
   /** Optional bounded-reader targets for input/output shortened by transport. */
@@ -216,6 +217,18 @@ export interface SessionTask {
     readonly step?: string;
   };
 }
+export interface DeferredTurnWork {
+  readonly counts: Readonly<Partial<Record<SessionChatToolCategory, number>>>;
+  readonly failures: number;
+  readonly busy: boolean;
+  readonly ready: boolean;
+  readonly error?: 'failed' | 'changed';
+}
+export type TurnWorkAction = 'retry' | 'refresh';
+export interface TurnWorkToggle {
+  readonly open: boolean;
+  readonly toolIds: readonly string[];
+}
 export interface ChatExchange {
   /** Stable mounted identity across prompt receipt reconciliation; id stays canonical. */
   readonly renderId?: string;
@@ -238,6 +251,8 @@ export interface ChatExchange {
   readonly mark?: string;
   readonly status: TurnStatus;
   readonly steps: readonly WorkStep[];
+  /** Saved counts are available before the activity is expanded. */
+  readonly deferredWork?: DeferredTurnWork;
   /** Keep work after the latest reply in source order; omitted means all work precedes it. */
   readonly answerBeforeStepId?: string;
   /** Identity of the latest assistant message, retained when it becomes commentary. */
@@ -250,5 +265,7 @@ export interface ChatExchange {
   readonly startedAt?: number;
   readonly files?: readonly ChangedFile[];
   readonly filesTotal?: number;
+  readonly filesDiff?: { readonly add: number; readonly del: number };
+  readonly sharedChanges?: boolean;
   readonly error?: string;
 }

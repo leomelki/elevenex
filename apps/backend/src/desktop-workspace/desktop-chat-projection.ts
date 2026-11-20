@@ -1,13 +1,11 @@
 import { chatMedia } from './desktop-chat-media.js';
+import type { SessionChatRecord } from '@elevenex/shared';
 import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
 import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
+import { chatItemFailed, commandExecution, record } from './desktop-chat-tool-outcome.js';
 
-export function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
+export { record } from './desktop-chat-tool-outcome.js';
 export function display(value: unknown, limit = 16000): string {
   const text =
     typeof value === 'string'
@@ -25,59 +23,59 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatMedia>>;
+type ChatDisplayContent = Pick<SessionChatRecord, 'text' | 'truncated' | 'mentions' | 'media'>;
+export type ChatMediaCache = WeakMap<AgentTranscriptItem, ChatDisplayContent>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
-/** Keep execution facts separate from output without forwarding provider payloads. */
-function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
-  const source = item.kind === 'tool_use' ? item : call;
-  const input = record(source?.toolInput);
-  if (source?.toolKind !== 'bash' && !input.command && !input.cmd) return undefined;
-  const result = record(item.providerToolResult);
-  const exitCode = result.exitCode ?? result.exit_code;
-  const cwd = input.cwd ?? input.workdir ?? result.cwd;
-  const interrupted = result.interrupted;
-  const execution = {
-    ...(typeof exitCode === 'number' && Number.isSafeInteger(exitCode)
-      ? { exitCode }
-      : {}),
-    ...(typeof cwd === 'string' && cwd.length <= 4000 ? { cwd } : {}),
-    ...(typeof interrupted === 'boolean' ? { interrupted } : {}),
-  };
-  return Object.keys(execution).length ? execution : undefined;
+
+export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
+  if (item.turnChanges) return changeSummary(item.turnChanges);
+  if (!call || !['write', 'edit', 'file_changes', 'notebook_edit', 'bash'].includes(call.toolKind ?? '')) return undefined;
+  const previous = cache?.get(call);
+  const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
+  const changes = previous?.result === item && previous.fingerprint === fingerprint
+    ? previous.changes : changeSummary(toolChanges(call, item));
+  cache?.set(call, { result: item, fingerprint, changes });
+  return changes;
 }
+
+export function chatDisplayContent(item: AgentTranscriptItem, cache?: ChatMediaCache): ChatDisplayContent {
+  const cached = cache?.get(item);
+  if (cached) return cached;
+  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
+  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
+  const content = chatMedia(context ? { ...item, content: context.text } : item);
+  const text = display(content.text, item.kind === 'user' ? 64000 : 16000);
+  const projected = {
+    text,
+    truncated: content.shortened || text.endsWith('… [display shortened]'),
+    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
+    ...(content.media.length ? { media: content.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+  };
+  cache?.set(item, projected);
+  return projected;
+}
+
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
-  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
-  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
-  const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
-  mediaCache?.set(item, projected);
-  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
-  let changes = changeSummary(item.turnChanges);
-  if (!item.turnChanges && call) {
-    const previous = cache?.get(call);
-    const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
-    changes = previous?.result === item && previous.fingerprint === fingerprint ? previous.changes : changeSummary(toolChanges(call, item));
-    cache?.set(call, { result: item, fingerprint, changes });
-  }
+  // Keep only bounded display data. Original text and media sources can be
+  // reconstructed from the transcript when their dedicated readers need them.
+  const projected = chatDisplayContent(item, mediaCache);
+  const changes = chatItemChanges(item, call, cache);
   return {
-    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
-    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+    ...projected,
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
-    text,
     timestamp: item.timestamp,
     toolId: item.toolUseId ?? null,
     toolName:
       item.toolDisplayName ?? item.providerToolName ?? item.toolName ?? null,
     toolKind: item.toolKind ?? null,
     input,
-    error: item.isError === true || execution?.interrupted === true || (execution?.exitCode !== undefined && execution.exitCode !== 0),
-    truncated:
-      projected.shortened || text.endsWith('… [display shortened]') ||
-      input.endsWith('… [display shortened]'),
+    error: chatItemFailed(item, execution),
+    truncated: projected.truncated || input.endsWith('… [display shortened]'),
   };
 }
 export function chatState(

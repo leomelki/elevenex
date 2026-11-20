@@ -211,8 +211,12 @@ export function focusSessionTool(
       break;
     }
     case "read":
+      add(input.find((block) => block.kind === "list" && block.title === "Command steps"), 6, false, 4);
       if (!failed)
         add(output.find((block) => block.kind === "code") ?? output[0]);
+      break;
+    case "image_view":
+      if (!failed) evidence(input);
       break;
     case "write":
     case "notebook_edit":

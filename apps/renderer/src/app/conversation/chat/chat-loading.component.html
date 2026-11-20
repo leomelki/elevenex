@@ -1,0 +1,30 @@
+<span class="visually-hidden" role="status">{{ visible() ? label() : '' }}</span>
+@if (visible()) {
+  <div class="skeleton" aria-hidden="true" animate.leave="skeleton-leave">
+    <div class="transcript">
+      <div class="exchanges">
+        @for (exchange of exchanges; track $index) {
+          <div class="exchange">
+            <div class="prompt" [style.inline-size.%]="exchange.prompt"><span class="line"></span></div>
+            <div class="reply">
+              <span class="mark"></span>
+              <div class="lines">
+                @for (width of exchange.reply; track $index) {
+                  <span class="line" [style.inline-size.%]="width"></span>
+                }
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+    <div class="composer">
+      <div class="composer-surface">
+        <div class="field"><span class="line"></span></div>
+        <div class="controls">
+          <span class="chip"></span><span class="chip"></span><span class="send"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+}

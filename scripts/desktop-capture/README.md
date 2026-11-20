@@ -178,11 +178,14 @@ keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 
-`scenarios/session-loading-policy.mjs` checks normal and adaptive slow openings,
-the small Progressive indicator, 10,000-record windowing, and retained turn/tool
-and composer identities through IPC-style updates. It also checks that fallback
-follows different chats/tasks and recreated workspace owners, then resets on
-reconnect and application reload. Its metadata records local
+`scenarios/session-opening-scroll.mjs` checks the first paint of the default
+progressive page during session switches. `scenarios/session-loading-policy.mjs`
+uses the preview's `?chatLoading=window` override to check adaptive slow openings,
+quiet background reads, 10,000-record windowing, and retained turn/tool
+and composer identities through IPC-style updates. It samples the loading
+crossfade and checks that the interactive composer holds its bounds. It also
+checks that fallback follows different chats/tasks and recreated workspace owners,
+then resets on reconnect and application reload. Its metadata records local
 preview opening/update timings; these exclude real backend hydration and WAN
 latency. It covers both themes and narrow/reduced-motion layouts.
 
@@ -579,9 +582,10 @@ position through refresh, both themes, narrow layouts and reduced motion using
 the connected workspace preview.
 
 `scenarios/session-loading-stability.mjs` holds cold and cached chat reads through
-the production owner, checks first-frame composer/editor geometry, end following,
-reading-position retention and inline Git feedback in both themes and narrow
-reduced motion. Run against the connected preview with `--url`. Optional
+the production owner and checks the cold-open skeleton, cached reopening,
+first-frame composer/editor geometry, end following, reading position and inline
+Git feedback in both themes and narrow reduced motion. Run against the connected
+preview with `--url`. Optional
 `ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of bounded
 `{id, items, state}` recorded pages for transcript replay; this is preview evidence,
 not a live backend or packaged-app test.
@@ -731,6 +735,27 @@ separately by desktop regressions and the sandboxed preload smoke.
 reading above the end and inside an earlier-history window. It asserts retained
 scroll position, unread feedback for recovered output, stable history items and
 view identity in both themes through the production window with controlled transport.
+
+`scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
+turns against the preview transport. It checks the collapsed reply and counts,
+an interrupted read, a single response for more than 600 tools, lazy group rows,
+a late tool receipt, on-demand evidence, cached reopen and error retry. It scrubs
+the first group expansion and interrupts a collapse to check row continuity. It
+checks the Worked control's position both at the live end and while reading above
+it, along with reply identity, keyboard focus and draft retention. Use the
+connected-workspace preview URL. The dark run uses a narrow viewport and reduced
+motion.
+
+`scenarios/session-turn-work-hover.mjs` uses trusted pointer input to warm a
+reply while another turn is loading, opens it from the finished cache while
+the transport is held, and joins an in-flight preload for a larger turn. Run
+it against the connected-workspace preview URL in both themes.
+
+`scenarios/session-tool-details.mjs` expands Worked and its activity group
+before requesting tool evidence by keyboard. It checks request cancellation,
+the direct evidence reveal, retry focus and cached reopen in the
+connected-workspace preview. The dark run uses a narrow viewport and reduced
+motion.
 
 `scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
 through production UI/IPC against a running disposable Nest backend. Supply

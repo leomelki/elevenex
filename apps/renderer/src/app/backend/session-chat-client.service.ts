@@ -11,6 +11,10 @@ import type {
   SessionChatCommandReply,
   SessionChatPage,
   SessionChatRead,
+  SessionChatTurnWorkReply,
+  SessionChatTurnWorkRead,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
   SessionChatChangesRead,
   SessionChatChangesPage,
   SessionChatContentRead,
@@ -43,6 +47,12 @@ export class SessionChatClient {
     return this.invoke(scope, false, () =>
       this.bridge.sessionChatRead(scope, input),
     );
+  }
+  turnWork(scope: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatTurnWork(scope, input));
+  }
+  toolDetails(scope: string, input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatToolDetails(scope, input));
   }
   catalog(scope: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>> {
     return this.invoke(scope, false, () => this.bridge.sessionChatCatalog(scope, input));

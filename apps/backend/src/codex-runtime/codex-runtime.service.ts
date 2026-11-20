@@ -1,4 +1,4 @@
-import { codexImageResult } from './codex-image-result.js';
+import { codexImageResult, codexImageViewInput, codexImageViewResult } from './codex-image-result.js';
 import { codexUserMessage } from './codex-user-message.js';
 import {
   elevenexMcpUrl,
@@ -2848,13 +2848,14 @@ export class CodexRuntimeService
       };
     }
     if (item.type === 'mcp_tool_call') {
+      const imageView = item.server === 'codex' && item.tool === 'ViewImage';
       return {
         id: `${item.id}:tool_result`,
         kind: 'tool_result',
         toolUseId: item.id,
-        content: item.error?.message ?? JSON.stringify(item.result ?? {}),
+        content: item.error?.message ?? (imageView ? '' : JSON.stringify(item.result ?? {})),
         providerToolResult: item.result,
-        isError: item.status === 'failed',
+        isError: item.status === 'failed' || !!item.error || record(item.result).isError === true,
         timestamp,
         authoredAt: timestamp,
       };
@@ -4915,6 +4916,16 @@ export class CodexRuntimeService
           ...(raw.failure ? { error: { message: 'Image generation failed.' } } : {}),
           status,
         };
+      case 'imageView': {
+        const input = codexImageViewInput(raw.path);
+        return {
+          id, type: 'mcp_tool_call', server: 'codex', tool: 'ViewImage',
+          arguments: input,
+          result: { content: [], structured_content: codexImageViewResult(status === 'failed' ? '' : input.path) },
+          ...(status === 'failed' ? { error: { message: 'Couldn’t view the image.' } } : {}),
+          status,
+        };
+      }
       case 'dynamicToolCall':
         return {
           id, type: 'mcp_tool_call', server: typeof raw.namespace === 'string' ? raw.namespace : 'codex',

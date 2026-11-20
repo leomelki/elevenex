@@ -227,6 +227,55 @@ describe("ChatScroll return to bottom", () => {
     expect(requests).toHaveBeenCalledExactlyOnceWith('before');
   });
 
+  it('only pages in the scroll direction and cancels an older read on reversal', async () => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    const chat = fixture.componentInstance;
+    const requests = vi.fn();
+    requests.mockImplementation(() => fixture.componentRef.setInput('historyLoading', true));
+    const cancelled = vi.fn(() => fixture.componentRef.setInput('historyLoading', false));
+    chat.historyRequested.subscribe(requests);
+    chat.historyCancelled.subscribe(cancelled);
+    dimensions.height = 850;
+    fixture.componentRef.setInput('initialHistoryPrefetch', false);
+    fixture.componentRef.setInput('historyBefore', true);
+    fixture.componentRef.setInput('historyAfter', true);
+    moveTo(225); // Both edges are equally close.
+    const wheel = async (deltaY: number) => {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY }));
+      await new Promise(requestAnimationFrame);
+      fixture.detectChanges();
+    };
+    await wheel(-100);
+    expect(requests.mock.calls.map(args => args[0])).toEqual(['before']);
+    await wheel(100);
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(requests.mock.calls.map(args => args[0])).toEqual(['before', 'following']);
+  });
+
+  it('keeps wheel input within scrollable tool evidence until it reaches its edge', async () => {
+    const { fixture, viewport, moveTo } = await setup();
+    fixture.componentRef.setInput('initialHistoryPrefetch', false);
+    fixture.componentRef.setInput('historyBefore', true);
+    moveTo(200);
+    const requests = vi.fn();
+    fixture.componentInstance.historyRequested.subscribe(requests);
+    const evidence = document.createElement('pre');
+    evidence.style.overflowY = 'auto';
+    Object.defineProperties(evidence, { scrollHeight: { value: 400 }, clientHeight: { value: 100 } });
+    fixture.componentInstance.content().nativeElement.append(evidence);
+    evidence.scrollTop = 50;
+    const wheelUp = async () => {
+      evidence.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -100 }));
+      await new Promise(requestAnimationFrame);
+    };
+    await wheelUp();
+    expect(requests).not.toHaveBeenCalled();
+    evidence.scrollTop = 0;
+    await wheelUp();
+    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+    expect(viewport.scrollTop).toBe(200);
+  });
+
   for (const reading of [false, true]) it(`prefetches older history without ${reading ? 'overriding a reader who scrolls during the request' : 'dropping end following when the partial turn is replaced'}`, async () => {
     const { fixture, viewport, dimensions, moveTo } = await setup();
     dimensions.height = 400;

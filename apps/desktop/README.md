@@ -63,6 +63,9 @@ pnpm package --linux
 `ELEVENEX_DESKTOP_PORT`), opens Electron and reloads renderer changes with
 Angular HMR. Main/preload/shared changes compile before Electron restarts.
 Type errors leave the previous app running. Stop development with Ctrl+C.
+The Angular dev server bundles `@elevenex/shared` with the renderer so workspace
+package rebuilds and branch updates can add runtime exports without a lockfile
+change or a manual Vite cache reset.
 
 `desktop:dev` also compiles and bundles the checkout's backend before opening
 Electron. **This Mac** runs that local bundle with the launcher's Node executable;
@@ -379,6 +382,11 @@ The guide covers incremental events, bounded caches, mutation outcomes and
 backward-compatible backend evolution. Agents may improve the backend to support
 the intended product and performance, and must ask the developer before useful
 breaking changes unless already authorized.
+
+To trace conversation requests, launch with `NODE_DEBUG=elevenex-chat pnpm desktop:dev`.
+Electron writes one dispatch and outcome line per HTTP request to stderr,
+including for an SSH backend. The logs show pagination, response size and timing
+using allowlisted metadata only.
 
 ## Agent UI captures
 

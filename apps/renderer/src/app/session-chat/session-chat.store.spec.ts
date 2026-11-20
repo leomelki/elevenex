@@ -18,7 +18,7 @@ import {
 } from "../backend/backend-client.service";
 import { SessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
 import { SessionChatStore } from "./session-chat.store";
-import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING } from './session-chat-loading';
+import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
 import { chatExchanges } from "./session-chat-transcript";
 const state: SessionChatState = {
   provider: "codex",
@@ -89,18 +89,20 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
   });
   const bridge = {
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
+    sessionChatTurnWork: vi.fn<ElevenexBridge['sessionChatTurnWork']>(async () =>
+      ({ ok: false, error: { code: 'transport', message: 'No activity fixture.' } })),
     sessionChatCommand: vi.fn<NonNullable<ElevenexBridge["sessionChatCommand"]>>(async () => ok({ accepted: true as const })),
     sessionChatCancel: vi.fn(async () => undefined),
   } satisfies Pick<
     ElevenexBridge,
-    "sessionChatRead" | "sessionChatCommand" | "sessionChatCancel"
+    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatCommand" | "sessionChatCancel"
   >;
   if (options.initial) bridge.sessionChatRead.mockImplementationOnce(() => options.initial!);
   TestBed.configureTestingModule({
     providers: [
       SessionChatStore,
       SessionChatDrafts,
-      { provide: SESSION_CHAT_PROGRESSIVE_LOADING, useValue: options.progressive ?? false },
+      ...(options.progressive === undefined ? [] : [{ provide: SESSION_CHAT_PROGRESSIVE_LOADING, useValue: options.progressive }]),
       { provide: ELEVENEX_BRIDGE, useValue: { ...bridge, ...options.localDrafts } },
       { provide: BackendClientService, useValue: { state: scope } },
     ],
@@ -292,8 +294,8 @@ describe("session chat ownership", () => {
     });
   });
 
-  it('opens a bounded window by default and does not interpret long polls as a slow connection', async () => {
-    const { store, bridge } = setup(); await settle();
+  it('uses a bounded window with the override and does not interpret long polls as a slow connection', async () => {
+    const { store, bridge } = setup({ progressive: false }); await settle();
     expect(bridge.sessionChatRead.mock.calls[0]?.[1].loadingMode).toBe('window');
     const poll = deferred<BackendResult<SessionChatPage>>();
     bridge.sessionChatRead.mockImplementationOnce(() => poll.promise);
@@ -302,12 +304,35 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCancel).not.toHaveBeenCalled();
   });
 
-  it('switches the app to progressive pages after a slow opening and rejects the cancelled window', async () => {
+  it('projects compact prompts and final replies without allowing live output to replace a saved answer', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [
+      item('saved', 'user', 'Saved question', { completedTurn: {
+        revision: 'a'.repeat(64), endId: 'outcome', beforeReply: 108, total: 108,
+        counts: { read: 14, run: 3 }, failures: 1, duration: 98,
+        reply: [item('reply', 'assistant', 'Final answer', { truncated: true })],
+      } }),
+      item('incoming', 'assistant', 'A new run has started'),
+    ], state: { ...state, phase: 'running' } })));
+    await store.refresh();
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1]).toMatchObject({ loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true });
+    expect(store.exchanges()).toMatchObject([
+      {
+        id: 'saved', status: 'done', answer: 'Final answer', answerId: 'reply', steps: [], duration: 98,
+        overflow: [{ id: 'reply', label: 'message' }],
+        deferredWork: { counts: { read: 14, run: 3 }, failures: 1, busy: false, ready: false },
+      },
+      { status: 'live', answer: 'A new run has started' },
+    ]);
+    expect(store.presentedItems().map(row => row.id)).toEqual(['saved', 'reply', 'incoming']);
+  });
+
+  it('switches the app to progressive pages after 1.75 seconds and rejects the cancelled window', async () => {
     const first = deferred<BackendResult<SessionChatPage>>();
     const second = deferred<BackendResult<SessionChatPage>>();
-    const { store, bridge, scope } = setup({ initial: first.promise });
+    const { store, bridge, scope } = setup({ initial: first.promise, progressive: false });
     bridge.sessionChatRead.mockImplementationOnce(() => second.promise);
-    await vi.advanceTimersByTimeAsync(2999);
+    await vi.advanceTimersByTimeAsync(1749);
     expect(store.progressiveLoading()).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(store.progressiveLoading()).toBe(true);
@@ -334,11 +359,11 @@ describe("session chat ownership", () => {
   it('shares the fallback with other chat owners and replaces their pending initial windows', async () => {
     const first = deferred<BackendResult<SessionChatPage>>();
     const second = deferred<BackendResult<SessionChatPage>>();
-    const { store, bridge } = setup({ initial: first.promise });
+    const { store, bridge } = setup({ initial: first.promise, progressive: false });
     bridge.sessionChatRead.mockImplementationOnce(() => second.promise);
     const other = TestBed.runInInjectionContext(() => new SessionChatStore());
     other.open({ scopeId: 'scope', taskId: 2, sessionId: 3 }, false);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(SESSION_CHAT_SLOW_OPEN_MS);
     expect(store.progressiveLoading()).toBe(true);
     expect(other.progressiveLoading()).toBe(true);
     expect(bridge.sessionChatRead.mock.calls.filter(([, read]) => read.sessionId === 3).map(([, read]) => read.loadingMode))
@@ -357,8 +382,8 @@ describe("session chat ownership", () => {
 
   it('clears the opening deadline on success, navigation, hiding and destruction', async () => {
     const first = deferred<BackendResult<SessionChatPage>>();
-    const { store, bridge } = setup({ initial: first.promise });
-    await vi.advanceTimersByTimeAsync(2999);
+    const { store, bridge } = setup({ initial: first.promise, progressive: false });
+    await vi.advanceTimersByTimeAsync(SESSION_CHAT_SLOW_OPEN_MS - 1);
     first.resolve(ok(page())); await settle();
     await vi.advanceTimersByTimeAsync(1);
     expect(store.progressiveLoading()).toBe(false);
@@ -381,14 +406,20 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
   });
 
-  it('allows the rollout flag to opt in immediately', async () => {
-    const { store, bridge } = setup({ progressive: true }); await settle();
+  it('opens with progressive summaries on the first request and keeps it pending past the fallback deadline', async () => {
+    const first = deferred<BackendResult<SessionChatPage>>();
+    const { store, bridge } = setup({ initial: first.promise });
     expect(store.progressiveLoading()).toBe(true);
-    expect(bridge.sessionChatRead.mock.calls[0]?.[1].loadingMode).toBe('progressive');
+    expect(bridge.sessionChatRead.mock.calls[0]?.[1]).toMatchObject({ loadingMode: 'progressive', summarizeCompleted: true });
+    await vi.advanceTimersByTimeAsync(SESSION_CHAT_SLOW_OPEN_MS);
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(1);
+    expect(bridge.sessionChatCancel).not.toHaveBeenCalled();
+    first.resolve(ok(page()));
+    await settle();
   });
 
   it('does not let a stale connection enable fallback on the reconnected app', async () => {
-    const { store, scope } = setup(); await settle();
+    const { store, scope } = setup({ progressive: false }); await settle();
     const policy = TestBed.inject(SessionChatLoadingPolicy);
     scope.set({ revision: 2, scope: null });
     expect(policy.enableProgressive('scope')).toBe(false);
@@ -975,7 +1006,7 @@ describe("session chat ownership", () => {
     expect(store.historical()).toBe(false);
   });
 
-  it('keeps a verified contiguous prefix when a bounded reset cuts through it', async () => {
+  it.each(['poll', 'refresh'] as const)('keeps a verified contiguous prefix when a bounded %s cuts through it', async cause => {
     const prompt = item('u', 'user', 'Prompt');
     const older = item('work', 'system', 'Previous work');
     const kept = item('answer', 'assistant', 'Reply');
@@ -984,7 +1015,8 @@ describe("session chat ownership", () => {
     ] }))) });
     await settle();
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [kept], before: kept.id, leadingPrompt: prompt })));
-    await vi.advanceTimersByTimeAsync(80);
+    if (cause === 'refresh') await store.refresh();
+    else await vi.advanceTimersByTimeAsync(80);
     expect(store.items()).toEqual([prompt, older, kept]);
     expect(store.before()).toBeNull();
   });
@@ -1083,8 +1115,43 @@ describe("session chat ownership", () => {
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: true, items: history.slice(-80), next: null, state: { ...state, phase: "running" } })));
     await vi.advanceTimersByTimeAsync(80);
     expect(store.items()).toBe(pinned); expect(store.state()?.phase).toBe("running");
+    expect(store.exchanges().every(exchange => exchange.status !== 'live')).toBe(true);
     while (store.next()) { await store.newer(); expect(store.items().length).toBeLessThanOrEqual(320); }
     expect(store.items().at(-1)?.id).toBe("3999"); expect(store.historical()).toBe(false);
+  });
+  it('keeps historical controls and rows available when returning to latest fails', async () => {
+    const { store, bridge } = setup(); await settle();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: 'latest', items:
+      Array.from({ length: 320 }, (_, i) => item(String(i), 'user', `Request ${i}`)),
+    })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Older')] })));
+    await store.older();
+    const pinned = store.exchanges();
+    const next = store.next();
+    expect(next).not.toBeNull();
+    bridge.sessionChatRead.mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Try again' } });
+    expect(await store.refresh()).toBe(false);
+    expect(store.exchanges()).toBe(pinned);
+    expect(store.next()).toBe(next);
+    expect(store.historical()).toBe(true);
+  });
+  it('drops compact replies removed from the live tail while reading older history', async () => {
+    const { store, bridge } = setup(); await settle();
+    const prompt = item('prompt', 'user', 'Request');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { before: prompt.id, items: [
+      prompt, ...Array.from({ length: 318 }, (_, i) => item(`activity-${i}`, 'system', 'Work')),
+      item('old-answer', 'assistant', 'Answer before rewind'),
+    ] })));
+    await store.refresh();
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [item('older', 'user', 'Older')] })));
+    await store.older();
+    expect(store.exchanges().at(-1)?.answer).toBe('Answer before rewind');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { next: null, items: [
+      item('new-answer', 'assistant', 'Answer after rewind'),
+    ] })));
+    await store.newer();
+    expect(store.exchanges().at(-1)?.answer).toBe('Answer after rewind');
   });
   it('does not flash a paged historical window before loading the latest session', async () => {
     const { store, bridge } = setup(); await settle();
@@ -1684,6 +1751,38 @@ it('keeps the visible chat lifetime and incremental cursor across same-machine r
   expect(store.viewRevision()).toBe(view); expect(store.items()[0]?.id).toBe('kept');
   expect(bridge.sessionChatRead).toHaveBeenLastCalledWith('recovered', expect.objectContaining({ after: 'cursor' }));
 });
+
+it('warms a hovered saved turn on the recovered scope while history is still pending', async () => {
+  const activityRevision = 'a'.repeat(64);
+  const prompt = item('saved', 'user', 'Saved question', { completedTurn: {
+    revision: activityRevision, endId: 'reply', reply: [item('reply', 'assistant', 'Saved answer')],
+    beforeReply: 1, total: 1, counts: {}, failures: 0,
+  } });
+  const { store, bridge, scope } = setup({ initial: Promise.resolve(ok(page(2, { items: [prompt] }))) });
+  await settle();
+  TestBed.tick();
+  const activity = item('activity', 'assistant', 'Previous work');
+  bridge.sessionChatTurnWork.mockImplementation(async (_scope, { taskId, sessionId, turnId, revision, offset }) =>
+    ok({ taskId, sessionId, turnId, revision, offset, total: 1, nextOffset: null, timeline: [activity] }));
+  store.work.hint(prompt.id);
+  await settle();
+  expect(bridge.sessionChatTurnWork.mock.calls.map(([scope]) => scope)).toEqual(['scope']);
+
+  const history = deferred<BackendResult<SessionChatPage>>();
+  bridge.sessionChatRead.mockReturnValueOnce(history.promise);
+  TestBed.inject(SessionChatDrafts).rebind('scope', 'recovered');
+  scope.set({ revision: 2, scope: { id: 'recovered', environment: { kind: 'local' } } });
+  store.open({ scopeId: 'recovered', taskId: 1, sessionId: 2 }, false);
+  TestBed.tick();
+  await settle();
+  expect(bridge.sessionChatTurnWork.mock.calls.map(([scope]) => scope)).toEqual(['scope', 'recovered']);
+  store.work.toggle(prompt.id, true);
+  expect(store.work.open().get(prompt.id)?.items).toEqual([activity]);
+  expect(bridge.sessionChatTurnWork).toHaveBeenCalledTimes(2);
+  history.resolve(ok(page(2, { reset: false })));
+  await settle();
+});
+
 it('keeps an earlier-history window on screen instead of jumping to latest after recovery', async () => {
   const { store, bridge, scope } = setup(); await settle();
   const items = Array.from({ length: 320 }, (_, index) => item(String(index), 'user', `Request ${index}`));

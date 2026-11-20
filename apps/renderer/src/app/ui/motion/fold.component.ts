@@ -13,6 +13,7 @@ import {
     "[style.--fold-enter-delay]": "enterDelay() + 'ms'",
     "[style.--fold-exit-delay]": "exitDelay() + 'ms'",
     "[class.open]": "open()",
+    "[class.animate-open-on-mount]": "animateOpenOnMount()",
     "[class.settled]": "settled()",
     "[attr.inert]": 'open() ? null : ""',
     "[attr.aria-hidden]": "!open()",
@@ -27,6 +28,7 @@ import {
 })
 export class FoldComponent {
   readonly open = input(false);
+  readonly animateOpenOnMount = input(false);
   /** Earlier-session reveal: geometry shares one curve, ink staggers from the boundary. */
   readonly motion = input<'default' | 'unroll'>('default');
   readonly enterDelay = input(0);

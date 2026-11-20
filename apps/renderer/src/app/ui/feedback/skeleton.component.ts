@@ -47,9 +47,9 @@ import {
       display: block;
       background: linear-gradient(
         90deg,
-        var(--surface-sunken) 35%,
-        var(--line) 50%,
-        var(--surface-sunken) 65%
+        var(--skeleton-fill, var(--surface-sunken)) 35%,
+        var(--skeleton-highlight, var(--line)) 50%,
+        var(--skeleton-fill, var(--surface-sunken)) 65%
       );
       background-size: 250% 100%;
       animation: shimmer 1.4s linear infinite;

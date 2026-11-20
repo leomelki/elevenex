@@ -89,6 +89,14 @@ export function canonicalizeAgentTool(
     };
   }
 
+  if (normalized === 'viewimage' && (data['server'] === undefined || data['server'] === 'codex')) {
+    return {
+      toolKind: 'image_view',
+      toolDisplayName: 'View image',
+      toolInput: asRecord(data['arguments'] ?? data),
+    };
+  }
+
   if (
     normalized === 'write' ||
     normalized === 'filewrite' ||

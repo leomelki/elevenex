@@ -73,6 +73,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   TestBed.resetTestingModule();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -216,14 +217,27 @@ describe("connected chat reply rendering", () => {
     expect(owner.store.exchanges()[0]).toBe(before.exchange);
     expect(root.querySelector('ex-turn')).toBe(before.turn);
   });
-  it('mounts history and composer together after cold hydration, with retry after a failed read', async () => {
+  it('shows a delayed, decorative skeleton on a cold open and replaces it with a retry on failure', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let resolve!: (result: BackendResult<SessionChatPage>) => void;
     const { fixture, root, bridge, publish } = setup([], state, new Promise(yes => { resolve = yes; }));
     await settle(fixture);
+    const status = root.querySelector('ex-chat-loading [role="status"]')!;
+    vi.advanceTimersByTime(149);
+    fixture.detectChanges();
+    expect(status.textContent).toBe('');
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    vi.advanceTimersByTime(1);
+    fixture.detectChanges();
+    expect(status.textContent).toBe('Loading conversation…');
+    const skeleton = root.querySelector('ex-chat-loading .skeleton');
+    expect(skeleton?.getAttribute('aria-hidden')).toBe('true');
+    expect(skeleton?.querySelector('button, input, textarea, [tabindex]')).toBeNull();
     expect(root.querySelector('ex-composer')).toBeNull();
-    expect(root.querySelector('[role="status"]')?.textContent).toContain('Loading conversation');
     resolve({ ok: false, error: { code: 'transport', message: 'Connection interrupted' } });
     await settle(fixture);
+    expect(status.textContent).toBe('');
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
     expect(root.querySelector('[role="alert"]')?.textContent).toContain('Connection interrupted');
     expect(root.querySelector('ex-composer')).toBeNull();
     publish({ taskId: 1, sessionId: 2, cursor: 'loaded', reset: true, before: null, events: [],
@@ -234,6 +248,28 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector('.opening')).toBeNull();
     expect(root.querySelector('ex-composer')).not.toBeNull();
     expect(root.querySelector('ex-turn')?.textContent).toContain('Loaded reply');
+  });
+
+  it('restarts the loading delay for a different session and shows its fast reply immediately', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { fixture, root, bridge } = setup([], state, new Promise(() => undefined));
+    await settle(fixture);
+    vi.advanceTimersByTime(100);
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(yes => { resolve = yes; }));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    vi.advanceTimersByTime(100);
+    fixture.detectChanges();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    resolve({ ok: true, value: { taskId: 1, sessionId: 3, cursor: 'latest', reset: true, before: null, events: [],
+      state, items: [item('reply', 'assistant', 'Latest reply')] } });
+    await settle(fixture);
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Latest reply');
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    vi.advanceTimersByTime(50);
+    fixture.detectChanges();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
   });
 
   it('renders a cached session immediately with fresh scroll ownership while its refresh waits', async () => {
@@ -249,6 +285,7 @@ describe("connected chat reply rendering", () => {
     await settle(fixture);
     expect(fixture.componentInstance.store.loading()).toBe(false);
     expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
     expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
     expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBe('cursor');
     expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
@@ -600,7 +637,7 @@ describe("connected chat reply rendering", () => {
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       if (phase === "idle") {
-        expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+        expect(turn.querySelector(".facts")?.textContent).toContain("1 command");
       } else {
         expect(turn.querySelector(".facts")).toBeNull();
       }

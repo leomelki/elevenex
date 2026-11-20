@@ -1,6 +1,8 @@
 import { elementMarker, elementMarkersIn, serializeBrowserElements } from '@elevenex/shared';
 import {
   DestroyRef,
+  Injector,
+  afterNextRender,
   effect,
   untracked,
   Injectable,
@@ -18,8 +20,10 @@ import type {
 } from "@elevenex/shared";
 import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
-import { chatTailContext } from './session-chat-tail';
+import { chatTailContext, retainChatWindow } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
+import { completedTurnRecords, SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
+import { SessionChatToolCache, SessionChatToolDetails } from './session-chat-tool-details';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, SessionDraft, type StartingSession } from "./session-chat-drafts";
@@ -55,6 +59,12 @@ export interface ChatSelection extends SessionChatTarget {
 @Injectable()
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
+  private readonly injector = inject(Injector);
+  readonly tools = new SessionChatToolDetails(this.client, inject(SessionChatToolCache), () => { void this.refresh(); });
+  readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache), {
+    prepare: (items, ids, signal, turnId) => this.tools.prepare(items, ids, signal, turnId),
+    afterReveal: release => { afterNextRender(release, { injector: this.injector }); },
+  });
   private readonly transcript = new ChatTranscriptProjection();
   private readonly drafts = inject(SessionChatDrafts);
   private readonly loadingPolicy = inject(SessionChatLoadingPolicy);
@@ -162,6 +172,16 @@ export class SessionChatStore {
     const trailing = context.filter(item => !ids.has(item.id));
     return [...leading, ...items, ...trailing];
   });
+  /** Include the mounted reply and inspected work for media and original-content resolution. */
+  readonly presentedItems = computed<readonly SessionChatItem[]>(() => {
+    const work = this.work.open();
+    return this.visibleItems().flatMap(item => {
+      if (!item.completedTurn) return [item];
+      const entry = work.get(item.id);
+      const details = entry?.revision === item.completedTurn.revision ? entry : undefined;
+      return [item, ...completedTurnRecords(item.completedTurn, details)];
+    });
+  }, { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
     const items = this.visibleItems();
@@ -172,6 +192,8 @@ export class SessionChatStore {
       this.state(),
       this.fresh(),
       showPending ? pending : undefined,
+      this.work.open(),
+      !this.historical(),
     );
     if (!pending && !this.turnArrivals().size) return exchanges;
     return exchanges.map((exchange): ChatExchange => {
@@ -222,6 +244,16 @@ export class SessionChatStore {
         }
       });
     });
+    effect(() => {
+      const items = this.visibleItems();
+      // A verified rebind can preserve both the visible items and online state.
+      const available = !!this.selectedTarget() && !!this.selectedScope() &&
+        this.active() && !this.offline() && !document.hidden;
+      untracked(() => {
+        this.tools.setAvailable(available);
+        this.work.sync(items, available);
+      });
+    });
     let wasPaused: boolean | undefined;
     effect(() => {
       const paused = this.offline() || !this.active();
@@ -230,8 +262,16 @@ export class SessionChatStore {
       untracked(() => { if (paused) { this.stopRead(); this.loading.set(false); } else if (resumed && this.selection && !this.request) void this.load(false); });
     });
     const visible = () => {
-      if (document.hidden) this.stopRead();
-      else if (this.selection) void this.load(false);
+      if (document.hidden) {
+        this.stopRead();
+        this.work.pause();
+        this.tools.setAvailable(false);
+      } else if (this.selection) {
+        const available = this.active() && !this.offline();
+        this.tools.setAvailable(available);
+        this.work.sync(this.visibleItems(), available);
+        void this.load(false);
+      }
     };
     document.addEventListener("visibilitychange", visible);
     inject(DestroyRef).onDestroy(() => {
@@ -240,6 +280,8 @@ export class SessionChatStore {
       this.disposed = true;
       this.epoch++;
       this.stopRead();
+      this.work.select(null);
+      this.tools.select(null);
       this.transcript.clear();
       document.removeEventListener("visibilitychange", visible);
     });
@@ -250,6 +292,8 @@ export class SessionChatStore {
     this.outbox?.setEditing(null);
     this.remember(); this.stopRead(); this.epoch++;
     this.selection = null; this.startingId = starting.id; this.starting.set(true); this.compactStart.set(false);
+    this.work.select(null);
+    this.tools.select(null);
     this.transcript.clear();
     this.selectedTarget.set(''); this.selectedScope.set(starting.scopeId);
     this.entry = starting.draft; this.activeEntry.set(this.entry);
@@ -290,6 +334,8 @@ export class SessionChatStore {
     this.entry = nextEntry;
     this.activeEntry.set(this.entry);
     const recovery = sameSession && previousEntry === this.entry;
+    this.work.select(selection, recovery);
+    this.tools.select(selection);
     if (!recovery) this.transcript.clear();
     this.readOnly.set(readOnly);
     this.pending.set(null);
@@ -334,12 +380,10 @@ export class SessionChatStore {
     this.requestMode = undefined;
     this.historyLoading.set(false);
   }
-  async refresh(): Promise<void> {
-    this.historical.set(false);
-    this.next.set(null);
-    this.historyLoading.set(false); this.historyError.set('');
+  async refresh(): Promise<boolean> {
     this.stopRead();
-    await this.load(true);
+    this.historyError.set('');
+    return this.load(true);
   }
   async older(): Promise<void> {
     if (!this.before() || this.loading() || this.historyLoading()) return;
@@ -350,23 +394,24 @@ export class SessionChatStore {
     if (!this.next() || this.loading() || this.historyLoading()) return;
     if (!this.supportsFollowing) { await this.refresh(); return; }
     this.stopRead();
-    await this.load(false, this.items().at(-1)?.id, "following");
+    await this.load(false, this.next()!, "following");
   }
   cancelHistory(): void {
     if (!this.historyLoading()) return;
     this.stopRead();
     if (!this.readOnly()) void this.load(false);
   }
-  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<void> {
+  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<boolean> {
     const selection = this.selection;
-    if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return;
+    if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return false;
     clearTimeout(this.timer);
     this.timer = undefined;
     const epoch = this.epoch,
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
     this.request = requestId;
-    this.requestMode = this.progressiveLoading() ? 'progressive' : 'window';
+    const profile = this.loadingPolicy.profile();
+    this.requestMode = profile.loadingMode;
     if (reset || !this.state()) this.loading.set(true);
     if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
     // Only time an uncached opening, never an idle 8s long poll or history read.
@@ -385,7 +430,8 @@ export class SessionChatStore {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
       requestId,
-      loadingMode: this.requestMode,
+      ...profile,
+      deferToolDetails: true,
       ...(position && direction
         ? { [direction]: position }
         : !reset && this.cursor
@@ -393,7 +439,7 @@ export class SessionChatStore {
           : {}),
     });
     if (this.disposed || epoch !== this.epoch || readEpoch !== this.readEpoch)
-      return;
+      return false;
     clearTimeout(this.slowOpenTimer);
     this.slowOpenTimer = undefined;
     this.request = undefined;
@@ -409,7 +455,7 @@ export class SessionChatStore {
         // Keep runtime state current without replacing the history being read.
         this.state.set(result.value.state);
         this.cursor = result.value.cursor;
-      } else this.accept(result.value, direction, !reset);
+      } else this.accept(result.value, direction);
       if (this.uncertain()) this.checked.set(true);
     } else if (direction) this.historyError.set(result.error.message);
     else if (reset || !this.state() || result.error.status === 404)
@@ -430,8 +476,9 @@ export class SessionChatStore {
         },
         result.ok ? 80 : 3000,
       );
+    return result.ok;
   }
-  private accept(page: SessionChatPage, direction?: "before" | "following", incremental = false): void {
+  private accept(page: SessionChatPage, direction?: "before" | "following"): void {
     const previous = this.items();
     if (!direction && !page.reset && !page.events.length) {
       this.state.set(page.state);
@@ -442,9 +489,9 @@ export class SessionChatStore {
     const older = direction === "before";
     const wasLoaded = !!this.cursor;
     const replacesTail = !direction && page.reset;
-    // A reset is authoritative from its first row onward. A matching first
-    // row proves where a previously loaded prefix joins the new page.
-    const sharedStart = replacesTail && incremental && page.before
+    // A reset is authoritative from its first row onward. In the live window,
+    // a matching first row shows where the loaded prefix joins the new page.
+    const sharedStart = replacesTail && !this.historical() && page.before
       ? previous.findIndex(item => item.id === page.items[0]?.id) : -1;
     const previousPrefix = sharedStart > 0 ? previous.slice(0, sharedStart) : [];
     const priorOwner = promptBefore(previous, sharedStart) ?? this.leadingPrompt();
@@ -494,8 +541,9 @@ export class SessionChatStore {
       (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
       ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
       : records;
-    const items = older ? all.slice(0, 320) : all.slice(-320);
-    if (older && all.length > items.length) {
+    const items = retainChatWindow(all, older);
+    const evicted = all.length > items.length;
+    if (older && evicted) {
       const contextIds = new Set(all.map(item => item.id));
       this.trailingContext.set(chatTailContext([
         ...all.slice(items.length),
@@ -503,8 +551,17 @@ export class SessionChatStore {
       ]));
     } else if (replacesTail) this.trailingContext.set([]);
     else if (direction === 'following') {
-      const ids = new Set(items.map(item => item.id));
-      this.trailingContext.update(context => context.filter(item => !ids.has(item.id)));
+      if (!page.next) this.trailingContext.set([]);
+      else {
+        // Nothing behind the following cursor can be missing from the gap
+        // anymore. Drop context that might have been removed during a rewind.
+        const pageIds = new Set(page.items.map(item => item.id));
+        this.trailingContext.update(context => {
+          let overlap = context.length;
+          while (overlap > 0 && !pageIds.has(context[overlap - 1]!.id)) overlap--;
+          return overlap ? context.slice(overlap) : context;
+        });
+      }
     }
     if (delivered || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
@@ -545,15 +602,18 @@ export class SessionChatStore {
     if (!direction) this.cursor = page.cursor;
     if (older) {
       this.before.set(page.before);
-      if (all.length > 320) this.next.set(items.at(-1)?.id ?? null);
+      if (evicted) {
+        const last = items.at(-1);
+        this.next.set(last?.completedTurn?.endId ?? last?.id ?? null);
+      }
     } else {
       if (replacesTail && !keepsPrefix) this.before.set(page.before);
-      if (all.length > 320) this.before.set(items[0]?.id ?? null);
+      if (evicted) this.before.set(items[0]?.id ?? null);
       this.next.set(page.next ?? null);
     }
     this.historical.set(!!this.next());
     const replacedRows = replacesTail && wasLoaded && previous.some((item, index) => item.id !== items[index]?.id);
-    if (direction || all.length > 320 || replacedRows)
+    if (direction || evicted || replacedRows)
       this.windowRevision.update(value => value + 1);
     this.reconcileDelivery(page.state, delivered, deliveredQueued);
   }
@@ -596,8 +656,7 @@ export class SessionChatStore {
     const original = this.draft();
     if (this.historical()) {
       const epoch = this.epoch;
-      await this.refresh();
-      if (epoch !== this.epoch || this.error()) return;
+      if (!await this.refresh() || epoch !== this.epoch) return;
     }
     if (
       !this.selection || (!this.state() && !this.offline()) ||

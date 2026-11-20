@@ -166,7 +166,7 @@ test('conversation loading modes are validated, scope-bound and transported by t
         paths.push(request.path);
         return { taskId: 1, sessionId: 2, cursor: 'cursor', reset: true, before: null, items: [], events: [], state };
       } };
-      return require('../dist/backend-client/' + name.slice(2));
+      return require(name.startsWith('./') ? '../dist/backend-client/' + name.slice(2) : name);
     },
   });
   const frame = {}, sender = { id: 42 }, scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

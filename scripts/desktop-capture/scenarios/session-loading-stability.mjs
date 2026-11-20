@@ -66,7 +66,11 @@ export default async function* (capture) {
       await hold(true);
       await select('102');
       assert.equal(await capture.evaluate(() => !!document.querySelector('ex-session-chat ex-composer')), false);
-      yield { name: `${prefix}-cold-loading`, inspect: ['ex-session-chat .opening', 'ex-workspace-task-header'] };
+      await capture.waitFor(() => {
+        const skeleton = document.querySelector('ex-chat-loading .skeleton');
+        return skeleton && getComputedStyle(skeleton).opacity === '1';
+      });
+      yield { name: `${prefix}-cold-loading`, inspect: ['ex-chat-loading .skeleton', 'ex-workspace-task-header'] };
       const initial = await probe('release'); stable(initial);
       assert.ok(await capture.evaluate(() => document.querySelector('ex-chat.center-composer ex-preset-picker')));
       yield { name: `${prefix}-empty-ready`, inspect: ['ex-session-chat', 'ex-composer'], metadata: { frames: initial } };
@@ -75,7 +79,8 @@ export default async function* (capture) {
       // the very next paint, rather than waiting until loading has finished.
       await hold(true);
       const cached = await probe('101'); stable(cached);
-      assert.equal(await capture.component('ex-session-chat', owner => owner.store.loading()), true);
+      assert.equal(await capture.component('ex-session-chat', owner => owner.store.loading()), false);
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-chat-loading .skeleton')), false);
       assert.ok(cached[0].composer);
       yield { name: `${prefix}-cached-refresh-pending`, inspect: ['ex-chat-scroll .viewport', 'ex-composer'], metadata: { frames: cached } };
       await hold(false); await quiet();

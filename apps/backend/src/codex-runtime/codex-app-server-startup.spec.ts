@@ -87,7 +87,13 @@ describe('Codex cold startup environment', () => {
       expect(spawn).toHaveBeenCalledTimes(1);
       expect(spawn).toHaveBeenCalledWith(
         '/shell/bin/codex',
-        ['app-server', '--listen', 'stdio://'],
+        [
+          'app-server',
+          '--listen',
+          'stdio://',
+          '-c',
+          'model_context_window=1000000',
+        ],
         {
           env,
           stdio: ['pipe', 'pipe', 'pipe'],
