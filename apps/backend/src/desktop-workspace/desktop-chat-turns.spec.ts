@@ -156,6 +156,39 @@ describe('completed turn history', () => {
     expect(Buffer.byteLength(compactJson)).toBeLessThan(Buffer.byteLength(JSON.stringify(legacy)) / 4);
   });
 
+  it('keeps the ordinary tool headings and receipt facts in a compact saved timeline', () => {
+    const path = 'src/' + 'nested-feature-folder/'.repeat(10) + 'component.ts';
+    const history: AgentTranscriptItem[] = [
+      row('prompt', 'user'),
+      { ...row('read', 'tool_use'), toolKind: 'read', toolInput: { file_path: path } },
+      { ...row('read-result', 'tool_result'), toolUseId: 'read' },
+      { ...row('list', 'tool_use'), toolKind: 'glob', toolInput: '{"pattern":"**/*.ts"}' },
+      { ...row('list-result', 'tool_result', 'a.ts\nb.ts'), toolUseId: 'list' },
+      { ...row('command', 'tool_use'), toolKind: 'bash', toolInput: { command: 'pnpm test' } },
+      { ...row('command-result', 'tool_result'), content: undefined, toolUseId: 'command',
+        providerToolResult: { stdout: 'Failure', exit_code: '2' }, isError: true },
+      { ...row('connection', 'tool_use'), toolKind: 'mcp', toolInput: { tool: 'searchFiles', server: 'full-deployment-name-'.repeat(3) } },
+      { ...row('orphan', 'tool_result'), toolKind: 'bash', toolName: 'Imported command result', content: 'Exit code: 5' },
+      row('reply', 'assistant'),
+    ];
+    const turns = new ChatCompletedTurns();
+    const revision = turns.summarize(history, 0, history.length, new Set())!.completedTurn!.revision;
+    const legacy = turns.page(history, revision, 0, new ChatToolDetails(new WeakMap(), new WeakMap()))!.items;
+    const timeline = turns.timeline(history, revision, 0)!.timeline;
+    for (const index of [0, 2, 4, 6]) {
+      const call = legacy[index];
+      const compact = timeline[index];
+      expect(compact).toMatchObject({ id: call.id });
+      if (!compact || !('label' in compact)) throw new Error('Expected a compact tool call.');
+      expect(compact.fullLabel ?? compact.label).toBe(call.toolDetails!.summary);
+      expect(compact.fullMeta ?? compact.meta).toBe(call.receipt?.toolDetails?.meta ?? call.toolDetails?.meta);
+    }
+    expect(timeline[0]).toMatchObject({ label: expect.stringContaining('…'), fullLabel: path });
+    expect(timeline[2]).toMatchObject({ label: '**/*.ts', meta: '2 paths' });
+    expect(timeline[4]).toMatchObject({ label: 'pnpm test', meta: 'Exit 2', error: true });
+    expect(timeline[7]).toMatchObject({ label: 'Imported command result', meta: 'Exit 5', kind: 'result' });
+  });
+
   it('continues an unusually large timeline at the first source slot outside its byte budget', () => {
     const turns = new ChatCompletedTurns();
     const work = Array.from({ length: 48 }, (_, i) => row(`note-${i}`, 'thinking', 'x'.repeat(16_000)));

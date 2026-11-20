@@ -1,4 +1,4 @@
-import type { SessionChatRecord } from './session-chat';
+import { SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT, type SessionChatRecord } from './session-chat';
 
 type Tool = Pick<SessionChatRecord, 'toolKind' | 'toolName'>;
 type Result = Pick<SessionChatRecord, 'text' | 'error' | 'execution' | 'truncated'>;
@@ -33,7 +33,7 @@ export function sessionChatToolHeading(tool: Tool, decodedInput: unknown, result
     case 'bash': {
       const command = text(input, 'command', 'cmd', 'input') ||
         (typeof decodedInput === 'string' ? decodedInput : '');
-      summary = command.slice(0, 500).split('\n')[0] || defaultTitle;
+      summary = command.slice(0, SESSION_CHAT_TOOL_LABEL_LIMIT).split('\n')[0] || defaultTitle;
       const data = object(output);
       const reported = result?.execution?.exitCode ?? data['exit_code'] ?? data['exitCode'] ??
         result?.text.match(/(?:Process exited with code|Exit code:)\s*(-?\d+)/i)?.[1];
@@ -52,7 +52,7 @@ export function sessionChatToolHeading(tool: Tool, decodedInput: unknown, result
       }
       const more = paths.size > 1 ? ` +${paths.size - 1} more` : '';
       const first = paths.values().next().value ?? defaultTitle;
-      summary = first.slice(0, 500 - more.length) + more;
+      summary = first.slice(0, SESSION_CHAT_TOOL_LABEL_LIMIT - more.length) + more;
       if (result?.execution?.interrupted) meta = 'Interrupted';
       else if (result?.execution?.exitCode) meta = `Exit ${result.execution.exitCode}`;
       break;
@@ -126,5 +126,5 @@ export function sessionChatToolHeading(tool: Tool, decodedInput: unknown, result
       break;
     }
   }
-  return { summary: summary.slice(0, 500), ...(meta ? { meta: meta.slice(0, 100) } : {}), exit };
+  return { summary: summary.slice(0, SESSION_CHAT_TOOL_LABEL_LIMIT), ...(meta ? { meta: meta.slice(0, SESSION_CHAT_TOOL_META_LIMIT) } : {}), exit };
 }

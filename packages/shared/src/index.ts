@@ -13,7 +13,8 @@ import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, 
 import type { SessionChatTurnWorkReply, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
 export type * from './session-chat';
 export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
-export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
 export { sessionChatToolHeading } from './session-chat-tool-heading';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';

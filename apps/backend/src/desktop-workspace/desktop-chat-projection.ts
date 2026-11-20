@@ -1,4 +1,5 @@
 import { chatMedia } from './desktop-chat-media.js';
+import type { SessionChatRecord } from '@elevenex/shared';
 import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
 import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
@@ -22,7 +23,8 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatDisplayContent>>;
+type ChatDisplayContent = Pick<SessionChatRecord, 'text' | 'truncated' | 'mentions' | 'media'>;
+export type ChatMediaCache = WeakMap<AgentTranscriptItem, ChatDisplayContent>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
 
 export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
@@ -36,17 +38,21 @@ export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscrip
   return changes;
 }
 
-function chatDisplayContent(item: AgentTranscriptItem) {
+export function chatDisplayContent(item: AgentTranscriptItem, cache?: ChatMediaCache): ChatDisplayContent {
+  const cached = cache?.get(item);
+  if (cached) return cached;
   const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
   const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
-  const projected = chatMedia(context ? { ...item, content: context.text } : item);
-  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
-  return {
+  const content = chatMedia(context ? { ...item, content: context.text } : item);
+  const text = display(content.text, item.kind === 'user' ? 64000 : 16000);
+  const projected = {
     text,
-    truncated: projected.shortened || text.endsWith('… [display shortened]'),
+    truncated: content.shortened || text.endsWith('… [display shortened]'),
     ...(context?.mentions.length ? { mentions: context.mentions } : {}),
-    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+    ...(content.media.length ? { media: content.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
   };
+  cache?.set(item, projected);
+  return projected;
 }
 
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
@@ -54,11 +60,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
   const input = display(item.toolInput);
   // Keep only bounded display data. Original text and media sources can be
   // reconstructed from the transcript when their dedicated readers need them.
-  let projected = mediaCache?.get(item);
-  if (!projected) {
-    projected = chatDisplayContent(item);
-    mediaCache?.set(item, projected);
-  }
+  const projected = chatDisplayContent(item, mediaCache);
   const changes = chatItemChanges(item, call, cache);
   return {
     ...projected,

@@ -1150,6 +1150,7 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   assert.equal((await read(largeRead)).error.code, 'invalid-response');
   for (const invalid of [
     { ...timeline, timeline: [{ ...shortCall, label: 'x'.repeat(121) }, null] },
+    { ...timeline, timeline: [{ ...shortCall, fullLabel: 'x'.repeat(501) }, null] },
     { ...timeline, timeline: [{ ...shortCall, resultId: 'prompt' }, null] },
     { ...timeline, timeline: [shortCall, shortCall] },
     { ...timeline, nextOffset: 2 },
@@ -1157,6 +1158,10 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
     response = invalid;
     assert.equal((await read(timelineRead)).error.code, 'invalid-response');
   }
+  const fullLabel = 'src/' + 'long-directory/'.repeat(12) + 'index.ts';
+  const fullMeta = 'long-connection-name-'.repeat(3);
+  response = { ...timeline, timeline: [{ ...shortCall, fullLabel, meta: fullMeta.slice(0, 40), fullMeta }, null] };
+  assert.deepEqual((await read(timelineRead)).value.timeline, [{ ...shortCall, label: fullLabel, meta: fullMeta }, null]);
   response = valid;
   assert.equal((await read(timelineRead)).value.items.length, 1, 'A legacy engine may return ordinary work rows');
 

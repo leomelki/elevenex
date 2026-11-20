@@ -4,6 +4,8 @@ import {
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
   SESSION_CHAT_TURN_TIMELINE_SLOTS,
+  SESSION_CHAT_TOOL_LABEL_LIMIT,
+  SESSION_CHAT_TOOL_META_LIMIT,
   SESSION_CHAT_TURN_TOOL_LABEL_LIMIT,
   SESSION_CHAT_TURN_TOOL_META_LIMIT,
   SESSION_CHAT_TURN_WORK_LIMIT,
@@ -209,8 +211,8 @@ function toolHeading(value: unknown): SessionChatToolHeading {
   const raw = chatObject(value);
   return {
     revision: contentRevision(raw['revision']),
-    ...(raw['summary'] === undefined ? {} : { summary: chatText(raw['summary'], 500) }),
-    ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], 100) }),
+    ...(raw['summary'] === undefined ? {} : { summary: chatText(raw['summary'], SESSION_CHAT_TOOL_LABEL_LIMIT) }),
+    ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], SESSION_CHAT_TOOL_META_LIMIT) }),
   };
 }
 
@@ -315,14 +317,17 @@ function timelineRow(value: unknown, turnId: string): SessionChatTurnTimelineRow
       return { kind, id, callId, media };
     }
     const resultId = raw['resultId'] === undefined ? undefined : chatText(raw['resultId']);
-    const label = chatText(raw['label'], SESSION_CHAT_TURN_TOOL_LABEL_LIMIT);
+    const shortLabel = chatText(raw['label'], SESSION_CHAT_TURN_TOOL_LABEL_LIMIT);
+    const label = raw['fullLabel'] === undefined ? shortLabel : chatText(raw['fullLabel'], kind === 'call' ? SESSION_CHAT_TOOL_LABEL_LIMIT : undefined);
+    const shortMeta = raw['meta'] === undefined ? undefined : chatText(raw['meta'], SESSION_CHAT_TURN_TOOL_META_LIMIT);
+    const meta = raw['fullMeta'] === undefined ? shortMeta : chatText(raw['fullMeta'], SESSION_CHAT_TOOL_META_LIMIT);
     const error = raw['error'];
-    if (!label.trim() || (error !== undefined && error !== true) ||
+    if (!shortLabel.trim() || (error !== undefined && error !== true) ||
         (resultId !== undefined && (kind !== 'call' || !resultId || resultId === turnId || resultId === id))) throw invalid();
     return {
       kind, id, label, toolKind: nullable(raw['toolKind']),
       ...(resultId ? { resultId } : {}), ...(error ? { error } : {}), ...(media ? { media } : {}),
-      ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], SESSION_CHAT_TURN_TOOL_META_LIMIT) }),
+      ...(meta === undefined ? {} : { meta }),
     };
   }
   const row = activityItem(raw, false);

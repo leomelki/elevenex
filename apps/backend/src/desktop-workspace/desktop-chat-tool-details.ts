@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sessionChatToolHeading, type SessionChatRecord, type SessionChatToolEvidence, type SessionChatToolRecord, type SessionChatToolReference } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
-import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { chatItem, display, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
 import { commandFacts } from './desktop-chat-tool-outcome.js';
 
 const MAX_RECENT_TEXT_BYTES = 1024 * 1024;
@@ -20,6 +20,23 @@ function decode(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+/** Keep compact and ordinary transcript headings identical. Read display text
+ * only for result metadata that depends on it. */
+export function transcriptToolHeading(raw: AgentTranscriptItem,
+  facts: Pick<SessionChatRecord, 'toolName' | 'toolKind' | 'execution' | 'error'>,
+  call?: AgentTranscriptItem, preview?: () => Pick<SessionChatRecord, 'text' | 'truncated'>) {
+  const tool = { toolName: facts.toolName, toolKind: call?.toolKind ?? facts.toolKind };
+  if (raw.kind === 'tool_use') {
+    const input = typeof raw.toolInput === 'string' ? decode(display(raw.toolInput)) : raw.toolInput;
+    return sessionChatToolHeading(tool, input);
+  }
+  const output = tool.toolKind === 'glob' || (tool.toolKind === 'bash' && facts.execution?.exitCode === undefined)
+    ? preview?.() : undefined;
+  return sessionChatToolHeading(tool, undefined, {
+    text: output?.text ?? '', truncated: output?.truncated ?? false, error: facts.error, execution: facts.execution,
+  }, output ? decode(output.text) : undefined);
 }
 
 /** Projects headings for the transcript and keeps a small hot window for explicit
@@ -72,14 +89,7 @@ export class ChatToolDetails {
     const item = chatItem(raw, call, this.changes, this.media);
     const evidence = this.evidence(raw, raw.kind, item);
     const isCall = raw.kind === 'tool_use';
-    const tool = { toolName: item.toolName, toolKind: call?.toolKind ?? item.toolKind };
-    const input = isCall
-      ? typeof raw.toolInput === 'string' ? decode(item.input) : raw.toolInput
-      : undefined;
-    const output = !isCall && (tool.toolKind === 'glob' ||
-      (tool.toolKind === 'bash' && item.execution?.exitCode === undefined))
-      ? decode(item.text) : undefined;
-    const { summary, meta } = sessionChatToolHeading(tool, input, isCall ? undefined : item, output);
+    const { summary, meta } = transcriptToolHeading(raw, item, call, () => item);
     const { execution: _execution, ...row } = item;
     const compact = {
       ...row, input: '', text: '',

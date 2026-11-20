@@ -136,9 +136,12 @@ export interface SessionChatTurnToolRow {
   readonly id: string;
   readonly toolKind: string | null;
   readonly label: string;
+  /** The ordinary heading when it differs from the original compact label. */
+  readonly fullLabel?: string;
   readonly resultId?: string;
   readonly error?: true;
   readonly meta?: string;
+  readonly fullMeta?: string;
   readonly media?: readonly SessionChatMediaReference[];
 }
 
@@ -164,6 +167,8 @@ export const SESSION_CHAT_TURN_TIMELINE_BYTES = 512 * 1024;
 export const SESSION_CHAT_TURN_TIMELINE_SLOTS = 8192;
 export const SESSION_CHAT_TURN_TOOL_LABEL_LIMIT = 120;
 export const SESSION_CHAT_TURN_TOOL_META_LIMIT = 40;
+export const SESSION_CHAT_TOOL_LABEL_LIMIT = 500;
+export const SESSION_CHAT_TOOL_META_LIMIT = 100;
 export const SESSION_CHAT_TURN_REPLY_LIMIT = 8;
 export const SESSION_CHAT_TURN_FILES_LIMIT = 3;
 export const SESSION_CHAT_TOOL_CATEGORIES = [

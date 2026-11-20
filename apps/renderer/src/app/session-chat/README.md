@@ -274,8 +274,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
   paging uses the prompt ID and forward paging uses the last source ID. A
   page starting or ending inside a turn uses ordinary rows at that seam.
   The renderer counts visible reply blocks toward its 320-record window.
-- Opening Worked requests a compact timeline. Each tool call has a short label,
-  outcome and an optional result ID. Its paired receipt uses an empty source slot,
+- Opening Worked requests a compact timeline. Each tool call carries the same
+  heading and outcome as the ordinary timeline, plus an optional result ID.
+  Its paired receipt uses an empty source slot,
   with inline image references kept at their original positions. Commentary and
   the visible reply stay in order. The entire timeline appears in one update.
   Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
