@@ -229,8 +229,9 @@ Progressive loading is enabled by default through
 `SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
 **80 records / 512 KiB** with compact completed turns on supporting engines.
 The viewport can prefetch older pages to fill available space, within a
-four-page budget and while each page adds visible height. A small “Progressive”
-label accompanies the initial or history loading glyph while work is pending.
+four-page budget and while each page adds visible height. Only a cold
+conversation open uses the ordinary conversation loading status. History
+prefetch runs in the background and preserves the reading position.
 
 An override can start in window mode at **320 records / 2 MiB** and defer
 older pages until scroll intent. If an uncached opening takes more than
@@ -257,42 +258,37 @@ cursor, without blocking the composer or repeating an initial history read when
 the feed is still current. The backend provider's source-history API remains a
 full-history read, so a cold provider parse can still dominate initial latency.
 
-### Completed work in progressive history
+### Saved turn activity
 
 - A settled turn can occupy one saved entry with its prompt, latest reply
   blocks, elapsed time, counts by tool category, failures and the first three
   changed files plus the total. Review still opens the full paginated change
-  list. Earlier messages, reasoning, tool inputs/outputs and activity media
-  stay on the engine. Turns within the latest 32 source records can arrive
-  inline when the projected rows fit in eight records and 8 KiB. Deferred
-  tool bodies do not count against that inline budget. A prompt with no hidden
-  work stays inline. The engine selects at most 40 summaries
-  per history read and keeps the current live turn's raw stream
-  and saved completion handoff available. Replies exceeding eight blocks or
-  128 KiB stay in the ordinary history window so their visible text can be paged.
+  list. The default profile requests this shape for recent saved turns too.
+  Older engines may return small recent turns inline. A prompt with no hidden
+  work stays inline. The engine selects at most 40 summaries per history read
+  and keeps the current live turn's stream and saved completion handoff
+  available. Replies exceeding eight blocks or 128 KiB use the ordinary
+  history window so all their visible text stays accessible.
 - Summary selection occurs only at complete saved turn boundaries. Backward
   paging uses the prompt ID and forward paging uses the last source ID. A
   page starting or ending inside a turn uses ordinary rows at that seam.
   The renderer counts visible reply blocks toward its 320-record window.
-- Opening Worked reads one versioned page of up to 40 activity records or
-  384 KiB. Earlier and Later page within the disclosure, so a large turn can
-  be inspected without retaining its entire trace in the renderer. A call
-  whose receipt falls on another page still reports its outcome. Opening that
-  tool reads the call and receipt together. The final reply keeps its identity
-  while the activity fills in around it.
-- The window-local cache retains up to 16 activity pages or 1.5 MiB of
-  serialized data, evicting least recently used pages first. Its key includes
-  the backend scope, task, session, turn revision and offset. One first page
-  of a turn with at most 40 hidden records can warm after 220ms of pointer or
-  keyboard focus intent. Opening the same turn joins that read. Collapsing,
-  hiding or switching the conversation cancels relevant reads. The tiny
-  inline turns and cached pages open directly.
-- The disclosure responds immediately. A slow read opens an inline loading
-  surface after 150ms, then reveals the timeline in place. A failure offers
-  retry while keeping the reply readable. When a page is already visible, its
-  rows and paging controls stay in place through loading and failure. Scope
-  and revision changes invalidate pending results. Activity and its loading
-  surface respect reduced motion.
+- Opening Worked reveals the whole chronological timeline in one update.
+  It requests up to 512 compact records or 1 MiB at a time, and follows any
+  remaining offsets privately. Older engines can keep returning 40-record
+  pages. Each batch must match the turn revision and advance contiguously
+  before the view can publish it. Call/result pairing and stable reply identity
+  preserve the original order, even for receipts that arrive after the reply.
+- The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
+  serialized data, keyed by backend scope, task, session and turn revision.
+  A turn with at most 40 hidden records can warm after 220 ms of pointer or
+  keyboard focus intent, and opening it joins that read. Closing the disclosure,
+  hiding the chat or switching conversations cancels pending reads. Scope and
+  revision changes discard stale results.
+- The reply and counts stay available throughout. Open sections and tool
+  disclosures survive releasing a turn's rows after collapse. Reopening
+  stages previously visible tool evidence alongside the compact timeline.
+  A failed read offers retry in place. The reveal respects reduced motion.
 
 ### Tool evidence
 
@@ -302,9 +298,10 @@ file-change metadata and existing inline media references remain available in
 the timeline. Older engines can send inline evidence with the same row UI.
 
 Opening a tool starts one bounded read for its call and its receipt when
-available. A page that contains only the receipt shows a named Result row and
-opens that same pair. A result without a known call opens by its own identity.
-Worked and group expansion, hover and keyboard focus alone do not read tool evidence. The
+available. A raw history page that contains only the receipt shows a named
+Result row and opens that same pair. A result without a known call opens by
+its own identity. Collapsed tool bodies stay deferred while the reader scans
+the timeline or expands a group. The
 conversation owner shares an in-flight request for matching open references and
 cancels it when the last observer closes, leaves the current page or changes
 session. A receipt arriving for an open call changes its reference and replaces
@@ -313,9 +310,8 @@ reads. Closing the tool releases the mounted evidence after its exit.
 
 Successful reads are kept in a window-local LRU of 48 entries and 1 MiB of
 serialized evidence. Entries are scoped by machine, task, session and both
-item revisions. Cache hits reopen without a placeholder. Slow reads reveal a
-loading surface after 140ms, then ease to the evidence while preserving the
-header and reading position. Failed reads can be retried in place. Evidence
+item revisions. The heading stays in place during a read, then the evidence
+opens in one fold. Failed reads can be retried in place. Evidence
 uses the existing preview, Details and original transcript reader.
 Counts describe observed operations, including calls whose completion is
 unknown. Codex compound reads show their other paths and reported command steps

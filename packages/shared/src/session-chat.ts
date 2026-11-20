@@ -9,6 +9,8 @@ export interface SessionChatRead extends SessionChatTarget {
   readonly loadingMode?: 'window' | 'progressive';
   /** Older engines can ignore this option and return ordinary transcript items. */
   readonly summarizeCompleted?: true;
+  /** Include small recent saved turns in the completed view. */
+  readonly summarizeRecent?: true;
   /** Tool rows include display headings and versioned references to their evidence. */
   readonly deferToolDetails?: true;
   readonly after?: string;
@@ -110,6 +112,8 @@ export interface SessionChatTurnWorkRead extends SessionChatTarget {
   readonly revision: string;
   readonly offset: number;
   readonly deferToolDetails?: true;
+  /** Optional larger batch for compact rows. Engines can return a shorter page. */
+  readonly limit?: number;
 }
 export interface SessionChatTurnWorkPage extends SessionChatTarget {
   readonly turnId: string;
@@ -121,6 +125,8 @@ export interface SessionChatTurnWorkPage extends SessionChatTarget {
 }
 
 export const SESSION_CHAT_TURN_WORK_LIMIT = 40;
+export const SESSION_CHAT_TURN_WORK_MAX_LIMIT = 512;
+export const SESSION_CHAT_TURN_WORK_BATCH_BYTES = 1024 * 1024;
 export const SESSION_CHAT_TURN_REPLY_LIMIT = 8;
 export const SESSION_CHAT_TURN_FILES_LIMIT = 3;
 export const SESSION_CHAT_TOOL_CATEGORIES = [

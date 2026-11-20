@@ -1,4 +1,4 @@
-import { serializeBrowserElements } from '@elevenex/shared';
+import { SESSION_CHAT_TURN_WORK_MAX_LIMIT, serializeBrowserElements } from '@elevenex/shared';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,7 @@ describe('selected session chat', () => {
     expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive'))!.items).toHaveLength(80);
     await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'all')).rejects.toThrow('Invalid conversation loading mode');
     await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'window', '1')).rejects.toThrow('Invalid completed turn view');
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', undefined, '1', '1')).rejects.toThrow('Invalid recent turn view');
   });
 
   it('sends only tool headings in opted-in history and resolves the exact paired evidence', async () => {
@@ -113,7 +114,7 @@ describe('selected session chat', () => {
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps small recent turns inline when their compact rows fit the opening budget', async () => {
+  it('summarizes small recent turns for the new reader while preserving the legacy inline option', async () => {
     status = 'archived';
     history = [
       { ...item('prompt'), kind: 'user' },
@@ -127,6 +128,12 @@ describe('selected session chat', () => {
     const compact = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
     expect(compact.items.map(item => item.id)).toEqual(['prompt', 'call', 'result', 'answer']);
     expect(compact.items[2]).toMatchObject({ text: '', toolDetails: { revision: expect.any(String) } });
+    const summarized = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    expect(summarized.items.map(item => item.id)).toEqual(['prompt']);
+    expect(summarized.items[0].completedTurn).toMatchObject({
+      total: 2, beforeReply: 2, counts: { read: 1 }, reply: [{ id: 'answer' }],
+    });
+    expect(JSON.stringify(summarized.items)).not.toMatch(/file\.txt|large hidden output/);
   });
 
   it('uses the matching command context when a receipt was cached on its own page', async () => {
@@ -163,20 +170,28 @@ describe('selected session chat', () => {
     history = [
       { ...item('prompt'), kind: 'user' },
       { ...item('call', ''), kind: 'tool_use', toolKind: 'read', toolUseId: 'operation', toolInput: { file_path: 'important.ts' } },
-      ...Array.from({ length: 41 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      ...Array.from({ length: 103 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
       { ...item('result', 'Important file contents'), kind: 'tool_result', toolUseId: 'operation' },
       item('answer'),
     ];
     const signal = new AbortController().signal;
     const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
     const version = initial.items[0].completedTurn!.revision;
+    const complete = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT))!;
+    expect(complete).toMatchObject({ total: 105, offset: 0, nextOffset: null });
+    expect(complete.items.map(row => row.id)).toEqual(history.slice(1, -1).map(row => row.id));
+    expect(JSON.stringify(complete.items)).not.toContain('Important file contents');
+    await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, undefined, 512)).rejects.toThrow('Invalid turn activity limit');
+    await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT + 1)).rejects.toThrow('Invalid turn activity limit');
+
     const page = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1'))!;
     const call = page.items[0];
     const receipt = call.receipt!;
     expect(call).toMatchObject({ id: 'call', input: '', toolDetails: { summary: 'important.ts' }, receipt: { id: 'result' } });
     expect(page.items.some(row => row.id === receipt.id)).toBe(false);
-    const later = (await chat.turnWork(1, 2, 'prompt', version, page.nextOffset!, signal, '1'))!;
-    expect(later.items.find(row => row.id === receipt.id)?.invocation)
+    expect(page.nextOffset).toBe(40);
+    const last = (await chat.turnWork(1, 2, 'prompt', version, 80, signal, '1'))!;
+    expect(last.items.find(row => row.id === receipt.id)?.invocation)
       .toEqual({ id: call.id, toolKind: 'read', toolDetails: call.toolDetails });
     const source = { item: { id: call.id, revision: call.toolDetails!.revision },
       result: { id: receipt.id, revision: receipt.toolDetails!.revision } };

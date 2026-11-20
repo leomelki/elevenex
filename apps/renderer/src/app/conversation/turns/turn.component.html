@@ -72,14 +72,14 @@
     }
   </ex-fold>
   @if (deferredWork(); as work) {
-    <ex-turn-work-panel #loadingPanel [work]="work" [expanded]="expanded()"
-      (requested)="requestWork($event)" (layoutChanging)="notifyWorkLayout()" />
+    <ex-turn-work-panel [error]="work.error" [expanded]="expanded()" (requested)="requestWork($event)" />
   }
   <ng-template #answerContent><ng-content /></ng-template>
   <ex-work-timeline
     [attr.id]="workId"
     [attr.aria-busy]="deferredWork()?.busy || null"
     [revealWork]="!!deferredWork()"
+    [workReady]="deferredWork()?.ready ?? true"
     [steps]="timelineSteps()"
     [live]="status() === 'live'"
     [expanded]="expanded()"

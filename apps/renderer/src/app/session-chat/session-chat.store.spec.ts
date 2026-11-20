@@ -194,12 +194,12 @@ describe("session chat ownership", () => {
       item('incoming', 'assistant', 'A new run has started'),
     ], state: { ...state, phase: 'running' } })));
     await store.refresh();
-    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1]).toMatchObject({ loadingMode: 'progressive', summarizeCompleted: true });
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1]).toMatchObject({ loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true });
     expect(store.exchanges()).toMatchObject([
       {
         id: 'saved', status: 'done', answer: 'Final answer', answerId: 'reply', steps: [], duration: 98,
         overflow: [{ id: 'reply', label: 'message' }],
-        deferredWork: { counts: { read: 14, run: 3 }, failures: 1, busy: false },
+        deferredWork: { counts: { read: 14, run: 3 }, failures: 1, busy: false, ready: false },
       },
       { status: 'live', answer: 'A new run has started' },
     ]);

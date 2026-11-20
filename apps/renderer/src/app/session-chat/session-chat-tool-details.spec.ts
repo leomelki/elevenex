@@ -1,4 +1,4 @@
-import type { BackendResult, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from '@elevenex/shared';
+import type { BackendResult, SessionChatRecord, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from '@elevenex/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { SessionChatToolCache, SessionChatToolDetails } from './session-chat-tool-details';
 
@@ -29,6 +29,24 @@ function setup() {
 }
 
 describe('on-demand tool evidence', () => {
+  it('stages the remembered open tool and shares its evidence with the mounted observer', async () => {
+    const { tools, client } = setup();
+    const row: SessionChatRecord = {
+      id: item.id, kind: 'tool_use', text: '', timestamp: '', toolId: 'operation', toolName: 'Command',
+      toolKind: 'bash', input: '', error: false, truncated: false, toolDetails: { revision: item.revision },
+    };
+    const staged = new AbortController();
+    await tools.prepare([row, { ...row, id: 'other' }], [item.id], staged.signal);
+    expect(client.toolDetails).toHaveBeenCalledOnce();
+    const mounted = new AbortController();
+    const view = tools.provider()!(source, mounted.signal);
+    staged.abort();
+    expect(view.state().status).toBe('ready');
+    expect(client.toolDetails).toHaveBeenCalledOnce();
+    expect(client.cancel).not.toHaveBeenCalled();
+    mounted.abort();
+  });
+
   it('coalesces open observers and reopens cached evidence without a request', async () => {
     const { tools, client } = setup();
     const inspect = tools.provider()!;

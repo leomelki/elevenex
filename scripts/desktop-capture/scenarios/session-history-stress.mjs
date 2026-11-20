@@ -61,15 +61,8 @@ export default async function* (capture) {
       await chat(owner => { void owner.store.older(); });
       assert.equal(await chat(owner => owner.store.historyLoading()), true);
       assert.ok(await capture.evaluate(() => document.querySelector('.reminder .quote')?.textContent.includes('original request')), 'Loading hid the prompt context');
-      const overlaps = await capture.evaluate(() => {
-        const status = document.querySelector('.history-indicator').getBoundingClientRect();
-        return ['.reminder .surface', '.return button'].some(selector => {
-          const rect = document.querySelector(selector).getBoundingClientRect();
-          return status.left < rect.right && status.right > rect.left && status.top < rect.bottom && status.bottom > rect.top;
-        });
-      });
-      assert.equal(overlaps, false, 'Loading status covers the prompt or return control');
-      yield { name: `${prefix}-pending-context`, inspect: ['ex-chat-scroll .viewport', '.reminder', '.history-indicator'] };
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading, .history-indicator')), null);
+      yield { name: `${prefix}-pending-context`, inspect: ['ex-chat-scroll .viewport', '.reminder'] };
       // Sample release and the following natural frames together.
       const samples = await fixture(async owner => {
         const row = [...document.querySelectorAll('[data-chat-row]')].at(-1);

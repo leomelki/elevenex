@@ -13,12 +13,16 @@ state and per-chat drafts. Scope rotation and application restart reset it.
 The renderer cancels superseded reads and discards stale replies. The backend
 shares in-flight hydration with the replacement.
 The progressive profile opts into completed-turn summaries with
-`summarizeCompleted`. A summary occupies one paging entry at the prompt and
+`summarizeCompleted` and also requests summaries for small recent turns with
+`summarizeRecent`. A summary occupies one paging entry at the prompt and
 advances past the saved turn's last source item in the forward direction.
 Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
 history reads, including when a single turn spans hundreds of tool records.
-Main validates turn, revision, offset and reply bounds under the same cancellable
-window lease. Older clients and engines can continue exchanging raw windows.
+An optional `limit` up to 512 increases the compact activity batch size to at
+most 1 MiB. Main validates the turn, revision, offset and reply bounds under the
+same cancellable window lease. The renderer collects the batches before showing
+the complete timeline. Older clients keep their 40-record activity pages, and
+older engines can keep returning those pages or raw history windows.
 
 Both history modes and turn activity reads can opt into `deferToolDetails`.
 Tool records then carry headings and versioned evidence addresses while their

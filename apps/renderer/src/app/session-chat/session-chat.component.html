@@ -10,7 +10,6 @@
   [historyBefore]="!!store.before()"
   [historyAfter]="!!store.next()"
   [historyLoading]="store.historyLoading()"
-  [progressiveLoading]="store.progressiveLoading()"
   [initialHistoryPrefetch]="store.progressiveLoading()"
   [historyError]="store.historyError()"
   [historyRevision]="store.windowRevision()"
@@ -23,9 +22,9 @@
   (stop)="store.perform({ type: 'stop' })"
   (retry)="continue()"
   (turnAction)="turnAction($event)"
-  (turnWorkToggled)="store.work.toggle($event.id, $event.open)"
+  (turnWorkToggled)="store.work.toggle($event.id, $event.open, $event.toolIds)"
   (turnWorkHint)="store.work.hint($event)"
-  (turnWorkRequested)="$event.action === 'refresh' ? latest() : store.work.navigate($event.id, $event.action)"
+  (turnWorkRequested)="$event.action === 'refresh' ? latest() : store.work.retry($event.id)"
   (copyCode)="copy($event, true)"
   (openLink)="openLink($event)"
   (openPage)="openFile($event)"
@@ -335,7 +334,7 @@
         <button exButton variant="secondary" [disabled]="store.loading()" (click)="store.refresh()">Try again</button>
       </div>
     } @else {
-      <ex-chat-loading label="Loading conversation…" [progressive]="store.progressiveLoading()" />
+      <ex-chat-loading label="Loading conversation…" />
     }
   </div>
 }

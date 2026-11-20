@@ -1,4 +1,7 @@
-import { sessionChatToolCategory, sessionChatToolHeading, type SessionChatItem } from "@elevenex/shared";
+import {
+  sessionChatToolCategory, sessionChatToolHeading,
+  type SessionChatItem, type SessionChatToolReference, type SessionChatToolSource,
+} from "@elevenex/shared";
 import type {
   StepKind,
   ToolBlock,
@@ -8,6 +11,23 @@ import type {
   ToolPresentation,
 } from "../conversation";
 import { focusSessionTool } from "./session-tool-focus";
+
+function toolReference(row?: Pick<SessionChatItem, 'id' | 'toolDetails'>): SessionChatToolReference | undefined {
+  return row?.toolDetails ? { id: row.id, revision: row.toolDetails.revision } : undefined;
+}
+
+export function sessionToolDetailsSource(row: SessionChatItem, result?: SessionChatItem): SessionChatToolSource | undefined {
+  const item = toolReference(row);
+  if (row.kind === 'tool_use') {
+    const receipt = toolReference(result) ?? toolReference(row.receipt);
+    return item ? { item, result: receipt } : receipt ? { item: receipt } : undefined;
+  }
+  if (row.kind === 'tool_result' && item) {
+    const call = toolReference(row.invocation);
+    return call ? { item: call, result: item } : { item };
+  }
+  return undefined;
+}
 
 type Data = Readonly<Record<string, unknown>>;
 const MAX_ROWS = 40;

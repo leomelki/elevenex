@@ -50,7 +50,7 @@ describe('application conversation loading policy', () => {
 
   it('uses progressive summaries by default independently of connection state', () => {
     const { policy, state } = setup();
-    expect(policy.profile()).toEqual({ loadingMode: 'progressive', summarizeCompleted: true });
+    expect(policy.profile()).toEqual({ loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true });
     state.set({ revision: 2, scope: null });
     expect(policy.progressive()).toBe(true);
   });

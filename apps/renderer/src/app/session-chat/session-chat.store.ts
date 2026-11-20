@@ -1,6 +1,8 @@
 import { elementMarker, elementMarkersIn, serializeBrowserElements } from '@elevenex/shared';
 import {
   DestroyRef,
+  Injector,
+  afterNextRender,
   effect,
   untracked,
   Injectable,
@@ -20,7 +22,7 @@ import { BackendClientService } from '../backend/backend-client.service';
 import { SessionChatOutbox } from './session-chat-outbox';
 import { chatTailContext, retainChatWindow } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
-import { SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
+import { completedTurnRecords, SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
 import { SessionChatToolCache, SessionChatToolDetails } from './session-chat-tool-details';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
@@ -57,8 +59,12 @@ export interface ChatSelection extends SessionChatTarget {
 @Injectable()
 export class SessionChatStore {
   private readonly client = inject(SessionChatClient);
-  readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache));
+  private readonly injector = inject(Injector);
   readonly tools = new SessionChatToolDetails(this.client, inject(SessionChatToolCache), () => { void this.refresh(); });
+  readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache), {
+    prepare: (items, ids, signal) => this.tools.prepare(items, ids, signal),
+    afterReveal: release => { afterNextRender(release, { injector: this.injector }); },
+  });
   private readonly transcript = new ChatTranscriptProjection();
   private readonly drafts = inject(SessionChatDrafts);
   private readonly loadingPolicy = inject(SessionChatLoadingPolicy);
@@ -169,8 +175,8 @@ export class SessionChatStore {
     return this.visibleItems().flatMap(item => {
       if (!item.completedTurn) return [item];
       const entry = work.get(item.id);
-      const details = entry?.revision === item.completedTurn.revision ? entry.page?.items ?? [] : [];
-      return [item, ...details, ...item.completedTurn.reply];
+      const details = entry?.revision === item.completedTurn.revision ? entry.items : undefined;
+      return [item, ...completedTurnRecords(item.completedTurn, details)];
     });
   }, { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
@@ -239,8 +245,8 @@ export class SessionChatStore {
       const items = this.visibleItems();
       const available = this.active() && !this.offline() && !document.hidden;
       untracked(() => {
-        this.work.sync(items, available);
         this.tools.setAvailable(available);
+        this.work.sync(items, available);
       });
     });
     let wasPaused: boolean | undefined;
@@ -257,8 +263,8 @@ export class SessionChatStore {
         this.tools.setAvailable(false);
       } else if (this.selection) {
         const available = this.active() && !this.offline();
-        this.work.sync(this.visibleItems(), available);
         this.tools.setAvailable(available);
+        this.work.sync(this.visibleItems(), available);
         void this.load(false);
       }
     };

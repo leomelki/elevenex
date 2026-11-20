@@ -23,6 +23,7 @@ import type {
   TurnAction,
   TurnStatus,
   TurnWorkAction,
+  TurnWorkToggle,
   WorkStep,
 } from "../conversation.models";
 import { WorkTimelineComponent } from "./work-timeline.component";
@@ -70,12 +71,13 @@ export class TurnComponent implements OnChanges {
   readonly keepWorkOnCompletion = input(false);
   readonly steps = input<readonly WorkStep[]>([]);
   readonly deferredWork = input<DeferredTurnWork>();
-  readonly workToggled = output<boolean>();
+  readonly workToggled = output<TurnWorkToggle>();
   readonly workHint = output<void>();
   readonly workRequested = output<TurnWorkAction>();
   readonly workLayoutChanging = output<HTMLElement>();
   protected readonly workId = 'work-' + crypto.randomUUID();
   private intentTimer?: ReturnType<typeof setTimeout>;
+  private reopenToolIds: readonly string[] = [];
   readonly answerBeforeStepId = input<string>();
   readonly answerId = input<string>();
   readonly answer = input<string>();
@@ -208,7 +210,8 @@ export class TurnComponent implements OnChanges {
   });
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
-  private readonly loadingPanel = viewChild<TurnWorkPanelComponent, ElementRef<HTMLElement>>('loadingPanel', { read: ElementRef });
+  private readonly workPanel = viewChild(TurnWorkPanelComponent, { read: ElementRef });
+  private readonly timeline = viewChild(WorkTimelineComponent);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly workRegion = viewChild<unknown, ElementRef<HTMLElement>>(
     "workRegion",
@@ -220,7 +223,7 @@ export class TurnComponent implements OnChanges {
       const next = !!this.deferredWork() && this.expanded();
       if (next === open) return;
       open = next;
-      untracked(() => this.workToggled.emit(next));
+      untracked(() => this.workToggled.emit({ open: next, toolIds: next ? this.reopenToolIds : [] }));
     });
     inject(DestroyRef).onDestroy(() => this.clearWorkHint());
     afterRenderEffect((onCleanup) => {
@@ -253,11 +256,13 @@ export class TurnComponent implements OnChanges {
         this.keepWorkOnCompletion() && this.toggled() === null)
       this.toggled.set(true);
     const focused = this.host.nativeElement.ownerDocument.activeElement;
-    if (changes["deferredWork"] && this.deferredWork() && this.expanded()) {
-      this.notifyWorkLayout();
-      if (!this.deferredWork()?.window && this.loadingPanel()?.nativeElement.contains(focused))
-        this.workButton()?.nativeElement.focus({ preventScroll: true });
+    const work = this.deferredWork(), previous = changes['deferredWork']?.previousValue as DeferredTurnWork | undefined;
+    if (changes['deferredWork'] && work && this.expanded()) {
+      if (!previous) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
+      if (work.ready !== previous?.ready || work.error !== previous?.error) this.notifyWorkLayout();
     }
+    if (changes['deferredWork'] && previous?.error && !work?.error && this.workPanel()?.nativeElement.contains(focused))
+      (this.workButton()?.nativeElement ?? this.host.nativeElement).focus({ preventScroll: true });
     if (
       !this.showWork() &&
       this.workRegion()?.nativeElement.contains(focused)
@@ -281,6 +286,7 @@ export class TurnComponent implements OnChanges {
 
   protected toggleWork(): void {
     const open = !this.expanded();
+    if (!open && this.deferredWork()?.ready) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
     this.clearWorkHint();
     this.notifyWorkLayout();
     this.toggled.set(open);
@@ -307,8 +313,7 @@ export class TurnComponent implements OnChanges {
   }
 
   protected requestWork(action: TurnWorkAction): void {
-    if (action === 'retry' || action === 'refresh')
-      this.workButton()?.nativeElement.focus({ preventScroll: true });
+    this.workButton()?.nativeElement.focus({ preventScroll: true });
     this.workRequested.emit(action);
   }
 

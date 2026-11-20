@@ -38,6 +38,7 @@ export class DesktopChatController {
     @Query('loadingMode') loadingMode?: string,
     @Query('summarizeCompleted') summarizeCompleted?: string,
     @Query('deferToolDetails') deferToolDetails?: string,
+    @Query('summarizeRecent') summarizeRecent?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -53,6 +54,7 @@ export class DesktopChatController {
         loadingMode,
         summarizeCompleted,
         deferToolDetails,
+        summarizeRecent,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {
@@ -68,6 +70,7 @@ export class DesktopChatController {
     @Query('offset') offset: string,
     @Res() response: Response,
     @Query('deferToolDetails') deferToolDetails?: string,
+    @Query('limit') limit?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -78,6 +81,7 @@ export class DesktopChatController {
         typeof offset === 'string' && /^\d+$/.test(offset) ? Number(offset) : NaN,
         abort.signal,
         deferToolDetails,
+        limit === undefined ? undefined : typeof limit === 'string' && /^\d+$/.test(limit) ? Number(limit) : NaN,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

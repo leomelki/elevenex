@@ -7,7 +7,7 @@ import type { ToolDetailsProvider, ToolDetailsState, ToolPresentation } from "..
 afterEach(() => vi.useRealTimers());
 
 describe("tool evidence", () => {
-  it("requests a folded tool on activation, delays its skeleton, and keeps the disclosure focused", () => {
+  it("keeps a pending read out of the layout and keeps the disclosure focused through retry", () => {
     vi.useFakeTimers();
     const fixture = TestBed.createComponent(ToolStepComponent);
     const inspection = signal<ToolDetailsState>({ status: 'loading' });
@@ -27,15 +27,16 @@ describe("tool evidence", () => {
     expect(inspect).toHaveBeenCalledTimes(1);
     expect(button.getAttribute('aria-expanded')).toBe('true');
     expect(button.getAttribute('aria-busy')).toBe('true');
-    expect(host.querySelector('.waiting')).toBeNull();
+    expect(host.querySelector('.detail-notice')).toBeNull();
     const [, abort] = inspect.mock.calls[0]!;
     fixture.componentRef.setInput("deferred", { item: { id: 'call', revision: 'a'.repeat(64) } });
     fixture.detectChanges();
     expect(inspect).toHaveBeenCalledTimes(1);
     expect(abort.aborted).toBe(false);
-    vi.advanceTimersByTime(160);
+    vi.advanceTimersByTime(1000);
     fixture.detectChanges();
-    expect(host.querySelector('.waiting')?.textContent).toContain('Loading tool details');
+    expect(host.querySelector('ex-fold')?.hasAttribute('inert')).toBe(true);
+    expect(host.querySelector('.detail-notice')).toBeNull();
     inspection.set({ status: 'error', reason: 'failed' });
     fixture.detectChanges();
     const retryButton = host.querySelector<HTMLButtonElement>('.detail-notice button')!;

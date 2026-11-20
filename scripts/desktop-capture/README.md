@@ -180,8 +180,8 @@ isolated typed backend adapter:
 
 `scenarios/session-opening-scroll.mjs` checks the first paint of the default
 progressive page during session switches. `scenarios/session-loading-policy.mjs`
-uses the preview's `?chatLoading=window` override to check window and adaptive slow openings,
-the small Progressive indicator, 10,000-record windowing, and retained turn/tool
+uses the preview's `?chatLoading=window` override to check adaptive slow openings,
+quiet background reads, 10,000-record windowing, and retained turn/tool
 and composer identities through IPC-style updates. It also checks that fallback
 follows different chats/tasks and recreated workspace owners, then resets on
 reconnect and application reload. Its metadata records local
@@ -732,15 +732,15 @@ view identity in both themes through the production window with controlled trans
 
 `scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
 turns against the preview transport. It checks the collapsed reply and counts,
-held activity, reversal, the frame-by-frame reveal, cached reopen, error retry,
-and forward activity paging with a receipt separated from its call. It checks
-stable reply identity, keyboard focus during a failed page read, the composer
-draft, and shared workspace change labeling. Use the connected-workspace preview
-URL. The dark run uses a narrow viewport and reduced motion.
+an interrupted read, the complete reveal of 105 records, a late tool receipt,
+on-demand evidence, cached reopen and error retry. It also checks stable reply
+identity, keyboard focus, the composer draft and shared workspace change
+labeling. Use the connected-workspace preview URL. The dark run uses a narrow
+viewport and reduced motion.
 
 `scenarios/session-tool-details.mjs` expands Worked and its activity group
 before requesting tool evidence by keyboard. It checks request cancellation,
-the loading-to-evidence height transition, retry focus and cached reopen in the
+the direct evidence reveal, retry focus and cached reopen in the
 connected-workspace preview. The dark run uses a narrow viewport and reduced
 motion.
 

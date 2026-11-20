@@ -5,9 +5,9 @@ const turn = '[data-chat-anchor="tool-history:reply"]';
 const call = '[data-work-step="payment-tests"]';
 const head = call + ' ex-tool-step .head';
 const body = call + ' ex-tool-step ex-fold';
-const waiting = body + ' .waiting';
+const notice = body + ' .detail-notice';
 const preview = body + ' .tool-preview';
-const inspect = [head, body, waiting, preview, '[data-chat-row="test-summary"]', 'ex-composer'];
+const inspect = [head, body, notice, preview, '[data-chat-row="test-summary"]', 'ex-composer'];
 
 async function settleMotion(capture) {
   await capture.waitFor(() => document.getAnimations().every(animation =>
@@ -69,14 +69,15 @@ export default async function* (capture) {
     yield { name: theme + '-collapsed', inspect };
 
     await capture.press('Enter');
-    await capture.waitFor(selector => document.querySelector(selector), waiting);
+    await capture.waitFor(selector => document.querySelector(selector)?.getAttribute('aria-busy') === 'true', head);
     await settleMotion(capture);
     assert.equal(await capture.evaluate(selector => document.activeElement === document.querySelector(selector), head), true);
-    yield { name: theme + '-loading', inspect };
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector), notice), null);
+    yield { name: theme + '-pending', inspect };
 
     await capture.press('Enter');
     await capture.waitFor(selector => document.querySelector(selector)?.hasAttribute('inert'), body);
-    await capture.waitFor(selector => !document.querySelector(selector), waiting);
+    await capture.waitFor(selector => !document.querySelector(selector)?.hasAttribute('aria-busy'), head);
     assert.equal(await capture.component(demo, viewer => viewer.fixture.chat.toolDetailsCancelled), 1);
     assert.equal(await capture.evaluate(selector => document.querySelector(selector), preview), null);
     yield { name: theme + '-interrupted', inspect };
@@ -92,7 +93,7 @@ export default async function* (capture) {
       await capture.press('Enter');
     } else {
       await capture.press('Enter');
-      await capture.waitFor(selector => document.querySelector(selector), waiting);
+      await capture.waitFor(selector => document.querySelector(selector)?.getAttribute('aria-busy') === 'true', head);
       await settleMotion(capture);
       const top = await capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().top, head);
       const startHeight = await capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().height, body);
@@ -100,13 +101,13 @@ export default async function* (capture) {
       await capture.motion.freeze();
       await capture.component(demo, viewer => viewer.fixture.chat.toolDetailsBehavior('ready'));
       await capture.waitFor(selector => document.querySelector(selector)?.textContent.includes('Tests: 12 passed'), preview);
-      for await (const frame of capture.frames('light-evidence-reveal', [0, 70, 140, 240], inspect)) {
+      for await (const frame of capture.frames('light-evidence-reveal', [0, 70, 140, 280], inspect)) {
         const measured = await capture.evaluate((head, body) => ({
           top: document.querySelector(head).getBoundingClientRect().top,
           height: document.querySelector(body).getBoundingClientRect().height,
         }), head, body);
         assert.ok(Math.abs(top - measured.top) < 2, 'The tool header moved while its evidence loaded');
-        assert.ok(measured.height >= height - 1, 'The loading body shrank during evidence entry');
+        assert.ok(measured.height >= height - 1, 'The tool body shrank during evidence entry');
         height = measured.height;
         yield frame;
       }
@@ -125,7 +126,7 @@ export default async function* (capture) {
     await capture.press('Enter');
     await capture.waitFor(selector => document.querySelector(selector), preview);
     assert.equal(await capture.component(demo, viewer => viewer.fixture.chat.toolDetailsReads), reads);
-    assert.equal(await capture.evaluate(selector => document.querySelector(selector), waiting), null);
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector), notice), null);
     await settleMotion(capture);
     yield { name: theme + '-cached', inspect };
   }

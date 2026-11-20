@@ -11,6 +11,7 @@ import type {
   ChatExchange,
   TurnAction,
   TurnWorkAction,
+  TurnWorkToggle,
   TurnNavigationItem,
 } from "../conversation.models";
 import type { ToolContentRequest, ToolDetailsProvider } from '../tool-presentation';
@@ -45,7 +46,6 @@ export class ChatComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
-  readonly progressiveLoading = input(false);
   readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
@@ -63,7 +63,7 @@ export class ChatComponent {
   readonly resolve = input<MarkdownAssetResolver>();
   readonly inspectTool = input<ToolDetailsProvider>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
-  readonly turnWorkToggled = output<{ id: string; open: boolean }>();
+  readonly turnWorkToggled = output<TurnWorkToggle & { readonly id: string }>();
   readonly turnWorkHint = output<string>();
   readonly turnWorkRequested = output<{ id: string; action: TurnWorkAction }>();
   readonly openFile = output<string>();

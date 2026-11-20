@@ -14,7 +14,7 @@ import {
   type OnChanges,
 } from "@angular/core";
 import type { SessionChatToolReference, SessionChatToolSource } from "@elevenex/shared";
-import { AutoHeightDirective, ButtonComponent, IconComponent, FoldComponent, SkeletonComponent, StatusGlyphComponent } from "../../ui";
+import { AutoHeightDirective, ButtonComponent, IconComponent, FoldComponent, StatusGlyphComponent } from "../../ui";
 import type {
   ToolContentRequest,
   ToolContentSource,
@@ -24,8 +24,6 @@ import type {
   ToolPresentation,
 } from "../tool-presentation";
 import { ToolContentComponent } from "./tool-content.component";
-
-const LOADING_DELAY_MS = 140;
 
 function sameReference(left?: SessionChatToolReference, right?: SessionChatToolReference): boolean {
   return left?.id === right?.id && left?.revision === right?.revision;
@@ -38,7 +36,6 @@ function sameReference(left?: SessionChatToolReference, right?: SessionChatToolR
     ButtonComponent,
     IconComponent,
     FoldComponent,
-    SkeletonComponent,
     StatusGlyphComponent,
     ToolContentComponent,
   ],
@@ -72,7 +69,6 @@ export class ToolStepComponent implements OnChanges {
   protected readonly bodyId = 'tool-evidence-' + crypto.randomUUID();
   private readonly head = viewChild<ElementRef<HTMLButtonElement>>('head');
   private readonly fold = viewChild.required<FoldComponent, ElementRef<HTMLElement>>('fold', { read: ElementRef });
-  private readonly delayed = signal(false);
   private readonly source = computed(() => this.deferred(), {
     equal: (left, right) => sameReference(left?.item, right?.item) && sameReference(left?.result, right?.result),
   });
@@ -86,23 +82,21 @@ export class ToolStepComponent implements OnChanges {
       ? inspection.value : undefined;
   });
   protected readonly waiting = computed(() => this.current()?.state().status === 'loading');
-  protected readonly showLoading = computed(() => this.waiting() && this.delayed());
   private readonly detailView = computed<ToolDetailsState | null>(() => {
     const state = this.current()?.state();
-    return state && (state.status !== 'loading' || this.showLoading()) ? state : null;
+    return state?.status === 'ready' || (state?.status === 'error' && state.reason !== 'unavailable') ? state : null;
   });
   // Keep a live call's evidence in place while its new receipt is read. A
   // different tool or backend provider never inherits the previous contents.
   protected readonly painted = linkedSignal({
     source: () => ({ visible: this.visible(), view: this.detailView(),
-      provider: this.inspect(), itemId: this.source()?.item.id }),
+      provider: this.inspect(), item: this.source()?.item }),
     computation: (current, previous): ToolDetailsState | null => {
       const last = previous?.value ?? null;
+      if (previous && (current.provider !== previous.source.provider ||
+          !sameReference(current.item, previous.source.item))) return current.view;
       if (!current.visible) return last;
-      if (previous && last?.status === 'ready' && current.itemId === previous.source.itemId &&
-        current.provider === previous.source.provider &&
-        (!current.view || current.view.status === 'loading')) return last;
-      return current.view;
+      return current.view ?? (last?.status === 'ready' ? last : null);
     },
   });
   protected readonly bodyOpen = computed(() => this.visible() &&
@@ -120,17 +114,9 @@ export class ToolStepComponent implements OnChanges {
       this.inspection.set({ source, provider, value });
       cleanup(() => abort.abort());
     });
-    effect(cleanup => {
-      if (!this.waiting()) {
-        this.delayed.set(false);
-        return;
-      }
-      const timer = setTimeout(() => this.delayed.set(true), LOADING_DELAY_MS);
-      cleanup(() => clearTimeout(timer));
-    });
     effect(() => {
       const head = this.head()?.nativeElement;
-      if (head && this.visible() && this.painted()) untracked(() => this.layoutChanging.emit(head));
+      if (head && this.visible() && this.toggled() && this.painted()) untracked(() => this.layoutChanging.emit(head));
     });
     afterRenderEffect(cleanup => {
       if (this.bodyOpen() || !this.painted()) return;

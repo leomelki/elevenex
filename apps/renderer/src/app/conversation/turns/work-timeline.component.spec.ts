@@ -1,7 +1,9 @@
 import { TestBed, type ComponentFixture } from "@angular/core/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { signal } from "@angular/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComponent } from "../chat/chat.component";
 import type { ChatExchange, WorkStep } from "../conversation.models";
+import type { ToolDetailsProvider, ToolDetailsState } from "../tool-presentation";
 
 const tool = (id: string, extra: Partial<WorkStep> = {}): WorkStep => ({
   id,
@@ -65,6 +67,55 @@ afterEach(() => {
 });
 
 describe("message-delimited work sections", () => {
+  it("restores saved sections and only requests details for tools whose bodies were open", async () => {
+    const source = (id: string) => ({ item: { id, revision: 'a'.repeat(64) } });
+    const loaded = [say('intro'), tool('opened', { deferredTool: source('opened') }),
+      tool('closed', { deferredTool: source('closed') }), say('after')];
+    const base = { answer: 'Final reply', status: 'done' as const };
+    const work = { counts: { run: 2 }, failures: 0, busy: false, ready: false };
+    const { host, fixture, update } = setup(exchange([], { ...base, deferredWork: work }));
+    const toggled = vi.fn();
+    fixture.componentInstance.turnWorkToggled.subscribe(toggled);
+    const state = signal<ToolDetailsState>({ status: 'ready', evidence: {
+      presentation: { summary: 'opened', blocks: [{ kind: 'text', text: 'Saved evidence' }] },
+      output: '',
+    } });
+    const inspect = vi.fn<ToolDetailsProvider>(() => ({ state, retry: () => undefined }));
+    fixture.componentRef.setInput('inspectTool', inspect);
+    const worked = host.querySelector<HTMLButtonElement>('button.work')!;
+    const reply = host.querySelector('.answer');
+    worked.click();
+    update(exchange([], { ...base, deferredWork: { ...work, busy: true } }));
+    expect(host.querySelector('[data-work-step="intro"]')).toBeNull();
+    expect(host.querySelector('ex-turn-work-panel .surface')).toBeNull();
+    update(exchange(loaded, { ...base, deferredWork: { ...work, ready: true } }));
+    expect(host.querySelector('.answer')).toBe(reply);
+    expect(host.querySelector('ex-tool-step')).toBeNull();
+    group(host, 'opened')!.click();
+    await settle(fixture);
+    expect(inspect).not.toHaveBeenCalled();
+    head(host, 'opened').click();
+    await settle(fixture);
+    expect(host.querySelector('.tool-preview')?.textContent).toContain('Saved evidence');
+    worked.click();
+    update(exchange([], { ...base, deferredWork: work }));
+    expect(inspect.mock.calls[0]![1].aborted).toBe(true);
+    expect(host.querySelector('ex-tool-step')).toBeNull();
+
+    worked.focus();
+    worked.click();
+    await settle(fixture);
+    expect(toggled).toHaveBeenLastCalledWith({ id: 'turn', open: true, toolIds: ['opened'] });
+    update(exchange(loaded, { ...base, deferredWork: { ...work, ready: true } }));
+    await settle(fixture);
+    expect(group(host, 'opened')?.getAttribute('aria-expanded')).toBe('true');
+    expect(head(host, 'opened').getAttribute('aria-expanded')).toBe('true');
+    expect(head(host, 'closed').getAttribute('aria-expanded')).toBe('false');
+    expect(inspect.mock.calls.map(([source]) => source.item.id)).toEqual(['opened', 'opened']);
+    expect(host.querySelector('.answer')).toBe(reply);
+    expect(document.activeElement).toBe(worked);
+  });
+
   it("keeps the last actual message when a settled receipt has no separate answer", async () => {
     const { host, fixture, update } = setup(exchange([
       say("intro"), tool("command"), say("last"),

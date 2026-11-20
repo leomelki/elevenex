@@ -10,6 +10,7 @@ import {
   computed,
   inject,
   input,
+  linkedSignal,
   output,
   signal,
 } from "@angular/core";
@@ -62,6 +63,7 @@ export class WorkTimelineComponent implements OnChanges {
   readonly live = input(false);
   readonly expanded = input(true);
   readonly revealWork = input(false);
+  readonly workReady = input(true);
   readonly maxVisible = input(5);
   readonly answer = input<string>();
   readonly answerId = input<string>();
@@ -79,13 +81,14 @@ export class WorkTimelineComponent implements OnChanges {
   readonly layoutChanging = output<HTMLElement>();
   readonly inspectionChanged = output<boolean>();
   readonly openGroups = signal<ReadonlySet<string>>(new Set());
+  protected readonly openTools = signal<ReadonlySet<string>>(new Set());
   private readonly inspected = signal<ReadonlySet<string>>(new Set());
   private readonly focused = signal<string | null>(null);
   protected readonly arrivals = signal<ReadonlySet<string>>(new Set());
   protected readonly hydrated = signal<ReadonlySet<string>>(new Set());
   private previousIds: ReadonlySet<string> | undefined;
   private previousLast: string | undefined;
-  private previousSections = new Map<string, WorkSection>();
+  private previousSections = new Map<string, readonly string[]>();
   private reportedInspection = false;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
@@ -110,6 +113,14 @@ export class WorkTimelineComponent implements OnChanges {
       this.expanded(),
     ),
   );
+  protected readonly mountedWorkRows = linkedSignal({
+    source: () => this.revealWork() ? this.rows() : undefined,
+    computation: (rows, previous): ReadonlySet<string> => {
+      const retained = previous?.value;
+      return new Set(rows?.filter(row => !isProse(row.step) &&
+        (retained?.has(row.step.id) || this.visible(row))).map(row => row.step.id));
+    },
+  });
   private readonly lastMessageId = computed(() => {
     const steps = this.ordered();
     for (let index = steps.length - 1; index >= 0; index--) {
@@ -165,9 +176,15 @@ export class WorkTimelineComponent implements OnChanges {
     this.previousLast = steps
       .filter((step) => step.id !== "$answer")
       .at(-1)?.id;
-    this.inspected.update(
-      (current) => new Set([...current].filter((id) => ids.has(id))),
-    );
+    // When a saved turn releases its rows, retain only the reader's choices
+    // and the section identities needed when those rows are restored.
+    if (!this.workReady()) return;
+    const retain = (current: ReadonlySet<string>) => {
+      const next = new Set([...current].filter(id => ids.has(id)));
+      return next.size === current.size ? current : next;
+    };
+    this.openTools.update(retain);
+    this.inspected.update(retain);
     const sections = new Map<string, WorkSection>();
     const byStep = new Map<string, WorkSection>();
     for (const { step, section } of this.rows()) {
@@ -185,17 +202,25 @@ export class WorkTimelineComponent implements OnChanges {
         if (sections.has(id)) next.add(id);
         else {
           // Prepending activity can change the first row of the same section.
-          const retained = this.previousSections.get(id)?.items.find(step => byStep.has(step.id));
+          const retained = this.previousSections.get(id)?.find(step => byStep.has(step));
           if (!retained) continue;
-          const replacement = byStep.get(retained.id)!.id;
+          const replacement = byStep.get(retained)!.id;
           next.add(replacement);
           if (id === focusedGroup) this.restoreGroupFocus(active, replacement);
         }
       }
       return next.size === current.size && [...next].every(id => current.has(id)) ? current : next;
     });
-    this.previousSections = sections;
+    this.previousSections = new Map([...this.openGroups()].flatMap(id => {
+      const section = sections.get(id);
+      return section ? [[id, section.items.map(step => step.id)]] : [];
+    }));
     this.reportInspection();
+  }
+  activeToolIds(): readonly string[] {
+    const tools = this.openTools();
+    return tools.size ? this.rows().filter(row => row.step.deferredTool && tools.has(row.step.id) && this.visible(row))
+      .map(row => row.step.id) : [];
   }
   private restoreGroupFocus(previous: Element | null, id: string): void {
     afterNextRender(() => {
@@ -245,20 +270,23 @@ export class WorkTimelineComponent implements OnChanges {
       return next;
     });
     if (wasOpen) {
+      this.previousSections.delete(id);
       const ids = new Set(section.items.map((step) => step.id));
       this.inspected.update(
         (current) => new Set([...current].filter((key) => !ids.has(key))),
       );
-    }
+    } else this.previousSections.set(id, section.items.map(step => step.id));
     this.reportInspection();
   }
   protected toolExpanded(id: string, expanded: boolean): void {
-    this.inspected.update((current) => {
+    const update = (current: ReadonlySet<string>) => {
       const next = new Set(current);
       if (expanded) next.add(id);
       else next.delete(id);
       return next;
-    });
+    };
+    this.openTools.update(update);
+    this.inspected.update(update);
     this.reportInspection();
   }
   protected focusChanged(event: FocusEvent): void {

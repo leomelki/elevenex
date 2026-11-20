@@ -2,7 +2,6 @@
   <ex-chat-scroll (activeExchange)="active.set($event)"
     [historyBefore]="historyBefore()" [historyAfter]="historyAfter()"
     [historyLoading]="historyLoading()" [historyError]="historyError()" [historyRevision]="historyRevision()"
-    [progressiveLoading]="progressiveLoading()"
     [initialHistoryPrefetch]="initialHistoryPrefetch()"
     (historyRequested)="historyRequested.emit($event)" (historyCancelled)="historyCancelled.emit()"
     (latestRequested)="latestRequested.emit()">
@@ -78,7 +77,7 @@
         [mark]="exchange.mark || 'EX'"
         [harness]="exchange.harness"
         (action)="turnAction.emit({ id: exchange.id, action: $event })"
-        (workToggled)="turnWorkToggled.emit({ id: exchange.id, open: $event })"
+        (workToggled)="turnWorkToggled.emit({ id: exchange.id, ...$event })"
         (workHint)="turnWorkHint.emit(exchange.id)"
         (workRequested)="turnWorkRequested.emit({ id: exchange.id, action: $event })"
         (workLayoutChanging)="scroll()?.keepDisclosurePosition($event)"

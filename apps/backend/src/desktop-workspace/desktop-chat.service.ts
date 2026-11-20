@@ -34,9 +34,10 @@ import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
 import { ChatToolDetails } from './desktop-chat-tool-details.js';
 import { toolKey } from './desktop-chat-tool-links.js';
+import { SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT } from '@elevenex/shared';
 import type { SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource } from '@elevenex/shared';
 
-type ChatReadView = `${'window' | 'progressive' | 'summary'}:${'inline' | 'deferred'}`;
+type ChatReadView = `${'window' | 'progressive' | 'summary' | 'recent-summary'}:${'inline' | 'deferred'}`;
 type ProjectionFingerprints = Map<string, { readonly json: string; readonly revision: number }>;
 interface ChatFeed {
   readonly id: string;
@@ -292,12 +293,15 @@ export class DesktopChatService implements OnModuleDestroy {
     loadingMode?: string,
     summarizeCompleted?: string,
     deferToolDetails?: string,
+    summarizeRecent?: string,
   ) {
     let session = await this.target(taskId, sessionId);
     if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
       throw new BadRequestException('Invalid conversation loading mode.');
     if (summarizeCompleted !== undefined && (summarizeCompleted !== '1' || loadingMode !== 'progressive'))
       throw new BadRequestException('Invalid completed turn view.');
+    if (summarizeRecent !== undefined && (summarizeRecent !== '1' || !summarizeCompleted))
+      throw new BadRequestException('Invalid recent turn view.');
     if (
       (after && !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)) ||
       (before !== undefined && (typeof before !== 'string' || before.length > 1000 || !before)) ||
@@ -310,7 +314,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const mode = loadingMode ?? 'progressive';
     const deferDetails = toolDetailsRequested(deferToolDetails);
     const evidence = deferDetails ? 'deferred' : 'inline';
-    const view: ChatReadView = `${summarizeCompleted ? 'summary' : mode}:${evidence}`;
+    const view: ChatReadView = `${summarizeRecent ? 'recent-summary' : summarizeCompleted ? 'summary' : mode}:${evidence}`;
     const readArchived = async () => {
       if (this.feeds.get(sessionId)?.attached) this.release(sessionId);
       const archivedFeed = this.feed(sessionId, session.activeAgentProvider, false);
@@ -322,6 +326,7 @@ export class DesktopChatService implements OnModuleDestroy {
         before, following, loadingMode: mode, historyIndex,
         changesCache: archivedFeed.changesCache, mediaCache: archivedFeed.mediaCache,
         completedTurns: summarizeCompleted ? this.completedTurns(archivedFeed) : undefined,
+        summarizeRecent: summarizeRecent === '1',
         toolDetails,
       });
       if (!window)
@@ -407,6 +412,7 @@ export class DesktopChatService implements OnModuleDestroy {
       before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
       changesCache: feed.changesCache, mediaCache: feed.mediaCache,
       completedTurns: summarizeCompleted && readsHistory ? this.completedTurns(feed) : undefined,
+      summarizeRecent: summarizeRecent === '1',
       toolDetails,
       liveTurn,
       keepTurnId: paging || prior?.[0] === feed.id ? feed.livePrompt : undefined,
@@ -447,12 +453,16 @@ export class DesktopChatService implements OnModuleDestroy {
     };
   }
 
-  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number, signal: AbortSignal, deferToolDetails?: string) {
+  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
+    signal: AbortSignal, deferToolDetails?: string, limit = SESSION_CHAT_TURN_WORK_LIMIT) {
     if (typeof turnId !== 'string' || !turnId || turnId.length > 1000 ||
         typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) ||
         !Number.isSafeInteger(offset) || offset < 0)
       throw new BadRequestException('Invalid turn activity window.');
     const deferDetails = toolDetailsRequested(deferToolDetails);
+    if (!Number.isSafeInteger(limit) || limit < 1 ||
+        limit > (deferDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT))
+      throw new BadRequestException('Invalid turn activity limit.');
     const session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
@@ -464,7 +474,7 @@ export class DesktopChatService implements OnModuleDestroy {
     index.align(history);
     const start = index.position(history, turnId);
     const page = start >= 0 && history[start].kind === 'user'
-      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset, toolDetails) : null;
+      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset, toolDetails, limit) : null;
     if (!page) throw new ConflictException('This activity has changed. Refresh the conversation to see it.');
     return { taskId, sessionId, turnId, revision, offset, ...page };
   }

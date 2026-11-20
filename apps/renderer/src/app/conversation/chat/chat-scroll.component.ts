@@ -21,7 +21,6 @@ import {
   TooltipDirective,
 } from "../../ui";
 import { MessageComponent } from "./message.component";
-import { ChatLoadingComponent } from './chat-loading.component';
 import { ChatHistoryScroll } from "./chat-history-scroll";
 import { ChatSendScroll } from "./chat-send-scroll";
 interface Reminder {
@@ -34,7 +33,7 @@ const PEEK_DELAY = 320;
 const historyMargin = (height: number) => Math.min(480, height * 0.75);
 @Component({
   selector: "ex-chat-scroll",
-  imports: [ButtonComponent, IconComponent, TooltipDirective, ChatLoadingComponent],
+  imports: [ButtonComponent, IconComponent, TooltipDirective],
   templateUrl: "./chat-scroll.component.html",
   styleUrl: "./chat-scroll.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -50,7 +49,6 @@ export class ChatScrollComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
-  readonly progressiveLoading = input(false);
   readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);

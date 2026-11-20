@@ -265,7 +265,7 @@ void (async () => {
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
   const { taskId, sessionId, turnId, revision: turnRevision, offset } = chatWork;
-  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true };
+  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true, limit: 512 };
   assert.deepEqual(await window.webContents.executeJavaScript(
     `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(workRequest)})`),
   { ok: true, value: chatWork });

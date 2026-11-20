@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
+  SESSION_CHAT_TURN_WORK_BATCH_BYTES,
   SESSION_CHAT_TURN_WORK_LIMIT,
   sessionChatToolCategory,
   type SessionChatCompletedTurn,
@@ -97,7 +98,7 @@ export class ChatCompletedTurns {
 
   summarize(
     history: readonly AgentTranscriptItem[], start: number, end: number,
-    liveIds: ReadonlySet<string>, projectTool?: ProjectChatTool,
+    liveIds: ReadonlySet<string>, projectTool?: ProjectChatTool, summarizeRecent = false,
   ): SessionChatItem | undefined {
     if (end - start < 2) return undefined;
     const items = history.slice(start, end);
@@ -106,7 +107,7 @@ export class ChatCompletedTurns {
     const prepared = this.prepare(items);
     if (!prepared) return undefined;
     const { reply, hidden, links } = prepared;
-    if (start >= history.length - RECENT_RECORDS && items.length <= INLINE_RECORDS) {
+    if (!summarizeRecent && start >= history.length - RECENT_RECORDS && items.length <= INLINE_RECORDS) {
       const bytes = Buffer.byteLength(JSON.stringify(items.map(item => {
         const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
         return projectTool?.(item, call) ?? this.project(item, call);
@@ -166,14 +167,16 @@ export class ChatCompletedTurns {
     };
   }
 
-  page(turn: readonly AgentTranscriptItem[], revision: string, offset: number, toolDetails?: ChatToolDetails) {
+  page(turn: readonly AgentTranscriptItem[], revision: string, offset: number, toolDetails?: ChatToolDetails,
+    limit = SESSION_CHAT_TURN_WORK_LIMIT) {
     const prepared = this.prepare(turn);
     if (!prepared || offset >= prepared.hidden.length || this.revision(turn) !== revision) return null;
     const { hidden, links } = prepared;
     const toolPage = toolDetails?.projectPage();
+    const byteLimit = limit > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES : WORK_PAGE_BYTES;
     const items: SessionChatRecord[] = [];
     let bytes = 0;
-    for (const raw of hidden.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT)) {
+    for (const raw of hidden.slice(offset, offset + limit)) {
       const peer = links.peer(raw);
       const call = raw.kind === 'tool_result' ? peer : undefined;
       const result = raw.kind === 'tool_use' ? peer : undefined;
@@ -182,7 +185,7 @@ export class ChatCompletedTurns {
         ...(result ? { receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)) } } : {}),
       };
       bytes += Buffer.byteLength(JSON.stringify(item));
-      if (bytes > WORK_PAGE_BYTES) break;
+      if (bytes > byteLimit) break;
       items.push(item);
     }
     if (!items.length) return null;

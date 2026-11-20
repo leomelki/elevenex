@@ -41,9 +41,6 @@
       />
     }
   </button>
-  @if (deferred()) {
-    <span class="visually-hidden" role="status">{{ showLoading() ? 'Loading tool details…' : '' }}</span>
-  }
   <ex-fold #fold [id]="bodyId" [open]="bodyOpen()">
     @if (deferred() ? !!painted() : expanded() || contentMounted()) {
       <div exAutoHeight>
@@ -51,35 +48,19 @@
           @if (deferred()) {
             @let panel = painted();
             @switch (panel?.status) {
-              @case ('loading') {
-                <div class="detail-notice waiting" aria-hidden="true" animate.leave="placeholder-exit">
-                  <span class="detail-status">
-                    <ex-status-glyph status="running" [size]="14" />
-                    Loading tool details…
-                  </span>
-                  <ex-skeleton variant="message" [count]="2" />
-                </div>
-              }
               @case ('error') {
                 <div class="detail-notice">
                   <span class="detail-status" role="status">
                     <ex-icon name="clock" [size]="14" />
-                    @switch (panel.reason) {
-                      @case ('changed') { Tool details have changed. }
-                      @case ('unavailable') { Waiting for the connection… }
-                      @default { Couldn’t load tool details. }
-                    }
+                    {{ panel.reason === 'changed' ? 'Tool details have changed.' : 'Couldn’t load tool details.' }}
                   </span>
-                  @if (panel.reason !== 'unavailable') {
-                    <button exButton variant="ghost" size="sm" type="button" (click)="retry()">
-                      {{ panel.reason === 'changed' ? 'Refresh conversation' : 'Retry' }}
-                    </button>
-                  }
+                  <button exButton variant="ghost" size="sm" type="button" (click)="retry()">
+                    {{ panel.reason === 'changed' ? 'Refresh conversation' : 'Retry' }}
+                  </button>
                 </div>
               }
               @case ('ready') {
                 <ex-tool-content
-                  animate.enter="evidence-reveal"
                   [presentation]="panel.evidence.presentation"
                   [original]="panel.evidence.output"
                   [fullContent]="panel.evidence.fullContent"

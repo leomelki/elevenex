@@ -18,8 +18,8 @@ export class SessionChatLoadingPolicy {
   private readonly slowScope = signal<string | null>(null);
   readonly progressive = computed(() => this.enabledByDefault ||
     (!!this.slowScope() && this.slowScope() === this.backend.state().scope?.id));
-  readonly profile = computed<Required<Pick<SessionChatRead, 'loadingMode'>> & Pick<SessionChatRead, 'summarizeCompleted'>>(
-    () => this.progressive() ? { loadingMode: 'progressive', summarizeCompleted: true } : { loadingMode: 'window' },
+  readonly profile = computed<Required<Pick<SessionChatRead, 'loadingMode'>> & Pick<SessionChatRead, 'summarizeCompleted' | 'summarizeRecent'>>(
+    () => this.progressive() ? { loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true } : { loadingMode: 'window' },
   );
 
   enableProgressive(scopeId: string): boolean {

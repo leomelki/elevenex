@@ -4,6 +4,7 @@ import {
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
   SESSION_CHAT_TURN_WORK_LIMIT,
+  SESSION_CHAT_TURN_WORK_MAX_LIMIT,
 } from "@elevenex/shared";
 import type {
   SessionChatAgentPage,
@@ -276,12 +277,16 @@ export function parseToolDetailsReply(value: unknown, input: SessionChatToolDeta
 export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
   const raw = chatObject(value);
   const turnId = chatText(raw['turnId']);
-  if (!turnId) throw invalid();
+  const deferToolDetails = deferredToolDetails(raw['deferToolDetails']);
+  const limit = raw['limit'] === undefined ? undefined : workCount(raw['limit']);
+  if (!turnId || (limit !== undefined && (limit < 1 ||
+    limit > (deferToolDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT)))) throw invalid();
   return {
     taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
     requestId: requestId(raw['requestId']), turnId,
     revision: contentRevision(raw['revision']), offset: workCount(raw['offset']),
-    ...(deferredToolDetails(raw['deferToolDetails']) ? { deferToolDetails: true } : {}),
+    ...(deferToolDetails ? { deferToolDetails } : {}),
+    ...(limit !== undefined ? { limit } : {}),
   };
 }
 export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkPage {
@@ -289,7 +294,9 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
   const { taskId, sessionId, turnId, revision, offset } = input;
   if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
     raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
-  const items = array(raw['items'], SESSION_CHAT_TURN_WORK_LIMIT, value => activityItem(value, !!input.deferToolDetails, true));
+  // A legacy engine may ignore the limit and return its ordinary 40-row page.
+  const items = array(raw['items'], Math.max(SESSION_CHAT_TURN_WORK_LIMIT, input.limit ?? 0),
+    value => activityItem(value, !!input.deferToolDetails, true));
   const total = workCount(raw['total']);
   const end = offset + items.length;
   const nextOffset = end < total ? end : null;

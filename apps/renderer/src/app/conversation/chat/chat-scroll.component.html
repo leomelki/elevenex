@@ -19,8 +19,6 @@
     <span>{{ historyError() }}</span>
     <button type="button" (click)="retryHistory()">Retry</button>
   </div>
-} @else if (historyLoading()) {
-  <ex-chat-loading class="history-indicator" [compact]="true" [progressive]="progressiveLoading()" />
 }
 @if (pin(); as pin) {
   <aside

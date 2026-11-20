@@ -68,20 +68,23 @@ export default async function* (capture) {
         owner.fixture.chat.holdReads(true);
       });
       await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '102' }));
-      await capture.waitFor(() => document.querySelector('.opening ex-chat-loading small')?.textContent === 'Progressive');
+      await capture.waitFor(() => {
+        const chat = document.querySelector('ex-session-chat');
+        return document.querySelector('.opening ex-chat-loading') &&
+          window.ng.getComponent(chat).store.progressiveLoading();
+      });
+      assert.equal(await capture.evaluate(() => document.querySelector('.opening ex-chat-loading').textContent.trim()), 'Loading conversation…');
       yield { name: `${prefix}-slow-opening`, inspect: ['.opening', 'ex-chat-loading'] };
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => document.querySelector('ex-composer'));
       assert.equal(await capture.component('ex-session-chat', owner => owner.store.progressiveLoading()), true);
       assert.ok(await capture.component('ex-session-chat', owner => owner.store.items().length <= 160));
-      // Small history requests expose the same unobtrusive mode indicator.
+      // Background history reads leave the mounted chat unchanged.
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(true));
       await capture.component('ex-session-chat', owner => { void owner.store.older(); });
-      await capture.waitFor(() => {
-        const indicator = document.querySelector('.history-indicator');
-        return indicator?.querySelector('small') && Number(getComputedStyle(indicator).opacity) > 0.9;
-      });
-      yield { name: `${prefix}-progressive-history`, inspect: ['.history-indicator', 'ex-chat-scroll'] };
+      await capture.waitFor(() => window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading, .history-indicator')), null);
+      yield { name: `${prefix}-background-history`, inspect: ['ex-chat-scroll'] };
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => !window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
 
@@ -97,7 +100,7 @@ export default async function* (capture) {
         return chat && window.ng.getComponent(chat).selection()?.sessionId === 103;
       });
       assert.equal(await capture.component('ex-session-chat', owner => owner.store.progressiveLoading()), true);
-      await capture.waitFor(() => document.querySelector('.opening ex-chat-loading small'));
+      await capture.waitFor(() => document.querySelector('.opening ex-chat-loading'));
       yield { name: `${prefix}-shared-fallback`, inspect: ['.opening', 'ex-chat-loading'] };
       await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.holdReads(false));
       await capture.waitFor(() => document.querySelector('ex-composer'));

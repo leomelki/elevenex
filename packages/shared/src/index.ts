@@ -12,7 +12,7 @@ export * from './waiting-writing';
 import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 import type { SessionChatTurnWorkPage, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
 export type * from './session-chat';
-export { sessionChatToolCategory, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT } from './session-chat';
+export { sessionChatToolCategory, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
 export { sessionChatToolHeading } from './session-chat-tool-heading';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';

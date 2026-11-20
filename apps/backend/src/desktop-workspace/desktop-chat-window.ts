@@ -75,6 +75,7 @@ interface ChatWindowOptions {
   readonly fingerprints?: Map<string, string>;
   readonly includeLeadingPrompt?: boolean;
   readonly completedTurns?: ChatCompletedTurns;
+  readonly summarizeRecent?: boolean;
   readonly toolDetails?: ChatToolDetails;
   readonly keepTurnId?: string;
   readonly liveTurn?: boolean;
@@ -110,7 +111,9 @@ function historyCandidates(
       const first = forward ? position : index.promptIndexBefore(history, position + 1);
       if (first >= start && first !== lastPrompt && history[first].id !== options.keepTurnId) {
         const through = forward ? endOfChatTurn(history, position) : position + 1;
-        const summary = through <= end ? turns.summarize(history, first, through, liveIds, projectTool) : undefined;
+        const summary = through <= end
+          ? turns.summarize(history, first, through, liveIds, projectTool, options.summarizeRecent)
+          : undefined;
         if (summary) {
           result.push({ item: history[first], summary, historyIndex: first, historyEnd: through - 1, liveIndex: -1 });
           summaryCount++;

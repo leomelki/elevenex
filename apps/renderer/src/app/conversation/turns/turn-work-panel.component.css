@@ -1,9 +1,6 @@
 :host {
   display: block;
 }
-ex-fold {
-  transition-duration: var(--dur-slow);
-}
 .frame {
   padding-block-end: var(--space-2);
 }
@@ -20,49 +17,13 @@ ex-fold {
   background: var(--surface-sunken);
   color: var(--ink-muted);
 }
-.surface.waiting {
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: linear-gradient(105deg, color-mix(in oklab, var(--accent-soft) 32%, var(--surface-sunken)), var(--surface-sunken) 75%);
-}
-.status,
-.pagination {
+.error {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-.status {
-  min-height: var(--space-6);
   font-size: var(--text-caption-size);
-  font-variant-numeric: tabular-nums;
 }
-.status ex-icon,
-.status ex-status-glyph {
+.error ex-icon {
   flex: none;
-}
-.status.error ex-icon {
   color: var(--attention);
-}
-.page-error {
-  display: flex;
-  flex: 1 0 100%;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--space-1) var(--space-2);
-  padding-block-start: var(--space-1);
-  border-block-start: 1px solid var(--line);
-}
-.waiting .status {
-  color: var(--ink);
-  font-weight: 500;
-}
-.surface button[aria-disabled="true"] {
-  opacity: .45;
-  cursor: default;
-}
-.waiting ex-skeleton {
-  padding-inline-start: var(--space-4);
 }

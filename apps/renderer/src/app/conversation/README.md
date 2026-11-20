@@ -9,12 +9,11 @@ These standalone OnPush components consume renderer view models and emit typed i
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work
   steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint` and `turnWorkRequested`
-  with the turn identity. The owner supplies busy/error/page state and the
-  current chronological steps. Preserve `answerId` across activity pages
-  and set `answerBeforeStepId` when evidence follows the answer. Worked keeps
-  keyboard focus and displays a delayed loading surface for a pending first
-  page. Cache hits reveal the steps directly. The panel retains the outgoing
-  loading surface during its fold and leaves the reply and file chips available.
+  with the turn identity. The open intent carries the IDs of previously visible
+  expanded tools. The owner supplies pending, ready or error state and publishes
+  the chronological steps together. Preserve `answerId` and set
+  `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
+  focus and leaves the reply and file chips available while the activity loads.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
   An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
@@ -47,20 +46,14 @@ Supply `WorkStep.deferredTool` for a tool with an addressable body and pass an
 `inspectTool` provider to Chat, Turn or WorkTimeline. ToolStep acquires the
 provider only while the row is visible and expanded, and aborts that observation
 on collapse, replacement or destruction. The feature owner handles transport and
-caching. ToolStep owns the delayed loading surface, retry focus, and disclosure
-animation. Fold owns opening and closing, and one AutoHeight wrapper owns
-changes in the open body as the placeholder fades into evidence. Inline evidence
-uses the same rendering and disclosure. The shared Skeleton accepts local
-`--skeleton-fill` and `--skeleton-highlight` overrides for contrast on sunken surfaces.
+caching. ToolStep keeps the heading in place until the evidence or a retry
+action is ready. Fold owns opening and closing, and one AutoHeight wrapper
+owns updates to the already open body. Inline evidence uses the same disclosure.
 
 ## Scrolling and performance
 
-`Chat.progressiveLoading` forwards the owner's loading mode to
-`ChatScroll`. `ChatLoading` is the shared, noninteractive loading glyph with an
-optional small Progressive label; `compact` hides its ordinary visual text but
-retains its accessible status name. The initial connected opening and history
-corner use the same component. The owner supplies the policy; these views never
-measure network latency or request history themselves.
+`ChatLoading` supplies the status for a cold conversation open. Background
+history reads preserve the current viewport and surface a retry if they fail.
 `Chat.initialHistoryPrefetch` / `ChatScroll.initialHistoryPrefetch` retain the
 existing default of filling an underfull viewport. The connected session owner
 enables this with default progressive loading. The window-mode override waits

@@ -1,9 +1,9 @@
 import { Injectable, computed, signal, type WritableSignal } from '@angular/core';
-import type { SessionChatToolSource } from '@elevenex/shared';
+import type { SessionChatRecord, SessionChatToolSource } from '@elevenex/shared';
 import type { SessionChatClient } from '../backend/session-chat-client.service';
 import type { ToolDetailsInspection, ToolDetailsProvider, ToolDetailsState, ToolEvidence } from '../conversation';
 import { ChatDisclosureCache } from './session-chat-disclosure-cache';
-import { presentSessionToolEvidence } from './session-chat-tools';
+import { presentSessionToolEvidence, sessionToolDetailsSource } from './session-chat-tools';
 import type { ChatSelection } from './session-chat.store';
 
 const loading = { status: 'loading' } as const;
@@ -22,6 +22,7 @@ interface Inspection {
   readonly state: WritableSignal<ToolDetailsState>;
   observers: number;
   request?: string;
+  pending?: Promise<void>;
 }
 
 function keyFor(selection: ChatSelection, source: SessionChatToolSource): string {
@@ -68,8 +69,44 @@ export class SessionChatToolDetails {
     }
   }
 
+  /** Stage only rows whose details were already open. Mounted tools take
+   * over these observers when the complete turn is revealed. */
+  async prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal): Promise<void> {
+    const selection = this.selection();
+    if (!selection || signal.aborted) return;
+    const wanted = new Set(toolIds);
+    const results = new Map(items.filter(row => row.kind === 'tool_result').map(row => [row.toolId ?? row.id, row]));
+    const sources = items.flatMap(row => {
+      const source = wanted.has(row.id) ? sessionToolDetailsSource(row, results.get(row.toolId ?? row.id)) : undefined;
+      return source ? [source] : [];
+    });
+    const queue = sources.values();
+    await Promise.all(Array.from({ length: Math.min(4, sources.length) }, async () => {
+      for (const source of queue) {
+        if (signal.aborted) return;
+        const entry = this.retain(selection, source, signal);
+        await entry?.pending;
+      }
+    }));
+  }
+
   private observe(selection: ChatSelection, source: SessionChatToolSource, signalToRelease: AbortSignal): ToolDetailsInspection {
-    if (signalToRelease.aborted || this.selection() !== selection) return closed;
+    const inspection = this.retain(selection, source, signalToRelease);
+    if (!inspection) return closed;
+    return {
+      state: inspection.state.asReadonly(),
+      retry: () => {
+        if (signalToRelease.aborted || this.open.get(inspection.key) !== inspection) return;
+        const state = inspection.state();
+        if (state.status !== 'error') return;
+        if (state.reason === 'changed') this.refresh();
+        else this.load(inspection);
+      },
+    };
+  }
+
+  private retain(selection: ChatSelection, source: SessionChatToolSource, signalToRelease: AbortSignal): Inspection | undefined {
+    if (signalToRelease.aborted || this.selection() !== selection) return;
     const key = keyFor(selection, source);
     let entry = this.open.get(key);
     if (!entry) {
@@ -87,16 +124,7 @@ export class SessionChatToolDetails {
       this.open.delete(key);
       this.cancel(inspection);
     }, { once: true });
-    return {
-      state: inspection.state.asReadonly(),
-      retry: () => {
-        if (signalToRelease.aborted || this.open.get(key) !== inspection) return;
-        const state = inspection.state();
-        if (state.status !== 'error') return;
-        if (state.reason === 'changed') this.refresh();
-        else this.load(inspection);
-      },
-    };
+    return inspection;
   }
 
   private load(entry: Inspection): void {
@@ -104,7 +132,7 @@ export class SessionChatToolDetails {
     const requestId = crypto.randomUUID();
     entry.request = requestId;
     entry.state.set(loading);
-    void this.receive(entry, requestId);
+    entry.pending = this.receive(entry, requestId);
   }
 
   private async receive(entry: Inspection, requestId: string): Promise<void> {
@@ -114,6 +142,7 @@ export class SessionChatToolDetails {
     });
     if (this.open.get(key) !== entry || entry.request !== requestId || this.selection() !== selection) return;
     entry.request = undefined;
+    entry.pending = undefined;
     if (!result.ok) {
       entry.state.set({ status: 'error', reason: result.error.status === 409 ? 'changed' : 'failed' });
       return;
@@ -131,5 +160,6 @@ export class SessionChatToolDetails {
   private cancel(entry: Inspection): void {
     if (entry.request) this.client.cancel(entry.selection.scopeId, entry.request);
     entry.request = undefined;
+    entry.pending = undefined;
   }
 }

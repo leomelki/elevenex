@@ -1037,7 +1037,7 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
       './session-chat-agents': { registerChatAgents: () => () => undefined },
       './session-chat-attachments': { registerChatAttachments: () => () => undefined },
       './session-chat-media': { registerSessionChatMedia: () => () => undefined },
-    })[name] ?? require('../dist/backend-client/' + name.slice(2)),
+    })[name] ?? require(name.startsWith('./') ? '../dist/backend-client/' + name.slice(2) : name),
   });
   const stop = adapter.registerSessionChatIpc(client, candidate => candidate === frame);
   context.after(stop);
@@ -1061,6 +1061,21 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   response = { ...valid, items: [{ ...heading, receipt: { id: 'result', error: false, toolDetails: { revision, meta: 'Exit 0' } } }] };
   assert.equal((await read({ ...input, deferToolDetails: true })).value.items[0].receipt.toolDetails.meta, 'Exit 0');
   assert.match(requests.at(-1), /deferToolDetails=1$/);
+  const largeRead = { ...input, deferToolDetails: true, limit: 512 };
+  response = { ...valid, total: 105, nextOffset: null,
+    items: Array.from({ length: 105 }, (_, index) => record(`activity-${index}`, 'assistant')) };
+  assert.equal((await read(largeRead)).value.items.length, 105);
+  assert.match(requests.at(-1), /deferToolDetails=1&limit=512$/);
+  assert.equal((await read({ ...input, deferToolDetails: true })).error.code, 'invalid-response');
+  for (const invalid of [{ ...input, limit: 512 }, { ...largeRead, limit: 513 }, { ...largeRead, limit: 0 }])
+    assert.throws(() => read(invalid));
+
+  const chatRead = value => handlers.get('session-chat:read')({ senderFrame: frame, sender }, scope, value);
+  const recent = { taskId: 5, sessionId: 9, requestId: 'recent', loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true };
+  assert.throws(() => chatRead({ ...recent, summarizeCompleted: undefined }));
+  response = page;
+  assert.equal((await chatRead({ ...recent, deferToolDetails: true })).ok, true);
+  assert.match(requests.at(-1), /loadingMode=progressive&summarizeCompleted=1&summarizeRecent=1&deferToolDetails=1$/);
 
   const item = { id: 'call', revision }, receipt = { id: 'result', revision };
   const details = { taskId: 5, sessionId: 9, item, result: receipt, requestId: 'details' };

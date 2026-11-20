@@ -551,7 +551,7 @@ export class SessionChatFixture {
     const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
     if (!work || revision !== summary?.revision)
       return { ok: false, error: { code: 'http', status: 409, message: 'Activity changed.' } };
-    const items = work.slice(offset, offset + SESSION_CHAT_TURN_WORK_LIMIT);
+    const items = work.slice(offset, offset + (input.limit ?? SESSION_CHAT_TURN_WORK_LIMIT));
     const end = offset + items.length;
     return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
       items, total: work.length, nextOffset: end < work.length ? end : null } };

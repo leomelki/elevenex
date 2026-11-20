@@ -37,22 +37,18 @@ describe('incremental transcript projection', () => {
     expect(fourth).toEqual(chatExchanges(streamed, state, fresh));
   });
 
-  it('keeps the saved reply separate from paged commentary and its exiting controls', () => {
+  it('keeps the saved reply in order with work before and after it and retains the exiting steps', () => {
     const projection = new ChatTranscriptProjection();
     const revision = 'a'.repeat(64);
     const earlier = item('commentary', 'assistant', 'Earlier explanation', { truncated: true });
     const reply = item('final', 'assistant', 'Final answer', { truncated: true });
     const command = { ...tool('test'), receipt: { id: 'receipt', error: false } };
+    const receipt = item('receipt', 'tool_result', '12 passed', { toolId: 'test', truncated: true });
     const prompt = item('prompt', 'user', 'Verify the change', { completedTurn: {
       revision, endId: 'receipt', reply: [reply], beforeReply: 1, total: 3,
       counts: { run: 1 }, failures: 0,
     } });
-    const work = {
-      revision, previous: [], page: {
-        taskId: 1, sessionId: 2, turnId: prompt.id, revision, offset: 0,
-        nextOffset: 2, total: 3, items: [earlier, command],
-      },
-    } as const;
+    const work = { revision, toolIds: [], items: [earlier, command, receipt] } as const;
     const [expanded] = projection.project([prompt], state, fresh, undefined, new Map([[prompt.id, work]]));
     expect(expanded).toMatchObject({
       answer: 'Final answer', answerId: 'final', answerBeforeStepId: 'test',

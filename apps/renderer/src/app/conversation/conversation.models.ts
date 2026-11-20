@@ -221,16 +221,14 @@ export interface DeferredTurnWork {
   readonly counts: Readonly<Partial<Record<SessionChatToolCategory, number>>>;
   readonly failures: number;
   readonly busy: boolean;
-  readonly error?: 'unavailable' | 'failed' | 'changed';
-  readonly window?: {
-    readonly start: number;
-    readonly end: number;
-    readonly total: number;
-    readonly previous: boolean;
-    readonly next: boolean;
-  };
+  readonly ready: boolean;
+  readonly error?: 'failed' | 'changed';
 }
-export type TurnWorkAction = 'previous' | 'next' | 'retry' | 'refresh';
+export type TurnWorkAction = 'retry' | 'refresh';
+export interface TurnWorkToggle {
+  readonly open: boolean;
+  readonly toolIds: readonly string[];
+}
 export interface ChatExchange {
   /** Stable mounted identity across prompt receipt reconciliation; id stays canonical. */
   readonly renderId?: string;
@@ -253,7 +251,7 @@ export interface ChatExchange {
   readonly mark?: string;
   readonly status: TurnStatus;
   readonly steps: readonly WorkStep[];
-  /** Saved activity whose details page independently of the transcript. */
+  /** Saved counts are available before the activity is expanded. */
   readonly deferredWork?: DeferredTurnWork;
   /** Keep work after the latest reply in source order; omitted means all work precedes it. */
   readonly answerBeforeStepId?: string;

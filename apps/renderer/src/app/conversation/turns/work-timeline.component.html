@@ -84,7 +84,7 @@
                 }
               </div>
             </div>
-          } @else {
+          } @else if (!revealWork() || mountedWorkRows().has(step.id)) {
             <div
               class="tool-row"
               [class.recovered]="step.recovered"
@@ -126,6 +126,7 @@
                   [fullContent]="step.fullContent"
                   [deferred]="step.deferredTool"
                   [inspect]="inspectTool()"
+                  [open]="openTools().has(step.id)"
                   [active]="rowVisible"
                   (expandedChange)="toolExpanded(step.id, $event)"
                   (contentRequested)="contentRequested.emit($event)"
