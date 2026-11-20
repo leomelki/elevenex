@@ -225,6 +225,7 @@ export interface WorkspaceRevision {
   readonly revision: number;
   readonly version: 1;
   readonly revisionWait?: true;
+  readonly chatStream?: true;
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;

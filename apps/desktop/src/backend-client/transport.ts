@@ -13,6 +13,27 @@ export class BackendRequestError extends Error {
 }
 
 /** Main-owned operation paths only. Renderer requests never choose transport details. */
+export function backendOperationUrl(endpoint: BackendEndpoint, path: string): URL {
+  const origin = new URL(endpoint.url);
+  if (
+    origin.protocol !== 'http:' ||
+    origin.hostname !== '127.0.0.1' ||
+    !origin.port ||
+    origin.username ||
+    origin.password ||
+    origin.pathname !== '/' ||
+    origin.search ||
+    origin.hash ||
+    !path.startsWith('/api/')
+  ) {
+    throw new BackendRequestError({
+      code: 'transport',
+      message: 'Backend endpoint is unavailable.',
+    });
+  }
+  return new URL(path, origin);
+}
+
 export async function requestBackendJson(
   endpoint: BackendEndpoint,
   operation: {
@@ -25,24 +46,7 @@ export async function requestBackendJson(
   },
   signal: AbortSignal,
 ): Promise<unknown> {
-  const origin = new URL(endpoint.url);
-  if (
-    origin.protocol !== 'http:' ||
-    origin.hostname !== '127.0.0.1' ||
-    !origin.port ||
-    origin.username ||
-    origin.password ||
-    origin.pathname !== '/' ||
-    origin.search ||
-    origin.hash ||
-    !operation.path.startsWith('/api/')
-  ) {
-    throw new BackendRequestError({
-      code: 'transport',
-      message: 'Backend endpoint is unavailable.',
-    });
-  }
-  const url = new URL(operation.path, origin);
+  const url = backendOperationUrl(endpoint, operation.path);
   const method = operation.method ?? 'GET';
   const trace = traceSessionChatRequest(method, url);
   let response: Response | undefined;

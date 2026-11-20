@@ -90,11 +90,12 @@ export class SessionChatStore {
   private slowOpenTimer: ReturnType<typeof setTimeout> | undefined;
   private request: string | undefined;
   private requestMode: 'window' | 'progressive' | undefined;
+  private streamAvailable = false;
+  private stream?: { readonly first: Promise<boolean>; close(): void };
   private disposed = false;
   private seenRequest: string | undefined;
   private readonly commands = new Map<string, string>();
-  // Replies cross IPC with new object identities even on an idle heartbeat.
-  // Keep unchanged inputs stable so polling does not rebuild the conversation.
+  // Preserve unchanged inputs when a page or a stream update crosses IPC.
   readonly state = signal<SessionChatState | null>(null, { equal: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
   readonly items = signal<readonly SessionChatItem[]>([], { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly leadingPrompt = signal<SessionChatItem | null>(null);
@@ -108,6 +109,7 @@ export class SessionChatStore {
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
   readonly error = signal("");
+  readonly streamError = signal('');
   readonly defaultChange =
     signal<SessionChatCommandReply["defaultChange"]>(undefined);
   readonly notice = signal("");
@@ -165,7 +167,8 @@ export class SessionChatStore {
     const leadingPrompt = this.leadingPrompt();
     const items = this.items();
     const context = this.trailingContext();
-    const leading = leadingPrompt && items.length > 0 && items[0]?.kind !== 'user'
+    const leading = leadingPrompt && items.length > 0 && items[0]?.kind !== 'user' &&
+      !items.some(item => item.id === leadingPrompt.id)
       ? [leadingPrompt] : [];
     if (!context.length) return leading.length ? [...leading, ...items] : items;
     const ids = new Set([...leading, ...items].map(item => item.id));
@@ -238,7 +241,7 @@ export class SessionChatStore {
       if (this.progressiveLoading()) untracked(() => {
         // Another chat may have detected the slow connection while this one
         // was opening. Replace only pending initial reads, never mutations.
-        if (this.request && this.requestMode === 'window' && !this.state()) {
+        if ((this.request || this.stream) && this.requestMode === 'window' && !this.state()) {
           this.stopRead();
           void this.load(true);
         }
@@ -304,17 +307,19 @@ export class SessionChatStore {
     this.viewRevision.update(value => value + 1);
   }
 
-  open(selection: ChatSelection, readOnly: boolean): void {
+  open(selection: ChatSelection, readOnly: boolean, streamAvailable = false): void {
     if (
       this.selection?.scopeId === selection.scopeId &&
       this.selection.sessionId === selection.sessionId &&
       this.selection.taskId === selection.taskId
     ) {
       const changed = this.readOnly() !== readOnly;
+      const transportChanged = this.streamAvailable !== streamAvailable;
       this.readOnly.set(readOnly);
-      if (changed) {
+      this.streamAvailable = streamAvailable;
+      if (changed || transportChanged) {
         this.stopRead();
-        void this.load(true);
+        void this.load(changed);
       }
       return;
     }
@@ -329,6 +334,7 @@ export class SessionChatStore {
     this.stopRead();
     this.epoch++;
     this.selection = selection;
+    this.streamAvailable = streamAvailable;
     this.selectedTarget.set(`${selection.taskId}/${selection.sessionId}`);
     this.selectedScope.set(selection.scopeId);
     this.entry = nextEntry;
@@ -374,6 +380,9 @@ export class SessionChatStore {
     this.slowOpenTimer = undefined;
     this.timer = undefined;
     this.readEpoch++;
+    this.stream?.close();
+    this.stream = undefined;
+    this.streamError.set('');
     if (this.request && this.selection)
       this.client.cancel(this.selection.scopeId, this.request);
     this.request = undefined;
@@ -406,6 +415,8 @@ export class SessionChatStore {
     if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return false;
     clearTimeout(this.timer);
     this.timer = undefined;
+    if (this.streamAvailable && !this.readOnly() && !direction)
+      return this.stream?.first ?? this.loadStream(selection, reset);
     const epoch = this.epoch,
       readEpoch = ++this.readEpoch,
       requestId = crypto.randomUUID();
@@ -414,18 +425,7 @@ export class SessionChatStore {
     this.requestMode = profile.loadingMode;
     if (reset || !this.state()) this.loading.set(true);
     if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
-    // Only time an uncached opening, never an idle 8s long poll or history read.
-    // Keep the smaller-page choice for this app connection; it must not oscillate
-    // or let the cancelled larger response overwrite the replacement window.
-    if (!this.state() && !this.progressiveLoading()) {
-      this.slowOpenTimer = setTimeout(() => {
-        if (this.disposed || epoch !== this.epoch || readEpoch !== this.readEpoch ||
-            document.hidden || this.offline() || !this.active()) return;
-        if (!this.loadingPolicy.enableProgressive(selection.scopeId)) return;
-        this.stopRead();
-        void this.load(reset, position, direction);
-      }, SESSION_CHAT_SLOW_OPEN_MS);
-    }
+    this.watchSlowOpen(selection, readEpoch, () => this.load(reset, position, direction));
     const result = await this.client.read(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
@@ -447,16 +447,8 @@ export class SessionChatStore {
     this.loading.set(false);
     this.historyLoading.set(false);
     if (result.ok) {
-      if (this.starting()) this.compactStart.set(!!this.draft().trim());
-      this.starting.set(false);
       this.error.set("");
-      this.supportsFollowing = result.value.next !== undefined;
-      if (this.historical() && !direction && !reset) {
-        // Keep runtime state current without replacing the history being read.
-        this.state.set(result.value.state);
-        this.cursor = result.value.cursor;
-      } else this.accept(result.value, direction);
-      if (this.uncertain()) this.checked.set(true);
+      this.receivePage(result.value, reset, direction);
     } else if (direction) this.historyError.set(result.error.message);
     else if (reset || !this.state() || result.error.status === 404)
       this.error.set(
@@ -464,7 +456,12 @@ export class SessionChatStore {
           ? "Chat is unavailable on this machine. Update its engine, then reconnect."
           : result.error.message,
       );
-    if (
+    if (this.streamAvailable && !this.readOnly()) {
+      // A following page has already installed the latest rows. An append
+      // based on the older live cursor would apply the same text a second time.
+      if (direction === 'following' && result.ok && !result.value.next) this.cursor = undefined;
+      void this.load(false);
+    } else if (
       !this.readOnly() &&
       (result.ok ||
         (result.error.status !== 404 && result.error.code !== "stale-scope"))
@@ -478,6 +475,90 @@ export class SessionChatStore {
       );
     return result.ok;
   }
+
+  private watchSlowOpen(selection: ChatSelection, readEpoch: number, retry: () => Promise<boolean>): void {
+    // Time only uncached openings. The smaller view is shared within the scope.
+    if (this.state() || this.progressiveLoading()) return;
+    this.slowOpenTimer = setTimeout(() => {
+      if (this.disposed || readEpoch !== this.readEpoch || document.hidden || this.offline() || !this.active()) return;
+      if (!this.loadingPolicy.enableProgressive(selection.scopeId)) return;
+      this.stopRead();
+      void retry();
+    }, SESSION_CHAT_SLOW_OPEN_MS);
+  }
+
+  private loadStream(selection: ChatSelection, reset: boolean): Promise<boolean> {
+    const readEpoch = ++this.readEpoch;
+    const loadingMode = this.loadingPolicy.profile().loadingMode;
+    const { scopeId, taskId, sessionId } = selection;
+    let firstPage = true;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let finish!: (ok: boolean) => void;
+    const first = new Promise<boolean>(resolve => { finish = resolve; });
+    const current = () => !this.disposed && readEpoch === this.readEpoch &&
+      this.active() && !this.offline() && !document.hidden;
+    const fail = (message: string) => {
+      this.stopRead();
+      this.loading.set(false);
+      this.streamError.set(message);
+    };
+    if (reset || !this.state()) this.loading.set(true);
+    this.requestMode = loadingMode;
+    this.watchSlowOpen(selection, readEpoch, () => this.load(reset));
+    const watch = this.client.watch(scopeId, {
+      taskId, sessionId, loadingMode, watchId: crypto.randomUUID(),
+      ...(!reset && this.cursor ? { after: this.cursor } : {}),
+    }, event => {
+      if (!current()) return false;
+      clearTimeout(reconnectTimer);
+      if (event.type === 'closed') {
+        fail(event.error.message);
+      } else if (event.type === 'reconnecting') {
+        // Retain the transcript and avoid a warning flash for quick recoveries.
+        if (firstPage) finish(false);
+        reconnectTimer = setTimeout(() => {
+          if (!current()) return;
+          this.loading.set(false);
+          this.streamError.set('Reconnecting to this conversation…');
+        }, 900);
+      } else {
+        const state = event.page.state ?? this.state();
+        if (!state) {
+          fail('The conversation stream did not provide its initial state.');
+          return false;
+        }
+        clearTimeout(this.slowOpenTimer);
+        this.slowOpenTimer = undefined;
+        this.requestMode = undefined;
+        this.loading.set(false);
+        this.streamError.set('');
+        if (firstPage && reset) this.error.set('');
+        this.receivePage({ ...event.page, state }, firstPage && reset);
+        firstPage = false;
+        finish(true);
+      }
+      return true;
+    });
+    this.stream = { first, close: () => { clearTimeout(reconnectTimer); watch.close(); finish(false); } };
+    void watch.started.then(result => {
+      if (current() && !result.ok) fail(result.error.message);
+    });
+    return first;
+  }
+
+  private receivePage(page: SessionChatPage, reset: boolean, direction?: 'before' | 'following'): void {
+    if (this.starting()) this.compactStart.set(!!this.draft().trim());
+    this.starting.set(false);
+    this.supportsFollowing = page.next !== undefined;
+    if (this.historical() && !direction && !reset) {
+      // Keep runtime state current while the user reads another window.
+      this.state.set(page.state);
+      this.cursor = page.cursor;
+      this.reconcileDelivery(page.state);
+    } else this.accept(page, direction);
+    if (this.uncertain()) this.checked.set(true);
+  }
+
   private accept(page: SessionChatPage, direction?: "before" | "following"): void {
     const previous = this.items();
     if (!direction && !page.reset && !page.events.length) {
@@ -487,7 +568,7 @@ export class SessionChatStore {
       return;
     }
     const older = direction === "before";
-    const wasLoaded = !!this.cursor;
+    const wasLoaded = !!this.state();
     const replacesTail = !direction && page.reset;
     // A reset is authoritative from its first row onward. In the live window,
     // a matching first row shows where the loaded prefix joins the new page.
@@ -771,12 +852,8 @@ export class SessionChatStore {
           ? "Changing harness…"
           : "Updating…",
     );
-    if (
-      ["provider", "preset", "save-preset", "preset-default"].includes(
-        action.type,
-      )
-    )
-      this.stopRead();
+    const configuration = ["provider", "preset", "save-preset", "preset-default"].includes(action.type);
+    if (configuration) this.stopRead();
     const pending = action.type === "send"
       ? (action.queue ? this.pendingQueue() : this.pending())
       : null;
@@ -796,12 +873,6 @@ export class SessionChatStore {
     )
       entry.uncertain.set("");
     if (this.disposed || epoch !== this.epoch) return result.ok;
-    const configuration = [
-      "provider",
-      "preset",
-      "save-preset",
-      "preset-default",
-    ].includes(action.type);
     if (!result.ok || !configuration) {
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
@@ -833,16 +904,9 @@ export class SessionChatStore {
     );
     this.defaultChange.set(result.value.defaultChange);
     if (configuration) {
-      this.cursor = undefined;
-      this.items.set([]);
-      this.before.set(null);
-      this.fresh.set(new Set());
-    }
-    // Explicitly reconcile writes; reconnect and read retries never replay them.
-    this.stopRead();
-    if (configuration) {
       // Retain the settings surface and its focus while loading the new catalog.
       // Keep writes blocked until authoritative provider state replaces it.
+      this.stopRead();
       await this.load(true);
       if (this.disposed || epoch !== this.epoch) return true;
       if (
@@ -852,9 +916,10 @@ export class SessionChatStore {
         this.state.set(null);
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
-    } else {
+    } else if (!this.streamAvailable || (!this.stream && !this.request)) {
       // A confirmed write only invalidates the incremental window. Its follow-up
       // read must not turn a successful send into a loading/error state.
+      this.stopRead();
       void this.load(false);
     }
     return true;

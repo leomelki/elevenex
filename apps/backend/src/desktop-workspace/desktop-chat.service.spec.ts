@@ -1,4 +1,4 @@
-import { SESSION_CHAT_TURN_WORK_MAX_LIMIT, serializeBrowserElements } from '@elevenex/shared';
+import { SESSION_CHAT_TURN_WORK_MAX_LIMIT, serializeBrowserElements, type SessionChatStreamPage } from '@elevenex/shared';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { SettingsService } from '../settings/settings.service.js';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EventEmitter } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { DesktopChatService } from './desktop-chat.service.js';
+import { DesktopChatController } from './desktop-chat.controller.js';
+import { createEdgeProxyServer } from '../proxy/edge-proxy.server.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import { chatState, display } from './desktop-chat-projection.js';
 
@@ -457,8 +460,10 @@ describe('selected session chat', () => {
       workspaceArchivedAt: null,
     }));
     module = await Test.createTestingModule({
+      controllers: [DesktopChatController],
       providers: [
         DesktopChatService,
+        { provide: DesktopChatAttachments, useValue: {} },
         { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
           provide: SettingsService,
@@ -782,6 +787,145 @@ describe('selected session chat', () => {
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
+  });
+
+  it('serves one HTTP stream through the edge, resumes missed text and activity, and closes archived sessions', async () => {
+    const app = module.createNestApplication();
+    app.setGlobalPrefix('api');
+    await app.listen(0, '127.0.0.1');
+    const proxy = createEdgeProxyServer({ repoRoot: join(__dirname, '../../../..'), upstreamOrigin: await app.getUrl() });
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+    const address = proxy.address();
+    if (!address || typeof address === 'string') throw new Error('Missing loopback test address.');
+    const base = `http://127.0.0.1:${address.port}/api/desktop-workspace/tasks`;
+    const path = `${base}/1/sessions/2/chat/events?loadingMode=progressive`;
+    const requests: AbortController[] = [];
+    const connect = async (after?: string) => {
+      const abort = new AbortController();
+      requests.push(abort);
+      const response = await fetch(path, {
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(3000)]),
+        headers: after ? { 'Last-Event-ID': after } : {},
+      });
+      expect(response.headers.get('content-type')).toMatch(/^text\/event-stream/);
+      expect(response.headers.get('cache-control')).toContain('no-transform');
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      return {
+        abort, reader,
+        next: async (): Promise<SessionChatStreamPage> => {
+          for (;;) {
+            const end = buffer.indexOf('\n\n');
+            if (end < 0) {
+              const part = await reader.read();
+              if (part.done) throw new Error('Unexpected conversation stream EOF.');
+              buffer += decoder.decode(part.value, { stream: true });
+              continue;
+            }
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            if (frame.startsWith(':')) continue;
+            const [id, event, data] = frame.split('\n');
+            const packet = JSON.parse(data.slice(6)) as SessionChatStreamPage;
+            expect(event).toBe('event: chat');
+            expect(id).toBe('id: ' + packet.page.cursor);
+            return packet;
+          }
+        },
+      };
+    };
+    try {
+      expect((await fetch(`${base}/9/sessions/2/chat/events?loadingMode=window`)).status).toBe(400);
+      expect((await fetch(path, { headers: { 'Last-Event-ID': 'bad cursor' } })).status).toBe(400);
+      live = [{ ...item('prompt'), kind: 'user' }, item('answer', 'Checking')];
+      const first = await connect();
+      const initial = await first.next();
+      expect(initial.after).toBeNull();
+      expect(initial.page.items.map(row => row.id)).toEqual(['prompt', 'answer']);
+      const reads = runtime.getRuntimeState.mock.calls.length;
+      runtime.emit('event', { type: 'message_delta', payload: { sessionId: 99 } });
+      await delay(65);
+      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(reads);
+      live = [live[0], item('answer', 'Checking files')];
+      emit();
+      const incremental = await first.next();
+      expect(incremental).toMatchObject({ after: initial.page.cursor, page: {
+        reset: false, items: [], events: [{ type: 'delta', id: 'answer', text: ' files' }],
+      } });
+      first.abort.abort();
+      live = [live[0], item('answer', 'Checking files and tests'), item('check', 'Tests passed')];
+      emit();
+      const second = await connect(incremental.page.cursor);
+      const catchUp = await second.next();
+      expect(catchUp).toMatchObject({ after: incremental.page.cursor, page: {
+        reset: false, events: [
+          { type: 'delta', id: 'answer', text: ' and tests' },
+          { type: 'item', item: { id: 'check', text: 'Tests passed' } },
+        ],
+      } });
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+      history = live;
+      live = [];
+      emit('history_snapshot');
+      const saved = await second.next();
+      expect(saved.page.reset).toBe(true);
+      expect(saved.page.items.map(row => row.id)).toEqual(['prompt', 'answer', 'check']);
+      status = 'archived';
+      module.get(SessionsService).emit('session-status-changed', { sessionId: 2, status });
+      expect(await second.reader.read()).toEqual({ value: undefined, done: true });
+      expect((await fetch(path)).status).toBe(410);
+    } finally {
+      for (const signal of requests) signal.abort();
+      await new Promise<void>(resolve => { proxy.close(() => resolve()); proxy.closeAllConnections(); });
+      await app.close();
+    }
+  });
+
+  it('resets a live window when a burst crosses its bound or changes source order', async () => {
+    const abort = new AbortController();
+    const source = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    try {
+      live = [item('one'), item('three')];
+      const first = (await source.next()).value as SessionChatStreamPage;
+      live = [live[0], item('two'), live[1]];
+      emit();
+      const reordered = (await source.next()).value as SessionChatStreamPage;
+      expect(reordered.after).toBe(first.page.cursor);
+      expect(reordered.page).toMatchObject({ reset: true, items: [
+        { id: 'one' }, { id: 'two' }, { id: 'three' },
+      ] });
+      live = [...live, ...Array.from({ length: 100 }, (_, i) => item(`work-${i}`))];
+      emit();
+      const burst = (await source.next()).value as SessionChatStreamPage;
+      expect(burst.page).toMatchObject({ reset: true, before: 'work-20', events: [] });
+      expect(burst.page.items).toHaveLength(80);
+    } finally {
+      abort.abort();
+      await source.return(undefined);
+    }
+  });
+
+  it('releases a closed stream while provider hydration is still pending', async () => {
+    let start!: () => void;
+    const started = new Promise<void>(resolve => { start = resolve; });
+    let finish!: (value: { liveItems: AgentTranscriptItem[] }) => void;
+    const hydration = new Promise<{ liveItems: AgentTranscriptItem[] }>(resolve => { finish = resolve; });
+    runtime.getRuntimeState.mockImplementationOnce(() => {
+      start();
+      return hydration;
+    });
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    const pending = stream.next();
+    try {
+      await started;
+      abort.abort();
+      expect(await pending).toEqual({ done: true, value: undefined });
+    } finally {
+      finish({ liveItems: [] });
+      abort.abort();
+    }
   });
 
   it('refreshes runtime state on an unchanged heartbeat without visiting transcript rows', async () => {

@@ -17,6 +17,28 @@ const item = (id: string, kind: SessionChatItem['kind'], text = '', extra: Parti
 const tool = (id: string) => item(id, 'tool_use', '', { toolId: id, toolKind: 'bash', input: '{"cmd":"pnpm test"}' });
 
 describe('incremental transcript projection', () => {
+  it('keeps one Claude section when refresh finds a saved prefix of the live reply', () => {
+    const prompt = item('prompt', 'user', 'Check the work');
+    const saved = item('msg_reply:assistant:0', 'assistant', 'Checking');
+    const live = item('msg_reply:1', 'assistant', 'Checking the fixtures');
+    const [reply, extra] = chatExchanges([prompt, saved, live], { ...state, provider: 'claude' }, fresh);
+    expect(extra).toBeUndefined();
+    expect(reply).toMatchObject({ answer: live.text, steps: [] });
+  });
+
+  it('shows compacted activity once when the raw saved span overlaps the latest page', () => {
+    const reply = item('reply', 'assistant', 'Checks passed.');
+    const followUp = item('next-detail', 'assistant', 'Starting the next check.');
+    const compact = item('prompt', 'user', 'Check the work', { completedTurn: {
+      revision: 'a'.repeat(64), endId: 'receipt', reply: [reply], beforeReply: 1,
+      total: 3, counts: { run: 1 }, failures: 0,
+    } });
+    const exchanges = chatExchanges([compact, tool('test'), reply, item('receipt', 'tool_result'), followUp], state, fresh);
+    expect(exchanges.map(exchange => [exchange.id, exchange.answer])).toEqual([
+      ['prompt', reply.text], ['history-next-detail', followUp.text],
+    ]);
+  });
+
   it('keeps viewed images in the matching tool disclosure for live receipts, compact timelines and split pages', () => {
     const prompt = item('prompt', 'user');
     const commentary = item('commentary', 'assistant', 'Opening the screenshot.');

@@ -131,6 +131,7 @@ test('backend client IPC validates scope/arity, isolates window ownership and un
   vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/ipc'), 'utf8'), {
     exports: clientExports, require: name => name === '../ipc' ? ipcExports : {
       registerWorkspaceIpc: () => () => {}, registerSessionChatIpc: () => () => {}, registerTaskTerminalIpc: () => () => {},
+      registerSessionChatStreamIpc: () => () => {},
       registerTerminalStreamIpc: () => () => {}, registerTerminalPreferencesIpc: () => () => {}, TerminalPreferences: class {},
     },
   });

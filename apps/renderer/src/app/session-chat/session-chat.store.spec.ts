@@ -11,6 +11,7 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatState,
+  SessionChatStreamEvent,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -82,20 +83,29 @@ function deferred<T>() {
   return { promise, resolve };
 }
 type DraftBridge = Pick<ElevenexBridge, 'sessionChatDraftRead' | 'sessionChatDraftSave'>;
-function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; progressive?: boolean; localDrafts?: DraftBridge; scopeId?: string } = {}) {
+function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; progressive?: boolean; localDrafts?: DraftBridge; scopeId?: string; stream?: boolean } = {}) {
   const scope = signal<BackendClientState>({
     revision: 1,
     scope: { id: options.scopeId ?? "scope", environment: { kind: "local" as const } },
   });
+  const listeners = new Set<(event: SessionChatStreamEvent) => void>();
   const bridge = {
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
     sessionChatTurnWork: vi.fn<ElevenexBridge['sessionChatTurnWork']>(async () =>
       ({ ok: false, error: { code: 'transport', message: 'No activity fixture.' } })),
     sessionChatCommand: vi.fn<NonNullable<ElevenexBridge["sessionChatCommand"]>>(async () => ok({ accepted: true as const })),
     sessionChatCancel: vi.fn(async () => undefined),
+    sessionChatWatch: vi.fn<ElevenexBridge['sessionChatWatch']>(async () => ok({ accepted: true })),
+    sessionChatUnwatch: vi.fn<ElevenexBridge['sessionChatUnwatch']>(async () => undefined),
+    sessionChatAcknowledge: vi.fn<ElevenexBridge['sessionChatAcknowledge']>(async () => undefined),
+    onSessionChatStream: vi.fn<ElevenexBridge['onSessionChatStream']>(listener => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    }),
   } satisfies Pick<
     ElevenexBridge,
-    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatCommand" | "sessionChatCancel"
+    "sessionChatRead" | "sessionChatTurnWork" | "sessionChatCommand" | "sessionChatCancel" |
+    "sessionChatWatch" | "sessionChatUnwatch" | "sessionChatAcknowledge" | "onSessionChatStream"
   >;
   if (options.initial) bridge.sessionChatRead.mockImplementationOnce(() => options.initial!);
   TestBed.configureTestingModule({
@@ -109,8 +119,14 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
   });
   if (options.localDrafts) TestBed.inject(SessionChatDrafts).selectMachine({ kind: 'local' });
   const store = TestBed.inject(SessionChatStore);
-  store.open({ scopeId: options.scopeId ?? "scope", taskId: 1, sessionId: 2 }, false);
-  return { store, bridge, scope };
+  store.open({ scopeId: options.scopeId ?? "scope", taskId: 1, sessionId: 2 }, false, options.stream);
+  const receive = (index: number, event: Pick<Extract<SessionChatStreamEvent, { type: 'page' }>, 'type' | 'delivery' | 'page'> | { type: 'reconnecting' }) => {
+    const [scopeId, input] = bridge.sessionChatWatch.mock.calls[index]!;
+    for (const listener of [...listeners]) listener({
+      scopeId, watchId: input.watchId, taskId: input.taskId, sessionId: input.sessionId, ...event,
+    });
+  };
+  return { store, bridge, scope, receive };
 }
 
 function localDraftBridge() {
@@ -192,6 +208,80 @@ afterEach(() => {
   TestBed.resetTestingModule();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+it('applies live pages once, preserves replies during reconnect, and rejects deliveries from the refreshed watch', async () => {
+  const { store, bridge, receive } = setup({ stream: true });
+  const prompt = item('prompt', 'user', 'Check the workspace');
+  const partial = item('reply', 'assistant', 'Reviewing');
+  const initial = page(2, { cursor: 'cursor-1', items: [prompt, partial], next: null });
+  receive(0, { type: 'page', delivery: 1, page: initial });
+  const next = page(2, { cursor: 'cursor-2', reset: false, events: [{ type: 'delta', id: 'reply', text: ' the files' }], next: null });
+  receive(0, { type: 'page', delivery: 2, page: next });
+  receive(0, { type: 'page', delivery: 2, page: next });
+  expect(store.exchanges().map(exchange => exchange.answer)).toEqual(['Reviewing the files']);
+  expect(bridge.sessionChatAcknowledge).toHaveBeenCalledTimes(2);
+  receive(0, { type: 'reconnecting' });
+  await vi.advanceTimersByTimeAsync(901);
+  expect(store.streamError()).toBe('Reconnecting to this conversation…');
+  expect(store.exchanges().length).toBe(1);
+  const caughtUp = page(2, { cursor: 'cursor-3', reset: false, next: null, events: [
+    { type: 'delta', id: 'reply', text: ' and tests' },
+  ] });
+  receive(0, { type: 'page', delivery: 3, page: caughtUp });
+  expect(store.streamError()).toBe('');
+  const refresh = store.refresh();
+  receive(0, { type: 'page', delivery: 4, page: page(2, { items: [item('late', 'user', 'Ignore')] }) });
+  receive(1, { type: 'page', delivery: 1, page: page(2, { next: null, items: [
+    prompt, { ...partial, text: 'Reviewing the files and tests' },
+  ] }) });
+  expect(await refresh).toBe(true);
+  expect(store.exchanges().map(exchange => [exchange.id, exchange.answer])).toEqual([['prompt', 'Reviewing the files and tests']]);
+  expect(bridge.sessionChatUnwatch).toHaveBeenCalledWith('scope', bridge.sessionChatWatch.mock.calls[0]?.[1].watchId);
+  expect(bridge.sessionChatAcknowledge).toHaveBeenCalledTimes(4);
+  expect(bridge.sessionChatRead).not.toHaveBeenCalled();
+});
+
+it('keeps a paged reading window pinned and starts from a fresh snapshot after a forward read reaches latest', async () => {
+  const { store, bridge, receive } = setup({ stream: true, progressive: false });
+  const records = Array.from({ length: 320 }, (_, index) => item(String(index + 1), 'user', `Prompt ${index + 1}`));
+  receive(0, { type: 'page', delivery: 1, page: page(2, { items: records, before: '1', next: null }) });
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+    items: [item('0', 'user', 'Earlier prompt')], before: null, next: '0',
+  })));
+  await store.older();
+  expect(store.historical()).toBe(true);
+  const prior = store.items();
+  expect(bridge.sessionChatWatch.mock.calls[1]?.[1].after).toBe('cursor');
+  receive(1, { type: 'page', delivery: 1, page: page(2, {
+    cursor: 'new-live-cursor', next: null, items: [item('later', 'user', 'New output')], state: { ...state, phase: 'running' },
+  }) });
+  expect(store.items()).toBe(prior);
+  expect(store.running()).toBe(true);
+  bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [records.at(-1)!, item('reply', 'assistant', 'Already read')], next: null })));
+  await store.newer();
+  expect(bridge.sessionChatWatch.mock.calls[2]?.[1].after).toBeUndefined();
+  receive(2, { type: 'page', delivery: 1, page: page(2, { items: [records.at(-1)!, item('reply', 'assistant', 'Already read')], next: null }) });
+  expect(store.exchanges().at(-1)?.answer).toBe('Already read');
+  expect(store.historical()).toBe(false);
+});
+
+it('releases the stream when a chat is inactive and resumes its last applied cursor without reopening after a send', async () => {
+  const { store, bridge, receive } = setup({ stream: true });
+  receive(0, { type: 'page', delivery: 1, page: page(2, { cursor: 'live-1', next: null }) });
+  TestBed.tick();
+  await store.submit({ text: 'Check this', context: [], intent: 'send' });
+  expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  expect(bridge.sessionChatWatch).toHaveBeenCalledTimes(1);
+  store.setActive(false);
+  TestBed.tick();
+  expect(bridge.sessionChatUnwatch).toHaveBeenCalledTimes(1);
+  store.setActive(true);
+  TestBed.tick();
+  expect(bridge.sessionChatWatch.mock.calls[1]?.[1].after).toBe('live-1');
+  expect(bridge.sessionChatRead).not.toHaveBeenCalled();
+  TestBed.resetTestingModule();
+  expect(bridge.sessionChatUnwatch).toHaveBeenCalledTimes(2);
 });
 describe("session chat ownership", () => {
   it('restores separate composer texts after relaunch and remembers explicitly clearing one', async () => {

@@ -47,6 +47,8 @@ const savedChatTool = {
   item: { ...chatTool.item, revision: chatWork.revision },
   result: { ...chatTool.result, revision: chatWork.revision },
 };
+const chatStreamMethods = ['sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream'];
+const chatStreamCursor = 'a'.repeat(36) + ':1:0';
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -153,6 +155,21 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         response.end(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', offset: 3, path: '/private/chat-attachments/2/11111111-1111-4111-8111-111111111111/notes.txt' }));
         return;
       }
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/events') {
+        assert.equal(request.headers.accept, 'text/event-stream');
+        assert.equal(searchParams.get('loadingMode'), 'progressive');
+        const page = {
+          taskId: 1, sessionId: 2, cursor: chatStreamCursor, reset: true, before: null, next: null, items: [], events: [],
+          state: {
+            provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [],
+            reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null,
+            queue: [], queuePaused: false, permission: null, question: null, activity: [],
+          },
+        };
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.write(`id: ${chatStreamCursor}\nevent: chat\ndata: ${JSON.stringify({ after: null, page })}\n\n`);
+        return;
+      }
       const responses = {
         '/api/info': { backendSha: revision },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/agent': { agentId: 'child', label: 'Reviewer', status: 'waiting', prompt: '', model: null, context: null, items: [], before: null, availability: 'starting', message: 'Waiting for the first message' },
@@ -249,7 +266,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, ...chatStreamMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -275,6 +292,34 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  const chatStream = await window.webContents.executeJavaScript(`(async () => {
+    const scope = ${JSON.stringify(firstScope.scope.id)};
+    const watch = { taskId: 1, sessionId: 2, watchId: 'native-stream', loadingMode: 'progressive' };
+    let stop;
+    let timer;
+    const first = new Promise((resolve, reject) => {
+      stop = window.elevenex.onSessionChatStream(event => { if (event.type === 'page') resolve(event); });
+      timer = setTimeout(() => reject(new Error('Chat stream smoke timed out')), 5000);
+    });
+    try {
+      const rejected = await window.elevenex.sessionChatWatch(scope, { ...watch, after: 'bad cursor' }).then(() => false, () => true);
+      const stale = await window.elevenex.sessionChatWatch('b'.repeat(36), watch);
+      const started = await window.elevenex.sessionChatWatch(scope, watch);
+      const event = await first;
+      await window.elevenex.sessionChatAcknowledge(scope, watch.watchId, event.delivery);
+      return { rejected, stale: stale.error?.code, started, event };
+    } finally {
+      clearTimeout(timer);
+      stop();
+      await window.elevenex.sessionChatUnwatch(scope, watch.watchId);
+    }
+  })()`);
+  assert.equal(chatStream.rejected, true);
+  assert.equal(chatStream.stale, 'stale-scope');
+  assert.equal(chatStream.started.ok, true);
+  assert.equal(chatStream.event.watchId, 'native-stream');
+  assert.equal(chatStream.event.page.cursor, chatStreamCursor);
+  assert.equal(chatStream.event.page.sessionId, 2);
   const { taskId, sessionId, turnId, revision: turnRevision, offset } = chatWork;
   const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true, limit: 512 };
   assert.deepEqual(await window.webContents.executeJavaScript(

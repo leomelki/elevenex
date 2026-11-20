@@ -77,6 +77,8 @@ interface ChatWindowOptions {
   readonly mediaCache?: ChatMediaCache;
   readonly historyIndex?: ChatHistoryIndex;
   readonly fingerprints?: Map<string, string>;
+  /** Live records actually included in this bounded projection, in display order. */
+  readonly projectedLive?: SessionChatItem[];
   readonly includeLeadingPrompt?: boolean;
   readonly completedTurns?: ChatCompletedTurns;
   readonly summarizeRecent?: boolean;
@@ -215,7 +217,7 @@ export function chatWindow(
   let edge = following ? 0 : ordered.length;
   while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
     const position = following ? edge : edge - 1;
-    const { item: raw, summary } = ordered[position];
+    const { item: raw, summary, liveIndex } = ordered[position];
     const peer = links.peer(raw);
     const call = raw.kind === 'tool_result' ? peer : undefined;
     let item: SessionChatItem = summary ?? toolPage?.activity(raw, peer) ?? chatItem(raw, call, changesCache, mediaCache);
@@ -241,9 +243,13 @@ export function chatWindow(
     fingerprints?.set(item.id, fingerprint);
     if (summary) historyIndex.remember(item.id, ordered[position].historyIndex);
     items.push(item);
+    if (liveIndex >= 0) options.projectedLive?.push(item);
     edge += following ? 1 : -1;
   }
-  if (!following) items.reverse();
+  if (!following) {
+    items.reverse();
+    options.projectedLive?.reverse();
+  }
   const first = ordered[following ? 0 : edge];
   const last = ordered[following ? edge - 1 : ordered.length - 1];
   let prompt: AgentTranscriptItem | undefined;

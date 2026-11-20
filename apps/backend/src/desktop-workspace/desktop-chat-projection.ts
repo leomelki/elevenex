@@ -1,5 +1,5 @@
 import { chatMedia } from './desktop-chat-media.js';
-import type { SessionChatRecord } from '@elevenex/shared';
+import type { SessionChatRecord, SessionChatState } from '@elevenex/shared';
 import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
 import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
@@ -82,7 +82,7 @@ export function chatState(
   raw: Record<string, unknown>,
   provider: string,
   permissionModes: readonly string[],
-) {
+): Omit<SessionChatState, 'activity'> {
   const permission = record(raw.pendingPermissionRequest),
     usage = record(raw.contextUsage);
   const permissionQuestion =
@@ -131,13 +131,10 @@ export function chatState(
       });
     }
   }
+  const phase = String(raw.runPhase);
   return {
     provider,
-    phase: ['idle', 'running', 'waiting', 'error'].includes(
-      String(raw.runPhase),
-    )
-      ? String(raw.runPhase)
-      : 'idle',
+    phase: phase === 'running' || phase === 'waiting' || phase === 'error' ? phase : 'idle',
     canInterrupt: raw.canInterrupt === true,
     error: nullable(raw.lastError),
     model: nullable(raw.selectedModel),

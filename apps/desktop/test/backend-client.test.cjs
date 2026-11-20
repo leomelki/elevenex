@@ -19,6 +19,100 @@ function local(url, identity = url) {
   return { identity, url, version, headers: {}, environment: { kind: 'local' } };
 }
 
+const chatState = {
+  provider: 'codex', phase: 'running', canInterrupt: true, error: null, model: null, models: [],
+  reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null,
+  queue: [], queuePaused: false, permission: null, question: null, activity: [],
+};
+const chatCursor = sequence => 'a'.repeat(36) + `:${sequence}:0`;
+const chatPacket = (sequence, overrides = {}) => ({
+  taskId: 1, sessionId: 2, cursor: chatCursor(sequence), reset: sequence === 1,
+  items: [], events: [], before: null, next: null, state: chatState, ...overrides,
+});
+const sseChatFrame = (after, page) => `id: ${page.cursor}\nevent: chat\ndata: ${JSON.stringify({ after, page })}\n\n`;
+
+test('chat stream gates IPC delivery on acknowledgements and resumes a broken connection', { timeout: 5000 }, async context => {
+  const { SessionChatConnection } = require('../dist/backend-client/session-chat-stream');
+  const { setTimeout: delay } = require('node:timers/promises');
+  const delivered = [];
+  let requests = 0;
+  let remoteClosed;
+  const closed = new Promise(resolve => { remoteClosed = resolve; });
+  const url = await server(context, (request, response) => {
+    assert.equal(request.url, '/api/desktop-workspace/tasks/1/sessions/2/chat/events?loadingMode=progressive');
+    assert.equal(request.headers.accept, 'text/event-stream');
+    assert.equal(request.headers.authorization, 'private test credential');
+    response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    response.write(': connected\n\n');
+    if (++requests === 1) {
+      assert.equal(request.headers['last-event-id'], undefined);
+      response.write(sseChatFrame(null, chatPacket(1)));
+      response.end(`id: ${chatCursor(2)}\nevent: chat\ndata: {"after":`);
+    } else {
+      assert.equal(request.headers['last-event-id'], chatCursor(1));
+      response.once('close', remoteClosed);
+      const frame = Buffer.from(sseChatFrame(chatCursor(1), chatPacket(2, { events: [{ type: 'delta', id: 'item', text: ' 🌍' }] })));
+      const split = frame.indexOf(Buffer.from('🌍')) + 2;
+      response.write(frame.subarray(0, split));
+      setTimeout(() => {
+        response.write(frame.subarray(split));
+        response.write(sseChatFrame(chatCursor(2), chatPacket(3, { state: undefined, events: [{ type: 'delta', id: 'item', text: ' resumed once' }] })));
+      }, 5);
+    }
+  });
+  const lifetime = new AbortController();
+  let released = 0;
+  const endpoint = { ...local(url), headers: { Authorization: 'private test credential' } };
+  const stream = new SessionChatConnection('scope', { taskId: 1, sessionId: 2, watchId: 'reader', loadingMode: 'progressive' }, {
+    endpoint, signal: lifetime.signal, release: () => { lifetime.abort(); released++; },
+  }, packet => delivered.push(packet), () => undefined);
+  context.after(() => stream.close());
+  const page = async delivery => {
+    for (;;) {
+      const packet = delivered.find(packet => packet.type === 'page' && packet.delivery === delivery);
+      if (packet) return packet.page;
+      await delay(10, undefined, { signal: testDeadline });
+    }
+  };
+  const testDeadline = AbortSignal.timeout(3500);
+  stream.start();
+  assert.equal((await page(1)).cursor, chatCursor(1));
+  stream.acknowledge(2);
+  await delay(30);
+  assert.equal(requests, 1);
+  stream.acknowledge(1);
+  assert.deepEqual((await page(2)).events, [{ type: 'delta', id: 'item', text: ' 🌍' }]);
+  assert.equal(delivered.filter(packet => packet.type === 'reconnecting').length, 1);
+  await delay(30);
+  assert.equal(delivered.filter(packet => packet.type === 'page').length, 2);
+  stream.acknowledge(2);
+  const third = await page(3);
+  assert.deepEqual(third.events, [{ type: 'delta', id: 'item', text: ' resumed once' }]);
+  assert.equal(third.state, undefined);
+  stream.close();
+  await closed;
+  assert.equal(released, 1);
+});
+
+test('chat stream rejects mismatched cursors, wrong-session replies and oversized frames', async () => {
+  const { parseChatStreamPage, readChatEventFrames } = require('../dist/backend-client/session-chat-stream-reader');
+  const watch = { taskId: 1, sessionId: 2, watchId: 'reader', loadingMode: 'progressive' };
+  const parse = (after, page, expected = after) => parseChatStreamPage({
+    id: page.cursor, json: JSON.stringify({ after, page }),
+  }, watch, expected ?? undefined);
+  const invalid = error => error.detail.code === 'invalid-response';
+  assert.equal(parse(null, chatPacket(1)).cursor, chatCursor(1));
+  assert.throws(() => parse(chatCursor(1), chatPacket(2), chatCursor(4)), invalid);
+  assert.throws(() => parse(chatCursor(4), chatPacket(2)), invalid);
+  assert.throws(() => parse(null, chatPacket(1, { sessionId: 3 })), invalid);
+  assert.throws(() => parse(chatCursor(1), chatPacket(2, { events: [
+    { type: 'delta', id: 'duplicate', text: 'one' }, { type: 'delta', id: 'duplicate', text: 'two' },
+  ] })), invalid);
+  const { SESSION_CHAT_STREAM_FRAME_BYTES } = require('@elevenex/shared');
+  const frames = readChatEventFrames(new globalThis.Response(Buffer.alloc(SESSION_CHAT_STREAM_FRAME_BYTES + 1, 65)).body, () => undefined);
+  await assert.rejects(frames.next(), invalid);
+});
+
 test('chat request diagnostics are opt-in, correlate HTTP outcomes and keep transcript data private', async () => {
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');

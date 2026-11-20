@@ -180,6 +180,7 @@ describe('desktop workspace HTTP resource slice', () => {
   it('keeps revision reads compatible and wakes waiting HTTP clients without periodic polling', async () => {
     const initial = object(await (await request('/revision')).json());
     expect(initial.revisionWait).toBe(true);
+    expect(initial.chatStream).toBe(true);
     expect(initial.sessionNesting).toBe(true);
     expect(initial.sessionNestingOrder).toBe(true);
     const navigation = app.get(NavigationEventsService);

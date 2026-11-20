@@ -9,11 +9,14 @@ import { ConversationExportService } from '../agent-runtime/conversation-export.
 import {
   BadRequestException,
   ConflictException,
+  GoneException,
+  HttpException,
   Injectable,
   Logger,
   OnModuleDestroy,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type {
   AgentRuntimeEvent,
   AgentRuntimeProvider,
@@ -31,11 +34,14 @@ import {
   record,
 } from './desktop-chat-projection.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
+import { DesktopChatReplay } from './desktop-chat-replay.js';
+import { waitForChatStreamWork } from './desktop-chat-stream.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
 import { ChatToolDetails } from './desktop-chat-tool-details.js';
 import { toolKey } from './desktop-chat-tool-links.js';
 import { SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT } from '@elevenex/shared';
 import type {
+  SessionChatItem, SessionChatState, SessionChatStreamPage, SessionChatWatch,
   SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource,
   SessionChatTurnWorkPage, SessionChatTurnWorkReply,
 } from '@elevenex/shared';
@@ -47,6 +53,7 @@ interface ChatFeed {
   readonly provider: AgentRuntimeProvider;
   readonly stop: () => void;
   readonly waiters: Set<() => void>;
+  readonly replays: Map<SessionChatWatch['loadingMode'], DesktopChatReplay>;
   readonly projections: { readonly inline: ProjectionFingerprints; readonly deferred: ProjectionFingerprints };
   readonly changesCache: ChatChangesCache;
   readonly mediaCache: ChatMediaCache;
@@ -60,6 +67,7 @@ interface ChatFeed {
   historyRevision: number;
   touched: number;
   attached: boolean;
+  observers: number;
   runtime?: Promise<Record<string, unknown>>;
   history?: { readonly revision: number; readonly pending: Promise<AgentTranscriptItem[]> };
 }
@@ -80,20 +88,19 @@ export class DesktopChatService implements OnModuleDestroy {
   private readonly logger = new Logger(DesktopChatService.name);
   private readonly configuring = new Set<number>();
   private readonly feeds = new Map<number, ChatFeed>();
+  private readonly providerObservers = new Map<AgentRuntimeProvider, { count: number; changed: (event: AgentRuntimeEvent) => void }>();
+  private readonly lifetime = new AbortController();
   private readonly completionChanged = (event: { sessionId: number; hasUnreviewedCompletion: boolean }) => {
-    const feed = this.feeds.get(event.sessionId);
-    if (!feed) return;
     // New completions may persist final output after the runtime's last event.
     // Viewing it only changes the marker, so it must not reload history.
-    feed.revision++;
-    if (event.hasUnreviewedCompletion) feed.historyRevision++;
-    for (const wake of feed.waiters) wake();
+    this.invalidate(event.sessionId, event.hasUnreviewedCompletion);
   };
+  private readonly sessionChanged = (event: { sessionId: number }) => this.invalidate(event.sessionId);
   private readonly expiry = setInterval(() => {
     for (const [id, feed] of this.feeds) {
       if (feed.review && feed.review.expires < Date.now())
         feed.review = undefined;
-      if (Date.now() - feed.touched > 30000 && !feed.waiters.size)
+      if (Date.now() - feed.touched > 30000 && !feed.waiters.size && !feed.observers)
         this.release(id);
     }
   }, 10000).unref();
@@ -104,10 +111,15 @@ export class DesktopChatService implements OnModuleDestroy {
     private readonly conversationExports: ConversationExportService,
   ) {
     this.sessions.on('session-completion-changed', this.completionChanged);
+    this.sessions.on('session-status-changed', this.sessionChanged);
+    this.sessions.on('session-provider-changed', this.sessionChanged);
   }
 
   onModuleDestroy(): void {
     this.sessions.off('session-completion-changed', this.completionChanged);
+    this.sessions.off('session-status-changed', this.sessionChanged);
+    this.sessions.off('session-provider-changed', this.sessionChanged);
+    this.lifetime.abort();
     clearInterval(this.expiry);
     for (const id of this.feeds.keys()) this.release(id);
   }
@@ -120,6 +132,37 @@ export class DesktopChatService implements OnModuleDestroy {
     for (const wake of feed.waiters) wake();
   }
 
+  private invalidate(sessionId: number, history = false): void {
+    const feed = this.feeds.get(sessionId);
+    if (!feed) return;
+    feed.revision++;
+    if (history) feed.historyRevision++;
+    for (const wake of feed.waiters) wake();
+  }
+
+  private retainProvider(provider: AgentRuntimeProvider): () => void {
+    let observer = this.providerObservers.get(provider);
+    if (!observer) {
+      observer = { count: 0, changed: event => {
+        const { sessionId } = event.payload;
+        if (this.feeds.get(sessionId)?.provider !== provider) return;
+        // Persisted history is read only when its identity/content can change.
+        this.invalidate(sessionId, event.type === 'history_snapshot' ||
+          event.type === 'session_snapshot' ||
+          (event.type === 'run_state' && record(event.payload).runPhase !== 'running'));
+      } };
+      this.providerObservers.set(provider, observer);
+      provider.on('event', observer.changed);
+    }
+    const retained = observer;
+    retained.count++;
+    return () => {
+      if (--retained.count) return;
+      provider.off('event', retained.changed);
+      this.providerObservers.delete(provider);
+    };
+  }
+
   private async target(taskId: number, sessionId: number) {
     const session = await this.sessions.findOne(sessionId);
     if (session.workspaceId !== taskId || session.surface !== 'session')
@@ -130,7 +173,7 @@ export class DesktopChatService implements OnModuleDestroy {
   private state(
     session: Awaited<ReturnType<SessionsService['findOne']>>,
     raw: Record<string, unknown>,
-  ) {
+  ): SessionChatState {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     const work = chatWork(raw, {
       stopTask: typeof provider.stopBackgroundTask === 'function',
@@ -191,25 +234,13 @@ export class DesktopChatService implements OnModuleDestroy {
     if (existing) this.release(sessionId);
     if (this.feeds.size >= 32) {
       const idle = [...this.feeds]
-        .filter(([, feed]) => !feed.waiters.size)
+        .filter(([, feed]) => !feed.waiters.size && !feed.observers)
         .sort((a, b) => a[1].touched - b[1].touched)[0];
       if (idle) this.release(idle[0]);
       else throw new BadRequestException('Too many open conversations.');
     }
     const provider = this.registry.getProvider(providerId);
-    const changed = (event: AgentRuntimeEvent) => {
-      if (event.payload.sessionId !== sessionId) return;
-      feed.revision++;
-      // Persisted history is read only when its identity/content can change, never per token.
-      if (
-        event.type === 'history_snapshot' ||
-        event.type === 'session_snapshot' ||
-        (event.type === 'run_state' &&
-          record(event.payload).runPhase !== 'running')
-      )
-        feed.historyRevision++;
-      for (const wake of feed.waiters) wake();
-    };
+    const releaseProvider = this.retainProvider(provider);
     const feed: ChatFeed = {
       id: randomUUID(),
       provider,
@@ -217,29 +248,30 @@ export class DesktopChatService implements OnModuleDestroy {
       historyRevision: 0,
       touched: Date.now(),
       attached: false,
+      observers: 0,
       waiters: new Set(),
+      replays: new Map(),
       projections: { inline: new Map(), deferred: new Map() },
       changesCache: new WeakMap(),
       mediaCache: new WeakMap(),
       latestBounds: new Map(),
       stop: () => {
-        provider.off('event', changed);
+        releaseProvider();
         if (feed.attached) provider.onClientDetached?.(sessionId);
       },
     };
     // Subscribe before any asynchronous snapshot read. The pre-read cursor makes
     // events arriving during hydration trigger another idempotent reconciliation.
-    provider.on('event', changed);
+    this.feeds.set(sessionId, feed);
     try {
       if (attach) {
         provider.onClientAttached?.(sessionId);
         feed.attached = true;
       }
     } catch (error) {
-      provider.off('event', changed);
+      this.release(sessionId);
       throw error;
     }
-    this.feeds.set(sessionId, feed);
     return feed;
   }
 
@@ -284,6 +316,141 @@ export class DesktopChatService implements OnModuleDestroy {
     if (feed.completedTurns?.revision !== feed.historyRevision)
       feed.completedTurns = { revision: feed.historyRevision, projector: new ChatCompletedTurns(feed.changesCache, feed.mediaCache) };
     return feed.completedTurns.projector;
+  }
+
+  private waitForChange(sessionId: number, feed: ChatFeed, revision: number, signal: AbortSignal, timeout?: number): Promise<void> {
+    if (signal.aborted || this.feeds.get(sessionId) !== feed || feed.revision !== revision)
+      return Promise.resolve();
+    return new Promise(resolve => {
+      const done = () => {
+        clearTimeout(timer);
+        feed.waiters.delete(done);
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = timeout === undefined ? undefined : setTimeout(done, timeout);
+      feed.waiters.add(done);
+      signal.addEventListener('abort', done, { once: true });
+    });
+  }
+
+  async openStream(taskId: number, sessionId: number, loadingMode: unknown, after: unknown, signal: AbortSignal) {
+    if (loadingMode !== 'window' && loadingMode !== 'progressive')
+      throw new BadRequestException('Invalid conversation loading mode.');
+    if (after !== undefined && (typeof after !== 'string' || !/^[a-f0-9-]{36}:\d{1,12}:\d{1,12}$/.test(after)))
+      throw new BadRequestException('Invalid conversation event ID.');
+    const lifetime = AbortSignal.any([signal, this.lifetime.signal]);
+    const session = await waitForChatStreamWork(this.target(taskId, sessionId), lifetime);
+    if (session.status === 'archived' || session.workspaceArchivedAt)
+      throw new GoneException('This conversation was archived.');
+    if ((this.feeds.get(sessionId)?.observers ?? 0) >= 8)
+      throw new HttpException('Too many conversation observers.', 429);
+    return this.streamPages(taskId, sessionId, loadingMode, after, lifetime);
+  }
+
+  private async *streamPages(
+    taskId: number, sessionId: number, loadingMode: SessionChatWatch['loadingMode'],
+    after: string | undefined, signal: AbortSignal,
+  ): AsyncGenerator<SessionChatStreamPage> {
+    let observed: ChatFeed | undefined;
+    let previousState: string | undefined;
+    const releaseObserver = () => {
+      if (!observed) return;
+      observed.observers--;
+      observed.touched = Date.now();
+    };
+    try {
+      while (!signal.aborted) {
+        const beforeRead = this.feeds.get(sessionId);
+        const observedRevision = beforeRead?.revision;
+        const session = await waitForChatStreamWork(this.target(taskId, sessionId), signal);
+        if (signal.aborted || session.status === 'archived' || session.workspaceArchivedAt) return;
+        const started = this.sessions.hasStartedAgentRuntime(session);
+        const feed = this.feed(sessionId, session.activeAgentProvider, started);
+        if (feed !== observed) {
+          releaseObserver();
+          observed = undefined;
+          if (feed.observers >= 8) throw new HttpException('Too many conversation observers.', 429);
+          feed.observers++;
+          observed = feed;
+        }
+        let replay = feed.replays.get(loadingMode);
+        if (!replay) {
+          replay = new DesktopChatReplay();
+          feed.replays.set(loadingMode, replay);
+        }
+        const revision = beforeRead === feed ? observedRevision! : feed.revision;
+        const historyRevision = feed.historyRevision;
+        const current = () => !signal.aborted && this.feeds.get(sessionId) === feed && feed.historyRevision === historyRevision;
+        const prior = replay.checkpoint(after, historyRevision);
+        const [raw, saved] = await waitForChatStreamWork(Promise.all([
+          this.runtime(feed, sessionId, started),
+          prior ? undefined : this.history(feed, sessionId),
+        ]), signal);
+        if (current()) {
+          const state = this.state(session, raw);
+          const stateJson = JSON.stringify(state);
+          const live = Array.isArray(raw.liveItems) ? raw.liveItems as AgentTranscriptItem[] : [];
+          const source = { length: live.length, first: live[0]?.id };
+          const liveTurn = state.phase === 'running' || state.phase === 'waiting';
+          this.rememberLivePrompt(feed, live, liveTurn);
+          const toolDetails = this.toolDetails(feed);
+          const projectedLive: SessionChatItem[] = [];
+          const options = {
+            loadingMode, changesCache: feed.changesCache, mediaCache: feed.mediaCache,
+            toolDetails, liveTurn, projectedLive,
+          };
+          const liveWindow = prior && chatWindow([], live, { ...options, includeLeadingPrompt: false });
+          let checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
+          const events = prior && liveWindow && replay.updates(prior, checkpoint, projectedLive, liveWindow.before !== null);
+          if (events) {
+            if (events.length || previousState !== stateJson) {
+              const cursor = replay.remember(checkpoint);
+              yield { after: after ?? null, page: {
+                taskId, sessionId, cursor, reset: false, items: [], events,
+                before: liveWindow.before, next: null,
+                ...(previousState !== stateJson ? { state } : {}),
+              } };
+              after = cursor;
+            }
+          } else {
+            const history = saved ?? await waitForChatStreamWork(this.history(feed, sessionId), signal);
+            if (!current()) {
+              await delay(32, undefined, { signal });
+              continue;
+            }
+            projectedLive.length = 0;
+            const window = chatWindow(history, live, {
+              ...options, historyIndex: this.historyWindowIndex(feed),
+              completedTurns: loadingMode === 'progressive' ? this.completedTurns(feed) : undefined,
+              summarizeRecent: true, keepTurnId: after ? feed.livePrompt : undefined,
+            })!;
+            checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
+            const cursor = replay.remember(checkpoint);
+            yield { after: after ?? null, page: {
+              taskId, sessionId, cursor, reset: true, ...window, events: [], state,
+            } };
+            after = cursor;
+          }
+          previousState = stateJson;
+          await this.waitForChange(sessionId, feed, revision, signal);
+        }
+        // Provider bursts need at most one projection per render interval.
+        // A changed revision is checked again after hydration and backpressure.
+        await delay(32, undefined, { signal });
+      }
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    } finally {
+      releaseObserver();
+    }
+  }
+
+  private rememberLivePrompt(feed: ChatFeed, live: readonly AgentTranscriptItem[], liveTurn: boolean): void {
+    if (!liveTurn) return;
+    // Keep the streamed timeline mounted through the saved-history handoff.
+    const prompt = live.findLast(item => item.kind === 'user')?.id;
+    if (prompt) feed.livePrompt = prompt;
   }
 
   async read(
@@ -355,18 +522,7 @@ export class DesktopChatService implements OnModuleDestroy {
     if (feed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
     if (after === cursor() && !paging)
-      await new Promise<void>((resolve) => {
-        const done = () => {
-          clearTimeout(timer);
-          feed.waiters.delete(done);
-          signal.removeEventListener('abort', done);
-          resolve();
-        };
-        const timer = setTimeout(done, 8000);
-        feed.waiters.add(done);
-        signal.addEventListener('abort', done, { once: true });
-        if (signal.aborted) done();
-      });
+      await this.waitForChange(sessionId, feed, feed.revision, signal, 8000);
     if (signal.aborted) return;
     // Long polls can outlive completion or another window viewing the reply.
     // Read the marker before hydrating content so its version cannot get ahead
@@ -404,12 +560,7 @@ export class DesktopChatService implements OnModuleDestroy {
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
     const liveTurn = state.phase === 'running' || state.phase === 'waiting';
-    if (liveTurn) {
-      // A streamed turn keeps its timeline during the persisted handoff.
-      // A fresh opening can still compact that turn from saved history.
-      const prompt = live.findLast(item => item.kind === 'user')?.id;
-      if (prompt) feed.livePrompt = prompt;
-    }
+    this.rememberLivePrompt(feed, live, liveTurn);
     const fingerprints = paging ? undefined : new Map<string, string>();
     const window = chatWindow(history, live, {
       before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
@@ -610,6 +761,10 @@ export class DesktopChatService implements OnModuleDestroy {
         'preset-default', 'send',
       ].includes(String(action.type)))
         await this.rememberConfiguration(sessionId);
+      if (action.type === 'save-preset' || action.type === 'preset-default' || action.type === 'preset-default-restore') {
+        for (const id of this.feeds.keys()) if (id !== sessionId) this.invalidate(id);
+      }
+      if (!preset && action.type !== 'provider') this.invalidate(sessionId);
       return result;
     } finally {
       if (preset) this.configuring.delete(sessionId);

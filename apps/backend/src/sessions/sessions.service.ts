@@ -687,6 +687,7 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
+    this.emit('session-provider-changed', { sessionId: id });
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 

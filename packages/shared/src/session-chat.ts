@@ -18,6 +18,33 @@ export interface SessionChatRead extends SessionChatTarget {
   /** Exclusive item cursor for continuing toward the live end of history. */
   readonly following?: string;
 }
+
+export interface SessionChatWatch extends SessionChatTarget {
+  readonly watchId: string;
+  readonly loadingMode: 'window' | 'progressive';
+  /** The last applied live cursor for this session and view. */
+  readonly after?: string;
+}
+
+export type SessionChatStreamEvent = SessionChatTarget & {
+  readonly scopeId: string;
+  readonly watchId: string;
+} & (
+  | { readonly type: 'page'; readonly delivery: number; readonly page: SessionChatStreamUpdate }
+  | { readonly type: 'reconnecting' }
+  | { readonly type: 'closed'; readonly error: import('./backend-client').BackendClientError }
+);
+
+/** One application event in the desktop chat SSE protocol. */
+export interface SessionChatStreamPage {
+  readonly after: string | null;
+  readonly page: SessionChatStreamUpdate;
+}
+export type SessionChatStreamUpdate = Omit<SessionChatPage, 'state'> & {
+  /** Present on connection and every reset, then only when state changes. */
+  readonly state?: SessionChatState;
+};
+export const SESSION_CHAT_STREAM_FRAME_BYTES = 4 * 1024 * 1024;
 /** Display metadata from a durable session-context snapshot; never includes its contents or path. */
 export interface SessionChatMention {
   readonly sessionId: number;

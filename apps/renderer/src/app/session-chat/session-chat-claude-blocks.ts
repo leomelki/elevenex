@@ -31,9 +31,11 @@ export function reconcileClaudeBlocks(items: readonly SessionChatItem[]): {
   for (const { streamed, saved } of groups.values()) {
     if (!streamed.length || !saved.length) continue;
     const available = new Set(saved);
-    const merge = (live: ClaudeBlock, durable: ClaudeBlock) => {
+    const merge = (live: ClaudeBlock, durable: ClaudeBlock, useLiveText = false) => {
       const earlier = live.position < durable.position ? live : durable;
-      replacements.set(earlier.position, durable.item);
+      replacements.set(earlier.position, useLiveText
+        ? { ...durable.item, text: live.item.text, truncated: live.item.truncated }
+        : durable.item);
       removed.add(Math.max(live.position, durable.position));
       renderIds.set(durable.item.id, earlier.item.id);
       available.delete(durable);
@@ -60,13 +62,14 @@ export function reconcileClaudeBlocks(items: readonly SessionChatItem[]): {
       if (matches.length === 1) merge(live, matches[0]!);
     }
 
-    // A saved block can complete a partial stream. Require a single block of
-    // this kind on each side so a shifted index cannot swallow another reply.
+    // Either snapshot can be ahead while the transcript is still being
+    // written. Require a single block of this kind on each side.
     if (unmatched.length === 1 && streamed.length === 1 && saved.length === 1) {
       const live = unmatched[0]!, durable = saved[0]!;
       const text = live.item.text.trim(), savedText = durable.item.text.trim();
-      if (available.has(durable) && (savedText === text ||
-        (!live.item.truncated && savedText.startsWith(text)))) merge(live, durable);
+      if (!available.has(durable)) continue;
+      if (savedText === text || (!live.item.truncated && savedText.startsWith(text))) merge(live, durable);
+      else if (!durable.item.truncated && text.startsWith(savedText)) merge(live, durable, true);
     }
   }
   return {

@@ -11,10 +11,12 @@ import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 import type { SessionChatTurnWorkReply, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
+import type { SessionChatStreamEvent, SessionChatWatch } from './session-chat';
 export type * from './session-chat';
 export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
 export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
 export { SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_STREAM_FRAME_BYTES } from './session-chat';
 export { sessionChatToolHeading } from './session-chat-tool-heading';
 import type { SessionChatDraftEdit, SessionChatDraftSnapshot, SessionChatDraftTarget } from './session-chat-draft';
 export type * from './session-chat-draft';
@@ -101,6 +103,9 @@ export interface InvokeContracts {
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
   'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
+  'session-chat:watch': { args: [scopeId: string, input: SessionChatWatch]; result: BackendResult<{ readonly accepted: true }> };
+  'session-chat:unwatch': { args: [scopeId: string, watchId: string]; result: void };
+  'session-chat:acknowledge': { args: [scopeId: string, watchId: string, delivery: number]; result: void };
   'session-chat:turn-work': { args: [scopeId: string, input: SessionChatTurnWorkRead]; result: BackendResult<SessionChatTurnWorkReply> };
   'session-chat:tool-details': { args: [scopeId: string, input: SessionChatToolDetailsRead]; result: BackendResult<SessionChatToolDetailsReply> };
   'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
@@ -181,6 +186,7 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'session-chat:stream': SessionChatStreamEvent;
   'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
@@ -265,6 +271,10 @@ export interface ElevenexBridge {
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;
   sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
+  sessionChatWatch(scopeId: string, input: SessionChatWatch): Promise<BackendResult<{ readonly accepted: true }>>;
+  sessionChatUnwatch(scopeId: string, watchId: string): Promise<void>;
+  sessionChatAcknowledge(scopeId: string, watchId: string, delivery: number): Promise<void>;
+  onSessionChatStream(listener: (event: SessionChatStreamEvent) => void): () => void;
   sessionChatTurnWork(scopeId: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>>;
   sessionChatToolDetails(scopeId: string, input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>>;
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;

@@ -49,6 +49,38 @@ cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.
 The provider still supplies the complete source snapshot for history reads.
 
+### Selected chat stream
+
+Engines advertising `chatStream: true` in `workspaceRevision` serve
+`GET /api/desktop-workspace/tasks/:taskId/sessions/:sessionId/chat/events`.
+Main opens the stream against the selected backend with its private credentials.
+The request carries a bounded loading profile and the last applied cursor in
+`Last-Event-ID`. The first event supplies the current state and either a
+snapshot or the changes since that cursor. Subsequent events carry ordered
+record replacements, text appends and changed state. SSE comments keep the
+connection alive without reading the runtime or waking Angular. The existing
+JSON read still serves adjacent history pages, archived chat and older desktop
+clients. Older engines keep their current long-poll behavior.
+
+Runtime and persisted session events wake the selected feeds. Provider
+listeners are shared across feeds, and updates arriving during hydration or a
+slow write are reconciled on the next projection. The backend retains bounded
+fingerprint checkpoints for each feed and view. A new provider, saved-history
+revision, expired cursor or gap in the live window returns a bounded authoritative
+snapshot with history cursors. Transcript payloads are limited to 4 MiB per
+frame, and backpressure prevents a slow network socket from growing a queue of
+pending projections.
+
+The named watch, acknowledge and unwatch bridge operations allow one live chat
+per window. Main validates the cursor chain, the scoped resource and each
+frame before forwarding it. A single outstanding delivery bounds Electron
+IPC. Main waits for the renderer to apply the page before advancing the resume
+cursor. On EOF or a stalled connection it reconnects with jittered backoff and
+the applied cursor. Scope rotation, session navigation, visibility changes and
+destruction release the watch. After backend identity changes, workspace
+restoration verifies the selection before opening a new watch. Reconnects and
+refreshes issue only reads.
+
 Terminal service URLs use the named `taskTerminalOpenPort` and
 `taskTerminalCopyPort` bridge operations. Both accept only a scoped
 task/terminal/port, freshly verify the owned listener and use the window's
@@ -299,7 +331,7 @@ transcript windows and cursors rather than sending an entire conversation again.
 Watch only visible/selected resources and relevant ancestors. Unrelated commits
 must not rescan the file tree or reload every branch/history page.
 
-Future live adapters stay in main, speaking the backend's actual protocol
+Live adapters stay in main, speaking the backend's actual protocol
 (currently raw WebSocket for several domains and Socket.IO for others). A native
 WebSocket client cannot impersonate Socket.IO. Add a protocol dependency only
 under the repository's dependency policy when a concrete feature needs it.
@@ -318,7 +350,6 @@ Distinguish replaceable status from ordered agent/token/terminal output.
 On reconnect, generation/instance changes invalidate old work. Reconcile selected
 resources and consumed cursors before restoring watches. Never recreate a task,
 replay a command or resubmit an agent prompt because a connection recovered.
-There is no event streaming or replay implementation in this initial slice.
 
 ## Mutations and backend evolution
 
@@ -408,8 +439,7 @@ real sandboxed preload/protocol verification; it uses disposable fixture assets
 and a backend, and does not certify a packaged app or a published remote runtime.
 
 The product renderer uses the supplied design system and the connected workspace
-slice above. There is no full backend API catalog, event replay client, offline
-mutation queue or packaged-app verification in this slice. See the
+slice above. See the
 [desktop README](../apps/desktop/README.md),
 [remote ownership/recovery guide](../apps/desktop/REMOTE_DEVELOPMENT.md) and
 [capture guide](../scripts/desktop-capture/README.md) when extending it.

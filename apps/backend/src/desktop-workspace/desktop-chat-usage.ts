@@ -1,8 +1,9 @@
+import type { SessionChatPlanUsage } from '@elevenex/shared';
 import { record } from './desktop-chat-projection.js';
 import { allowsClaudePlanUsage } from '../claude-runtime/claude-plan-usage.js';
 
 /** Only expose bounded subscription facts, never authentication or provider payloads. */
-export function chatPlanUsage(raw: Record<string, unknown>, provider: string) {
+export function chatPlanUsage(raw: Record<string, unknown>, provider: string): SessionChatPlanUsage | null {
   if (
     (provider !== 'codex' && provider !== 'claude') ||
     (provider === 'codex'

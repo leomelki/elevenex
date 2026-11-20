@@ -60,6 +60,7 @@ export class DesktopWorkspaceController {
       revision: this.navigation.revision,
       version: 1,
       revisionWait: true,
+      chatStream: true,
       sessionNesting: true,
       sessionNestingOrder: true,
       taskRequests: true,

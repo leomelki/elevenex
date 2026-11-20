@@ -84,6 +84,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });
   // @ts-expect-error Chat reads must identify the expected backend scope.
   void invoke('session-chat:read', { taskId: 1, sessionId: 2, requestId: 'read' });
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Chat streams bind an expected backend scope.
+  void invoke('session-chat:watch', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Renderer code cannot send an endpoint or credentials through the bridge.
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive', url: 'https://example.test' });
   // @ts-expect-error The conversation bridge never accepts generic shell actions.
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'shell', command: 'anything' } });
   // @ts-expect-error Permission decisions are an explicit union.

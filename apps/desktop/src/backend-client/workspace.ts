@@ -83,12 +83,13 @@ function parseRevision(value: unknown): WorkspaceRevision {
   const response = object(value);
   if (response['version'] !== 1) throw invalidResponse();
   const revision = count(response['revision']);
-  for (const capability of ['revisionWait', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel']) {
+  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
     revision, version: 1,
     ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
+    ...(response['chatStream'] === true ? { chatStream: true } : {}),
     ...(response['sessionNesting'] === true ? { sessionNesting: true } : {}),
     ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true } : {}),
     ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),

@@ -50,22 +50,25 @@ Older engines omit the capability and retain their original send contract.
 
 - `SessionChatClient` calls only named, scope-bound bridge operations. Main owns
   HTTP, credentials, validation, coalescing, deadlines and cancellation.
-- `SessionChatStore` owns one visible transcript window, long reads, mutation
-  epochs and feedback. It cancels reads on navigation, hiding or destruction.
-  Pending writes can finish on their original backend; their replies never
-  change a different conversation. No write is replayed by reconnect or refresh.
-  Idle heartbeats retain unchanged conversation inputs. Backend resets
-  reconcile the authoritative suffix, including rewinds while a session
-  was cached. An overlapping first row lets both background resets and
-  explicit refreshes of the live tail retain the loaded prefix when the
-  prompt context still matches. Transient background
-  read failures retain the transcript and retry quietly; initial/explicit reads
-  and unsupported-engine errors still expose recovery feedback.
-  Confirmed non-configuration actions reconcile through that same quiet,
-  incremental read path. Repeated visibility notifications share the active read.
-  Reversing direction, leaving a history edge, or inspecting visible work cancels
-  its pending page read and resumes the live feed. Returning to latest keeps the
-  historical window and its cursors until a fresh read succeeds.
+- `SessionChatStore` owns one visible transcript window, its live cursor,
+  mutation epochs and feedback. It releases the stream on navigation, hiding
+  or destruction. Main keeps the stream open between updates and resumes from
+  the last applied cursor after an interruption. Pending writes can finish on
+  their original backend, and their replies apply only to their original
+  conversation. Reconnect and refresh issue reads only.
+  Heartbeats stay in main. Live updates retain unchanged conversation inputs.
+  Backend resets reconcile the authoritative suffix, including rewinds while
+  a session was cached. An overlapping first row lets both background resets
+  and explicit refreshes retain the loaded prefix when the prompt context
+  still matches. Interruptions retain the transcript, scroll position and draft.
+  The reconnect message appears after a short delay. Confirmed non-configuration
+  actions reconcile through the open stream.
+- Adjacent history reads pause the watch and resume it when the page arrives.
+  Live updates refresh runtime state while the user reads a historical window.
+  A forward page that reaches latest establishes a fresh stream snapshot so it
+  cannot reapply text the history page included. Returning to latest keeps the
+  historical window and its cursors until the fresh snapshot succeeds.
+  Older engines without `chatStream` use bounded long reads and the same history controls.
 - Paging keeps at most 320 contiguous raw records. When hidden work leaves the
   newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
   context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
@@ -179,7 +182,7 @@ is opened; older history leaves a quiet clock button. The CDK dialog traps and
 restores focus, closes on Escape or
 outside click, and stays open with an empty state if the work finishes underneath it.
 Elapsed times tick locally (1s only while work runs); no extra reads are added:
-the data rides the existing long-poll feed.
+the data rides the selected chat feed.
 
 The panel lists **Needs you** (work waiting on a decision), **Running** and
 **Recent**. Every row has the same shape so the list scans quickly: a status glyph,
@@ -220,16 +223,17 @@ older desktops; engines without `work` show no activity trigger.
 reduced-motion states in both themes.
 
 The backend keeps at most 32 short-lived selected-session observations. It
-subscribes before hydration, then uses a pre-read cursor and idempotent changed
-item replacements to reconcile events during the snapshot. Reads wait up to
-eight seconds for activity; the renderer spaces active reads by 80ms. Persisted
-history is read at entry, explicit paging and durable history invalidation,
-never for each streamed token. Simultaneous runtime/history reads share their
-work. Provider APIs still own source transcript reading; their `getHistory`
+subscribes before hydration and samples the feed revision before reading. The
+next projection catches changes that arrived during the snapshot. When the
+resume cursor is available, changed records and appended text fill the gap.
+Persisted history is read at entry, explicit paging, history invalidation or
+after a gap in the bounded live window. Simultaneous runtime/history reads
+share their work. Providers still own source transcript reading. Their `getHistory`
 interface currently returns full history inside the backend. The selected feed
 caches a bounded set of emitted cursor offsets and the last prompt span for its
 current history revision. Pages project and transport only bounded candidates,
-and idle heartbeats refresh state without projecting an unchanged transcript.
+and idle connections send transport heartbeats without projecting a transcript.
+Legacy reads still wait up to eight seconds with an unchanged cursor.
 
 Progressive loading is enabled by default through
 `SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to

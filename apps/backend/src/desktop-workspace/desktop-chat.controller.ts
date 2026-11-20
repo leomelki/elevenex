@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -13,11 +14,24 @@ import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { record } from './desktop-chat-projection.js';
 import { DesktopChatService } from './desktop-chat.service.js';
+import { sendDesktopChatStream } from './desktop-chat-stream.js';
 import { resourceId } from './desktop-workspace.service.js';
 
 @Controller('desktop-workspace/tasks/:taskId/sessions/:sessionId/chat')
 export class DesktopChatController {
   constructor(private readonly chat: DesktopChatService, private readonly attachments: DesktopChatAttachments, private readonly sessions: SessionsService) {}
+  @Get('events')
+  events(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Query('loadingMode') loadingMode: unknown,
+    @Headers('last-event-id') after: unknown,
+    @Res() response: Response,
+  ) {
+    return sendDesktopChatStream(response, signal =>
+      this.chat.openStream(resourceId(task), resourceId(session), loadingMode, after, signal));
+  }
+
   @Post('attachments')
   async upload(@Param('taskId') task: string, @Param('sessionId') session: string, @Body() body: unknown) {
     const sessionId = resourceId(session);

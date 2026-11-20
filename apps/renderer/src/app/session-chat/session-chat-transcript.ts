@@ -150,8 +150,24 @@ function projectExchanges(
   const reconciled = reconcileClaudeBlocks(pending ? withPendingPrompt(items, pending) : items);
   const renderId = (item: SessionChatItem) =>
     cache?.claudeRenderIds.get(item.id) ?? reconciled.renderIds.get(item.id) ?? item.id;
-  for (const item of reconciled.items) {
+  let savedThrough = -1;
+  let savedTurn: SessionChatItem['completedTurn'];
+  for (const [position, item] of reconciled.items.entries()) {
     if (item.kind === "user") {
+      savedTurn = item.completedTurn;
+      savedThrough = -1;
+      // A refresh or adjacent page can overlap a compact turn with its raw
+      // source. Only its durable end cursor can prove the full overlap.
+      if (savedTurn) {
+        for (let i = position + 1; i < reconciled.items.length; i++) {
+          const following = reconciled.items[i]!;
+          if (following.kind === 'user') break;
+          if (following.id === savedTurn.endId) {
+            savedThrough = i;
+            break;
+          }
+        }
+      }
       const previous = cache?.turns.get(item.id);
       if (previous?.source[0] === item) {
         const { prompt, mentions, attachments, time, startedAt } = previous.exchange;
@@ -174,6 +190,7 @@ function projectExchanges(
         items: [],
       });
     } else {
+      if (position <= savedThrough || savedTurn?.reply.some(reply => reply.id === item.id)) continue;
       if (!groups.length || groups.at(-1)?.promptItem?.completedTurn)
         groups.push({
           id: "history-" + item.id,

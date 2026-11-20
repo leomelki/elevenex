@@ -523,7 +523,7 @@ function planUsage(
     updatedAt,
   };
 }
-function state(value: unknown): SessionChatState {
+export function parseChatState(value: unknown): SessionChatState {
   const raw = chatObject(value),
     phase = raw["phase"];
   if (
@@ -686,6 +686,18 @@ export function parseChatPage(
   deferToolDetails = false,
 ): SessionChatPage {
   const raw = chatObject(value);
+  return { ...parseChatPageWindow(raw, taskId, sessionId, loadingMode, summarizeCompleted, deferToolDetails),
+    state: parseChatState(raw['state']) };
+}
+
+export function parseChatPageWindow(
+  raw: Record<string, unknown>,
+  taskId: number,
+  sessionId: number,
+  loadingMode?: 'window' | 'progressive',
+  summarizeCompleted = false,
+  deferToolDetails = false,
+): Omit<SessionChatPage, 'state'> {
   if (raw["taskId"] !== taskId || raw["sessionId"] !== sessionId)
     throw invalid();
   const leadingPrompt = raw['leadingPrompt'] == null ? raw['leadingPrompt'] : item(raw['leadingPrompt']);
@@ -698,7 +710,6 @@ export function parseChatPage(
     reset: bool(raw["reset"]),
     before: nullable(raw["before"]),
     ...(raw["next"] !== undefined ? { next: nullable(raw["next"]) } : {}),
-    state: state(raw["state"]),
     items: array(raw["items"], loadingMode === 'window' ? 320 : 80, value => historyItem(value, summarizeCompleted, deferToolDetails)),
     events: array(raw["events"], loadingMode === 'window' ? 320 : 80, (value): SessionChatEvent => {
       const event = chatObject(value);

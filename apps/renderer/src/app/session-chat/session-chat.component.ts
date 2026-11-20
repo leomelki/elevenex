@@ -123,6 +123,7 @@ export class SessionChatComponent {
     this.contentId.set(request.itemId);
   }
   readonly selection = input<ChatSelection | null>(null);
+  readonly streamAvailable = input(false);
   readonly creation = input<StartingSession | null>(null);
   /** Stable through a create receipt, including one that arrives before first paint. */
   readonly creationKey = input<string | null>(null);
@@ -202,7 +203,7 @@ export class SessionChatComponent {
     },
   );
   readonly message = computed(
-    () => this.store.error() || this.store.uncertain() || this.store.state()?.error || "",
+    () => this.store.error() || this.store.uncertain() || this.store.streamError() || this.store.state()?.error || "",
   );
   protected readonly opening = computed(() => !!this.selection() && this.active() && this.store.loading() &&
     !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
@@ -436,11 +437,14 @@ export class SessionChatComponent {
     });
     effect(() => {
       const selection = this.selection();
-      this.store.setActive(this.active());
       const creation = this.creation();
-      if (creation) this.store.openDraft(creation);
-      else if (selection) this.store.open(selection, this.archived());
-      untracked(() => this.attachments.open(creation ? null : selection));
+      const active = this.active(), archived = this.archived(), streamAvailable = this.streamAvailable();
+      untracked(() => {
+        this.store.setActive(active);
+        if (creation) this.store.openDraft(creation);
+        else if (selection) this.store.open(selection, archived, streamAvailable);
+        this.attachments.open(creation ? null : selection);
+      });
     });
     effect(() => {
       const selection = this.creation() ? null : this.selection();
