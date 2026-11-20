@@ -22,7 +22,7 @@ interface ChatMedia {
 }
 
 /** Binary content travels only on demand, never through transcript text pages. */
-export function chatMedia(item: AgentTranscriptItem) {
+export function chatMedia(item: AgentTranscriptItem, includeText = true) {
   const media: ChatMedia[] = [];
   const add = (source: string, path?: string, caption = 'Image') => {
     if (!source || source.length > MAX_DATA + 100 || media.length >= 12) return;
@@ -114,8 +114,7 @@ export function chatMedia(item: AgentTranscriptItem) {
   const cleaned = item.kind === 'tool_result' ? clean(original) : original;
   if (item.content !== undefined && item.providerToolResult !== undefined)
     clean(item.providerToolResult);
-  const text =
-    typeof cleaned === 'string' ? cleaned : JSON.stringify(cleaned, null, 2);
+  const text = !includeText ? '' : typeof cleaned === 'string' ? cleaned : JSON.stringify(cleaned, null, 2);
   // Only actual image embeds authorize a path read; links and tool input do not.
   if (item.kind === 'assistant' || item.kind === 'user')
     for (const match of text.matchAll(/^!\[([^\]]*)\]\((?:<([^<>\r\n]+)>|([^<>)\r\n]+))\)\s*$/gm)) {

@@ -38,6 +38,7 @@ export function traceSessionChatRequest(method: 'GET' | 'POST' | 'PATCH' | 'DELE
     ...(operation === 'history' || operation === 'turn-work' ? {
       deferToolDetails: query.get('deferToolDetails') === '1',
     } : {}),
+    ...(operation === 'turn-work' && query.has('timeline') ? { timeline: query.get('timeline') === '1' } : {}),
     offset: queryNumber(query, 'offset'),
     limit: queryNumber(query, 'limit'),
     ...(operation === 'tool-details' ? { withResult: query.has('resultId') } : {}),
@@ -50,6 +51,7 @@ export function traceSessionChatRequest(method: 'GET' | 'POST' | 'PATCH' | 'DELE
     finish(outcome: 'ok' | 'aborted' | BackendClientError['code'], status?: number, value?: unknown): void {
       const reply = object(value);
       const items = Array.isArray(reply['items']) ? reply['items'] : undefined;
+      const timeline = Array.isArray(reply['timeline']) ? reply['timeline'] : undefined;
       const events = Array.isArray(reply['events']) ? reply['events'] : undefined;
       const total = reply['total'], nextOffset = reply['nextOffset'];
       debug('response %j', {
@@ -59,6 +61,7 @@ export function traceSessionChatRequest(method: 'GET' | 'POST' | 'PATCH' | 'DELE
         elapsedMs: Math.round(performance.now() - start),
         responseBytes,
         items: items?.length,
+        ...(timeline ? { timelineSlots: timeline.length, timelineRows: timeline.filter(row => row !== null).length } : {}),
         events: events?.length,
         ...(operation === 'history' && outcome === 'ok' ? {
           completedTurns: items?.filter(item => object(item)['completedTurn'] !== undefined).length,

@@ -274,13 +274,15 @@ full-history read, so a cold provider parse can still dominate initial latency.
   paging uses the prompt ID and forward paging uses the last source ID. A
   page starting or ending inside a turn uses ordinary rows at that seam.
   The renderer counts visible reply blocks toward its 320-record window.
-- Opening Worked reveals the whole chronological timeline in one update.
-  It requests up to 512 compact records or 1 MiB at a time, and follows any
-  remaining offsets privately. Older engines can keep returning 40-record
-  pages. Each batch must match the turn revision and advance contiguously
-  before the view can publish it. Repeated provider row IDs retain their first
-  position and latest value in both formats. Call/result pairing and stable
-  reply identity preserve order when receipts arrive after the reply.
+- Opening Worked requests a compact timeline. Each tool call has a short label,
+  outcome and an optional result ID. Its paired receipt uses an empty source slot,
+  with inline image references kept at their original positions. Commentary and
+  the visible reply stay in order. The entire timeline appears in one update.
+  Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
+  order, independent of the chat's scroll direction. Older engines keep their
+  ordinary work pages. Every batch must match the turn revision and advance
+  contiguously before the view publishes the timeline. Repeated provider row IDs
+  retain their first position and latest value.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
   A turn with at most 40 hidden records can warm after 220 ms of pointer or
@@ -290,14 +292,17 @@ full-history read, so a cold provider parse can still dominate initial latency.
 - The reply and counts stay available throughout. Open sections and tool
   disclosures survive releasing a turn's rows after collapse. Reopening
   stages previously visible tool evidence alongside the compact timeline.
+  Unopened groups mount their count controls and defer their folded tool rows.
   A failed read offers retry in place. The reveal respects reduced motion.
 
 ### Tool evidence
 
 Normal windows, live updates and saved activity pages opt into deferred tool
-details. Tool rows carry the heading, outcome and evidence revision. Counts,
-file-change metadata and existing inline media references remain available in
-the timeline. Older engines can send inline evidence with the same row UI.
+details. Compact timeline tools share their enclosing turn revision and resolve
+their call and receipt within that exact saved turn. Ordinary rows carry
+individual evidence revisions. Counts, file-change metadata and inline media
+references remain available. Older engines can send inline evidence with the
+same row UI.
 
 Opening a tool starts one bounded read for its call and its receipt when
 available. A raw history page that contains only the receipt shows a named
@@ -311,8 +316,8 @@ the requested evidence in place. Hidden or disconnected chats pause pending
 reads. Closing the tool releases the mounted evidence after its exit.
 
 Successful reads are kept in a window-local LRU of 48 entries and 1 MiB of
-serialized evidence. Entries are scoped by machine, task, session and both
-item revisions. The heading stays in place during a read, then the evidence
+serialized evidence. Entries are scoped by machine, task, session and either the
+saved turn revision or the individual item revisions. The heading stays in place during a read, then the evidence
 opens in one fold. Failed reads can be retried in place. Evidence
 uses the existing preview, Details and original transcript reader.
 Counts describe observed operations, including calls whose completion is

@@ -70,7 +70,7 @@ export class ToolStepComponent implements OnChanges {
   private readonly head = viewChild<ElementRef<HTMLButtonElement>>('head');
   private readonly fold = viewChild.required<FoldComponent, ElementRef<HTMLElement>>('fold', { read: ElementRef });
   private readonly source = computed(() => this.deferred(), {
-    equal: (left, right) => sameReference(left?.item, right?.item) && sameReference(left?.result, right?.result),
+    equal: (left, right) => left?.turnId === right?.turnId && sameReference(left?.item, right?.item) && sameReference(left?.result, right?.result),
   });
   private readonly inspection = signal<{
     source: SessionChatToolSource; provider: ToolDetailsProvider; value: ToolDetailsInspection;
@@ -90,10 +90,10 @@ export class ToolStepComponent implements OnChanges {
   // different tool or backend provider never inherits the previous contents.
   protected readonly painted = linkedSignal({
     source: () => ({ visible: this.visible(), view: this.detailView(),
-      provider: this.inspect(), item: this.source()?.item }),
+      provider: this.inspect(), item: this.source()?.item, turnId: this.source()?.turnId }),
     computation: (current, previous): ToolDetailsState | null => {
       const last = previous?.value ?? null;
-      if (previous && (current.provider !== previous.source.provider ||
+      if (previous && (current.provider !== previous.source.provider || current.turnId !== previous.source.turnId ||
           !sameReference(current.item, previous.source.item))) return current.view;
       if (!current.visible) return last;
       return current.view ?? (last?.status === 'ready' ? last : null);

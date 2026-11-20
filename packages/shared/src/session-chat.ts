@@ -73,6 +73,8 @@ export interface SessionChatToolReference {
   readonly revision: string;
 }
 export interface SessionChatToolSource {
+  /** Saved timeline addresses use the enclosing turn revision for both records. */
+  readonly turnId?: string;
   readonly item: SessionChatToolReference;
   readonly result?: SessionChatToolReference;
 }
@@ -86,6 +88,7 @@ export interface SessionChatToolEvidence extends SessionChatToolReference {
   readonly record: SessionChatToolRecord;
 }
 export interface SessionChatToolDetailsReply extends SessionChatTarget {
+  readonly turnId?: string;
   readonly item: SessionChatToolEvidence;
   readonly result?: SessionChatToolEvidence;
 }
@@ -114,7 +117,9 @@ export interface SessionChatTurnWorkRead extends SessionChatTarget {
   readonly revision: string;
   readonly offset: number;
   readonly deferToolDetails?: true;
-  /** Optional larger batch for compact rows. Engines can return a shorter page. */
+  /** Prefer a compact timeline. Engines can return an ordinary work page instead. */
+  readonly timeline?: true;
+  /** Optional larger batch for ordinary work pages. */
   readonly limit?: number;
 }
 export interface SessionChatTurnWorkPage extends SessionChatTarget {
@@ -126,9 +131,39 @@ export interface SessionChatTurnWorkPage extends SessionChatTarget {
   readonly items: readonly SessionChatRecord[];
 }
 
+export interface SessionChatTurnToolRow {
+  readonly kind: 'call' | 'result';
+  readonly id: string;
+  readonly toolKind: string | null;
+  readonly label: string;
+  readonly resultId?: string;
+  readonly error?: true;
+  readonly meta?: string;
+  readonly media?: readonly SessionChatMediaReference[];
+}
+
+export interface SessionChatTurnMediaRow {
+  readonly kind: 'media';
+  readonly id: string;
+  readonly callId: string;
+  readonly media: readonly SessionChatMediaReference[];
+}
+
+/** A paired result already represented by its call occupies a null slot, so
+ * offsets and the saved reply boundary use the same coordinates in both formats. */
+export type SessionChatTurnTimelineRow = SessionChatTurnToolRow | SessionChatTurnMediaRow | SessionChatRecord | null;
+export interface SessionChatTurnTimelinePage extends Omit<SessionChatTurnWorkPage, 'items'> {
+  readonly timeline: readonly SessionChatTurnTimelineRow[];
+}
+export type SessionChatTurnWorkReply = SessionChatTurnWorkPage | SessionChatTurnTimelinePage;
+
 export const SESSION_CHAT_TURN_WORK_LIMIT = 40;
 export const SESSION_CHAT_TURN_WORK_MAX_LIMIT = 512;
 export const SESSION_CHAT_TURN_WORK_BATCH_BYTES = 1024 * 1024;
+export const SESSION_CHAT_TURN_TIMELINE_BYTES = 512 * 1024;
+export const SESSION_CHAT_TURN_TIMELINE_SLOTS = 8192;
+export const SESSION_CHAT_TURN_TOOL_LABEL_LIMIT = 120;
+export const SESSION_CHAT_TURN_TOOL_META_LIMIT = 40;
 export const SESSION_CHAT_TURN_REPLY_LIMIT = 8;
 export const SESSION_CHAT_TURN_FILES_LIMIT = 3;
 export const SESSION_CHAT_TOOL_CATEGORIES = [

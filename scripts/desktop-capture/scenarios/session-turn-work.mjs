@@ -18,7 +18,7 @@ async function scrollTo(capture, selector) {
   await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
 }
 
-function seed(viewer) {
+function seed(viewer, readingHistory) {
   const chat = viewer.fixture.chat;
   chat.scenario('new', 101);
   return chat.read({ taskId: 11, sessionId: 101, requestId: window.crypto.randomUUID() }).then(initial => {
@@ -26,40 +26,31 @@ function seed(viewer) {
       id, kind, text, timestamp: '2026-11-19T10:00:00Z',
       toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false, ...extra,
     });
-    const commandHeading = { revision: 'c'.repeat(64), summary: 'pnpm test --filter payments' };
-    const receiptHeading = { revision: 'd'.repeat(64), meta: 'Exit 1' };
+    const revision = 'a'.repeat(64);
     const command = row('test', 'tool_use', '', { toolId: 'test', toolKind: 'bash', toolName: 'Command' });
     const output = row('test-result', 'tool_result', '12 tests passed. One retry scenario failed.', {
       toolId: 'test', error: true, execution: { exitCode: 1 },
     });
     const beforeReply = [
       row('approach', 'assistant', 'I found the race: both requests can reach the payment provider before either records its result. I’ll make the claim atomic and verify it with overlapping requests.'),
-      { ...command, toolDetails: commandHeading, receipt: { id: output.id, error: true, toolDetails: receiptHeading } },
-      ...Array.from({ length: 50 }, (_, index) => {
+      { id: command.id, kind: 'call', toolKind: 'bash', label: 'pnpm test --filter payments', resultId: output.id, error: true, meta: 'Exit 1' },
+      ...Array.from({ length: 600 }, (_, index) => {
         const id = 'read-' + index;
-        const heading = { revision: 'e'.repeat(64), summary: 'src/payments/case-' + index + '.ts' };
-        const result = { revision: 'f'.repeat(64) };
-        return [
-          row(id, 'tool_use', '', { toolId: id, toolKind: 'read', toolDetails: heading, receipt: {
-            id: id + '-result', error: false, toolDetails: result,
-          } }),
-          row(id + '-result', 'tool_result', '', { toolId: id, toolDetails: result }),
-        ];
+        return [{ id, kind: 'call', toolKind: 'read', label: 'src/payments/case-' + index + '.ts', resultId: id + '-result' }, null];
       }).flat(),
       row('validation-note', 'assistant', 'The unique constraint now chooses one request. The other waits for its receipt.'),
     ];
     const evidence = [
       ...beforeReply,
-      { ...output, text: '', execution: undefined, toolDetails: receiptHeading,
-        invocation: { id: command.id, toolKind: command.toolKind, toolDetails: commandHeading } },
+      null,
       row('receipt-note', 'system', 'The test receipt arrived after the reply.'),
     ];
     const final = row('retry-final', 'assistant',
       'Concurrent retries now share the same payment result. The first request claims the idempotency key before contacting the provider.');
     const saved = row('retries', 'user', 'Prevent duplicate charges when two payment retries overlap.', {
       completedTurn: {
-        revision: 'a'.repeat(64), endId: 'receipt-note', reply: [final],
-        beforeReply: beforeReply.length, total: evidence.length, counts: { read: 50, run: 1 },
+        revision, endId: 'receipt-note', reply: [final],
+        beforeReply: beforeReply.length, total: evidence.length, counts: { read: 600, run: 1 },
         failures: 1, duration: 94, changes: { total: 14, lineTotals: { add: 216, del: 339 }, shared: true, files: [
           { path: 'src/payments/retry.ts', status: 'M', add: 28, del: 6 },
           { path: 'src/payments/retry.test.ts', status: 'M', add: 46, del: 0 },
@@ -74,12 +65,16 @@ function seed(viewer) {
         beforeReply: 1, total: 1, counts: {}, failures: 0, duration: 38,
       },
     });
-    chat.seed(101, { items: [earlier, saved], state: { ...initial.value.state, providerLocked: true } });
+    const tail = readingHistory ? Array.from({ length: 6 }, (_, index) => [
+      row('followup-' + index, 'user', 'Review the payment and retry behavior.'),
+      row('followup-reply-' + index, 'assistant', 'The integration covers race conditions, timeouts, and repeated requests. '.repeat(4)),
+    ]).flat() : [];
+    chat.seed(101, { items: [earlier, saved, ...tail], state: { ...initial.value.state, providerLocked: true } });
     chat.seedTurnWork(101, earlier.id, [row('verification-note', 'assistant', 'I checked the saved test cases.')]);
-    chat.seedTurnWork(101, saved.id, evidence);
+    chat.seedTurnTimeline(101, saved.id, evidence);
     chat.seedToolDetails(101, [
-      { id: command.id, revision: commandHeading.revision, record: { ...command, input: '{"command":"pnpm test --filter payments"}' } },
-      { id: output.id, revision: receiptHeading.revision, record: output },
+      { id: command.id, revision, record: { ...command, input: '{"command":"pnpm test --filter payments"}' } },
+      { id: output.id, revision, record: output },
     ]);
     chat.turnWorkBehavior('held');
   });
@@ -94,16 +89,17 @@ export default async function* (capture) {
     await capture.viewport(narrow ? 780 : 1280, narrow ? 760 : 900);
     await capture.theme(theme);
     await capture.reducedMotion(narrow);
-    await fixture(seed);
+    await fixture(seed, narrow);
     await capture.component('ex-machine-workspace', workspace => workspace.store.selectSession({ taskId: '11', sessionId: '101' }));
     await capture.waitFor(selector => document.querySelector(selector)?.textContent.includes('same payment result'), reply);
     await capture.fill('ex-composer textarea', 'Draft for the next check');
     await capture.evaluate(selector => { document.querySelector(selector).dataset.captureIdentity = 'same-reply'; }, reply);
     await scrollTo(capture, work);
     await settleMotion(capture);
+    await capture.waitFor(atEnd => window.ng.getComponent(document.querySelector('ex-chat-scroll')).atEnd() === atEnd, !narrow);
     assert.equal(await fixture(viewer => viewer.fixture.chat.turnWorkReads), 0);
     const facts = await capture.evaluate(selector => document.querySelector(selector).textContent, work);
-    assert.match(facts, /1 failed.*14 workspace changes.*\+216.*−339.*1 command.*50 reads/);
+    assert.match(facts, /1 failed.*14 workspace changes.*\+216.*−339.*1 command.*600 reads/);
     yield { name: theme + '-collapsed', inspect };
 
     await capture.click(work);
@@ -128,10 +124,10 @@ export default async function* (capture) {
     assert.deepEqual(await capture.evaluate((selector, reply) => {
       const root = document.querySelector(selector);
       const rows = [...root.querySelectorAll('[data-work-step]')].map(row => row.dataset.workStep);
-      return [rows[0], rows.includes('read-49'), rows.at(-3), rows.at(-2), rows.at(-1),
+      return [rows[0], rows.includes('read-599'), rows.at(-3), rows.at(-2), rows.at(-1),
         document.querySelector(reply).dataset.captureIdentity, root.querySelectorAll('ex-tool-step').length,
         !!root.querySelector('ex-turn-work-panel .surface')];
-    }, turn, reply), ['approach', true, 'validation-note', 'retry-final', 'receipt-note', 'same-reply', 0, false]);
+    }, turn, reply), ['approach', false, 'validation-note', 'retry-final', 'receipt-note', 'same-reply', 0, false]);
     assert.equal(await fixture(viewer => viewer.fixture.chat.turnWorkReads), reads);
     assert.equal(await fixture(viewer => viewer.fixture.chat.toolDetailsReads), 0);
     if (!narrow) {
@@ -143,12 +139,15 @@ export default async function* (capture) {
       await capture.motion.play();
     }
     await settleMotion(capture);
+    const settledTop = await capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().top, work);
+    assert.ok(Math.abs(settledTop - top) < 2, 'Worked moved after the compact timeline opened');
     assert.equal(await capture.evaluate(selector => document.activeElement === document.querySelector(selector), work), true);
     yield { name: theme + '-expanded', inspect };
 
     await scrollTo(capture, group);
     await capture.click(group);
     await settleMotion(capture);
+    assert.equal(await capture.evaluate(() => document.querySelector('[data-work-step="read-599"] ex-tool-step') !== null), true);
     assert.match(await capture.evaluate(selector => document.querySelector(selector).textContent, head), /pnpm test --filter payments.*Exit 1/);
     assert.equal(await fixture(viewer => viewer.fixture.chat.toolDetailsReads), 0);
     await fixture(viewer => viewer.fixture.chat.toolDetailsBehavior('held'));

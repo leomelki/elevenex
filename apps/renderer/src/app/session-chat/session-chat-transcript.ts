@@ -184,8 +184,9 @@ function projectExchanges(
     const completed = group.promptItem?.completedTurn;
     const entry = work?.get(group.id);
     const activity = completed && entry?.revision === completed.revision ? entry : undefined;
-    const replyStart = completed && activity?.items ? completed.beforeReply : 0;
-    const records = completed ? completedTurnRecords(completed, activity?.items) : group.items;
+    const replyStart = completed && activity?.items ? activity.replyOffset ?? completed.beforeReply : 0;
+    const turnId = activity?.replyOffset === undefined ? undefined : group.id;
+    const records = completed ? completedTurnRecords(completed, activity) : group.items;
     const current = atLiveTail && index === groups.length - 1;
     const live =
       !completed && current &&
@@ -251,7 +252,7 @@ function projectExchanges(
         const project = (): WorkStep[] => {
           if (item.kind === "tool_use") {
             const receipt = item.receipt;
-            const deferredTool = sessionToolDetailsSource(item, result);
+            const deferredTool = sessionToolDetailsSource(item, result, turnId);
             const evidence = deferredTool ? undefined : presentSessionToolEvidence(item, result, result ? undefined : receipt?.id);
             const status = sessionChatToolStatus(item.error, result?.error ?? receipt?.error, live);
             return [
@@ -279,7 +280,7 @@ function projectExchanges(
             // position, including when it arrives after another message.
             if (pairedResult) return media?.length ? [{ id, kind: 'media', media }] : [];
             const invocation = item.invocation;
-            const deferredTool = sessionToolDetailsSource(item);
+            const deferredTool = sessionToolDetailsSource(item, undefined, turnId);
             return [{
               id,
               kind: invocation ? sessionToolKind(invocation) : "tool",

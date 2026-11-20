@@ -3,6 +3,9 @@ import {
   SESSION_CHAT_TOOL_CATEGORIES,
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
+  SESSION_CHAT_TURN_TIMELINE_SLOTS,
+  SESSION_CHAT_TURN_TOOL_LABEL_LIMIT,
+  SESSION_CHAT_TURN_TOOL_META_LIMIT,
   SESSION_CHAT_TURN_WORK_LIMIT,
   SESSION_CHAT_TURN_WORK_MAX_LIMIT,
 } from "@elevenex/shared";
@@ -15,7 +18,8 @@ import type {
   SessionChatItem,
   SessionChatRecord,
   SessionChatCompletedTurn,
-  SessionChatTurnWorkPage,
+  SessionChatTurnTimelineRow,
+  SessionChatTurnWorkReply,
   SessionChatTurnWorkRead,
   SessionChatToolDetailsReply,
   SessionChatToolDetailsRead,
@@ -178,15 +182,18 @@ function item(value: unknown): SessionChatRecord {
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
     ...(mentions === undefined ? {} : { mentions }),
-    ...(raw["media"] !== undefined ? { media: array(raw["media"], 12, value => {
-      const media = chatObject(value);
-      const id = chatText(media["id"], 2);
-      if (!/^\d{1,2}$/.test(id)) throw invalid();
-      return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]), ...(media["kind"] === undefined ? {} : { kind: mediaKind(media["kind"]) }) };
-    }) } : {}),
+    ...(raw["media"] !== undefined ? { media: mediaReferences(raw["media"]) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
+}
+function mediaReferences(value: unknown) {
+  return array(value, 12, value => {
+    const media = chatObject(value);
+    const id = chatText(media["id"], 2);
+    if (!/^\d{1,2}$/.test(id)) throw invalid();
+    return { id, path: chatText(media["path"], 4000), caption: chatText(media["caption"], 200), inline: bool(media["inline"]), ...(media["kind"] === undefined ? {} : { kind: mediaKind(media["kind"]) }) };
+  });
 }
 function contentRevision(value: unknown): string {
   const revision = chatText(value, 64);
@@ -246,17 +253,19 @@ export function parseToolDetailsRead(value: unknown): SessionChatToolDetailsRead
   const raw = chatObject(value);
   const item = toolReference(raw['item']);
   const result = raw['result'] === undefined ? undefined : toolReference(raw['result']);
-  if (item.id === result?.id) throw invalid();
+  const turnId = raw['turnId'] === undefined ? undefined : chatText(raw['turnId']);
+  if (item.id === result?.id || (turnId !== undefined && (!turnId || turnId === item.id || turnId === result?.id ||
+    (result && result.revision !== item.revision)))) throw invalid();
   return {
     taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
-    requestId: requestId(raw['requestId']), item, ...(result ? { result } : {}),
+    requestId: requestId(raw['requestId']), item, ...(result ? { result } : {}), ...(turnId ? { turnId } : {}),
   };
 }
 
 export function parseToolDetailsReply(value: unknown, input: SessionChatToolDetailsRead): SessionChatToolDetailsReply {
   const raw = chatObject(value);
   const { taskId, sessionId } = input;
-  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
+  if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId || raw['turnId'] !== input.turnId ||
       !!input.result !== (raw['result'] !== undefined)) throw invalid();
   const evidence = (value: unknown, expected: SessionChatToolReference): SessionChatToolEvidence => {
     const valueRecord = chatObject(value);
@@ -271,33 +280,74 @@ export function parseToolDetailsReply(value: unknown, input: SessionChatToolDeta
   const result = input.result ? evidence(raw['result'], input.result) : undefined;
   if (result && (call.record.kind !== 'tool_use' || result.record.kind !== 'tool_result' ||
     result.record.toolId !== (call.record.toolId ?? call.id))) throw invalid();
-  return { taskId, sessionId, item: call, ...(result ? { result } : {}) };
+  return { taskId, sessionId, item: call, ...(result ? { result } : {}), ...(input.turnId ? { turnId: input.turnId } : {}) };
 }
 
 export function parseTurnWorkRead(value: unknown): SessionChatTurnWorkRead {
   const raw = chatObject(value);
   const turnId = chatText(raw['turnId']);
   const deferToolDetails = deferredToolDetails(raw['deferToolDetails']);
+  const timeline = raw['timeline'];
   const limit = raw['limit'] === undefined ? undefined : workCount(raw['limit']);
-  if (!turnId || (limit !== undefined && (limit < 1 ||
+  if (!turnId || (timeline !== undefined && (timeline !== true || !deferToolDetails)) || (limit !== undefined && (limit < 1 ||
     limit > (deferToolDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT)))) throw invalid();
   return {
     taskId: chatId(raw['taskId']), sessionId: chatId(raw['sessionId']),
     requestId: requestId(raw['requestId']), turnId,
     revision: contentRevision(raw['revision']), offset: workCount(raw['offset']),
     ...(deferToolDetails ? { deferToolDetails } : {}),
+    ...(timeline === true ? { timeline } : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
 }
-export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkPage {
+
+function timelineRow(value: unknown, turnId: string): SessionChatTurnTimelineRow {
+  if (value === null) return null;
+  const raw = chatObject(value);
+  const kind = raw['kind'], id = chatText(raw['id']);
+  if (!id || id === turnId) throw invalid();
+  if (kind === 'call' || kind === 'result' || kind === 'media') {
+    const media = raw['media'] === undefined ? undefined : mediaReferences(raw['media']);
+    if (media?.some(value => !value.inline || value.kind === 'file')) throw invalid();
+    if (kind === 'media') {
+      const callId = chatText(raw['callId']);
+      if (!callId || callId === id || callId === turnId || !media?.length) throw invalid();
+      return { kind, id, callId, media };
+    }
+    const resultId = raw['resultId'] === undefined ? undefined : chatText(raw['resultId']);
+    const label = chatText(raw['label'], SESSION_CHAT_TURN_TOOL_LABEL_LIMIT);
+    const error = raw['error'];
+    if (!label.trim() || (error !== undefined && error !== true) ||
+        (resultId !== undefined && (kind !== 'call' || !resultId || resultId === turnId || resultId === id))) throw invalid();
+    return {
+      kind, id, label, toolKind: nullable(raw['toolKind']),
+      ...(resultId ? { resultId } : {}), ...(error ? { error } : {}), ...(media ? { media } : {}),
+      ...(raw['meta'] === undefined ? {} : { meta: chatText(raw['meta'], SESSION_CHAT_TURN_TOOL_META_LIMIT) }),
+    };
+  }
+  const row = activityItem(raw, false);
+  if (row.kind === 'user' || row.kind === 'tool_use' || row.kind === 'tool_result') throw invalid();
+  return row;
+}
+
+export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead): SessionChatTurnWorkReply {
   const raw = chatObject(value);
   const { taskId, sessionId, turnId, revision, offset } = input;
   if (raw['taskId'] !== taskId || raw['sessionId'] !== sessionId ||
     raw['turnId'] !== turnId || raw['revision'] !== revision || raw['offset'] !== offset) throw invalid();
+  const total = workCount(raw['total']);
+  if (raw['timeline'] !== undefined) {
+    if (!input.timeline || raw['items'] !== undefined) throw invalid();
+    const timeline = array(raw['timeline'], SESSION_CHAT_TURN_TIMELINE_SLOTS, value => timelineRow(value, turnId));
+    const end = offset + timeline.length;
+    const nextOffset = end < total ? end : null;
+    const ids = timeline.flatMap(row => row ? [row.id] : []);
+    if (!timeline.length || end > total || raw['nextOffset'] !== nextOffset || new Set(ids).size !== ids.length) throw invalid();
+    return { taskId, sessionId, turnId, revision, offset, timeline, total, nextOffset };
+  }
   // A legacy engine may ignore the limit and return its ordinary 40-row page.
   const items = array(raw['items'], Math.max(SESSION_CHAT_TURN_WORK_LIMIT, input.limit ?? 0),
     value => activityItem(value, !!input.deferToolDetails, true));
-  const total = workCount(raw['total']);
   const end = offset + items.length;
   const nextOffset = end < total ? end : null;
   if (!items.length || end > total || raw['nextOffset'] !== nextOffset ||

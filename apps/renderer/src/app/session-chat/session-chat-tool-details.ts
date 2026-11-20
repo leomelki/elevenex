@@ -27,7 +27,7 @@ interface Inspection {
 
 function keyFor(selection: ChatSelection, source: SessionChatToolSource): string {
   const { item, result } = source;
-  return JSON.stringify([selection.taskId, selection.sessionId, item.id, item.revision, result?.id, result?.revision]);
+  return JSON.stringify([selection.taskId, selection.sessionId, source.turnId, item.id, item.revision, result?.id, result?.revision]);
 }
 
 /** A mounted conversation owns only the details currently being inspected. */
@@ -71,13 +71,13 @@ export class SessionChatToolDetails {
 
   /** Stage only rows whose details were already open. Mounted tools take
    * over these observers when the complete turn is revealed. */
-  async prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal): Promise<void> {
+  async prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal, turnId?: string): Promise<void> {
     const selection = this.selection();
     if (!selection || signal.aborted) return;
     const wanted = new Set(toolIds);
     const results = new Map(items.filter(row => row.kind === 'tool_result').map(row => [row.toolId ?? row.id, row]));
     const sources = items.flatMap(row => {
-      const source = wanted.has(row.id) ? sessionToolDetailsSource(row, results.get(row.toolId ?? row.id)) : undefined;
+      const source = wanted.has(row.id) ? sessionToolDetailsSource(row, results.get(row.toolId ?? row.id), turnId) : undefined;
       return source ? [source] : [];
     });
     const queue = sources.values();

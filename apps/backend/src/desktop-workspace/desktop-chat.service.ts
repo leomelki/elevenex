@@ -35,7 +35,10 @@ import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
 import { ChatToolDetails } from './desktop-chat-tool-details.js';
 import { toolKey } from './desktop-chat-tool-links.js';
 import { SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT } from '@elevenex/shared';
-import type { SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource } from '@elevenex/shared';
+import type {
+  SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource,
+  SessionChatTurnWorkPage, SessionChatTurnWorkReply,
+} from '@elevenex/shared';
 
 type ChatReadView = `${'window' | 'progressive' | 'summary' | 'recent-summary'}:${'inline' | 'deferred'}`;
 type ProjectionFingerprints = Map<string, { readonly json: string; readonly revision: number }>;
@@ -453,40 +456,67 @@ export class DesktopChatService implements OnModuleDestroy {
     };
   }
 
+  private async savedTurn(feed: ChatFeed, sessionId: number, turnId: string, signal: AbortSignal) {
+    const history = await this.history(feed, sessionId);
+    if (signal.aborted) return;
+    const index = this.historyWindowIndex(feed);
+    index.align(history);
+    const start = index.position(history, turnId);
+    if (start >= 0 && history[start].kind === 'user') return history.slice(start, endOfChatTurn(history, start));
+  }
+
   async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
-    signal: AbortSignal, deferToolDetails?: string, limit = SESSION_CHAT_TURN_WORK_LIMIT) {
+    signal: AbortSignal, deferToolDetails?: string, limit?: number): Promise<SessionChatTurnWorkPage | undefined>;
+  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
+    signal: AbortSignal, deferToolDetails?: string, limit?: number, timeline?: string): Promise<SessionChatTurnWorkReply | undefined>;
+  async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
+    signal: AbortSignal, deferToolDetails?: string, limit: number = SESSION_CHAT_TURN_WORK_LIMIT, timeline?: string): Promise<SessionChatTurnWorkReply | undefined> {
     if (typeof turnId !== 'string' || !turnId || turnId.length > 1000 ||
         typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) ||
         !Number.isSafeInteger(offset) || offset < 0)
       throw new BadRequestException('Invalid turn activity window.');
     const deferDetails = toolDetailsRequested(deferToolDetails);
+    if (timeline !== undefined && (timeline !== '1' || !deferDetails))
+      throw new BadRequestException('Invalid turn timeline format.');
     if (!Number.isSafeInteger(limit) || limit < 1 ||
         limit > (deferDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT))
       throw new BadRequestException('Invalid turn activity limit.');
     const session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
-    const index = this.historyWindowIndex(feed);
-    const projector = this.completedTurns(feed);
-    const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
-    const history = await this.history(feed, sessionId);
+    const turn = await this.savedTurn(feed, sessionId, turnId, signal);
     if (signal.aborted) return;
-    index.align(history);
-    const start = index.position(history, turnId);
-    const page = start >= 0 && history[start].kind === 'user'
-      ? projector.page(history.slice(start, endOfChatTurn(history, start)), revision, offset, toolDetails, limit) : null;
+    const projector = this.completedTurns(feed);
+    const page = turn && (timeline
+      ? projector.timeline(turn, revision, offset)
+      : projector.page(turn, revision, offset, deferDetails ? this.toolDetails(feed) : undefined, limit));
     if (!page) throw new ConflictException('This activity has changed. Refresh the conversation to see it.');
     return { taskId, sessionId, turnId, revision, offset, ...page };
   }
 
   async readToolDetails(taskId: number, sessionId: number, source: SessionChatToolSource, signal: AbortSignal): Promise<SessionChatToolDetailsReply | undefined> {
     if (!validToolReference(source.item) ||
-        (source.result && (!validToolReference(source.result) || source.result.id === source.item.id)))
+        (source.result && (!validToolReference(source.result) || source.result.id === source.item.id)) ||
+        (source.turnId !== undefined && (typeof source.turnId !== 'string' || !source.turnId || source.turnId.length > 1000 ||
+          source.turnId === source.item.id || source.turnId === source.result?.id ||
+          (source.result && source.result.revision !== source.item.revision))))
       throw new BadRequestException('Invalid tool details reference.');
     const changed = () => new ConflictException('This tool call has changed. Refresh the conversation to see the latest details.');
     const session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     const feed = this.feed(sessionId, session.activeAgentProvider, false);
+    if (source.turnId) {
+      const { id, revision } = source.item;
+      const turn = await this.savedTurn(feed, sessionId, source.turnId, signal);
+      if (signal.aborted) return;
+      const tool = turn && this.completedTurns(feed).timelineTool(turn, revision, id);
+      if (!tool || tool.result?.id !== source.result?.id) throw changed();
+      const projector = this.toolDetails(feed);
+      const item = projector.turnEvidence(revision, tool.item);
+      const result = tool.result && projector.turnEvidence(revision, tool.result, tool.item);
+      if (!item || (source.result && !result)) throw changed();
+      return { taskId, sessionId, turnId: source.turnId, item, ...(result ? { result } : {}) };
+    }
     const projector = this.toolDetails(feed);
     let item = projector.recentEvidence(source.item);
     let result = source.result && projector.recentEvidence(source.result, source.item.id);

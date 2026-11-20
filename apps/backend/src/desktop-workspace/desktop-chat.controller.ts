@@ -71,6 +71,7 @@ export class DesktopChatController {
     @Res() response: Response,
     @Query('deferToolDetails') deferToolDetails?: string,
     @Query('limit') limit?: string,
+    @Query('timeline') timeline?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -82,6 +83,7 @@ export class DesktopChatController {
         abort.signal,
         deferToolDetails,
         limit === undefined ? undefined : typeof limit === 'string' && /^\d+$/.test(limit) ? Number(limit) : NaN,
+        timeline,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {
@@ -97,12 +99,14 @@ export class DesktopChatController {
     @Query('resultId') resultId: string,
     @Query('resultRevision') resultRevision: string,
     @Res() response: Response,
+    @Query('turnId') turnId?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
     response.once('close', close);
     try {
       const details = await this.chat.readToolDetails(resourceId(task), resourceId(session), {
+        turnId,
         item: { id: itemId, revision },
         ...(resultId !== undefined || resultRevision !== undefined ? { result: { id: resultId, revision: resultRevision } } : {}),
       }, abort.signal);

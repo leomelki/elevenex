@@ -4,12 +4,15 @@ import {
   SESSION_CHAT_TURN_REPLY_LIMIT,
   SESSION_CHAT_TURN_WORK_BATCH_BYTES,
   SESSION_CHAT_TURN_WORK_LIMIT,
+  SESSION_CHAT_TURN_TIMELINE_BYTES,
+  SESSION_CHAT_TURN_TIMELINE_SLOTS,
   sessionChatToolCategory,
   sessionChatToolStatus,
   type SessionChatCompletedTurn,
   type SessionChatItem,
   type SessionChatRecord,
   type SessionChatToolCategory,
+  type SessionChatTurnTimelineRow,
 } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { changeSummary, summarizeTurnChanges } from './desktop-chat-changes.js';
@@ -17,6 +20,7 @@ import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-
 import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js';
 import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
 import { ChatToolLinks } from './desktop-chat-tool-links.js';
+import { savedTimelineRow } from './desktop-chat-turn-timeline.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
@@ -182,6 +186,33 @@ export class ChatCompletedTurns {
     toolPage?.commit();
     const next = offset + items.length;
     return { items, nextOffset: next < hidden.length ? next : null, total: hidden.length };
+  }
+
+  timeline(turn: readonly AgentTranscriptItem[], revision: string, offset: number) {
+    const prepared = this.prepare(turn);
+    if (!prepared || offset >= prepared.hidden.length || this.revision(prepared.rows) !== revision) return null;
+    const { hidden, links } = prepared;
+    const timeline: SessionChatTurnTimelineRow[] = [];
+    let bytes = 2;
+    const end = Math.min(hidden.length, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
+    for (let position = offset; position < end; position++) {
+      const raw = hidden[position];
+      const row = savedTimelineRow(raw, links.peer(raw), this.changesCache, this.mediaCache);
+      bytes += Buffer.byteLength(JSON.stringify(row)) + Number(timeline.length > 0);
+      if (bytes > SESSION_CHAT_TURN_TIMELINE_BYTES) break;
+      timeline.push(row);
+    }
+    if (!timeline.length) return null;
+    const next = offset + timeline.length;
+    return { timeline, nextOffset: next < hidden.length ? next : null, total: hidden.length };
+  }
+
+  timelineTool(turn: readonly AgentTranscriptItem[], revision: string, itemId: string) {
+    const prepared = this.prepare(turn);
+    if (!prepared || this.revision(prepared.rows) !== revision) return;
+    const item = prepared.hidden.find(row => row.id === itemId);
+    if (item?.kind === 'tool_use') return { item, result: prepared.links.peer(item) };
+    if (item?.kind === 'tool_result' && !prepared.links.peer(item)) return { item };
   }
 }
 

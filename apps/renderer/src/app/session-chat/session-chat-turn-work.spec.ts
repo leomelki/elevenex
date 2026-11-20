@@ -1,9 +1,10 @@
 import {
   SESSION_CHAT_TURN_WORK_MAX_LIMIT,
-  type BackendResult, type SessionChatItem, type SessionChatRecord, type SessionChatTurnWorkPage, type SessionChatTurnWorkRead,
+  type BackendResult, type SessionChatItem, type SessionChatRecord, type SessionChatTurnWorkPage,
+  type SessionChatTurnWorkRead, type SessionChatTurnWorkReply,
 } from '@elevenex/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
+import { completedTurnRecords, SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
 
 const selection = { taskId: 12, sessionId: 101, scopeId: 'machine' };
 const revision = 'a'.repeat(64);
@@ -35,7 +36,7 @@ async function settle() {
 function setup(tools?: ConstructorParameters<typeof SessionChatTurnWork>[2]) {
   const client = {
     cancel: vi.fn<(scope: string, id: string) => void>(),
-    turnWork: vi.fn(async (_scope: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkPage>> =>
+    turnWork: vi.fn(async (_scope: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> =>
       ({ ok: true, value: page(input.turnId, input.offset, input.revision) })),
   };
   const work = new SessionChatTurnWork(client, new SessionChatWorkCache(), tools);
@@ -83,13 +84,38 @@ describe('finished turn activity', () => {
     expect(client.turnWork.mock.calls.map(([, input]) => input.offset)).toEqual([0, 40, 80]);
     expect(new Set(client.turnWork.mock.calls.map(([, input]) => input.requestId)).size).toBe(1);
     expect(client.turnWork).toHaveBeenCalledWith(selection.scopeId, expect.objectContaining({
-      deferToolDetails: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+      deferToolDetails: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT, timeline: true,
     }));
     expect(work.open().get('turn')?.items).toBeUndefined();
     last.resolve({ ok: true, value: page('turn', 80, revision, 105) });
     await settle();
     expect(work.open().get('turn')?.items).toEqual(page('turn', 0, revision, 105).items);
     expect(work.open().get('turn')?.busy).toBeUndefined();
+  });
+
+  it('assembles compact batches in source order when paired results straddle the reply', async () => {
+    const { work, client } = setup();
+    const saved = turn('turn', 5);
+    const summary = { ...saved.completedTurn!, beforeReply: 3 };
+    work.sync([{ ...saved, completedTurn: summary }], true);
+    const first = { taskId: selection.taskId, sessionId: selection.sessionId, turnId: 'turn', revision,
+      offset: 0, total: 5, nextOffset: 3 };
+    const last = deferred<BackendResult<SessionChatTurnWorkReply>>();
+    client.turnWork.mockResolvedValueOnce({ ok: true, value: { ...first, timeline: [
+      { kind: 'call', id: 'call', toolKind: 'bash', label: 'pnpm test', resultId: 'receipt' },
+      { kind: 'call', id: 'read', toolKind: 'read', label: 'src/test.ts', resultId: 'read-result' },
+      null,
+    ] } }).mockReturnValueOnce(last.promise);
+    work.toggle('turn', true);
+    await settle();
+    expect(client.turnWork.mock.calls.map(([, input]) => input.offset)).toEqual([0, 3]);
+    expect(work.open().get('turn')?.items).toBeUndefined();
+    last.resolve({ ok: true, value: { ...first, offset: 3, nextOffset: null, timeline: [null, row('after', 'system')] } });
+    await settle();
+    const opened = work.open().get('turn');
+    expect(completedTurnRecords(summary, opened).map(record => record.id)).toEqual(['call', 'read', 'turn-reply', 'after']);
+    expect(opened?.items?.[0]).toMatchObject({ kind: 'tool_use', toolDetails: { revision, summary: 'pnpm test' },
+      receipt: { id: 'receipt', toolDetails: { revision } } });
   });
 
   it('cancels a closing or superseded turn and rejects replies from those reads', async () => {
@@ -152,7 +178,7 @@ describe('finished turn activity', () => {
     const { work, client } = setup({ prepare, afterReveal });
     work.toggle('turn', true, ['turn-1']);
     await settle();
-    expect(prepare).toHaveBeenCalledWith(page().items, ['turn-1'], expect.any(AbortSignal));
+    expect(prepare).toHaveBeenCalledWith(page().items, ['turn-1'], expect.any(AbortSignal), undefined);
     expect(work.open().get('turn')?.items).toBeUndefined();
     const signal = prepare.mock.calls[0]![2];
     first.resolve();
@@ -166,15 +192,15 @@ describe('finished turn activity', () => {
 
   it('drops cached turns by least recent access, aggregate bytes, and backend scope', () => {
     const cache = new SessionChatWorkCache();
-    for (let index = 0; index < 16; index++) cache.put(selection, 'turn-' + index, revision, [row('small')]);
+    for (let index = 0; index < 16; index++) cache.put(selection, 'turn-' + index, revision, { items: [row('small')] });
     expect(cache.get(selection, 'turn-0', revision)).toBeDefined();
-    cache.put(selection, 'turn-16', revision, [row('small')]);
+    cache.put(selection, 'turn-16', revision, { items: [row('small')] });
     expect(cache.get(selection, 'turn-1', revision)).toBeUndefined();
     expect(cache.get(selection, 'turn-0', revision)).toBeDefined();
 
     for (let index = 0; index < 6; index++) {
       const id = 'large-' + index;
-      cache.put(selection, id, revision, [row(id, 'thinking', 'é'.repeat(170_000))]);
+      cache.put(selection, id, revision, { items: [row(id, 'thinking', 'é'.repeat(170_000))] });
     }
     expect(cache.get(selection, 'large-0', revision)).toBeUndefined();
     expect(cache.get(selection, 'large-5', revision)).toBeDefined();

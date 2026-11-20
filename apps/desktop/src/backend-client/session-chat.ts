@@ -103,6 +103,7 @@ export function registerSessionChatIpc(
     const query = new URLSearchParams({ turnId, revision, offset: String(offset) });
     if (input.deferToolDetails) query.set('deferToolDetails', '1');
     if (limit !== undefined) query.set('limit', String(limit));
+    if (input.timeline) query.set('timeline', '1');
     return client.execute(
       window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
       async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
@@ -118,6 +119,7 @@ export function registerSessionChatIpc(
     const input = parseToolDetailsRead(args[1]);
     const { taskId, sessionId, item, result, requestId } = input;
     const query = new URLSearchParams({ itemId: item.id, revision: item.revision });
+    if (input.turnId) query.set('turnId', input.turnId);
     if (result) {
       query.set('resultId', result.id);
       query.set('resultRevision', result.revision);

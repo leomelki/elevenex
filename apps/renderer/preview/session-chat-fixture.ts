@@ -3,7 +3,7 @@ import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
-import { SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
+import { SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   SessionChatAgentRead,
@@ -17,8 +17,9 @@ import type {
   SessionChatPage,
   SessionChatRead,
   SessionChatRecord,
-  SessionChatTurnWorkPage,
+  SessionChatTurnTimelineRow,
   SessionChatTurnWorkRead,
+  SessionChatTurnWorkReply,
   SessionChatToolDetailsReply,
   SessionChatToolDetailsRead,
   SessionChatToolEvidence,
@@ -521,6 +522,7 @@ export class SessionChatFixture {
     this.changed();
   }
   private readonly turnActivities = new Map<string, readonly SessionChatRecord[]>();
+  private readonly turnTimelines = new Map<string, readonly SessionChatTurnTimelineRow[]>();
   private readonly heldActivity = new Set<() => void>();
   private workBehavior: 'ready' | 'held' | 'failed' = 'ready';
   turnWorkReads = 0;
@@ -528,13 +530,16 @@ export class SessionChatFixture {
   seedTurnWork(sessionId: number, turnId: string, records: readonly SessionChatRecord[]): void {
     this.turnActivities.set(`${sessionId}/${turnId}`, records);
   }
+  seedTurnTimeline(sessionId: number, turnId: string, timeline: readonly SessionChatTurnTimelineRow[]): void {
+    this.turnTimelines.set(`${sessionId}/${turnId}`, timeline);
+  }
 
   turnWorkBehavior(behavior: 'ready' | 'held' | 'failed'): void {
     this.workBehavior = behavior;
     if (behavior !== 'held') for (const release of this.heldActivity) release();
   }
 
-  async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkPage>> {
+  async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
     this.turnWorkReads++;
     if (this.workBehavior === 'held') await new Promise<void>(resolve => {
       const release = () => {
@@ -547,8 +552,16 @@ export class SessionChatFixture {
     });
     if (this.workBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
     const { taskId, sessionId, turnId, revision, offset } = input;
-    const work = this.turnActivities.get(`${sessionId}/${turnId}`);
+    const key = `${sessionId}/${turnId}`;
     const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
+    const timeline = input.timeline ? this.turnTimelines.get(key) : undefined;
+    if (timeline && revision === summary?.revision) {
+      const rows = timeline.slice(offset, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
+      const end = offset + rows.length;
+      return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+        timeline: rows, total: timeline.length, nextOffset: end < timeline.length ? end : null } };
+    }
+    const work = this.turnActivities.get(key);
     if (!work || revision !== summary?.revision)
       return { ok: false, error: { code: 'http', status: 409, message: 'Activity changed.' } };
     const items = work.slice(offset, offset + (input.limit ?? SESSION_CHAT_TURN_WORK_LIMIT));
@@ -580,13 +593,13 @@ export class SessionChatFixture {
       });
     });
     if (this.detailBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Could not read tool details.' } };
-    const { taskId, sessionId, item, result } = input;
+    const { taskId, sessionId, item, result, turnId } = input;
     const records = this.toolEvidence.get(sessionId);
     const primary = records?.get(item.id);
     const output = result ? records?.get(result.id) : undefined;
     if (!primary || primary.revision !== item.revision || output?.revision !== result?.revision)
       return { ok: false, error: { code: 'http', status: 409, message: 'Tool evidence changed.' } };
-    return { ok: true, value: { taskId, sessionId, item: primary, ...(output ? { result: output } : {}) } };
+    return { ok: true, value: { taskId, sessionId, item: primary, ...(output ? { result: output } : {}), ...(turnId ? { turnId } : {}) } };
   }
 
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {

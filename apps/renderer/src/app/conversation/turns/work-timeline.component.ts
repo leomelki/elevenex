@@ -121,6 +121,15 @@ export class WorkTimelineComponent implements OnChanges {
         (retained?.has(row.step.id) || this.visible(row))).map(row => row.step.id));
     },
   });
+  protected readonly renderedRows = computed(() => {
+    const rows = this.rows();
+    if (!this.revealWork()) return rows;
+    const mounted = this.mountedWorkRows();
+    // Retain group controls and rows that have entered a fold. An unopened
+    // group in a saved timeline needs no hidden row shells.
+    return rows.filter(row => isProse(row.step) || mounted.has(row.step.id) ||
+      (row.section?.id === row.step.id && row.section.folded.size > 0));
+  });
   private readonly lastMessageId = computed(() => {
     const steps = this.ordered();
     for (let index = steps.length - 1; index >= 0; index--) {

@@ -6,6 +6,7 @@ import {
 import type { SessionChatClient } from '../backend/session-chat-client.service';
 import type { ChatSelection } from './session-chat.store';
 import { ChatDisclosureCache } from './session-chat-disclosure-cache';
+import { timelineRecord } from './session-chat-turn-timeline';
 
 const CACHE_TURNS = 16;
 const CACHE_BYTES = 1536 * 1024;
@@ -14,26 +15,30 @@ const DISCLOSURE_EXIT_MS = 280;
 
 @Injectable({ providedIn: 'root' })
 export class SessionChatWorkCache {
-  private readonly turns = new ChatDisclosureCache<readonly SessionChatRecord[]>(CACHE_TURNS, CACHE_BYTES);
+  private readonly turns = new ChatDisclosureCache<TurnWorkRows>(CACHE_TURNS, CACHE_BYTES);
 
   private key(selection: ChatSelection, turnId: string, revision: string): string {
     return JSON.stringify([selection.taskId, selection.sessionId, turnId, revision]);
   }
 
-  get(selection: ChatSelection, turnId: string, revision: string): readonly SessionChatRecord[] | undefined {
+  get(selection: ChatSelection, turnId: string, revision: string): TurnWorkRows | undefined {
     return this.turns.get(selection.scopeId, this.key(selection, turnId, revision));
   }
 
-  put(selection: ChatSelection, turnId: string, revision: string, items: readonly SessionChatRecord[]): void {
-    this.turns.put(selection.scopeId, this.key(selection, turnId, revision), items);
+  put(selection: ChatSelection, turnId: string, revision: string, work: TurnWorkRows): void {
+    this.turns.put(selection.scopeId, this.key(selection, turnId, revision), work);
   }
 }
 
 type WorkError = 'failed' | 'changed';
-export interface OpenTurnWork {
+interface TurnWorkRows {
+  readonly items: readonly SessionChatRecord[];
+  /** A compact timeline omits paired receipts, moving the visible reply boundary. */
+  readonly replyOffset?: number;
+}
+export interface OpenTurnWork extends Partial<TurnWorkRows> {
   readonly revision: string;
   readonly toolIds: readonly string[];
-  readonly items?: readonly SessionChatRecord[];
   readonly busy?: true;
   readonly error?: WorkError;
   readonly closing?: true;
@@ -45,12 +50,14 @@ interface WorkRequest {
   readonly controller: AbortController;
 }
 interface TurnToolPreparation {
-  prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal): Promise<void>;
+  prepare(items: readonly SessionChatRecord[], toolIds: readonly string[], signal: AbortSignal, turnId?: string): Promise<void>;
   afterReveal(release: () => void): void;
 }
 
-export function completedTurnRecords(turn: SessionChatCompletedTurn, work?: readonly SessionChatRecord[]): readonly SessionChatRecord[] {
-  return work ? [...work.slice(0, turn.beforeReply), ...turn.reply, ...work.slice(turn.beforeReply)] : turn.reply;
+export function completedTurnRecords(turn: SessionChatCompletedTurn, work?: Partial<TurnWorkRows>): readonly SessionChatRecord[] {
+  if (!work?.items) return turn.reply;
+  const boundary = work.replyOffset ?? turn.beforeReply;
+  return [...work.items.slice(0, boundary), ...turn.reply, ...work.items.slice(boundary)];
 }
 
 /** Collect bounded transport replies before publishing any activity to the view. */
@@ -162,7 +169,7 @@ export class SessionChatTurnWork {
     if (!selection || !turn || !open || open.items || open.closing || open.error) return;
     const cached = this.cache.get(selection, id, turn.revision);
     if (cached && (!open.toolIds.length || !this.tools)) {
-      this.set(id, { ...open, items: cached, busy: undefined });
+      this.set(id, { ...open, ...cached, busy: undefined });
       return;
     }
     if (!this.available && !cached) return;
@@ -178,58 +185,68 @@ export class SessionChatTurnWork {
     this.request(selection, id, turn, cached);
   }
 
-  private request(selection: ChatSelection, turnId: string, turn: SessionChatCompletedTurn, cached?: readonly SessionChatRecord[]): WorkRequest {
+  private request(selection: ChatSelection, turnId: string, turn: SessionChatCompletedTurn, cached?: TurnWorkRows): WorkRequest {
     const request = { id: crypto.randomUUID(), turnId, revision: turn.revision, controller: new AbortController() };
     this.pending.set(turnId, request);
     void this.receive(selection, turn, request, cached);
     return request;
   }
 
-  private async receive(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest, cached?: readonly SessionChatRecord[]): Promise<void> {
+  private async receive(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest, cached?: TurnWorkRows): Promise<void> {
     const { turnId, revision, controller } = request;
-    const result = cached ? { items: cached } : await this.readItems(selection, turn, request);
+    const result = cached ?? await this.readItems(selection, turn, request);
     if (!result || !this.current(selection, request)) return;
     const open = this.open().get(turnId);
     if ('items' in result) {
-      if (!cached) this.cache.put(selection, turnId, revision, result.items);
+      if (!cached) this.cache.put(selection, turnId, revision, result);
       if (this.tools && open?.toolIds.length) {
-        await this.tools.prepare(result.items, open.toolIds, controller.signal);
+        await this.tools.prepare(result.items, open.toolIds, controller.signal, result.replyOffset === undefined ? undefined : turnId);
         if (!this.current(selection, request)) return;
         // Retain the staged inspections until the mounted tools acquire them,
         // even when their combined evidence exceeds the closed-tool cache.
         this.tools.afterReveal(() => controller.abort());
       }
-      if (open) this.set(turnId, { ...open, items: result.items, busy: undefined });
+      if (open) this.set(turnId, { ...open, ...result, busy: undefined });
     } else if (open) this.set(turnId, { ...open, error: result.error, busy: undefined });
     this.pending.delete(turnId);
     if (this.prefetch === request) this.prefetch = undefined;
   }
 
   private async readItems(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest):
-  Promise<{ items: readonly SessionChatRecord[] } | { error: WorkError } | undefined> {
+  Promise<TurnWorkRows | { error: WorkError } | undefined> {
     const { turnId, revision, id } = request;
     const items: SessionChatRecord[] = [];
     const seen = new Set(turn.reply.map(row => row.id));
     seen.add(turnId);
-    while (items.length < turn.total) {
-      const offset = items.length;
+    let offset = 0;
+    let replyOffset = 0;
+    let timeline: boolean | undefined;
+    while (offset < turn.total) {
       const result = await this.client.turnWork(selection.scopeId, {
         taskId: selection.taskId, sessionId: selection.sessionId, turnId, revision, offset,
-        requestId: id, deferToolDetails: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT,
+        requestId: id, deferToolDetails: true, timeline: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT,
       });
       if (!this.current(selection, request)) return;
       if (!result.ok) return { error: result.error.status === 409 ? 'changed' : 'failed' };
-      const page = result.value, end = offset + page.items.length;
+      const page = result.value;
+      const compact = 'timeline' in page;
+      if (timeline !== undefined && timeline !== compact) return { error: 'failed' };
+      timeline = compact;
+      const rows = compact ? page.timeline : page.items;
+      const end = offset + rows.length;
       if (page.taskId !== selection.taskId || page.sessionId !== selection.sessionId ||
         page.turnId !== turnId || page.revision !== revision || page.offset !== offset || page.total !== turn.total ||
-        !page.items.length || end > turn.total || page.nextOffset !== (end < turn.total ? end : null)) return { error: 'failed' };
-      for (const row of page.items) {
+          !rows.length || end > turn.total || page.nextOffset !== (end < turn.total ? end : null)) return { error: 'failed' };
+      for (const row of rows) {
+        const beforeReply = offset++ < turn.beforeReply;
+        if (!row) continue;
         if (seen.has(row.id)) return { error: 'failed' };
         seen.add(row.id);
-        items.push(row);
+        items.push(timelineRecord(row, revision));
+        if (beforeReply) replyOffset++;
       }
     }
-    return { items };
+    return items.length ? { items, ...(timeline ? { replyOffset } : {}) } : { error: 'failed' };
   }
 
   private current(selection: ChatSelection, request: WorkRequest): boolean {

@@ -297,6 +297,31 @@ describe('selected session chat', () => {
     expect(fresh.items[0].completedTurn?.reply[0].id).toBe('answer');
   });
 
+  it('resolves compact saved tool evidence within the exact turn and revision', async () => {
+    status = 'archived';
+    const call = { ...item('command', ''), kind: 'tool_use' as const, toolKind: 'bash', toolInput: { command: 'pnpm test' } };
+    const result = { ...item('receipt', 'full output'), kind: 'tool_result' as const, toolUseId: call.id };
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    history = [prompt, call, item('answer'), result, { ...prompt, id: 'other' }, { ...result, id: 'other-result' }];
+    const signal = new AbortController().signal;
+    const first = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    const revision = first.items.find(row => row.id === prompt.id)!.completedTurn!.revision;
+    const compact = await chat.turnWork(1, 2, prompt.id, revision, 0, signal, '1', 512, '1');
+    expect(compact).toMatchObject({ timeline: [{ kind: 'call', id: call.id, resultId: result.id, label: 'pnpm test' }, null] });
+    const source = { turnId: prompt.id, item: { id: call.id, revision }, result: { id: result.id, revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({ turnId: prompt.id,
+      item: { id: call.id, revision, record: { input: expect.stringContaining('pnpm test') } },
+      result: { id: result.id, revision, record: { text: 'full output' } },
+    });
+    await expect(chat.readToolDetails(1, 2, { ...source, turnId: 'other' }, signal)).rejects.toThrow('changed');
+    await expect(chat.readToolDetails(1, 2, { ...source, result: { id: 'other-result', revision } }, signal)).rejects.toThrow('changed');
+    await expect(chat.turnWork(1, 2, prompt.id, revision, 0, signal, undefined, 40, '1')).rejects.toThrow('format');
+    history[3] = { ...result, content: 'different output' };
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    await expect(chat.readToolDetails(1, 2, source, signal)).rejects.toThrow('changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
   it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {
     let release!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));

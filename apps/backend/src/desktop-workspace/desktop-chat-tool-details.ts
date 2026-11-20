@@ -106,11 +106,17 @@ export class ChatToolDetails {
     return evidence;
   }
 
-  private evidence(raw: AgentTranscriptItem, kind: SessionChatToolRecord['kind'], item: SessionChatRecord): SessionChatToolEvidence {
+  turnEvidence(revision: string, raw: AgentTranscriptItem, call?: AgentTranscriptItem): SessionChatToolEvidence | undefined {
+    if (raw.kind !== 'tool_use' && raw.kind !== 'tool_result') return;
+    return this.evidence(raw, raw.kind, chatItem(raw, call, this.changes, this.media), revision);
+  }
+
+  private evidence(raw: AgentTranscriptItem, kind: SessionChatToolRecord['kind'], item: SessionChatRecord,
+    turnRevision?: string): SessionChatToolEvidence {
     const { id, toolId, toolName, toolKind, text, input, timestamp, error, truncated, execution } = item;
     // A result can appear by itself at a page boundary. Its address does not
     // depend on whether the matching call was in that same window.
-    const revision = createHash('sha256')
+    const revision = turnRevision ?? createHash('sha256')
       .update(JSON.stringify([id, kind, toolId, toolName, toolKind, truncated, raw.isError, commandFacts(raw), text.length]))
       .update(text, 'utf16le')
       .update(input, 'utf16le')

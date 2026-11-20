@@ -16,15 +16,16 @@ function toolReference(row?: Pick<SessionChatItem, 'id' | 'toolDetails'>): Sessi
   return row?.toolDetails ? { id: row.id, revision: row.toolDetails.revision } : undefined;
 }
 
-export function sessionToolDetailsSource(row: SessionChatItem, result?: SessionChatItem): SessionChatToolSource | undefined {
+export function sessionToolDetailsSource(row: SessionChatItem, result?: SessionChatItem, turnId?: string): SessionChatToolSource | undefined {
   const item = toolReference(row);
+  const scope = turnId ? { turnId } : {};
   if (row.kind === 'tool_use') {
     const receipt = toolReference(result) ?? toolReference(row.receipt);
-    return item ? { item, result: receipt } : receipt ? { item: receipt } : undefined;
+    return item ? { ...scope, item, result: receipt } : receipt ? { ...scope, item: receipt } : undefined;
   }
   if (row.kind === 'tool_result' && item) {
     const call = toolReference(row.invocation);
-    return call ? { item: call, result: item } : { item };
+    return call ? { ...scope, item: call, result: item } : { ...scope, item };
   }
   return undefined;
 }

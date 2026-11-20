@@ -1140,6 +1140,26 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   for (const invalid of [{ ...input, limit: 512 }, { ...largeRead, limit: 513 }, { ...largeRead, limit: 0 }])
     assert.throws(() => read(invalid));
 
+  const timelineRead = { ...largeRead, timeline: true };
+  assert.throws(() => read({ ...input, timeline: true }));
+  const shortCall = { kind: 'call', id: 'call', toolKind: 'bash', label: 'pnpm test', resultId: 'result' };
+  const timeline = { ...valid, items: undefined, nextOffset: null, timeline: [{ ...shortCall, input: 'discard' }, null] };
+  response = timeline;
+  assert.deepEqual((await read(timelineRead)).value.timeline, [shortCall, null]);
+  assert.match(requests.at(-1), /limit=512&timeline=1$/);
+  assert.equal((await read(largeRead)).error.code, 'invalid-response');
+  for (const invalid of [
+    { ...timeline, timeline: [{ ...shortCall, label: 'x'.repeat(121) }, null] },
+    { ...timeline, timeline: [{ ...shortCall, resultId: 'prompt' }, null] },
+    { ...timeline, timeline: [shortCall, shortCall] },
+    { ...timeline, nextOffset: 2 },
+  ]) {
+    response = invalid;
+    assert.equal((await read(timelineRead)).error.code, 'invalid-response');
+  }
+  response = valid;
+  assert.equal((await read(timelineRead)).value.items.length, 1, 'A legacy engine may return ordinary work rows');
+
   const chatRead = value => handlers.get('session-chat:read')({ senderFrame: frame, sender }, scope, value);
   const recent = { taskId: 5, sessionId: 9, requestId: 'recent', loadingMode: 'progressive', summarizeCompleted: true, summarizeRecent: true };
   assert.throws(() => chatRead({ ...recent, summarizeCompleted: undefined }));
@@ -1160,6 +1180,13 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   response = complete;
   assert.deepEqual(await inspect(), { ok: true, value: complete });
   assert.equal(requests.at(-1), `/api/desktop-workspace/tasks/5/sessions/9/chat/tool-details?itemId=call&revision=${revision}&resultId=result&resultRevision=${revision}`);
+  const savedDetails = { ...details, turnId: 'prompt' };
+  response = { ...complete, turnId: 'prompt' };
+  assert.equal((await inspect(savedDetails)).value.turnId, 'prompt');
+  assert.match(requests.at(-1), /turnId=prompt/);
+  assert.throws(() => inspect({ ...savedDetails, result: { ...receipt, revision: 'b'.repeat(64) } }));
+  response = { ...complete, turnId: 'other' };
+  assert.equal((await inspect(savedDetails)).error.code, 'invalid-response');
   for (const invalid of [
     { ...complete, taskId: 6 },
     { ...complete, result: undefined },

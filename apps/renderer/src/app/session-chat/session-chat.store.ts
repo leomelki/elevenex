@@ -62,7 +62,7 @@ export class SessionChatStore {
   private readonly injector = inject(Injector);
   readonly tools = new SessionChatToolDetails(this.client, inject(SessionChatToolCache), () => { void this.refresh(); });
   readonly work = new SessionChatTurnWork(this.client, inject(SessionChatWorkCache), {
-    prepare: (items, ids, signal) => this.tools.prepare(items, ids, signal),
+    prepare: (items, ids, signal, turnId) => this.tools.prepare(items, ids, signal, turnId),
     afterReveal: release => { afterNextRender(release, { injector: this.injector }); },
   });
   private readonly transcript = new ChatTranscriptProjection();
@@ -175,7 +175,7 @@ export class SessionChatStore {
     return this.visibleItems().flatMap(item => {
       if (!item.completedTurn) return [item];
       const entry = work.get(item.id);
-      const details = entry?.revision === item.completedTurn.revision ? entry.items : undefined;
+      const details = entry?.revision === item.completedTurn.revision ? entry : undefined;
       return [item, ...completedTurnRecords(item.completedTurn, details)];
     });
   }, { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });

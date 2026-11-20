@@ -1,4 +1,5 @@
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
+import { SESSION_CHAT_TURN_TIMELINE_BYTES } from '@elevenex/shared';
 import { ChatCompletedTurns } from './desktop-chat-turns.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
 import { ChatToolDetails } from './desktop-chat-tool-details.js';
@@ -127,6 +128,45 @@ describe('completed turn history', () => {
     const forward = chatWindow(history, [], { ...options, following: middle.next! })!;
     expect(forward.items[0]?.id).toBe('big-read-18');
     expect(forward.items.some(item => item.completedTurn)).toBe(false);
+  });
+
+  it('fits hundreds of paired tools in one compact timeline and keeps media at the receipt position', () => {
+    const turns = new ChatCompletedTurns();
+    const calls = activity('large', 600);
+    const results = calls.map(call => ({
+      ...row(call.id + '-result', 'tool_result', 'Body that should only be read on demand.'), toolUseId: call.id,
+    }));
+    const image = { ...results.at(-1)!, images: [{ mediaType: 'image/png', data: 'aW1hZ2U=' }] };
+    const timeline = calls.slice(0, -1).flatMap((call, index) => [call, results[index]]);
+    const history = [row('prompt', 'user'), ...timeline, calls.at(-1)!, row('answer', 'assistant'), image];
+    const summary = turns.summarize(history, 0, history.length, new Set())!.completedTurn!;
+    const compact = turns.timeline(history, summary.revision, 0)!;
+    expect(compact).toMatchObject({ total: 1200, nextOffset: null });
+    expect(compact.timeline[1]).toBeNull();
+    expect(compact.timeline.filter(Boolean)).toHaveLength(601);
+    expect(compact.timeline[0]).toEqual({ kind: 'call', id: calls[0].id, label: 'src/0.ts', toolKind: 'read', resultId: results[0].id });
+    expect(compact.timeline[summary.beforeReply]).toMatchObject({
+      kind: 'media', id: image.id, callId: calls.at(-1)!.id,
+      media: [{ id: '0', path: expect.stringContaining('chat-image-'), inline: true }],
+    });
+    const toolDetails = new ChatToolDetails(new WeakMap(), new WeakMap());
+    const legacy = [0, 512, 1024].map(offset => turns.page(history, summary.revision, offset, toolDetails, 512)!.items).flat();
+    const compactJson = JSON.stringify(compact.timeline);
+    expect(compactJson).not.toContain('Body that should only be read');
+    expect(Buffer.byteLength(compactJson)).toBeLessThan(Buffer.byteLength(JSON.stringify(legacy)) / 4);
+  });
+
+  it('continues an unusually large timeline at the first source slot outside its byte budget', () => {
+    const turns = new ChatCompletedTurns();
+    const work = Array.from({ length: 48 }, (_, i) => row(`note-${i}`, 'thinking', 'x'.repeat(16_000)));
+    const history = [row('prompt', 'user'), ...work, row('answer', 'assistant')];
+    const revision = turns.summarize(history, 0, history.length, new Set())!.completedTurn!.revision;
+    const first = turns.timeline(history, revision, 0)!;
+    expect(Buffer.byteLength(JSON.stringify(first.timeline))).toBeLessThanOrEqual(SESSION_CHAT_TURN_TIMELINE_BYTES);
+    expect(first.nextOffset).toBe(first.timeline.length);
+    const last = turns.timeline(history, revision, first.nextOffset!)!;
+    expect(last.nextOffset).toBeNull();
+    expect([...first.timeline, ...last.timeline].map(item => item?.id)).toEqual(work.map(item => item.id));
   });
 
   it('uses the raw end cursor to walk older and newer completed turns without gaps', () => {
