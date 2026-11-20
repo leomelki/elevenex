@@ -1,6 +1,8 @@
 const calls = [
   ['workspaceWaitingRead', 'workspace:waiting-read', [{ kind: 'local' }]],
   ['workspaceWaitingSave', 'workspace:waiting-save', [{ kind: 'local' }, 'identity', { chat: [], tasks: [] }]],
+  ['sessionChatDraftRead', 'session-chat:draft-read', [{ kind: 'local' }, { taskId: 1, sessionId: 2 }]],
+  ['sessionChatDraftSave', 'session-chat:draft-save', [{ kind: 'local' }, 'identity', { target: { taskId: 1, sessionId: 2 }, draft: { text: 'Draft' } }]],
 
   ['remoteHosts', 'remote:hosts', []],
   ['chooseRemoteSshFile', 'remote:choose-file', ['identity']],

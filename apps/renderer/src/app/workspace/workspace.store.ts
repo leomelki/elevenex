@@ -3,7 +3,7 @@ import { WorkspaceSessionCreation } from './workspace-session-creation';
 import { WorkspaceSessionOutbox } from './workspace-session-outbox';
 import { WorkspaceWritingJournal } from './workspace-writing-journal';
 import { WorkspaceTaskOutbox, type WaitingTask } from './workspace-task-outbox';
-import { SessionChatDrafts } from '../session-chat/session-chat-drafts';
+import { SessionChatDrafts, SessionDraft } from '../session-chat/session-chat-drafts';
 import { SessionChatOutbox } from '../session-chat/session-chat-outbox';
 import { DOCUMENT } from '@angular/common';
 import type { BackendResult, EnvironmentContext, EnvironmentSelection, WorkspacePage, WorkspaceViewState, WorkspaceCreateProject, WorkspaceBranch, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRepository, WorkspaceSession, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
@@ -113,7 +113,7 @@ export class WorkspaceStore {
   private readonly localSessionId = signal<string | null>(null);
   private readonly sessionRenderIds = signal<ReadonlyMap<number, string>>(new Map());
   private readonly sessionCreation = new WorkspaceSessionCreation(this.bridge, scope => this.valid(scope), (starting, session) => {
-    this.drafts?.adopt(starting.scopeId, session.id, starting.draft);
+    this.drafts?.adopt({ scopeId: starting.scopeId, taskId: starting.taskId, sessionId: session.id }, starting.draft);
     this.sessionRenderIds.update(ids => new Map([...ids, [session.id, starting.id] as const].slice(-400)));
     if (!this.taskRecords().some(task => task.id === starting.taskId)) return;
     this.sessionRecords.update(records => new Map(records).set(session.taskId, [...(records.get(session.taskId) ?? []).filter(row => row.id !== session.id).slice(-19), session]));
@@ -122,7 +122,7 @@ export class WorkspaceStore {
       this.chosen.set({ scopeId: starting.scopeId, taskId: session.taskId, sessionId: session.id });
       this.localSessionId.set(null);
     }
-  });
+  }, taskId => this.drafts?.start(taskId) ?? new SessionDraft());
   readonly selectedCreation = computed(() => this.sessionCreation.items().find(item => item.id === this.localSessionId() && !this.closed() && this.taskRecords().some(task => task.id === item.taskId)) ?? null);
   readonly selectedCreationKey = computed(() => this.selectedCreation()?.id ?? this.sessionRenderIds().get(this.chosen()?.sessionId ?? 0) ?? null);
   readonly selectedSessionId = computed(() => this.selectedCreation()?.id ?? this.chosen()?.sessionId.toString() ?? null);
@@ -265,7 +265,11 @@ export class WorkspaceStore {
     if (!active || this.machineState()?.id !== machine.id) this.saveBeforeExit();
     const identity = JSON.stringify([machine.id, machine.address, machine.key]);
     if (this.machineIdentity && this.machineIdentity !== identity) { this.reset(null); this.outbox?.clear(); this.taskOutbox.clear(); this.sessionOutbox.clear(); }
-    if (this.machineIdentity !== identity) void this.journal?.open(machine.kind === 'local' ? { kind: 'local' } : { kind: 'remote', hostId: machine.id });
+    if (this.machineIdentity !== identity) {
+      const environment: EnvironmentSelection = machine.kind === 'local' ? { kind: 'local' } : { kind: 'remote', hostId: machine.id };
+      this.drafts?.selectMachine(environment);
+      void this.journal?.open(environment);
+    }
     this.machineIdentity = identity;
     this.machineState.set(machine); this.enabled.set(active);
   }
@@ -585,6 +589,7 @@ export class WorkspaceStore {
       ? this.bridge.workspaceDeleteSession(scope, { taskId, sessionId })
       : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' }));
     if (result) {
+      if (deleting) this.drafts?.entry({ scopeId: scope, taskId, sessionId }).discard();
       this.closeUndo.set(null); this.archiveUndo.set(null);
       this.sessionArchiveUndo.set(deleting ? null : { scopeId: scope, session });
       if (revision === this.listRevision) {

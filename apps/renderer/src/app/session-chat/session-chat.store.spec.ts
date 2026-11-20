@@ -6,6 +6,8 @@ import type {
   BackendResult,
   BackendClientState,
   ElevenexBridge,
+  SessionChatDraftSnapshot,
+  SessionChatDraftText,
   SessionChatItem,
   SessionChatPage,
   SessionChatState,
@@ -14,7 +16,7 @@ import {
   BackendClientService,
   ELEVENEX_BRIDGE,
 } from "../backend/backend-client.service";
-import { createSessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
+import { SessionDraft, type StartingSession, SessionChatDrafts } from "./session-chat-drafts";
 import { SessionChatStore } from "./session-chat.store";
 import { SessionChatLoadingPolicy, SESSION_CHAT_PROGRESSIVE_LOADING } from './session-chat-loading';
 import { chatExchanges } from "./session-chat-transcript";
@@ -79,10 +81,11 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; progressive?: boolean } = {}) {
+type DraftBridge = Pick<ElevenexBridge, 'sessionChatDraftRead' | 'sessionChatDraftSave'>;
+function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; progressive?: boolean; localDrafts?: DraftBridge; scopeId?: string } = {}) {
   const scope = signal<BackendClientState>({
     revision: 1,
-    scope: { id: "scope", environment: { kind: "local" as const } },
+    scope: { id: options.scopeId ?? "scope", environment: { kind: "local" as const } },
   });
   const bridge = {
     sessionChatRead: vi.fn(async (_scope, input) => ok(page(input.sessionId))),
@@ -98,13 +101,29 @@ function setup(options: { initial?: Promise<BackendResult<SessionChatPage>>; pro
       SessionChatStore,
       SessionChatDrafts,
       { provide: SESSION_CHAT_PROGRESSIVE_LOADING, useValue: options.progressive ?? false },
-      { provide: ELEVENEX_BRIDGE, useValue: bridge },
+      { provide: ELEVENEX_BRIDGE, useValue: { ...bridge, ...options.localDrafts } },
       { provide: BackendClientService, useValue: { state: scope } },
     ],
   });
+  if (options.localDrafts) TestBed.inject(SessionChatDrafts).selectMachine({ kind: 'local' });
   const store = TestBed.inject(SessionChatStore);
-  store.open({ scopeId: "scope", taskId: 1, sessionId: 2 }, false);
+  store.open({ scopeId: options.scopeId ?? "scope", taskId: 1, sessionId: 2 }, false);
   return { store, bridge, scope };
+}
+
+function localDraftBridge() {
+  const records = new Map<string, SessionChatDraftText>();
+  const key = (taskId: number, sessionId: number | null) => `${taskId}/${sessionId}`;
+  return {
+    sessionChatDraftRead: vi.fn<DraftBridge['sessionChatDraftRead']>(async (_environment, target) =>
+      ({ identity: 'test-machine', draft: records.get(key(target.taskId, target.sessionId)) ?? { text: '' } })),
+    sessionChatDraftSave: vi.fn<DraftBridge['sessionChatDraftSave']>(async (_environment, _identity, edit) => {
+      if (edit.fromCreation) records.delete(key(edit.target.taskId, null));
+      const target = key(edit.target.taskId, edit.target.sessionId);
+      if (edit.draft.text) records.set(target, edit.draft);
+      else records.delete(target);
+    }),
+  };
 }
 
 it('coalesces seen writes and rejects late acknowledgments across completions and selection changes', async () => {
@@ -173,6 +192,106 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("session chat ownership", () => {
+  it('restores separate composer texts after relaunch and remembers explicitly clearing one', async () => {
+    const localDrafts = localDraftBridge(), original = setup({ localDrafts });
+    const second = { scopeId: 'scope', taskId: 1, sessionId: 3 };
+    await settle();
+    original.store.setDraft('  café\n\t👩🏽‍💻  ');
+    original.store.open(second, false);
+    await settle();
+    expect(original.store.draft()).toBe('');
+    original.store.setDraft('Another conversation');
+    TestBed.resetTestingModule();
+
+    const reopened = setup({ localDrafts, scopeId: 'relaunched' });
+    await settle();
+    expect(reopened.store.draft()).toBe('  café\n\t👩🏽‍💻  ');
+    reopened.store.setDraft('');
+    reopened.store.open({ ...second, scopeId: 'relaunched' }, false);
+    await settle();
+    expect(reopened.store.draft()).toBe('Another conversation');
+    expect(reopened.bridge.sessionChatCommand).not.toHaveBeenCalled();
+    TestBed.resetTestingModule();
+    expect((await localDrafts.sessionChatDraftRead({ kind: 'local' }, { taskId: 1, sessionId: 2 })).draft.text).toBe('');
+  });
+
+  it('rejects a late draft read from the previous machine even when conversation IDs match', async () => {
+    const localDrafts = localDraftBridge(), first = deferred<SessionChatDraftSnapshot>();
+    localDrafts.sessionChatDraftRead.mockReturnValueOnce(first.promise);
+    const { store, scope } = setup({ localDrafts });
+    const environment = { kind: 'remote', hostId: 'another-machine' } as const;
+    TestBed.inject(SessionChatDrafts).selectMachine(environment);
+    scope.set({ revision: 2, scope: { id: 'remote-scope', environment } });
+    store.open({ scopeId: 'remote-scope', taskId: 1, sessionId: 2 }, false);
+    await settle();
+    store.setDraft('Writing for this machine');
+    first.resolve({ identity: 'previous-machine', draft: { text: 'Old machine draft' } });
+    await settle();
+    expect(store.draft()).toBe('Writing for this machine');
+    expect(localDrafts.sessionChatDraftSave).toHaveBeenCalledExactlyOnceWith(environment, 'test-machine', {
+      target: { taskId: 1, sessionId: 2 }, draft: { text: 'Writing for this machine' },
+    });
+  });
+
+  it('preserves typing during local hydration and moves a creation draft to the confirmed session', async () => {
+    const localDrafts = localDraftBridge(), { store, bridge } = setup({ localDrafts });
+    await settle();
+    const restored = deferred<SessionChatDraftSnapshot>();
+    localDrafts.sessionChatDraftRead.mockReturnValueOnce(restored.promise);
+    const drafts = TestBed.inject(SessionChatDrafts);
+    const draft = drafts.start(1);
+    store.openDraft({ id: 'local-creation', scopeId: 'scope', taskId: 1, status: 'creating', draft });
+    store.setDraft('New typing');
+    const target = { taskId: 1, sessionId: 4 };
+    const selection = { ...target, scopeId: 'scope' };
+    drafts.adopt(selection, draft);
+    store.open(selection, false);
+    await settle();
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    restored.resolve({ identity: 'test-machine', draft: { text: 'Saved while creating' } });
+    await settle();
+    expect(store.draft()).toBe('Saved while creating\n\nNew typing');
+    expect(localDrafts.sessionChatDraftSave).toHaveBeenLastCalledWith({ kind: 'local' }, 'test-machine', {
+      target, draft: { text: store.draft() }, fromCreation: true,
+    });
+  });
+
+  it('clears accepted text locally without removing input written during the send', async () => {
+    const localDrafts = localDraftBridge(), { store, bridge } = setup({ localDrafts });
+    await settle();
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(command.promise);
+    store.setDraft('Ready to send');
+    const sending = store.submit({ text: 'Ready to send', intent: 'send', context: [] });
+    expect(store.draft()).toBe('');
+    store.setDraft('Next idea');
+    const saved = async () => (await localDrafts.sessionChatDraftRead({ kind: 'local' }, { taskId: 1, sessionId: 2 })).draft;
+    expect(await saved()).toEqual({ text: 'Ready to send\n\nNext idea', checkDelivery: true });
+    command.resolve(ok({ accepted: true as const }));
+    await sending;
+    expect(await saved()).toEqual({ text: 'Next idea' });
+    expect(store.draft()).toBe('Next idea');
+  });
+
+  it('restores an interrupted send as text requiring a delivery check', async () => {
+    const localDrafts = localDraftBridge();
+    await localDrafts.sessionChatDraftSave({ kind: 'local' }, 'test-machine', {
+      target: { taskId: 1, sessionId: 2 }, draft: { text: 'Review delivery', checkDelivery: true },
+    });
+    const { store, bridge } = setup({ localDrafts, scopeId: 'relaunched' });
+    await settle();
+    expect(store.draft()).toBe('Review delivery');
+    expect(store.uncertain()).toContain('Check its delivery');
+    await store.submit({ text: store.draft(), intent: 'send', context: [] });
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    await store.refresh();
+    store.acknowledgeUncertain();
+    expect(localDrafts.sessionChatDraftSave).toHaveBeenLastCalledWith({ kind: 'local' }, 'test-machine', {
+      target: { taskId: 1, sessionId: 2 }, draft: { text: 'Review delivery' },
+    });
+  });
+
   it('opens a bounded window by default and does not interpret long polls as a slow connection', async () => {
     const { store, bridge } = setup(); await settle();
     expect(bridge.sessionChatRead.mock.calls[0]?.[1].loadingMode).toBe('window');
@@ -306,7 +425,7 @@ describe("session chat ownership", () => {
 
   it('allows local writing without reads or sends, then hands off the same draft and view to the saved session', async () => {
     const { store, bridge } = setup(); await settle();
-    const draft = createSessionDraft();
+    const draft = new SessionDraft();
     const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft, status: 'creating' };
     const reads = bridge.sessionChatRead.mock.calls.length;
     store.openDraft(starting);
@@ -317,7 +436,7 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled(); expect(bridge.sessionChatRead).toHaveBeenCalledTimes(reads);
     const read = deferred<BackendResult<SessionChatPage>>();
     bridge.sessionChatRead.mockImplementationOnce(() => read.promise);
-    TestBed.inject(SessionChatDrafts).adopt('scope', 20, draft);
+    TestBed.inject(SessionChatDrafts).adopt({ scopeId: 'scope', taskId: 1, sessionId: 20 }, draft);
     store.open({ scopeId: 'scope', taskId: 1, sessionId: 20 }, false);
     expect(store.viewRevision()).toBe(revision); expect(store.starting()).toBe(true);
     store.setDraft('Still writing during hydration');
@@ -330,7 +449,7 @@ describe("session chat ownership", () => {
 
   it('updates a retained local draft’s scope after same-machine recovery without loading or sending', async () => {
     const { store, bridge, scope } = setup(); await settle();
-    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: createSessionDraft(), status: 'creating' };
+    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: new SessionDraft(), status: 'creating' };
     store.openDraft(starting); store.setDraft('Keep writing through recovery');
     scope.set({ revision: 2, scope: { id: 'next', environment: { kind: 'local' } } });
     store.openDraft({ ...starting, scopeId: 'next', status: 'unknown' });
@@ -344,7 +463,7 @@ describe("session chat ownership", () => {
     const read = deferred<BackendResult<SessionChatPage>>();
     bridge.sessionChatRead.mockImplementationOnce(() => read.promise);
     const refreshing = store.refresh();
-    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: createSessionDraft(), status: 'creating' };
+    const starting: StartingSession = { id: 'local-draft', scopeId: 'scope', taskId: 1, draft: new SessionDraft(), status: 'creating' };
     store.openDraft(starting); store.setDraft('Safe local writing');
     read.resolve(ok(page(2, { items: [item('late', 'assistant', 'Old conversation')] }))); await refreshing;
     expect(bridge.sessionChatCancel).toHaveBeenCalled();
@@ -543,7 +662,7 @@ describe("session chat ownership", () => {
   it('retains element identity and image association through uncertain queue delivery without replaying', async () => {
     const { store, bridge } = setup(); await settle();
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { state: { ...state, browserElements: true, attachments: true } }))); await store.refresh();
-    const drafts = TestBed.inject(SessionChatDrafts), entry = drafts.entry('scope', 2);
+    const drafts = TestBed.inject(SessionChatDrafts), entry = drafts.entry({ scopeId: 'scope', taskId: 1, sessionId: 2 });
     const reference = { version: 1 as const, id: '11111111-1111-4111-8111-111111111111', label: 'button · Save', tag: 'button', selector: 'button', frames: [], page: 'https://example.com/checkout', tabId: 'tab-1', documentId: 'document-1', capturedAt: '2026-11-09T10:00:00Z', target: { x: 20, y: 30, width: 80, height: 30 }, crop: { x: 0, y: 0, width: 148, height: 108 }, image: { width: 148, height: 108, scale: 1 } };
     const file = { id: 'image-1', name: 'element.jpg', path: '/stored/element.jpg', kind: 'image' as const, status: 'ready' as const, element: reference, marker: 1, file: new File(['image'], 'element.jpg') };
     entry.files.set([file]);
@@ -562,7 +681,7 @@ describe("session chat ownership", () => {
     expect(store.uncertain()).toBe('Check delivery');
     const writes = bridge.sessionChatCommand.mock.calls.length;
     store.open({ scopeId: 'scope', taskId: 1, sessionId: 3 }, false); await settle();
-    expect(drafts.entry('scope', 3).files()).toHaveLength(0);
+    expect(drafts.entry({ scopeId: 'scope', taskId: 1, sessionId: 3 }).files()).toHaveLength(0);
     store.open({ scopeId: 'scope', taskId: 1, sessionId: 2 }, false); await settle();
     expect(store.uncertain()).toBeTruthy(); expect(entry.files()[0]?.element).toEqual(reference);
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(writes);
@@ -572,7 +691,7 @@ describe("session chat ownership", () => {
     const { store, bridge } = setup();
     await settle();
     const drafts = TestBed.inject(SessionChatDrafts);
-    const entry = drafts.entry('scope', 2);
+    const entry = drafts.entry({ scopeId: 'scope', taskId: 1, sessionId: 2 });
     const file = { id: 'attachment', path: '/stored/notes.txt', name: 'notes.txt', kind: 'file' as const, status: 'ready' as const, file: new File(['notes'], 'notes.txt') };
     entry.files.set([file]);
     const write = deferred<BackendResult<{ readonly accepted: true }>>();
@@ -586,7 +705,7 @@ describe("session chat ownership", () => {
     write.resolve({ ok: false, error: { code: 'http', status: 400, message: 'Rejected' } });
     await sending;
     expect(entry.files()).toEqual([file]);
-    expect(drafts.entry('scope', 3).files()).toEqual([]);
+    expect(drafts.entry({ scopeId: 'scope', taskId: 1, sessionId: 3 }).files()).toEqual([]);
   });
 
   it("cancels old reads and rejects late same-scope replies after session navigation", async () => {
@@ -993,8 +1112,10 @@ describe("session chat ownership", () => {
     const sending = store.submit({ text: store.draft(), intent: "send", context: [] });
     await store.submit({ text: store.draft(), intent: "send", context: [] });
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    store.setDraft("Keep typing while history refreshes");
     read.resolve(ok(page(2, { next: null, items: [item("latest", "user", "Current live tail")] })));
     await sending; expect(bridge.sessionChatCommand).toHaveBeenCalledOnce();
+    expect(store.draft()).toBe("Keep typing while history refreshes");
   });
   it("keeps a failed history read retryable and rejects a history reply after navigation", async () => {
     const { store, bridge } = setup(); await settle();

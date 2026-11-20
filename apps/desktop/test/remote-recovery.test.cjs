@@ -395,3 +395,79 @@ test('malformed persisted destination bindings fail closed', async t => {
     await assert.rejects(new WaitingWritingStore(path).load([]), /could not be read/);
   }
 });
+
+test('chat drafts survive immediate shutdown, move on creation, and isolate windows and conversations', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-chat-drafts-')), settingsPath = join(root, 'settings.json');
+  const options = { root, helper: '', settingsPath, release: async () => release };
+  const first = new RemoteManager(options), second = new RemoteManager(options);
+  t.after(async () => { await Promise.all([first.dispose(), second.dispose()]); await rm(root, { recursive: true, force: true }); });
+  await first.load();
+  first.attach(1, null); first.attach(2, null);
+  const environment = { kind: 'local' }, target = { taskId: 11, sessionId: 22 };
+  const other = { taskId: 12, sessionId: 22 }, creation = { taskId: 11, sessionId: null };
+  const identity = first.chatDraftRead(1, environment, target).identity;
+  const draft = { text: '  Write in café\n\t👩🏽‍💻  ' };
+  const save = (windowId, target, draft, options) => first.chatDraftSave(windowId, environment, identity, { target, draft, ...options });
+  const writes = [
+    save(1, target, { text: 'Remove this older draft' }),
+    save(1, target, { text: '' }),
+    save(1, other, { text: 'Another task' }),
+    save(1, creation, draft),
+    save(1, { ...target, sessionId: 23 }, draft, { fromCreation: true }),
+    save(2, target, { text: 'The other window', checkDelivery: true }),
+  ];
+  await Promise.all([...writes, first.dispose()]);
+  await second.load();
+  second.attach(3, null); second.attach(4, null);
+  const read = (windowId, target) => second.chatDraftRead(windowId, environment, target).draft;
+  assert.deepEqual(read(3, target), { text: '' });
+  assert.deepEqual(read(3, creation), { text: '' });
+  assert.deepEqual(read(3, { ...target, sessionId: 23 }), draft);
+  assert.deepEqual(read(3, other), { text: 'Another task' });
+  assert.deepEqual(read(4, target), { text: 'The other window', checkDelivery: true });
+  assert.deepEqual(read(4, other), { text: '' });
+});
+
+test('chat draft access checks machine configuration, target and text at runtime', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-chat-draft-bindings-')), settingsPath = join(root, 'settings.json');
+  const options = { root, helper: '', settingsPath, release: async () => release };
+  const first = new RemoteManager(options), second = new RemoteManager(options);
+  t.after(async () => { await Promise.all([first.dispose(), second.dispose()]); await rm(root, { recursive: true, force: true }); });
+  await first.load();
+  const host = await first.saveHost({ name: 'Dev', host: 'before' }, null);
+  const environment = { kind: 'remote', hostId: host.id }, target = { taskId: 1, sessionId: 2 };
+  first.attach(1, environment);
+  const { identity } = first.chatDraftRead(1, environment, target);
+  const edit = { target, draft: { text: 'Private to this destination' } };
+  assert.throws(() => first.chatDraftRead(1, { kind: 'local' }, target), /machine changed/);
+  assert.throws(() => first.chatDraftRead(1, environment, { ...target, taskId: 0 }), /draft target/);
+  await assert.rejects(first.chatDraftSave(1, environment, identity, { ...edit, draft: { text: 'a'.repeat(256001) } }), /size limit/);
+  await assert.rejects(first.chatDraftSave(1, environment, identity, { ...edit, action: { type: 'send' } }), /Invalid/);
+  await first.chatDraftSave(1, environment, identity, edit);
+  await first.dispose();
+
+  const settings = new RemoteSettingsStore(settingsPath), saved = await settings.load();
+  saved.hosts[0].host = 'after';
+  await settings.save(saved);
+  await second.load();
+  second.attach(2, environment);
+  assert.deepEqual(second.chatDraftRead(2, environment, target).draft, { text: '' });
+  await assert.rejects(second.chatDraftSave(2, environment, identity, edit), /machine changed/);
+});
+
+test('a damaged chat draft file cannot erase saved data or block the existing journal', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-chat-drafts-damaged-')), settingsPath = join(root, 'settings.json');
+  const path = `${settingsPath}.chat-drafts.json`;
+  const manager = new RemoteManager({ root, helper: '', settingsPath, release: async () => release });
+  t.after(async () => { await manager.dispose(); await rm(root, { recursive: true, force: true }); });
+  const damaged = '{"version":2}';
+  await writeFile(path, damaged);
+  await manager.load();
+  manager.attach(1, null);
+  const environment = { kind: 'local' }, target = { taskId: 1, sessionId: 2 };
+  const { identity } = manager.waitingRead(1, environment);
+  assert.throws(() => manager.chatDraftRead(1, environment, target), /could not be read/);
+  await assert.rejects(manager.chatDraftSave(1, environment, identity, { target, draft: { text: 'Replacement' } }), /could not be read/);
+  await manager.dispose();
+  assert.equal(await readFile(path, 'utf8'), damaged);
+});

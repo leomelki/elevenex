@@ -37,7 +37,7 @@ describe('workspace session creation ownership', () => {
 
   it('retains writing across same-machine recovery without replaying or adopting an old reply', async () => {
     const { creation, created, bridge, finish } = setup();
-    const first = creation.start('old', 1)!; first.draft.text.set('Keep this across recovery');
+    const first = creation.start('old', 1)!; first.draft.setText('Keep this across recovery');
     const sent = creation.send(first.id); creation.rebind('old', 'new');
     finish({ ok: true, value: session }); await sent;
     expect(creation.items()[0]).toMatchObject({ scopeId: 'new', status: 'unknown', draft: first.draft });

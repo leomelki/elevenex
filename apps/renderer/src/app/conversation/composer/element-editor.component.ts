@@ -65,15 +65,23 @@ export class ElementEditorComponent implements OnChanges, AfterViewInit {
     if (this.composing && this.value() === this.current.text && !removed) return;
     if (this.value() !== this.current.text || removed) {
       // A different session/draft or an explicit attachment removal starts a new history.
-      if (this.composing) {
-        this.cancelledComposition = true; this.composing = false;
-        this.surface()!.nativeElement.blur();
-      }
-      this.past.length = 0; this.future.length = 0;
-      this.current = { text: this.value(), start: Math.min(this.current.start, this.value().length), end: Math.min(this.current.end, this.value().length) };
-      this.lastEdit = { type: '', at: 0, caret: this.current.end };
+      this.reset(this.value());
     }
     this.render();
+  }
+  writeDraft(text: string): void {
+    if (!this.surface() || this.current.text === text) return;
+    this.reset(text);
+    this.render();
+  }
+  private reset(text: string): void {
+    if (this.composing) {
+      this.cancelledComposition = true; this.composing = false;
+      this.surface()?.nativeElement.blur();
+    }
+    this.past.length = 0; this.future.length = 0;
+    this.current = { text, start: Math.min(this.current.start, text.length), end: Math.min(this.current.end, text.length) };
+    this.lastEdit = { type: '', at: 0, caret: this.current.end };
   }
   focus(): void {
     if (this.disabled()) return;

@@ -27,6 +27,8 @@ export function registerRemoteIpc(remote: RemoteManager, backend: BackendManager
   register('remote:remove-host', 1, (_window, id) => remote.removeHost(id));
   register('workspace:waiting-read', 1, (window, expected) => remote.waitingRead(window, expected));
   register('workspace:waiting-save', 3, (window, expected, identity, input) => remote.waitingSave(window, expected, identity, input));
+  register('session-chat:draft-read', 2, (window, expected, target) => remote.chatDraftRead(window, expected, target));
+  register('session-chat:draft-save', 3, (window, expected, identity, edit) => remote.chatDraftSave(window, expected, identity, edit));
   register('environment:status', 0, window => remote.snapshot(window));
   register('environment:select', 1, (window, input) => remote.select(window, input));
   register('environment:context', 2, (window, input, expected) => remote.saveContext(window, input, expected));

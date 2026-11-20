@@ -274,6 +274,8 @@ navigation, copy, changes review and other intents.
 
 `Composer.clearOnSubmit=false` lets a controlled owner clear the draft only after
 accepting an intent, avoiding a child reset overtaking failure recovery.
+Use `writeDraft(text)` to reflect immediate consumption or restoration in the
+editor when both can occur before the next Angular render.
 `Composer.sending` disables submission/queue operations while keeping the draft
 editable; `stoppable` controls stop availability. `showSettings`, `showTools`,
 `showDictation` and `mentionsEnabled` default to true for existing consumers.

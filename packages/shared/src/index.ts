@@ -11,6 +11,8 @@ import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
 export type * from './session-chat';
+import type { SessionChatDraftEdit, SessionChatDraftSnapshot, SessionChatDraftTarget } from './session-chat-draft';
+export type * from './session-chat-draft';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
@@ -98,6 +100,8 @@ export interface InvokeContracts {
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
   'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
   'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
+  'session-chat:draft-read': { args: [expected: EnvironmentSelection, target: SessionChatDraftTarget]; result: SessionChatDraftSnapshot };
+  'session-chat:draft-save': { args: [expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit]; result: void };
   'machines:state': { args: []; result: MachineState };
   'machines:opened': { args: [selection: EnvironmentSelection]; result: MachineState };
   'machines:new-window': { args: [selection: EnvironmentSelection | null]; result: void };
@@ -259,6 +263,8 @@ export interface ElevenexBridge {
   sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
   sessionChatAgent(scopeId: string, input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>>;
   sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
+  sessionChatDraftRead(expected: EnvironmentSelection, target: SessionChatDraftTarget): Promise<SessionChatDraftSnapshot>;
+  sessionChatDraftSave(expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit): Promise<void>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;
   editMachine(selection: EnvironmentSelection, input: MachineEditInput): Promise<MachineState>;

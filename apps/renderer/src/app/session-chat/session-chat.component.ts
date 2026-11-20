@@ -30,6 +30,7 @@ import {
   PresetCreatorComponent,
   ToolContentComponent,
   type AgentQuestion,
+  type ComposerSubmission,
   type QuestionAnswers,
   type TurnAction,
   type AgentConfig,
@@ -198,7 +199,7 @@ export class SessionChatComponent {
     },
   );
   readonly message = computed(
-    () => this.store.error() || this.store.state()?.error || "",
+    () => this.store.error() || this.store.uncertain() || this.store.state()?.error || "",
   );
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
@@ -505,6 +506,9 @@ export class SessionChatComponent {
   }
   focusComposer(): void {
     this.composer()?.focusEditor();
+  }
+  submit(submission: ComposerSubmission): void {
+    void this.store.submit(submission, text => this.composer()?.writeDraft(text));
   }
   queueAction(type: "steer-queued" | "cancel-queued", id: string): void {
     this.focusComposer();

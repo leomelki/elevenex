@@ -212,6 +212,12 @@
         (dismissed)="focusComposer()"
       />
     }
+    @if (store.draftError(); as error) {
+      <div class="feedback error" role="alert">
+        <span>{{ error }}</span>
+        <button exButton variant="ghost" size="sm" [disabled]="store.draftRestoring()" (click)="store.retryDraft(); focusComposer()">Try again</button>
+      </div>
+    }
     @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
     @for (item of store.waiting(); track item.id) {
       @if (item.status === 'unknown' || item.status === 'failed') {
@@ -224,7 +230,7 @@
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
       [disabled]="archived()"
-      [sending]="!!creation() || store.loading() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
       [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
       [waiting]="store.waitingMessages()"
@@ -291,7 +297,7 @@
               ? 'Message the agent, or @ to mention a session…'
               : 'Message the agent…'
       "
-      (submitted)="store.submit($event)"
+      (submitted)="submit($event)"
       (stop)="store.perform({ type: 'stop' })"
       (focusLastMessage)="chat()?.focusLastMessage()"
       (queueSteer)="queueAction('steer-queued', $event)"

@@ -615,13 +615,13 @@ describe('WorkspaceStore', () => {
     expect(store.taskSelection()).toEqual({ scopeId: 'scope', taskId: 3 });
     expect(store.tasks()[0]!.sessions.at(-1)).toMatchObject({ id: starting.id, local: true, renderId: starting.id });
     expect(store.sessionMentionItems().some(item => item.id === starting.id)).toBe(false);
-    starting.draft.text.set('Writing before the server responds');
+    starting.draft.setText('Writing before the server responds');
     await store.createSession('3'); expect(bridge.workspaceCreateSession).toHaveBeenCalledTimes(1);
     finish(ok({ ...session, id: 6 })); await creating;
     expect(store.selectedCreation()).toBeNull();
     expect(store.selected()).toEqual({ scopeId: 'scope', taskId: 3, sessionId: 6 });
     expect(store.tasks()[0]!.sessions.at(-1)).toMatchObject({ id: '6', renderId: starting.id });
-    expect(TestBed.inject(SessionChatDrafts).entry('scope', 6)).toBe(starting.draft);
+    expect(TestBed.inject(SessionChatDrafts).entry({ scopeId: 'scope', taskId: 3, sessionId: 6 })).toBe(starting.draft);
   });
 
   it('keeps the created row and draft without taking selection back after navigation', async () => {
@@ -629,11 +629,11 @@ describe('WorkspaceStore', () => {
     let finish!: (result: BackendResult<WorkspaceSession>) => void;
     bridge.workspaceCreateSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const creating = store.createSession('3'); const starting = store.selectedCreation()!;
-    starting.draft.text.set('Keep this new conversation');
+    starting.draft.setText('Keep this new conversation');
     store.selectSession({ taskId: '3', sessionId: '5' });
     finish(ok({ ...session, id: 6 })); await creating;
     expect(store.selected()?.sessionId).toBe(5);
-    expect(TestBed.inject(SessionChatDrafts).entry('scope', 6).text()).toBe('Keep this new conversation');
+    expect(TestBed.inject(SessionChatDrafts).entry({ scopeId: 'scope', taskId: 3, sessionId: 6 }).text()).toBe('Keep this new conversation');
     expect(store.tasks()[0]!.sessions.filter(row => row.id === '6')).toHaveLength(1);
   });
 
@@ -641,7 +641,7 @@ describe('WorkspaceStore', () => {
     const { store, bridge, start } = setup(); await start();
     bridge.workspaceCreateSession.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 409, message: 'Task is preparing.' } });
     await store.createSession('3');
-    const starting = store.selectedCreation()!; starting.draft.text.set('Keep this');
+    const starting = store.selectedCreation()!; starting.draft.setText('Keep this');
     expect(starting.status).toBe('failed'); expect(starting.error).toBe('Task is preparing.');
     expect(store.error()).toBeNull(); expect(store.mutationUncertain()).toBe(false);
     bridge.workspaceCreateSession.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Unknown.' } });

@@ -80,7 +80,7 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement?.tagName), 'TEXTAREA');
     await capture.cdp('Input.insertText', { text: 'Keep the current provider' }); await capture.press('Enter', 1);
     await capture.waitFor(() => document.querySelector('ex-composer textarea').value === '');
-    await capture.waitFor(() => document.querySelector('ex-session-chat .status')?.textContent.includes('Ready'));
+    await capture.waitFor(() => document.querySelector('ex-composer button[aria-label="Send message (Enter)"]:not([aria-busy="true"])'));
     await capture.fill('ex-composer textarea', 'A longer draft\nwith a second line\nand one more line for context.');
     await capture.viewport(760, 760); await capture.reducedMotion(true); await finish(); await assertRow();
     yield { name: theme + '-narrow-reduced', inspect: ['ex-composer', 'ex-composer .bar', 'ex-mode-toggle', 'ex-agent-picker', 'ex-permission-picker'] };
@@ -89,7 +89,7 @@ export default async function* (capture) {
     await capture.press('Escape'); await capture.reducedMotion(false);
     await mode('running');
     await capture.click('ex-composer textarea'); await capture.press('.', 4);
-    await capture.waitFor(() => document.querySelector('ex-session-chat .status')?.textContent.includes('Ready'));
+    await capture.waitFor(() => document.querySelector('ex-composer button[aria-label="Send message (Enter)"]:not([aria-busy="true"])'));
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value.startsWith('A longer draft')), true);
   }
   await capture.viewport(1440, 960); await mode('ready');

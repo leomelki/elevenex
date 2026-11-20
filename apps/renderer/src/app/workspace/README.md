@@ -170,9 +170,12 @@ changes. Same-machine recovery retains local writing, marks interrupted creation
 unconfirmed, and never resends it. Definite rejections offer explicit retry;
 unconfirmed creation offers Check sessions and explicit draft dismissal. These
 errors belong to the local session rather than disabling other workspace actions.
-As with ordinary unsent chat drafts, these local drafts live in this workspace
-window; they are not a durable disk outbox. Offline new-session requests retain
-the existing journaled waiting-session flow.
+The local composer saves unfinished text for the task in this window's saved
+workspace. If the app closes before confirmation, the text is recovered the next
+time the user chooses New session in that task. Confirmation moves it to the
+saved session in one local write. Discard draft clears the task's local text.
+Restoring text never initiates session creation. Offline new-session requests
+retain the existing journaled waiting-session flow.
 
 
 Task creation returns a preparing task. The store keeps `pendingTask()` and

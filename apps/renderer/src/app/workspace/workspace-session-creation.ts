@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import type { ElevenexBridge, WorkspaceSession } from '@elevenex/shared';
-import { createSessionDraft, type StartingSession } from '../session-chat/session-chat-drafts';
+import { SessionDraft, type StartingSession } from '../session-chat/session-chat-drafts';
 
 /** Workspace-owned local drafts and create requests. Never invents durable IDs or replays writes. */
 export class WorkspaceSessionCreation {
@@ -12,13 +12,14 @@ export class WorkspaceSessionCreation {
     private readonly bridge: Pick<ElevenexBridge, 'workspaceCreateSession'>,
     private readonly valid: (scope: string) => boolean,
     private readonly created: (starting: StartingSession, session: WorkspaceSession) => void,
+    private readonly makeDraft: (taskId: number) => SessionDraft = () => new SessionDraft(),
   ) {}
 
   start(scopeId: string, taskId: number): StartingSession | null {
     const existing = this.items().find(item => item.scopeId === scopeId && item.taskId === taskId);
     if (existing) return existing;
     if (this.disposed || this.items().length >= 10) return null;
-    const item: StartingSession = { id: `starting-${crypto.randomUUID()}`, scopeId, taskId, draft: createSessionDraft(), status: 'creating' };
+    const item: StartingSession = { id: `starting-${crypto.randomUUID()}`, scopeId, taskId, draft: this.makeDraft(taskId), status: 'creating' };
     this.records.update(items => [...items, item]);
     return item;
   }
@@ -49,7 +50,10 @@ export class WorkspaceSessionCreation {
     await this.send(id);
   }
   discard(id: string): void {
-    this.records.update(items => items.filter(item => item.id !== id || item.status === 'creating'));
+    const item = this.items().find(item => item.id === id);
+    if (!item || item.status === 'creating') return;
+    item.draft.discard();
+    this.records.update(items => items.filter(item => item.id !== id));
   }
   rebind(previous: string, next: string): void {
     this.records.update(items => items.map(item => item.scopeId === previous

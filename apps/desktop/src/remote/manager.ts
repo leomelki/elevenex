@@ -3,7 +3,8 @@ import { TerminalForwards, type TerminalForwardLease } from './terminal-forwards
 import { terminalForwardTarget } from './terminal-forward-store';
 import { WaitingWritingStore, type SavedWaitingWriting } from './waiting-writing-store';
 import { waitingWriting } from './waiting-writing';
-import type { WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
+import { ChatDraftStore, draftEdit, draftTarget } from './chat-draft-store';
+import type { SessionChatDraftSnapshot, WaitingWriting, WaitingWritingSnapshot } from '@elevenex/shared';
 import type { BackendStatus, EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteForward, RemoteForwardInput, RemoteHost, RemoteHostInput, RemoteMachineSummary } from '@elevenex/shared';
 import { RemoteConnection, disconnected, type ConnectionOptions } from './connection';
 import { RemoteSettingsStore, emptyContext, emptyWindow, environmentKey, type RemoteSettings, type SavedWindow } from './store';
@@ -38,6 +39,7 @@ export class RemoteManager {
   private readonly directoryListeners = new Set<() => void>();
   private readonly store: RemoteSettingsStore;
   private readonly waitingStore: WaitingWritingStore;
+  private readonly chatDrafts: ChatDraftStore;
   private readonly terminalForwards: TerminalForwards;
   private waitingError = false;
   private readonly fileGrants = { identity: new Set<string>(), config: new Set<string>() };
@@ -48,12 +50,13 @@ export class RemoteManager {
   constructor(private readonly options: RemoteManagerOptions) {
     this.store = new RemoteSettingsStore(options.settingsPath);
     this.waitingStore = new WaitingWritingStore(`${options.settingsPath}.waiting-writing.json`);
+    this.chatDrafts = new ChatDraftStore(`${options.settingsPath}.chat-drafts.json`);
     this.terminalForwards = new TerminalForwards(`${options.settingsPath}.terminal-forwards.json`);
   }
 
   async load(): Promise<void> {
     try {
-      const settings = await this.store.load();
+      const [settings] = await Promise.all([this.store.load(), this.chatDrafts.load()]);
       await this.terminalForwards.load(settings.hosts.map(host => host.id), settings.windows.flatMap(window =>
         Object.entries(window.forwards).flatMap(([hostId, forwards]) => forwards.filter(forward => forward.localPort === 0)
           .map(forward => ({ id: forward.id, hostId, remotePort: forward.remotePort })))));
@@ -334,6 +337,21 @@ export class RemoteManager {
     catch { if (window.saved.waiting[key] === saved) { if (previous) window.saved.waiting[key] = previous; else delete window.saved.waiting[key]; } throw new Error('Waiting writing could not be saved.'); }
     if (this.windows.get(windowId) !== window || key !== environmentKey(window.saved.selection) || identity !== this.configurationIdentity(selection)) throw new Error('The selected machine changed.');
   }
+  chatDraftRead(windowId: number, expected: EnvironmentSelection, target: unknown): SessionChatDraftSnapshot {
+    const scope = this.chatDraftScope(windowId, expected);
+    return { identity: scope.identity, draft: this.chatDrafts.read(scope, draftTarget(target)) };
+  }
+  async chatDraftSave(windowId: number, expected: EnvironmentSelection, identity: string, edit: unknown): Promise<void> {
+    const scope = this.chatDraftScope(windowId, expected);
+    if (identity !== scope.identity) throw new Error('The selected machine changed.');
+    await this.chatDrafts.save(scope, draftEdit(edit));
+  }
+  private chatDraftScope(windowId: number, expected: EnvironmentSelection) {
+    this.assertWritable();
+    const selected = this.window(windowId).saved, selection = validate.selection(expected);
+    if (environmentKey(selection) !== environmentKey(selected.selection)) throw new Error('The selected machine changed.');
+    return { slot: this.settings.windows.indexOf(selected), identity: this.configurationIdentity(selection) };
+  }
   async saveContext(windowId: number, input: EnvironmentContext, expected: EnvironmentSelection): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.window(windowId);
     if (environmentKey(validate.selection(expected)) !== environmentKey(window.saved.selection)) throw new Error('The selected environment changed; discard this stale context update');
@@ -480,6 +498,8 @@ export class RemoteManager {
         ...this.retiringConnections,
         ...[...this.windows.values()].map(window => this.closeForwards(window)),
         this.terminalForwards.dispose(),
+        // An accepted draft edit belongs to main even after its window closes.
+        this.chatDrafts.flush().catch(() => undefined),
       ]);
       if (!this.error) await this.save();
       this.listeners.clear(); this.directoryListeners.clear(); this.windows.clear(); this.connections.clear();

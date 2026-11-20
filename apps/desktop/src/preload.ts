@@ -73,6 +73,8 @@ const bridge = Object.freeze<ElevenexBridge>({
   sessionChatUpload: (scope, input) => invoke('session-chat:upload', scope, input),
   sessionChatMedia: (scope, input) => invoke('session-chat:media', scope, input),
   sessionChatContent: (scope, input) => invoke('session-chat:content', scope, input),
+  sessionChatDraftRead: (expected, target) => invoke('session-chat:draft-read', expected, target),
+  sessionChatDraftSave: (expected, identity, edit) => invoke('session-chat:draft-save', expected, identity, edit),
   platform: process.platform as DesktopPlatform,
   machineState: () => invoke('machines:state'),
   editMachine: (selection, input) => invoke('machines:edit', selection, input),

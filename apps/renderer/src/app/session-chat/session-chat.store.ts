@@ -22,7 +22,7 @@ import { chatTailContext } from './session-chat-tail';
 import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-chat-loading';
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
-import { SessionChatDrafts, type AttachmentDraft, type StartingSession } from "./session-chat-drafts";
+import { SessionChatDrafts, SessionDraft, type StartingSession } from "./session-chat-drafts";
 import {
   ChatTranscriptProjection,
   pendingPromptStart,
@@ -71,7 +71,7 @@ export class SessionChatStore {
   readonly waitingUncertain = computed(() => this.waiting().some(item => item.status === 'unknown'));
   private selection: ChatSelection | null = null;
   private readonly selectedTarget = signal<string>('');
-  private entry = { text: signal(""), uncertain: signal(""), files: signal<readonly AttachmentDraft[]>([]), mentions: signal<readonly ConversationMention[]>([]) };
+  private entry = new SessionDraft();
   private readonly activeEntry = signal(this.entry);
   private epoch = 0;
   private readEpoch = 0;
@@ -111,6 +111,9 @@ export class SessionChatStore {
   readonly windowRevision = signal(0);
   private supportsFollowing = false;
   readonly draft = computed(() => this.activeEntry().text());
+  readonly draftRestoring = computed(() => this.activeEntry().restoring());
+  readonly draftError = computed(() => this.activeEntry().error());
+  retryDraft(): void { this.entry.retry(); }
   readonly mentions = computed(() => this.activeEntry().mentions());
   addMention(mention: ConversationMention): void {
     if (!this.state()?.sessionMentions || mention.kind !== 'session' || this.readOnly() || this.busy() || this.uncertain()) return;
@@ -271,11 +274,12 @@ export class SessionChatStore {
       }
       return;
     }
-    const startingHandoff = !!this.startingId && this.entry === this.drafts.entry(selection.scopeId, selection.sessionId);
+    this.remember();
+    const nextEntry = this.drafts.entry(selection);
+    const startingHandoff = !!this.startingId && this.entry === nextEntry;
     this.startingId = null;
     if (!startingHandoff) { this.starting.set(false); this.compactStart.set(false); }
     this.outbox?.setEditing(null);
-    this.remember();
     const sameSession = this.selection?.taskId === selection.taskId && this.selection.sessionId === selection.sessionId;
     const previousEntry = this.entry, previousCursor = this.cursor, previousBefore = this.before(), historical = this.historical();
     this.stopRead();
@@ -283,7 +287,7 @@ export class SessionChatStore {
     this.selection = selection;
     this.selectedTarget.set(`${selection.taskId}/${selection.sessionId}`);
     this.selectedScope.set(selection.scopeId);
-    this.entry = this.drafts.entry(selection.scopeId, selection.sessionId);
+    this.entry = nextEntry;
     this.activeEntry.set(this.entry);
     const recovery = sameSession && previousEntry === this.entry;
     if (!recovery) this.transcript.clear();
@@ -313,10 +317,10 @@ export class SessionChatStore {
     // Opening always means the latest conversation. A paged reading window is
     // not a usable opening snapshot: showing it before the tail would jump.
     if (this.selection && state && !this.historical() && !this.next())
-      this.drafts.remember(this.selection.sessionId, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, cursor: this.cursor, before: this.before() });
+      this.drafts.remember(this.selection, { items: this.items(), leadingPrompt: this.leadingPrompt(), state, cursor: this.cursor, before: this.before() });
   }
   setDraft(value: string): void {
-    this.entry.text.set(value);
+    this.entry.setText(value);
   }
   private stopRead(): void {
     clearTimeout(this.timer);
@@ -587,8 +591,9 @@ export class SessionChatStore {
     }
   }
 
-  async submit(submission: ComposerSubmission): Promise<void> {
-    if (this.loading()) return;
+  async submit(submission: ComposerSubmission, writeDraft?: (text: string) => void): Promise<void> {
+    if (this.loading() || this.draftRestoring()) return;
+    const original = this.draft();
     if (this.historical()) {
       const epoch = this.epoch;
       await this.refresh();
@@ -605,7 +610,7 @@ export class SessionChatStore {
       return;
     if (submission.text.length > 64000) {
       this.error.set("Messages can contain up to 64,000 characters.");
-      this.setDraft(submission.text);
+      if (!original && !this.draft()) this.setDraft(submission.text);
       return;
     }
     const files = this.entry.files();
@@ -626,7 +631,8 @@ export class SessionChatStore {
     if (text.length > 64000) { this.error.set('Message and attachments exceed 64,000 characters.'); return; }
     if (this.offline() && this.outbox && this.selection) {
       if (this.outbox.enqueue(this.selection, { type: 'send', text, queue: false, ...(mentions.length ? { sessionIds: mentions.map(mention => Number(mention.id)) } : {}) }, text, null)) {
-        this.setDraft(''); this.entry.files.set([]); this.entry.mentions.set([]); this.error.set('');
+        if (this.draft() === original) { this.setDraft(''); writeDraft?.(''); }
+        this.entry.files.set([]); this.entry.mentions.set([]); this.error.set('');
       } else this.error.set('Up to 20 actions can wait in this window. Remove one before adding another.');
       return;
     }
@@ -647,7 +653,7 @@ export class SessionChatStore {
       epoch = this.epoch;
     const pendingChannel = pending.queue ? this.pendingQueue : this.pending;
     pendingChannel.set(pending);
-    this.setDraft("");
+    if (entry.beginSend(submission.text, original)) writeDraft?.('');
     entry.files.set([]);
     entry.mentions.set([]);
     const success = await this.perform({
@@ -658,23 +664,11 @@ export class SessionChatStore {
     });
     if (!success) entry.files.update(current => [...files, ...current]);
     if (!success) entry.mentions.update(current => [...mentions, ...current.filter(item => !mentions.some(mention => mention.id === item.id))]);
-    if (epoch !== this.epoch || this.disposed) {
-      if (!success)
-        entry.text.set(
-          entry.text()
-            ? submission.text + "\n\n" + entry.text()
-            : submission.text,
-        );
-      return;
-    }
-    if (!success && pendingChannel()?.id === pending.id) {
-      pendingChannel.set(null);
-      this.setDraft(
-        this.draft()
-          ? submission.text + "\n\n" + this.draft()
-          : submission.text,
-      );
-    }
+    const current = epoch === this.epoch && !this.disposed;
+    const restore = !success && (!current || pendingChannel()?.id === pending.id);
+    if (restore && current) pendingChannel.set(null);
+    entry.finishSend(restore);
+    if (restore && current) writeDraft?.(entry.text());
   }
   async perform(action: SessionChatAction): Promise<boolean> {
     const selection = this.selection;
@@ -808,7 +802,7 @@ export class SessionChatStore {
   }
   acknowledgeUncertain(): void {
     if (this.checked()) {
-      this.entry.uncertain.set("");
+      this.entry.acknowledgeSend();
       this.error.set("");
       this.notice.set(
         "Draft retained. Check for an existing message before sending.",

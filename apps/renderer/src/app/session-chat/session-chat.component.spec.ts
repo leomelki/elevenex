@@ -408,6 +408,37 @@ describe("connected chat reply rendering", () => {
     },
   );
 
+  it('clears native input when typing and submitting before the next render', async () => {
+    const { fixture, root, bridge, complete } = setup();
+    await settle(fixture);
+    const textarea = root.querySelector<HTMLTextAreaElement>('ex-composer textarea')!;
+    textarea.value = 'Submit immediately';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+    expect(textarea.value).toBe('');
+    expect(fixture.componentInstance.store.draft()).toBe('');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledOnce();
+    complete();
+    await settle(fixture);
+  });
+
+  it('restores the native input when a rejected message comes back before the next render', async () => {
+    const { fixture, root, complete } = setup();
+    await settle(fixture);
+    const textarea = root.querySelector<HTMLTextAreaElement>('ex-composer textarea')!;
+    textarea.value = 'Keep this draft';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(fixture);
+
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(textarea.value).toBe('');
+    complete({ ok: false, error: { code: 'outcome-unknown', message: 'Check delivery' } });
+    await settle(fixture);
+    expect(textarea.value).toBe('Keep this draft');
+    expect(fixture.componentInstance.store.uncertain()).toBe('Check delivery');
+  });
+
   it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {
     const { fixture, root, publish, complete } = setup();
     await settle(fixture);

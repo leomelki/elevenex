@@ -72,10 +72,16 @@ Older engines omit the capability and retain their original send contract.
   cursors; following pages consume it without duplicate replies. Explicit history
   replacement and session navigation release it. This keeps short collapsed turns
   readable without retaining every tool record or fetching the full transcript.
-- `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
-  scope. Unresolved writes are not evicted silently. A failed send restores its
-  text ahead of any newly typed draft. An uncertain outcome requires checking
-  delivery and explicit acknowledgement before another send. A new matching
+- `SessionChatDrafts` keeps a 20-entry cache of live composers per workspace.
+  It reads unsent text on demand from the local app, keyed by saved window,
+  configured machine, task and session. Edits reach main independently of
+  backend availability, and a restart restores the text when that composer
+  opens. Attachments and mention chips have a window lifetime.
+  Entries with unsaved changes or unresolved writes stay in memory. A failed
+  send restores its text ahead of any newly typed draft. Accepted sends remove
+  their submitted text and keep later edits. If the app closes during a send,
+  reopening preserves the text and asks the user to check delivery and
+  acknowledge the outcome before sending again. A new matching
   user/queue receipt confirms delivery even if the command reply is lost;
   running state or assistant output alone does not confirm a particular send.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
@@ -668,7 +674,8 @@ a retained receipt baseline require explicit conversation inspection.
 
 Draft text, files, mentions and in-flight uncertainty share the retained entry
 through a same-machine scope rebind. Late command results update their original
-draft entry without overwriting another session. Up to five transcript snapshots
+draft entry without overwriting another session. Local draft storage is
+independent of the waiting-action journal. It cannot dispatch messages. Up to five transcript snapshots
 of one million serialized characters each retain loaded conversations for offline
 navigation, alongside the existing 320-item live window and ordinary twenty-draft
 cache. Unresolved draft uncertainty keeps its existing preservation policy.

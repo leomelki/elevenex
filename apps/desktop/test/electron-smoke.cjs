@@ -371,10 +371,24 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'bad', taskId: 1, sessionId: 2, action: { type: 'credential', answer: 'forbidden' }, label: '', turnId: null, status: 'waiting' }], tasks: [] }).then(() => false, () => true)`), true);
   await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [], tasks: [] })`);
 
+  const draftTarget = { taskId: 1, sessionId: 2 };
+  const draftText = '  A local draft\nwith café and 👩🏽‍💻  ';
+  const readDraft = (target) => window.webContents.executeJavaScript(`window.elevenex.sessionChatDraftRead({kind:"local"}, ${JSON.stringify(target)})`);
+  const { identity: draftIdentity } = await readDraft(draftTarget);
+  const edit = { target: draftTarget, draft: { text: draftText } };
+  const saveDraft = (identity, edit) => window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatDraftSave({kind:"local"}, ${JSON.stringify(identity)}, ${JSON.stringify(edit)})`);
+  await assert.rejects(saveDraft('stale-identity', edit), /machine changed/);
+  await saveDraft(draftIdentity, edit);
+  assert.deepEqual((await readDraft({ ...draftTarget, sessionId: 3 })).draft, { text: '' });
+
   await window.loadURL('app://elevenex/smoke/history');
   assert.equal(window.webContents.getURL(), 'app://elevenex/smoke/history');
   assert.equal(await window.webContents.executeJavaScript('typeof window.elevenex.gitStatus'), 'function');
   assert.notEqual((await window.webContents.executeJavaScript('window.elevenex.backendClientState()')).scope.id, restartedScope.scope.id);
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: draftText });
+  await saveDraft(draftIdentity, { target: draftTarget, draft: { text: '' } });
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: '' });
   const assets = await window.webContents.executeJavaScript(`(async () => {
     const index = await fetch('/');
     const missing = await fetch('/missing-asset.js');

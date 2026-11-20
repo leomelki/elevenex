@@ -464,6 +464,22 @@ so offline persistence needs no live backend scope. Backend dispatch still uses
 its ordinary current-scope and resource validation. Task creation reconciliation
 uses the additive, capability-gated `workspaceTaskRequest` read.
 
+## Chat drafts
+
+Unsent composer text is stored separately in the private
+`remote-settings.json.chat-drafts.json` sidecar in desktop application data.
+The named `sessionChatDraftRead` and `sessionChatDraftSave` methods target one
+conversation in the sending window's saved slot and verified machine
+configuration. The same store accepts a per-task draft during session creation
+and moves it to the confirmed session atomically. It needs no backend
+connection. Restoring text never submits it.
+
+Main batches edits for atomic writes and drains the last batch on quit. The
+sidecar holds up to 512 drafts and 16 MiB across windows, with up to 256,000
+UTF-16 code units per draft. An unavailable or full store surfaces retry
+feedback in the composer. Attachments, mention chips and transcript windows
+stay in memory.
+
 ## Task browser surfaces
 
 Local task pages use main-authorized sandboxed Electron guests, with no preload
