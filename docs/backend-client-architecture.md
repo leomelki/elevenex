@@ -23,6 +23,10 @@ most 1 MiB. Main validates the turn, revision, offset and reply bounds under the
 same cancellable window lease. The renderer collects the batches before showing
 the complete timeline. Older clients keep their 40-record activity pages, and
 older engines can keep returning those pages or raw history windows.
+Completed turns reconcile repeated row identities before computing the visible
+reply, counts and activity offsets. Both history formats use the same saved
+change reconciliation as Review and can carry full line totals with their
+three-file preview.
 
 Both history modes and turn activity reads can opt into `deferToolDetails`.
 Tool records then carry headings and versioned evidence addresses while their

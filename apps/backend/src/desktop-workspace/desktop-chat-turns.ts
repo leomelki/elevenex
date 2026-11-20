@@ -5,16 +5,18 @@ import {
   SESSION_CHAT_TURN_WORK_BATCH_BYTES,
   SESSION_CHAT_TURN_WORK_LIMIT,
   sessionChatToolCategory,
+  sessionChatToolStatus,
   type SessionChatCompletedTurn,
   type SessionChatItem,
   type SessionChatRecord,
   type SessionChatToolCategory,
 } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
-import { capturedChangeSummary, changeSummary } from './desktop-chat-changes.js';
-import { chatItem, chatItemChanges, chatItemFailed, commandExecution, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { changeSummary, summarizeTurnChanges } from './desktop-chat-changes.js';
+import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js';
 import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
-import { ChatToolLinks, toolKey } from './desktop-chat-tool-links.js';
+import { ChatToolLinks } from './desktop-chat-tool-links.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
@@ -88,12 +90,15 @@ export class ChatCompletedTurns {
   }
 
   private prepare(items: readonly AgentTranscriptItem[]) {
-    const reply = this.reply(items);
+    // Provider history can contain successive receipts for the same row.
+    // The ordinary history window keeps its first position and latest value.
+    const rows = [...new Map(items.map(item => [item.id, item])).values()];
+    const reply = this.reply(rows);
     if (!reply) return null;
-    const hidden = items.slice(1).filter((item, index) =>
+    const hidden = rows.slice(1).filter((item, index) =>
       (index + 1 < reply.start || index + 1 >= reply.end) && !captureMarker(item));
     if (!hidden.length) return null;
-    return { reply, hidden, links: new ChatToolLinks(hidden) };
+    return { rows, reply, hidden, links: new ChatToolLinks(hidden) };
   }
 
   summarize(
@@ -106,71 +111,56 @@ export class ChatCompletedTurns {
     if (items.some(item => liveIds.has(item.id))) return undefined;
     const prepared = this.prepare(items);
     if (!prepared) return undefined;
-    const { reply, hidden, links } = prepared;
-    if (!summarizeRecent && start >= history.length - RECENT_RECORDS && items.length <= INLINE_RECORDS) {
-      const bytes = Buffer.byteLength(JSON.stringify(items.map(item => {
+    const { rows, reply, hidden, links } = prepared;
+    if (!summarizeRecent && start >= history.length - RECENT_RECORDS && rows.length <= INLINE_RECORDS) {
+      const bytes = Buffer.byteLength(JSON.stringify(rows.map(item => {
         const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
         return projectTool?.(item, call) ?? this.project(item, call);
       })));
       if (bytes <= INLINE_BYTES) return undefined;
     }
     const counts: Partial<Record<SessionChatToolCategory, number>> = {};
-    const failed = new Set<string>();
-    const changes = new Map<string, NonNullable<SessionChatCompletedTurn['changes']>['files'][number]>();
-    const edits: ReturnType<typeof chatItemChanges>[] = [];
-    let captured: AgentTranscriptItem | undefined;
-    let shared: true | undefined;
+    let failures = 0;
     let ended = -Infinity;
     let beforeReply = 0;
-    for (let index = 1; index < items.length; index++) {
-      const item = items[index];
-      const key = toolKey(item);
-      const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
+    for (let index = 1; index < rows.length; index++) {
+      const item = rows[index];
       const at = Date.parse(item.timestamp);
       if (Number.isFinite(at)) ended = Math.max(ended, at);
-      if (item.kind === 'system' && item.turnChanges) captured = item;
-      if (index < reply.start && !captureMarker(item)) beforeReply++;
-      if (!call && links.isLatest(item)) {
-        const category = sessionChatToolCategory(item.toolKind);
-        counts[category] = (counts[category] ?? 0) + 1;
-      }
-      const error = item.kind === 'error' || chatItemFailed(item, commandExecution(item, call));
-      if (error) {
-        failed.add(item.kind === 'tool_use' || call ? 'call:' + key : 'item:' + item.id);
-      } else if (item.kind === 'tool_result') {
-        const edit = chatItemChanges(item, call, this.changesCache);
-        if (!edit?.files.length) continue;
-        shared ??= edit.shared;
-        // Only metadata is needed here. Retain the same net-change precedence
-        // as the regular timeline while limiting fallback work on long traces.
-        if (edits.length < 200) edits.push(edit);
-        for (const file of edit.files)
-          if (changes.size < 200 || changes.has(file.path)) changes.set(file.path, file);
-      }
+      if (captureMarker(item) || (index >= reply.start && index < reply.end)) continue;
+      if (index < reply.start) beforeReply++;
+      const peer = links.peer(item);
+      if (item.kind === 'tool_result' && peer) continue;
+      const error = item.kind === 'error' || chatItemFailed(item);
+      const category = item.kind === 'tool_use' ? sessionChatToolCategory(item.toolKind)
+        : item.kind === 'tool_result' || item.kind === 'error' ? 'tool' : undefined;
+      if (category) counts[category] = (counts[category] ?? 0) + 1;
+      if (item.kind === 'tool_use'
+        ? sessionChatToolStatus(error, peer && chatItemFailed(peer, commandExecution(peer, item)), false) === 'failed'
+        : error) failures++;
     }
-    const outcome = captured ? capturedChangeSummary(captured, edits)
-      : changes.size ? { files: [...changes.values()], total: changes.size, ...(shared ? { shared } : {}) } : undefined;
-    const started = Date.parse(items[0].timestamp);
+    const outcome = summarizeTurnChanges(rows, SESSION_CHAT_TURN_FILES_LIMIT);
+    const started = Date.parse(rows[0].timestamp);
     return {
-      ...this.project(items[0]),
+      ...this.project(rows[0]),
       completedTurn: {
-        revision: this.revision(items),
+        revision: this.revision(rows),
         endId: items.at(-1)!.id,
         reply: reply.records,
         beforeReply,
         total: hidden.length,
         counts,
-        failures: failed.size,
+        failures,
         ...(Number.isFinite(started) && Number.isFinite(ended) ? { duration: Math.max(0, (ended - started) / 1000) } : {}),
-        ...(outcome ? { changes: { ...outcome, files: outcome.files.slice(0, SESSION_CHAT_TURN_FILES_LIMIT) } } : {}),
-      },
+        ...(outcome ? { changes: outcome } : {}),
+      } satisfies SessionChatCompletedTurn,
     };
   }
 
   page(turn: readonly AgentTranscriptItem[], revision: string, offset: number, toolDetails?: ChatToolDetails,
     limit = SESSION_CHAT_TURN_WORK_LIMIT) {
     const prepared = this.prepare(turn);
-    if (!prepared || offset >= prepared.hidden.length || this.revision(turn) !== revision) return null;
+    if (!prepared || offset >= prepared.hidden.length || this.revision(prepared.rows) !== revision) return null;
     const { hidden, links } = prepared;
     const toolPage = toolDetails?.projectPage();
     const byteLimit = limit > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES : WORK_PAGE_BYTES;

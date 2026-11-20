@@ -22,6 +22,7 @@ export function summarizeWork(
   fileCount = files.length,
   saved?: Pick<DeferredTurnWork, 'counts' | 'failures'>,
   sharedChanges = false,
+  totals?: WorkFact['diff'],
 ): readonly WorkFact[] {
   let failures = saved?.failures ?? 0;
   const counts: Partial<Record<WorkStep['kind'], number>> = { ...saved?.counts };
@@ -53,15 +54,17 @@ export function summarizeWork(
       tone: "danger",
     });
   if (files.length) {
-    const added = files.reduce((sum, file) => sum + (file.add ?? 0), 0);
-    const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
+    const diff = totals ?? (fileCount === files.length ? {
+      add: files.reduce((sum, file) => sum + (file.add ?? 0), 0),
+      del: files.reduce((sum, file) => sum + (file.del ?? 0), 0),
+    } : undefined);
     facts.push({
       kind: "files",
       label: sharedChanges
         ? `${fileCount} workspace ${fileCount === 1 ? "change" : "changes"}`
         : `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
       icon: "changes",
-      diff: fileCount === files.length ? { add: added, del: removed } : undefined,
+      diff,
     });
   }
   if (testResult)
@@ -83,7 +86,7 @@ export function summarizeWork(
       icon: "file",
       label: `${reads} ${reads === 1 ? "read" : "reads"}`,
     });
-  if (edits && (saved || sharedChanges || !files.length))
+  if (edits && (sharedChanges || !files.length))
     facts.push({
       kind: "edits", icon: "changes",
       label: `${edits} ${edits === 1 ? "edit" : "edits"}`,
@@ -113,7 +116,7 @@ export function summarizeWork(
       kind: "questions", icon: "chat",
       label: `${questions} ${questions === 1 ? "question" : "questions"}`,
     });
-  return saved ? facts : facts.slice(0, 4);
+  return facts.slice(0, 4);
 }
 export function formatDuration(seconds: number): string {
   const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));

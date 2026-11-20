@@ -36,11 +36,6 @@ export class ChatToolLinks {
     return peer?.id !== item.id ? peer : undefined;
   }
 
-  isLatest(item: AgentTranscriptItem): boolean {
-    const role = roleOf(item);
-    return role ? this.pairs.get(toolKey(item))?.[role] === item : item.kind === 'tool_result';
-  }
-
   findMissing(source: readonly AgentTranscriptItem[], positions?: Map<string, Pair<number>>): void {
     if (!source.length) return;
     const missing = { call: new Set<string>(), result: new Set<string>() };

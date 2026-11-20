@@ -3,11 +3,16 @@ import { createHash } from 'node:crypto';
 import type { SessionChatChangeSummary } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import {
+  UNKNOWN_IGNORED_FILE_BASELINE,
   computeTurnChangeDetailsFromItems,
   reconcileCapturedChanges,
   type TurnChangedFile,
   type TurnChangeDetails,
 } from '../agent-runtime/turn-change-stats.js';
+import { chatItemFailed, commandExecution, record } from './desktop-chat-tool-outcome.js';
+import { ChatToolLinks } from './desktop-chat-tool-links.js';
+
+const fileTools = new Set(['write', 'edit', 'file_changes', 'notebook_edit', 'bash']);
 
 export function changedFile(file: TurnChangedFile) {
   return {
@@ -27,14 +32,16 @@ function sharedChanges(details: TurnChangeDetails) {
     ? { shared: true as const } : {};
 }
 
-export function changeSummary(details: TurnChangeDetails | null | undefined): SessionChatChangeSummary | undefined {
-  return details
-    ? {
-        files: details.filesChanged.slice(0, 200).map(changedFile),
-        total: details.filesChanged.length,
-        ...sharedChanges(details),
-      }
-    : undefined;
+export function changeSummary(details: TurnChangeDetails | null | undefined, limit = 200): SessionChatChangeSummary | undefined {
+  if (!details) return undefined;
+  const files = details.filesChanged;
+  const lineTotals = files.length > limit ? files.reduce((totals, file) => {
+    totals.add += file.additions;
+    totals.del += file.deletions;
+    return totals;
+  }, { add: 0, del: 0 }) : undefined;
+  return { files: files.slice(0, limit).map(changedFile), total: files.length,
+    ...(lineTotals ? { lineTotals } : {}), ...sharedChanges(details) };
 }
 
 /** Never run fallback diff computation on unbounded provider tool arguments. */
@@ -43,10 +50,9 @@ export function toolChanges(
   result: AgentTranscriptItem,
 ) {
   if (
-    result.isError ||
-    !['write', 'edit', 'file_changes', 'notebook_edit', 'bash'].includes(
-      call.toolKind ?? '',
-    )
+    chatItemFailed(result, commandExecution(result, call)) ||
+    !fileTools.has(call.toolKind ?? '') ||
+    (call.toolKind === 'bash' && !record(result.providerToolResult).bashEditDiff)
   )
     return null;
   if (
@@ -55,6 +61,17 @@ export function toolChanges(
   )
     return null;
   return computeTurnChangeDetailsFromItems([call, result]);
+}
+
+function verifiedCapture(snapshot: AgentTranscriptItem): AgentTranscriptItem {
+  const capture = snapshot.turnChanges;
+  if (!capture?.filesChanged.some(file => file.diffUnavailable === UNKNOWN_IGNORED_FILE_BASELINE)) return snapshot;
+  // A watcher notification with no starting state cannot establish a net
+  // change. Leave this path available for corroboration by native tool edits.
+  return { ...snapshot, turnChanges: {
+    ...capture,
+    filesChanged: capture.filesChanged.filter(file => file.diffUnavailable !== UNKNOWN_IGNORED_FILE_BASELINE),
+  } };
 }
 
 /** Reconcile metadata without rerunning provider diffs on every streamed token. */
@@ -89,7 +106,7 @@ export function capturedChangeSummary(
           deletions: 0,
           filesChanged,
         },
-        [snapshot],
+        [verifiedCapture(snapshot)],
       ),
     ) ?? { files: [], total: 0 }
   );
@@ -97,19 +114,19 @@ export function capturedChangeSummary(
 }
 
 function nativeChanges(turn: readonly AgentTranscriptItem[]) {
-  const results = new Map(
-    turn
-      .filter((item) => item.kind === 'tool_result')
-      .map((item) => [item.toolUseId ?? item.id, item]),
-  );
+  const links = new ChatToolLinks(turn);
   const pairs: AgentTranscriptItem[] = [];
   let budget = 256 * 1024;
   for (const call of turn) {
     if (call.kind !== 'tool_use') continue;
-    const result = results.get(call.toolUseId ?? call.id);
-    if (!result || result.isError) continue;
+    if (pairs.length >= 640) break;
+    // Older records can still identify the editor by its provider name.
+    if (call.toolKind && call.toolKind !== 'unknown' && !fileTools.has(call.toolKind)) continue;
+    const result = links.peer(call);
+    if (!result || chatItemFailed(call) || chatItemFailed(result, commandExecution(result, call))) continue;
+    if (call.toolKind === 'bash' && !record(result.providerToolResult).bashEditDiff) continue;
     const size = Buffer.byteLength(JSON.stringify(call.toolInput ?? ''));
-    if (size > 32000 || size > budget || pairs.length >= 640) continue;
+    if (size > 32000 || size > budget) continue;
     budget -= size;
     pairs.push(call, {
       ...result,
@@ -121,6 +138,17 @@ function nativeChanges(turn: readonly AgentTranscriptItem[]) {
     });
   }
   return computeTurnChangeDetailsFromItems(pairs);
+}
+
+function turnChanges(turn: readonly AgentTranscriptItem[], native = nativeChanges(turn)) {
+  const capture = turn.findLast(item => item.turnChanges);
+  return reconcileCapturedChanges(native, capture ? [verifiedCapture(capture)] : []);
+}
+
+/** The compact and full transcript use the same reconciled change list as Review. */
+export function summarizeTurnChanges(turn: readonly AgentTranscriptItem[], limit?: number): SessionChatChangeSummary | undefined {
+  return changeSummary(turnChanges(turn), limit) ??
+    (turn.some(item => item.turnChanges) ? { files: [], total: 0 } : undefined);
 }
 export interface ChangeLine {
   id: string;
@@ -214,7 +242,7 @@ export function prepareTurnChanges(
   const turn = items.slice(start, end);
   // A persisted capture is already a net diff, including shell and external edits.
   const native = nativeChanges(turn);
-  const details = reconcileCapturedChanges(native, turn);
+  const details = turnChanges(turn, native);
   const files = details?.filesChanged ?? [];
   const revision = createHash('sha256')
     .update(turn.findLast((item) => item.turnChanges)?.id ?? '')

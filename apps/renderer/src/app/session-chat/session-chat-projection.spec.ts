@@ -99,6 +99,20 @@ describe('incremental transcript projection', () => {
       expect(turn).toMatchObject({ sharedChanges: true, files: changes.files, filesTotal: 1 });
   });
 
+  it('prefers verified turn totals over per-tool and capture preview rows', () => {
+    const changes = { total: 6, lineTotals: { add: 40, del: 15 },
+      files: [{ path: 'src/retry.ts', status: 'M', add: 2, del: 1 }] } as const;
+    const prompt = item('prompt', 'user'), reply = item('reply', 'assistant', 'Done.');
+    const capture = item('capture', 'system', '', { changes: { ...changes, total: 220 } });
+    const [raw] = chatExchanges([{ ...prompt, turnChanges: changes }, tool('call'), reply, capture], state, fresh);
+    const [compact] = chatExchanges([{ ...prompt, completedTurn: {
+      revision: 'a'.repeat(64), endId: capture.id, beforeReply: 1, total: 1,
+      reply: [reply], counts: { run: 1 }, failures: 0, changes,
+    } }], state, fresh);
+    for (const turn of [raw, compact])
+      expect(turn).toMatchObject({ filesTotal: 6, files: changes.files, filesDiff: changes.lineTotals, answer: 'Done.' });
+  });
+
   it('ignores unrelated runtime updates and only changes the active turn for phase/decision updates', () => {
     const projection = new ChatTranscriptProjection();
     const items = [item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Done'),

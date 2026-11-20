@@ -498,9 +498,9 @@ export class DesktopChatService implements OnModuleDestroy {
       ]);
       if (signal.aborted) return;
       const live = Array.isArray(runtime?.liveItems) ? runtime.liveItems as AgentTranscriptItem[] : [];
-      const index = this.historyWindowIndex(feed);
-      index.align(history);
-      const find = (id: string) => live.findLast(value => value.id === id) ?? history[index.position(history, id)];
+      // History and activity keep the latest payload at a repeated row ID.
+      // Resolve the same payload after its recent evidence has left the cache.
+      const find = (id: string) => live.findLast(value => value.id === id) ?? history.findLast(value => value.id === id);
       const raw = find(source.item.id);
       const receipt = source.result ? find(source.result.id) : undefined;
       if (source.result && (raw?.kind !== 'tool_use' || receipt?.kind !== 'tool_result' || receipt.toolUseId !== toolKey(raw)))
@@ -665,8 +665,8 @@ export class DesktopChatService implements OnModuleDestroy {
       ? (record(runtime).liveItems as AgentTranscriptItem[])
       : [];
     const item =
-      live.find((item) => item.id === itemId) ??
-      history.find((item) => item.id === itemId);
+      live.findLast((item) => item.id === itemId) ??
+      history.findLast((item) => item.id === itemId);
     if (!item)
       throw new BadRequestException(
         'This transcript item is no longer available.',

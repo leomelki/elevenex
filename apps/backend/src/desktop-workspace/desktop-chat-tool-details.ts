@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { sessionChatToolHeading, type SessionChatRecord, type SessionChatToolEvidence, type SessionChatToolRecord, type SessionChatToolReference } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
-import { chatItem, commandFacts, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
+import { commandFacts } from './desktop-chat-tool-outcome.js';
 
 const MAX_RECENT_TEXT_BYTES = 1024 * 1024;
 const MAX_RECENT_RECORDS = 256;

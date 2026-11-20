@@ -1,4 +1,4 @@
-import { parseBrowserElements, type BrowserElementContext } from '@elevenex/shared';
+import { parseBrowserElements, sessionChatToolStatus, type BrowserElementContext } from '@elevenex/shared';
 
 /** Pairs a recorded image with the element it shows, by its exact attachment name. */
 function elementOf(elements: readonly BrowserElementContext[], caption: string) {
@@ -253,26 +253,20 @@ function projectExchanges(
             const receipt = item.receipt;
             const deferredTool = sessionToolDetailsSource(item, result);
             const evidence = deferredTool ? undefined : presentSessionToolEvidence(item, result, result ? undefined : receipt?.id);
-            const hasResult = !!result || !!receipt;
-            const outcome =
-              (result?.error ?? receipt?.error) || item.error
-                ? "failed"
-                : !hasResult && !live
-                  ? "unknown"
-                  : undefined;
+            const status = sessionChatToolStatus(item.error, result?.error ?? receipt?.error, live);
             return [
               {
                 id: item.id,
                 kind: sessionToolKind(item),
                 detail: item.toolDetails?.summary ?? evidence?.presentation.summary ?? item.toolName ?? 'Tool',
-                verb: sessionToolVerb(item, !hasResult && live, outcome),
+                verb: sessionToolVerb(item, status === 'running', status === 'failed' || status === 'unknown' ? status : undefined),
                 meta:
-                  outcome === "unknown"
+                  status === "unknown"
                     ? "Completion unknown"
                     : result?.toolDetails?.meta ?? receipt?.toolDetails?.meta ?? item.toolDetails?.meta ?? evidence?.presentation.meta,
                 deferredTool,
                 ...evidence,
-                status: outcome ?? (hasResult ? "done" : "running"),
+                status,
               },
             ];
           }
@@ -327,9 +321,8 @@ function projectExchanges(
         if (projected[0]) cache?.steps.set(item, { result, pairedResult, running, renderId: id, step: projected[0] });
         return projected;
       });
-    const captured = completed ? completed.changes : records
-      .filter((item) => item.kind === "system" && item.changes)
-      .at(-1)?.changes;
+    const captured = completed ? completed.changes : group.promptItem?.turnChanges ??
+      records.filter(item => item.kind === 'system' && item.changes).at(-1)?.changes;
     const reported = new Map<string, NonNullable<SessionChatItem['changes']>['files'][number]>();
     let sharedChanges = captured?.shared;
     if (!completed && !captured) {
@@ -391,6 +384,7 @@ function projectExchanges(
       files: previous?.exchange.files?.length === files.length && files.every((file, i) => file === previous.exchange.files?.[i])
         ? previous.exchange.files : files,
       filesTotal,
+      filesDiff: captured?.lineTotals,
       sharedChanges,
       answerBeforeStepId:
         finalEnd > finalStart

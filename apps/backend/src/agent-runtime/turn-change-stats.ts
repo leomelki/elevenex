@@ -47,6 +47,11 @@ export interface TurnChangeDetails extends TurnChangeSummary {
   capture?: { root: string; complete: boolean; shared: boolean; message?: string; unchangedPaths?: string[]; aliases?: string[] };
 }
 
+// This value is also persisted in older captures. It marks an observation
+// with no preimage, unlike a verified binary, mode-only or oversized change.
+export const UNKNOWN_IGNORED_FILE_BASELINE =
+  'The file is ignored by Git and its starting contents were not available';
+
 interface EditOp {
   oldString: string;
   newString: string;

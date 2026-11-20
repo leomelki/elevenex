@@ -1,6 +1,7 @@
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { ChatCompletedTurns } from './desktop-chat-turns.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
+import { ChatToolDetails } from './desktop-chat-tool-details.js';
 
 const stamp = '2026-11-19T10:00:00.000Z';
 function row(id: string, kind: AgentTranscriptItem['kind'], content = id): AgentTranscriptItem {
@@ -14,6 +15,46 @@ function activity(prefix: string, count: number): AgentTranscriptItem[] {
 }
 
 describe('completed turn history', () => {
+  it('discloses the latest version of each saved block in ordinary transcript order', () => {
+    const history: AgentTranscriptItem[] = [
+      row('prompt', 'user'),
+      row('msg_split:thinking:0', 'thinking', ''),
+      row('progress', 'assistant', 'Checked the entry point.'),
+      row('msg_split:thinking:0', 'thinking', 'Completed reasoning'),
+      row('checkpoint', 'system'),
+      row('msg_final:assistant:0', 'assistant', 'Early reply'),
+      row('msg_final:assistant:0', 'assistant', 'Complete reply'),
+    ];
+    const turns = new ChatCompletedTurns();
+    const toolDetails = new ChatToolDetails(new WeakMap(), new WeakMap());
+    const full = chatWindow(history, [], { loadingMode: 'window', toolDetails })!;
+    const saved = chatWindow(history, [], { completedTurns: turns, summarizeRecent: true, toolDetails })!
+      .items[0].completedTurn!;
+    expect(saved).toMatchObject({ total: 3, beforeReply: 3, reply: [{ text: 'Complete reply' }] });
+    const page = turns.page(history, saved.revision, 0, toolDetails, 512)!;
+    expect(page).toMatchObject({ nextOffset: null, total: 3 });
+    expect([...page.items, ...saved.reply]).toEqual(full.items.slice(1));
+    expect(page.items[0].text).toBe('Completed reasoning');
+    const appended = [...history, row('next', 'user'), row('next-reply', 'assistant')];
+    const following = chatWindow(appended, [], { following: saved.endId, completedTurns: new ChatCompletedTurns() })!;
+    expect(following.items.map(item => item.id)).toEqual(['next', 'next-reply']);
+  });
+
+  it('counts displayed calls and standalone failures using the final paired result', () => {
+    const history: AgentTranscriptItem[] = [
+      row('prompt', 'user'),
+      { ...row('test', 'tool_use', ''), toolKind: 'bash', toolUseId: 'test' },
+      { ...row('test-first', 'tool_result'), toolUseId: 'test', isError: true },
+      row('orphan', 'tool_result'),
+      { ...row('orphan-error', 'tool_result'), toolKind: 'read', isError: true },
+      row('agent-error', 'error'),
+      row('answer', 'assistant'),
+      { ...row('test-final', 'tool_result'), toolUseId: 'test', providerToolResult: { exitCode: 0 } },
+    ];
+    const summary = new ChatCompletedTurns().summarize(history, 0, history.length, new Set(), undefined, true)?.completedTurn;
+    expect(summary).toMatchObject({ counts: { run: 1, tool: 3 }, failures: 2, beforeReply: 5, total: 6 });
+  });
+
   it('returns the visible reply and net changes without sending hidden evidence', () => {
     const turns = new ChatCompletedTurns();
     const evidence = 'private tool input and output '.repeat(1500);

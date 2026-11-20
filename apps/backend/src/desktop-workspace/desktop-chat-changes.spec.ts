@@ -1,7 +1,8 @@
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
-import type { TurnChangeDetails } from '../agent-runtime/turn-change-stats.js';
+import { UNKNOWN_IGNORED_FILE_BASELINE, type TurnChangeDetails } from '../agent-runtime/turn-change-stats.js';
 import { chatWindow } from './desktop-chat-window.js';
 import { turnChangesPage } from './desktop-chat-changes.js';
+import { ChatCompletedTurns } from './desktop-chat-turns.js';
 
 const item = (
   id: string,
@@ -41,6 +42,66 @@ const captured = (count = 1, lines = 1): TurnChangeDetails => ({
 });
 
 describe('desktop reply changes', () => {
+  it('shows the same verified edits and line totals before loading work, in full history and in Review', () => {
+    const snapshot = captured(4, 2);
+    // A verified binary modification contributes a file even with no lines.
+    snapshot.filesChanged[0] = { ...snapshot.filesChanged[0], additions: 0, hunks: [], diffUnavailable: 'Binary file changed' };
+    snapshot.filesChanged.push(...Array.from({ length: 206 }, (_, index) => ({
+      path: index === 0 ? 'ignored-config' : `ignored/output-${index}`,
+      status: 'modified' as const, additions: 0, deletions: 0, hunks: [], diffUnavailable: UNKNOWN_IGNORED_FILE_BASELINE,
+    })));
+    snapshot.files = snapshot.filesChanged.length;
+    const rows = [
+      item('prompt', 'user'),
+      item('write', 'tool_use', { toolUseId: 'write', toolKind: 'write', toolInput: { file_path: '/repo/ignored-config', content: 'verified\n' } }),
+      item('written', 'tool_result', { toolUseId: 'write' }),
+      item('answer', 'assistant', { content: 'Finished.' }),
+      item('capture', 'system', { turnChanges: snapshot }),
+    ];
+    const full = chatWindow(rows, [], { loadingMode: 'window' })!.items[0].turnChanges!;
+    const compact = chatWindow(rows, [], { completedTurns: new ChatCompletedTurns(), summarizeRecent: true })!
+      .items[0].completedTurn?.changes;
+    const review = turnChangesPage(rows, 'prompt', 0);
+    expect(full.total).toBe(5);
+    expect(full.files).toEqual(review.files.slice(0, 3));
+    expect(review.files.find(file => file.path === '/repo/ignored-config')).toMatchObject({ status: 'A', add: 1 });
+    expect(review.files.find(file => file.path === 'file-0.txt')).toBeDefined();
+    expect(full.lineTotals).toEqual({ add: 7, del: 0 });
+    expect(compact).toEqual(full);
+  });
+
+  it('deduplicates repeated native edits and preserves distinct edits in both saved formats', () => {
+    const edit = (id: string, oldText: string, newText: string) => [
+      item(id, 'tool_use', { toolUseId: id, toolKind: 'edit',
+        toolInput: { file_path: 'retry.ts', old_string: oldText, new_string: newText } }),
+      item(id + '-result', 'tool_result', { toolUseId: id }),
+    ];
+    const rows = [item('prompt', 'user'),
+      ...edit('first', 'old()', 'new()'), ...edit('retry', 'old()', 'new()'), ...edit('second', 'oldAgain()', 'newAgain()'),
+      item('answer', 'assistant', { content: 'Edited the retry path.' })];
+    const full = chatWindow(rows, [], { loadingMode: 'window' })!.items[0].turnChanges;
+    const compact = chatWindow(rows, [], { completedTurns: new ChatCompletedTurns(), summarizeRecent: true })!
+      .items[0].completedTurn?.changes;
+    expect(full).toEqual({ total: 1, files: [{ path: 'retry.ts', status: 'M', add: 2, del: 2 }] });
+    expect(compact).toEqual(full);
+    expect(turnChangesPage(rows, 'prompt', 0).files).toEqual(full?.files);
+  });
+
+  it('reserves the native change budget for tools that can report a file change', () => {
+    const reads = Array.from({ length: 330 }, (_, i) => [
+      item(`read-${i}`, 'tool_use', { toolUseId: `read-${i}`, toolKind: 'read', toolInput: { file_path: 'source.ts' } }),
+      item(`receipt-${i}`, 'tool_result', { toolUseId: `read-${i}` }),
+    ]).flat();
+    const rows = [item('prompt', 'user'), ...reads,
+      item('write', 'tool_use', { toolUseId: 'write', toolKind: 'write', toolInput: { file_path: 'new.txt', content: 'hello\n' } }),
+      item('written', 'tool_result', { toolUseId: 'write' }),
+      item('reply', 'assistant', { content: 'Created the file.' })];
+    const compact = chatWindow(rows, [], { completedTurns: new ChatCompletedTurns(), summarizeRecent: true })!
+      .items[0].completedTurn?.changes;
+    expect(compact).toEqual({ total: 1, files: [{ path: 'new.txt', status: 'A', add: 1, del: 0 }] });
+    expect(turnChangesPage(rows, 'prompt', 0).files).toEqual(compact?.files);
+  });
+
   it('carries shared capture attribution through history and review', () => {
     const details = captured(2);
     details.capture!.shared = true;

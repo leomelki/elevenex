@@ -307,7 +307,11 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
 }
 function historyItem(value: unknown, summaryAllowed: boolean, detailsAllowed: boolean): SessionChatItem {
   const raw = chatObject(value), row = activityItem(raw, detailsAllowed);
-  if (raw['completedTurn'] === undefined) return row;
+  if (raw['completedTurn'] === undefined) {
+    if (raw['turnChanges'] === undefined) return row;
+    if (row.kind !== 'user') throw invalid();
+    return { ...row, turnChanges: parseChangeSummary(raw['turnChanges'], SESSION_CHAT_TURN_FILES_LIMIT) };
+  }
   if (!summaryAllowed || row.kind !== 'user') throw invalid();
   const turn = chatObject(raw['completedTurn']);
   const endId = chatText(turn['endId']);

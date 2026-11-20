@@ -55,7 +55,6 @@ const WORK_PRELOAD_INTENT_MS = 220;
     "[class.live]": 'status() === "live"',
     "[class.expanded]": "expanded()",
     "[class.arriving]": "arriving()",
-    "[class.deferred]": "!!deferredWork()",
     tabindex: "0",
     "(keydown)": "onKey($event)",
     "(animationend)": "arrivalFinished($event)",
@@ -94,6 +93,7 @@ export class TurnComponent implements OnChanges {
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
   readonly filesTotal = input<number>();
+  readonly filesDiff = input<{ readonly add: number; readonly del: number }>();
   readonly sharedChanges = input(false);
   readonly error = input("");
   readonly open = input(false);
@@ -180,6 +180,7 @@ export class TurnComponent implements OnChanges {
           this.filesTotal() ?? this.files().length,
           this.deferredWork(),
           this.sharedChanges(),
+          this.filesDiff(),
         ),
   );
   private readonly factsElement =

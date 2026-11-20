@@ -47,6 +47,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container-type: inline-size;
 }
 ex-fold.work-region {
   /* Give the answer's 36px handoff a full, interruptible settling curve. */
@@ -174,45 +175,22 @@ footer {
   flex: none;
   margin-left: calc(-1 * var(--space-1));
 }
-:host(.deferred) .work {
-  padding-inline: var(--space-2);
-  margin-inline-start: calc(-1 * var(--space-2));
-  border-radius: var(--radius-sm);
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-:host(.deferred) .work:hover,
-:host(.deferred.expanded) .work {
-  background: var(--surface-sunken);
-}
-:host(.deferred) .work:hover .work-label {
-  text-decoration: none;
-}
-:host(.deferred) .work-item {
-  opacity: 1;
-  transform: none;
-}
-:host(.deferred.expanded) .chevron {
-  color: var(--accent);
-}
-.body:has(ex-turn-work-panel) {
-  container-type: inline-size;
-}
 @container (max-width: 560px) {
-  :host(.deferred) .work:has(.fact:nth-child(3)) {
+  .work:has(.fact:nth-child(3)) {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     column-gap: var(--space-2);
     row-gap: var(--space-1);
     padding-block: var(--space-1);
   }
-  :host(.deferred) .work:has(.fact:nth-child(3)) .facts {
+  .work:has(.fact:nth-child(3)) .facts {
     grid-column: 1 / -1;
     grid-row: 2;
     gap: var(--space-2);
     flex-wrap: wrap;
     mask-image: none;
   }
-  :host(.deferred) .work:has(.fact:nth-child(3)) .chevron {
+  .work:has(.fact:nth-child(3)) .chevron {
     grid-column: 3;
     grid-row: 1;
     margin: 0;

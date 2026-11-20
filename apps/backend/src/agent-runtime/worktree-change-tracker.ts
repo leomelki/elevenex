@@ -7,9 +7,10 @@ import chokidar from 'chokidar';
 import { formatPatch, parsePatch, structuredPatch } from 'diff';
 import { buildAugmentedEnv } from '../config/system-paths.js';
 import { isolateGitEnvironment } from '../config/git-environment.js';
-import type {
-  TurnChangeDetails,
-  TurnChangedFile,
+import {
+  UNKNOWN_IGNORED_FILE_BASELINE,
+  type TurnChangeDetails,
+  type TurnChangedFile,
 } from './turn-change-stats.js';
 
 const FILE_BYTES = 256 * 1024;
@@ -260,8 +261,7 @@ export class WorktreeChangeTracker {
                         signature: 'unknown',
                         mode: after.mode,
                         references: 0,
-                        reason:
-                          'The file is ignored by Git and its starting contents were not available',
+                        reason: UNKNOWN_IGNORED_FILE_BASELINE,
                       }
                     : undefined));
               if (!before && !after) {

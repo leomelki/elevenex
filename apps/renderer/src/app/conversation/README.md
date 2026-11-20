@@ -14,6 +14,8 @@ These standalone OnPush components consume renderer view models and emit typed i
   the chronological steps together. Preserve `answerId` and set
   `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
   focus and leaves the reply and file chips available while the activity loads.
+  `filesTotal` and `filesDiff` preserve complete work facts with a bounded file
+  preview. Loaded and deferred turns share the same heading and fact priority.
 - `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
   An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
@@ -332,9 +334,9 @@ When a worktree capture overlaps another turn, `ChatExchange.sharedChanges`
 carries that attribution to the Worked header as workspace changes.
 They enter with a short stagger and spring, and fade/slide out together on a
 shorter curve; reduced motion removes movement and touch keeps them visible.
-Unrecovered failure facts stay visible. Narrow headings clip the facts with a
-trailing fade while retaining the duration and disclosure. Counts exclude
-running/unknown tools; partial file windows omit aggregate line counts.
+Unrecovered failure facts stay visible. Narrow headings wrap larger fact sets
+while retaining the duration and disclosure. Counts cover observed calls with
+unknown completion. Partial file windows show aggregate line counts when supplied.
 Live counts use the shared Ticker, with still initial history and reduced motion.
 Inspected results and focused controls remain mounted and visible.
 Explicit section collapse releases its inspection pins; focusing a summary alone

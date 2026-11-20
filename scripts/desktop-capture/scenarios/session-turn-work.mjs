@@ -60,7 +60,7 @@ function seed(viewer) {
       completedTurn: {
         revision: 'a'.repeat(64), endId: 'receipt-note', reply: [final],
         beforeReply: beforeReply.length, total: evidence.length, counts: { read: 50, run: 1 },
-        failures: 1, duration: 94, changes: { total: 3, shared: true, files: [
+        failures: 1, duration: 94, changes: { total: 14, lineTotals: { add: 216, del: 339 }, shared: true, files: [
           { path: 'src/payments/retry.ts', status: 'M', add: 28, del: 6 },
           { path: 'src/payments/retry.test.ts', status: 'M', add: 46, del: 0 },
           { path: 'src/payments/store.ts', status: 'M', add: 12, del: 2 },
@@ -102,7 +102,8 @@ export default async function* (capture) {
     await scrollTo(capture, work);
     await settleMotion(capture);
     assert.equal(await fixture(viewer => viewer.fixture.chat.turnWorkReads), 0);
-    assert.match(await capture.evaluate(selector => document.querySelector(selector).textContent, work), /1 failed.*3 workspace changes.*1 command.*50 reads/);
+    const facts = await capture.evaluate(selector => document.querySelector(selector).textContent, work);
+    assert.match(facts, /1 failed.*14 workspace changes.*\+216.*−339.*1 command.*50 reads/);
     yield { name: theme + '-collapsed', inspect };
 
     await capture.click(work);
@@ -123,6 +124,7 @@ export default async function* (capture) {
     if (!narrow) await capture.motion.freeze();
     await fixture(viewer => viewer.fixture.chat.turnWorkBehavior('ready'));
     await capture.waitFor(() => document.querySelector('[data-work-step="receipt-note"]'));
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector).textContent, work), facts);
     assert.deepEqual(await capture.evaluate((selector, reply) => {
       const root = document.querySelector(selector);
       const rows = [...root.querySelectorAll('[data-work-step]')].map(row => row.dataset.workStep);

@@ -92,6 +92,8 @@ export interface SessionChatToolDetailsReply extends SessionChatTarget {
 export interface SessionChatItem extends SessionChatRecord {
   /** A complete history entry at the user record. Its hidden rows page separately. */
   readonly completedTurn?: SessionChatCompletedTurn;
+  /** Reconciled changes for a complete saved turn sent as ordinary records. */
+  readonly turnChanges?: SessionChatChangeSummary;
 }
 export interface SessionChatCompletedTurn {
   readonly revision: string;
@@ -149,6 +151,12 @@ const toolCategories: Readonly<Record<string, SessionChatToolCategory>> = {
 };
 export function sessionChatToolCategory(toolKind: string | null | undefined): SessionChatToolCategory {
   return toolKind && Object.hasOwn(toolCategories, toolKind) ? toolCategories[toolKind]! : 'tool';
+}
+/** Missing receipts are distinct from successful receipts. */
+export function sessionChatToolStatus(callFailed: boolean, resultFailed: boolean | undefined, live: boolean) {
+  if (callFailed || resultFailed) return 'failed';
+  if (resultFailed !== undefined) return 'done';
+  return live ? 'running' : 'unknown';
 }
 export interface SessionChatQuestion {
   readonly id: string;
@@ -476,6 +484,8 @@ export interface SessionChatChangedFile {
 export interface SessionChatChangeSummary {
   readonly files: readonly SessionChatChangedFile[];
   readonly total: number;
+  /** Line counts across the full list when the supplied preview is partial. */
+  readonly lineTotals?: { readonly add: number; readonly del: number };
   /** The worktree capture includes changes observed during overlapping work. */
   readonly shared?: true;
 }

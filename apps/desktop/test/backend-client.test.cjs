@@ -1054,6 +1054,18 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   for (const completedTurn of [{ ...summary, total: 0 }, { ...summary, beforeReply: 2 }, { ...summary, counts: { run: 2 } }, { ...summary, reply: [record('tool', 'tool_use')] }]) {
     assert.throws(() => parseChatPage({ ...page, items: [{ ...page.items[0], completedTurn }] }, 5, 9, 'progressive', true), /incompatible/);
   }
+  const changes = { total: 14, files: [{ path: 'retry.ts', status: 'M', add: 2, del: 1 }], lineTotals: { add: 216, del: 339 } };
+  const fullHistory = { ...page, items: [{ ...record('prompt', 'user'), turnChanges: changes }] };
+  assert.deepEqual(parseChatPage(fullHistory, 5, 9, 'window').items[0].turnChanges, changes);
+  const compactHistory = { ...page, items: [{ ...page.items[0], completedTurn: { ...summary, changes } }] };
+  assert.deepEqual(parseChatPage(compactHistory, 5, 9, 'progressive', true).items[0].completedTurn.changes, changes);
+  for (const turnChanges of [
+    { ...changes, lineTotals: { add: 1, del: 10 } },
+    { ...changes, total: 1 },
+    { ...changes, lineTotals: { add: 5, del: -1 } },
+  ]) {
+    assert.throws(() => parseChatPage({ ...fullHistory, items: [{ ...fullHistory.items[0], turnChanges }] }, 5, 9, 'window'), /incompatible/);
+  }
   const tool = { ...record('call', 'tool_use'), toolId: 'operation', text: '' };
   const heading = { ...tool, toolDetails: { revision, summary: 'pnpm test', private: 'discard' } };
   const callWithReceipt = { ...heading, receipt: { id: 'result', error: true, toolDetails: { revision, meta: 'Exit 1' } } };

@@ -171,6 +171,7 @@ describe('selected session chat', () => {
       { ...item('prompt'), kind: 'user' },
       { ...item('call', ''), kind: 'tool_use', toolKind: 'read', toolUseId: 'operation', toolInput: { file_path: 'important.ts' } },
       ...Array.from({ length: 103 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      { ...item('result', 'Partial file contents'), kind: 'tool_result', toolUseId: 'operation' },
       { ...item('result', 'Important file contents'), kind: 'tool_result', toolUseId: 'operation' },
       item('answer'),
     ];
@@ -179,7 +180,7 @@ describe('selected session chat', () => {
     const version = initial.items[0].completedTurn!.revision;
     const complete = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT))!;
     expect(complete).toMatchObject({ total: 105, offset: 0, nextOffset: null });
-    expect(complete.items.map(row => row.id)).toEqual(history.slice(1, -1).map(row => row.id));
+    expect(complete.items.map(row => row.id)).toEqual([...new Set(history.slice(1, -1).map(row => row.id))]);
     expect(JSON.stringify(complete.items)).not.toContain('Important file contents');
     await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, undefined, 512)).rejects.toThrow('Invalid turn activity limit');
     await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT + 1)).rejects.toThrow('Invalid turn activity limit');
@@ -257,12 +258,14 @@ describe('selected session chat', () => {
     status = 'archived';
     history = [
       { ...item('prompt'), kind: 'user' },
+      { ...item('thought-0', ''), kind: 'thinking' },
       ...Array.from({ length: 60 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
       item('answer'),
     ];
     const signal = new AbortController().signal;
     const open = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
     const saved = open.items[0].completedTurn!;
+    expect(saved.total).toBe(60);
     expect((await chat.read(1, 2, undefined, undefined, signal))!.items.some(item => item.completedTurn)).toBe(false);
     const page = (await chat.turnWork(1, 2, 'prompt', saved.revision, 40, signal))!;
     expect(page).toMatchObject({ taskId: 1, sessionId: 2, turnId: 'prompt', offset: 40, total: 60, nextOffset: null });
@@ -271,7 +274,7 @@ describe('selected session chat', () => {
     await expect(chat.turnWork(1, 2, 'answer', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
     await expect(chat.turnWork(1, 2, 'prompt', saved.revision, NaN, signal)).rejects.toThrow('Invalid turn activity');
     expect(await chat.turnWork(1, 2, 'prompt', saved.revision, 0, AbortSignal.abort())).toBeUndefined();
-    history[1] = { ...history[1], content: 'Rewritten evidence' };
+    history[2] = { ...history[2], content: 'Rewritten evidence' };
     await expect(chat.turnWork(1, 2, 'prompt', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
     expect(runtime.getRuntimeState).not.toHaveBeenCalled();
   });

@@ -262,8 +262,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
 
 - A settled turn can occupy one saved entry with its prompt, latest reply
   blocks, elapsed time, counts by tool category, failures and the first three
-  changed files plus the total. Review still opens the full paginated change
-  list. The default profile requests this shape for recent saved turns too.
+  changed files plus the full file and line totals. Complete saved turns in an
+  ordinary window and the paginated Changes review use the same reconciliation.
+  The default profile requests compact entries for recent saved turns too.
   Older engines may return small recent turns inline. A prompt with no hidden
   work stays inline. The engine selects at most 40 summaries per history read
   and keeps the current live turn's stream and saved completion handoff
@@ -277,8 +278,9 @@ full-history read, so a cold provider parse can still dominate initial latency.
   It requests up to 512 compact records or 1 MiB at a time, and follows any
   remaining offsets privately. Older engines can keep returning 40-record
   pages. Each batch must match the turn revision and advance contiguously
-  before the view can publish it. Call/result pairing and stable reply identity
-  preserve the original order, even for receipts that arrive after the reply.
+  before the view can publish it. Repeated provider row IDs retain their first
+  position and latest value in both formats. Call/result pairing and stable
+  reply identity preserve order when receipts arrive after the reply.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
   A turn with at most 40 hidden records can warm after 220 ms of pointer or
@@ -589,6 +591,9 @@ older engines can omit it. Persisted net captures include shell edits and surviv
 history reloads. Successful native edits provide a fallback; failed/pending calls
 do not claim changed files. Captured unchanged paths remove reverted edits, while
 explicit edits outside the captured repository survive reconciliation.
+An ignored file observed without a starting state only contributes when a
+successful tool supplies evidence for that path. Verified binary and mode-only
+changes still contribute to the file count.
 
 `SessionChat.reviewRequested` carries the selected scope/task/session, stable
 reply ID and optional file path. `MachineWorkspace` owns that selection and

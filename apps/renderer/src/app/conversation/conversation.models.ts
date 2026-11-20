@@ -265,6 +265,7 @@ export interface ChatExchange {
   readonly startedAt?: number;
   readonly files?: readonly ChangedFile[];
   readonly filesTotal?: number;
+  readonly filesDiff?: { readonly add: number; readonly del: number };
   readonly sharedChanges?: boolean;
   readonly error?: string;
 }
