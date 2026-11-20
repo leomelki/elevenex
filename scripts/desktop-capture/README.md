@@ -733,7 +733,8 @@ view identity in both themes through the production window with controlled trans
 `scenarios/session-turn-work.mjs` exercises the connected chat's compact saved
 turns against the preview transport. It checks the collapsed reply and counts,
 an interrupted read, a single response for more than 600 tools, lazy group rows,
-a late tool receipt, on-demand evidence, cached reopen and error retry. It also
+a late tool receipt, on-demand evidence, cached reopen and error retry. It scrubs
+the first group expansion and interrupts a collapse to check row continuity. It
 checks the Worked control's position both at the live end and while reading above
 it, along with reply identity, keyboard focus and draft retention. Use the
 connected-workspace preview URL. The dark run uses a narrow viewport and reduced

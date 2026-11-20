@@ -314,7 +314,7 @@ passes `answer`, `streaming`, `copiedCode` and `resolve` to the same Markdown
 instance as earlier commentary. File/link/page/copy intents work in both places.
 `Turn` still supports projected answer content for existing standalone callers.
 
-The timeline retains every step’s component in its original keyed list. Nonempty
+The timeline keys mounted steps by ID and retains their component instances. Nonempty
 messages delimit activity sections; empty streaming replies do not close work.
 A new message or completion folds settled work in the preceding section into a
 summary at that location (“5 reads · 3 commands · 2 edits”), with a shared icon
@@ -345,9 +345,11 @@ does not open it. Commentary stays visible even when the turn’s work is closed
 starts as soon as a completed step falls outside that window. That
 partial summary leads with “Earlier” (accessible name “Show earlier activity: …”)
 so the visible recent window is not mistaken for its contents. A new
-message starts a fresh budget. Closed folds are inert immediately and retain
-disclosure state through exit and reopening. History is still on mount; appended
-rows grow before their ink appears. When a message closes a section, the step
+message starts a fresh budget. The first expansion of a saved group mounts its
+tool rows and gives their folds the same opening transition as later expansions.
+Closed folds are inert immediately and retain disclosure state through exit and
+reopening. Initial history stays still. Appended rows grow before their ink
+appears. When a message closes a section, the step
 and its summary share one row and one `dur-slow` curve, so the row keeps its
 height and the swap crossfades. Fold and AutoHeight own reversible height
 transitions and reduced-motion behavior.

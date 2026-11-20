@@ -53,7 +53,11 @@
           }
         </ex-fold>
         @let rowVisible = visible(row);
-        <ex-fold class="step-fold" [open]="rowVisible">
+        <ex-fold
+          class="step-fold"
+          [open]="rowVisible"
+          [animateOpenOnMount]="revealWork() && groupOpen(row) && !hydrated().has(step.id)"
+        >
           @if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"

@@ -7,6 +7,7 @@ const reply = '[data-chat-row="retry-final"]';
 const group = '[data-work-step="test"] .group';
 const head = '[data-work-step="test"] .head';
 const body = '[data-work-step="test"] .tool-preview';
+const lazyFold = '[data-work-step="read-0"] .step-fold';
 const inspect = [work, reply, group, head, body, 'ex-composer'];
 
 async function settleMotion(capture) {
@@ -145,7 +146,45 @@ export default async function* (capture) {
     yield { name: theme + '-expanded', inspect };
 
     await scrollTo(capture, group);
+    await capture.settle();
+    assert.equal(await capture.evaluate(selector => document.querySelector(selector), lazyFold), null);
+    if (!narrow) await capture.motion.freeze();
+    const groupTop = await capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().top, group);
     await capture.click(group);
+    await capture.waitFor(selector => document.querySelector(selector), lazyFold);
+    const height = () => capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().height, lazyFold);
+    if (!narrow) {
+      const heights = [];
+      for await (const frame of capture.frames('light-group-first-open', [0, 80, 160, 280], [group, lazyFold])) {
+        const rowHeight = await height();
+        heights.push(rowHeight);
+        const top = await capture.evaluate(selector => document.querySelector(selector).getBoundingClientRect().top, group);
+        assert.ok(Math.abs(top - groupTop) < 2, `The group control moved during the first opening: ${groupTop} to ${top}`);
+        yield { ...frame, metadata: { ...frame.metadata, rowHeight } };
+      }
+      assert.ok(heights[0] < 1 && heights[1] > 1 && heights[1] < heights[2] && heights[2] < heights[3],
+        `First group opening should grow from zero through intermediate heights: ${heights}`);
+      await capture.motion.play();
+      await settleMotion(capture);
+
+      await capture.evaluate(selector => { document.querySelector(selector).dataset.captureIdentity = 'retained'; }, lazyFold);
+      await capture.motion.freeze();
+      await capture.press('Enter');
+      await capture.waitFor(selector => document.querySelector(selector).hasAttribute('inert'), lazyFold);
+      await capture.motion.seek(120);
+      const closing = await height();
+      assert.ok(closing > 1 && closing < heights[3], `Interrupted closing should be between zero and full height: ${closing}`);
+      await capture.press('Enter');
+      await capture.waitFor(selector => !document.querySelector(selector).hasAttribute('inert'), lazyFold);
+      await capture.motion.finish();
+      await capture.motion.play();
+      assert.equal(await capture.evaluate(selector => document.querySelector(selector).dataset.captureIdentity, lazyFold), 'retained');
+      assert.ok(Math.abs(await height() - heights[3]) < 1);
+      assert.equal(await capture.evaluate(selector => document.activeElement === document.querySelector(selector), group), true);
+    } else {
+      assert.ok(await height() > 20, 'Reduced motion opens the first lazy row immediately');
+      assert.equal(await capture.evaluate(selector => document.querySelector(selector).getAnimations().length, lazyFold), 0);
+    }
     await settleMotion(capture);
     assert.equal(await capture.evaluate(() => document.querySelector('[data-work-step="read-599"] ex-tool-step') !== null), true);
     assert.match(await capture.evaluate(selector => document.querySelector(selector).textContent, head), /pnpm test --filter payments.*Exit 1/);
