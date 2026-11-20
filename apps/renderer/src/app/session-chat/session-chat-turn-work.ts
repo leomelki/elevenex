@@ -12,6 +12,9 @@ const CACHE_TURNS = 16;
 const CACHE_BYTES = 1536 * 1024;
 // Keep the rows mounted until the timeline finishes closing.
 const DISCLOSURE_EXIT_MS = 280;
+// Unopened warm-ups. Moving between turns lets earlier reads finish into the
+// cache; beyond this bound the oldest yields. Each batch is at most 512 KiB.
+const SPECULATIVE_READS = 3;
 
 @Injectable({ providedIn: 'root' })
 export class SessionChatWorkCache {
@@ -74,7 +77,8 @@ export class SessionChatTurnWork {
   private readonly pending = new Map<string, WorkRequest>();
   private readonly closing = new Map<string, ReturnType<typeof setTimeout>>();
   private hinted?: WorkHint;
-  private prefetch?: WorkRequest;
+  /** Unopened warm-ups, oldest first. A held large turn keeps its slot until opened or evicted. */
+  private readonly speculative: WorkRequest[] = [];
 
   constructor(
     private readonly client: Pick<SessionChatClient, 'turnWork' | 'cancel'>,
@@ -183,9 +187,9 @@ export class SessionChatTurnWork {
     if (!turn || hint.attemptedRevision === turn.revision || this.open().has(id) || this.pending.has(id)) return;
     hint.attemptedRevision = turn.revision;
     if (this.cache.get(selection, id, turn.revision)) return;
-    // Keep one speculative batch. A newer dwell takes the slot even while another turn is open.
-    if (this.prefetch) this.cancel(this.prefetch);
-    this.prefetch = this.request(selection, id, turn);
+    // A newer dwell evicts only the oldest warm-up, even while another turn is open.
+    if (this.speculative.length >= SPECULATIVE_READS) this.cancel(this.speculative[0]!);
+    this.speculative.push(this.request(selection, id, turn));
   }
 
   private load(id: string): void {
@@ -203,10 +207,7 @@ export class SessionChatTurnWork {
     const active = this.pending.get(id);
     // A click on the same turn takes ownership of its speculative read.
     if (active) {
-      if (this.prefetch === active) {
-        this.prefetch = undefined;
-        active.resume?.();
-      }
+      if (this.release(active)) active.resume?.();
       return;
     }
     this.request(selection, id, turn, cached);
@@ -236,7 +237,7 @@ export class SessionChatTurnWork {
       if (open) this.set(turnId, { ...open, ...result, busy: undefined });
     } else if (open) this.set(turnId, { ...open, error: result.error, busy: undefined });
     this.pending.delete(turnId);
-    if (this.prefetch === request) this.prefetch = undefined;
+    this.release(request);
   }
 
   private async readItems(selection: ChatSelection, turn: SessionChatCompletedTurn, request: WorkRequest):
@@ -272,7 +273,7 @@ export class SessionChatTurnWork {
         items.push(timelineRecord(row, revision));
         if (beforeReply) replyOffset++;
       }
-      if (offset < turn.total && this.prefetch === request) {
+      if (offset < turn.total && this.speculative.includes(request)) {
         // Hold the validated first page and its cursor until an explicit open.
         await new Promise<void>(resume => { request.resume = resume; });
         request.resume = undefined;
@@ -292,7 +293,14 @@ export class SessionChatTurnWork {
     if (request.resume) request.resume();
     else if (this.selection) this.client.cancel(this.selection.scopeId, request.id);
     this.pending.delete(request.turnId);
-    if (this.prefetch === request) this.prefetch = undefined;
+    this.release(request);
+  }
+
+  /** Remove a request from the warm-up slots; true when it was speculative. */
+  private release(request: WorkRequest): boolean {
+    const index = this.speculative.indexOf(request);
+    if (index >= 0) this.speculative.splice(index, 1);
+    return index >= 0;
   }
 
   private clearClosing(id: string): void {

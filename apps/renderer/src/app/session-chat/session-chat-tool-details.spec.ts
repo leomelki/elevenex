@@ -47,37 +47,39 @@ describe('on-demand tool evidence', () => {
     mounted.abort();
   });
 
-  it('warms one closed tool at a time and lets an open join the warmed read', async () => {
+  it('keeps up to four warm-ups, evicts the oldest beyond them, and lets an open join a warmed read', async () => {
     const { tools, client } = setup();
     const replies: ((value: BackendResult<SessionChatToolDetailsReply>) => void)[] = [];
     client.toolDetails.mockImplementation(() => new Promise(resolve => { replies.push(resolve); }));
     const inspect = tools.provider()!;
-    const other = { item: { id: 'other', revision: item.revision } };
-    inspect.prefetch!(other);
-    inspect.prefetch!(other);
-    expect(client.toolDetails).toHaveBeenCalledOnce();
-    const superseded = client.toolDetails.mock.calls[0]![1];
-    inspect.prefetch!(source);
-    expect(client.cancel).toHaveBeenCalledWith(target.scopeId, superseded.requestId);
-    expect(client.toolDetails).toHaveBeenCalledTimes(2);
+    const tool = (id: string) => ({ item: { id, revision: item.revision } });
+    const warmed = ['a', 'b', 'c', 'd'].map(tool);
+    for (const value of warmed) inspect.prefetch!(value);
+    inspect.prefetch!(warmed[1]!);
+    expect(client.toolDetails).toHaveBeenCalledTimes(4);
+    expect(client.cancel).not.toHaveBeenCalled();
 
+    // An open adopts its warm-up, freeing a slot without evicting another read.
     const opened = new AbortController();
-    const view = inspect(source, opened.signal);
+    const view = inspect(warmed[3]!, opened.signal);
     expect(view.state().status).toBe('loading');
-    // The adopted read is no longer speculative, so a newer intent keeps it.
-    inspect.prefetch!(other);
-    expect(client.cancel).toHaveBeenCalledOnce();
-    expect(client.toolDetails).toHaveBeenCalledTimes(3);
-    replies[1]!(success(client.toolDetails.mock.calls[1]![1]));
-    replies[2]!(success(client.toolDetails.mock.calls[2]![1]));
+    inspect.prefetch!(source);
+    expect(client.cancel).not.toHaveBeenCalled();
+    inspect.prefetch!(tool('e'));
+    expect(client.cancel).toHaveBeenCalledExactlyOnceWith(target.scopeId, client.toolDetails.mock.calls[0]![1].requestId);
+    expect(client.toolDetails).toHaveBeenCalledTimes(6);
+
+    client.toolDetails.mock.calls.forEach(([, input], index) => replies[index]!(success(input)));
     await Promise.resolve();
     expect(view.state().status).toBe('ready');
     opened.abort();
 
-    // A completed warm-up opens from the cache without another request.
-    const warmed = inspect(other, new AbortController().signal);
-    expect(warmed.state().status).toBe('ready');
-    expect(client.toolDetails).toHaveBeenCalledTimes(3);
+    // Completed warm-ups open from the cache; the evicted one reads again.
+    for (const value of [warmed[1]!, warmed[2]!, source, tool('e')])
+      expect(inspect(value, new AbortController().signal).state().status).toBe('ready');
+    expect(client.toolDetails).toHaveBeenCalledTimes(6);
+    inspect(warmed[0]!, new AbortController().signal);
+    expect(client.toolDetails).toHaveBeenCalledTimes(7);
     tools.select(null);
   });
 

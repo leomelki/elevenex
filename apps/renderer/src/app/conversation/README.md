@@ -57,8 +57,8 @@ provider only while the row is visible and expanded, and aborts that observation
 on collapse, replacement or destruction. The feature owner handles transport and
 caching. A provider may also expose `prefetch(source)`: ToolStep calls it for a
 closed row after a 100 ms mouse hover or visible focus on its heading, or
-immediately on a non-touch press. The owner bounds and cancels those warm-ups
-and lets the later observation join them; plain provider functions omit it.
+immediately on a non-touch press. The owner bounds the concurrent warm-ups,
+evicts the oldest beyond that bound and lets the later observation join them; plain provider functions omit it.
 ToolStep keeps the heading in place until the evidence or a retry
 action is ready, pulsing it only when the read outlasts 120 ms. Fold owns opening and closing, and one AutoHeight wrapper
 owns updates to the already open body. Inline evidence uses the same disclosure.

@@ -8,6 +8,9 @@ import type { ChatSelection } from './session-chat.store';
 
 const loading = { status: 'loading' } as const;
 const unavailable = { status: 'error', reason: 'unavailable' } as const;
+// Tool reads are small; scanning a list can keep a few warm-ups finishing into
+// the cache. Beyond this bound the oldest unobserved read yields.
+const SPECULATIVE_READS = 4;
 const closed: ToolDetailsInspection = { state: signal<ToolDetailsState>(unavailable).asReadonly(), retry: () => undefined };
 
 @Injectable({ providedIn: 'root' })
@@ -34,8 +37,8 @@ function keyFor(selection: ChatSelection, source: SessionChatToolSource): string
 export class SessionChatToolDetails {
   private readonly selection = signal<ChatSelection | null>(null);
   private readonly open = new Map<string, Inspection>();
-  /** At most one unobserved read warmed by hover, focus or press intent. */
-  private speculative?: Inspection;
+  /** Unobserved reads warmed by hover, focus or press intent, oldest first. */
+  private readonly speculative: Inspection[] = [];
   private available = false;
   readonly provider = computed<ToolDetailsProvider | undefined>(() => {
     const selection = this.selection();
@@ -57,7 +60,7 @@ export class SessionChatToolDetails {
       entry.state.set(unavailable);
     }
     this.open.clear();
-    this.speculative = undefined;
+    this.speculative.length = 0;
     this.selection.set(selection);
   }
 
@@ -97,22 +100,27 @@ export class SessionChatToolDetails {
     }));
   }
 
-  /** Warm one closed tool into the cache. A newer intent supersedes an unobserved read. */
+  /** Warm a closed tool into the cache. Beyond the bound, a newer intent evicts the oldest warm-up. */
   private prefetch(selection: ChatSelection, source: SessionChatToolSource): void {
     if (!this.available || this.selection() !== selection) return;
     const key = keyFor(selection, source);
     if (this.open.has(key) || this.cache.get(selection.scopeId, key)) return;
-    if (this.speculative) this.discard(this.speculative);
+    if (this.speculative.length >= SPECULATIVE_READS) this.discard(this.speculative[0]!);
     const entry: Inspection = { selection, source, key, observers: 0, state: signal<ToolDetailsState>(unavailable) };
     this.open.set(key, entry);
-    this.speculative = entry;
+    this.speculative.push(entry);
     this.load(entry);
   }
 
   private discard(entry: Inspection): void {
     if (this.open.get(entry.key) === entry) this.open.delete(entry.key);
-    if (this.speculative === entry) this.speculative = undefined;
+    this.release(entry);
     this.cancel(entry);
+  }
+
+  private release(entry: Inspection): void {
+    const index = this.speculative.indexOf(entry);
+    if (index >= 0) this.speculative.splice(index, 1);
   }
 
   private observe(selection: ChatSelection, source: SessionChatToolSource, signalToRelease: AbortSignal): ToolDetailsInspection {
@@ -142,8 +150,8 @@ export class SessionChatToolDetails {
       if (!evidence) this.load(entry);
     }
     const inspection = entry;
-    // An observer adopts a warmed read, so the next intent cannot cancel it.
-    if (this.speculative === inspection) this.speculative = undefined;
+    // An observer adopts a warmed read, so later intents cannot evict it.
+    this.release(inspection);
     inspection.observers++;
     signalToRelease.addEventListener('abort', () => {
       inspection.observers--;

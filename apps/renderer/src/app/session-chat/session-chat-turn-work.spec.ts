@@ -92,22 +92,36 @@ describe('finished turn activity', () => {
     await settle();
   });
 
-  it('gives a new dwell the speculative slot and drops the superseded reply', async () => {
+  it('lets earlier dwells finish into the cache and evicts only the oldest beyond three warm-ups', async () => {
     const { work, client } = setup();
-    const superseded = deferred<BackendResult<SessionChatTurnWorkReply>>();
-    client.turnWork.mockReturnValueOnce(superseded.promise);
-    work.hint('turn');
-    work.endHint('turn');
+    const ids = ['turn', 'another', 'third', 'fourth'];
+    work.sync(ids.map(id => turn(id)), true);
+    const replies = ids.map(() => deferred<BackendResult<SessionChatTurnWorkReply>>());
+    for (const reply of replies) client.turnWork.mockReturnValueOnce(reply.promise);
+    for (const id of ids.slice(0, 3)) {
+      work.hint(id);
+      work.endHint(id);
+    }
+    expect(client.turnWork).toHaveBeenCalledTimes(3);
+    expect(client.cancel).not.toHaveBeenCalled();
+    // Returning to an in-flight turn reuses its read.
     work.hint('another');
+    work.endHint('another');
+    expect(client.turnWork).toHaveBeenCalledTimes(3);
+
+    work.hint('fourth');
     expect(client.cancel).toHaveBeenCalledExactlyOnceWith(selection.scopeId, client.turnWork.mock.calls[0]![1].requestId);
-    superseded.resolve({ ok: true, value: page() });
+    ids.forEach((id, index) => replies[index]!.resolve({ ok: true, value: page(id) }));
     await settle();
 
-    work.toggle('another', true);
-    expect(work.open().get('another')?.items).toEqual(page('another').items);
-    expect(client.turnWork).toHaveBeenCalledTimes(2);
+    for (const id of ids.slice(1)) {
+      work.toggle(id, true);
+      expect(work.open().get(id)?.items).toEqual(page(id).items);
+    }
+    expect(client.turnWork).toHaveBeenCalledTimes(4);
+    // The evicted reply was dropped, so opening it reads again.
     work.toggle('turn', true);
-    expect(client.turnWork).toHaveBeenCalledTimes(3);
+    expect(client.turnWork).toHaveBeenCalledTimes(5);
     await settle();
   });
 

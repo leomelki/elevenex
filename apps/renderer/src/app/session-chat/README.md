@@ -291,11 +291,14 @@ full-history read, so a cold provider parse can still dominate initial latency.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
   A 220 ms mouse dwell over the reply, keyboard focus on Worked, a 60 ms dwell
-  on Worked itself or a press on it (before the click lands) can warm one
+  on Worked itself or a press on it (before the click lands) can warm an
   activity batch even while another disclosure is loading.
   Moving within the same turn preserves the dwell. Opening joins an active read,
   continues a warmed first batch from its cursor, or uses the complete snapshot
-  immediately. A newer uncached dwell can replace speculative work. Closing the
+  immediately. Up to three unopened warm-ups (one batch each) keep running, so
+  moving between turns lets earlier reads finish into the cache; returning to
+  an in-flight turn reuses its read. A fourth uncached dwell cancels the oldest
+  warm-up, including a held first batch of a large turn. Closing the
   disclosure cancels its read until a fresh interaction. Hiding the chat or
   switching conversations cancels pending reads.
   Scope and revision changes discard stale results. A sustained dwell can warm
@@ -317,9 +320,9 @@ same row UI.
 
 Opening a tool starts one bounded read for its call and its receipt when
 available. A 100 ms hover or visible focus on a closed tool heading, or a press
-on it, warms that same read first. One unobserved warm-up runs at a time; a
-newer intent cancels it, an open adopts it, and a completed warm-up leaves only
-its cached evidence. Failed warm-ups stay uncached, and hidden or disconnected
+on it, warms that same read first. Up to four unobserved warm-ups run at once;
+a newer intent beyond them cancels the oldest, an open adopts its warm-up and
+frees that slot, and a completed warm-up leaves only its cached evidence. Failed warm-ups stay uncached, and hidden or disconnected
 chats drop them. A raw history page that contains only the receipt shows a named
 Result row and opens that same pair. A result without a known call opens by
 its own identity. Collapsed tool bodies stay deferred while the reader scans
