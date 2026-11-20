@@ -229,9 +229,13 @@ Progressive loading is enabled by default through
 `SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
 **80 records / 512 KiB** with compact completed turns on supporting engines.
 The viewport can prefetch older pages to fill available space, within a
-four-page budget and while each page adds visible height. Only a cold
-conversation open uses the ordinary conversation loading status. History
-prefetch runs in the background and preserves the reading position.
+four-page budget and while each page adds visible height. A cold conversation
+open shows a transcript and composer skeleton after 150 ms. The real chat
+renders as soon as the page is ready, with the latest reply positioned before
+paint. The placeholder surface crossfades to that view over 140 ms while the
+composer stays interactive. Reduced motion swaps the surface immediately.
+Cached opens, new-session drafts and background history reads use their
+existing content immediately. History prefetch preserves the reading position.
 
 An override can start in window mode at **320 records / 2 MiB** and defer
 older pages until scroll intent. If an uncached opening takes more than
@@ -701,10 +705,12 @@ Provider history retains ordinary named Markdown links. Projection recognizes on
 our private upload namespace, emits bounded image/video/file metadata, and avoids
 duplicating provider-native image blocks. The transcript shows supplied images in
 the existing accessible image viewer, videos in the existing recording player,
-and documents as named cards with Copy path. Media reads select a recorded item
-and attachment ID, validate signatures, and confine real paths to that session's
-upload directory. Video data is limited to MP4/WebM/Ogg; codec failures remain
-readable. The desktop CSP permits local data media, with no external media hosts.
+and documents as named cards with Copy path. A standalone Markdown embed such as
+`![Walkthrough](artifacts/run.webm)` can also show a recording from the session
+workspace in an agent reply. Media reads select a recorded item and attachment ID,
+validate signatures, and confine recordings to the workspace or that session's
+upload directory. Video data is limited to MP4/WebM/Ogg and 20 MiB per file. Codec
+failures remain readable. The desktop CSP permits local data media.
 
 The preview adapter and `session-attachments.mjs` exercise native file selection,
 DOM paste/drop, files-only sends, retry/removal, viewer focus, playback and both

@@ -182,9 +182,10 @@ isolated typed backend adapter:
 progressive page during session switches. `scenarios/session-loading-policy.mjs`
 uses the preview's `?chatLoading=window` override to check adaptive slow openings,
 quiet background reads, 10,000-record windowing, and retained turn/tool
-and composer identities through IPC-style updates. It also checks that fallback
-follows different chats/tasks and recreated workspace owners, then resets on
-reconnect and application reload. Its metadata records local
+and composer identities through IPC-style updates. It samples the loading
+crossfade and checks that the interactive composer holds its bounds. It also
+checks that fallback follows different chats/tasks and recreated workspace owners,
+then resets on reconnect and application reload. Its metadata records local
 preview opening/update timings; these exclude real backend hydration and WAN
 latency. It covers both themes and narrow/reduced-motion layouts.
 
@@ -577,9 +578,10 @@ position through refresh, both themes, narrow layouts and reduced motion using
 the connected workspace preview.
 
 `scenarios/session-loading-stability.mjs` holds cold and cached chat reads through
-the production owner, checks first-frame composer/editor geometry, end following,
-reading-position retention and inline Git feedback in both themes and narrow
-reduced motion. Run against the connected preview with `--url`. Optional
+the production owner and checks the cold-open skeleton, cached reopening,
+first-frame composer/editor geometry, end following, reading position and inline
+Git feedback in both themes and narrow reduced motion. Run against the connected
+preview with `--url`. Optional
 `ELEVENEX_SESSION_CAPTURE_PAGES` points to an ignored JSON array of bounded
 `{id, items, state}` recorded pages for transcript replay; this is preview evidence,
 not a live backend or packaged-app test.

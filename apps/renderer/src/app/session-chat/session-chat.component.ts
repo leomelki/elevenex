@@ -203,6 +203,8 @@ export class SessionChatComponent {
   readonly message = computed(
     () => this.store.error() || this.store.state()?.error || "",
   );
+  protected readonly opening = computed(() => !!this.selection() && this.active() && this.store.loading() &&
+    !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
   /** The inspected agent's live Activity record, while it is still listed. */

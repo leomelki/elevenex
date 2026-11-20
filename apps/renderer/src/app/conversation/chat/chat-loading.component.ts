@@ -1,22 +1,28 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { StatusGlyphComponent } from '../../ui';
+import { ChangeDetectionStrategy, Component, computed, effect, input, signal } from '@angular/core';
 
 @Component({
   selector: 'ex-chat-loading',
-  imports: [StatusGlyphComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: {
-    role: 'status',
-    '[attr.aria-label]': 'label()',
-  },
-  template: `
-    <ex-status-glyph status="running" [size]="12" aria-hidden="true" />
-    <span aria-hidden="true">{{ label() }}</span>
-  `,
-  styles: `
-    :host { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
-  `,
+  templateUrl: './chat-loading.component.html',
+  styleUrl: './chat-loading.component.css',
 })
 export class ChatLoadingComponent {
   readonly label = input('Loading messages');
+  readonly pending = input(true);
+
+  private readonly delayElapsed = signal(false);
+  protected readonly visible = computed(() => this.pending() && this.delayElapsed());
+  protected readonly exchanges = [
+    { prompt: 39, reply: [68, 85, 46] },
+    { prompt: 58, reply: [94, 81, 88, 56] },
+  ] as const;
+
+  constructor() {
+    effect(cleanup => {
+      this.delayElapsed.set(false);
+      if (!this.pending()) return;
+      const timer = setTimeout(() => this.delayElapsed.set(true), 150);
+      cleanup(() => clearTimeout(timer));
+    });
+  }
 }

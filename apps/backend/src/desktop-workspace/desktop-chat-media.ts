@@ -48,6 +48,7 @@ export function chatMedia(item: AgentTranscriptItem, includeText = true) {
       caption: caption.slice(0, 200),
       inline: path === undefined,
       source,
+      ...(path && attachmentKind(path) === 'video' ? { kind: 'video' } : {}),
     });
   };
   for (const image of item.images?.slice(0, 12) ?? [])
@@ -115,7 +116,7 @@ export function chatMedia(item: AgentTranscriptItem, includeText = true) {
   if (item.content !== undefined && item.providerToolResult !== undefined)
     clean(item.providerToolResult);
   const text = !includeText ? '' : typeof cleaned === 'string' ? cleaned : JSON.stringify(cleaned, null, 2);
-  // Only actual image embeds authorize a path read; links and tool input do not.
+  // Only explicit Markdown embeds authorize these path reads.
   if (item.kind === 'assistant' || item.kind === 'user')
     for (const match of text.matchAll(/^!\[([^\]]*)\]\((?:<([^<>\r\n]+)>|([^<>)\r\n]+))\)\s*$/gm)) {
       const path = match[2] ?? match[3];
@@ -203,8 +204,8 @@ const within = (root: string, path: string) => {
 };
 
 /** The caller first verifies session membership and selects a transcript attachment.
- * Generated images live outside checkouts; allow that one agent-owned directory,
- * never the whole home directory. Resolve symlinks before enforcing confinement. */
+ * Workspace recordings and session uploads share the bounded read. The separate
+ * Codex-generated media directory is restricted to images. */
 export async function readChatMedia(
   source: string,
   workspace: string,
@@ -212,6 +213,7 @@ export async function readChatMedia(
   sessionId?: number,
 ) {
   let bytes: Buffer;
+  let allowVideo = false;
   const data =
     /^data:image\/(?:png|jpeg|gif|webp);base64,([A-Za-z0-9+/]*={0,2})$/.exec(
       source,
@@ -230,28 +232,26 @@ export async function readChatMedia(
       source.includes('\0')
     )
       throw new BadRequestException('Unsupported image source.');
-    const roots = [
-      workspace,
-      ...(sessionId !== undefined && uploadedAttachment(source, sessionId)
-        ? [attachmentRoot(sessionId)]
-        : []),
-      ...(provider === 'codex'
-        ? [
-            join(
-              process.env.CODEX_HOME || join(homedir(), '.codex'),
-              'generated_images',
-            ),
-          ]
-        : []),
-    ];
+    const attachment = sessionId !== undefined && uploadedAttachment(source, sessionId)
+      ? attachmentRoot(sessionId)
+      : null;
+    const generatedImages = provider === 'codex'
+      ? join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'generated_images')
+      : null;
     const path = await realpath(resolve(workspace, source));
-    const allowed = await Promise.all(
-      roots.map((root) => realpath(root).catch(() => null)),
+    const [workspaceRoot, attachmentDirectory, generatedDirectory] = await Promise.all([
+      workspace,
+      attachment,
+      generatedImages,
+    ].map((root) => root && realpath(root).catch(() => null)));
+    const inWorkspaceOrUpload = [workspaceRoot, attachmentDirectory].some(
+      (root) => root && within(root, path),
     );
-    if (!allowed.some((root) => root && within(root, path)))
+    if (!inWorkspaceOrUpload && !(generatedDirectory && within(generatedDirectory, path)))
       throw new BadRequestException(
-        'Image is outside this session’s allowed folders.',
+        'Media is outside this session’s allowed folders.',
       );
+    allowVideo = inWorkspaceOrUpload && attachmentKind(source) === 'video';
     const file = await open(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -284,9 +284,7 @@ export async function readChatMedia(
   }
   const type =
     imageType(bytes) ??
-    (sessionId !== undefined &&
-    uploadedAttachment(source, sessionId) &&
-    attachmentKind(source) === 'video'
+    (allowVideo
       ? bytes.subarray(4, 8).toString() === 'ftyp'
         ? 'video/mp4'
         : bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
@@ -299,6 +297,6 @@ export async function readChatMedia(
     !type ||
     bytes.length > (type.startsWith('image/') ? 8 * 1024 * 1024 : MAX_BYTES)
   )
-    throw new BadRequestException('Unsupported or oversized image.');
+    throw new BadRequestException('Unsupported or oversized media.');
   return `data:${type};base64,${bytes.toString('base64')}`;
 }

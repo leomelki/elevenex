@@ -61,7 +61,7 @@ export default async function* (capture) {
       await chat(owner => { void owner.store.older(); });
       assert.equal(await chat(owner => owner.store.historyLoading()), true);
       assert.ok(await capture.evaluate(() => document.querySelector('.reminder .quote')?.textContent.includes('original request')), 'Loading hid the prompt context');
-      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading, .history-indicator')), null);
+      assert.equal(await capture.evaluate(() => document.querySelector('ex-chat-loading .skeleton, .history-indicator')), null);
       yield { name: `${prefix}-pending-context`, inspect: ['ex-chat-scroll .viewport', '.reminder'] };
       // Sample release and the following natural frames together.
       const samples = await fixture(async owner => {

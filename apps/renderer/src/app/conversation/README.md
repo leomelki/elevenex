@@ -54,8 +54,17 @@ owns updates to the already open body. Inline evidence uses the same disclosure.
 
 ## Scrolling and performance
 
-`ChatLoading` supplies the status for a cold conversation open. Background
-history reads preserve the current viewport and surface a retry if they fail.
+`ChatLoading` lays out two placeholder exchanges above a pinned composer.
+Keep it mounted for the selected view so its live status is present before its
+text changes. Set `pending` only for a cold open. Both the placeholders and
+the status text appear after 150 ms. Layer it over the ready chat and set
+`--chat-loading-exit-duration` on successful hydration. Its surface fades out
+in place, revealing the already positioned transcript and a matching composer
+frame. Input reaches the ready chat during the fade. Reduced motion keeps the
+placeholders static and swaps them immediately. A new view identity restarts
+the delay.
+
+Background history reads preserve the current viewport and surface a retry if they fail.
 `Chat.initialHistoryPrefetch` / `ChatScroll.initialHistoryPrefetch` retain the
 existing default of filling an underfull viewport. The connected session owner
 enables this with default progressive loading. The window-mode override waits

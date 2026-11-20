@@ -1,5 +1,6 @@
-@if (store.state() || store.starting()) {
-  @for (view of chatViews(); track view.revision) {
+@for (view of chatViews(); track view.revision) {
+  <ex-chat-loading [pending]="opening()" [class.hydrated]="!!store.state()" label="Loading conversation…" />
+  @if (store.state() || store.starting()) {
 <ex-chat
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
@@ -323,20 +324,18 @@
     </ex-composer>
   </div>
 </ex-chat>
+  } @else if (store.offline() || message()) {
+    <div class="opening" [attr.aria-busy]="store.loading()">
+      @if (store.offline()) {
+        <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" />
+      } @else {
+        <div class="opening-error" role="alert">
+          <p>{{ message() }}</p>
+          <button exButton variant="secondary" [disabled]="store.loading()" (click)="store.refresh()">Try again</button>
+        </div>
+      }
+    </div>
   }
-} @else {
-  <div class="opening" [attr.aria-busy]="store.loading()">
-    @if (store.offline()) {
-      <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" />
-    } @else if (message()) {
-      <div class="opening-error" role="alert">
-        <p>{{ message() }}</p>
-        <button exButton variant="secondary" [disabled]="store.loading()" (click)="store.refresh()">Try again</button>
-      </div>
-    } @else {
-      <ex-chat-loading label="Loading conversation…" />
-    }
-  </div>
 }
 @if (contentId() && selection(); as selected) {
   <ex-session-chat-content
