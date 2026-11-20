@@ -383,6 +383,11 @@ backward-compatible backend evolution. Agents may improve the backend to support
 the intended product and performance, and must ask the developer before useful
 breaking changes unless already authorized.
 
+To trace conversation requests, launch with `NODE_DEBUG=elevenex-chat pnpm desktop:dev`.
+Electron writes one dispatch and outcome line per HTTP request to stderr,
+including for an SSH backend. The logs show pagination, response size and timing
+using allowlisted metadata only.
+
 ## Agent UI captures
 
 Use `pnpm desktop:capture` for native Electron screenshots, precise Angular state,

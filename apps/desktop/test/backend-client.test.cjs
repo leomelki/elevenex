@@ -19,6 +19,64 @@ function local(url, identity = url) {
   return { identity, url, version, headers: {}, environment: { kind: 'local' } };
 }
 
+test('chat request diagnostics are opt-in, correlate HTTP outcomes and keep transcript data private', async () => {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const program = `
+    const assert = require('node:assert/strict');
+    const { requestBackendJson } = require(process.argv[1]);
+    const privateValue = 'for-tests-only-private-data';
+    const endpoint = { url: 'http://127.0.0.1:12345', headers: { Authorization: privateValue } };
+    const chat = '/api/desktop-workspace/tasks/5/sessions/9/chat';
+    globalThis.fetch = async (url, { signal }) => {
+      signal.throwIfAborted();
+      const status = url.pathname.endsWith('/tool-details') ? 409 : 200;
+      const body = url.pathname.endsWith('/turn-work')
+        ? { items: Array.from({ length: 105 }, () => ({ text: privateValue })), total: 105, nextOffset: null }
+        : { items: [{ completedTurn: {}, text: privateValue }], events: [], reset: true, before: privateValue };
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    };
+    const read = (path, signal = new AbortController().signal) => requestBackendJson(endpoint, { path }, signal);
+    (async () => {
+      await read(chat + '?before=' + privateValue + '&loadingMode=progressive&summarizeCompleted=1&summarizeRecent=1&deferToolDetails=1');
+      await read(chat + '/turn-work?offset=0&limit=512&deferToolDetails=1&turnId=' + privateValue);
+      await assert.rejects(read(chat + '/tool-details?resultId=' + privateValue), error => error.detail.status === 409);
+      await assert.rejects(read(chat + '?after=' + privateValue, AbortSignal.abort()), { name: 'AbortError' });
+      await read('/api/info');
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `;
+  const run = options => promisify(execFile)(process.execPath, ['-e', program, require.resolve('../dist/backend-client/transport')], {
+    env: { ...process.env, NODE_DEBUG: options },
+  });
+  assert.equal((await run('')).stderr, '');
+  const { stderr } = await run('elevenex-chat');
+  assert.doesNotMatch(stderr, /for-tests-only-private-data|127\.0\.0\.1|Authorization/);
+  const entries = stderr.trim().split('\n').map(line => {
+    const entry = /^ELEVENEX-CHAT \d+: (request|response) (.*)$/.exec(line);
+    assert.ok(entry, line);
+    const [, phase, json] = entry;
+    return { phase, ...JSON.parse(json) };
+  });
+  assert.equal(entries.length, 8);
+  for (let index = 0; index < entries.length; index += 2) {
+    const [request, response] = entries.slice(index, index + 2);
+    assert.equal(request.phase, 'request');
+    assert.equal(response.phase, 'response');
+    assert.equal(request.id, response.id);
+    assert.ok(response.elapsedMs >= 0);
+    assert.equal(request.taskId, 5);
+    assert.equal(request.sessionId, 9);
+  }
+  const [history, work, details, poll] = entries.filter(entry => entry.phase === 'response');
+  assert.deepEqual([history.operation, history.direction, history.mode, history.items, history.completedTurns, history.hasOlder],
+    ['history', 'before', 'progressive', 1, 1, true]);
+  assert.ok(history.summarizeCompleted && history.summarizeRecent && history.deferToolDetails && history.responseBytes > 0);
+  assert.deepEqual([work.operation, work.offset, work.limit, work.status, work.items, work.total, work.nextOffset],
+    ['turn-work', 0, 512, 200, 105, 105, null]);
+  assert.deepEqual([details.operation, details.withResult, details.outcome, details.status], ['tool-details', true, 'http', 409]);
+  assert.deepEqual([poll.direction, poll.outcome, poll.status], ['poll', 'aborted', undefined]);
+});
+
 test('named info adapter coalesces reads within a window and isolates scopes across windows', async context => {
   let calls = 0;
   let respond;
