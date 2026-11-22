@@ -49,7 +49,7 @@ export class ChatCompletedTurns {
     if (cached) return cached;
     const hash = createHash('sha256');
     for (const value of [
-      item.id, item.kind, item.timestamp, item.toolUseId, item.toolKind,
+      item.id, item.kind, item.assistantPhase, item.timestamp, item.toolUseId, item.toolKind,
       item.toolDisplayName, item.providerToolName, item.toolName, item.isError,
       item.content, item.toolInput, item.providerToolResult, item.agentMessage?.body,
       changeSummary(item.turnChanges),
@@ -77,14 +77,15 @@ export class ChatCompletedTurns {
     let end = items.length;
     while (end > 1) {
       const item = items[end - 1];
-      if (item.kind === 'assistant') {
+      if (item.kind === 'assistant' && item.assistantPhase !== 'commentary') {
         const projected = this.project(item);
         if (projected.text.trim() || (!projected.error && projected.media?.some(media => media.inline))) break;
       }
       end--;
     }
     let start = end;
-    while (start > 1 && items[start - 1].kind === 'assistant') {
+    const phase = items[end - 1]?.assistantPhase;
+    while (start > 1 && items[start - 1].kind === 'assistant' && items[start - 1].assistantPhase === phase) {
       start--;
       if (end - start > SESSION_CHAT_TURN_REPLY_LIMIT) return null;
     }

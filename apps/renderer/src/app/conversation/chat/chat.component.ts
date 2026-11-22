@@ -9,6 +9,7 @@ import {
 } from "@angular/core";
 import type {
   ChatExchange,
+  ChatHistoryRequest,
   TurnAction,
   TurnWorkAction,
   TurnWorkToggle,
@@ -49,7 +50,7 @@ export class ChatComponent {
   readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
-  readonly historyRequested = output<"before" | "following">();
+  readonly historyRequested = output<ChatHistoryRequest>();
   readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
   readonly exchanges = input<readonly ChatExchange[]>([]);

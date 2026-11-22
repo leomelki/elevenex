@@ -215,15 +215,17 @@ function projectExchanges(
     const turnId = activity?.replyOffset === undefined ? undefined : group.id;
     const records = completed ? completedTurnRecords(completed, activity) : group.items;
     const current = atLiveTail && index === groups.length - 1;
-    const live =
-      !completed && current &&
-      (state?.phase === "running" || state?.phase === "waiting");
+    const live = !completed &&
+      (state?.phase === "running" || state?.phase === "waiting") &&
+      (state.activePromptId ? group.id === state.activePromptId : current);
+    // A history slice can belong to the active turn without receiving live rows.
+    const liveUpdates = live && atLiveTail;
     const source = group.promptItem ? [group.promptItem, ...records] : records;
     const author = state?.providers?.find(provider => provider.id === state.provider)?.label ?? state?.provider ?? 'Agent';
     const signature = JSON.stringify([
-      current ? state?.phase : 'idle',
+      current || live ? state?.phase : 'idle',
       current ? state?.error : '',
-      live && !!state?.permission, live && !!state?.question,
+      live, liveUpdates, live && !!state?.permission, live && !!state?.question,
       state?.provider, author, fresh.has(group.id), records.map(renderId),
     ]);
     const previous = cache?.turns.get(group.id);
@@ -260,15 +262,16 @@ function projectExchanges(
       if (isTextReceipt(item)) continue;
       lastTimelineItem ??= item;
       if (item.kind !== "system") lastActivity ??= item;
-      if (item.kind === "assistant" && messageText(item).trim()) {
+      if (item.kind === "assistant" && (live || item.assistantPhase !== "commentary") && messageText(item).trim()) {
         finalEnd = index + 1;
         break;
       }
     }
     let finalStart = completed ? replyStart : finalEnd;
+    const replyPhase = records[finalEnd - 1]?.assistantPhase;
     for (let index = completed ? -1 : finalEnd - 1; index >= 0; index--) {
       const item = records[index]!;
-      if (item.kind === 'assistant') finalStart = index;
+      if (item.kind === 'assistant' && item.assistantPhase === replyPhase) finalStart = index;
       else if (!isTextReceipt(item)) break;
     }
     const followingIds = new Set(
@@ -282,7 +285,7 @@ function projectExchanges(
         if (pairedResult && viewedResult) return [];
         if (item.kind === "system" && item.changes && !item.text.trim()) return [];
         const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
-        const running = live && ((item.kind === 'tool_use' && !result && !item.receipt) ||
+        const running = liveUpdates && ((item.kind === 'tool_use' && !result && !item.receipt) ||
           (item.kind === 'thinking' && item === lastTimelineItem));
         const old = cache?.steps.get(item);
         const id = renderId(item);
@@ -298,7 +301,7 @@ function projectExchanges(
             const status = sessionChatToolStatus(
               item.error || shell?.failed === true || shell?.interrupted === true,
               result?.error ?? receipt?.error,
-              live,
+              liveUpdates,
             );
             return [
               {
@@ -407,7 +410,7 @@ function projectExchanges(
       time: group.time,
       isNew: fresh.has(group.id),
       streaming:
-        live &&
+        liveUpdates &&
         state?.phase === "running" &&
         !state.permission &&
         !state.question &&

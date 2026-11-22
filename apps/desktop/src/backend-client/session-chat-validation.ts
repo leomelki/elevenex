@@ -165,6 +165,9 @@ function item(value: unknown): SessionChatRecord {
     kind !== "error"
   )
     throw invalid();
+  const assistantPhase = raw['assistantPhase'];
+  if (assistantPhase !== undefined && (kind !== 'assistant' ||
+    (assistantPhase !== 'commentary' && assistantPhase !== 'final'))) throw invalid();
   const mentions = raw['mentions'] === undefined ? undefined : array(raw['mentions'], 8, value => {
     const mention = chatObject(value), sessionId = mention['sessionId'];
     const title = chatText(mention['title'], 1000);
@@ -175,6 +178,7 @@ function item(value: unknown): SessionChatRecord {
   return {
     id: chatText(raw["id"]),
     kind,
+    ...(assistantPhase === undefined ? {} : { assistantPhase }),
     text: chatText(raw["text"], 64000),
     timestamp: chatText(raw["timestamp"]),
     toolId: nullable(raw["toolId"]),
@@ -533,6 +537,9 @@ export function parseChatState(value: unknown): SessionChatState {
     phase !== "error"
   )
     throw invalid();
+  const activePromptId = raw['activePromptId'] === undefined ? undefined : chatText(raw['activePromptId']);
+  if (activePromptId !== undefined && (!activePromptId || (phase !== 'running' && phase !== 'waiting')))
+    throw invalid();
   const permission =
     raw["permission"] === null ? null : chatObject(raw["permission"]);
   const question =
@@ -546,6 +553,7 @@ export function parseChatState(value: unknown): SessionChatState {
   const context = raw["context"] === null ? null : chatObject(raw["context"]);
   return {
     provider: chatText(raw["provider"]),
+    ...(activePromptId === undefined ? {} : { activePromptId }),
     ...(raw["browserElements"] === undefined ? {} : { browserElements: bool(raw["browserElements"]) }),
     ...(raw["unseenCompletionAt"] === undefined ? {} : {
       unseenCompletionAt: raw["unseenCompletionAt"] === null ? null : completionAt(raw["unseenCompletionAt"]),

@@ -16,6 +16,17 @@ function activity(prefix: string, count: number): AgentTranscriptItem[] {
 }
 
 describe('completed turn history', () => {
+  it('keeps classified commentary in work and reserves the saved reply for the final message', () => {
+    const prompt = row('prompt', 'user');
+    const commentary = { ...row('commentary', 'assistant'), assistantPhase: 'commentary' } as const;
+    const final = { ...row('final', 'assistant'), assistantPhase: 'final' } as const;
+    const turns = new ChatCompletedTurns();
+    const partial = turns.summarize([prompt, commentary], 0, 2, new Set(), undefined, true)?.completedTurn;
+    expect(partial).toMatchObject({ reply: [], total: 1 });
+    const finished = turns.summarize([prompt, commentary, final], 0, 3, new Set(), undefined, true)?.completedTurn;
+    expect(finished).toMatchObject({ reply: [{ id: final.id, assistantPhase: 'final' }], beforeReply: 1, total: 1 });
+  });
+
   it('discloses the latest version of each saved block in ordinary transcript order', () => {
     const history: AgentTranscriptItem[] = [
       row('prompt', 'user'),

@@ -23,6 +23,7 @@ import {
 import { MessageComponent } from "./message.component";
 import { ChatHistoryScroll } from "./chat-history-scroll";
 import { ChatSendScroll } from "./chat-send-scroll";
+import type { ChatHistoryRequest } from "../conversation.models";
 interface Reminder {
   readonly id: string;
   readonly text: string;
@@ -52,7 +53,7 @@ export class ChatScrollComponent {
   readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
-  readonly historyRequested = output<"before" | "following">();
+  readonly historyRequested = output<ChatHistoryRequest>();
   readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
   private readingAnchor?: {
@@ -74,7 +75,7 @@ export class ChatScrollComponent {
     readonly top: number;
     settledFrames: number;
   };
-  private historyIntent: "before" | "following" = "before";
+  private historyIntent: ChatHistoryRequest = { direction: "before", source: "prefetch" };
   private nativeScrollOrigin: number | undefined;
   onViewportWheel(event: WheelEvent): void {
     if (event.defaultPrevented || event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
@@ -111,7 +112,7 @@ export class ChatScrollComponent {
   private beginHistoryScroll(direction: "before" | "following"): void {
     this.nativeScrollOrigin = undefined;
     this.disclosure = undefined;
-    this.historyIntent = direction;
+    this.historyIntent = { direction, source: "reader" };
     if (direction !== this.lastHistoryDirection) this.cancelPendingHistory();
     this.historyBudget = 4;
     this.interruptSendReveal();
@@ -259,7 +260,8 @@ export class ChatScrollComponent {
     effect(() => {
       // The owner decides whether its opening window needs filling. Explicit
       // scroll intent replenishes the budget independently of that policy.
-      this.historyBudget = this.initialHistoryPrefetch() ? 4 : 0;
+      const prefetch = this.initialHistoryPrefetch();
+      if (this.historyIntent.source === "prefetch") this.historyBudget = prefetch ? 4 : 0;
       if (this.contentReady) this.scheduleMeasure();
     });
     effect(() => {
@@ -451,7 +453,8 @@ export class ChatScrollComponent {
   retryHistory(): void {
     this.viewport().nativeElement.focus({ preventScroll: true });
     this.historyBudget = 4;
-    this.requestHistory(this.lastHistoryDirection);
+    this.historyIntent = { direction: this.lastHistoryDirection, source: "reader" };
+    this.requestHistory(this.historyIntent);
   }
   private rememberReadingAnchor(): void {
     const viewport = this.viewport().nativeElement;
@@ -492,8 +495,9 @@ export class ChatScrollComponent {
       (anchor.rowId === '$answer' ? null : content.querySelector(selector));
     return row && row.getBoundingClientRect().height > 0 ? row : undefined;
   }
-  private requestHistory(direction: "before" | "following"): void {
+  private requestHistory(intent: ChatHistoryRequest): void {
     if (this.historyLoading() || this.historyPending) return;
+    const { direction } = intent;
     this.interruptSendReveal();
     this.rememberReadingAnchor();
     this.lastHistoryDirection = direction;
@@ -507,7 +511,7 @@ export class ChatScrollComponent {
     // Loading above a pinned tail must not relinquish end following. An actual
     // reader scroll updates atEnd normally while the request is pending.
     if (direction === 'following') this.atEnd.set(false);
-    this.historyRequested.emit(direction);
+    this.historyRequested.emit(intent);
   }
   private cancelDistantHistory(): void {
     if (!this.historyPending || !this.historyLoading() || !this.historyScroll) return;
@@ -575,12 +579,12 @@ export class ChatScrollComponent {
       // successful short pages can keep filling a tall viewport automatically.
       const margin = historyMargin(viewport.clientHeight);
       const underfilled = height <= viewport.clientHeight;
-      if (this.historyIntent === "before" && this.historyBefore() && top < margin &&
+      if (this.historyIntent.direction === "before" && this.historyBefore() && top < margin &&
           (!this.atEnd() || underfilled))
-        this.requestHistory("before");
-      else if (this.historyIntent === "following" && this.historyAfter() &&
+        this.requestHistory(this.historyIntent);
+      else if (this.historyIntent.direction === "following" && this.historyAfter() &&
           height - top - viewport.clientHeight < margin)
-        this.requestHistory("following");
+        this.requestHistory(this.historyIntent);
     }
   }
   private maintainDisclosurePosition(viewport: HTMLDivElement): boolean {

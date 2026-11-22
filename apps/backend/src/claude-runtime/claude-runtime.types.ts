@@ -87,6 +87,7 @@ export interface ClaudeTranscriptItem {
   agentId?: string;
   id: string;
   kind: ClaudeTranscriptItemKind;
+  assistantPhase?: import('@elevenex/shared').AssistantMessagePhase;
   contentType?: 'message' | 'plan';
   content?: string;
   /** Routing and readable payload of an incoming agent message, not assistant output. */

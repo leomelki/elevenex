@@ -93,7 +93,7 @@ import {
   textValue,
 } from './codex-subagents.js';
 import { CodexSubagentMetadataLoader } from './codex-subagent-metadata.js';
-import { codexAgentMessage } from './codex-agent-message.js';
+import { codexAgentMessage, codexAssistantPhase } from './codex-agent-message.js';
 import type {
   ClaudeSubagentState,
   ClaudeSubagentHistoryPayload,
@@ -108,11 +108,13 @@ import type {
   CodexSessionSnapshotPayload,
 } from './codex-runtime.types.js';
 
-// The SDK event union omits user receipts exposed by the app-server.
-type CodexTurnEvent = ThreadEvent | {
-  type: 'user.message';
-  message: { id: string; text: string };
-} | { type: 'turn.interrupted' };
+// The app-server carries assistant phases and user receipts beyond the SDK event shape.
+type CodexThreadItem = ThreadItem & Pick<ClaudeTranscriptItem, 'assistantPhase'>;
+type CodexTurnEvent =
+  | Exclude<ThreadEvent, { item: ThreadItem }>
+  | { type: 'item.started' | 'item.updated' | 'item.completed'; item: CodexThreadItem }
+  | { type: 'user.message'; message: { id: string; text: string } }
+  | { type: 'turn.interrupted' };
 
 const CODEX_STOP_UNCONFIRMED_MESSAGE =
   'Codex has not confirmed that the previous turn stopped. Retry stopping it before continuing.';
@@ -1205,6 +1207,7 @@ export class CodexRuntimeService
               kind:
                 translated.type === 'agent_message' ? 'assistant' : 'thinking',
               content: translated.text,
+              ...(translated.assistantPhase ? { assistantPhase: translated.assistantPhase } : {}),
               timestamp,
             });
             if (translated.type === 'agent_message' && translated.text)
@@ -2543,7 +2546,7 @@ export class CodexRuntimeService
 
   private handleItemEvent(
     sessionId: number,
-    item: ThreadItem,
+    item: CodexThreadItem,
     terminal: boolean,
   ): void {
     const timestamp = new Date().toISOString();
@@ -2593,6 +2596,7 @@ export class CodexRuntimeService
           id: item.id,
           kind: 'assistant',
           content: item.text,
+          ...(item.assistantPhase ? { assistantPhase: item.assistantPhase } : {}),
           sourceMessageId: item.id,
           timestamp,
           receivedAt: timestamp,
@@ -3758,6 +3762,7 @@ export class CodexRuntimeService
     // Accumulated agent_message / reasoning text per item id so we can emit
     // SDK-style `item.updated` deltas from the app-server's delta notifications.
     const messageText = new Map<string, string>();
+    const messagePhases = new Map<string, NonNullable<CodexThreadItem['assistantPhase']>>();
     const reasoningText = new Map<string, string>();
     const planText = new Map<string, string>();
     let contextModel =
@@ -3912,6 +3917,7 @@ export class CodexRuntimeService
             reasoningText,
             planText,
           );
+          if (item?.assistantPhase) messagePhases.set(item.id, item.assistantPhase);
           if (item) push({ type: 'item.started', item });
           return;
         }
@@ -3934,6 +3940,7 @@ export class CodexRuntimeService
             { isFinal: true },
           );
           if (item) push({ type: 'item.completed', item });
+          if (item?.type === 'agent_message') messagePhases.delete(item.id);
           return;
         }
         case 'item/agentMessage/delta': {
@@ -3949,7 +3956,8 @@ export class CodexRuntimeService
               id,
               type: 'agent_message',
               text: next,
-            } as ThreadItem,
+              assistantPhase: messagePhases.get(id),
+            },
           });
           return;
         }
@@ -4801,7 +4809,7 @@ export class CodexRuntimeService
     reasoningText: Map<string, string>,
     planText: Map<string, string>,
     opts: { isFinal?: boolean } = {},
-  ): ThreadItem | null {
+  ): CodexThreadItem | null {
     if (!raw || typeof raw !== 'object') return null;
     const id = typeof raw.id === 'string' ? raw.id : null;
     if (!id) return null;
@@ -4852,6 +4860,7 @@ export class CodexRuntimeService
         return {
           id,
           type: 'agent_message',
+          assistantPhase: codexAssistantPhase(raw.phase),
           text: opts.isFinal ? finalText : (messageText.get(id) ?? finalText),
         };
       }

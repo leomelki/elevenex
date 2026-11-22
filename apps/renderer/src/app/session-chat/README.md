@@ -65,6 +65,10 @@ Older engines omit the capability and retain their original send contract.
   actions reconcile through the open stream.
 - Adjacent history reads pause the watch and resume it when the page arrives.
   Live updates refresh runtime state while the user reads a historical window.
+  The engine's optional `state.activePromptId` identifies the foreground turn
+  independently of paging. A visible slice of that turn keeps Working and its
+  open work timeline while the retained transcript waits for a return to latest.
+  Older engines omit the prompt ID and use the latest visible turn when following live.
   A forward page that reaches latest establishes a fresh stream snapshot so it
   cannot reapply text the history page included. Returning to latest keeps the
   historical window and its cursors until the fresh snapshot succeeds.
@@ -133,6 +137,9 @@ Older engines omit the capability and retain their original send contract.
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
   each tool. Envelopes without supported native receipts remain inspectable.
+  Codex assistant phases survive streaming and history reload. Commentary stays
+  with the turn's activity after it ends. Compact transcript exports label the
+  latest interim text as Progress update until a final reply arrives.
 - Claude tool calls share the same message/tool ID in live events and saved
   history, so reopening an active turn merges each call once and keeps its
   result in the bounded transcript page.
@@ -238,8 +245,9 @@ Legacy reads still wait up to eight seconds with an unchanged cursor.
 Progressive loading is enabled by default through
 `SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
 **80 records / 512 KiB** with compact completed turns on supporting engines.
-The viewport can prefetch older pages to fill available space, within a
-four-page budget and while each page adds visible height. A cold conversation
+The viewport can prefetch older pages when idle to fill available space, within
+a four-page budget and while each page adds visible height. Prefetch preserves
+the latest records when the buffer fills. A cold conversation
 open shows a transcript and composer skeleton after 150 ms. The real chat
 renders as soon as the page is ready, with the latest reply positioned before
 paint. The placeholder surface crossfades to that view over 140 ms while the
@@ -371,8 +379,8 @@ at most 320 items. Scrolling near either edge automatically loads an adjacent pa
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional
 `following`/`next` contract continues forward without gaps while live state keeps
-refreshing. Live state changes update the composer without relabeling historical
-turns as live or failed. Sending reconciles the live tail first, and the draft
+refreshing. Live state changes update the composer and the identified active
+turn when a slice of it is visible. Sending reconciles the live tail first, and the draft
 stays editable while reading. Engines without forward cursors retain an automatic return to their tail
 when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
 with explicit access to the original paged content. State, queue, model and

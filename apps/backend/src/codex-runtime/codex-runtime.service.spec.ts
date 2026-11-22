@@ -17,6 +17,36 @@ import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
+  it('preserves assistant phases across live deltas and item receipts', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Run the checks');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const progress = { id: 'progress', type: 'agentMessage', phase: 'commentary' };
+      notify('item/started', { item: { ...progress, text: '' } });
+      notify('item/agentMessage/delta', { itemId: progress.id, delta: 'Checking.' });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: progress.id, assistantPhase: 'commentary', content: 'Checking.' }),
+      ]));
+
+      notify('item/completed', { item: { id: progress.id, type: progress.type, text: 'Still checking.' } });
+      notify('item/completed', { item: { id: 'reply', type: 'agentMessage', phase: 'final_answer', text: 'Passed.' } });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect((await service.getRuntimeState(7)).liveItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: progress.id, assistantPhase: 'commentary', content: 'Still checking.' }),
+        expect.objectContaining({ id: 'reply', assistantPhase: 'final', content: 'Passed.' }),
+      ]));
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+      await pending;
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
   it.each(['completed', 'interrupted', 'failed'])(
     'records an unseen reply only for a successful turn (%s)', async status => {
       const { service, sessionsService, appServer } = createService();

@@ -394,7 +394,7 @@ export class DesktopChatService implements OnModuleDestroy {
           const live = Array.isArray(raw.liveItems) ? raw.liveItems as AgentTranscriptItem[] : [];
           const source = { length: live.length, first: live[0]?.id };
           const liveTurn = state.phase === 'running' || state.phase === 'waiting';
-          this.rememberLivePrompt(feed, live, liveTurn);
+          if (state.activePromptId) feed.livePrompt = state.activePromptId;
           const toolDetails = this.toolDetails(feed);
           const projectedLive: SessionChatItem[] = [];
           const options = {
@@ -424,7 +424,7 @@ export class DesktopChatService implements OnModuleDestroy {
             const window = chatWindow(history, live, {
               ...options, historyIndex: this.historyWindowIndex(feed),
               completedTurns: loadingMode === 'progressive' ? this.completedTurns(feed) : undefined,
-              summarizeRecent: true, keepTurnId: after ? feed.livePrompt : undefined,
+              summarizeRecent: true, keepTurnId: state.activePromptId ?? (after ? feed.livePrompt : undefined),
             })!;
             checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
             const cursor = replay.remember(checkpoint);
@@ -445,13 +445,6 @@ export class DesktopChatService implements OnModuleDestroy {
     } finally {
       releaseObserver();
     }
-  }
-
-  private rememberLivePrompt(feed: ChatFeed, live: readonly AgentTranscriptItem[], liveTurn: boolean): void {
-    if (!liveTurn) return;
-    // Keep the streamed timeline mounted through the saved-history handoff.
-    const prompt = live.findLast(item => item.kind === 'user')?.id;
-    if (prompt) feed.livePrompt = prompt;
   }
 
   async read(
@@ -561,7 +554,8 @@ export class DesktopChatService implements OnModuleDestroy {
       ? (raw.liveItems as AgentTranscriptItem[])
       : [];
     const liveTurn = state.phase === 'running' || state.phase === 'waiting';
-    this.rememberLivePrompt(feed, live, liveTurn);
+    // Keep the streamed timeline mounted through the saved-history handoff.
+    if (state.activePromptId) feed.livePrompt = state.activePromptId;
     const fingerprints = paging ? undefined : new Map<string, string>();
     const window = chatWindow(history, live, {
       before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
@@ -570,7 +564,7 @@ export class DesktopChatService implements OnModuleDestroy {
       summarizeRecent: summarizeRecent === '1',
       toolDetails,
       liveTurn,
-      keepTurnId: paging || prior?.[0] === feed.id ? feed.livePrompt : undefined,
+      keepTurnId: state.activePromptId ?? (paging || prior?.[0] === feed.id ? feed.livePrompt : undefined),
     });
     if (!window)
       throw new BadRequestException(

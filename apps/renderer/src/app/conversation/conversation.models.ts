@@ -233,6 +233,11 @@ export interface TurnWorkToggle {
   readonly open: boolean;
   readonly toolIds: readonly string[];
 }
+export interface ChatHistoryRequest {
+  readonly direction: "before" | "following";
+  readonly source: "prefetch" | "reader";
+}
+
 export interface ChatExchange {
   /** Stable mounted identity across prompt receipt reconciliation; id stays canonical. */
   readonly renderId?: string;

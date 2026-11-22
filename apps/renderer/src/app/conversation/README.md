@@ -164,8 +164,11 @@ the new prompt in over the old one. Under reduced motion no motion classes are a
 
 Connected owners supply `historyBefore`, `historyAfter`, `historyLoading`,
 `historyError` and `historyRevision` through `Chat`/`ChatScroll`. Edge proximity
-emits `historyRequested('before' | 'following')`; the owner merges a bounded page,
-evicts the opposite edge and increments `historyRevision` in the same update.
+emits `historyRequested` with a `before` or `following` direction and a
+`prefetch` or `reader` source. The owner merges a bounded page, gives reader
+requests priority at the requested edge, and increments `historyRevision` in
+the same update. Initial prefetch can fill spare room while keeping the latest
+records available.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
 its offset after either operation. Within a long turn, `data-chat-row` identifies
 individual timeline rows so prepending work preserves the answer's offset as well.

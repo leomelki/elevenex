@@ -12,7 +12,7 @@ import {
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
 import { codexHistoryTools } from './codex-history-tools.js';
-import { codexAgentMessage } from './codex-agent-message.js';
+import { codexAgentMessage, codexAssistantPhase } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import { homedir } from 'os';
@@ -692,6 +692,7 @@ export class CodexHistoryService {
               id:
                 stringValue(completed.id) ?? `codex-history:${index}:assistant`,
               kind: 'assistant',
+              assistantPhase: codexAssistantPhase(completed.phase),
               content,
               timestamp,
               receivedAt: timestamp,
@@ -819,6 +820,7 @@ export class CodexHistoryService {
         ? {
             id,
             kind: 'assistant',
+            assistantPhase: codexAssistantPhase(item.phase),
             content,
             providerToolResult: item.content,
             sourceMessageId: id,

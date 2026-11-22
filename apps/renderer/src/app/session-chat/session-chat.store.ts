@@ -25,7 +25,7 @@ import { SessionChatLoadingPolicy, SESSION_CHAT_SLOW_OPEN_MS } from './session-c
 import { completedTurnRecords, SessionChatTurnWork, SessionChatWorkCache } from './session-chat-turn-work';
 import { SessionChatToolCache, SessionChatToolDetails } from './session-chat-tool-details';
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import type { ChatExchange, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
+import type { ChatExchange, ChatHistoryRequest, ComposerSubmission, MessageSendOrigin, ConversationMention, QueuedMessage, WaitingMessage } from "../conversation";
 import { SessionChatDrafts, SessionDraft, type StartingSession } from "./session-chat-drafts";
 import {
   ChatTranscriptProjection,
@@ -395,10 +395,10 @@ export class SessionChatStore {
     this.historyError.set('');
     return this.load(true);
   }
-  async older(): Promise<void> {
+  async older(source: ChatHistoryRequest['source'] = 'reader'): Promise<void> {
     if (!this.before() || this.loading() || this.historyLoading()) return;
     this.stopRead();
-    await this.load(false, this.before()!, "before");
+    await this.load(false, this.before()!, "before", source === 'prefetch' && !this.historical());
   }
   async newer(): Promise<void> {
     if (!this.next() || this.loading() || this.historyLoading()) return;
@@ -411,7 +411,7 @@ export class SessionChatStore {
     this.stopRead();
     if (!this.readOnly()) void this.load(false);
   }
-  private async load(reset: boolean, position?: string, direction?: "before" | "following"): Promise<boolean> {
+  private async load(reset: boolean, position?: string, direction?: "before" | "following", preserveTail = false): Promise<boolean> {
     const selection = this.selection;
     if (!selection || this.request || this.disposed || document.hidden || this.offline() || !this.active()) return false;
     clearTimeout(this.timer);
@@ -426,7 +426,7 @@ export class SessionChatStore {
     this.requestMode = profile.loadingMode;
     if (reset || !this.state()) this.loading.set(true);
     if (direction) { this.historyLoading.set(true); this.historyError.set(""); }
-    this.watchSlowOpen(selection, readEpoch, () => this.load(reset, position, direction));
+    this.watchSlowOpen(selection, readEpoch, () => this.load(reset, position, direction, preserveTail));
     const result = await this.client.read(selection.scopeId, {
       taskId: selection.taskId,
       sessionId: selection.sessionId,
@@ -449,7 +449,7 @@ export class SessionChatStore {
     this.historyLoading.set(false);
     if (result.ok) {
       this.error.set("");
-      this.receivePage(result.value, reset, direction);
+      this.receivePage(result.value, reset, direction, preserveTail);
     } else if (direction) this.historyError.set(result.error.message);
     else if (reset || !this.state() || result.error.status === 404)
       this.error.set(
@@ -547,7 +547,7 @@ export class SessionChatStore {
     return first;
   }
 
-  private receivePage(page: SessionChatPage, reset: boolean, direction?: 'before' | 'following'): void {
+  private receivePage(page: SessionChatPage, reset: boolean, direction?: 'before' | 'following', preserveTail = false): void {
     if (this.starting()) this.compactStart.set(!!this.draft().trim());
     this.starting.set(false);
     this.supportsFollowing = page.next !== undefined;
@@ -556,11 +556,11 @@ export class SessionChatStore {
       this.state.set(page.state);
       this.cursor = page.cursor;
       this.reconcileDelivery(page.state);
-    } else this.accept(page, direction);
+    } else this.accept(page, direction, preserveTail);
     if (this.uncertain()) this.checked.set(true);
   }
 
-  private accept(page: SessionChatPage, direction?: "before" | "following"): void {
+  private accept(page: SessionChatPage, direction?: "before" | "following", preserveTail = false): void {
     const previous = this.items();
     if (!direction && !page.reset && !page.events.length) {
       this.state.set(page.state);
@@ -569,6 +569,8 @@ export class SessionChatStore {
       return;
     }
     const older = direction === "before";
+    // Initial prefetch can fill unused space. Only reader paging can evict the live end.
+    const keepsOlder = older && !preserveTail;
     const wasLoaded = !!this.state();
     const replacesTail = !direction && page.reset;
     // A reset is authoritative from its first row onward. In the live window,
@@ -623,9 +625,9 @@ export class SessionChatStore {
       (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
       ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
       : records;
-    const items = retainChatWindow(all, older);
+    const items = retainChatWindow(all, keepsOlder);
     const evicted = all.length > items.length;
-    if (older && evicted) {
+    if (keepsOlder && evicted) {
       const contextIds = new Set(all.map(item => item.id));
       this.trailingContext.set(chatTailContext([
         ...all.slice(items.length),
@@ -672,7 +674,7 @@ export class SessionChatStore {
     if (direction) this.fresh.update(ids => new Set([...ids].filter(id => items.some(item => item.id === id))));
     // Retain only the prompt owning the first item, even after its actual row
     // is evicted. Context never participates in pagination or delivery receipts.
-    const cut = older ? 0 : all.length - items.length;
+    const cut = keepsOlder ? 0 : all.length - items.length;
     const prompt = items[0]?.kind === 'user' ? null
       : promptBefore(all, cut)
         ?? (older || (replacesTail && !keepsPrefix) || !previous.length
@@ -683,8 +685,8 @@ export class SessionChatStore {
     this.state.set(page.state);
     if (!direction) this.cursor = page.cursor;
     if (older) {
-      this.before.set(page.before);
-      if (evicted) {
+      this.before.set(evicted && preserveTail ? items[0]?.id ?? null : page.before);
+      if (evicted && keepsOlder) {
         const last = items.at(-1);
         this.next.set(last?.completedTurn?.endId ?? last?.id ?? null);
       }

@@ -50,6 +50,8 @@ export interface SessionChatMention {
   readonly sessionId: number;
   readonly title: string;
 }
+export type AssistantMessagePhase = "commentary" | "final";
+
 export interface SessionChatRecord {
   readonly id: string;
   readonly kind:
@@ -60,6 +62,8 @@ export interface SessionChatRecord {
     | "tool_result"
     | "system"
     | "error";
+  /** Provider-reported phase of an assistant message. Older engines may omit it. */
+  readonly assistantPhase?: AssistantMessagePhase;
   /** Attachment references only; bytes are fetched separately for the selected chat. */
   readonly media?: readonly SessionChatMediaReference[];
   readonly mentions?: readonly SessionChatMention[];
@@ -249,6 +253,8 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Durable transcript prompt ID for the current foreground turn, when known. */
+  readonly activePromptId?: string;
   /** Present on engines supporting mark-seen; null means no unseen completion. */
   readonly unseenCompletionAt?: string | null;
   /** Explicit send can resolve at most eight session identities into context. */

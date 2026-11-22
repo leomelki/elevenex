@@ -224,7 +224,7 @@ describe("ChatScroll return to bottom", () => {
     expect(requests).not.toHaveBeenCalled();
     viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -60 }));
     await new Promise(requestAnimationFrame); fixture.detectChanges();
-    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+    expect(requests).toHaveBeenCalledExactlyOnceWith({ direction: 'before', source: 'reader' });
   });
 
   it('only pages in the scroll direction and cancels an older read on reversal', async () => {
@@ -246,10 +246,12 @@ describe("ChatScroll return to bottom", () => {
       fixture.detectChanges();
     };
     await wheel(-100);
-    expect(requests.mock.calls.map(args => args[0])).toEqual(['before']);
+    expect(requests.mock.calls.map(args => args[0])).toEqual([{ direction: 'before', source: 'reader' }]);
     await wheel(100);
     expect(cancelled).toHaveBeenCalledOnce();
-    expect(requests.mock.calls.map(args => args[0])).toEqual(['before', 'following']);
+    expect(requests.mock.calls.map(args => args[0])).toEqual([
+      { direction: 'before', source: 'reader' }, { direction: 'following', source: 'reader' },
+    ]);
   });
 
   it('keeps wheel input within scrollable tool evidence until it reaches its edge', async () => {
@@ -272,7 +274,7 @@ describe("ChatScroll return to bottom", () => {
     expect(requests).not.toHaveBeenCalled();
     evidence.scrollTop = 0;
     await wheelUp();
-    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+    expect(requests).toHaveBeenCalledExactlyOnceWith({ direction: 'before', source: 'reader' });
     expect(viewport.scrollTop).toBe(200);
   });
 
@@ -291,7 +293,7 @@ describe("ChatScroll return to bottom", () => {
     for (const callback of resizeCallbacks) callback();
     await new Promise(requestAnimationFrame);
     fixture.detectChanges();
-    expect(requests).toHaveBeenCalledExactlyOnceWith('before');
+    expect(requests).toHaveBeenCalledExactlyOnceWith({ direction: 'before', source: 'prefetch' });
     expect(fixture.componentInstance.atEnd()).toBe(true);
     if (reading) { dimensions.height = 600; moveTo(40); }
     // The original partial turn has no retained DOM anchor after its prompt

@@ -962,6 +962,7 @@ describe('selected session chat', () => {
     emit('message_start');
     const update = (await read(initial.cursor))!;
     expect(update.reset).toBe(false);
+    expect(update.state.activePromptId).toBe(receipt.id);
     expect(update.events.map(event => event.type === 'item' && event.item.id)).toEqual(['native-user', 'follow-up-answer']);
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     history = [...history, ...live];
@@ -969,6 +970,13 @@ describe('selected session chat', () => {
     const saved = (await read(update.cursor))!;
     expect(saved.items.map(item => item.id)).toEqual(['initial', 'initial-answer', 'native-user', 'follow-up-answer']);
     expect(saved.items.filter(item => item.kind === 'user')).toHaveLength(2);
+
+    const older = (await read(undefined, receipt.id))!;
+    expect(older.items.map(item => item.id)).toEqual(['initial', 'initial-answer']);
+    expect(older.state.activePromptId).toBe(receipt.id);
+
+    runtime.getRuntimeState.mockResolvedValueOnce({ runPhase: 'idle', liveItems: live });
+    expect((await read())!.state.activePromptId).toBeUndefined();
   });
   it('keeps a pre-read cursor so events during hydration are reconciled without losing or duplicating text', async () => {
     runtime.getRuntimeState.mockImplementationOnce(async () => {

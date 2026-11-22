@@ -68,6 +68,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
     ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
+    ...(item.kind === 'assistant' && item.assistantPhase ? { assistantPhase: item.assistantPhase } : {}),
     timestamp: item.timestamp,
     toolId: item.toolUseId ?? null,
     toolName:
@@ -132,9 +133,14 @@ export function chatState(
     }
   }
   const phase = String(raw.runPhase);
+  const activePrompt = phase === 'running' || phase === 'waiting'
+    ? record(list(raw.liveItems).findLast(item => record(item).kind === 'user')).id
+    : undefined;
   return {
     provider,
     phase: phase === 'running' || phase === 'waiting' || phase === 'error' ? phase : 'idle',
+    ...(typeof activePrompt === 'string' && activePrompt.length > 0 && activePrompt.length <= 1000
+      ? { activePromptId: activePrompt } : {}),
     canInterrupt: raw.canInterrupt === true,
     error: nullable(raw.lastError),
     model: nullable(raw.selectedModel),

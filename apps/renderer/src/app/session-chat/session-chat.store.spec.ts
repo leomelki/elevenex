@@ -1186,6 +1186,44 @@ describe("session chat ownership", () => {
     expect(store.exchanges()[0]?.answer).toBe('Replaced history');
   });
 
+  it('prefetches without evicting the live end and keeps an explicitly paged slice of the active turn working', async () => {
+    const active = { ...state, phase: 'running', activePromptId: 'prompt', canInterrupt: true } as const;
+    const prompt = item('prompt', 'user', 'Check the full suite');
+    const progress = item('progress', 'assistant', 'Checking the suite…', { assistantPhase: 'commentary' });
+    const before = 'step-0';
+    const latest = [
+      ...Array.from({ length: 319 }, (_, index) => item(`step-${index}`, 'thinking', `Check ${index}`)),
+      progress,
+    ];
+    const previous = item('previous', 'user', 'An earlier request');
+    const older = page(2, { state: active, items: [previous, item('earlier-answer', 'assistant', 'Done.'), prompt] });
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, {
+      state: active, before, next: null, leadingPrompt: prompt, items: latest,
+    }))) });
+    await settle();
+    expect(store.exchanges().at(-1)).toMatchObject({ id: prompt.id, status: 'live', streaming: true });
+
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(older));
+    await store.older('prefetch');
+    expect(store.historical()).toBe(false);
+    expect(store.before()).toBe(before);
+    expect(store.items()).toEqual(latest);
+
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(older));
+    await store.older('reader');
+    expect(store.historical()).toBe(true);
+    expect(store.items()).toHaveLength(320);
+    expect(store.exchanges().map(({ id, status }) => [id, status])).toEqual([[previous.id, 'done'], [prompt.id, 'live']]);
+    expect(store.exchanges().at(-1)).toMatchObject({ answer: progress.text, streaming: false });
+
+    const final = item('final', 'assistant', 'The full suite passed.', { assistantPhase: 'final' });
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [progress, final], leadingPrompt: prompt })));
+    await store.refresh();
+    expect(store.exchanges().at(-1)).toMatchObject({
+      id: prompt.id, status: 'done', answer: final.text, steps: [expect.objectContaining({ id: progress.id, kind: 'say' })],
+    });
+  });
+
   it("scrolls both directions across thousands of items with a bounded contiguous window", async () => {
     const { store, bridge } = setup(); await settle();
     const history = Array.from({ length: 4000 }, (_, i) => item(String(i), i % 2 ? "assistant" : "user", `Message ${i}`));

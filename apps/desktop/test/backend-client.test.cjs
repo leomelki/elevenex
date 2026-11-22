@@ -785,6 +785,16 @@ test('harness selection requires a known action shape and an expected current pr
   assert.throws(() => parseChatPage(window, 1, 2, 'progressive'));
   assert.throws(() => parseChatPage({ ...window, items: [...window.items, record] }, 1, 2, 'window'));
   assert.throws(() => parseChatPage({ ...page, events: Array(321).fill({ type: 'item', item: record }) }, 1, 2, 'window'));
+  const active = { ...state, phase: 'running', activePromptId: 'prompt' };
+  const phased = { ...record, assistantPhase: 'commentary' };
+  const livePage = parseChatPage({ ...page, state: active, items: [phased] }, 1, 2);
+  assert.equal(livePage.state.activePromptId, 'prompt');
+  assert.equal(livePage.items[0].assistantPhase, 'commentary');
+  for (const badId of ['', 1, 'x'.repeat(1001)])
+    assert.throws(() => parseChatPage({ ...page, state: { ...active, activePromptId: badId } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, state: { ...active, phase: 'idle' } }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...phased, kind: 'user' }] }, 1, 2));
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...phased, assistantPhase: 'unknown' }] }, 1, 2));
   const completionAt = '2026-11-14T12:00:00.000Z';
   assert.equal(parseChatPage(page, 1, 2).state.unseenCompletionAt, undefined);
   for (const unseenCompletionAt of [completionAt, null])
