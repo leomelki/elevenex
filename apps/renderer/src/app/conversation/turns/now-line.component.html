@@ -22,9 +22,9 @@
     }
   </div>
 }
-@if (step().kind === "think" && step().text) {
+@if (reasoningText(); as text) {
   <div class="reasoning">
-    <ex-stream-text [text]="step().text || ''" [streaming]="streaming()" />
+    <ex-stream-text [text]="text" [streaming]="streaming()" />
   </div>
 }
 @if (step().progress !== undefined) {

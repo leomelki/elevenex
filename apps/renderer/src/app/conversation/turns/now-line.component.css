@@ -44,14 +44,14 @@
   font-family: var(--font-mono);
 }
 .reasoning {
-  max-height: 40px;
+  max-height: 2lh;
   overflow: hidden;
   padding-left: var(--space-6);
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
   display: flex;
   align-items: flex-end;
-  mask-image: linear-gradient(transparent, currentColor 18px);
+  mask-image: linear-gradient(to top, black 1lh, transparent 2lh);
 }
 .progress {
   height: 2px;

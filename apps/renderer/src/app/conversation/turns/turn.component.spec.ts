@@ -354,6 +354,31 @@ describe("turn work disclosure", () => {
 });
 
 describe("turn evidence", () => {
+  it("keeps the live thinking preview anchored to the last visible text", () => {
+    const fixture = TestBed.createComponent(TurnComponent);
+    const host: HTMLElement = fixture.nativeElement;
+    const thinking = { id: "thinking", kind: "think", status: "running" } as const;
+    const update = (text: string) => {
+      fixture.componentRef.setInput("steps", [{ ...thinking, text }]);
+      fixture.detectChanges();
+    };
+    fixture.componentRef.setInput("status", "live");
+    update(" \t\r\n\n");
+    expect(host.querySelector("ex-now-line .verb")?.textContent).toContain("Thinking");
+    expect(host.querySelector("ex-now-line ex-stream-text")).toBeNull();
+
+    update("Checking the details.");
+    const stream = host.querySelector("ex-now-line ex-stream-text");
+    expect(stream?.querySelector(".caret")).toBeTruthy();
+    update("Checking the details.\n\n  ");
+    expect(host.querySelector("ex-now-line ex-stream-text")).toBe(stream);
+    expect(stream?.textContent).toBe("Checking the details.");
+
+    update("Checking the details.\n\nNext, check the tests.\n");
+    expect(stream?.textContent).toBe("Checking the details.\n\nNext, check the tests.");
+    fixture.destroy();
+  });
+
   it.each(["live", "done", "stopped", "failed"] as const)(
     "hands thinking to the timeline once when the turn is %s",
     (status) => {

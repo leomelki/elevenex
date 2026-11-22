@@ -355,9 +355,10 @@ blocks submissions and disables its native answer fieldset while a reply is pend
 `ChatExchange.streaming` can control the reply cursor independently of a turn's
 live tool activity; omitted values retain the status-based default for existing
 consumers. Markdown gives the cursor to the current unfinished code block or to
-prose, including nested lists/quotes. `NowLine.streaming=false` keeps a held
-thinking line visible without keeping its cursor alive during the handoff to
-assistant text.
+prose, including nested lists/quotes. `NowLine` shows only its status row until
+nonblank reasoning arrives, and its preview ends at the last nonblank character.
+`NowLine.streaming=false` keeps a held thinking line visible without keeping
+its cursor alive during the handoff to assistant text.
 
 `ChatExchange.answerBeforeStepId` (also accepted by `Turn`) places the latest
 reply before that work step; omission means all work precedes it. Supply
