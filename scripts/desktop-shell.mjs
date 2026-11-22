@@ -7,8 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stageBackendRelease } from './desktop-backend-release.mjs';
-import { prepareDevelopmentBackend } from './desktop-backend-development.mjs';
-import { developmentLinuxArchitecture } from './desktop-backend-linux.mjs';
+import { developmentLaunchOptions, prepareDevelopmentBackend } from './desktop-backend-development.mjs';
 import { generateDesktopIcons } from './desktop-icons.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -86,19 +85,25 @@ async function stopChildren() {
   await Promise.allSettled([...children].map((child) => completed(child)));
 }
 
-async function dev(args) {
-  const linuxArchitecture = developmentLinuxArchitecture(args);
+async function dev(args, sharedWorkspace = false) {
+  const { linuxArchitecture, workspace } = developmentLaunchOptions(args, sharedWorkspace);
   await compileMain();
   await syncTokens();
   const backendEnvironment = await prepareDevelopmentBackend(root, run, {
-    linuxArchitecture, runCommand: (command, args, cwd) => completed(launchCommand(command, args, cwd)),
+    linuxArchitecture, workspace, runCommand: (command, args, cwd) => completed(launchCommand(command, args, cwd)),
   });
   const port = Number(process.env['ELEVENEX_DESKTOP_PORT'] ?? 4300);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid ELEVENEX_DESKTOP_PORT');
   const url = `http://127.0.0.1:${port}`;
-  const server = launch(ng, ['serve', '--host', '127.0.0.1', '--port', String(port)], renderer);
+  const serveArgs = ['serve', '--host', '127.0.0.1', '--port', String(port)];
+  if (sharedWorkspace) {
+    console.log(`Shared SSH development workspace ${workspace}`);
+    serveArgs.push('--watch=false', '--live-reload=false', '--hmr=false');
+  }
+  const server = launch(ng, serveArgs, renderer);
+  const serverCompleted = completed(server);
   let serverStopped = false;
-  server.once('exit', () => { serverStopped = true; if (!stopping) void stopChildren(); });
+  void serverCompleted.finally(() => { serverStopped = true; }).catch(() => undefined);
   let ready = false;
   for (let attempt = 0; attempt < 240; attempt++) {
     if (serverStopped || stopping) throw new Error('Renderer dev server stopped');
@@ -119,13 +124,23 @@ async function dev(args) {
   const startElectron = () => {
     const env = { ...process.env, ...backendEnvironment, ELEVENEX_RENDERER_URL: url };
     delete env['ELECTRON_RUN_AS_NODE'];
+    if (workspace) env['ELEVENEX_DESKTOP_DEV_REMOTE_WORKSPACE'] = workspace;
+    else delete env['ELEVENEX_DESKTOP_DEV_REMOTE_WORKSPACE'];
     electron = spawn(electronPath, [desktop], { cwd: root, stdio: 'inherit', env });
     children.add(electron);
-    electron.once('error', (error) => { console.error(error); void stopChildren(); });
     const child = electron;
-    child.once('exit', () => {
+    child.once('error', (error) => {
       children.delete(child);
-      if (!restarting && !stopping) void stopChildren();
+      console.error(error);
+      process.exitCode = 1;
+      void stopChildren();
+    });
+    child.once('exit', (code) => {
+      children.delete(child);
+      if (!restarting && !stopping) {
+        if (code) process.exitCode = code;
+        void stopChildren();
+      }
     });
   };
   const rebuild = async () => {
@@ -151,19 +166,24 @@ async function dev(args) {
     }
   };
   startElectron();
-  const watchers = [join(desktop, 'src'), join(shared, 'src'), join(root, 'packages/browser-network/src'), join(root, 'packages/browser-inspection/src'), join(root, 'packages/browser-agent/src')].map((path) => watch(path, { recursive: true }, () => {
-    dirty = true;
-    clearTimeout(timer);
-    timer = setTimeout(() => void rebuild(), 150);
-  }));
-  const tokenWatcher = watch(join(root, 'docs/design-system/project/tokens.css'), () => {
-    void syncTokens().catch(console.error);
-  });
+  const watchers = [];
   try {
-    await completed(server);
+    if (!sharedWorkspace) {
+      for (const path of [join(desktop, 'src'), join(shared, 'src'), join(root, 'packages/browser-network/src'), join(root, 'packages/browser-inspection/src'), join(root, 'packages/browser-agent/src')]) {
+        watchers.push(watch(path, { recursive: true }, () => {
+          dirty = true;
+          clearTimeout(timer);
+          timer = setTimeout(() => void rebuild(), 150);
+        }));
+      }
+      watchers.push(watch(join(root, 'docs/design-system/project/tokens.css'), () => {
+        void syncTokens().catch(console.error);
+      }));
+    }
+    await serverCompleted.catch(error => { if (!stopping) throw error; });
   } finally {
     clearTimeout(timer);
-    for (const watcher of [...watchers, tokenWatcher]) watcher.close();
+    for (const watcher of watchers) watcher.close();
     await stopChildren();
   }
 }
@@ -174,6 +194,7 @@ try {
   const [mode, ...args] = process.argv.slice(2);
   switch (mode) {
     case 'dev': await dev(args); break;
+    case 'dev:shared': await dev(args, true); break;
     case 'build': await build(); break;
     case 'preview':
       await compileMain();
@@ -205,7 +226,7 @@ try {
         'scripts/desktop-shell.mjs', 'scripts/desktop-icons.mjs', 'scripts/desktop-icons-render.cjs', 'scripts/desktop-icons.test.mjs', 'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-release.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.test.mjs', 'scripts/desktop-capture', 'apps/renderer/capture', 'apps/renderer/preview', 'apps/desktop/test', 'apps/desktop/eslint.config.mjs',
       ]);
       break;
-    default: throw new Error('Use dev, preview, build, package, test or lint');
+    default: throw new Error('Use dev, dev:shared, preview, build, package, test or lint');
   }
 } catch (error) {
   console.error(error);

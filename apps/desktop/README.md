@@ -36,6 +36,7 @@ Angular version. Install with the repository's pinned pnpm:
 pnpm install
 pnpm desktop:dev
 pnpm desktop:dev --linux
+pnpm desktop:dev:shared --linux
 pnpm desktop:preview
 pnpm desktop:build
 pnpm desktop:test
@@ -48,6 +49,7 @@ The standard names also work from this directory:
 ```sh
 cd apps/desktop
 pnpm dev
+pnpm dev:shared --linux
 pnpm build
 pnpm test
 pnpm lint
@@ -64,6 +66,14 @@ Type errors leave the previous app running. Stop development with Ctrl+C.
 The Angular dev server bundles `@elevenex/shared` with the renderer so workspace
 package rebuilds and branch updates can add runtime exports without a lockfile
 change or a manual Vite cache reset.
+
+`pnpm desktop:dev:shared --linux` builds and launches the development app once.
+Restart the command to pick up source edits. It uses the same fixed SSH workspace
+ID on every computer. Use `--workspace <32-character-id>` to open an existing
+development workspace on the same SSH account. The shared mode saves machine
+settings and drafts separately for each workspace ID, so add the server in this
+mode the first time you use it. Use the same source and Linux target on both
+computers to connect to the same engine revision.
 
 `desktop:dev` also compiles and bundles the checkout's backend before opening
 Electron. The local machine runs that bundle with the launcher's Node executable

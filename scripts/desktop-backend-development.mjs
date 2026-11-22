@@ -5,10 +5,38 @@ import { constants, createReadStream } from 'node:fs';
 import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildLinuxDevelopmentRuntime } from './desktop-backend-linux.mjs';
+import { buildLinuxDevelopmentRuntime, developmentLinuxArchitecture, linuxRuntimeNodeVersion } from './desktop-backend-linux.mjs';
+
+const sharedWorkspaceId = createHash('sha256').update('elevenex-desktop-shared-development').digest('hex').slice(0, 32);
+const workspaceId = /^[a-f0-9]{32}$/;
+const textSource = /(?:\.(?:[cm]?[jt]sx?|json|sql|md|ya?ml|sh|fish|ps1|txt|css|html|svg|Dockerfile)|\/(?:bashrc|zshenv|zshrc))$/;
+
+export function developmentLaunchOptions(args, shared = false) {
+  if (!shared) return { linuxArchitecture: developmentLinuxArchitecture(args) };
+  const workspaceAt = args.indexOf('--workspace');
+  const workspace = workspaceAt < 0 ? sharedWorkspaceId : args[workspaceAt + 1];
+  if (!workspaceId.test(workspace ?? '')) throw new Error('--workspace requires a 32-character lowercase hexadecimal workspace ID');
+  const targetArgs = workspaceAt < 0 ? args : [...args.slice(0, workspaceAt), ...args.slice(workspaceAt + 2)];
+  return { linuxArchitecture: developmentLinuxArchitecture(targetArgs), workspace };
+}
+
+async function hashSource(hash, path, normalizeText) {
+  const input = createReadStream(path);
+  if (!normalizeText) {
+    for await (const bytes of input) hash.update(bytes);
+    return;
+  }
+  let trailing = '';
+  for await (const text of input.setEncoding('utf8')) {
+    const chunk = trailing + text;
+    trailing = chunk.endsWith('\r') ? '\r' : '';
+    hash.update((trailing ? chunk.slice(0, -1) : chunk).replaceAll('\r\n', '\n'));
+  }
+  hash.update(trailing);
+}
 
 /** Include dirty/untracked backend sources so a development cache cannot hide edits. */
-export async function developmentRevision(root) {
+export async function developmentRevision(root, sharedLinuxArchitecture) {
   const git = promisify(execFile);
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
     'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/bin', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-agent/src', 'packages/browser-agent/build-worker.mjs', 'packages/browser-agent/package.json', 'packages/browser-agent/tsconfig.json', 'packages/browser-inspection/src', 'packages/browser-inspection/package.json', 'packages/browser-inspection/tsconfig.json', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
@@ -19,11 +47,14 @@ export async function developmentRevision(root) {
     'apps/desktop/src/remote/runtime*.ts', 'apps/desktop/src/remote/wire.ts', 'apps/desktop/src/remote/agent-proxy.ts',
     'scripts/archive-electron-backend.js', 'scripts/rebuild-electron-backend-natives.js',
   ], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })).stdout.split('\0').filter(Boolean);
-  const hash = createHash('sha256').update(`${process.version}\0${process.platform}\0${process.arch}\0`);
+  // The Linux archive uses the same pinned runtime on every client OS. Keep
+  // its revision stable across checkouts with different Git line endings.
+  const runtime = sharedLinuxArchitecture ? `${linuxRuntimeNodeVersion}\0linux\0${sharedLinuxArchitecture}` : `${process.version}\0${process.platform}\0${process.arch}`;
+  const hash = createHash('sha256').update(`${runtime}\0`);
   for (const file of [...new Set(paths)].sort()) {
     if (file === 'apps/backend/src/generated/git-sha.ts') continue;
     hash.update(`${file}\0`);
-    try { for await (const bytes of createReadStream(join(root, file))) hash.update(bytes); }
+    try { await hashSource(hash, join(root, file), sharedLinuxArchitecture !== undefined && textSource.test(file)); }
     catch (error) { if (error.code !== 'ENOENT') throw error; hash.update('deleted'); }
     hash.update('\0');
   }
@@ -31,10 +62,11 @@ export async function developmentRevision(root) {
 }
 
 /** Build checkout code, reusing installed dependencies/assets without a release archive. */
-export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, runCommand } = {}) {
+export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, runCommand, workspace } = {}) {
+  if (workspace !== undefined && !workspaceId.test(workspace)) throw new Error('Invalid shared development workspace');
   const backend = join(root, 'apps/backend');
   const require = createRequire(join(backend, 'package.json'));
-  const version = await developmentRevision(root);
+  const version = await developmentRevision(root, workspace ? linuxArchitecture : undefined);
   console.log('Building the local desktop development backend…');
   await mkdir(join(backend, 'src/generated'), { recursive: true });
   await writeFile(join(backend, 'src/generated/git-sha.ts'), `// Generated by the desktop development launcher.\nexport const GIT_SHA = '${version}';\n`);
@@ -51,7 +83,7 @@ export async function prepareDevelopmentBackend(root, run, { linuxArchitecture, 
   await run(require.resolve('typescript/bin/tsc'), ['-p', 'tsconfig.build.json'], backend);
   await run(join(root, 'scripts/bundle-electron-backend.js'));
 
-  const directory = join(root, 'apps/desktop/.stage/development-backend');
+  const directory = join(root, 'apps/desktop/.stage', workspace ? `shared-development-${workspace}` : 'development-backend');
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
   for (const file of ['main.cjs', 'main.cjs.map', 'browser-setup.cjs', 'terminal-screen-worker.cjs', 'pi-agent-extension.mjs', 'shell-integration']) {

@@ -193,9 +193,15 @@ terminal reports why.
 
 Dirty and untracked backend sources contribute to the development revision;
 the generated revision file itself does not. Development runtime caches, daemon
-ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
-separate from release data. Identical builds reuse their installation. An explicit
-open or Retry waits for the daemon in this checkout to become idle before handing
+ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<workspace-id>/`,
+separate from release data. Regular dev derives its workspace ID from the local
+checkout path. `pnpm desktop:dev:shared --linux` uses a fixed ID and builds once
+per launch. Pass `--workspace <32-character-id>` with the same value on both
+computers to reuse an existing development database. Shared Linux builds use the
+target architecture, pinned runtime and checkout sources for the engine revision.
+Git CRLF and LF checkout endings produce the same revision for those text sources.
+Identical builds reuse their installation. An explicit
+open or Retry waits for that workspace's daemon to become idle before handing
 off to the requested revision. Background recovery follows an accepted update
 for its revision and never initiates a handoff.
 
