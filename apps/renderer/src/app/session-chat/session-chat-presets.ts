@@ -163,7 +163,8 @@ export class SessionChatPresets {
   }
 
   setEditing(value: boolean): void {
-    if (!this.canEdit()) return;
+    if (value === this.editing() || (value && !this.canEdit())) return;
+    if (value) this.owner.closeAgent();
     this.editing.set(value);
     this.naming.set(false);
     this.clearChangeNotice();
@@ -426,7 +427,7 @@ export class SessionChatPresets {
     ids.splice(to, 0, id);
     if (await this.performEdit({ type: "preset-reorder", ids, expectedRevision: revision })) {
       this.owner.store.notice.set("Presets reordered");
-      if (restoreFocus) this.owner.focusPreset(id);
+      if (restoreFocus && this.editing()) this.owner.focusPreset(id);
     }
   }
 
@@ -448,7 +449,7 @@ export class SessionChatPresets {
     this.defaultNoticeOpen.set(false);
     this.removalOpen.set(true);
     this.owner.store.notice.set("Preset removed");
-    this.owner.focusPreset();
+    if (this.editing()) this.owner.focusPreset();
   }
 
   private restoreAction(

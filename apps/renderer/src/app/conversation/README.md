@@ -44,11 +44,13 @@ These standalone OnPush components consume renderer view models and emit typed i
   With `adaptive`, supply the ordered catalog of up to 24 saved presets.
   The first six entries take the full tiles and numeric shortcuts. Custom
   follows the saved presets and the slim preview size follows the available
-  width. Set `editing` to expose all saved tiles for management and
-  `editedPreset` with the saved ID and current display values to mark a
-  preset adjusted for this chat. Handle
-  `editRequested`, `moved`, and `removed` in the owner. Reordering uses
-  stable preset IDs and FLIP across both tile sizes.
+  width. Set `editing` to expose all saved tiles, with visible grips and pencils.
+  Remove badges appear on full cards and on hover or focus for slim cards.
+  The card itself opens the editor in this mode. Drag its grip or use
+  Option+Arrow keys to reorder. Supply `editedPreset` with the saved ID and
+  current display values to mark a preset adjusted for this chat. Handle
+  `editRequested`, `moved`, and `removed` in the owner. Reordering uses stable
+  preset IDs and FLIP across both tile sizes.
 - `PresetCreator` is a retained modal draft: provide a fixed `initial` agent and current `harnesses`, saved `names`, `open`, `busy`, `blocked`, `error` and thinking/fast capabilities. `defaultAvailable` adds a “Default for new chats” setting with Keep current / Use this preset choices; `initial.default` seeds Use this preset (otherwise Keep current); `submitted.default` requests the persisted default. It emits `submitted(AgentConfig)` with a trimmed `preset` name, `closeRequested` and `closed`. With `harnessLocked=false` and a `catalogProvider(harnessId, signal, refresh?)`, the form offers a Harness dropdown and loads scoped, session-independent model capabilities on demand. Switching preserves a local draft per harness; failed reads are retryable, and closing/superseding a read aborts it and discards late results. Model controls and Create stay disabled until the chosen catalog is ready. The form edits harness/model/thinking/fast locally, checks duplicate names; it never saves on its own. Retain it through exit, deactivate children as closing begins and create a fresh identity for each draft. `ModalLayer` owns focus and recession; AutoHeight owns error-driven size changes.
   Edit mode seeds the name and settings from `initial`. Exclude the edited
   record from `names`. Optional `chatSettings` supplies a mix the user can

@@ -161,6 +161,65 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
   };
 }
 
+describe("connected chat preset editing", () => {
+  it("shows and exits the grid editing controls without losing the composer draft", async () => {
+    const presets: NonNullable<SessionChatState["presets"]> = Array.from({ length: 8 }, (_, index) => ({
+      id: `preset-${index}`, name: `Preset ${index + 1}`, provider: "codex", providerLabel: "Codex",
+      model: "test", modelLabel: "Test model", reasoning: null, fast: false,
+    }));
+    const chatState: SessionChatState = {
+      ...state, providerLocked: false, presetEditing: true, presets,
+      presetDefault: { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "a".repeat(64) },
+    };
+    const { fixture, root, bridge, publish } = setup([], chatState);
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft("Keep the draft");
+    fixture.detectChanges();
+    const headingActions = () => Array.from(root.querySelectorAll(".preset-heading button[data-preset-edit], .preset-heading button[data-preset-new]"))
+      .map(button => button.textContent?.trim());
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset", "Done"]);
+    expect(root.querySelector("[data-preset-edit]")?.getAttribute("data-variant")).toBe("primary");
+    expect(root.querySelectorAll(".full .grip")).toHaveLength(6);
+    expect(root.querySelectorAll(".slim-grid .grip")).toHaveLength(2);
+    expect(root.querySelectorAll(".preset-tile button[draggable='true']")).toHaveLength(8);
+    expect(root.querySelector("[data-flip='preset-0'] .default")?.textContent).toBe("Default");
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-edit]"));
+
+    const slimCard = root.querySelector<HTMLButtonElement>(".slim-grid ex-preset-card button")!;
+    slimCard.focus();
+    slimCard.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(false);
+    expect(root.querySelector<HTMLTextAreaElement>("ex-composer textarea")?.value).toBe("Keep the draft");
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-edit]"));
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    publish({
+      taskId: 1, sessionId: 2, cursor: "empty", reset: true, before: null, items: [], events: [],
+      state: { ...chatState, presets: [], presetDefault: { provider: "codex", id: null, defaultIds: [], revision: "b".repeat(64) } },
+    });
+    await fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset", "Done"]);
+    expect(root.querySelector(".start")?.textContent).not.toContain("Choose your agent below");
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset"]);
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-new]"));
+    expect(root.querySelector<HTMLTextAreaElement>("ex-composer textarea")?.value).toBe("Keep the draft");
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+});
+
 describe("connected chat reply rendering", () => {
   it('loads the leading prompt attachment outside the raw transcript page', async () => {
     const { fixture, bridge } = setup([], state, Promise.resolve({ ok: true, value: {

@@ -97,7 +97,7 @@ function equalViewData<T>(left: T, right: T): boolean {
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
   host: {
-    "(keydown)": "presetFlow.presetShortcut($event)",
+    "(keydown)": "onKey($event)",
     "(dragover)": "dragOver($event)",
     "(drop)": "dropFiles($event)",
     "(dragleave)": "composer()?.dragLeave($event)",
@@ -289,14 +289,37 @@ export class SessionChatComponent {
     closeAgent: () => this.composer()?.agentPicker()?.closePicker(),
     focusPreset: (id) => this.focusPreset(id),
   });
+  protected readonly presetEditing = computed(() =>
+    this.showWelcome() && this.presetFlow.canEdit() && this.presetFlow.editing() &&
+    !this.store.starting() && !this.store.compactStart(),
+  );
+  protected readonly presetHeadingActions = computed<readonly ("edit" | "new")[]>(() => {
+    if (!this.presetFlow.canEdit() || (!this.presetFlow.presets().length && !this.presetEditing())) return ["new"];
+    return this.presetEditing() ? ["new", "edit"] : ["edit", "new"];
+  });
   focusPreset(id?: string): void {
     afterNextRender(() => {
       const card = id && this.element.querySelector(
         `[data-flip="${CSS.escape(id)}"] ex-preset-card button`,
       );
-      const fallback = this.element.querySelector<HTMLButtonElement>("[data-preset-edit]");
+      const fallback = this.element.querySelector<HTMLButtonElement>("[data-preset-edit]") ??
+        this.element.querySelector<HTMLButtonElement>("[data-preset-new]");
       (card instanceof HTMLButtonElement ? card : fallback)?.focus();
     }, { injector: this.injector });
+  }
+  setPresetEditing(editing: boolean): void {
+    this.presetFlow.setEditing(editing);
+    this.focusPreset();
+  }
+  protected onKey(event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.presetEditing() && !this.presetFlow.creatorOpen() &&
+      !event.defaultPrevented && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setPresetEditing(false);
+      return;
+    }
+    this.presetFlow.presetShortcut(event);
   }
   editPreset(id: string): void {
     this.presetFlow.setEditing(true);
@@ -437,10 +460,14 @@ export class SessionChatComponent {
   );
 
   dragOver(event: DragEvent): void {
-    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.dragOver(event);
+    if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+    if (this.presetEditing()) event.preventDefault();
+    else if (this.store.state()?.attachments) this.composer()?.dragOver(event);
   }
   dropFiles(event: DragEvent): void {
-    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.drop(event);
+    if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+    if (this.presetEditing()) event.preventDefault();
+    else if (this.store.state()?.attachments) this.composer()?.drop(event);
   }
   constructor() {
     effect((cleanup) => {
@@ -555,6 +582,7 @@ export class SessionChatComponent {
     this.composer()?.focusEditor();
   }
   submit(submission: ComposerSubmission): void {
+    if (this.presetEditing()) return;
     void this.store.submit(submission, text => this.composer()?.writeDraft(text));
   }
   queueAction(type: "steer-queued" | "cancel-queued", id: string): void {

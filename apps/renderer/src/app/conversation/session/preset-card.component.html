@@ -1,3 +1,4 @@
+@let label = preset()?.preset || preset()?.modelLabel || preset()?.model || "Provider default";
 <button
   type="button"
   [disabled]="disabled()"
@@ -8,56 +9,46 @@
   [class.slim]="slim()"
   [class.editing]="editing()"
   [class.changed]="edited()"
+  [attr.draggable]="editing() && !disabled() ? true : null"
   [attr.aria-pressed]="editing() ? null : selected()"
-  [attr.aria-label]="editing() ? 'Edit ' + preset()?.preset : (slim() && edited() ? preset()?.preset + ', changed for this chat' : null)"
-  [attr.aria-keyshortcuts]="editing() ? 'Alt+ArrowLeft Alt+ArrowRight Delete' : null"
+  [attr.aria-label]="editing() ? 'Edit ' + label : (slim() && edited() ? label + ', changed for this chat' : null)"
+  [attr.aria-keyshortcuts]="editing() ? 'Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Delete' : null"
+  [attr.title]="slim() && !custom() ? label + ' · ' + modelSummary() : null"
   (click)="picked.emit()"
 >
-  <span class="top"
-    ><span class="mark">
-      @if (custom()) {
-        <ex-icon name="plus" [size]="14" />
-      } @else if (preset(); as preset) {
-        <ex-agent-mark [mark]="preset.mark" [harness]="preset.harness" />
-      }</span
-    ><span class="grow"></span>
+  <span class="top">
+    @if (editing()) {
+      <span class="grip" aria-hidden="true"><ex-icon name="grip" /></span>
+    } @else {
+      <span class="mark">
+        @if (custom()) {
+          <ex-icon name="plus" [size]="14" />
+        } @else if (preset(); as preset) {
+          <ex-agent-mark [mark]="preset.mark" [harness]="preset.harness" />
+        }
+      </span>
+    }
+    <span class="grow"></span>
     @if (shortcut()) {
       <ex-kbd>{{ shortcut() }}</ex-kbd>
     }
-    @if (editing() && !slim()) {
-      <ex-icon class="edit-mark" name="pencil" [size]="14" />
-    } @else if (edited() && !slim()) {
+    @if (edited() && !slim()) {
       <span class="edited">Edited</span>
     } @else if (selected() && !slim()) {
       <span class="check"><ex-icon name="check" [size]="12" /></span>
-    }</span
-  ><span class="name"
-    ><span class="label">{{
-      custom()
-        ? "Custom"
-        : preset()?.preset || preset()?.modelLabel || preset()?.model
-    }}</span>
-    @if (!custom() && preset()?.default && !slim() && !editing()) {
-      <span class="default">Default</span>
-    }
-    @if (preset()?.fast && !slim()) {
-      <ex-icon name="bolt" [size]="13" />
     }
   </span>
-  @if (slim() && editing()) {
-    <ex-icon class="edit-mark" name="pencil" [size]="13" />
-  }
+  <span class="name">
+    <span class="label">{{ custom() ? "Custom" : label }}</span>
+    @if (preset()?.fast && !slim()) {
+      <ex-icon class="fast" name="bolt" [size]="13" />
+    }
+    @if (!custom() && preset()?.default && !slim()) {
+      <span class="default">Default</span>
+    }
+  </span>
   @if (!compact() && !slim()) {
-    <span class="sub">{{
-      custom()
-        ? "Choose your own mix"
-        : (preset()?.modelLabel || preset()?.model || "Provider default") +
-          (thinking() ? " · " + thinking() : "")
-    }}</span
-    ><span class="harness">{{
-      custom()
-        ? "Adjust the agent"
-        : preset()?.harnessLabel || preset()?.harness
-    }}</span>
+    <span class="sub">{{ custom() ? "Choose your own mix" : modelSummary() }}</span>
+    <span class="harness">{{ custom() ? "Adjust the agent" : preset()?.harnessLabel || preset()?.harness }}</span>
   }
 </button>

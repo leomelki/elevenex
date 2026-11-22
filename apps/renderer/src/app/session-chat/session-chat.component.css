@@ -36,6 +36,15 @@ ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
   overflow: auto;
 }
 .session-composer:has(.start) > :not(.start) { flex-shrink: 0; }
+.session-composer > ex-composer {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.session-composer > ex-composer[inert] {
+  opacity: 0.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-composer > ex-composer { transition: none; }
+}
 .start {
   min-height: 0;
   overflow-x: hidden;
@@ -45,6 +54,8 @@ ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
   padding: var(--space-1) var(--space-1) var(--space-6);
 }
 .start.with-preset-change { padding-block-end: var(--space-3); }
+/* Leave room for the badges that sit on the upper-start edges of the cards. */
+.start.preset-editing { padding-inline: var(--space-2); }
 .start-content {
   display: flex;
   flex-direction: column;
@@ -71,7 +82,7 @@ ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
   font-size: var(--text-caption-size);
 }
 .preset-heading > :first-child { margin-inline-end: auto; }
-.preset-edit-title { color: var(--ink); font-weight: var(--text-ui-weight); }
+.preset-heading button[data-variant="ghost"] { color: var(--ink-muted); }
 .preset-change {
   display: grid;
   gap: var(--space-2);

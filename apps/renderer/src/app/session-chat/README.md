@@ -589,9 +589,12 @@ retain a six-card window that makes room for the selected and default presets.
 With `presetEditing`, the first six entries get full cards and Option+1–6.
 The remainder follow in responsive slim rows, with Custom last in the entire
 order. The blank chat previews up to two slim rows and compacts as vertical
-space shrinks. Edit shows the entire catalog. Click a card, use its pencil, or
-press E on a focused card to edit in the retained preset dialog. Drag cards or
-use Option+Left/Right to reorder. Remove or Delete offers a short undo window.
+space shrinks. Edit shows the entire catalog and keeps New preset in the heading.
+The composer stays visible with its draft and becomes interactive again on Done
+or Escape. Click a card or its pencil to open the retained preset dialog.
+On the start screen, E on a focused card opens that dialog and enters Edit.
+Drag a grip or use Option+Arrow keys to reorder. Remove or Delete offers a short
+undo window.
 Removing the default selects the first eligible preset in the remaining order.
 Undo restores the original position and defaults if the catalog revision is
 still current.

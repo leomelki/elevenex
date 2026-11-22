@@ -10,13 +10,13 @@ import {
   viewChild,
   type ElementRef,
 } from "@angular/core";
-import { AutoHeightDirective, FlipDirective, IconButtonComponent } from "../../ui";
+import { AutoHeightDirective, ButtonComponent, FlipDirective, IconComponent, TooltipDirective } from "../../ui";
 import { NgTemplateOutlet } from "@angular/common";
 import type { AgentConfig } from "../conversation.models";
 import { PresetCardComponent } from "./preset-card.component";
 @Component({
   selector: "ex-preset-picker",
-  imports: [PresetCardComponent, AutoHeightDirective, FlipDirective, IconButtonComponent, NgTemplateOutlet],
+  imports: [PresetCardComponent, AutoHeightDirective, FlipDirective, ButtonComponent, IconComponent, TooltipDirective, NgTemplateOutlet],
   templateUrl: "./preset-picker.component.html",
   styleUrl: "./preset-picker.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -85,14 +85,14 @@ export class PresetPickerComponent {
     this.dragged.set(id);
   }
   protected dragOver(event: DragEvent, id: string): void {
-    if (!this.dragged() || this.disabled()) return;
+    if (!this.editing() || !this.dragged() || this.disabled()) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     this.over.set(this.dragged() === id ? "" : id);
   }
   protected drop(event: DragEvent, target: string): void {
     const id = this.dragged();
-    if (!id || this.disabled()) return;
+    if (!this.editing() || !id || this.disabled()) return;
     event.preventDefault();
     this.stopDrag();
     if (id !== target) this.moved.emit({ id, target, restoreFocus: false });
@@ -103,7 +103,12 @@ export class PresetPickerComponent {
   }
   protected cardKey(event: KeyboardEvent, id: string): void {
     if (this.disabled() || event.defaultPrevented || event.isComposing ||
-      event.ctrlKey || event.metaKey || event.shiftKey) return;
+      event.ctrlKey || event.metaKey) return;
+    if (!event.altKey && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+      this.edit(event, id);
+      return;
+    }
+    if (event.shiftKey) return;
     if (!this.editing() && !event.altKey && event.key.toLowerCase() === "e") {
       this.edit(event, id);
       return;
@@ -113,14 +118,14 @@ export class PresetPickerComponent {
       event.preventDefault();
       this.removed.emit(id);
     }
-    if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-      const index = this.entries().findIndex(entry => entry.id === id);
-      const target = this.entries()[index + (event.key === "ArrowLeft" ? -1 : 1)]?.id;
-      if (target) {
-        event.preventDefault();
-        this.moved.emit({ id, target, restoreFocus: true });
-      }
-    }
+    if (!event.altKey) return;
+    const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1
+      : event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    const index = this.entries().findIndex(entry => entry.id === id);
+    const target = this.entries()[index + direction]?.id;
+    if (target) this.moved.emit({ id, target, restoreFocus: true });
   }
   private shortcutNumber(event: KeyboardEvent): number {
     return Number(

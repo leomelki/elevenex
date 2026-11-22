@@ -16,7 +16,7 @@ import { ICON_PATHS } from "./icon-paths";
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
-    [attr.stroke-width]="name() === 'more' ? 2.4 : 1.5"
+    [attr.stroke-width]="name() === 'more' || name() === 'grip' ? 2.4 : 1.5"
     stroke-linecap="round"
     stroke-linejoin="round"
   >

@@ -56,16 +56,15 @@
     [class.second-row]="slim && index >= columns()"
     [class.beyond-preview]="slim && index >= columns() * 2"
     [class.drop-target]="over() === entry.id"
+    [style.--preset-edit-delay]="slim ? null : index * 24 + 'ms'"
     [attr.data-flip]="entry.id"
-    [attr.draggable]="editing() && !disabled()"
     (dragstart)="startDrag($event, entry.id)"
     (dragover)="dragOver($event, entry.id)"
     (dragleave)="over() === entry.id && over.set('')"
     (dragend)="stopDrag()"
-    (drop)="drop($event, entry.id)"
-    (keydown)="entry.preset && cardKey($event, entry.id)"
-    (contextmenu)="entry.preset && edit($event, entry.id)">
+    (drop)="drop($event, entry.id)">
     <ex-preset-card
+      [animate.enter]="ready() && editing() ? 'preset-card-arrive' : ''"
       [preset]="edited || entry.preset"
       [custom]="!entry.preset"
       [selected]="!editing() && value() === entry.id"
@@ -75,18 +74,25 @@
       [slim]="slim"
       [shortcut]="entry.preset && !slim && !editing() ? '⌥' + (index + 1) : ''"
       [disabled]="disabled()"
+      (keydown)="entry.preset && cardKey($event, entry.id)"
+      (contextmenu)="entry.preset && edit($event, entry.id)"
       (picked)="activate(entry.id)"
     />
     @if (entry.preset) {
       @if (editing()) {
-        <ex-icon-button class="tile-action remove" icon="x" size="sm"
-          [label]="'Remove ' + entry.preset.preset"
-          [disabled]="disabled()" (pressed)="removed.emit(entry.id)" />
-      } @else {
-        <ex-icon-button class="tile-action edit" icon="pencil" size="sm"
-          [label]="'Edit ' + entry.preset.preset"
-          [disabled]="disabled()" (pressed)="editRequested.emit(entry.id)" />
+        @let removeLabel = 'Remove ' + (entry.preset.preset || entry.preset.modelLabel || entry.preset.model);
+        <button exButton class="tile-action remove" variant="ghost" size="sm"
+          [attr.aria-label]="removeLabel" [exTooltip]="removeLabel"
+          [disabled]="disabled()" (click)="removed.emit(entry.id)">
+          <ex-icon name="x" [size]="13" />
+        </button>
       }
+      @let editLabel = 'Edit ' + (entry.preset.preset || entry.preset.modelLabel || entry.preset.model);
+      <button exButton class="tile-action edit" variant="ghost" size="sm"
+        [attr.aria-label]="editLabel" [exTooltip]="editLabel" [attr.tabindex]="editing() ? -1 : null"
+        [disabled]="disabled()" (click)="editRequested.emit(entry.id)">
+        <ex-icon name="pencil" [size]="14" />
+      </button>
     }
   </div>
 </ng-template>

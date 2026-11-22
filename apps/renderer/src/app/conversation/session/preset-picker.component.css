@@ -24,7 +24,8 @@
   grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 112px), 1fr));
 }
 .editing .slim-grid {
-  grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 128px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 132px), 1fr));
+  row-gap: calc((var(--space-1) + var(--space-2)) / 2);
 }
 .slim-grid:empty, .full:empty, .adaptive:not(.editing) .beyond-preview {
   display: none;
@@ -56,31 +57,87 @@
   outline-offset: 1px;
   border-radius: var(--radius-md);
 }
-.tile-action {
+button.tile-action {
   position: absolute;
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+  padding: 0;
+  z-index: 1;
+  color: var(--ink-muted);
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+button.tile-action:disabled { --preset-action-opacity: 0.45; }
+.tile-action.edit {
   inset-block-start: var(--space-2);
   inset-inline-end: var(--space-2);
-  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
 }
-.slim-grid .tile-action {
+.slim-grid .tile-action.edit {
   inset-block-start: 50%;
   inset-inline-end: var(--space-1);
   transform: translateY(-50%);
 }
-.tile-action.edit {
-  opacity: 0;
+.editing .tile-action.edit,
+.preset-tile:is(:hover, :focus-within) .tile-action.edit {
+  opacity: var(--preset-action-opacity, 1);
+  pointer-events: auto;
+}
+.editing .preset-tile:is(:hover, :focus-within):not(:has(.tile-action:disabled)) {
+  --preset-edit-edge: var(--accent);
+}
+.editing .preset-tile:is(:hover, :focus-within) .tile-action.edit:not(:disabled) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tile-action.remove {
+  inset-block-start: calc(-1 * var(--space-2));
+  inset-inline-start: calc(-1 * var(--space-2));
+  border-radius: var(--radius-full);
+  z-index: 2;
+}
+.tile-action.remove::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--line-strong);
+}
+.tile-action.remove:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink-inverse);
+}
+.tile-action.remove:hover:not(:disabled)::before {
+  background: var(--danger);
+  box-shadow: var(--shadow-pop);
 }
 .full .tile-action.remove {
-  inset-inline-end: var(--space-1);
+  animation: preset-badge-enter var(--dur-base) var(--ease-spring) var(--preset-edit-delay, 0ms) backwards;
 }
 .slim-grid .tile-action.remove {
   opacity: 0;
+  pointer-events: none;
 }
-.preset-tile:is(:hover, :focus-within) .tile-action {
-  opacity: 1;
+.slim-grid .preset-tile:is(:hover, :focus-within) .tile-action.remove {
+  opacity: var(--preset-action-opacity, 1);
+  pointer-events: auto;
 }
-.preset-tile:has(.tile-action.edit):is(:hover, :focus-within) {
+.adaptive:not(.editing) .preset-tile:has(.tile-action.edit):is(:hover, :focus-within) {
   --preset-indicator-opacity: 0;
+}
+@media (hover: none) {
+  .slim-grid .tile-action.remove {
+    opacity: var(--preset-action-opacity, 1);
+    pointer-events: auto;
+  }
+}
+@keyframes preset-badge-enter {
+  from { opacity: 0; scale: 0.75; }
 }
 @container session-chat (max-height: 620px) {
   .adaptive:not(.editing) .second-row { display: none; }
@@ -90,11 +147,19 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .slim-grid .preset-tile { transition: none; }
+  .slim-grid .preset-tile,
+  button.tile-action { transition: none; }
+  .full .tile-action.remove { animation: none; }
 }
 
 .preset-enter {
   animation: preset-enter var(--dur-slow) var(--ease-out);
+}
+.preset-card-arrive {
+  animation: preset-card-arrive var(--dur-base) var(--ease-out);
+}
+@keyframes preset-card-arrive {
+  from { opacity: 0.45; scale: 0.97; }
 }
 @keyframes preset-enter {
   from {
@@ -103,7 +168,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .preset-enter {
+  .preset-enter,
+  .preset-card-arrive {
     animation: none;
   }
 }

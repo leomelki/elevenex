@@ -100,7 +100,8 @@
   <div chatComposer class="session-composer">
     @if (showWelcome()) {
       <section class="start"
-        [class.with-preset-change]="!presetFlow.editing() && (!!presetFlow.drift() || presetFlow.changeNoticeOpen())">
+        [class.preset-editing]="presetEditing()"
+        [class.with-preset-change]="!presetEditing() && (!!presetFlow.drift() || presetFlow.changeNoticeOpen())">
         <div class="start-content">
         <h1>What should we work on?</h1>
         @if (store.starting()) {
@@ -109,8 +110,8 @@
           <p role="status">Your session is ready. Send when you’re ready.</p>
         } @else if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
-            @if (presetFlow.editing()) {
-              <span class="preset-edit-title">Edit presets</span>
+            @if (presetEditing()) {
+              <span>Edit presets</span>
             } @else if (presetFlow.defaultPreset() && presetFlow.presets().length) {
               <ex-dropdown
                 class="default-preset"
@@ -126,28 +127,24 @@
             } @else {
               <span>{{ presetFlow.presets().length ? 'Start with a preset' : 'Agent setup' }}</span>
             }
-            <button
-              exButton
-              variant="ghost"
-              size="sm"
-              [disabled]="blocked() || presetFlow.presets().length >= 24"
-              [title]="
-                presetFlow.presets().length >= 24
-                  ? 'You can save up to 24 presets'
-                  : 'Save a starting configuration'
-              "
-              (click)="presetFlow.openPresetCreator()"
-            >
-              <ex-icon name="plus" [size]="13" />New preset
-            </button>
-            @if (presetFlow.canEdit() && (presetFlow.presets().length || presetFlow.editing())) {
-              <button exButton [variant]="presetFlow.editing() ? 'secondary' : 'ghost'" size="sm"
-                data-preset-edit [disabled]="blocked() || store.loading()"
-                [attr.aria-pressed]="presetFlow.editing()"
-                (click)="presetFlow.setEditing(!presetFlow.editing())">
-                <ex-icon [name]="presetFlow.editing() ? 'check' : 'pencil'" [size]="13" />
-                {{ presetFlow.editing() ? 'Done' : 'Edit' }}
-              </button>
+            @for (action of presetHeadingActions(); track action) {
+              @if (action === 'edit') {
+                <button exButton [variant]="presetEditing() ? 'primary' : 'ghost'" size="sm"
+                  data-preset-edit [disabled]="!presetEditing() && (blocked() || store.loading())"
+                  [attr.aria-pressed]="presetEditing()"
+                  [attr.aria-keyshortcuts]="presetEditing() ? 'Escape' : null"
+                  (click)="setPresetEditing(!presetEditing())">
+                  <ex-icon [name]="presetEditing() ? 'check' : 'pencil'" [size]="13" />
+                  {{ presetEditing() ? 'Done' : 'Edit' }}
+                </button>
+              } @else {
+                <button exButton variant="ghost" size="sm" data-preset-new
+                  [disabled]="blocked() || store.loading() || presetFlow.presets().length >= 24"
+                  [title]="presetFlow.presets().length >= 24 ? 'You can save up to 24 presets' : 'Save a starting configuration'"
+                  (click)="presetFlow.openPresetCreator()">
+                  <ex-icon name="plus" [size]="13" />New preset
+                </button>
+              }
             }
           </div>
           <div class="preset-grid-section"><ex-preset-picker
@@ -155,14 +152,14 @@
             [presets]="presetFlow.canEdit() ? presetFlow.presets() : presetFlow.visiblePresets()"
             [value]="presetFlow.drift()?.saved?.id || presetFlow.selectedPreset()?.id || 'custom'"
             [editedPreset]="editedPreset()"
-            [editing]="presetFlow.editing()"
+            [editing]="presetEditing()"
             [disabled]="blocked() || store.loading()"
             (selected)="presetFlow.selectPreset($event)"
             (editRequested)="editPreset($event)"
             (removed)="presetFlow.removePreset($event)"
             (moved)="presetFlow.movePreset($event.id, $event.target, $event.restoreFocus)"
           />
-          <ex-fold [open]="(!!presetFlow.drift() || presetFlow.changeNoticeOpen()) && !presetFlow.editing()">
+          <ex-fold [open]="(!!presetFlow.drift() || presetFlow.changeNoticeOpen()) && !presetEditing()">
             @if (presetFlow.drift(); as drift) {
               <section class="preset-change" aria-label="Changes to saved preset">
                 <strong>“{{ drift.saved.preset }}” is changed for this chat</strong>
@@ -201,7 +198,7 @@
               </div>
             }
           </ex-fold></div>
-          @if (!presetFlow.presets().length) {
+          @if (!presetFlow.presets().length && !presetEditing()) {
             <p>Choose your agent below, or save your own starting point.</p>
           }
         } @else {
@@ -289,6 +286,7 @@
       }
     }
     <ex-composer
+      [attr.inert]="presetEditing() ? '' : null"
       [clearOnSubmit]="false"
       [draft]="store.draft()"
       (draftChange)="store.setDraft($event)"

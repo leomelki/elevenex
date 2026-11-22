@@ -59,17 +59,28 @@ button:focus-visible:not(:disabled) {
   min-height: 20px;
   margin-bottom: var(--space-2);
 }
-.mark {
+.mark,
+.grip {
+  flex: none;
   width: 20px;
   height: 20px;
   display: grid;
   place-items: center;
+}
+.mark {
   border-radius: var(--radius-xs);
   background: var(--surface-sunken);
   color: var(--ink);
   font-size: var(--text-overline-size);
   font-weight: 600;
 }
+.grip {
+  color: var(--ink-muted);
+  cursor: grab;
+  animation: preset-check var(--dur-base) var(--ease-spring) var(--preset-edit-delay, 0ms) backwards;
+}
+.grip:active { cursor: grabbing; }
+button:disabled .grip { cursor: default; }
 .mark ex-agent-mark {
   --agent-mark-size: 14px;
 }
@@ -154,7 +165,8 @@ button:disabled {
   button:hover:not(:disabled):not(.selected) {
     transform: none;
   }
-  .check {
+  .check,
+  .grip {
     animation: none;
   }
   .adaptive :is(ex-kbd, .edited, .check) {
@@ -163,12 +175,11 @@ button:disabled {
 }
 
 .name .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.default { flex: none; margin-left: auto; color: var(--ink-muted); font-size: var(--text-overline-size); font-weight: var(--text-caption-weight); }
-.editing:not(.slim) .top {
-  padding-inline-end: var(--space-6);
+.default { flex: none; margin-inline-start: auto; color: var(--ink-muted); font-size: var(--text-overline-size); font-weight: var(--text-caption-weight); }
+.adaptive .fast { color: var(--attention); }
+button.adaptive.editing:not(:disabled) {
+  box-shadow: var(--shadow-raised), inset 0 0 0 1px var(--preset-edit-edge, var(--line));
 }
-.editing:hover:not(:disabled) .edit-mark { color: var(--accent); }
-.editing { cursor: grab; }
 .edited {
   color: var(--accent);
   font-size: var(--text-overline-size);
@@ -189,8 +200,11 @@ button:disabled {
 .slim .top { margin: 0; }
 .slim .name { flex: 1; }
 .slim:not(.editing):not(.custom):is(:hover, :focus-visible) .name { padding-inline-end: var(--space-6); }
-.slim.editing { padding-inline-end: var(--space-8); }
-.slim.editing .edit-mark { flex: none; }
+.slim.editing {
+  padding-inline-end: var(--space-8);
+  min-height: calc(var(--space-8) + var(--space-1));
+}
+.slim.editing .name { font-weight: var(--text-ui-weight); }
 @container session-chat (max-height: 530px) {
   .adaptive:not(.slim) { padding: var(--space-2); }
   .adaptive .harness { display: none; }
