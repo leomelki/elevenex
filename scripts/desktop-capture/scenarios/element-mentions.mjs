@@ -176,7 +176,9 @@ export default async function* (capture) {
   await capture.waitFor(() => document.querySelectorAll('ex-element-chip .unreferenced').length === 2);
   yield { name: 'unreferenced-elements', inspect: ['ex-element-chip .unreferenced'] };
   await capture.component('ex-element-editor', component => { component.setSelection({ start: 5, end: 5 }); component.focus(); });
-  await capture.click('ex-composer ex-icon-button[label="Point at an element in the browser"] button');
+  await type('@');
+  await capture.waitFor(() => document.querySelector('ex-mention-menu .action'));
+  await capture.click('ex-mention-menu .action');
   assert.equal(await capture.evaluate(() => document.querySelector('.pick-note') !== null), true);
 
   await capture.component('ex-element-mentions-demo', component => component.disabled.set(true));

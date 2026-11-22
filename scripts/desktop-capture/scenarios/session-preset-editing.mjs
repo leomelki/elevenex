@@ -67,11 +67,11 @@ export default async function* (capture) {
 
   await capture.hover(card('deep'));
   await capture.click(pencil('deep'));
-  await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
-  assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator input').value), 'Deep work');
+  await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
+  assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .identity input').value), 'Deep work');
   await settle();
   yield { name: 'light-existing-editor', inspect: ['.preset-creator', '[aria-busy]'] };
-  await capture.fill('.preset-creator input', 'Focused work');
+  await capture.fill('.preset-creator .identity input', 'Focused work');
   await capture.click('.preset-creator button[type=submit]');
   await capture.waitFor(() => !document.querySelector('.preset-creator'));
   await capture.waitFor(() => document.activeElement === document.querySelector('[data-flip="deep"] ex-preset-card button'));
@@ -109,16 +109,18 @@ export default async function* (capture) {
   assert.equal(await capture.evaluate(selector => getComputedStyle(document.querySelector(selector)).cursor, `${tile('review-4')} .grip`), 'grab');
 
   await capture.click('[data-preset-new]');
-  await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
-  assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator input').value), '');
+  await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
+  assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .identity input').value), '');
   await capture.press('Escape');
   await capture.waitFor(() => !document.querySelector('.preset-creator'));
   assert.equal(await capture.evaluate(() => document.activeElement?.matches('[data-preset-new]')), true);
   assert.equal(await capture.evaluate(() => document.querySelector('[data-preset-edit]').getAttribute('aria-pressed')), 'true');
 
   await capture.click(card('deep'));
-  await capture.waitFor(() => !!document.querySelector('.preset-creator [aria-label="Thinking level"] button[aria-label="Med"]:enabled'));
-  await capture.click('.preset-creator [aria-label="Thinking level"] button[aria-label="Med"]');
+  await capture.waitFor(() => !!document.querySelector('.preset-creator input[type="range"]:enabled'));
+  await capture.evaluate(() => document.querySelector('.preset-creator input[type="range"]').focus());
+  await capture.press('Home');
+  for (let step = 0; step < 8 && await capture.evaluate(() => document.querySelector('.preset-creator input[type="range"]').getAttribute('aria-valuetext')) !== 'Medium'; step++) await capture.press('ArrowRight');
   await capture.click('.preset-creator button[type=submit]');
   await capture.waitFor(() => !document.querySelector('.preset-creator'));
   assert.equal(await capture.component('ex-session-chat', component => component.store.state().reasoning), 'medium');

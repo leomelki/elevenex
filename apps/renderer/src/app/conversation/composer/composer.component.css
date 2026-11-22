@@ -34,10 +34,8 @@
   display: none;
 }
 .send {
-  height: var(--control-height);
-}
-.send span {
-  font-size: var(--text-caption-size);
+  width: var(--control-height);
+  padding-inline: 0;
 }
 .composer:focus-within {
   box-shadow:
@@ -155,11 +153,5 @@ textarea::placeholder {
   .context ex-mention,
   .context ex-element-chip { animation: none; }
 }
-@container composer (max-width: 340px) {
-  .send span {
-    display: none;
-  }
-}
-
 .waiting-line { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); color: var(--attention); font-size: var(--text-caption-size); }
 .waiting-line span { flex: 1; }

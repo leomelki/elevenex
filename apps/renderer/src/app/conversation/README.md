@@ -51,10 +51,18 @@ These standalone OnPush components consume renderer view models and emit typed i
   current display values to mark a preset adjusted for this chat. Handle
   `editRequested`, `moved`, and `removed` in the owner. Reordering uses stable
   preset IDs and FLIP across both tile sizes.
-- `PresetCreator` is a retained modal draft: provide a fixed `initial` agent and current `harnesses`, saved `names`, `open`, `busy`, `blocked`, `error` and thinking/fast capabilities. `defaultAvailable` adds a “Default for new chats” setting with Keep current / Use this preset choices; `initial.default` seeds Use this preset (otherwise Keep current); `submitted.default` requests the persisted default. It emits `submitted(AgentConfig)` with a trimmed `preset` name, `closeRequested` and `closed`. With `harnessLocked=false` and a `catalogProvider(harnessId, signal, refresh?)`, the form offers a Harness dropdown and loads scoped, session-independent model capabilities on demand. Switching preserves a local draft per harness; failed reads are retryable, and closing/superseding a read aborts it and discards late results. Model controls and Create stay disabled until the chosen catalog is ready. The form edits harness/model/thinking/fast locally, checks duplicate names; it never saves on its own. Retain it through exit, deactivate children as closing begins and create a fresh identity for each draft. `ModalLayer` owns focus and recession; AutoHeight owns error-driven size changes.
+- `PresetCreator` is a retained modal draft: provide a fixed `initial` agent and current `harnesses`, saved `names`, `open`, `busy`, `blocked`, `error` and thinking/fast capabilities. `defaultAvailable` adds a “Default for new chats” setting with Keep current / Use this preset choices; `initial.default` seeds Use this preset (otherwise Keep current); `submitted.default` requests the persisted default. It emits `submitted(AgentConfig)` with a trimmed `preset` name, `closeRequested` and `closed`. With `harnessLocked=false` and a `catalogProvider(harnessId, signal, refresh?)`, the form offers the composer menu's harness rail and loads scoped, session-independent model capabilities on demand. Switching preserves a local draft per harness; failed reads are retryable from the menu's Try again, and closing/superseding a read aborts it and discards late results. Model choices and Create stay disabled until the chosen catalog is ready; the rail stays usable. The form edits harness/model/thinking/fast locally, checks duplicate names; it never saves on its own. Retain it through exit, deactivate children as closing begins and create a fresh identity for each draft. `ModalLayer` owns focus and recession; AutoHeight owns size changes from errors, options and harnesses with more or fewer models.
+  The dialog is the composer's agent popover at dialog scale: the same surface,
+  inset and `AgentMenu`. Its name field (`.identity`, initial focus) is laid out
+  like the composer chip the preset becomes: the harness mark over the rail's
+  column, the name, then `model · thinking` and a fast bolt, updating as the
+  draft changes. A new harness's mark springs in and the summary and the submit
+  label (Create preset / Save changes / Saving…) swap through `EaseSwap`. Rows
+  enter 24ms apart with the dialog, all within `dur-slow`; reduced motion
+  removes every movement.
   Edit mode seeds the name and settings from `initial`. Exclude the edited
-  record from `names`. Optional `chatSettings` supplies a mix the user can
-  copy into the draft.
+  record from `names`. Optional `chatSettings` adds a This chat row that copies
+  that mix into the draft and reads In use once the draft matches it.
 - `SessionStart` selects the provided or first preset, offers task/branch rename intents, and accepts a projected composer. Workspace preparation never disables typing by itself. Readiness and deferred first-message delivery belong to the future session controller.
 - `SideThread` is reusable panel content. When hosted in an overlay, set `trapFocus` to true and own dismissal through `closed`; the CDK restores focus to its originating element. The host owns popover placement. Promote is an intent, never a hidden fork operation.
 - `JobBriefComponent` renders the supplied opening brief of a git-helper session. Inputs are `title`, `time`, and `id`; project the brief as text with inline `code`. It never inserts messages in sessions or starts a helper. The owner supplies what happened, what judgement is needed, and when to stop.
@@ -402,8 +410,9 @@ transitions and reduced-motion behavior.
 ## Connected composer controls
 
 `Composer` keeps one toolbar row at narrow widths using its named `composer`
-container. Thinking metadata, mode labels, then permission labels yield space;
-accessible names remain. `settingsDisabled` prevents editing; `settingsBusy`
+container. Thinking metadata, mode labels, then permission labels yield space
+while retaining their accessible names. Send and Queue share a square icon button
+sized to `--control-height`. `settingsDisabled` prevents editing. `settingsBusy`
 disables choices while keeping the agent popover mounted during reconciliation.
 Neither locks the draft. `modeAvailable`, `agentLocked`, `showFork`,
 `showSavePreset`, `reasoningAvailable`, `fastAvailable` and `canCompact` gate
@@ -448,7 +457,17 @@ thinking level beside it. The accessible name still includes the harness.
   Escape clears it. While `busy`, rail and model rows stay focusable with
   `aria-disabled` so keyboard position survives the update; the track, fast pill
   and actions are disabled. `disabled` disables everything. A compaction intent
-  focuses the heading before its button can disappear.
+  focuses the heading before its button can disappear. `modelsLoading` shows
+  skeleton rows and “Loading models…” and holds model, thinking and fast choices
+  like `busy`, while the rail stays usable so a slow read can be abandoned.
+  `lockedHint` names why a locked harness is fixed (default “fixed for this
+  conversation”). With `modelsError`, the refresh action reads Try again.
+  Model rows that arrive after first paint (another harness, a cleared filter)
+  ink in. With the rail, the list keeps six rows of height unless the host sets
+  `--agent-menu-list-height` (the preset creator uses `auto`, from three rows up
+  to six, and lets its `AutoHeight` ease the change).
+  `PresetCreator` composes this same menu, so harness, model, thinking and fast
+  behave identically in the composer and in a preset draft.
 - Internal `ThinkingSlider` is a native range over the model's own levels,
   provider IDs kept exact and ordered as reported. Dragging previews; a level is
   emitted once committed, and a rejected change returns the thumb to the actual
@@ -463,9 +482,9 @@ thinking level beside it. The accessible name still includes the harness.
   Codex uses a locally scoped SVG gradient with a unique ID per instance; it is
   app-inspired, not an official coloured asset. No animation belongs to this mark.
 - `agent-config.ts` holds the shared config transitions (`withHarness`,
-  `withModel`, `thinkingLabel`). The menu and the preset form's
-  `AgentSettings` both use them, so a manual change always leaves the preset
-  and a new model keeps a thinking level it supports.
+  `withModel`, `thinkingLabel`). The menu uses them in the composer and in the
+  preset creator, so a manual change always leaves the preset and a new model
+  keeps a thinking level it supports.
 - Internal `AgentUsage` renders the context/plan block in the read-only hover
   card; the menu shows only its one-line plan summary. Internal `AgentPlanMeter` shows the tighter account limit
   as a clock ring. `AgentConfig.tokens` is display text. Optional `plan` follows
@@ -664,8 +683,8 @@ The `textarea()` query remains available for ordinary drafts only. The internal
 editor handles selection in canonical marker offsets, never thumbnail-label text
 lengths. Capture, upload, lifecycle and the backend protocol remain with the owner.
 
-`elementPickAvailable` adds the target button and the `@` menu's “Point at an
-element in the browser” command; both emit `elementPickRequested`.
+`elementPickAvailable` enables the `@` menu's “Point at an element in the browser”
+command, which emits `elementPickRequested`.
 `insertElement(marker)` inserts a named reference; `elementRepick` forwards Pick
 again. Element mentions never emit `mentionInserted`. Capture, upload and browser
 authority remain with the owner. Snapshot outlines stay outside target borders;

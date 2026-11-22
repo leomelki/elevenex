@@ -31,7 +31,7 @@ export default async function* (capture) {
     await settle(); yield { name: theme + '-undo', inspect: ['.preset-heading', 'ex-preset-picker'] };
     await capture.click('.preset-heading > button'); await capture.waitFor(() => !!document.querySelector('.preset-creator'));
     const name = theme === 'light' ? 'Focused review' : 'Ship carefully';
-    await capture.fill('.preset-creator input:not([type="checkbox"])', name);
+    await capture.fill('.preset-creator .identity input', name);
     const keep = '.default-choice button[aria-label="Keep current"]';
     await capture.click(keep);
     assert.equal(await capture.evaluate(() => document.querySelector('.default-choice button[aria-label="Keep current"]').getAttribute('aria-checked')), 'true');
@@ -75,7 +75,7 @@ export default async function* (capture) {
     await capture.click('.preset-heading > button');
     await capture.waitFor(() => document.querySelector('.default-choice button[aria-label="Use this preset"]')?.getAttribute('aria-checked') === 'true');
     const name = 'First ' + theme + ' preset';
-    await capture.fill('.preset-creator input', name);
+    await capture.fill('.preset-creator .identity input', name);
     await capture.viewport(420, 780); await capture.reducedMotion(true); await settle();
     yield { name: theme + '-no-default-compact', inspect: ['.preset-creator', '.default-choice'] };
     await capture.click('.preset-creator button[type="submit"]'); await capture.waitFor(() => !document.querySelector('.preset-creator'));

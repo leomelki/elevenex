@@ -655,7 +655,7 @@ checks Use this preset is initially selected when no default exists, respects
 cancellation, and becomes the default for a new session only after Create.
 
 
-`scenarios/preset-creator-harness.mjs` checks the creator Harness dropdown,
+`scenarios/preset-creator-harness.mjs` checks the creator's shared harness rail,
 keyboard choice, delayed/cancelled model reads, retry, per-harness draft recovery,
 Cancel isolation and applying a chosen harness only on Create. It covers both
 themes, narrow/compact reduced-motion layouts and retained message/name drafts.

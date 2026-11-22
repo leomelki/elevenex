@@ -859,11 +859,15 @@ describe("connected composer controls", () => {
     custom.focus(); custom.click(); await settle(fixture);
     expect(document.querySelector('.agent-settings')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('.preset-creator input')?.value).toBe('');
-    expect(document.querySelector('.preset-creator button[aria-label="Model: GPT"]')).not.toBeNull();
-    expect(document.querySelector('.preset-creator [aria-label="Thinking level"] [aria-checked="true"]')?.getAttribute('aria-label')).toBe(reasoning === 'high' ? 'High' : 'Low');
-    expect(document.querySelector('.preset-creator [role="switch"]')?.getAttribute('aria-checked')).toBe(String(fast));
-    document.querySelector<HTMLButtonElement>(`.preset-creator [aria-label="Thinking level"] button[aria-label="${reasoning === 'high' ? 'Low' : 'High'}"]`)!.click();
+    // The creator edits the mix with the composer's own agent menu.
+    expect(document.querySelector('.preset-creator [role="option"][aria-selected="true"]')?.textContent).toContain('GPT');
+    const slider = document.querySelector<HTMLInputElement>('.preset-creator input[type="range"]')!;
+    expect(slider.getAttribute('aria-valuetext')).toBe(reasoning === 'high' ? 'High' : 'Low');
+    expect(document.querySelector('.preset-creator button[aria-label="Fast mode"]')?.getAttribute('aria-pressed')).toBe(String(fast));
+    slider.value = reasoning === 'high' ? '0' : '1';
+    slider.dispatchEvent(new Event('input')); slider.dispatchEvent(new Event('change'));
     await settle(fixture);
+    expect(slider.getAttribute('aria-valuetext')).toBe(reasoning === 'high' ? 'Low' : 'High');
     expect(fixture.componentInstance.store.state()).toMatchObject(chatState);
     document.querySelector('.preset-creator')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await settle(fixture);

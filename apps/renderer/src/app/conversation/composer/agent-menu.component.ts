@@ -3,11 +3,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  afterNextRender,
   computed,
   inject,
   input,
   linkedSignal,
   output,
+  signal,
 } from "@angular/core";
 import {
   ButtonComponent,
@@ -62,6 +64,11 @@ export class AgentMenuComponent {
   readonly disabled = input(false);
   /** An update is applying: choices stay focusable but take no input. */
   readonly busy = input(false);
+  /** A model catalog is loading: harnesses stay selectable, model, thinking
+   * and fast choices wait for it. */
+  readonly modelsLoading = input(false);
+  /** Read after the harness name while it cannot change. */
+  readonly lockedHint = input("fixed for this conversation");
   readonly modelsRefreshAvailable = input(false);
   readonly modelsError = input('');
   readonly modelsRefreshRequested = output<void>();
@@ -77,6 +84,11 @@ export class AgentMenuComponent {
 
   private readonly host =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
+  /** Rows that arrive after first paint (a new harness, a cleared filter) ink in. */
+  protected readonly live = signal(false);
+  protected readonly choicesBusy = computed(
+    () => this.busy() || this.modelsLoading(),
+  );
   protected readonly harness = computed(() =>
     this.harnesses().find((harness) => harness.id === this.value().harness),
   );
@@ -116,7 +128,7 @@ export class AgentMenuComponent {
   );
   /** Focus lands on the chosen model; while busy, on the stable heading. */
   protected readonly initialModel = computed(() =>
-    this.disabled() || this.busy()
+    this.disabled() || this.choicesBusy()
       ? undefined
       : this.visible().find((model) => model.id === this.value().model)?.id,
   );
@@ -165,6 +177,10 @@ export class AgentMenuComponent {
     () => this.locked() && this.showFork(),
   );
 
+  constructor() {
+    afterNextRender(() => this.live.set(true));
+  }
+
   protected harnessChange(id: string): void {
     if (this.locked() || this.disabled() || this.busy()) return;
     const harness = this.harnesses().find((item) => item.id === id);
@@ -172,17 +188,22 @@ export class AgentMenuComponent {
       this.changed.emit(withHarness(this.value(), harness));
   }
   protected modelChange(model: AgentModel): void {
-    if (this.disabled() || this.busy() || model.id === this.value().model)
+    if (this.disabled() || this.choicesBusy() || model.id === this.value().model)
       return;
     this.changed.emit(withModel(this.value(), model));
   }
   protected thinkingChange(thinking: string): void {
-    if (this.disabled() || this.busy() || !this.levels().includes(thinking))
+    if (
+      this.disabled() ||
+      this.choicesBusy() ||
+      !this.levels().includes(thinking)
+    )
       return;
     this.changed.emit({ ...this.value(), preset: undefined, thinking });
   }
   protected fastToggle(): void {
-    if (this.disabled() || this.busy() || !this.fastAvailable()) return;
+    if (this.disabled() || this.choicesBusy() || !this.fastAvailable())
+      return;
     this.changed.emit({
       ...this.value(),
       preset: undefined,

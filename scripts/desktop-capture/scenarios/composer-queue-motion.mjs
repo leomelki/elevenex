@@ -22,7 +22,7 @@ export default async function* (capture) {
       await capture.reducedMotion(reduced);
       await capture.viewport(reduced ? 1000 : 1440, reduced ? 680 : 960);
       await capture.component('ex-connected-workspace-demo', component => component.fixture.chat.scenario('running'));
-      await capture.waitFor(() => document.querySelector('ex-composer .send')?.textContent.includes('Queue') && !document.querySelector('ex-composer-queue .item'));
+      await capture.waitFor(() => document.querySelector('ex-composer button.send[aria-label^="Queue message"]') && !document.querySelector('ex-composer-queue .item'));
       await capture.motion.finish(); await capture.settle();
       for (let count = 1; count <= 3; count++) {
         await capture.fill('ex-composer textarea', count === 1 ? 'Document the fallback behavior' : 'Add a regression test');

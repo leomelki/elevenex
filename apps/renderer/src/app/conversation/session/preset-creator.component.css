@@ -1,141 +1,242 @@
 :host {
   display: contents;
 }
+/* The composer's agent popover at dialog scale: the same raised surface, inset
+   line and 4px inset, so its menu reads as the same object. Corners stay
+   concentric with the 7px controls inside. */
 .preset-creator {
   display: flex;
   flex-direction: column;
-  width: min(460px, calc(100vw - var(--space-8)));
+  width: min(380px, calc(100vw - var(--space-8)));
   max-height: calc(100dvh - var(--space-8));
   overflow: hidden;
+  padding: var(--space-1);
   color: var(--ink);
+  font-family: var(--font-sans);
   background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--radius-md);
+  box-shadow:
+    var(--shadow-pop),
+    inset 0 0 0 1px var(--line);
 }
 header {
   display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  padding: var(--space-6);
+  align-items: center;
+  gap: var(--space-2);
   flex: none;
-}
-.symbol {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: var(--space-8);
-  height: var(--space-8);
-  border-radius: var(--radius-sm);
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-header > div {
-  flex: 1;
-  min-width: 0;
+  min-height: var(--row-height);
+  padding-left: var(--space-2);
 }
 h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  font-size: var(--text-title-size);
+  font-size: var(--text-ui-size);
+  line-height: var(--text-ui-line);
   font-weight: var(--text-title-weight);
-  line-height: var(--text-title-line);
-  letter-spacing: var(--text-title-tracking);
 }
-p {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-caption-size);
-  line-height: var(--text-caption-line);
-  color: var(--ink-muted);
-}
+/* Bleeds into the surface inset so focus rings at the edges are never clipped. */
 .scroll {
   min-height: 0;
+  margin-inline: calc(-1 * var(--space-1));
+  padding-inline: var(--space-1);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 .body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: 0 var(--space-6) var(--space-6);
+  gap: var(--space-1);
+  padding-block: var(--space-1);
 }
-.name-field {
+
+/* Name: a sunken well like the model filter, laid out like the composer chip
+   (mark, name, then model · thinking and fast). The mark sits over the
+   harness rail's column below. */
+.identity {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
-}
-label {
-  font-size: var(--text-ui-size);
-  font-weight: var(--text-ui-weight);
-}
-input {
-  width: 100%;
-  min-height: var(--space-8);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
+  min-width: 0;
+  height: 40px;
+  padding: 0 var(--space-3) 0 11px;
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
+  cursor: text;
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+  --agent-mark-size: 18px;
+}
+.identity:hover {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+/* Inset like a focused model row, so the ring stays within the surface. */
+.identity:focus-within {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.identity.invalid {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.identity.invalid:focus-within {
+  box-shadow: inset 0 0 0 2px var(--danger);
+}
+.identity.disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.identity-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--ink);
+}
+.identity input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
   color: var(--ink);
   font: inherit;
   font-size: var(--text-ui-size);
-  transition: border-color var(--dur-fast) var(--ease-out);
+  font-weight: var(--text-ui-weight);
 }
-input::placeholder {
+.identity input::placeholder {
   color: var(--ink-muted);
+  font-weight: var(--text-body-weight);
 }
-input:hover {
-  border-color: var(--line-strong);
+.identity-sub {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: var(--text-code-size);
 }
-input:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+.identity-fast {
+  flex: none;
+  color: var(--accent);
 }
-input[aria-invalid="true"] {
-  border-color: var(--danger);
+
+/* AutoHeight eases the dialog as harnesses with more or fewer models swap in. */
+ex-agent-menu {
+  --agent-menu-list-height: auto;
 }
-input:disabled {
-  opacity: 0.55;
-}
-.error {
+.issue {
+  margin: 0;
+  padding: 0 var(--space-2);
   color: var(--danger);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  animation: issue-enter var(--dur-fast) var(--ease-out) both;
 }
+
+/* Preset-only choices continue the menu's rows below its tune section. */
+.options {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+.option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: calc(var(--row-height) + var(--space-1));
+  padding: calc(var(--space-1) / 2) 0 calc(var(--space-1) / 2) var(--space-2);
+}
+.option-label {
+  flex: none;
+  color: var(--ink);
+  font-size: var(--text-ui-size);
+  font-weight: var(--text-ui-weight);
+}
+.option-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+}
+.option button,
+.option ex-segmented {
+  flex: none;
+  margin-left: auto;
+}
+
 footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  flex: none;
+  padding: var(--space-2) 0 0 var(--space-2);
   border-top: 1px solid var(--line);
-  padding: var(--space-4) var(--space-6);
+}
+footer button {
   flex: none;
 }
-.note {
-  flex: 1 0 100%;
-  color: var(--ink-muted);
-  font-size: var(--text-caption-size);
-  margin-bottom: var(--space-1);
+
+/* The surface pops with ModalLayer; its rows follow 24ms apart and are done
+   within dur-slow. Rows added later (an option, a refreshed list) fade alone. */
+header,
+.identity,
+ex-agent-menu,
+.options,
+footer {
+  animation: row-enter var(--dur-base) var(--ease-out)
+    calc(var(--stagger, 0) * 24ms) both;
 }
-@media (max-width: 420px) {
-  header,
-  footer {
-    padding: var(--space-4);
+.identity {
+  --stagger: 1;
+}
+ex-agent-menu {
+  --stagger: 2;
+}
+.options,
+footer {
+  --stagger: 3;
+}
+/* A new harness's mark springs in: it is a small mark, so it may bounce. */
+.mark-enter {
+  animation: mark-enter var(--dur-slow) var(--ease-spring) both;
+}
+
+@keyframes row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
-  .body {
-    padding: 0 var(--space-3) var(--space-4);
+}
+@keyframes mark-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+@keyframes issue-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  input {
+  .identity,
+  header,
+  ex-agent-menu,
+  .options,
+  footer,
+  .issue,
+  .mark-enter {
     transition: none;
+    animation: none;
   }
 }
-
-.default-choice {
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-}
-
-.catalog-status { margin: 0; padding-inline: var(--space-2); }
-.catalog-error { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--danger); font-size: var(--text-caption-size); }
-.catalog-error span { min-width: 0; overflow-wrap: anywhere; }
-.catalog-error button { flex: none; }

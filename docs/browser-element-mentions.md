@@ -12,9 +12,9 @@ this document covers capture, the wire contract and recovery.
 
 ## Flow and ownership
 
-A pick starts from the browser's target button, the Composer's ⌖ button, the `@`
-menu's “Point at an element in the browser”, or a chip's Pick again. Composer
-requests reach `MachineWorkspace`, which opens the browser panel and asks
+A pick starts from the browser's target button, the `@` menu's “Point at an
+element in the browser”, or a chip's Pick again. Composer requests reach
+`MachineWorkspace`, which opens the browser panel and asks
 `TaskBrowser.beginElementPick(tabId?)` to arm the picker on the named tab, or the
 current page. `TaskBrowser` records the picking scope/task/session when the pick
 starts. When a snapshot arrives, it checks that ownership and the tab again, then

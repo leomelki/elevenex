@@ -30,19 +30,24 @@ function setup() {
 it('keeps a draft per harness, restores edits, and never submits on harness selection', async () => {
   const { fixture, form, requests, provider, settle } = setup(); await settle();
   const submitted = vi.fn(); form.submitted.subscribe(submitted);
-  document.querySelector<HTMLButtonElement>('button[aria-label="Harness: Codex"]')!.click(); await settle();
-  const choice = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(b => b.textContent?.includes('Claude Code'))!;
-  choice.click(); await settle();
+  const rail = (label: string) => document.querySelector<HTMLButtonElement>(`.preset-creator .rail [role="radio"][aria-label="${label}"]`)!;
+  expect(rail('Codex').getAttribute('aria-checked')).toBe('true');
+  rail('Claude Code').click(); await settle();
   expect(form.catalogBusy()).toBe(true); expect(form.name()).toBe('Review');
+  expect(document.querySelector('.preset-creator .status')?.textContent).toContain('Loading models…');
+  expect(document.querySelector('.preset-creator .models ex-skeleton')).not.toBeNull();
   expect(document.querySelector<HTMLButtonElement>('.preset-creator button[type="submit"]')!.disabled).toBe(true);
-  expect(document.querySelector<HTMLButtonElement>('button[aria-label="Harness: Claude Code"]')!.disabled).toBe(false);
+  // The rail stays usable while models load, so a slow read can be abandoned.
+  expect(rail('Codex').disabled).toBe(false);
   requests[0]!.resolve(claude); await settle();
-  expect([...document.querySelectorAll('[aria-label="Thinking level"] button')].map(button => button.textContent?.trim())).toEqual(['Low', 'High', 'XHigh', 'Max']);
+  expect(document.querySelector<HTMLInputElement>('.preset-creator input[type="range"]')!.max).toBe('3');
+  expect(document.querySelector('.preset-creator .identity-sub')?.textContent).toContain('Sonnet · High');
   expect(form.draft()).toMatchObject({ harness: 'claude', model: 'sonnet', fast: false });
   form.change({ ...form.draft(), thinking: 'low' });
-  form.change({ harness: 'codex', mark: 'Cx', model: '' }); await settle();
+  rail('Codex').click(); await settle();
   expect(form.draft()).toMatchObject({ harness: 'codex', model: 'gpt', thinking: 'high', fast: true });
-  form.change({ harness: 'claude', mark: 'Cl', model: '' }); await settle();
+  expect(document.querySelector('.preset-creator .identity-fast')).not.toBeNull();
+  rail('Claude Code').click(); await settle();
   expect(form.draft().thinking).toBe('low'); expect(provider).toHaveBeenCalledTimes(1);
   expect(submitted).not.toHaveBeenCalled();
   fixture.destroy();
@@ -62,7 +67,10 @@ it('retains the name after a failed catalog read and permits explicit retry', as
   form.change({ harness: 'claude', mark: 'Cl', model: '' });
   requests[0]!.reject(new Error('Models unavailable')); await settle();
   expect(form.catalogError()).toBe('Models unavailable'); expect(form.name()).toBe('Review');
+  expect(document.querySelector('.preset-creator .models')?.textContent).toContain('Models unavailable');
   expect(document.querySelector<HTMLButtonElement>('.preset-creator button[type="submit"]')!.disabled).toBe(true);
-  void form.loadCatalog(); requests[1]!.resolve(claude); await settle();
+  const retry = [...document.querySelectorAll<HTMLButtonElement>('.preset-creator button')].find(button => button.textContent?.includes('Try again'))!;
+  retry.click(); requests[1]!.resolve(claude); await settle();
+  expect(requests).toHaveLength(2);
   expect(form.catalogError()).toBe(''); expect(form.draft().model).toBe('sonnet');
 });

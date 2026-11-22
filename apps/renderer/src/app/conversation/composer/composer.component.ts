@@ -118,7 +118,7 @@ export class ComposerComponent implements OnChanges {
   readonly attachments = input<readonly ConversationAttachment[]>([]);
   /** Pick again from a staged element's snapshot. */
   readonly elementRepick = output<NonNullable<ConversationAttachment["element"]>>();
-  /** Offers the ⌖ button and the @ menu command for pointing at a browser element. */
+  /** Enables browser element picking from the @ menu and element chips. */
   readonly elementPickAvailable = input(false);
   readonly elementPickRequested = output<void>();
   readonly attachmentRemoved = output<string>();

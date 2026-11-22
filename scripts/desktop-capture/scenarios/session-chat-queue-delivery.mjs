@@ -13,7 +13,7 @@ export default async function* (capture) {
       await capture.reducedMotion(narrow);
       await capture.component('ex-connected-workspace-demo', component => component.fixture.chat.scenario('running'));
       await capture.component('ex-session-chat', component => component.store.refresh());
-      await capture.waitFor(() => document.querySelector('ex-composer .send')?.textContent.includes('Queue'));
+      await capture.waitFor(() => document.querySelector('ex-composer button.send[aria-label^="Queue message"]'));
       await capture.motion.finish();
       await capture.settle();
       for (let i = 0; i < 2; i++) {

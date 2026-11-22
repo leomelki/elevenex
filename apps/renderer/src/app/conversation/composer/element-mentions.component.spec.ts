@@ -66,14 +66,19 @@ describe('element pins in the composer', () => {
     expect(composer.draft()).toBe('Align ❷ ');
     expect(mention).not.toHaveBeenCalled();
   });
-  it('offers pointing at a new element from the @ menu and the bar, consuming the query', () => {
+  it('offers pointing at a new element through the @ menu and consumes the query', () => {
     const { fixture, composer, editor } = mount([file]);
     const picks = vi.fn(); composer.elementPickRequested.subscribe(picks);
-    composer.draft.set('Align @po'); fixture.detectChanges(); editor.setSelection({ start: 9, end: 9 });
-    composer.pickFromMentions();
+    composer.updateRich({ text: 'Align @po', start: 9 });
+    fixture.detectChanges();
+    editor.setSelection({ start: 9, end: 9 });
+    const pickLabel = 'Point at an element in the browser';
+    expect(fixture.nativeElement.querySelector(`.bar button[aria-label="${pickLabel}"]`)).toBeNull();
+    const action = document.querySelector<HTMLButtonElement>('ex-mention-menu button.action');
+    expect(action?.textContent).toContain(pickLabel);
+    action?.click();
     expect(composer.draft()).toBe('Align ');
-    fixture.nativeElement.querySelector('ex-icon-button[label="Point at an element in the browser"] button').click();
-    expect(picks).toHaveBeenCalledTimes(2);
+    expect(picks).toHaveBeenCalledTimes(1);
   });
   it('stops offering picks once a message holds eight elements', () => {
     const files = Array.from({ length: 8 }, (_, index) => ({ ...file, id: 'f' + index, marker: index + 1, element: { ...reference, id: `${index}1111111-1111-4111-8111-111111111111` } }));
