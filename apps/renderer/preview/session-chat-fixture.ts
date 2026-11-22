@@ -265,6 +265,30 @@ export class SessionChatFixture {
   deferUserReceipts(value: boolean | 'completion'): void {
     this.delayedReceipts = value;
   }
+  dispatchQueuedPrompt(sessionId = 101, queueId?: string): void {
+    const session = this.session(sessionId);
+    const next = queueId ? session.state.queue.find(item => item.id === queueId) : session.state.queue[0];
+    if (!next) return;
+    const timestamp = new Date().toISOString();
+    session.state = {
+      ...session.state, phase: 'running', canInterrupt: true, queuePaused: false,
+      queue: session.state.queue.filter(item => item.id !== next.id),
+      dispatchingPrompts: [...(session.state.dispatchingPrompts ?? []), { ...next, timestamp }],
+    };
+    this.changed();
+  }
+  finishQueuedPrompt(sessionId = 101): void {
+    const session = this.session(sessionId);
+    const [next, ...rest] = session.state.dispatchingPrompts ?? [];
+    if (!next) return;
+    const userId = `sent-${this.version}`;
+    session.items.push(
+      item(userId, 'user', next.text, { timestamp: next.timestamp }),
+      item(`reply-${this.version}`, 'assistant', 'Applying the queued guidance.', { timestamp: next.timestamp }),
+    );
+    session.state = { ...session.state, activePromptId: userId, dispatchingPrompts: rest };
+    this.changed();
+  }
   /** Incoming reply growth without a local submission or transcript reset. */
   appendAssistant(text: string, id = 101): void {
     this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text, { timestamp: new Date().toISOString() }));
@@ -965,21 +989,10 @@ export class SessionChatFixture {
         queue: session.state.queue.filter((item) => item.id !== action.id),
       };
     else if (action.type === "steer-queued" || action.type === "resume-queue") {
-      const next = action.type === "steer-queued"
-        ? session.state.queue.find(item => item.id === action.id)
-        : session.state.phase === "idle" ? session.state.queue[0] : undefined;
       session.state = { ...session.state, queuePaused: false };
-      if (next) {
-        const timestamp = new Date().toISOString();
-        session.items.push(
-          item(`sent-${this.version}`, "user", next.text, { timestamp }),
-          item(`reply-${this.version}`, "assistant", "Applying the queued guidance.", { timestamp }),
-        );
-        session.state = {
-          ...session.state, phase: "running", canInterrupt: true,
-          queue: session.state.queue.filter(item => item.id !== next.id),
-        };
-      }
+      if (action.type === 'steer-queued' || session.state.phase === 'idle')
+        this.dispatchQueuedPrompt(input.sessionId, action.type === 'steer-queued' ? action.id : undefined);
+      if (!this.delayedReceipts) this.finishQueuedPrompt(input.sessionId);
     }
     else if (action.type === "plan")
       session.state = { ...session.state, plan: action.enabled };

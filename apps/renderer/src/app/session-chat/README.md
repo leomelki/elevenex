@@ -119,6 +119,14 @@ Older engines omit the capability and retain their original send contract.
 - Queued messages retain their optimistic render IDs through saved receipts, too.
   The mapping is bounded by the current queue, pruned when messages leave, and
   cleared on session/backend navigation. Queue actions use the saved ID.
+  Steer and an idle Resume show the outgoing prompt immediately. Automatic
+  sends follow the engine's optional `state.dispatchingPrompts` signal, even
+  before the native user item or any assistant output arrives. Queue removal
+  alone can be a cancellation. The handoff reuses the normal bubble entrance
+  and queue exit, preserves scroll following, and keeps the bubble mounted
+  when the native item arrives. A rejected handoff restores its queue row when
+  the engine still holds it. The temporary prompt never becomes a history
+  cursor or a saved transcript record.
 - `session-chat-tools` selects semantic verbs and bounded presentation blocks for all
   normalized tool kinds. Commands separate purpose, working directory, stdout/stderr
   and reported exit/interruption facts; file tools preserve code whitespace and

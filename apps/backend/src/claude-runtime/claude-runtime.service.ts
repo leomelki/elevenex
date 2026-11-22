@@ -190,6 +190,7 @@ import type {
   AgentPlanUsage,
   AgentProviderModelCatalogPayload,
 } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import { SettingsService } from '../settings/settings.service.js';
 
 type PermissionDecision =
@@ -618,6 +619,7 @@ export class ClaudeRuntimeService
   private readonly prewarmInFlight = new Map<number, Promise<void>>();
   private readonly lastPrewarmAt = new Map<number, number>();
   private readonly runtimeStates = new Map<number, RuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly invalidatedSessions = new Set<number>();
   private readonly sessionGenerations = new Map<number, number>();
   // Active MCP OAuth flows whose underlying Claude CLI subprocess (and loopback
@@ -2955,6 +2957,9 @@ export class ClaudeRuntimeService
     const run = this.activeRuns.get(sessionId);
     if (run?.query.canSteer && !run.interruptRequested) {
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
+      if (this.runtimeStates.get(sessionId) !== state || !state.pendingPrompts.includes(selected)) return;
+    }
+    if (run?.query.canSteer && !run.interruptRequested && this.activeRuns.get(sessionId) === run) {
       run.query.steer(
         this.buildSdkUserMessage(
           selected.prompt,
@@ -2965,6 +2970,7 @@ export class ClaudeRuntimeService
       state.pendingPrompts = state.pendingPrompts.filter(
         (prompt) => prompt.id !== id,
       );
+      this.queuedDispatches.begin(state, selected);
       state.queuePaused = false;
       this.emitRunState(sessionId);
       return;
@@ -3739,9 +3745,11 @@ export class ClaudeRuntimeService
 
     const [next, ...rest] = state.pendingPrompts;
     state.pendingPrompts = rest;
+    const finishDispatch = this.queuedDispatches.begin(state, next);
     this.emitRunState(sessionId);
     setImmediate(() => {
-      this.submitPrompt(sessionId, next.prompt, undefined, next.images, {
+      if (this.runtimeStates.get(sessionId) !== state || this.invalidatedSessions.has(sessionId)) return;
+      void this.submitPrompt(sessionId, next.prompt, undefined, next.images, {
         human: next.human,
       }).catch((error) => {
         this.logger.error(
@@ -3749,6 +3757,8 @@ export class ClaudeRuntimeService
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
   }
@@ -5682,6 +5692,7 @@ export class ClaudeRuntimeService
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
+    this.queuedDispatches.clear(state);
     state.pendingPermissionRequest = null;
     state.pendingUserInputRequest = null;
     state.liveItems = [];
@@ -5749,6 +5760,7 @@ export class ClaudeRuntimeService
 
     const run = this.activeRuns.get(sessionId);
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     state.runPhase = 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -6728,6 +6740,7 @@ export class ClaudeRuntimeService
     sessionId: number,
     state: RuntimeState,
   ): ClaudeRuntimeStatePayload {
+    if (state.runPhase === 'error' && state.lastError) this.queuedDispatches.clear(state);
     return {
       sessionId,
       claudeSessionId: state.claudeSessionId,
@@ -6743,6 +6756,7 @@ export class ClaudeRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,

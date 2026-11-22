@@ -589,6 +589,10 @@ export class SessionChatComponent {
     this.focusComposer();
     void this.store.perform({ type, id });
   }
+  resumeQueue(): void {
+    this.focusComposer();
+    void this.store.perform({ type: 'resume-queue' });
+  }
   continue(): void {
     this.store.setDraft("Please continue.");
     this.focusComposer();

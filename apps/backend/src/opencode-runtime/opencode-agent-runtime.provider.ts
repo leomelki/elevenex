@@ -32,6 +32,7 @@ import type {
   AgentForkConversationRequest,
   AgentLoginMode,
 } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import type {
   ClaudeRuntimeStatePayload,
   ClaudeTranscriptItem,
@@ -112,6 +113,7 @@ export class OpenCodeAgentRuntimeProvider
   private readonly entries = new Map<number, RuntimeEntry>();
   private readonly starts = new Map<number, Promise<RuntimeEntry>>();
   private readonly states = new Map<number, ClaudeRuntimeStatePayload>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly clients = new Map<number, number>();
   private readonly generations = new Map<number, number>();
   private readonly interruptions = new Map<number, number>();
@@ -246,7 +248,10 @@ export class OpenCodeAgentRuntimeProvider
       const projectAuth = { ...auth, authenticated: true };
       state.authStatus = projectAuth;
     }
-    return { ...state, backgroundWork: this.backgroundWork(state), liveItems: [...state.liveItems] };
+    return {
+      ...state, backgroundWork: this.backgroundWork(state), liveItems: [...state.liveItems],
+      dispatchingPrompts: this.queuedDispatches.current(state),
+    };
   }
   async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const state = await this.state(sessionId);
@@ -992,6 +997,7 @@ export class OpenCodeAgentRuntimeProvider
     ]);
     entry.run = this.run(entry, signal, prompt, titlePrompt, images).finally(
       () => {
+        this.queuedDispatches.clear(state);
         entry.run = null;
         if (entry.turnController === turnController)
           entry.turnController = null;
@@ -1267,14 +1273,21 @@ export class OpenCodeAgentRuntimeProvider
     // V2 has native steering; V1 resumes the selected prompt after a clean abort.
     const entry = this.entries.get(sessionId);
     if (entry?.client?.steerPrompt && entry.run && !prompt.images?.length) {
-      await entry.client.steerPrompt(state.claudeSessionId!, prompt.prompt);
+      const finishDispatch = this.queuedDispatches.begin(state, prompt);
+      try {
+        await entry.client.steerPrompt(state.claudeSessionId!, prompt.prompt);
+      } catch (error) {
+        finishDispatch();
+        throw error;
+      }
       await this.cancelPendingPrompt(sessionId, id);
       return;
     }
     await this.interrupt(sessionId);
-    await this.cancelPendingPrompt(sessionId, id);
+    if (this.states.get(sessionId) !== state || !state.pendingPrompts.includes(prompt)) return;
+    state.pendingPrompts = state.pendingPrompts.filter(item => item.id !== id);
     state.queuePaused = false;
-    await this.submitPrompt(sessionId, prompt.prompt, undefined, prompt.images);
+    await this.sendQueuedPrompt(sessionId, state, prompt);
   }
   async resumePendingPrompts(sessionId: number) {
     const state = await this.state(sessionId);
@@ -1288,7 +1301,22 @@ export class OpenCodeAgentRuntimeProvider
       return;
     const [next, ...remaining] = state.pendingPrompts;
     state.pendingPrompts = remaining;
-    await this.submitPrompt(sessionId, next.prompt, undefined, next.images);
+    await this.sendQueuedPrompt(sessionId, state, next);
+  }
+
+  private async sendQueuedPrompt(
+    sessionId: number,
+    state: ClaudeRuntimeStatePayload,
+    prompt: ClaudeRuntimeStatePayload['pendingPrompts'][number],
+  ): Promise<void> {
+    const finishDispatch = this.queuedDispatches.begin(state, prompt);
+    try {
+      await this.submitPrompt(sessionId, prompt.prompt, undefined, prompt.images);
+    } finally {
+      // A startup failure or interruption before the turn registered has no run cleanup.
+      if (!this.entries.get(sessionId)?.run && finishDispatch() && this.states.get(sessionId) === state)
+        this.emit('event', { type: 'run_state', payload: state });
+    }
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {

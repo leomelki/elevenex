@@ -958,9 +958,18 @@ describe('selected session chat', () => {
     history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];
     const initial = (await read())!;
     const receipt: AgentTranscriptItem = { ...item('native-user', 'Queued follow-up'), kind: 'user' };
+    runtime.getRuntimeState.mockResolvedValueOnce({
+      runPhase: 'running', liveItems: live, pendingPrompts: [],
+      dispatchingPrompts: [{ id: 'queue-id', prompt: receipt.content, timestamp: receipt.timestamp }],
+    });
+    emit('message_start');
+    const dispatch = (await read(initial.cursor))!;
+    expect(dispatch.reset).toBe(false);
+    expect(dispatch.events).toEqual([]);
+    expect(dispatch.state.dispatchingPrompts).toEqual([{ id: 'queue-id', text: receipt.content, timestamp: receipt.timestamp }]);
     live = [receipt, item('follow-up-answer')];
     emit('message_start');
-    const update = (await read(initial.cursor))!;
+    const update = (await read(dispatch.cursor))!;
     expect(update.reset).toBe(false);
     expect(update.state.activePromptId).toBe(receipt.id);
     expect(update.events.map(event => event.type === 'item' && event.item.id)).toEqual(['native-user', 'follow-up-answer']);

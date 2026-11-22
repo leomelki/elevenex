@@ -60,6 +60,7 @@ header span {
   animation: queue-enter var(--dur-base) var(--ease-out);
 }
 .queue-leave {
+  interactivity: inert;
   pointer-events: none;
   animation: queue-leave var(--dur-fast) var(--ease-in);
 }

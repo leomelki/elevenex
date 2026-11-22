@@ -772,6 +772,18 @@ test('conversation replies validate resource identity, bounded fields and suppor
   assert.throws(() => parseChatPage({ taskId: 1, sessionId: 2, cursor: 'x'.repeat(201) }, 1, 2));
 });
 
+test('chat accepts bounded queued handoffs from engines using the capability', () => {
+  const { parseChatState } = require('../dist/backend-client/session-chat-validation');
+  const prompt = { id: 'q1', text: 'Queued follow-up', timestamp: '2026-11-14T12:00:00.000Z' };
+  assert.equal(parseChatState(chatState).dispatchingPrompts, undefined);
+  assert.deepEqual(parseChatState({ ...chatState, dispatchingPrompts: [] }).dispatchingPrompts, []);
+  assert.deepEqual(parseChatState({
+    ...chatState, dispatchingPrompts: [{ ...prompt, images: ['do not expose provider data'] }],
+  }).dispatchingPrompts, [prompt]);
+  for (const dispatchingPrompts of [[{ ...prompt, timestamp: 'bad' }], [{ ...prompt, text: 'x'.repeat(64001) }], Array(9).fill(prompt)])
+    assert.throws(() => parseChatState({ ...chatState, dispatchingPrompts }));
+});
+
 test('harness selection requires a known action shape and an expected current provider', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
   assert.deepEqual(parseChatAction({ type: 'provider', provider: 'claude', expectedProvider: 'codex', private: 'discard' }), { type: 'provider', provider: 'claude', expectedProvider: 'codex' });

@@ -69,7 +69,7 @@
                 icon="steer"
                 label="Steer now"
                 size="sm"
-                [disabled]="disabled()"
+                [disabled]="disabled() || item.steerable === false"
                 (pressed)="steer.emit(item.id)" /> }
               @if (editable() && item.editable !== false) {
                 <ex-icon-button

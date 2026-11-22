@@ -184,6 +184,21 @@ export function chatState(
         return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 64000) };
       }),
     queuePaused: raw.queuePaused === true,
+    ...(Array.isArray(raw.dispatchingPrompts) ? {
+      dispatchingPrompts: raw.dispatchingPrompts.slice(0, 8).map(value => {
+        const prompt = record(value);
+        const id = display(prompt.id, 1000), timestamp = display(prompt.timestamp, 100);
+        const { text, mentions, media } = chatDisplayContent({
+          id, timestamp, kind: 'user', content: typeof prompt.prompt === 'string' ? prompt.prompt : '',
+        });
+        return {
+          id, timestamp, text, ...(mentions?.length ? { mentions } : {}),
+          // A pending prompt can reference uploaded files. Native inline media
+          // is read using the eventual transcript item ID.
+          ...(media?.some(ref => !ref.inline) ? { media: media.filter(ref => !ref.inline) } : {}),
+        };
+      }),
+    } : {}),
     permission:
       permission.requestId && !permissionQuestion
         ? {

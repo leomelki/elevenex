@@ -252,7 +252,7 @@
         }
       </div>
     }
-    @if (store.state()?.queuePaused && store.queue().length) {
+    @if (store.state()?.queuePaused && store.queue().length && !store.dispatching()) {
       <div class="feedback">
         <span>Queue paused</span
         ><button
@@ -260,7 +260,7 @@
           variant="secondary"
           size="sm"
           [disabled]="blocked()"
-          (click)="store.perform({ type: 'resume-queue' })"
+          (click)="resumeQueue()"
         >
           Resume queue
         </button>

@@ -80,9 +80,10 @@ export function pendingPromptStart(items: readonly SessionChatItem[], pending: P
 }
 
 /** Runtime output may precede the harness's durable user-message receipt. */
-function withPendingPrompt(
+export function withPendingPrompt(
   items: readonly SessionChatItem[],
   pending: PendingChatPrompt,
+  start = pendingPromptStart(items, pending),
 ): readonly SessionChatItem[] {
   const prompt: SessionChatItem = {
     id: pending.id,
@@ -98,7 +99,6 @@ function withPendingPrompt(
     error: false,
     truncated: false,
   };
-  const start = pendingPromptStart(items, pending);
   return [...items.slice(0, start), prompt, ...items.slice(start)];
 }
 function epoch(timestamp: string): number | undefined {

@@ -303,6 +303,8 @@ export interface SessionChatState {
   readonly planUsage?: SessionChatPlanUsage | null;
   readonly queue: readonly { readonly id: string; readonly text: string }[];
   readonly queuePaused: boolean;
+  /** Queue entries handed off to the harness, awaiting native transcript items. */
+  readonly dispatchingPrompts?: readonly Pick<SessionChatItem, "id" | "text" | "timestamp" | "media" | "mentions">[];
   readonly permission: {
     readonly id: string;
     readonly title: string;

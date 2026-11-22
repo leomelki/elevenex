@@ -175,6 +175,12 @@ for excess rows, changing DOM identity and height overshoot, with repeated text,
 keyboard removal, both themes and narrow reduced-motion layouts. Run it with
 `--url http://127.0.0.1:4310`.
 
+`scenarios/session-chat-queue-delivery.mjs` holds harness receipts while the
+connected chat moves a steered or automatically dispatched message into the
+transcript. It checks the bubble and queue exit, keyboard focus, repeated text,
+native receipt reconciliation, both themes and narrow reduced-motion layouts.
+Run it against the same component preview URL.
+
 The connected workspace regression uses the production composition and its
 isolated typed backend adapter:
 

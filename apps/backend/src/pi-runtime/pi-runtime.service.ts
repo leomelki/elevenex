@@ -29,6 +29,7 @@ import type {
   AgentImageInput,
 } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import {
   orderReasoningEfforts,
   resolveAgentStartupSelection,
@@ -98,6 +99,7 @@ export class PiRuntimeService
   private readonly initializingRuns = new Set<number>();
   private readonly interruptedInitializations = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly runtimes = new Map<number, PiRuntimeEntry>();
   private readonly runtimeStarts = new Map<number, Promise<PiSessionRuntime>>();
   // Cleanup invalidates work before awaiting it; reopening starts a new owner.
@@ -709,22 +711,7 @@ export class PiRuntimeService
             !state.queuePaused &&
             state.pendingPrompts.length > 0
           ) {
-            const [next, ...rest] = state.pendingPrompts;
-            state.pendingPrompts = rest;
-            this.emitRunState(sessionId);
-            setImmediate(() => {
-              if (!ownsSession()) return;
-              this.submitPrompt(
-                sessionId,
-                next.prompt,
-                undefined,
-                next.images,
-              ).catch((error) => {
-                this.logger.error(
-                  `Pending Pi prompt failed session=${sessionId}: ${String(error)}`,
-                );
-              });
-            });
+            this.dispatchQueuedPrompt(sessionId, state);
           }
         }
       }
@@ -839,10 +826,19 @@ export class PiRuntimeService
       this.emitRunState(sessionId);
       return Promise.resolve();
     }
+    this.dispatchQueuedPrompt(sessionId, state);
+    return Promise.resolve();
+  }
+
+  private dispatchQueuedPrompt(sessionId: number, state: PiRuntimeState): void {
     const [next, ...rest] = state.pendingPrompts;
+    if (!next) return;
+    const generation = this.sessionGeneration(sessionId);
     state.pendingPrompts = rest;
+    const finishDispatch = this.queuedDispatches.begin(state, next);
     this.emitRunState(sessionId);
     setImmediate(() => {
+      if (this.runtimeStates.get(sessionId) !== state || !this.ownsSession(sessionId, generation)) return;
       void this.submitPrompt(
         sessionId,
         next.prompt,
@@ -850,11 +846,13 @@ export class PiRuntimeService
         next.images,
       ).catch((error) => {
         this.logger.error(
-          `Resumed Pi prompt failed session=${sessionId}: ${String(error)}`,
+          `Queued Pi prompt failed session=${sessionId}: ${String(error)}`,
         );
+      }).finally(() => {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
-    return Promise.resolve();
   }
 
   clearPendingPrompts(sessionId: number): Promise<void> {
@@ -1955,6 +1953,7 @@ export class PiRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,

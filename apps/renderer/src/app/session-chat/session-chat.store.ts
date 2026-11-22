@@ -30,8 +30,10 @@ import { SessionChatDrafts, SessionDraft, type StartingSession } from "./session
 import {
   ChatTranscriptProjection,
   pendingPromptStart,
+  withPendingPrompt,
   type PendingChatPrompt,
 } from "./session-chat-transcript";
+import { queuedDelivery, reconcileQueuedDeliveries, type QueuedDelivery } from './session-chat-queue-delivery';
 
 interface PendingSubmission extends PendingChatPrompt {
   readonly sendOrigin?: MessageSendOrigin;
@@ -141,6 +143,7 @@ export class SessionChatStore {
   readonly checked = signal(false);
   private readonly pending = signal<PendingSubmission | null>(null);
   private readonly pendingQueue = signal<PendingSubmission | null>(null);
+  private readonly queuedDeliveries = signal<ReadonlyMap<string, QueuedDelivery>>(new Map());
   // Keep local entry identity and source through a receipt that beats first paint.
   // Pruned with the bounded transcript and cleared on selection changes.
   private readonly turnArrivals = signal<ReadonlyMap<string, TurnArrival>>(new Map());
@@ -150,19 +153,21 @@ export class SessionChatStore {
     readonly exchange: ChatExchange;
   }>();
   private readonly queueRenderIds = signal<ReadonlyMap<string, string>>(new Map());
+  readonly dispatching = computed(() => !!this.state()?.dispatchingPrompts?.length);
   readonly running = computed(
     () =>
       this.state()?.phase === "running" ||
       this.state()?.phase === "waiting" ||
+      this.dispatching() ||
       (!!this.pending() && !this.pending()?.queue),
   );
   readonly queue = computed<readonly QueuedMessage[]>(() => {
     const pending = this.pendingQueue(),
-      queue = (this.state()?.queue ?? []).map((item): QueuedMessage => {
+      queue = (this.state()?.queue ?? []).filter(item => !this.queuedDeliveries().has(item.id)).map((item): QueuedMessage => {
         const renderId = this.queueRenderIds().get(item.id);
         return renderId ? { ...item, renderId } : item;
       });
-    return pending ? [...queue, { id: pending.id, text: pending.text }] : queue;
+    return pending ? [...queue, { id: pending.id, text: pending.text, steerable: false, removable: false }] : queue;
   });
   readonly visibleItems = computed<readonly SessionChatItem[]>(() => {
     const leadingPrompt = this.leadingPrompt();
@@ -188,13 +193,29 @@ export class SessionChatStore {
   }, { equal: (a, b) => a.length === b.length && a.every((item, index) => item === b[index]) });
   readonly exchanges = computed<readonly ChatExchange[]>(() => {
     const pending = this.pending();
-    const items = this.visibleItems();
+    let items = this.visibleItems();
+    let state = this.state();
+    let fresh = this.fresh();
+    if (!this.historical() && this.queuedDeliveries().size) {
+      const deliveries = [...this.queuedDeliveries().values()].reverse();
+      const tail = items.length;
+      const previousPrompt = promptBefore(items, tail);
+      for (const delivery of deliveries) {
+        items = withPendingPrompt(items, delivery, delivery.local ? tail : undefined);
+      }
+      fresh = new Set([...fresh, ...deliveries.map(delivery => delivery.id)]);
+      const dispatch = deliveries.find(delivery => !delivery.local);
+      if (dispatch && state && (state.phase === 'idle' || state.phase === 'running' || state.phase === 'waiting'))
+        state = { ...state, phase: state.phase === 'idle' ? 'running' : state.phase, activePromptId: dispatch.id };
+      else if (state && !state.activePromptId && previousPrompt)
+        state = { ...state, activePromptId: previousPrompt.id };
+    }
     // A distant history window may no longer contain the send boundary.
     const showPending = pending && (!this.historical() || pendingPromptStart(items, pending) > 0);
     const exchanges = this.transcript.project(
       items,
-      this.state(),
-      this.fresh(),
+      state,
+      fresh,
       showPending ? pending : undefined,
       this.work.open(),
       !this.historical(),
@@ -303,6 +324,7 @@ export class SessionChatStore {
     this.entry = starting.draft; this.activeEntry.set(this.entry);
     this.state.set(null); this.items.set([]); this.leadingPrompt.set(null); this.trailingContext.set([]); this.before.set(null); this.next.set(null); this.historyLoading.set(false); this.historyError.set(''); this.cursor = undefined;
     this.pending.set(null); this.pendingQueue.set(null); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map());
+    this.queuedDeliveries.set(new Map());
     this.fresh.set(new Set()); this.error.set(''); this.notice.set(''); this.busy.set(''); this.checked.set(false);
     this.defaultChange.set(undefined); this.commands.clear(); this.readOnly.set(false); this.historical.set(false); this.loading.set(false);
     this.viewRevision.update(value => value + 1);
@@ -347,6 +369,7 @@ export class SessionChatStore {
     this.readOnly.set(readOnly);
     this.pending.set(null);
     this.pendingQueue.set(null);
+    if (!recovery) this.queuedDeliveries.set(new Map());
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
     const cached = this.drafts.snapshot(selection.sessionId);
     if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.trailingContext.set([]); this.state.set(cached?.state ?? null); }
@@ -563,6 +586,12 @@ export class SessionChatStore {
   private accept(page: SessionChatPage, direction?: "before" | "following", preserveTail = false): void {
     const previous = this.items();
     if (!direction && !page.reset && !page.events.length) {
+      const { arrivals } = this.acceptQueuedDeliveries(page.state, previous, previous, false);
+      if (arrivals.size) this.turnArrivals.update(current => {
+        const next = new Map(current);
+        for (const [id, renderId] of arrivals) next.set(id, { renderId });
+        return next;
+      });
       this.state.set(page.state);
       this.cursor = page.cursor;
       this.reconcileDelivery(page.state);
@@ -621,10 +650,13 @@ export class SessionChatStore {
     // Snapshots and history pages already have authoritative order. A late
     // incremental receipt may need to precede output shown under its pending prompt.
     const precedingPrompt = delivered ? promptBefore(records, deliveredIndex) : undefined;
-    const all = delivered && deliveredIndex > start && !direction && !page.reset &&
+    const reordered = delivered && deliveredIndex > start && !direction && !page.reset &&
       (!precedingPrompt || pending?.knownIds.has(precedingPrompt.id))
       ? [...records.slice(0, start), delivered, ...records.slice(start, deliveredIndex), ...records.slice(deliveredIndex + 1)]
       : records;
+    const { records: all, arrivals: queueArrivals } = !direction
+      ? this.acceptQueuedDeliveries(page.state, previous, reordered, !page.reset, delivered?.id)
+      : { records: reordered, arrivals: new Map<string, string>() };
     const items = retainChatWindow(all, keepsOlder);
     const evicted = all.length > items.length;
     if (keepsOlder && evicted) {
@@ -647,11 +679,12 @@ export class SessionChatStore {
         });
       }
     }
-    if (delivered || this.turnArrivals().size) {
+    if (delivered || queueArrivals.size || this.turnArrivals().size) {
       // Receipts can arrive with completion. Keep Angular's mounted turn key
       // through that handoff while actions/reviews keep using the durable ID.
       const arrivals = new Map(this.turnArrivals());
       if (delivered && pending) arrivals.set(delivered.id, { renderId: pending.id, sendOrigin: pending.sendOrigin });
+      for (const [id, renderId] of queueArrivals) arrivals.set(id, { renderId });
       const retained = new Set([...items, ...this.trailingContext()].map(item => item.id));
       for (const id of arrivals.keys())
         if (!retained.has(id)) arrivals.delete(id);
@@ -702,11 +735,28 @@ export class SessionChatStore {
     this.reconcileDelivery(page.state, delivered, deliveredQueued);
   }
 
+  private acceptQueuedDeliveries(
+    state: SessionChatState, previous: readonly SessionChatItem[], records: readonly SessionChatItem[], incremental: boolean,
+    directReceipt?: string,
+  ) {
+    const deliveries = this.queuedDeliveries();
+    if (!deliveries.size && !state.dispatchingPrompts?.length)
+      return { records, arrivals: new Map<string, string>() };
+    const claimed = new Set(this.turnArrivals().keys());
+    if (directReceipt) claimed.add(directReceipt);
+    const update = reconcileQueuedDeliveries(deliveries, state, previous, records, incremental, claimed);
+    this.queuedDeliveries.set(update.deliveries);
+    return update;
+  }
+
   private reconcileDelivery(state: SessionChatState, delivered?: SessionChatItem, deliveredQueued?: SessionChatItem): void {
+    const dispatched = (submission: PendingSubmission) => state.dispatchingPrompts?.some(
+      item => !submission.knownQueueIds.has(item.id) && item.text === submission.text,
+    );
     const pending = this.pending();
     if (
       pending &&
-      (delivered ||
+      (delivered || dispatched(pending) ||
         state.queue.some(
           (item) =>
             !pending.knownQueueIds.has(item.id) && item.text === pending.text,
@@ -729,7 +779,7 @@ export class SessionChatStore {
         if (!retained.has(id)) renderIds.delete(id);
       this.queueRenderIds.set(renderIds);
     }
-    if (queued && (queueReceipt || deliveredQueued)) {
+    if (queued && (queueReceipt || deliveredQueued || dispatched(queued))) {
       queued.confirmed = true;
       this.pendingQueue.set(null);
     }
@@ -846,10 +896,18 @@ export class SessionChatStore {
     );
     this.busy.set(action.type);
     this.error.set("");
+    const state = this.state();
+    const queuedPrompt = action.type === 'steer-queued' ? state?.queue.find(item => item.id === action.id)
+      : action.type === 'resume-queue' && state?.phase === 'idle' && !state.canInterrupt ? state.queue[0]
+      : undefined;
+    if (queuedPrompt) {
+      const delivery = queuedDelivery({ ...queuedPrompt, timestamp: new Date().toISOString() }, this.visibleItems(), true);
+      this.queuedDeliveries.update(current => new Map(current).set(queuedPrompt.id, delivery));
+    }
     if (action.type === "preset-default" || action.type === "save-preset")
       this.defaultChange.set(undefined);
     this.notice.set(
-      action.type === "send"
+      action.type === "send" || queuedPrompt
         ? "Sending…"
         : action.type === "provider"
           ? "Changing harness…"
@@ -868,7 +926,8 @@ export class SessionChatStore {
     });
     // A durable user/queue receipt is stronger evidence than a lost HTTP reply.
     // Running state or assistant output alone cannot identify this submission.
-    if (!result.ok && result.error.code === "outcome-unknown" && pending?.confirmed)
+    const queuedReceipt = queuedPrompt && [...this.turnArrivals().values()].some(arrival => arrival.renderId === `queued-delivery:${queuedPrompt.id}`);
+    if (!result.ok && result.error.code === "outcome-unknown" && (pending?.confirmed || queuedReceipt))
       result = { ok: true, value: { accepted: true } };
     if (
       result.ok ||
@@ -882,6 +941,11 @@ export class SessionChatStore {
       this.busy.set(this.commands.values().next().value ?? "");
     }
     if (!result.ok) {
+      if (queuedPrompt && this.queuedDeliveries().get(queuedPrompt.id)?.local) {
+        const remaining = new Map(this.queuedDeliveries());
+        remaining.delete(queuedPrompt.id);
+        this.queuedDeliveries.set(remaining);
+      }
       this.notice.set("");
       this.error.set(result.error.message);
       if (
@@ -898,7 +962,7 @@ export class SessionChatStore {
       return false;
     }
     this.notice.set(
-      action.type === "send"
+      action.type === "send" || action.type === 'steer-queued' || action.type === 'resume-queue'
         ? ""
         : action.type === "stop"
           ? "Stop requested"

@@ -35,6 +35,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
@@ -199,6 +200,7 @@ export class CodexRuntimeService
   private readonly unconfirmedStops = new Map<number, CodexActiveRunState>();
   private readonly rewindingSessions = new Set<number>();
   private readonly runtimeStates = new Map<number, CodexRuntimeState>();
+  private readonly queuedDispatches = new QueuedPromptDispatches();
   private readonly subagentTrackers = new Map<number, CodexSubagentTracker>();
   private readonly subagentMetadata = new CodexSubagentMetadataLoader();
   private readonly subagentRestores = new Map<number, Promise<void>>();
@@ -2098,6 +2100,7 @@ export class CodexRuntimeService
     // it until another follow-up arrives.
     if (run) {
       await Promise.race([run.turnReadyPromise, run.completionPromise]);
+      if (this.runtimeStates.get(sessionId) !== state || !state.pendingPrompts.includes(selected)) return;
       if (
         this.activeRuns.get(sessionId) === run &&
         run.threadId &&
@@ -2109,6 +2112,8 @@ export class CodexRuntimeService
           (prompt) => prompt.id !== id,
         );
         state.queuePaused = true;
+        const finishDispatch = this.queuedDispatches.begin(state, selected);
+        this.emitRunState(sessionId);
         try {
           const built = await this.buildCodexInput(
             selected.prompt,
@@ -2132,6 +2137,7 @@ export class CodexRuntimeService
           }
           return;
         } catch (error) {
+          finishDispatch();
           state.pendingPrompts = [
             selected,
             ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
@@ -2197,6 +2203,7 @@ export class CodexRuntimeService
       const [next, ...rest] = state.pendingPrompts;
       if (!next) return;
       state.pendingPrompts = rest;
+      const finishDispatch = this.queuedDispatches.begin(state, next);
       this.emitRunState(sessionId);
       void this.submitPrompt(
         sessionId,
@@ -2222,6 +2229,9 @@ export class CodexRuntimeService
           type: 'error',
           payload: { sessionId, message: state.lastError! },
         });
+      }).finally(() => {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state)
+          this.emitRunState(sessionId);
       });
     });
   }
@@ -2953,6 +2963,7 @@ export class CodexRuntimeService
       return;
     }
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     state.runPhase = state.lastError ? 'error' : 'idle';
     state.sessionState = 'idle';
     state.canInterrupt = false;
@@ -2968,6 +2979,7 @@ export class CodexRuntimeService
 
   private finalizeInterruptedRun(sessionId: number): void {
     const state = this.ensureRuntimeState(sessionId);
+    this.queuedDispatches.clear(state);
     if (!this.unconfirmedStops.has(sessionId)) {
       state.runPhase = 'idle';
       state.sessionState = 'idle';
@@ -3673,6 +3685,7 @@ export class CodexRuntimeService
       pendingPrompts: state.pendingPrompts,
       queuePaused: state.queuePaused,
       liveItems: state.liveItems,
+      dispatchingPrompts: this.queuedDispatches.current(state),
       lastError: state.lastError,
       selectedModel: state.selectedModel,
       reasoningEffort: state.reasoningEffort,

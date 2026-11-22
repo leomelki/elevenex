@@ -168,13 +168,8 @@ function item(value: unknown): SessionChatRecord {
   const assistantPhase = raw['assistantPhase'];
   if (assistantPhase !== undefined && (kind !== 'assistant' ||
     (assistantPhase !== 'commentary' && assistantPhase !== 'final'))) throw invalid();
-  const mentions = raw['mentions'] === undefined ? undefined : array(raw['mentions'], 8, value => {
-    const mention = chatObject(value), sessionId = mention['sessionId'];
-    const title = chatText(mention['title'], 1000);
-    if (kind !== 'user' || typeof sessionId !== 'number' || !Number.isSafeInteger(sessionId) || sessionId <= 0 || !title.trim()) throw invalid();
-    return { sessionId, title };
-  });
-  if (mentions && new Set(mentions.map(mention => mention.sessionId)).size !== mentions.length) throw invalid();
+  const mentions = raw['mentions'] === undefined ? undefined : sessionMentions(raw['mentions']);
+  if (mentions && kind !== 'user') throw invalid();
   return {
     id: chatText(raw["id"]),
     kind,
@@ -192,6 +187,16 @@ function item(value: unknown): SessionChatRecord {
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
   };
+}
+function sessionMentions(value: unknown) {
+  const mentions = array(value, 8, value => {
+    const mention = chatObject(value), sessionId = mention['sessionId'];
+    const title = chatText(mention['title'], 1000);
+    if (typeof sessionId !== 'number' || !Number.isSafeInteger(sessionId) || sessionId <= 0 || !title.trim()) throw invalid();
+    return { sessionId, title };
+  });
+  if (new Set(mentions.map(mention => mention.sessionId)).size !== mentions.length) throw invalid();
+  return mentions;
 }
 function mediaReferences(value: unknown) {
   return array(value, 12, value => {
@@ -651,6 +656,18 @@ export function parseChatState(value: unknown): SessionChatState {
       return { id: chatText(q["id"]), text: chatText(q["text"], 64000) };
     }),
     queuePaused: bool(raw["queuePaused"]),
+    ...(raw["dispatchingPrompts"] === undefined ? {} : {
+      dispatchingPrompts: array(raw["dispatchingPrompts"], 8, value => {
+        const prompt = chatObject(value);
+        const id = chatText(prompt["id"]), timestamp = chatText(prompt["timestamp"], 100);
+        if (!id || !Number.isFinite(Date.parse(timestamp))) throw invalid();
+        return {
+          id, timestamp, text: chatText(prompt["text"], 64000),
+          ...(prompt["mentions"] === undefined ? {} : { mentions: sessionMentions(prompt["mentions"]) }),
+          ...(prompt["media"] === undefined ? {} : { media: mediaReferences(prompt["media"]) }),
+        };
+      }),
+    }),
     permission: permission && {
       id: chatText(permission["id"]),
       title: chatText(permission["title"]),

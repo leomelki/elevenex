@@ -1,0 +1,70 @@
+:host { display: block; height: 100%; min-height: 0; overflow: auto; color: var(--ink); }
+.page { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-6); box-sizing: border-box; }
+.intro { display: flex; flex-direction: column; gap: var(--space-2); max-width: 900px; }
+.overline { color: var(--ink-muted); font-size: var(--text-overline-size); line-height: var(--text-overline-line); font-weight: var(--text-overline-weight); letter-spacing: var(--text-overline-tracking); text-transform: uppercase; }
+h2 { margin: 0; font-size: var(--text-display-size); line-height: var(--text-display-line); font-weight: var(--text-display-weight); letter-spacing: var(--text-display-tracking); }
+h3 { margin: 0; font-size: var(--text-ui-size); line-height: var(--text-ui-line); font-weight: 600; }
+p { margin: 0; color: var(--ink-muted); font-size: var(--text-ui-size); line-height: var(--text-body-line); }
+p strong { color: var(--ink); font-weight: 500; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--sidebar-width) + 2 * var(--space-2)), 1fr)); gap: var(--space-6) var(--space-4); }
+.option { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.caption { display: flex; flex-direction: column; gap: 2px; padding-inline: var(--space-1); }
+.option[data-option="a"] .caption .overline { color: var(--accent); }
+.sidebar { width: var(--sidebar-width); max-width: 100%; box-sizing: border-box; padding: var(--space-2); border-radius: var(--radius-lg); background: var(--glass); backdrop-filter: blur(var(--blur-glass)); box-shadow: var(--shadow-glass); }
+.baseline .sidebar { outline: 1px dashed var(--line-strong); outline-offset: 3px; }
+
+.task + .task { margin-top: var(--space-2); }
+.task-head { display: flex; align-items: center; gap: var(--space-2); height: 28px; padding: 0 var(--space-2); font-size: 12.5px; font-weight: 600; }
+.chevron { color: var(--ink-muted); transition: transform var(--dur-base) var(--ease-out); }
+.chevron.closed { transform: rotate(-90deg); }
+.task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-running, .task-commands { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-muted); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.task-commands { padding: 1px 6px 1px 5px; border-radius: var(--radius-full); background: var(--surface-sunken); }
+
+/* Mirrors the production session row so options compare against the real density. */
+.select { position: relative; display: flex; align-items: center; gap: var(--space-2); box-sizing: border-box; width: 100%; height: 28px; padding: 0 var(--space-2) 0 24px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: background var(--dur-base) var(--ease-out); }
+.row:hover .select { background: var(--surface-sunken); }
+.select[aria-current="true"] { background: var(--surface-raised); box-shadow: var(--shadow-raised); }
+.select[aria-current="true"] .title { font-weight: 500; }
+.select:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
+.select.attention { background: var(--attention-soft); }
+.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.done .title { color: var(--ink-muted); }
+.diff { display: inline-flex; gap: var(--space-1); font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.add { color: var(--diff-add); }
+.del { color: var(--diff-del); }
+.unread { width: 6px; height: 6px; flex: none; border-radius: var(--radius-full); background: var(--accent); }
+
+.lead { position: relative; display: inline-flex; flex: none; }
+
+/* A: trailing terminal icon. Static: motion stays reserved for an agent that is working. */
+.commands { display: inline-flex; align-items: center; gap: 2px; flex: none; color: var(--ink-muted); font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+.commands.orphaned, .words.orphaned, .commands-glyph.orphaned { opacity: .55; }
+
+/* B: a distinct status glyph — hollow ring with a slowly orbiting dot. */
+.commands-glyph { position: relative; display: block; flex: none; width: 14px; height: 14px; box-sizing: border-box; border: 1.5px solid var(--ink-muted); border-radius: var(--radius-full); color: var(--running); }
+.commands-glyph::after { content: ''; position: absolute; top: -3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: var(--radius-full); background: currentColor; transform-origin: 2px 7px; animation: orbit 6s linear infinite; }
+.commands-glyph.small { width: 12px; height: 12px; }
+.commands-glyph.small::after { top: -2.5px; transform-origin: 2px 6px; }
+@keyframes orbit { to { transform: rotate(360deg); } }
+
+/* C: corner pip on the status glyph. */
+.pip { position: absolute; right: -2px; bottom: -2px; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--running); box-shadow: 0 0 0 1.5px var(--surface-raised); }
+.pip.orphaned { background: var(--ink-muted); }
+
+/* D: the command itself, in words. */
+.words { flex: none; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-family: var(--font-mono); font-size: 11px; }
+
+.rail { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-1); border-top: 1px solid var(--line); color: var(--ink-muted); font-size: 11.5px; }
+.rail > span:first-child { flex: 1; }
+.rail-count { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+
+.tradeoffs { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); margin: 0; padding-inline: var(--space-1); max-width: var(--sidebar-width); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+dt { color: var(--ink); font-weight: 600; }
+dd { margin: 0; color: var(--ink-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .commands-glyph::after { animation: none; }
+  .select, .chevron { transition: none; }
+}

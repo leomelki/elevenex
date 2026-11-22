@@ -90,6 +90,7 @@ export interface WaitingMessage extends QueuedMessage {
   readonly state: 'waiting' | 'sending';
 }
 export interface QueuedMessage {
+  readonly steerable?: boolean;
   readonly editable?: boolean;
   readonly removable?: boolean;
   readonly id: string;

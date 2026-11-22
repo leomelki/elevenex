@@ -25,6 +25,7 @@ void bootstrapApplication(PreviewComponent, {
         { path: 'project-settings', loadComponent: () => import('./settings-demo.component').then(module => module.SettingsDemoComponent) },
         { path: 'projects', loadComponent: () => import('./project-creation-demo.component').then(module => module.ProjectCreationDemoComponent) },
         { path: 'git-jobs', loadComponent: () => import('./git-jobs-demo.component').then(module => module.GitJobsDemoComponent) },
+        { path: 'background-commands', loadComponent: () => import('./background-commands-demo.component').then(module => module.BackgroundCommandsDemoComponent) },
         { path: 'sidebar-motion', loadComponent: () => import('./sidebar-motion-demo.component').then(module => module.SidebarMotionDemoComponent) },
         { path: 'git-motion', loadComponent: () => import('./git-motion-demo.component').then(module => module.GitMotionDemoComponent) },
         {

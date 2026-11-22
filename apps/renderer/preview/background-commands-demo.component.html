@@ -1,0 +1,93 @@
+<div class="page">
+  <header class="intro">
+    <span class="overline">Design exploration</span>
+    <h2>Sessions with commands still running</h2>
+    <p>
+      Same data in every column. <strong>Wire OAuth callback</strong> is the only agent actually working.
+      <strong>Fix flaky login test</strong> finished with an unread reply and left two commands running.
+      <strong>Bench query planner</strong> finished with one command running. <strong>Spike: cache layer</strong>
+      has a command left behind by a finished subagent. <strong>Upgrade Angular</strong> is collapsed and has one command running.
+    </p>
+  </header>
+
+  <div class="grid">
+    @for (option of options; track option.id) {
+      <section class="option" [attr.data-option]="option.id" [class.baseline]="option.id === 'today'">
+        <div class="caption">
+          <span class="overline">{{ option.overline }}</span>
+          <h3>{{ option.name }}</h3>
+        </div>
+
+        <aside class="sidebar">
+          @for (task of tasks; track task.title) {
+            <div class="task">
+              <div class="task-head">
+                <ex-icon class="chevron" [class.closed]="task.collapsed" name="chevron-down" [size]="12" />
+                <span class="task-title">{{ task.title }}</span>
+                @if (taskCommands(option.id, task)) {
+                  <span class="task-commands" [attr.aria-label]="commandCount(task) + ' commands running'" [exTooltip]="commandCount(task) + ' commands running in this task'">
+                    <ex-icon name="terminal" [size]="12" />{{ commandCount(task) }}
+                  </span>
+                }
+                @if (runningCount(option.id, task)) {
+                  <span class="task-running"><ex-status-glyph status="running" [size]="12" />{{ runningCount(option.id, task) }}</span>
+                } @else if (option.id === 'b' && task.collapsed && commandCount(task)) {
+                  <span class="task-running"><span class="commands-glyph small" aria-hidden="true"></span>{{ commandCount(task) }}</span>
+                }
+              </div>
+              @if (!task.collapsed) {
+                @for (session of task.sessions; track session.id) {
+                  <div class="row" [attr.data-session]="session.id">
+                    <button
+                      type="button"
+                      class="select"
+                      [attr.aria-current]="session.selected ? 'true' : null"
+                      [class.attention]="session.turn === 'attention' && !session.selected"
+                      [class.done]="glyph(option.id, session) === 'done'"
+                    >
+                      <span class="lead">
+                        @if (commandsGlyph(option.id, session)) {
+                          <span class="commands-glyph" role="img" [attr.aria-label]="describe(session)" [exTooltip]="describe(session)" [class.orphaned]="orphaned(session)"></span>
+                        } @else {
+                          <ex-status-glyph [status]="glyph(option.id, session)" [size]="14" />
+                        }
+                        @if (pip(option.id, session)) {
+                          <span class="pip" [class.orphaned]="orphaned(session)" role="img" [attr.aria-label]="describe(session)" [exTooltip]="describe(session)"></span>
+                        }
+                      </span>
+                      <span class="title">{{ session.title }}</span>
+                      @if (trailing(option.id) && session.commands.length) {
+                        <span class="commands" [class.orphaned]="orphaned(session)" role="img" [attr.aria-label]="describe(session)" [exTooltip]="describe(session)">
+                          <ex-icon name="terminal" [size]="12" />
+                          @if (session.commands.length > 1) { <span>{{ session.commands.length }}</span> }
+                        </span>
+                      }
+                      @if (words(option.id, session); as words) {
+                        <span class="words" [class.orphaned]="orphaned(session)" [exTooltip]="describe(session)">{{ words }}</span>
+                      } @else if (session.diff) {
+                        <span class="diff"><span class="add">+{{ session.diff.add }}</span><span class="del">−{{ session.diff.del }}</span></span>
+                      }
+                      @if (unread(option.id, session)) { <span class="unread" aria-label="Unread"></span> }
+                    </button>
+                  </div>
+                }
+              }
+            </div>
+          }
+          <footer class="rail">
+            <span>Rail / island</span>
+            <span class="rail-count"><ex-status-glyph status="running" [size]="12" />{{ railCount(option.id) }} running</span>
+            @if (option.id !== 'today') {
+              <span class="rail-count muted"><ex-icon name="terminal" [size]="12" />{{ projectCommands() }}</span>
+            }
+          </footer>
+        </aside>
+
+        <dl class="tradeoffs">
+          <dt>Good</dt><dd>{{ option.good }}</dd>
+          <dt>Cost</dt><dd>{{ option.cost }}</dd>
+        </dl>
+      </section>
+    }
+  </div>
+</div>

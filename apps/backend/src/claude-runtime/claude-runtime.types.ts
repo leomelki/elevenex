@@ -620,6 +620,7 @@ export interface ClaudeRuntimePromptTiming {
 }
 
 export interface ClaudeRuntimeStatePayload {
+  dispatchingPrompts?: readonly import('../agent-runtime/queued-prompt-dispatches.js').QueuedPromptDispatch[];
   sessionId: number;
   claudeSessionId: string | null;
   runPhase: ClaudeRunPhase;

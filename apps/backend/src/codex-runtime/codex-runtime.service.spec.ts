@@ -1993,6 +1993,11 @@ describe('CodexRuntimeService', () => {
         await new Promise<void>(resolve => setImmediate(resolve));
         activeTurnId = 'turn-2';
       }
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        pendingPrompts: [queued[1]],
+        liveItems: [],
+        dispatchingPrompts: [{ id: queued[0].id, prompt: 'Repeated follow-up', timestamp: expect.any(String) }],
+      });
       const notify = (method: string, id: string, type: string, text: string, threadId = 'thread-1', turnId = activeTurnId) =>
         wire.notificationHandler({ method, params: {
           threadId, turnId, item: { id, type, content: [{ type: 'text', text }], text },
@@ -2008,6 +2013,7 @@ describe('CodexRuntimeService', () => {
       expect(state.liveItems.map(item => item.id)).toEqual(['native-queued-1', 'answer']);
       expect(state.liveItems[0]).toMatchObject({ kind: 'user', content: 'Repeated follow-up' });
       expect(state.pendingPrompts).toEqual([queued[1]]);
+      expect(state.dispatchingPrompts).toEqual([]);
       expect(events).toContainEqual(expect.objectContaining({
         type: 'message_start', payload: expect.objectContaining({
           sessionId: 7, item: expect.objectContaining({ id: 'native-queued-1', kind: 'user' }),

@@ -1662,33 +1662,86 @@ describe("session chat ownership", () => {
     expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
     expect(bridge.sessionChatRead).toHaveBeenCalledTimes(calls);
   });
-  it.each(['automatic', 'steer'] as const)('shows a dequeued prompt and its answer on %s dispatch without a local send', async dispatch => {
+  it.each(['automatic', 'steer'] as const)('shows a queued prompt before the agent responds on %s dispatch', async dispatch => {
     const { store, bridge } = setup();
     await settle();
     const initial = [item('u1', 'user', 'Initial prompt'), item('a1', 'assistant', 'Initial answer')];
+    const first = { id: 'q1', text: 'Same follow-up' };
+    const second = { id: 'q2', text: first.text };
+    const running: SessionChatState = { ...state, phase: 'running', activePromptId: 'u1' };
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
       items: initial,
-      state: { ...state, phase: 'running', queue: [{ id: 'q1', text: 'Same follow-up' }, { id: 'q2', text: 'Same follow-up' }] },
+      state: { ...running, queue: [first, second] },
     })));
     await store.refresh();
+    expect(store.exchanges()).toHaveLength(1);
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(command.promise);
+    const steering = dispatch === 'steer' ? store.perform({ type: 'steer-queued', id: first.id }) : undefined;
+    if (steering) {
+      expect(store.exchanges().at(-1)).toMatchObject({ prompt: first.text, isNew: true });
+      expect(store.queue()).toEqual([second]);
+    }
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      reset: false,
+      state: {
+        ...running, queue: [second],
+        dispatchingPrompts: [{ ...first, timestamp: initial[1]!.timestamp }],
+      },
+    })));
+    await vi.advanceTimersByTimeAsync(80);
+    await settle();
+    const renderId = store.exchanges().at(-1)?.id;
+    expect(store.exchanges().at(-1)).toMatchObject({ prompt: first.text, isNew: true, status: 'live' });
+    expect(store.exchanges()).toHaveLength(2);
     const receipt = item('native-user', 'user', 'Same follow-up');
     const answer = item('a2', 'assistant', 'New answer');
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
       reset: false,
       events: [{ type: 'item', item: receipt }, { type: 'item', item: answer }],
-      state: { ...state, phase: 'running', queue: [{ id: 'q2', text: 'Same follow-up' }] },
+      state: { ...running, activePromptId: receipt.id, queue: [second] },
     })));
-    if (dispatch === 'steer') await store.perform({ type: 'steer-queued', id: 'q1' });
-    else await vi.advanceTimersByTimeAsync(80);
+    if (steering) {
+      command.resolve(ok({ accepted: true }));
+      await steering;
+    } else {
+      await vi.advanceTimersByTimeAsync(80);
+    }
     await settle();
     expect(store.exchanges().map(exchange => [exchange.id, exchange.prompt, exchange.answer])).toEqual([
       ['u1', 'Initial prompt', 'Initial answer'], ['native-user', 'Same follow-up', 'New answer'],
     ]);
+    expect(store.exchanges().at(-1)).toMatchObject({ id: receipt.id, renderId, isNew: true });
     expect(store.queue().map(item => item.id)).toEqual(['q2']);
     bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { items: [...initial, receipt, answer] })));
     await store.refresh();
     expect(store.exchanges().filter(exchange => exchange.prompt === 'Same follow-up')).toHaveLength(1);
     expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(dispatch === 'steer' ? 1 : 0);
+  });
+
+  it("restores a rejected steer and leaves cancelled queued messages out of the transcript", async () => {
+    const { store, bridge } = setup();
+    await settle();
+    const first = { id: 'q1', text: 'Keep this follow-up' };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [item('u1', 'user', 'Initial prompt')],
+      state: { ...state, phase: 'running', queue: [first] },
+    })));
+    await store.refresh();
+    const command = deferred<BackendResult<{ readonly accepted: true }>>();
+    bridge.sessionChatCommand.mockReturnValueOnce(command.promise);
+    const steering = store.perform({ type: 'steer-queued', id: first.id });
+    expect(store.exchanges().at(-1)?.prompt).toBe(first.text);
+    command.resolve({ ok: false, error: { code: 'http', status: 409, message: 'Steer failed.' } });
+    await steering;
+    expect(store.exchanges().map(exchange => exchange.prompt)).toEqual(['Initial prompt']);
+    expect(store.queue()).toEqual([first]);
+    expect(store.error()).toBe('Steer failed.');
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, { reset: false, state: { ...state, phase: 'running' } })));
+    await vi.advanceTimersByTimeAsync(80);
+    await settle();
+    expect(store.queue()).toEqual([]);
+    expect(store.exchanges().map(exchange => exchange.prompt)).toEqual(['Initial prompt']);
   });
 });
 describe("provider-neutral transcript presentation", () => {
