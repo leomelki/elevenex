@@ -376,6 +376,14 @@ export class RemoteManager {
       throw error;
     } finally { if (window.revision === revision) window.pendingHost = undefined; }
   }
+  forceUpdate(windowId: number, hostId: string, instance: string): void {
+    this.assertWritable();
+    const window = this.remoteWindow(windowId);
+    if (this.hostId(window) !== hostId || window.intent !== 'connected' || !/^[a-f0-9-]{36}$/.test(instance)) throw new Error('The selected remote update changed.');
+    const connection = this.connections.get(hostId);
+    if (!connection) throw new Error('This remote update is no longer waiting.');
+    connection.forceUpdate(windowId, instance);
+  }
   async disconnect(windowId: number, pause = false): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId);
     ++window.revision;

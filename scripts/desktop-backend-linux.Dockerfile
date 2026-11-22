@@ -12,13 +12,15 @@ WORKDIR /workspace
 RUN node /usr/local/lib/node_modules/npm/bin/npm-cli.js install --global pnpm@${PNPM_VERSION}
 COPY manifests/ ./
 # The context retains the exact source lock entries for runtime externals.
-# The root postinstall builds UI assets, supplied from the Mac instead.
+# The root postinstall builds UI assets, supplied from the host instead.
 # pnpm 8 bundles node-gyp 9, whose gyp imports distutils (removed in Python 3.12).
 RUN pnpm --filter elevenex-backend install --prod --frozen-lockfile --ignore-scripts \
     && npm_config_python=/opt/python/cp311-cp311/bin/python3 npm_config_build_from_source=true pnpm --filter elevenex-backend... rebuild better-sqlite3 node-pty \
     && pnpm --filter elevenex-backend... rebuild ffmpeg-static onnxruntime-node \
     && rm -rf /root/.local/share/pnpm/store /root/.cache/node-gyp
 COPY runtime/ ./
+# The Windows build context cannot carry the Unix executable bit.
+COPY --chmod=755 runtime/apps/backend/bin/plannotator-wrapper.sh ./apps/backend/bin/plannotator-wrapper.sh
 ARG DEVELOPMENT_VERSION
 RUN ELEVENEX_LINUX_RUNTIME_BUILDER=1 ELEVENEX_BACKEND_STAGE_VERSION=${DEVELOPMENT_VERSION} node scripts/desktop-backend-runtime.mjs
 

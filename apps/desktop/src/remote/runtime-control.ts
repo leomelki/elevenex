@@ -2,7 +2,14 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { request, type IncomingMessage } from 'node:http';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+
+export function ownershipPort(root: string, home: string, uid: number | undefined): number {
+  const namespace = basename(root);
+  const development = dirname(root) === join(home, '.elevenex', 'desktop-remote-dev') && /^[a-f0-9]{32}$/.test(namespace);
+  const hash = createHash('sha256').update(`${home}:${uid ?? ''}:elevenex-desktop${development ? `:${namespace}` : ''}`).digest().readUInt32BE(0);
+  return development ? 10000 + hash % 10000 : 20000 + hash % 20000;
+}
 
 export interface RuntimeHealth {
   version: string;
@@ -10,9 +17,10 @@ export interface RuntimeHealth {
   ready: boolean;
   /** Absent on daemons predating authenticated handoff and instance sockets. */
   handoff?: 1;
+  activeConnections?: number;
   replacement?: string;
 }
-export interface RuntimeLease { id: string; agent: string | null }
+export interface RuntimeLease { id: string; agent: string | null; presence?: 'active' | 'closed'; instance?: string }
 const mac = (token: string, value: string) => createHmac('sha256', token).update(value).digest('hex');
 export function sameProof(value: unknown, expected: string): boolean {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) && timingSafeEqual(Buffer.from(value), Buffer.from(expected));
@@ -30,13 +38,22 @@ export function verifyHealthRequest(req: IncomingMessage, token: string): string
 }
 
 /** Bind a destructive request to one instance and one source/target revision. */
-export function verifyHandoffRequest(req: IncomingMessage, token: string, current: RuntimeHealth): { nonce: string; target: string } | null {
+export function verifyHandoffRequest(req: IncomingMessage, token: string, current: RuntimeHealth): { nonce: string; target: string; force?: true } | null {
   const time = req.headers['x-elevenex-time']; const nonce = req.headers['x-elevenex-nonce'];
   const instance = req.headers['x-elevenex-instance']; const version = req.headers['x-elevenex-version']; const target = req.headers['x-elevenex-target'];
+  const force = req.headers['x-elevenex-force'];
   if (req.method !== 'POST' || req.url !== '/handoff' || typeof time !== 'string' || !/^\d{13}$/.test(time)
     || Math.abs(Date.now() - Number(time)) > 10_000 || typeof nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonce)
-    || instance !== current.instance || version !== current.version || typeof target !== 'string' || !/^[a-f0-9]{40}$/.test(target) || target === version) return null;
-  return sameProof(req.headers['x-elevenex-proof'], mac(token, `handoff:${time}:${nonce}:${instance}:${version}:${target}`)) ? { nonce, target } : null;
+    || instance !== current.instance || version !== current.version || typeof target !== 'string' || !/^[a-f0-9]{40}$/.test(target) || target === version
+    || (force !== undefined && force !== '1')) return null;
+  return sameProof(req.headers['x-elevenex-proof'], mac(token, `handoff:${time}:${nonce}:${instance}:${version}:${target}${force ? ':force' : ''}`))
+    ? { nonce, target, ...(force ? { force: true as const } : {}) } : null;
+}
+
+export function connectionPresence(req: IncomingMessage, token: string, nonce: string, id: string, instance: string): RuntimeLease['presence'] | null {
+  const presence = req.headers['x-elevenex-presence'];
+  if (presence === undefined) return undefined;
+  return (presence === 'active' || presence === 'closed') && sameProof(req.headers['x-elevenex-presence-proof'], mac(token, `presence:${nonce}:${id}:${presence}:${instance}`)) ? presence : null;
 }
 
 /** A retired bridge must never open the replacement backend's socket. */
@@ -44,12 +61,24 @@ export function backendSocketPath(root: string, health: Pick<RuntimeHealth, 'ins
   return join(root, health.handoff === 1 ? `b-${createHash('sha256').update(health.instance).digest('hex').slice(0, 16)}` : 'backend.sock');
 }
 
-export async function publishDaemon(root: string, port: number, instance: string): Promise<void> {
+export async function publishDaemon(root: string, port: number, instance: string, ownershipPort?: number): Promise<void> {
   const temporary = join(root, `.daemon-${randomBytes(16).toString('hex')}.tmp`);
   try {
-    await writeFile(temporary, JSON.stringify({ port, instance }), { mode: 0o600 });
+    await writeFile(temporary, JSON.stringify({ port, instance, ownershipPort }), { mode: 0o600 });
     await rename(temporary, join(root, 'daemon.json'));
   } finally { await rm(temporary, { force: true }); }
+}
+
+export async function needsLegacyOwnership(root: string, port: number): Promise<boolean> {
+  try {
+    const path = join(root, 'daemon.json');
+    const info = await stat(path);
+    if (!info.isFile() || info.size > 1024) return true;
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+    return !value || typeof value !== 'object' || !('ownershipPort' in value) || value.ownershipPort !== port;
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ENOENT');
+  }
 }
 
 async function daemonAddress(root: string, fallbackPort: number): Promise<{ port: number; instance?: string }> {
@@ -82,9 +111,11 @@ async function controlRequest(root: string, fallbackPort: number, token: string,
             || !('instance' in value) || typeof value.instance !== 'string' || value.instance.length > 64
             || expectedInstance !== undefined && value.instance !== expectedInstance || !('ready' in value) || typeof value.ready !== 'boolean'
             || 'handoff' in value && value.handoff !== 1
+            || 'activeConnections' in value && (typeof value.activeConnections !== 'number' || !Number.isInteger(value.activeConnections) || value.activeConnections < 0 || value.activeConnections > 257)
             || 'replacement' in value && (typeof value.replacement !== 'string' || !/^[a-f0-9]{40}$/.test(value.replacement))) throw new Error('Invalid daemon reply');
           resolve({ version: value.version, instance: value.instance, ready: value.ready,
             ...('handoff' in value ? { handoff: 1 as const } : {}),
+            ...('activeConnections' in value && typeof value.activeConnections === 'number' ? { activeConnections: value.activeConnections } : {}),
             ...('replacement' in value && typeof value.replacement === 'string' ? { replacement: value.replacement } : {}),
           });
         } catch (error) { reject(error); }
@@ -101,14 +132,17 @@ export async function queryDaemon(root: string, fallbackPort: number, token: str
   return controlRequest(root, fallbackPort, token, nonce, 'GET', '/health', {
     'X-Elevenex-Time': time, 'X-Elevenex-Nonce': nonce, 'X-Elevenex-Lease': leaseId, 'X-Elevenex-Agent': agent,
     'X-Elevenex-Proof': mac(token, `request:${time}:${nonce}:${leaseId}:${agent}`),
+    ...(lease?.presence ? { 'X-Elevenex-Presence': lease.presence, 'X-Elevenex-Presence-Proof': mac(token, `presence:${nonce}:${leaseId}:${lease.presence}:${lease.instance}`) } : {}),
   });
 }
 
-export async function requestHandoff(root: string, fallbackPort: number, token: string, current: RuntimeHealth, target: string): Promise<RuntimeHealth> {
+export async function requestHandoff(root: string, fallbackPort: number, token: string, current: RuntimeHealth, target: string, force = false): Promise<RuntimeHealth> {
   const nonce = randomBytes(32).toString('hex'); const time = String(Date.now());
+  const signedForce = force && current.activeConnections !== undefined;
   return controlRequest(root, fallbackPort, token, nonce, 'POST', '/handoff', {
     'X-Elevenex-Time': time, 'X-Elevenex-Nonce': nonce, 'X-Elevenex-Instance': current.instance,
     'X-Elevenex-Version': current.version, 'X-Elevenex-Target': target,
-    'X-Elevenex-Proof': mac(token, `handoff:${time}:${nonce}:${current.instance}:${current.version}:${target}`),
+    'X-Elevenex-Proof': mac(token, `handoff:${time}:${nonce}:${current.instance}:${current.version}:${target}${signedForce ? ':force' : ''}`),
+    ...(signedForce ? { 'X-Elevenex-Force': '1' } : {}),
   });
 }

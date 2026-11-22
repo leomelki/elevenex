@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { verifyLinuxCompatibility } from './desktop-backend-compatibility.mjs';
 
 const requirements = names => `Version needs section '.gnu.version_r' contains entries:\n${names.map(name => `  Name: ${name} Flags: none`).join('\n')}`;
 async function fixture(t) {
-  const root = await mkdtemp('/tmp/ex-elf-');
+  const root = await mkdtemp(join(tmpdir(), 'ex-elf-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'node_modules/node-pty/build/Release'), { recursive: true });
   await writeFile(join(root, 'node_modules/node-pty/build/Release/pty.node'), Buffer.from([0x7f, 0x45, 0x4c, 0x46]));

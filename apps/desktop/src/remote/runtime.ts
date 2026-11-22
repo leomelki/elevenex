@@ -1,6 +1,6 @@
 /** Uploaded as plain CommonJS alongside wire.js; runs only on the SSH host. */
 import { fork, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { homedir } from 'node:os';
@@ -11,7 +11,7 @@ import { ForwardedAgentProxy } from './agent-proxy';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wire, SocketChannels, type WireMessage } from './wire';
 import { BrowserDestinations } from './browser-destination';
-import { backendSocketPath, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
+import { backendSocketPath, connectionPresence, needsLegacyOwnership, ownershipPort, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
 import { ensureDaemon } from './runtime-start';
 import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
 
@@ -53,6 +53,14 @@ async function controlToken(root: string): Promise<string> {
   }
 }
 
+async function reserveOwnership(port: number): Promise<OwnershipSocket> {
+  const socket = createSocket('udp4');
+  try {
+    await new Promise<void>((resolve, reject) => { socket.once('error', reject); socket.bind({ port, address: '127.0.0.1', exclusive: true }, resolve); });
+    return socket;
+  } catch (error) { socket.close(); throw error; }
+}
+
 async function daemon(root: string, installation: string, version: string, port: number, token: string, inherited?: OwnershipSocket): Promise<void> {
   const instance = randomUUID();
   const socketPath = backendSocketPath(root, { instance, handoff: 1 });
@@ -62,8 +70,16 @@ async function daemon(root: string, installation: string, version: string, port:
   let replacement: string | undefined;
   let next: RuntimeReplacement | undefined;
   let preparing: Promise<void> | undefined;
+  let preparingTarget: string | undefined;
+  const connections = new Map<string, number>();
+  let overflowUntil = 0;
   const lifetime = new AbortController();
-  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, ...(replacement ? { replacement } : {}) });
+  const activeConnections = () => {
+    const now = Date.now();
+    for (const [id, expires] of connections) if (expires <= now) connections.delete(id);
+    return connections.size + Number(overflowUntil > now);
+  };
+  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, activeConnections: activeConnections(), ...(replacement ? { replacement } : {}) });
   const stop = () => {
     if (stopping) return;
     stopping = true; ready = false; lifetime.abort();
@@ -75,49 +91,70 @@ async function daemon(root: string, installation: string, version: string, port:
     const handoff = verifyHandoffRequest(req, token, snapshot());
     const nonce = handoff?.nonce ?? verifyHealthRequest(req, token);
     if (nonce === null) { res.writeHead(403).end(); return; }
-    const respond = () => {
-      const body = JSON.stringify(snapshot());
+    const respond = (state = snapshot()) => {
+      const body = JSON.stringify(state);
       res.setHeader('Content-Type', 'application/json'); res.setHeader('X-Elevenex-Proof', healthResponseProof(token, nonce, body)); res.end(body);
     };
     if (handoff) {
-      if (!stopping && !replacement) {
-        replacement = handoff.target;
-        preparing = prepareReplacement(root, handoff.target).then(plan => { next = plan; stop(); }).catch(error => { replacement = undefined; throw error; });
+      if (preparing) {
+        if (preparingTarget === handoff.target) void preparing.then(() => respond(), () => respond());
+        else respond({ ...snapshot(), replacement: preparingTarget });
+        return;
       }
-      if (replacement === handoff.target && preparing) void preparing.then(respond, respond);
-      else respond();
+      if (!stopping && !replacement) {
+        if (!handoff.force && activeConnections()) { respond(); return; }
+        preparingTarget = handoff.target;
+        preparing = prepareReplacement(root, handoff.target).then(plan => {
+          // The descriptor check can yield to a new authenticated connection.
+          if (stopping || (!handoff.force && activeConnections())) return;
+          replacement = handoff.target;
+          next = plan;
+          stop();
+        }).finally(() => { preparing = undefined; preparingTarget = undefined; });
+        void preparing.then(() => respond(), () => respond());
+      } else {
+        respond();
+      }
       return;
     }
     const lease = req.headers['x-elevenex-lease'];
     const agent = req.headers['x-elevenex-agent'];
     if (typeof lease === 'string' && /^[a-f0-9-]{36}$/.test(lease) && typeof agent === 'string' && agent.length <= 4096) {
       const path = Buffer.from(agent, 'base64').toString('utf8');
-      agents.renew(lease, path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
+      const presence = connectionPresence(req, token, nonce, lease, instance);
+      if (presence === null) { respond(); return; }
+      if (presence === 'closed') connections.delete(lease);
+      else if (!stopping) {
+        const expires = Date.now() + 75_000;
+        if (connections.has(lease) || activeConnections() < 256) connections.set(lease, expires);
+        else overflowUntil = expires;
+      }
+      agents.renew(lease, presence !== 'closed' && path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
     }
     respond();
   });
   health.requestTimeout = 2000; health.headersTimeout = 2000;
   // A separate UDP reservation can be retained by the supervisor without
   // accepting/swallowing any HTTP health connections in that other process.
-  const ownership = inherited ?? createSocket('udp4');
-  if (!inherited) {
-    try {
-      await new Promise<void>((resolve, reject) => { ownership.once('error', reject); ownership.bind({ port, address: '127.0.0.1', exclusive: true }, resolve); });
-    } catch (error) { ownership.close(); throw error; }
-  }
+  let previousOwnership = inherited && inherited.address().port !== port ? inherited : undefined;
+  const legacyPort = ownershipPort(homedir(), homedir(), process.getuid?.());
+  // An unreachable legacy daemon could still own this checkout's data. Take
+  // its account-wide reservation before migrating an existing discovery record.
+  if (!inherited && port !== legacyPort && await needsLegacyOwnership(root, port)) previousOwnership = await reserveOwnership(legacyPort);
+  const ownership = inherited && !previousOwnership ? inherited : await reserveOwnership(port).catch(error => { previousOwnership?.close(); throw error; });
   try {
     await new Promise<void>((resolve, reject) => { health.once('error', reject); health.listen(0, '127.0.0.1', resolve); });
     const address = health.address();
     if (!address || typeof address === 'string') throw new Error('Invalid daemon listener');
-    await publishDaemon(root, address.port, instance);
+    await publishDaemon(root, address.port, instance, port);
   } catch (error) {
     health.closeAllConnections();
     if (health.listening) await new Promise<void>(resolve => health.close(() => resolve()));
-    ownership.close(); throw error;
+    ownership.close(); previousOwnership?.close(); throw error;
   }
   try { await agents.listen(); }
   catch (error) {
-    await agents.dispose(); health.closeAllConnections(); await new Promise<void>(resolve => health.close(() => resolve())); ownership.close(); throw error;
+    await agents.dispose(); health.closeAllConnections(); await new Promise<void>(resolve => health.close(() => resolve())); ownership.close(); previousOwnership?.close(); throw error;
   }
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   if (inherited && process.send) process.send({ type: 'adopted' }, () => undefined);
@@ -182,16 +219,51 @@ async function daemon(root: string, installation: string, version: string, port:
       // Transfer the same kernel reservation after tree/socket cleanup. There
       // is no vacant interval for an older desktop to reclaim the database.
       if (next) await launchReplacement(root, next, ownership);
-    } finally { ownership.close(); }
+    } finally { ownership.close(); previousOwnership?.close(); }
   }
 }
 
 async function bridge(root: string, installation: string, version: string, port: number, token: string): Promise<void> {
-  const lease = { id: randomUUID(), agent: process.env['SSH_AUTH_SOCK'] ?? null };
-  await publishReplacement(root, installation, __filename, version);
-  const health = await ensureDaemon({ root, installation, version, port, token, lease, runtime: __filename, allowUpdate: process.argv[6] === 'update' });
   const wire = new Wire(process.stdin, process.stdout);
+  const setup = new AbortController();
+  let waitingInstance: string | undefined;
+  let forceInstance: string | undefined;
+  const cancel = () => setup.abort();
+  const receiveForce = (message: WireMessage) => {
+    if (message.type === 'force-update' && message.instance === waitingInstance) forceInstance = message.instance;
+  };
+  wire.on('message', receiveForce); wire.once('closed', cancel); process.once('SIGTERM', cancel);
+  let health: RuntimeHealth;
+  let lease: { id: string; agent: string | null; presence: 'active'; instance: string } | undefined;
+  try {
+    await publishReplacement(root, installation, __filename, version);
+    health = await ensureDaemon({ root, installation, version, port, token, runtime: __filename, allowUpdate: process.argv[6] === 'update', signal: setup.signal,
+      waitingForUpdate: current => {
+        waitingInstance = current.instance;
+        const force = forceInstance === current.instance;
+        forceInstance = undefined;
+        if (!force) wire.send({ type: 'update-waiting', instance: current.instance, connections: current.activeConnections ?? null });
+        return force;
+      },
+      updateStarting: instance => {
+        if (waitingInstance !== instance) return;
+        waitingInstance = undefined;
+        wire.send({ type: 'update-starting', instance });
+      },
+    });
+    lease = { id: randomUUID(), agent: process.env['SSH_AUTH_SOCK'] ?? null, presence: 'active', instance: health.instance };
+    const joined = await queryDaemon(root, port, token, lease);
+    setup.signal.throwIfAborted();
+    if (!joined.ready || joined.instance !== health.instance || joined.version !== version) throw new Error('EX11_UPDATE: competing revision accepted an update during connection');
+  } catch (error) {
+    wire.close(); process.stdin.destroy();
+    if (lease) await queryDaemon(root, port, token, { ...lease, agent: null, presence: 'closed' }).catch(() => undefined);
+    throw error;
+  } finally {
+    wire.removeListener('message', receiveForce); wire.removeListener('closed', cancel); process.removeListener('SIGTERM', cancel);
+  }
   const channels = new SocketChannels(wire);
+  const activeLease = lease;
   const destinations = new BrowserDestinations();
   const socketPath = backendSocketPath(root, health);
   wire.on('message', (message: WireMessage) => {
@@ -210,7 +282,7 @@ async function bridge(root: string, installation: string, version: string, port:
       wire.once('closed', closed);
     }
     else if (message.type === 'ping') {
-      void queryDaemon(root, port, token, lease).then(current => {
+      void queryDaemon(root, port, token, activeLease).then(current => {
         wire.send({ type: 'pong', id: message.id, ready: current.ready && current.version === version && current.instance === health.instance && !current.replacement, instance: current.instance });
       }).catch(() => wire.close());
     }
@@ -219,10 +291,10 @@ async function bridge(root: string, installation: string, version: string, port:
   const close = () => {
     if (closing) return; closing = true;
     destinations.close(); channels.dispose(); wire.close(); process.stdin.destroy(); process.stdout.end();
-    void queryDaemon(root, port, token, { id: lease.id, agent: null }).catch(() => undefined);
+    void queryDaemon(root, port, token, { ...activeLease, agent: null, presence: 'closed' }).catch(() => undefined);
   };
   wire.once('closed', close); process.once('SIGTERM', close);
-  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: lease.agent !== null, browserProxy: true });
+  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: activeLease.agent !== null, browserProxy: true });
 }
 
 async function main(): Promise<void> {
@@ -235,7 +307,7 @@ async function main(): Promise<void> {
     await mkdir(root, { recursive: true, mode: 0o700 });
     await mkdir(join(root, 'data'), { recursive: true, mode: 0o700 });
     const token = await controlToken(root);
-    const port = 20000 + createHash('sha256').update(`${homedir()}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
+    const port = ownershipPort(root, homedir(), process.getuid?.());
     if (mode === 'daemon' || mode === 'handoff') { delegated = true; await daemon(root, installation, version, port, token, inherited); }
     else if (mode === 'bridge') await bridge(root, installation, version, port, token);
     else throw new Error('EX11_CONFIGURATION: unknown remote runtime mode');

@@ -189,3 +189,11 @@ width transition, with `panelWide` preserving the outgoing feature layout. Code'
 keeps the picture mounted inside the already inert region until the shell settles.
 The shell freezes its inner width and opacity through exit, owns cancellation on
 reopen/destruction, and releases contents without a timer when motion is absent.
+
+## Remote engine updates
+
+An explicit launch can wait for connected Elevenex clients to leave an older
+engine. The machine dialog shows the reported count and updates as it changes.
+Cancel releases the window's pending connection. Force targets the exact daemon
+instance shown and can interrupt running agents and terminals. The main process
+owns the SSH update negotiation and validates the selected host and instance.

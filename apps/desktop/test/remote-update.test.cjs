@@ -4,6 +4,7 @@ const { createHash, createHmac, randomBytes } = require('node:crypto');
 const { createSocket } = require('node:dgram');
 const { EventEmitter } = require('node:events');
 const { mkdir, mkdtemp, readFile, rm, symlink, writeFile } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const processes = require('node:child_process');
@@ -15,10 +16,10 @@ const { prepareReplacement, publishReplacement } = require('../dist/remote/runti
 
 const version = 'a'.repeat(40); const target = 'b'.repeat(40); const other = 'c'.repeat(40);
 const token = randomBytes(32).toString('hex');
-const old = { version, instance: 'old-instance', ready: true, handoff: 1 };
+const old = { version, instance: 'old-instance', ready: true, handoff: 1, activeConnections: 0 };
 const current = { version: target, instance: 'new-instance', ready: true, handoff: 1 };
 const startup = { root: '/fixture', installation: '/fixture/runtime', version: target, port: 22222, token,
-  lease: { id: 'lease', agent: null }, runtime: '/fixture/runtime.js', allowUpdate: true };
+  runtime: '/fixture/runtime.js', allowUpdate: true };
 
 function startupFixture(t, replies, handoff = async () => ({ ...old, ready: false, replacement: target })) {
   let reads = 0; let stops = 0; let starts = 0;
@@ -49,6 +50,19 @@ test('handoff proofs bind method, path, time, instance and both revisions withou
   }
   assert.equal(control.verifyHandoffRequest(req, token, current), null);
   assert.equal(control.verifyHealthRequest(req, token), null);
+  assert.equal(control.verifyHandoffRequest({ ...req, headers: { ...headers, 'x-elevenex-force': '1' } }, token, old), null);
+  const forcedProof = createHmac('sha256', token).update(`handoff:${time}:${nonce}:${old.instance}:${version}:${target}:force`).digest('hex');
+  assert.deepEqual(control.verifyHandoffRequest({ ...req, headers: { ...headers, 'x-elevenex-force': '1', 'x-elevenex-proof': forcedProof } }, token, old), { nonce, target, force: true });
+});
+
+test('development checkouts use scoped ownership ports and preserve the release lock', () => {
+  const home = '/fixture/home';
+  const legacy = 20000 + createHash('sha256').update(`${home}:1000:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
+  assert.equal(control.ownershipPort(join(home, '.elevenex/desktop-remote'), home, 1000), legacy);
+  const first = control.ownershipPort(join(home, '.elevenex/desktop-remote-dev', 'a'.repeat(32)), home, 1000);
+  const second = control.ownershipPort(join(home, '.elevenex/desktop-remote-dev', 'b'.repeat(32)), home, 1000);
+  assert.ok(first >= 10000 && first < 20000);
+  assert.notEqual(first, second);
 });
 
 test('warm startup joins the current revision without shutdown or another process', async t => {
@@ -63,6 +77,29 @@ test('background reconnect and legacy daemons never authorize destructive replac
   control.queryDaemon.mock.mockImplementation(async () => ({ version, instance: old.instance, ready: true }));
   await assert.rejects(ensureDaemon(startup), /legacy daemon requires one manual stop/);
   assert.equal(fixture.stops(), 0); assert.equal(fixture.starts(), 0);
+});
+
+test('waiting reports active connections and cancellation sends no handoff request', async t => {
+  const busy = { ...old, activeConnections: 3 };
+  const fixture = startupFixture(t, [busy]);
+  const stop = new AbortController();
+  await assert.rejects(ensureDaemon({ ...startup, signal: stop.signal, waitingForUpdate: value => {
+    assert.deepEqual(value, busy);
+    stop.abort();
+    return false;
+  } }), /abort/i);
+  assert.equal(fixture.stops(), 0);
+  assert.equal(fixture.starts(), 0);
+});
+
+test('an unreported connection count requires explicit force authorization', async t => {
+  const legacy = { version, instance: old.instance, ready: true, handoff: 1 };
+  const fixture = startupFixture(t, [legacy, current], async (...args) => {
+    assert.equal(args[5], true);
+    return { ...legacy, ready: false, replacement: target };
+  });
+  assert.deepEqual(await ensureDaemon({ ...startup, waitingForUpdate: value => value === legacy }), current);
+  assert.equal(fixture.stops(), 1);
 });
 
 test('lost handoff replies are reconciled without replay, and startup waits for the old listener to leave', async t => {
@@ -84,7 +121,7 @@ test('a signed handoff rejection reports preparation failure without retrying sh
 });
 
 test('replacement descriptors confine the revision, runtime cache and uploaded shim', async t => {
-  const root = await mkdtemp('/tmp/ex-handoff-plan-'); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), 'ex-handoff-plan-')); t.after(() => rm(root, { recursive: true, force: true }));
   const installation = join(root, 'runtimes', `runtime-${target}-linux-x64`);
   const client = 'd'.repeat(64); const runtime = join(root, 'clients', client, 'runtime.js');
   await mkdir(join(installation, 'backend/node/bin'), { recursive: true }); await mkdir(join(root, 'clients', client), { recursive: true });
@@ -128,7 +165,9 @@ async function until(read, accepts, timeout = 10000) {
 
 test('real remote handoff preserves data, coalesces clients, fences old bridges and recovers interrupted startup', { timeout: 45000 }, async t => {
   if (process.platform === 'win32') return t.skip('POSIX remote daemon');
-  const home = await mkdtemp('/tmp/ex-update-'); const root = join(home, '.elevenex/desktop-remote');
+  const home = await mkdtemp('/tmp/ex-'); const root = join(home, '.elevenex/desktop-remote');
+  const developmentNamespace = 'b'.repeat(32);
+  const developmentRoot = join(home, '.elevenex/desktop-remote-dev', developmentNamespace);
   const bin = join(home, 'bin'); await mkdir(bin); await mkdir(join(root, 'data'), { recursive: true });
   // Skip optional server downloads, keeping this lifecycle test fully offline.
   await writeFile(join(bin, 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
@@ -156,14 +195,14 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
       child.stdout.on('data', bytes => { body += bytes; }); child.once('close', () => resolve(body));
     });
     for (const line of listing.split('\n')) {
-      if (line.includes(`runtime.js daemon ${root} `) || line.includes(`runtime.js handoff ${root} `)) process.kill(Number(line.trim().split(/\s+/)[0]), 'SIGTERM');
+      if ([root, developmentRoot].some(path => line.includes(`runtime.js daemon ${path} `) || line.includes(`runtime.js handoff ${path} `))) process.kill(Number(line.trim().split(/\s+/)[0]), 'SIGTERM');
     }
     await until(() => control.queryDaemon(root, 1, secret).catch(() => null), value => value === null);
     await rm(home, { recursive: true, force: true });
   });
   const releaseFor = value => backendRelease({ version: value, tag: `runtime-${value}` }, process.platform, process.arch);
-  const install = async (value, ignoreTerm = false, gated = false) => {
-    const release = releaseFor(value); const directory = join(root, 'runtimes', `${release.tag}-${release.target}`);
+  const install = async (value, ignoreTerm = false, gated = false, installRoot = root) => {
+    const release = releaseFor(value); const directory = join(installRoot, 'runtimes', `${release.tag}-${release.target}`);
     await mkdir(join(directory, 'backend/node/bin'), { recursive: true });
     await symlink(process.execPath, join(directory, 'backend/node/bin/node'));
     await writeFile(join(directory, 'installation.sha256'), 'fixture');
@@ -194,6 +233,17 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
   t.diagnostic('Starting the original daemon.');
   const original = await connect(await install(version, true)); const before = await info(original);
   const secret = await runtimeToken(); const health = await control.queryDaemon(root, 1, secret);
+  assert.equal(health.activeConnections, 1);
+  await mkdir(join(developmentRoot, 'data'), { recursive: true });
+  await writeFile(join(developmentRoot, 'data/keep'), 'development user data');
+  const devRelease = await install(version, false, false, developmentRoot);
+  const legacyDiscovery = join(developmentRoot, 'daemon.json');
+  await writeFile(legacyDiscovery, JSON.stringify({ port: 1, instance: 'unreachable-legacy-daemon' }));
+  await assert.rejects(connect(devRelease, { developmentNamespace }), error => error.failure?.code === 'configuration');
+  await rm(legacyDiscovery);
+  const development = await connect(devRelease, { developmentNamespace });
+  assert.equal((await info(development)).keep, 'development user data');
+  assert.equal((await info(original)).pid, before.pid);
   await assert.rejects(control.requestHandoff(root, 1, '0'.repeat(64), health, target));
   await assert.rejects(control.requestHandoff(root, 1, secret, { ...health, instance: 'stale-instance' }, target));
   assert.equal((await control.requestHandoff(root, 1, secret, health, 'f'.repeat(40))).replacement, undefined);
@@ -218,7 +268,17 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
     }
   })();
   let first; let second;
-  try { [first, second] = await Promise.all([connect(nextRelease), connect(nextRelease)]); }
+  let permitForce;
+  const waiting = new Promise(resolve => { permitForce = resolve; });
+  try {
+    const updating = Promise.all([connect(nextRelease, { waitingForUpdate: (state, force) => permitForce({ state, force }) }), connect(nextRelease)]);
+    void updating.catch(() => undefined);
+    const request = await Promise.race([waiting, updating.then(() => assert.fail('Update should wait for an active bridge'))]);
+    assert.equal(request.state.connections, 1);
+    assert.equal((await info(original)).pid, before.pid);
+    request.force();
+    [first, second] = await updating;
+  }
   finally { watching = false; await watcher; }
   assert.equal(vacant, false, 'ownership must remain reserved throughout shutdown and daemon replacement');
   const after = await info(first);
@@ -233,10 +293,19 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
 
   t.diagnostic('Interrupting replacement startup.');
   const gated = await install(other, false, true);
-  await assert.rejects(connect(gated, { signal: AbortSignal.timeout(2500) }), /abort|timeout/i);
+  const cancel = new AbortController();
+  let reportWaiting;
+  const waitingForClients = new Promise(resolve => { reportWaiting = resolve; });
+  const upgrade = connect(gated, { signal: AbortSignal.any([cancel.signal, AbortSignal.timeout(15000)]), waitingForUpdate: reportWaiting });
+  void upgrade.catch(() => undefined);
+  const pending = await Promise.race([waitingForClients, upgrade.then(() => assert.fail('Update should wait for both clients'))]);
+  assert.equal(pending.connections, 2);
+  await Promise.all([first.close(), second.close()]);
+  const unready = await until(() => control.queryDaemon(root, 1, secret).catch(() => null), value => value?.version === other);
   assert.throws(() => process.kill(after.pid, 0), { code: 'ESRCH' });
-  const unready = await control.queryDaemon(root, 1, secret);
-  assert.equal(unready.version, other); assert.equal(unready.ready, false);
+  assert.equal(unready.ready, false);
+  cancel.abort();
+  await assert.rejects(upgrade, /abort/i);
   await writeFile(join(root, 'data/ready'), 'ready');
   const recovered = await connect(gated, { interactive: false });
   assert.equal((await info(recovered)).backendSha, other);

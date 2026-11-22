@@ -66,8 +66,8 @@ package rebuilds and branch updates can add runtime exports without a lockfile
 change or a manual Vite cache reset.
 
 `desktop:dev` also compiles and bundles the checkout's backend before opening
-Electron. **This Mac** runs that local bundle with the launcher's Node executable;
-it does not fetch a GitHub release. The development runtime is assembled under
+Electron. The local machine runs that bundle with the launcher's Node executable
+and skips the GitHub release download. The development runtime is assembled under
 `apps/desktop/.stage/development-backend/`, with links to the workspace's installed
 dependencies, migrations and assets. Mutable data remains under
 `~/.elevenex/desktop/data/`. Install dependencies for the Node version used to
@@ -78,19 +78,22 @@ that custom build over SSH, without trying GitHub. By default this archive match
 the client's OS and architecture. Failed default archive assembly leaves local
 development available and reports the reason in the terminal.
 
-To develop on a Mac and connect to a **Linux ARM64** server, start Docker Desktop
-or OrbStack, then run:
+To develop against a **Linux ARM64** server, start Docker with Buildx support.
+On Windows, use Docker Desktop in Linux container mode. On macOS, use Docker
+Desktop or OrbStack. Then run:
 
 ```sh
 pnpm desktop:dev --linux
 ```
 
-Electron, Angular HMR and **This Mac** still run locally. The launcher bundles your
-current backend code (including uncommitted edits), then uses Docker to install
-the lockfile's Linux dependencies, bundle portable Node and validate the runtime.
+Electron, Angular HMR and the local backend still run on the host. The launcher
+bundles your current backend code (including uncommitted edits), then uses Docker
+to install the lockfile's Linux dependencies, bundle portable Node and validate
+the runtime.
 Docker caches the dependency/build layers between launches. Only manifests and
-runtime inputs enter the isolated build context; the Mac's installed dependencies
-are left alone. The explicit Linux build must succeed before Electron opens.
+runtime inputs enter the isolated build context. The launcher normalizes the
+staged lockfile and Linux shell scripts for Windows checkouts with CRLF line
+endings. The explicit Linux build must succeed before Electron opens.
 The first build requires internet access and can take several minutes. The builder
 uses the [official Node image on ECR Public](https://gallery.ecr.aws/docker/library/node)
 for portable Node 24.22.3, the repository's pinned pnpm, and the
@@ -124,10 +127,11 @@ the ordinary test suite skips this Docker integration test.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
-Explicitly opening/retrying a server replaces a daemon from a different build
-through authenticated handoff. This interrupts that daemon's agents and terminals;
-background recovery never replaces another revision. Daemons predating handoff
-need one manual stop as described in the remote guide. Production remote data is untouched.
+Explicitly opening or retrying a server prepares an authenticated handoff. The
+desktop checks active Elevenex connections and waits for the engine to become
+idle. **Force update** can interrupt connected users, agents and terminals.
+Background recovery never requests a handoff. Daemons predating authenticated
+handoff need the one-time migration in the remote guide.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 

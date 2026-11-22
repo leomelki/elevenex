@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import type { RemoteHost, RemoteStage } from '@elevenex/shared';
+import type { RemoteConnectionStatus, RemoteHost, RemoteStage } from '@elevenex/shared';
 import type { BackendRelease } from '../backend/release';
 import { backendRelease } from '../backend/release';
 import type { DownloadProgress } from '../backend/download';
@@ -34,6 +34,8 @@ export interface ConnectOptions {
   readonly interactive: boolean;
   readonly ask: Ask;
   readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
+  readonly waitingForUpdate?: (update: NonNullable<RemoteConnectionStatus['updateWaiting']>, force: () => void) => void;
+  readonly updateStarting?: (instance: string) => void;
   readonly prepareArchive?: PrepareRemoteArchive;
   /** Unpackaged launcher only; isolates custom runtimes and their mutable data. */
   readonly developmentNamespace?: string;
@@ -46,12 +48,14 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   const signal = AbortSignal.any([options.signal, cancellation.signal]);
   const { progress } = options;
   const nonce = randomBytes(16).toString('hex');
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive), options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
+  const { command, payload } = await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
+  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });
   let stage: RemoteStage = 'authentication';
   ssh.child.stdin.on('error', () => undefined);
+  ssh.child.stdin.write(payload);
   const transportEnded = ssh.exited.then(() => {
     const stderr = ssh.diagnostics();
     if (/EX11_UPDATE: legacy daemon/.test(stderr)) throw failure('runtime', 'compatibility', 'The running remote daemon predates automatic updates. Stop that verified daemon once using the remote development guide, then Retry. Later updates stop and replace it automatically.', 'retry');
@@ -132,6 +136,11 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
     const channel = wire;
     const greeting = new Promise<Extract<WireMessage, { type: 'hello' }>>((resolve, reject) => {
       const receive = (message: WireMessage) => {
+        if (message.type === 'update-waiting') {
+          options.waitingForUpdate?.({ instance: message.instance, connections: message.connections }, () => channel.send({ type: 'force-update', instance: message.instance }));
+          return;
+        }
+        if (message.type === 'update-starting') { options.updateStarting?.(message.instance); return; }
         if (message.type !== 'hello') return;
         channel.removeListener('message', receive); channel.removeListener('closed', closed);
         if (message.version !== options.release.version || !message.ready) reject(failure('application', 'compatibility', 'The remote backend is not ready at the expected revision.', 'edit'));

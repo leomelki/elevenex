@@ -45,6 +45,8 @@ export class RemoteConnection {
   private challenge: { value: RemoteChallenge; owner: number; resolve: (value: string | null) => void } | undefined;
   private transport: RemoteTransport | undefined;
   private backendForward: Awaited<ReturnType<RemoteTransport['forward']>> | undefined;
+  private forcePendingUpdate: (() => void) | undefined;
+  private forcedInstance: string | undefined;
 
   constructor(private readonly options: ConnectionOptions) { this.status = disconnected(options.host.id); }
   snapshot(): RemoteConnectionStatus { return structuredClone(this.status); }
@@ -89,6 +91,13 @@ export class RemoteConnection {
     this.outageStarted = undefined;
     this.status = { ...this.status, retryStoppedAt: undefined };
     this.acquire(windowId, true); this.wakeup?.abort();
+  }
+  forceUpdate(windowId: number, instance: string): void {
+    if (!this.owners.has(windowId) || this.status.updateWaiting?.instance !== instance || !this.forcePendingUpdate) throw new Error('This remote update is no longer waiting.');
+    this.forcePendingUpdate();
+    this.forcePendingUpdate = undefined;
+    this.forcedInstance = instance;
+    this.publish({ ...this.status, updateWaiting: undefined });
   }
   networkChanged(): void {
     if (!this.active) return;
@@ -172,7 +181,7 @@ export class RemoteConnection {
       const setupSignal = AbortSignal.any([signal, deadline.signal]);
       try {
         this.publish({ ...this.status, phase: attempt ? 'recovering' : 'connecting', stage, authenticated: false,
-          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null });
+          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined });
         resetDeadline(stage);
         const release = await this.options.release();
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
@@ -184,6 +193,21 @@ export class RemoteConnection {
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
             this.publish({ ...this.status, phase: next === 'discovery' ? 'connecting' : 'setting-up', stage: next,
               authenticated: true, progress: value ?? null, application: next === 'runtime' ? 'starting' : 'unknown' });
+          },
+          waitingForUpdate: (update, force) => {
+            if (setupSignal.aborted || !interactive) return;
+            resetDeadline('runtime');
+            if (this.forcedInstance === update.instance) return;
+            this.forcePendingUpdate = force;
+            const before = this.status.updateWaiting;
+            if (before?.instance !== update.instance || before.connections !== update.connections) this.publish({ ...this.status, updateWaiting: update });
+          },
+          updateStarting: instance => {
+            if (setupSignal.aborted) return;
+            resetDeadline('runtime');
+            if (this.status.updateWaiting?.instance !== instance) return;
+            this.forcePendingUpdate = undefined;
+            this.publish({ ...this.status, updateWaiting: undefined });
           },
         });
         if (signal.aborted) { await transport.close(); signal.throwIfAborted(); }
@@ -199,7 +223,7 @@ export class RemoteConnection {
         this.outageStarted = undefined;
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
-          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined });
+          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, updateWaiting: undefined });
         const connectedAt = Date.now();
         const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
         void transportLost.catch(() => undefined);
@@ -240,9 +264,11 @@ export class RemoteConnection {
         const stopped = problem.transient && now - this.outageStarted >= (this.options.retryWindow ?? 600_000);
         this.paused = stopped || !problem.transient && this.requestedInteractiveOwner === undefined;
         this.publish({ ...this.status, phase: this.paused ? 'paused' : 'recovering', stage: problem.stage,
-          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined });
+          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined, updateWaiting: undefined });
       } finally {
         if (timer) clearTimeout(timer);
+        this.forcePendingUpdate = undefined;
+        this.forcedInstance = undefined;
         this.wakeup?.abort();
         deadline.abort();
         this.challenge?.resolve(null); this.challenge = undefined;

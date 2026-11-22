@@ -59,6 +59,8 @@ export interface RemoteConnectionStatus {
   readonly unreachableSince?: number;
   readonly retryStoppedAt?: number;
   readonly failure: RemoteFailure | null;
+  /** An explicit launch is waiting for an authenticated daemon to become idle. */
+  readonly updateWaiting?: { readonly instance: string; readonly connections: number | null };
   readonly progress: { readonly receivedBytes: number; readonly totalBytes: number | null } | null;
   /** Changes after every successful reconnection. Reject work from older generations. */
   readonly generation: number;

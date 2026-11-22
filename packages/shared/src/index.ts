@@ -176,6 +176,7 @@ export interface InvokeContracts {
   'environment:select': { args: [selection: EnvironmentSelection]; result: EnvironmentSnapshot };
   'environment:context': { args: [context: EnvironmentContext, expectedEnvironment: EnvironmentSelection]; result: EnvironmentSnapshot };
   'remote:retry': { args: []; result: EnvironmentSnapshot };
+  'remote:force-update': { args: [hostId: string, instance: string]; result: void };
   'remote:pause': { args: []; result: EnvironmentSnapshot };
   'remote:disconnect': { args: []; result: EnvironmentSnapshot };
   'remote:answer': { args: [challengeId: string, answer: string | null]; result: void };
@@ -350,6 +351,7 @@ export interface ElevenexBridge {
   selectEnvironment(selection: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   saveEnvironmentContext(context: EnvironmentContext, expectedEnvironment: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   retryRemote(): Promise<EnvironmentSnapshot>;
+  forceRemoteUpdate(hostId: string, instance: string): Promise<void>;
   pauseRemoteRecovery(): Promise<EnvironmentSnapshot>;
   disconnectRemote(): Promise<EnvironmentSnapshot>;
   answerRemoteChallenge(id: string, answer: string | null): Promise<void>;

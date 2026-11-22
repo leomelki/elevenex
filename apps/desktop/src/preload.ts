@@ -147,6 +147,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   selectEnvironment: selection => invoke('environment:select', selection),
   saveEnvironmentContext: (context, expected) => invoke('environment:context', context, expected),
   retryRemote: () => invoke('remote:retry'),
+  forceRemoteUpdate: (hostId, instance) => invoke('remote:force-update', hostId, instance),
   pauseRemoteRecovery: () => invoke('remote:pause'),
   disconnectRemote: () => invoke('remote:disconnect'),
   answerRemoteChallenge: (id, answer) => invoke('remote:answer', id, answer),

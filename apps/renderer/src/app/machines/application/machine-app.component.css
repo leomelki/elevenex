@@ -13,9 +13,10 @@
 .connection-notice span { flex: 1; min-width: 120px; overflow-wrap: anywhere; }
 .settings-error { margin: var(--space-4); color: var(--danger); font-size: var(--text-caption-size); }
 .error-toast { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 20; max-width: calc(100vw - var(--space-8)); }
-.pairing { width: min(440px, calc(100vw - var(--space-8))); padding: var(--space-6); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
-.pairing h2 { margin: 0; font-size: var(--text-title-size); }
-.pairing p { margin: 0; font-size: var(--text-body-size); color: var(--ink-muted); line-height: var(--text-body-line); }
+.machine-dialog { width: min(440px, calc(100vw - var(--space-8))); padding: var(--space-6); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-4); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+.machine-dialog h2 { margin: 0; font-size: var(--text-title-size); }
+.machine-dialog p { margin: 0; font-size: var(--text-body-size); color: var(--ink-muted); line-height: var(--text-body-line); }
+.update-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-self: stretch; gap: var(--space-2); }
 
 .reach-panel { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in oklab, var(--ink-inverse) 8%, transparent); }
 .reach-panel p { margin: 0; font-size: var(--text-caption-size); font-weight: 400; line-height: var(--text-ui-line); white-space: normal; }

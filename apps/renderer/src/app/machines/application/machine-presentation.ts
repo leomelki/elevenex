@@ -19,6 +19,7 @@ export function localMachine(status: BackendStatus, name: string): Machine {
 
 export function remotePresentation(connection: RemoteConnectionStatus): Pick<Machine, 'conn' | 'status' | 'last' | 'busy' | 'error'> {
   if (connection.phase === 'ready') return { conn: 'live', status: 'Ready to work' };
+  if (connection.updateWaiting) return { conn: 'idle', busy: { step: 'Waiting to update the engine' } };
   if (connection.phase === 'paused' || connection.phase === 'disconnected') return { conn: connection.failure ? 'fail' : 'idle', last: connection.failure?.message ?? 'Open to connect', error: connection.failure ? { step: failureStep(connection.failure.message), tone: connection.failure.code === 'host-trust' ? 'danger' : 'warn', progress: connection.progress ? progress(connection.progress.receivedBytes, connection.progress.totalBytes) : undefined, action: connection.failure.action === 'verify-host' ? 'Review the key' : 'Try again' } : undefined };
   const labels: Record<RemoteConnectionStatus['stage'], string> = {
     authentication: connection.phase === 'awaiting-input' ? 'Waiting for your sign-in' : 'Connecting over SSH',

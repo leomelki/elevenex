@@ -111,7 +111,7 @@ receive cloned context snapshots during a download or typing burst.
 
 ## Setup and remote work lifetime
 
-The host must provide a POSIX shell, uname, Git, tar, gzip, base64, head with `-c`,
+The host must provide a POSIX shell, uname, Git, tar, gzip, head with `-c`,
 mktemp, and sha256sum or shasum. Supported remote targets are **Linux glibc and macOS,
 x64/arm64**, subject to the OS/libc requirements of the selected release's
 bundled Node and native modules. Alpine/musl and Windows SSH servers need a
@@ -194,9 +194,10 @@ terminal reports why.
 Dirty and untracked backend sources contribute to the development revision;
 the generated revision file itself does not. Development runtime caches, daemon
 ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
-separate from release data. Identical builds reuse their installation. The existing
-handoff replaces a daemon from another build on explicit open/retry, just as for
-release builds. Background recovery never interrupts another build's backend.
+separate from release data. Identical builds reuse their installation. An explicit
+open or Retry waits for the daemon in this checkout to become idle before handing
+off to the requested revision. Background recovery follows an accepted update
+for its revision and never initiates a handoff.
 
 Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
 7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
@@ -222,8 +223,13 @@ legacy remote data and local desktop data:
 | `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
 | `handoff-<revision>.json` | Private prepared runtime/shim descriptor, atomically published before handoff |
 
-The daemon reserves a deterministic remote loopback UDP port in 20000–39999 as
-its kernel database ownership lock. The HTTP control listener uses an
+The release daemon reserves a deterministic remote loopback UDP port in 20000–39999
+as its kernel database ownership lock. Each development checkout derives its own
+port in 10000–19999 from its namespace. During a handoff from a development daemon
+using the old account-wide port, the replacement acquires the checkout's port
+before announcing readiness. If an older discovery record is unreachable, a
+cold start must acquire its account-wide lock before migrating the checkout.
+The HTTP control listener uses an
 OS-allocated TCP port recorded in `daemon.json`, so an unrelated TCP service
 cannot prevent setup. Requests and responses authenticate with fresh nonces,
 timestamps and HMAC proofs; the token is never sent to a stale/reused TCP port.
@@ -266,9 +272,16 @@ invent automatic agent-run resumption.
 ### Updating a remote backend
 
 Explicitly opening a server or choosing Retry prepares this desktop's backend
-revision, then replaces a different running revision automatically. Preparation
-finishes before shutdown: failed download, checksum, extraction or Node checks
-leave the old backend running. The authenticated handoff is bound to the exact
+revision. If another revision has active Elevenex connections, the desktop shows
+the count and checks again over the existing SSH connection until the last one
+closes. **Force update** can interrupt those connections and their agents and
+terminals. **Cancel connection** stops waiting. The count covers Elevenex
+transports. Other SSH sessions and background work after disconnect are outside
+this count. An engine that supports handoff but cannot report connections requires
+an explicit force. The daemon rechecks active leases before accepting a normal
+handoff so a connection opened during preparation can keep using the engine.
+Download, checksum, extraction and bundled Node checks finish before shutdown.
+The authenticated handoff is bound to the exact
 daemon instance, source revision and target revision. The daemon accepts only
 an already installed runtime and uploaded shim beneath its own root. No process
 discovery, PID file, broad kill command or public shutdown API is involved.

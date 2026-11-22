@@ -41,6 +41,10 @@ export class MachineConnectionService {
     await this.refresh();
   }
   async disconnect(): Promise<void> { await this.bridge.disconnectRemote(); await this.refresh(); }
+  async forceUpdate(hostId: string, instance: string): Promise<void> {
+    await this.bridge.forceRemoteUpdate(hostId, instance);
+    await this.refresh();
+  }
   async opened(selection: EnvironmentSelection): Promise<void> { this.accept(await this.bridge.markMachineOpened(selection)); }
   async addHost(input: RemoteHostInput) {
     const host = await this.bridge.saveRemoteHost(input, null);

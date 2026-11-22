@@ -34,6 +34,10 @@ export function registerRemoteIpc(remote: RemoteManager, backend: BackendManager
   register('environment:context', 2, (window, input, expected) => remote.saveContext(window, input, expected));
   register('environment:backend-status', 0, window => remote.backendStatus(window, backend.snapshot()));
   register('remote:retry', 0, window => remote.retry(window));
+  register('remote:force-update', 2, (window, hostId, instance) => {
+    if (typeof hostId !== 'string' || typeof instance !== 'string') throw new Error('Invalid remote update');
+    remote.forceUpdate(window, hostId, instance);
+  });
   register('remote:pause', 0, window => remote.disconnect(window, true));
   register('remote:disconnect', 0, window => remote.disconnect(window));
   register('remote:answer', 2, (window, id, answer) => remote.answer(window, id, answer));

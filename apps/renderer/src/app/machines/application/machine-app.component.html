@@ -64,6 +64,25 @@
   @for (prompt of retainedChallenge() ? [retainedChallenge()!] : []; track prompt.id) { <ex-remote-challenge-dialog [challenge]="prompt" [machineName]="islandMachine()?.name ?? 'server'" [active]="!!challenge() && (!launcher.open() || reviewTrust())" [busy]="challengeBusy()" [error]="challengeError()" (answered)="answer($event)" /> }
 </ex-modal-layer>
 <ex-modal-layer [open]="pairingOpen()" [from]="pairingFrom()" (closeRequested)="pairingOpen.set(false)">
-  <section class="pairing" role="dialog" aria-labelledby="pairing-title" [attr.inert]="pairingOpen() ? null : ''"><ex-icon name="peer" [size]="24" /><h2 id="pairing-title">Pair another computer</h2><p>Computer pairing is not available in this desktop version. You can run agents on this computer or connect to a server over SSH.</p><button exButton variant="primary" (click)="pairingOpen.set(false)">Back to machines</button></section>
+  <section class="machine-dialog" role="dialog" aria-labelledby="pairing-title" [attr.inert]="pairingOpen() ? null : ''"><ex-icon name="peer" [size]="24" /><h2 id="pairing-title">Pair another computer</h2><p>Computer pairing is not available in this desktop version. You can run agents on this computer or connect to a server over SSH.</p><button exButton variant="primary" (click)="pairingOpen.set(false)">Back to machines</button></section>
+</ex-modal-layer>
+<ex-modal-layer [open]="!!waitingUpdate()" (closeRequested)="respondToUpdate(false)">
+  @if (retainedUpdate(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="engine-update-title" [attr.inert]="waitingUpdate() ? null : ''">
+      <h2 id="engine-update-title">Engine update on {{ pending.name }}</h2>
+      <p role="status">
+        @if (pending.connections === null) { This engine cannot report active connections. }
+        @else if (pending.connections === 1) { One connection is active. The update will start when it closes. }
+        @else if (pending.connections === 257) { At least 257 connections are active. The update will start when they close. }
+        @else { {{ pending.connections }} connections are active. The update will start when they close. }
+      </p>
+      <p>Forcing the update disconnects everyone using this engine and stops running agents and terminals.</p>
+      @if (updateActionError()) { <p role="alert">{{ updateActionError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="updateActionBusy()" (click)="respondToUpdate(false)">Cancel connection</button>
+        <button exButton variant="danger" [disabled]="updateActionBusy()" (click)="respondToUpdate(true)">Force update</button>
+      </div>
+    </section>
+  }
 </ex-modal-layer>
 </div>
