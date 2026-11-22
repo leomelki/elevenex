@@ -17,6 +17,167 @@ import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 
 describe('CodexRuntimeService', () => {
+  const terminalList = 'thread/backgroundTerminals/list';
+  const terminalClean = 'thread/backgroundTerminals/clean';
+  const commandItem = {
+    type: 'commandExecution',
+    id: 'command-1',
+    source: 'unifiedExecStartup',
+    processId: '12345',
+  };
+  const terminal = { processId: '12345', command: 'sleep 12' };
+
+  it('publishes Codex background commands separately from an idle turn, then clears them on exit', async () => {
+    const { service, sessionsService, appServer, hooksService } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    let listed = [terminal];
+    appServer.request.mockImplementation(async method =>
+      method === terminalList ? { data: listed } : { data: [] },
+    );
+    const events = jest.fn();
+    service.on('event', events);
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const receive = appServer.onNotification.mock.calls[0][0];
+      const notify = (method: string, threadId = 'root') =>
+        receive({ method, params: { threadId, item: commandItem } });
+
+      notify('item/started', 'other');
+      notify('turn/completed', 'other');
+      notify('item/started');
+      expect(appServer.request.mock.calls.map(([method]) => method)).not.toContain(terminalList);
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+
+      notify('turn/completed');
+      await new Promise(setImmediate);
+      const backgroundWork = [
+        expect.objectContaining({ id: 'task:root:12345', kind: 'task', label: 'sleep 12' }),
+      ];
+      expect(await service.getRuntimeState(7)).toMatchObject({
+        runPhase: 'idle', sessionState: 'idle', canInterrupt: false, backgroundWork,
+      });
+      expect(events).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'run_state',
+        payload: expect.objectContaining({ sessionId: 7, runPhase: 'idle', backgroundWork }),
+      }));
+      expect(hooksService.updateRuntimeActivity).toHaveBeenLastCalledWith(
+        7, expect.objectContaining({ activityStatus: 'idle', backgroundActive: true }),
+        { authoritative: true, provider: 'codex' },
+      );
+      expect(appServer.addRef).toHaveBeenCalledTimes(1);
+
+      listed = [];
+      notify('item/completed');
+      await new Promise(setImmediate);
+      expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+      expect(appServer.release).toHaveBeenCalledTimes(1);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('cleans session-owned Codex terminals and confirms exit before releasing the runtime', async () => {
+    const { service, sessionsService, appServer } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+    let listed = [terminal];
+    let cleanFails = true;
+    appServer.request.mockImplementation(async method => {
+      if (method === terminalList) return { data: listed };
+      if (method === terminalClean) {
+        if (cleanFails) throw new Error('Temporary Codex failure');
+        listed = [];
+      }
+      return { data: [] };
+    });
+    service.onModuleInit();
+    try {
+      await service.getRuntimeState(7);
+      const receive = appServer.onNotification.mock.calls[0][0];
+      receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+      receive({ method: 'turn/completed', params: { threadId: 'root' } });
+      await new Promise(setImmediate);
+
+      await expect(service.cleanupSession(7)).rejects.toThrow('background commands stopped');
+      expect(appServer.release).not.toHaveBeenCalled();
+      cleanFails = false;
+      await service.cleanupSession(7);
+      expect(appServer.request.mock.calls.filter(([method]) =>
+        method === terminalList || method === terminalClean,
+      ).map(([method, params]) => [method, params])).toEqual([
+        [terminalList, { threadId: 'root', limit: 64 }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+        [terminalClean, { threadId: 'root' }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+        [terminalClean, { threadId: 'root' }],
+        [terminalList, { threadId: 'root', limit: 1 }],
+      ]);
+      expect(appServer.release).toHaveBeenCalledTimes(1);
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it.each(['empty', 'unsupported', 'poll'])(
+    'stops monitoring Codex terminals after a %s result',
+    async scenario => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+      const listed = scenario === 'poll' ? [terminal] : [];
+      appServer.request.mockImplementation(async method => {
+        if (method !== terminalList) return { data: [] };
+        if (scenario === 'unsupported')
+          throw new Error('Invalid request: unknown variant `thread/backgroundTerminals/list`');
+        return { data: [...listed] };
+      });
+      jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        const receive = appServer.onNotification.mock.calls[0][0];
+        receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+        receive({ method: 'turn/completed', params: { threadId: 'root' } });
+        await new Promise(setImmediate);
+        expect((await service.getRuntimeState(7)).backgroundWork).toHaveLength(listed.length);
+        listed.length = 0;
+        await jest.advanceTimersByTimeAsync(15_000);
+        expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+        expect(appServer.release).toHaveBeenCalledTimes(1);
+        expect(appServer.request.mock.calls.filter(([method]) => method === terminalList))
+          .toHaveLength(scenario === 'poll' ? 2 : 1);
+      } finally {
+        service.onModuleDestroy();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['thread/closed', 'elevenex:app-server-down'])(
+    'rejects a late terminal list after %s',
+    async method => {
+      const { service, sessionsService, appServer } = createService();
+      sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'root' });
+      let reply!: (result: unknown) => void;
+      appServer.request.mockImplementation(async name =>
+        name === terminalList ? new Promise(resolve => { reply = resolve; }) : { data: [] },
+      );
+      service.onModuleInit();
+      try {
+        await service.getRuntimeState(7);
+        const receive = appServer.onNotification.mock.calls[0][0];
+        receive({ method: 'item/started', params: { threadId: 'root', item: commandItem } });
+        receive({ method: 'turn/completed', params: { threadId: 'root' } });
+        receive({ method, params: { threadId: 'root' } });
+        reply({ data: [terminal] });
+        await new Promise(setImmediate);
+        expect((await service.getRuntimeState(7)).backgroundWork).toEqual([]);
+        expect(appServer.release).toHaveBeenCalledTimes(1);
+      } finally {
+        service.onModuleDestroy();
+      }
+    },
+  );
+
   it('preserves assistant phases across live deltas and item receipts', async () => {
     const { service, appServer } = createService();
     const wire = wireAppServerTurn(appServer);

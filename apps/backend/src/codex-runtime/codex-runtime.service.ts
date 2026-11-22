@@ -76,6 +76,7 @@ import {
   CODEX_MODEL_CATALOG_TTL_MS,
 } from './codex-model-catalog-retry.js';
 import { CodexAuthService } from './codex-auth.service.js';
+import { CodexBackgroundTerminals } from './codex-background-terminals.js';
 import { CodexHistoryService } from './codex-history.service.js';
 import {
   codexAsyncQuestionAnswers,
@@ -209,6 +210,7 @@ export class CodexRuntimeService
     Promise<ClaudeSubagentHistoryPayload>
   >();
   private readonly backgroundRefs = new Set<number>();
+  private readonly backgroundTerminals: CodexBackgroundTerminals;
   private readonly restoredSubagents = new WeakSet<CodexSubagentTracker>();
   private readonly delegatedRequests = new Map<
     number,
@@ -249,6 +251,10 @@ export class CodexRuntimeService
     @Optional() private readonly turnChanges?: TurnChangesService,
   ) {
     super();
+    this.backgroundTerminals = new CodexBackgroundTerminals(
+      appServer,
+      (sessionId) => this.publishBackgroundWork(sessionId, true),
+    );
   }
 
   /**
@@ -344,6 +350,7 @@ export class CodexRuntimeService
 
   onModuleDestroy(): void {
     this.subagentMetadata.dispose();
+    this.backgroundTerminals.clear(false);
     this.unsubscribeSubagentRequests?.();
     for (const requests of this.delegatedRequests.values())
       this.resolvePendingCodexRequests(requests);
@@ -855,13 +862,27 @@ export class CodexRuntimeService
       this.backgroundRefs.delete(sessionId)
     )
       this.appServer.release();
+    this.publishBackgroundWork(sessionId, lifecycleChanged);
+  }
+
+  private publishBackgroundWork(
+    sessionId: number,
+    lifecycleChanged: boolean,
+  ): void {
     this.emitEvent({
       type: 'background_work',
-      payload: { sessionId, backgroundWork },
+      payload: { sessionId, backgroundWork: this.backgroundWork(sessionId) },
     });
     // Metadata/preview events already wake the selected-session feed. Repeating
     // an idle parent's run_state would invalidate and reread its durable history.
     if (lifecycleChanged) this.emitRunState(sessionId);
+  }
+
+  private backgroundWork(sessionId: number) {
+    return [
+      ...this.subagentBackgroundWork(sessionId),
+      ...this.backgroundTerminals.work(sessionId),
+    ];
   }
 
   private subagentBackgroundWork(sessionId: number) {
@@ -953,12 +974,17 @@ export class CodexRuntimeService
     const params = record(notification.params);
     const thread = record(params.thread);
     const threadId = textValue(params.threadId ?? thread.id);
+    if (notification.method === 'elevenex:app-server-down')
+      this.backgroundTerminals.clear(true);
+    if (notification.method === 'thread/closed' && threadId)
+      this.backgroundTerminals.threadClosed(threadId);
     const timestamp = new Date().toISOString();
     for (const [sessionId, tracker] of this.subagentTrackers) {
       const state = this.runtimeStates.get(sessionId);
-      if (!state?.codexSessionId || this.invalidatedSessions.has(sessionId))
+      const rootId =
+        this.activeRuns.get(sessionId)?.threadId ?? state?.codexSessionId;
+      if (!state || !rootId || this.invalidatedSessions.has(sessionId))
         continue;
-      const rootId = state.codexSessionId;
       if (notification.method === 'elevenex:app-server-down') {
         const delegated = this.delegatedRequests.get(sessionId);
         if (delegated) {
@@ -1012,6 +1038,21 @@ export class CodexRuntimeService
       if (!threadId || (threadId !== rootId && !tracker.agents.has(threadId)))
         continue;
       const raw = record(params.item);
+      if (
+        notification.method === 'turn/completed' ||
+        (notification.method === 'error' && !params.willRetry)
+      )
+        this.backgroundTerminals.turnFinished(threadId);
+      if (
+        notification.method === 'item/started' ||
+        notification.method === 'item/completed'
+      )
+        this.backgroundTerminals.observe(
+          sessionId,
+          threadId,
+          notification.method,
+          raw,
+        );
       if (
         ['item/started', 'item/completed'].includes(notification.method) &&
         raw.type === 'subAgentActivity'
@@ -1870,6 +1911,8 @@ export class CodexRuntimeService
       this.emitRunState(sessionId);
       this.logger.error(`Codex run failed session=${sessionId}: ${message}`);
     } finally {
+      if (ownsSession() && activeRun.threadId && !activeRun.interruptRequested)
+        this.backgroundTerminals.turnFinished(activeRun.threadId);
       let changesFinished = false;
       try {
         const changes = await this.turnChanges?.finish(
@@ -1953,6 +1996,8 @@ export class CodexRuntimeService
           // request alone is never evidence that its checkout is safe to reuse.
         }
         await this.confirmTurnStopped(run);
+        if (!this.invalidatedSessions.has(sessionId))
+          this.backgroundTerminals.turnFinished(run.threadId);
       }
       await this.interruptSubagents(sessionId);
       await run.completionPromise.catch(() => undefined);
@@ -2475,6 +2520,7 @@ export class CodexRuntimeService
       (this.sessionGenerations.get(sessionId) ?? 0) + 1,
     );
     await this.interrupt(sessionId);
+    await this.backgroundTerminals.stopSession(sessionId);
     const delegated = this.delegatedRequests.get(sessionId);
     if (delegated) this.resolvePendingCodexRequests(delegated);
     this.delegatedRequests.delete(sessionId);
@@ -3142,7 +3188,7 @@ export class CodexRuntimeService
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
         queuePaused: state.queuePaused,
-        backgroundWork: this.subagentBackgroundWork(sessionId),
+        backgroundWork: this.backgroundWork(sessionId),
       },
     });
   }
@@ -3156,7 +3202,7 @@ export class CodexRuntimeService
         activityStatus: 'waiting',
         actionKind: null,
         actionLabel: 'Retry stopping Codex',
-        backgroundActive: this.subagentBackgroundWork(sessionId).length > 0,
+        backgroundActive: this.backgroundWork(sessionId).length > 0,
       };
     }
     if (state.pendingPermissionRequest) {
@@ -3184,7 +3230,7 @@ export class CodexRuntimeService
       actionLabel: null,
       backgroundActive:
         sessionId !== undefined &&
-        this.subagentBackgroundWork(sessionId).length > 0,
+        this.backgroundWork(sessionId).length > 0,
     };
   }
 
@@ -3707,7 +3753,7 @@ export class CodexRuntimeService
       subagents: [
         ...[...(this.subagentTrackers.get(sessionId)?.agents.values() ?? [])].map(agent => ({ ...agent, taskTitle: codexAgentTaskTitle(agent), canStop: isAgentActive(agent) })),
       ],
-      backgroundWork: this.subagentBackgroundWork(sessionId),
+      backgroundWork: this.backgroundWork(sessionId),
       latestToolProgress: null,
       latestToolSummary: null,
       latestApiRetry: state.latestApiRetry ?? null,
