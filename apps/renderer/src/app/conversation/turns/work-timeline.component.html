@@ -12,43 +12,45 @@
         <ex-fold class="group-fold" [open]="groupVisible(row)">
           @if (row.section; as group) {
             @if (group.id === step.id) {
-              <button
-                #groupControl
-                type="button"
-                class="group"
-                [attr.aria-expanded]="groupOpen(row)"
-                [attr.aria-label]="
-                  (groupOpen(row) ? 'Hide ' : 'Show ') +
-                  (group.earlier ? 'earlier activity: ' : 'activity: ') +
-                  group.label
-                "
-                (click)="toggleGroup(group.id, groupControl)"
-              >
-                <ex-icon
-                  class="disclosure"
-                  name="chevron-right"
-                  [size]="12"
-                  [class.turned]="groupOpen(row)"
-                />
-                @if (group.earlier) {
-                  <span class="summary-lead">Earlier</span>
-                }
-                <span class="summary-facts">
-                  @for (fact of group.facts; track fact.kind) {
-                    <span class="summary-fact" [class.failure]="fact.danger">
-                      @if (fact.danger) {
-                        <ex-status-glyph status="failed" [size]="12" />
-                      } @else {
-                        <ex-icon [name]="fact.icon" [size]="12" />
-                      }
-                      <span
-                        ><ex-ticker [value]="fact.count" />
-                        {{ fact.noun }}</span
-                      >
-                    </span>
+              <div class="summary-size" exAutoHeight>
+                <button
+                  #groupControl
+                  type="button"
+                  class="group"
+                  [attr.aria-expanded]="groupOpen(row)"
+                  [attr.aria-label]="
+                    (groupOpen(row) ? 'Hide ' : 'Show ') +
+                    (group.earlier ? 'earlier activity: ' : 'activity: ') +
+                    group.label
+                  "
+                  (click)="toggleGroup(group.id, groupControl)"
+                >
+                  <ex-icon
+                    class="disclosure"
+                    name="chevron-right"
+                    [size]="12"
+                    [class.turned]="groupOpen(row)"
+                  />
+                  @if (group.earlier) {
+                    <span class="summary-lead">Earlier</span>
                   }
-                </span>
-              </button>
+                  <span class="summary-facts">
+                    @for (fact of group.facts; track fact.kind) {
+                      <span class="summary-fact" [class.failure]="fact.danger">
+                        @if (fact.danger) {
+                          <ex-status-glyph status="failed" [size]="12" />
+                        } @else {
+                          <ex-icon [name]="fact.icon" [size]="12" />
+                        }
+                        <span
+                          ><ex-ticker [value]="fact.count" />
+                          {{ fact.noun }}</span
+                        >
+                      </span>
+                    }
+                  </span>
+                </button>
+              </div>
             }
           }
         </ex-fold>

@@ -819,10 +819,10 @@ automatic delivery joins that queue instead of restarting the agent.
 
 ## Tool timeline and original content
 
-The production timeline has one recent-work budget across alternating messages
-and tool calls. Running/unknown work and unresolved failures stay outside age
-compaction; commentary stays in order. Discovery grouping and completion preserve
-inspection. `session-tool-timeline.mjs` exercises these transitions, repeated and
+Each activity section has its own recent-work budget. Running and unknown calls
+stay visible, and a late result updates its original call and section. Paired
+text-only results do not break adjacent reply blocks or interrupt newer
+thinking. `session-tool-timeline.mjs` exercises these transitions, repeated and
 interrupted disclosures, full-output paging and paired call/input selection with
 provider-shaped fixtures in the connected preview.
 

@@ -364,8 +364,9 @@ Failure counts are a subset of category totals; totals count attempts, not
 successes. Expected/recovered failures do not contribute to the failure marker;
 later success alone never clears it. Running/unknown tools remain visible.
 Each section opens independently and retains that choice through streaming and
-completion. The work line shows status/time and expands or collapses all sections;
-category totals remain available in the section summaries.
+completion. The work line shows status and time and toggles the whole timeline.
+When a result adds a fact that wraps the summary, its height changes on the same
+curve as the tool row folding into it. Reduced motion applies both heights at once.
 Settled turns also reveal up to four work facts beside the duration on turn
 hover, keyboard focus or expansion (for example, Edited 2 files · 3 commands).
 When a worktree capture overlaps another turn, `ChatExchange.sharedChanges`

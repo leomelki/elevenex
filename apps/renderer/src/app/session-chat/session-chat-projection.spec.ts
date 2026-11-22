@@ -92,6 +92,48 @@ describe('incremental transcript projection', () => {
     expect(fourth).toEqual(chatExchanges(streamed, state, fresh));
   });
 
+  it('preserves the visible message boundary when a paired result moves between reply blocks', () => {
+    const projection = new ChatTranscriptProjection();
+    const prompt = item('prompt', 'user');
+    const first = tool('first');
+    const slow = tool('slow');
+    const firstReply = item('first-reply', 'assistant', 'The focused checks passed.');
+    const nextReply = item('next-reply', 'assistant', 'I’ll run the full suite.');
+    const next = tool('suite');
+    const result = item('slow-result', 'tool_result', 'Finished', { toolId: 'slow' });
+    const started = [prompt, first, slow,
+      item('first-result', 'tool_result', 'Passed', { toolId: 'first' }), firstReply];
+    const [before] = projection.project([...started, nextReply, next], state, fresh);
+    const [received] = projection.project([...started, result, nextReply, next], state, fresh);
+    const [replayed] = projection.project([...started, nextReply, next, result], state, fresh);
+    for (const turn of [before, received, replayed]) {
+      expect(turn).toMatchObject({
+        answer: `${firstReply.text}\n\n${nextReply.text}`,
+        answerId: firstReply.id,
+        answerBeforeStepId: next.id,
+      });
+      expect(turn!.steps.map(step => step.id)).toEqual([first.id, slow.id, next.id]);
+    }
+    expect(received!.steps[0]).toBe(before!.steps[0]);
+    expect(received!.steps[1]).toMatchObject({ status: 'done', output: expect.stringContaining('Finished') });
+    expect(replayed!.steps).toBe(received!.steps);
+    const [stillReplying] = projection.project([...started, nextReply, result], state, fresh);
+    expect(stillReplying).toMatchObject({ answerId: firstReply.id, streaming: true });
+  });
+
+  it('settles a running thought on new activity and keeps it running through an older tool result', () => {
+    const projection = new ChatTranscriptProjection();
+    const items = [item('prompt', 'user'), tool('slow'), item('thought', 'thinking', 'Checking the remaining cases.')];
+    const [before] = projection.project(items, state, fresh);
+    const received = [...items, item('result', 'tool_result', 'Passed', { toolId: 'slow' })];
+    const [after] = projection.project(received, state, fresh);
+    expect(before!.steps[1]!.status).toBe('running');
+    expect(after!.steps[0]!.status).toBe('done');
+    expect(after!.steps[1]).toBe(before!.steps[1]);
+    const [next] = projection.project([...received, tool('next')], state, fresh);
+    expect(next!.steps[1]!.status).toBe('done');
+  });
+
   it('keeps the saved reply in order with work before and after it and retains the exiting steps', () => {
     const projection = new ChatTranscriptProjection();
     const revision = 'a'.repeat(64);

@@ -854,6 +854,10 @@ paired original input/output, keyboard focus, scoped motion frames, both themes
 and narrow reduced-motion layouts. Run against the connected component preview
 with `--url`. `SessionChatFixture.timeline(scene)` supplies stable harness-shaped
 receipts outside the production graph.
+`scenarios/session-tool-summary-stability.mjs` applies incremental tool starts
+and results while reading collapsed sections in the same turn. It samples
+summary position, height and focus each frame, including a late failure that
+wraps a narrow summary, in both themes with and without reduced motion.
 
 `scenarios/commit-recovery.mjs` checks the production commit owner with controlled
 backend failures: retained messages and selections, duplicate-submit protection,

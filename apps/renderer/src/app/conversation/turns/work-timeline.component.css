@@ -41,6 +41,11 @@ li {
   font-size: var(--text-body-size);
   line-height: var(--text-body-line);
 }
+/* When a new fact wraps, resize on the same curve as the tool folding away. */
+.summary-size {
+  --auto-height-duration: var(--dur-slow);
+  --auto-height-easing: var(--ease-in-out);
+}
 .group {
   display: flex;
   align-items: center;

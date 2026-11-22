@@ -144,6 +144,8 @@ preview-only backend adapter. Its fixture never enters the production build.
   Width-driven wrapping follows the panel/window resize directly and cancels
   competing height motion. The observer's delivered sizes establish the new
   baseline; subsequent content growth at that width still animates.
+  A wrapper can set `--auto-height-duration` and `--auto-height-easing` using
+  motion tokens to coordinate its resize with a neighbouring fold.
 - `FlipDirective` captures painted positions before keyed children update and
   animates only elements in its own `data-flip-scope`. Nested session scopes do
   not get transformed twice. Sidebar scopes use reordering only: Fold already

@@ -79,8 +79,8 @@ export class AutoHeightDirective {
             { height: `${next}px`, overflow: "clip", boxSizing: "border-box" },
           ],
           {
-            duration: parseFloat(style.getPropertyValue("--dur-base")),
-            easing: style.getPropertyValue("--ease-out").trim(),
+            duration: parseFloat(style.getPropertyValue("--auto-height-duration") || style.getPropertyValue("--dur-base")),
+            easing: (style.getPropertyValue("--auto-height-easing") || style.getPropertyValue("--ease-out")).trim(),
           },
         );
         this.animation.onfinish = () => {

@@ -117,6 +117,9 @@ function viewedImages(result: SessionChatItem): readonly ToolImage[] | undefined
   return result.media.filter(media => media.inline && (!media.kind || media.kind === 'image'))
     .map(({ id, path, caption }) => ({ itemId: result.id, mediaId: id, path, caption }));
 }
+function inlineToolPreview(media: NonNullable<SessionChatItem['media']>[number]): boolean {
+  return media.inline && media.kind !== 'file';
+}
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
   items: readonly SessionChatItem[],
@@ -241,36 +244,46 @@ function projectExchanges(
         .map((item) => [item.toolId ?? item.id, item]),
     );
     const viewCalls = imageViewCallIds(records);
+    const isPairedResult = (item: SessionChatItem): boolean =>
+      item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
+    const isTextReceipt = (item: SessionChatItem): boolean =>
+      isPairedResult(item) && (item.error || !item.media?.some(inlineToolPreview));
     // Keep the latest text visible, with work on either side in source order.
-    // Tool receipts stay paired with their calls, even when they arrive late.
+    // Text-only receipts update the original call. Their position cannot
+    // interrupt a later thought or split adjacent reply blocks. Media and
+    // unpaired results still delimit the surrounding activity.
     let finalEnd = completed ? replyStart + completed.reply.length : 0;
     let lastActivity: SessionChatItem | undefined;
+    let lastTimelineItem: SessionChatItem | undefined;
     for (let index = completed ? -1 : records.length - 1; index >= 0; index--) {
-      const item = records[index];
-      if (!item) continue;
-      if (!lastActivity && item.kind !== "system") lastActivity = item;
+      const item = records[index]!;
+      if (isTextReceipt(item)) continue;
+      lastTimelineItem ??= item;
+      if (item.kind !== "system") lastActivity ??= item;
       if (item.kind === "assistant" && messageText(item).trim()) {
         finalEnd = index + 1;
         break;
       }
     }
     let finalStart = completed ? replyStart : finalEnd;
-    while (!completed && finalStart > 0 && records[finalStart - 1]?.kind === "assistant")
-      finalStart--;
+    for (let index = completed ? -1 : finalEnd - 1; index >= 0; index--) {
+      const item = records[index]!;
+      if (item.kind === 'assistant') finalStart = index;
+      else if (!isTextReceipt(item)) break;
+    }
     const followingIds = new Set(
       records.slice(finalEnd).map(renderId),
     );
     const steps: WorkStep[] = records
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
-        const pairedResult = item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
+        const pairedResult = isPairedResult(item);
         const viewedResult = isViewedImageResult(item, viewCalls);
         if (pairedResult && viewedResult) return [];
-        if (item.kind === "system" && item.changes && !item.text.trim())
-          return [];
+        if (item.kind === "system" && item.changes && !item.text.trim()) return [];
         const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
         const running = live && ((item.kind === 'tool_use' && !result && !item.receipt) ||
-          (item.kind === 'thinking' && item.id === records.at(-1)?.id));
+          (item.kind === 'thinking' && item === lastTimelineItem));
         const old = cache?.steps.get(item);
         const id = renderId(item);
         if (old && old.result === result && old.pairedResult === pairedResult &&
@@ -306,7 +319,7 @@ function projectExchanges(
           }
           if (item.kind === "tool_result") {
             const media = !viewedResult && !item.error
-              ? item.media?.filter(preview => preview.inline && preview.kind !== 'file')
+              ? item.media?.filter(inlineToolPreview)
                 .map(({ path, caption }) => ({ path, caption }))
               : undefined;
             // Text receipts update the call. Previews stay at the result's
@@ -344,9 +357,7 @@ function projectExchanges(
               status:
                 item.error || item.kind === "error"
                   ? "failed"
-                  : live &&
-                      item.kind === "thinking" &&
-                      item.id === records.at(-1)?.id
+                  : running
                     ? "running"
                     : "done",
             },
@@ -377,7 +388,8 @@ function projectExchanges(
       !live && group.startedAt !== undefined && endedAt !== undefined
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
-    const answer = records.slice(finalStart, finalEnd).map(messageText).join("\n\n");
+    const answer = records.slice(finalStart, finalEnd)
+      .filter(item => item.kind === 'assistant').map(messageText).join("\n\n");
     const exchange: ChatExchange = {
       overflow: (completed && activity?.closing ? completed.reply : records)
         // Tool evidence belongs in the work timeline, not below the answer.
