@@ -104,6 +104,13 @@ only) derived from saved prompt headers. Main validates these optional fields;
 older engines omit them. Snapshot contents and export paths remain outside this
 metadata. Saved history and incremental item events use the same projection.
 
+Engines advertising `presetEditing` accept saved preset update, reorder,
+delete and restore actions through `sessionChatCommand`. The desktop
+validates each action and the deletion receipt. The engine checks the same
+catalog revision used by default changes inside the settings transaction.
+An automatic application of an edited preset also carries the expected chat
+mix and catalog revision. Older engines retain the original preset controls.
+
 Add backend operations as each desktop feature needs them. The product model
 is **project → task → sessions**. A task owns its branch and workspace, and
 conversations belong to that task. Repositories are resources within projects.

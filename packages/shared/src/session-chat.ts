@@ -258,6 +258,7 @@ export interface SessionChatState {
   /** Bounded saved starting configurations; omitted by older engines. */
   readonly presets?: readonly SessionChatPreset[];
   readonly presetCatalogs?: boolean;
+  readonly presetEditing?: boolean;
   readonly presetDefault?: SessionChatPresetDefault;
   readonly provider: string;
   readonly providers?: readonly {
@@ -430,13 +431,32 @@ export interface SessionChatPresetDefault {
 }
 export interface SessionChatCommandReply {
   readonly accepted: true;
+  readonly presetRemoval?: { readonly position: number; readonly revision: string };
   readonly defaultChange?: {
     readonly before: SessionChatPresetDefault;
     readonly after: SessionChatPresetDefault;
   };
 }
+interface SavedPresetFields {
+  readonly id: string;
+  readonly name: string;
+  readonly provider: string;
+  readonly model: string | null;
+  readonly reasoning: string | null;
+  readonly fast: boolean;
+}
 export type SessionChatAction =
   | { readonly type: "mark-seen"; readonly completionAt: string }
+  | ({ readonly type: "preset-update"; readonly expectedRevision: string } & SavedPresetFields)
+  | { readonly type: "preset-reorder"; readonly ids: readonly string[]; readonly expectedRevision: string }
+  | { readonly type: "preset-delete"; readonly id: string; readonly expectedRevision: string }
+  | ({
+      readonly type: "preset-restore";
+      readonly position: number;
+      readonly defaultProvider: string;
+      readonly defaultIds: readonly string[];
+      readonly expectedRevision: string;
+    } & SavedPresetFields)
   | {
       readonly type: "preset-default";
       readonly id: string;
@@ -453,6 +473,12 @@ export type SessionChatAction =
       readonly type: "preset";
       readonly id: string;
       readonly expectedProvider: string;
+      readonly expectedMix?: {
+        readonly model: string | null;
+        readonly reasoning: string | null;
+        readonly fast: boolean;
+        readonly revision: string;
+      };
     }
   | {
       readonly type: "save-preset";

@@ -200,9 +200,21 @@ export class SessionChatFixture {
   private defaultProvider = 'codex';
   private defaultIds: readonly string[] = ['deep'];
   private defaultVersion = 1;
+  private presetEditing = false;
   /** Exercise first-use layout without replacing the connected chat components. */
-  presetCatalog(mode: 'empty' | 'saved'): void {
+  presetCatalog(mode: 'empty' | 'saved' | 'editing' | 'full'): void {
+    this.presetEditing = mode === 'editing' || mode === 'full';
     this.presets = mode === 'empty' ? [] : [...savedPresets];
+    if (this.presetEditing) {
+      const count = mode === 'full' ? 24 : 8;
+      this.presets.push(...Array.from({ length: count - savedPresets.length }, (_, index) => ({
+        ...savedPresets[index % savedPresets.length]!,
+        id: `review-${index + 1}`,
+        name: `Review ${index + 1}`,
+      })));
+    }
+    this.defaultProvider = 'codex';
+    this.defaultIds = this.presets.length ? ['deep'] : [];
     this.defaultVersion++;
     this.changed();
   }
@@ -655,7 +667,7 @@ export class SessionChatFixture {
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
         before: (start > 0 || end > limit) ? (items[0]?.id ?? null) : null,
         next: end < session.items.length ? (items.at(-1)?.id ?? null) : null,
-        state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
+        state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot(), presetEditing: this.presetEditing },
       },
     };
   }
@@ -728,7 +740,53 @@ export class SessionChatFixture {
       return { ok: true, value: { accepted: true } };
     }
     let defaultChange: SessionChatCommandReply['defaultChange'];
-    if (action.type === 'preset-default-restore') {
+    if (action.type === 'preset-reorder' || action.type === 'preset-update' ||
+        action.type === 'preset-delete' || action.type === 'preset-restore') {
+      if (action.expectedRevision !== this.defaultSnapshot().revision)
+        return { ok: false, error: { code: 'http', status: 409, message: 'The saved presets changed. Refresh before trying again.' } };
+      let position = -1;
+      if (action.type === 'preset-reorder') {
+        const byId = new Map(this.presets.map(preset => [preset.id, preset]));
+        this.presets = action.ids.map(id => byId.get(id)!);
+      } else if (action.type === 'preset-delete') {
+        position = this.presets.findIndex(preset => preset.id === action.id);
+        if (position < 0) return { ok: false, error: { code: 'http', status: 404, message: 'Preset unavailable' } };
+        const replacingDefault = this.defaultSnapshot().id === action.id;
+        this.presets = this.presets.filter(preset => preset.id !== action.id);
+        this.defaultIds = this.defaultIds.filter(id => id !== action.id);
+        const fallback = replacingDefault && this.presets[0];
+        if (fallback) {
+          this.defaultProvider = fallback.provider;
+          this.defaultIds = [...this.defaultIds.filter(id => this.presets.find(preset => preset.id === id)?.provider !== fallback.provider), fallback.id];
+        }
+      } else {
+        const catalog = this.catalogData(action.provider);
+        const preset: SessionChatPreset = {
+          id: action.id, name: action.name, provider: action.provider, providerLabel: catalog.label,
+          model: action.model, modelLabel: catalog.models.find(model => model.id === action.model)?.label ?? 'Provider default',
+          reasoning: action.reasoning, fast: action.fast,
+        };
+        if (action.type === 'preset-update') {
+          const original = this.presets.find(item => item.id === preset.id);
+          if (original && original.provider !== preset.provider) {
+            if (this.defaultSnapshot().id === original.id) {
+              this.defaultProvider = preset.provider;
+              this.defaultIds = this.defaultIds.filter(id => this.presets.find(item => item.id === id)?.provider !== preset.provider);
+            } else this.defaultIds = this.defaultIds.filter(id => id !== action.id);
+          }
+          this.presets = this.presets.map(item => item.id === preset.id ? preset : item);
+        } else {
+          this.presets = [...this.presets.slice(0, action.position), preset, ...this.presets.slice(action.position)];
+          this.defaultProvider = action.defaultProvider;
+          this.defaultIds = action.defaultIds;
+        }
+      }
+      this.defaultVersion++;
+      this.changed();
+      return { ok: true, value: { accepted: true, ...(position < 0 ? {} : {
+        presetRemoval: { position, revision: this.defaultSnapshot().revision },
+      }) } };
+    } else if (action.type === 'preset-default-restore') {
       if (action.expectedRevision !== this.defaultSnapshot().revision)
         return { ok: false, error: { code: 'http', status: 409, message: 'The default changed. Refresh before trying again.' } };
       this.defaultProvider = action.provider; this.defaultIds = [...action.defaultIds]; this.defaultVersion++;
@@ -736,6 +794,10 @@ export class SessionChatFixture {
       if (session.state.providerLocked || session.state.provider !== action.expectedProvider)
         return { ok: false, error: { code: 'http', status: 409, message: 'This conversation has already started.' } };
       const before = this.defaultSnapshot();
+      if (action.type === 'preset' && action.expectedMix &&
+        (action.expectedMix.revision !== before.revision || action.expectedMix.model !== session.state.model ||
+        action.expectedMix.reasoning !== session.state.reasoning || action.expectedMix.fast !== !!session.state.fast))
+        return { ok: false, error: { code: 'http', status: 409, message: 'This chat’s agent settings changed.' } };
       const makeDefault = action.type === 'preset-default' || (action.type === 'save-preset' && action.makeDefault === true);
       const revision = action.type === 'preset-default' ? action.expectedRevision : action.type === 'save-preset' ? action.expectedDefaultRevision : undefined;
       if (makeDefault && revision !== before.revision)
@@ -747,6 +809,7 @@ export class SessionChatFixture {
           model: action.model, modelLabel: this.catalogData(action.provider ?? action.expectedProvider).models.find(m => m.id === action.model)?.label ?? 'Provider default',
           reasoning: action.reasoning, fast: action.fast };
         this.presets = [preset, ...this.presets.filter(p => p.id !== action.id)];
+        if (!makeDefault) this.defaultVersion++;
       }
       if (!preset) return { ok: false, error: { code: 'http', message: 'Preset unavailable' } };
       if (preset.provider !== session.state.provider)

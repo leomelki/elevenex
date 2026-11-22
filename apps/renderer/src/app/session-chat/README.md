@@ -545,9 +545,10 @@ missing/API-key data and narrow reduced-motion layouts in both themes.
 The component-owned `SessionChatPresets` controller owns preset view models, stable chosen identities, the retained creator draft and stale/disposed reply checks. Transcript state remains in `SessionChatStore`.
 
 Starting presets use the optional bounded `SessionChatState.presets` capability.
-The blank chat centers one composer beneath at most six reference preset cards
-and Custom, which opens the preset creator with the current harness, model,
-thinking and fast-mode configuration and an empty name. Editing or cancelling
+The blank chat centers one composer beneath the starting presets, with the
+welcome area scrolling independently on short windows. Custom opens the preset
+creator with the current harness, model, thinking and fast-mode configuration
+and an empty name. Editing or cancelling
 this local draft leaves the conversation settings unchanged. A saved-card
 selection submits one
 `preset` action, validates the entire mix before applying it, reconciles state,
@@ -573,9 +574,33 @@ state. Editing a preset never starts a runtime or sends a message; Create applie
 The optional `presetDefault` snapshot enables the quiet Default dropdown above
 the cards. It changes the connected machine's default provider/preset and applies
 that mix to the current blank chat. Ordinary card selection remains session-only.
-The Default card label and selected ring have separate meanings. A bounded
-six-card window retains a selected/default preset chosen beyond the first six;
-the dropdown lists the existing bounded 24-preset catalog.
+The Default card label and selected ring have separate meanings. The dropdown
+lists the existing bounded 24-preset catalog. Engines without `presetEditing`
+retain a six-card window that makes room for the selected and default presets.
+
+With `presetEditing`, the first six entries get full cards and Option+1–6.
+The remainder follow in responsive slim rows, with Custom last in the entire
+order. The blank chat previews up to two slim rows and compacts as vertical
+space shrinks. Edit shows the entire catalog. Click a card, use its pencil, or
+press E on a focused card to edit in the retained preset dialog. Drag cards or
+use Option+Left/Right to reorder. Remove or Delete offers a short undo window.
+Removing the default selects the first eligible preset in the remaining order.
+Undo restores the original position and defaults if the catalog revision is
+still current.
+
+When a user adjusts the starting preset through the composer, the grid retains
+the association with the saved preset and the callout shows the changed fields.
+Revert applies the saved mix to the current chat. Update preset writes the
+current mix to the saved preset, and Save as new gives the mix its own name.
+The existing edit dialog can also take the current mix as a draft. If the
+chat still uses the preset being edited, saving a changed mix reapplies it.
+Chat-specific adjustments are preserved.
+
+Update, reorder, remove and restore actions compare the catalog revision
+inside the settings transaction. They can change future defaults and update
+active chat feeds while leaving the current conversation's agent intact.
+Reorder preserves stored slots for unregistered harnesses, and deletion of a
+legacy default clears the legacy values that could regenerate it on reload.
 
 Default writes and creator choice reuse existing settings columns. A settings
 transaction compares a revision of the provider and canonical preset catalog,

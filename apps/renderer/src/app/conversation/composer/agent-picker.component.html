@@ -7,12 +7,13 @@
   [attr.aria-expanded]="open()"
   aria-haspopup="dialog"
   [attr.aria-describedby]="usageOpen() ? usageId : null"
-  [attr.aria-label]="'Adjust agent: ' + harnessLabel() + ', ' + modelLabel()"
+  [attr.aria-label]="'Adjust agent: ' + harnessLabel() + ', ' + modelLabel() + (value().presetEdited ? ', changed from saved preset' : '')"
   [attr.title]="hasUsage() ? null : 'Agent · ⌘J'"
   (click)="toggle()"
 >
   <ex-agent-mark [mark]="value().mark" [harness]="value().harness" />
   <span class="name">{{ value().preset || modelLabel() }}</span>
+  @if (value().presetEdited) { <span class="preset-edited" aria-hidden="true"></span> }
   @if (subtitle(); as subtitle) {
     <span class="sub">{{ subtitle }}</span>
   }

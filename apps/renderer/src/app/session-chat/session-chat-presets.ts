@@ -1,4 +1,4 @@
-import type { SessionChatPresetDefault } from "@elevenex/shared";
+import type { SessionChatAction, SessionChatPreset, SessionChatPresetDefault, SessionChatState } from "@elevenex/shared";
 import { computed, signal, type Signal } from "@angular/core";
 import type {
   PresetCatalogProvider,
@@ -21,15 +21,25 @@ interface PresetOwner {
   readonly agent: () => AgentConfig | undefined;
   readonly focusComposer: () => void;
   readonly closeAgent: () => void;
+  readonly focusPreset: (id?: string) => void;
+}
+
+function matchesMix(preset: AgentConfig, state: SessionChatState): boolean {
+  return preset.harness === state.provider &&
+    preset.model === (state.model ?? "") &&
+    (preset.thinking ?? null) === state.reasoning &&
+    !!preset.fast === !!state.fast;
 }
 
 /** Owns the starting choice and retained creator, independently of transcript rendering. */
 export class SessionChatPresets {
   private disposed = false;
   private readonly preferredId = signal<string | null>(null);
+  private readonly tweakBase = signal<AgentConfig | undefined>(undefined);
   constructor(private readonly owner: PresetOwner) {}
   readonly presetDraft = signal<{
     readonly id: string;
+    readonly editing?: { readonly id: string; readonly revision: string };
     readonly initial: AgentConfig;
     readonly identity: string;
     readonly harnesses: readonly AgentHarness[];
@@ -40,6 +50,18 @@ export class SessionChatPresets {
   readonly presetError = signal("");
   readonly defaultNoticeOpen = signal(false);
   readonly undoBusy = signal(false);
+  readonly editing = signal(false);
+  readonly naming = signal(false);
+  readonly newName = signal("");
+  readonly changeNotice = signal("");
+  readonly changeNoticeOpen = signal(false);
+  private noticeTimer?: ReturnType<typeof setTimeout>;
+  readonly removal = signal<{
+    readonly label: string;
+    readonly detail?: string;
+    readonly action: Extract<SessionChatAction, { type: "preset-restore" }>;
+  } | null>(null);
+  readonly removalOpen = signal(false);
   readonly defaultUndo = signal<{
     before: SessionChatPresetDefault;
     afterRevision: string;
@@ -48,6 +70,9 @@ export class SessionChatPresets {
   } | null>(null);
   readonly defaultPreset = computed(
     () => this.owner.store.state()?.presetDefault,
+  );
+  readonly canEdit = computed(() =>
+    !!this.owner.store.state()?.presetEditing && !!this.defaultPreset(),
   );
   readonly defaultOptions = computed(() =>
     this.presets().map((p) => ({
@@ -82,6 +107,7 @@ export class SessionChatPresets {
   );
   readonly visiblePresets = computed(() => {
     const visible = this.presets().slice(0, 6);
+    if (this.canEdit()) return visible;
     const pinned = [this.defaultPreset()?.id, this.selectedPreset()?.id].filter(
       Boolean,
     );
@@ -97,35 +123,74 @@ export class SessionChatPresets {
     return visible;
   });
   readonly presetNames = computed(() =>
-    this.presets().map((preset) => preset.preset ?? ""),
+    this.presets().filter(preset => preset.id !== this.presetDraft()?.editing?.id)
+      .map((preset) => preset.preset ?? ""),
   );
   readonly selectedPreset = computed(() => {
     const state = this.owner.store.state();
-    const matching = this.presets().filter(
-      (p) =>
-        p.harness === state?.provider &&
-        p.model === (state.model ?? "") &&
-        (p.thinking ?? "") === (state.reasoning ?? "") &&
-        !!p.fast === !!state.fast,
-    );
+    if (!state) return undefined;
+    const matching = this.presets().filter(preset => matchesMix(preset, state));
     return (
       matching.find((preset) => preset.id === this.preferredId()) ??
       matching.find((preset) => preset.id === this.defaultPreset()?.id) ??
       matching[0]
     );
   });
+  readonly drift = computed(() => {
+    const base = this.tweakBase();
+    const saved = base?.id && this.presets().find((preset) => preset.id === base.id);
+    const state = this.owner.store.state();
+    if (!saved || !base || !state || !this.canEdit() || matchesMix(base, state)) return null;
+    const harness = this.owner.harnesses().find(item => item.id === state.provider);
+    const fields = [
+      { label: "Harness", from: saved.harnessLabel ?? saved.harness, to: harness?.label ?? state.provider, changed: saved.harness !== state.provider },
+      { label: "Model", from: saved.modelLabel || saved.model, to: this.owner.models().find(item => item.id === state.model)?.label ?? state.model ?? "Provider default", changed: saved.model !== (state.model ?? "") },
+      { label: "Thinking", from: saved.thinking ?? "Default", to: state.reasoning ?? "Default", changed: (saved.thinking ?? null) !== state.reasoning },
+      { label: "Fast mode", from: saved.fast ? "On" : "Off", to: state.fast ? "On" : "Off", changed: !!saved.fast !== !!state.fast },
+    ].filter(field => field.changed);
+    return fields.length ? { saved, fields } : null;
+  });
+  readonly invalidNewName = computed(() => {
+    const name = this.newName().trim().toLowerCase();
+    return !name || this.presets().some(preset => preset.preset?.toLowerCase() === name);
+  });
+
+  trackTweak(): void {
+    if (!this.owner.showWelcome() || !this.canEdit()) return;
+    if (!this.drift()) this.tweakBase.set(this.selectedPreset());
+    this.naming.set(false);
+    this.clearChangeNotice();
+  }
+
+  setEditing(value: boolean): void {
+    if (!this.canEdit()) return;
+    this.editing.set(value);
+    this.naming.set(false);
+    this.clearChangeNotice();
+  }
+
+  openPresetEditor(id: string): void {
+    const preset = this.presets().find(item => item.id === id);
+    const revision = this.defaultPreset()?.revision;
+    if (!this.canEdit() || !preset || !revision) return;
+    this.openDraft(preset, { id, revision });
+  }
+
   createPresetFromAgent(value: AgentConfig): void {
     this.owner.closeAgent();
     this.openPresetCreator(value);
   }
   openPresetCreator(value = this.owner.agent()): void {
+    this.openDraft(value);
+  }
+  private openDraft(value?: AgentConfig, editing?: { id: string; revision: string }): void {
     if (
       this.disposed ||
       !value ||
       this.owner.blocked() ||
       this.owner.store.state()?.providerLocked !== false ||
       this.owner.store.state()?.presets === undefined ||
-      this.presets().length >= 24
+      (!editing && this.presets().length >= 24)
     )
       return;
     this.presetError.set("");
@@ -135,7 +200,8 @@ export class SessionChatPresets {
     const id = crypto.randomUUID();
     this.presetDraft.set({
       id,
-      initial: {
+      editing,
+      initial: editing ? value : {
         ...value,
         preset: undefined,
         default: this.defaultPreset()?.id === null,
@@ -222,7 +288,16 @@ export class SessionChatPresets {
       return;
     this.presetSaving.set(true);
     this.presetError.set("");
-    const saved = await this.owner.store.perform({
+    const applyEditedMix = draft.editing && this.selectedPreset()?.id === draft.editing.id &&
+      !this.drift() && (
+        value.harness !== draft.initial.harness || value.model !== draft.initial.model ||
+        value.thinking !== draft.initial.thinking || !!value.fast !== !!draft.initial.fast
+      );
+    const saved = await this.owner.store.perform(draft.editing ? {
+      type: "preset-update",
+      ...this.presetFields(draft.editing.id, value),
+      expectedRevision: draft.editing.revision,
+    } : {
       type: "save-preset",
       id: draft.id,
       name: value.preset ?? "",
@@ -238,6 +313,21 @@ export class SessionChatPresets {
           }
         : {}),
     });
+    const state = this.owner.store.state();
+    const revision = this.defaultPreset()?.revision;
+    const updated = state?.presets?.find(preset => preset.id === draft.editing?.id);
+    if (saved && applyEditedMix && draft.editing && this.presetDraft() === draft &&
+      draft.identity === this.owner.identity() && !this.disposed && this.creatorOpen() &&
+      revision && state && matchesMix(draft.initial, state) && updated &&
+      updated.provider === value.harness && (updated.model ?? "") === value.model &&
+      updated.reasoning === (value.thinking ?? null) && updated.fast === !!value.fast) {
+      const applied = await this.owner.store.perform({
+        type: "preset", id: draft.editing.id, expectedProvider: state.provider,
+        expectedMix: { model: state.model, reasoning: state.reasoning, fast: !!state.fast, revision },
+      });
+      if (applied && this.presetDraft() === draft && draft.identity === this.owner.identity() && !this.disposed)
+        this.preferredId.set(draft.editing.id);
+    }
     if (!this.presetDraft() || this.presetDraft() === draft)
       this.presetSaving.set(false);
     if (
@@ -247,10 +337,13 @@ export class SessionChatPresets {
     )
       return;
     if (saved) {
-      this.preferredId.set(draft.id);
+      if (!draft.editing) {
+        this.preferredId.set(draft.id);
+        this.tweakBase.set(undefined);
+      }
       this.creatorOpen.set(false);
-      this.owner.store.notice.set("Preset created");
-      if (value.default) this.showDefaultUndo();
+      this.owner.store.notice.set(draft.editing ? "Preset updated" : "Preset created");
+      if (!draft.editing && value.default) this.showDefaultUndo();
     } else
       this.presetError.set(
         this.owner.store.error() ||
@@ -269,12 +362,13 @@ export class SessionChatPresets {
       this.openPresetCreator();
       return;
     }
-    if (id === this.selectedPreset()?.id) {
+    this.clearChangeNotice();
+    if (id === this.selectedPreset()?.id && !this.drift()) {
       this.owner.focusComposer();
       return;
     }
     const state = this.owner.store.state();
-    if (!state || !this.visiblePresets().some((preset) => preset.id === id))
+    if (!state || !(this.canEdit() ? this.presets() : this.visiblePresets()).some((preset) => preset.id === id))
       return;
     const identity = this.owner.identity();
     if (
@@ -287,6 +381,8 @@ export class SessionChatPresets {
       !this.disposed
     ) {
       this.preferredId.set(id);
+      this.tweakBase.set(undefined);
+      this.naming.set(false);
       this.owner.focusComposer();
     }
   }
@@ -314,9 +410,130 @@ export class SessionChatPresets {
       identity === this.owner.identity()
     ) {
       this.preferredId.set(id);
+      this.tweakBase.set(undefined);
+      this.naming.set(false);
       this.showDefaultUndo();
       this.owner.focusComposer();
     }
+  }
+  async movePreset(id: string, target: string, restoreFocus: boolean): Promise<void> {
+    const ids = this.presets().flatMap(preset => preset.id ? [preset.id] : []);
+    const from = ids.indexOf(id);
+    const to = ids.indexOf(target);
+    const revision = this.defaultPreset()?.revision;
+    if (!this.editing() || !revision || from < 0 || to < 0 || from === to) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, id);
+    if (await this.performEdit({ type: "preset-reorder", ids, expectedRevision: revision })) {
+      this.owner.store.notice.set("Presets reordered");
+      if (restoreFocus) this.owner.focusPreset(id);
+    }
+  }
+
+  async removePreset(id: string): Promise<void> {
+    const settings = this.defaultPreset();
+    const saved = this.owner.store.state()?.presets?.find(preset => preset.id === id);
+    if (!this.editing() || !settings || !saved ||
+      !await this.performEdit({ type: "preset-delete", id, expectedRevision: settings.revision })) return;
+    const removal = this.owner.store.presetRemoval();
+    if (!removal) return;
+    const fallback = settings.id === id
+      ? this.presets().find(preset => preset.id === this.defaultPreset()?.id)?.preset
+      : undefined;
+    this.removal.set({
+      label: saved.name,
+      detail: fallback ? `Default is now “${fallback}”` : undefined,
+      action: this.restoreAction(saved, settings, removal),
+    });
+    this.defaultNoticeOpen.set(false);
+    this.removalOpen.set(true);
+    this.owner.store.notice.set("Preset removed");
+    this.owner.focusPreset();
+  }
+
+  private restoreAction(
+    preset: SessionChatPreset,
+    settings: SessionChatPresetDefault,
+    removal: { position: number; revision: string },
+  ): Extract<SessionChatAction, { type: "preset-restore" }> {
+    const { id, name, provider, model, reasoning, fast } = preset;
+    return {
+      type: "preset-restore", id, name, provider, model, reasoning, fast,
+      position: removal.position, expectedRevision: removal.revision,
+      defaultProvider: settings.provider, defaultIds: settings.defaultIds,
+    };
+  }
+
+  async undoRemoval(): Promise<void> {
+    const removal = this.removal();
+    if (removal && await this.performEdit(removal.action)) {
+      this.removalOpen.set(false);
+      this.owner.store.notice.set("Preset restored");
+      this.owner.focusPreset(this.editing() ? removal.action.id : undefined);
+    }
+  }
+
+  async updateFromChat(): Promise<void> {
+    const saved = this.drift()?.saved;
+    const revision = this.defaultPreset()?.revision;
+    const agent = this.owner.agent();
+    if (!saved?.id || !agent || !revision) return;
+    if (await this.performEdit({
+      type: "preset-update", expectedRevision: revision,
+      ...this.presetFields(saved.id, { ...agent, preset: saved.preset }),
+    })) {
+      this.preferredId.set(saved.id);
+      this.tweakBase.set(undefined);
+      this.owner.store.notice.set("Preset updated");
+      this.showChangeNotice(`“${saved.preset}” updated`);
+      this.owner.focusComposer();
+    }
+  }
+
+  startNaming(): void {
+    this.newName.set("");
+    this.naming.set(true);
+  }
+
+  async saveChatAsNew(event: Event): Promise<void> {
+    event.preventDefault();
+    const agent = this.owner.agent();
+    if (!agent || !this.drift() || this.invalidNewName() || this.presets().length >= 24) return;
+    const id = crypto.randomUUID();
+    const { provider, ...fields } = this.presetFields(id, { ...agent, preset: this.newName() });
+    if (await this.performEdit({ type: "save-preset", ...fields, expectedProvider: provider })) {
+      this.preferredId.set(id);
+      this.tweakBase.set(undefined);
+      this.naming.set(false);
+      this.owner.store.notice.set("Preset created");
+      this.showChangeNotice(`Saved as “${fields.name}”`);
+      this.owner.focusComposer();
+    }
+  }
+
+  private showChangeNotice(text: string): void {
+    this.clearChangeNotice();
+    this.changeNotice.set(text);
+    this.changeNoticeOpen.set(true);
+    this.noticeTimer = setTimeout(() => this.changeNoticeOpen.set(false), 2400);
+  }
+
+  private clearChangeNotice(): void {
+    clearTimeout(this.noticeTimer);
+    this.changeNoticeOpen.set(false);
+  }
+
+  private presetFields(id: string, config: AgentConfig) {
+    return {
+      id, name: config.preset?.trim() ?? "", provider: config.harness,
+      model: config.model || null, reasoning: config.thinking || null, fast: !!config.fast,
+    };
+  }
+
+  private async performEdit(action: SessionChatAction): Promise<boolean> {
+    if (this.disposed || !this.canEdit() || this.owner.blocked() || !this.owner.showWelcome()) return false;
+    const identity = this.owner.identity();
+    return await this.owner.store.perform(action) && identity === this.owner.identity() && !this.disposed;
   }
   private showDefaultUndo(): void {
     const change = this.owner.store.defaultChange();
@@ -330,6 +547,7 @@ export class SessionChatPresets {
       identity: this.owner.identity(),
     });
     this.defaultNoticeOpen.set(true);
+    this.removalOpen.set(false);
   }
   async undoDefault(): Promise<void> {
     const undo = this.defaultUndo();
@@ -363,6 +581,7 @@ export class SessionChatPresets {
   presetShortcut(event: KeyboardEvent): void {
     if (
       !this.owner.showWelcome() ||
+      this.editing() ||
       this.creatorOpen() ||
       this.owner.blocked() ||
       event.defaultPrevented ||
@@ -392,8 +611,15 @@ export class SessionChatPresets {
     this.defaultUndo.set(null);
     this.undoBusy.set(false);
     this.preferredId.set(null);
+    this.tweakBase.set(undefined);
+    this.editing.set(false);
+    this.naming.set(false);
+    this.removal.set(null);
+    this.removalOpen.set(false);
+    this.clearChangeNotice();
   }
   dispose(): void {
+    this.clearChangeNotice();
     this.disposed = true;
   }
 }

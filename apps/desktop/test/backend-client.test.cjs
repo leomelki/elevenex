@@ -902,6 +902,23 @@ test('default preset snapshots and writes are bounded and revision guarded', () 
   assert.throws(() => parseChatAction({ type: 'preset-default-restore', provider: 'codex', defaultIds: Array(25).fill('deep'), expectedRevision: revision }));
 });
 
+test('saved preset edits validate revision, unique order and restoration position', () => {
+  const { parseChatAction } = require('../dist/backend-client/session-chat-validation');
+  const expectedRevision = 'a'.repeat(64);
+  const reorder = { type: 'preset-reorder', ids: ['deep', 'quick'], expectedRevision };
+  const update = { type: 'preset-update', id: 'deep', name: 'Deep work', provider: 'codex', model: null, reasoning: null, fast: false, expectedRevision };
+  const restore = { ...update, type: 'preset-restore', position: 0, defaultProvider: 'codex', defaultIds: ['deep'] };
+  for (const action of [reorder, update, restore, { type: 'preset-delete', id: 'deep', expectedRevision }]) {
+    assert.deepEqual(parseChatAction({ ...action, extra: 'discard' }), action);
+    assert.throws(() => parseChatAction({ ...action, expectedRevision: 'stale' }));
+  }
+  assert.throws(() => parseChatAction({ ...reorder, ids: ['deep', 'deep'] }));
+  assert.throws(() => parseChatAction({ ...reorder, ids: Array.from({ length: 25 }, (_, index) => String(index)) }));
+  assert.throws(() => parseChatAction({ ...update, provider: '../provider' }));
+  assert.throws(() => parseChatAction({ ...restore, position: 24 }));
+  assert.throws(() => parseChatAction({ ...restore, defaultIds: ['deep', 'deep'] }));
+});
+
 test('preset catalogs reject mismatched identities and unsupported configurations', () => {
   const { parseChatCatalog, parseChatAction } = require('../dist/backend-client/session-chat-validation');
   const catalog = { provider: 'claude', label: 'Claude Code', models: [{ id: 'sonnet', label: 'Sonnet', reasoningEfforts: ['high'], supportsFastMode: false }], model: 'sonnet', reasoning: 'high', fast: false, reasoningAvailable: true, fastAvailable: false, error: null };

@@ -112,6 +112,7 @@ export class SessionChatStore {
   readonly streamError = signal('');
   readonly defaultChange =
     signal<SessionChatCommandReply["defaultChange"]>(undefined);
+  readonly presetRemoval = signal<SessionChatCommandReply["presetRemoval"]>(undefined);
   readonly notice = signal("");
   readonly busy = signal("");
   readonly readOnly = signal(false);
@@ -852,7 +853,8 @@ export class SessionChatStore {
           ? "Changing harness…"
           : "Updating…",
     );
-    const configuration = ["provider", "preset", "save-preset", "preset-default"].includes(action.type);
+    const configuration = ["provider", "preset", "save-preset", "preset-default",
+      "preset-update", "preset-reorder", "preset-delete", "preset-restore"].includes(action.type);
     if (configuration) this.stopRead();
     const pending = action.type === "send"
       ? (action.queue ? this.pendingQueue() : this.pending())
@@ -903,6 +905,7 @@ export class SessionChatStore {
             : "Updated",
     );
     this.defaultChange.set(result.value.defaultChange);
+    this.presetRemoval.set(result.value.presetRemoval);
     if (configuration) {
       // Retain the settings surface and its focus while loading the new catalog.
       // Keep writes blocked until authoritative provider state replaces it.

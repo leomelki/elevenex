@@ -97,9 +97,11 @@
       </section>
     }
   </div>
-  <div chatComposer>
+  <div chatComposer class="session-composer">
     @if (showWelcome()) {
-      <section class="start" exAutoHeight><div class="start-content">
+      <section class="start"
+        [class.with-preset-change]="!presetFlow.editing() && (!!presetFlow.drift() || presetFlow.changeNoticeOpen())">
+        <div class="start-content">
         <h1>What should we work on?</h1>
         @if (store.starting()) {
           <p role="status">{{ creation()?.status === 'creating' ? 'Creating session… You can start writing.' : creation() ? 'Your draft stays here while you finish creating the session.' : 'Getting your agent ready… You can keep writing.' }}</p>
@@ -107,7 +109,9 @@
           <p role="status">Your session is ready. Send when you’re ready.</p>
         } @else if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
-            @if (presetFlow.defaultPreset() && presetFlow.presets().length) {
+            @if (presetFlow.editing()) {
+              <span class="preset-edit-title">Edit presets</span>
+            } @else if (presetFlow.defaultPreset() && presetFlow.presets().length) {
               <ex-dropdown
                 class="default-preset"
                 label="Default preset for new chats"
@@ -136,13 +140,67 @@
             >
               <ex-icon name="plus" [size]="13" />New preset
             </button>
+            @if (presetFlow.canEdit() && (presetFlow.presets().length || presetFlow.editing())) {
+              <button exButton [variant]="presetFlow.editing() ? 'secondary' : 'ghost'" size="sm"
+                data-preset-edit [disabled]="blocked() || store.loading()"
+                [attr.aria-pressed]="presetFlow.editing()"
+                (click)="presetFlow.setEditing(!presetFlow.editing())">
+                <ex-icon [name]="presetFlow.editing() ? 'check' : 'pencil'" [size]="13" />
+                {{ presetFlow.editing() ? 'Done' : 'Edit' }}
+              </button>
+            }
           </div>
-          <ex-preset-picker
-            [presets]="presetFlow.visiblePresets()"
-            [value]="presetFlow.selectedPreset()?.id || 'custom'"
+          <div class="preset-grid-section"><ex-preset-picker
+            [adaptive]="presetFlow.canEdit()"
+            [presets]="presetFlow.canEdit() ? presetFlow.presets() : presetFlow.visiblePresets()"
+            [value]="presetFlow.drift()?.saved?.id || presetFlow.selectedPreset()?.id || 'custom'"
+            [editedPreset]="editedPreset()"
+            [editing]="presetFlow.editing()"
             [disabled]="blocked() || store.loading()"
             (selected)="presetFlow.selectPreset($event)"
+            (editRequested)="editPreset($event)"
+            (removed)="presetFlow.removePreset($event)"
+            (moved)="presetFlow.movePreset($event.id, $event.target, $event.restoreFocus)"
           />
+          <ex-fold [open]="(!!presetFlow.drift() || presetFlow.changeNoticeOpen()) && !presetFlow.editing()">
+            @if (presetFlow.drift(); as drift) {
+              <section class="preset-change" aria-label="Changes to saved preset">
+                <strong>“{{ drift.saved.preset }}” is changed for this chat</strong>
+                @if (presetFlow.naming()) {
+                  <form class="preset-change-actions" (submit)="presetFlow.saveChatAsNew($event)"
+                    (keydown.escape)="cancelPresetName(); $event.stopPropagation()">
+                    <input #presetName aria-label="New preset name" placeholder="Preset name" maxlength="48" required
+                      [value]="presetFlow.newName()" [disabled]="blocked()"
+                      (input)="presetFlow.newName.set(presetName.value)" />
+                    <button exButton variant="ghost" size="sm" type="button"
+                      (click)="cancelPresetName()">Cancel</button>
+                    <button exButton variant="primary" size="sm" type="submit"
+                      [disabled]="blocked() || presetFlow.invalidNewName()">Save preset</button>
+                  </form>
+                } @else {
+                  <p>New chats still use the saved preset.</p>
+                  <ul class="preset-diffs">
+                    @for (field of drift.fields; track field.label) {
+                      <li>{{ field.label }} <del>{{ field.from }}</del> → <span>{{ field.to }}</span></li>
+                    }
+                  </ul>
+                  <div class="preset-change-actions">
+                    <button exButton variant="ghost" size="sm" [disabled]="blocked()"
+                      (click)="presetFlow.selectPreset(drift.saved.id!)">Revert</button>
+                    <button exButton variant="ghost" size="sm" data-name-preset
+                      [disabled]="blocked() || presetFlow.presets().length >= 24"
+                      (click)="nameNewPreset()">Save as new…</button>
+                    <button exButton variant="primary" size="sm" [disabled]="blocked()"
+                      (click)="presetFlow.updateFromChat()">Update preset</button>
+                  </div>
+                }
+              </section>
+            } @else if (presetFlow.changeNotice()) {
+              <div class="preset-change preset-result" role="status">
+                <ex-icon name="check" [size]="14" />{{ presetFlow.changeNotice() }}
+              </div>
+            }
+          </ex-fold></div>
           @if (!presetFlow.presets().length) {
             <p>Choose your agent below, or save your own starting point.</p>
           }
@@ -364,11 +422,13 @@
 ) {
   <ex-preset-creator
     [initial]="draft.initial"
+    [editing]="!!draft.editing"
+    [chatSettings]="draft.editing && draft.editing.id === presetFlow.drift()?.saved?.id ? agent() : undefined"
     [harnesses]="draft.harnesses"
     [harnessLocked]="!draft.catalogProvider"
     [catalogProvider]="draft.catalogProvider"
     [names]="presetFlow.presetNames()"
-    [defaultAvailable]="!!presetFlow.defaultPreset()"
+    [defaultAvailable]="!draft.editing && !!presetFlow.defaultPreset()"
     [open]="presetFlow.creatorOpen()"
     [busy]="presetFlow.presetSaving()"
     [blocked]="!!store.uncertain() || draft.identity !== identity()"
@@ -377,7 +437,7 @@
     [error]="presetFlow.presetError()"
     (submitted)="presetFlow.savePreset($event)"
     (closeRequested)="presetFlow.creatorOpen.set(false)"
-    (closed)="presetFlow.presetDraft.set(null)"
+    (closed)="presetFlow.presetDraft.set(null); draft.editing && focusPreset(draft.editing.id)"
   />
 }
 
@@ -396,6 +456,16 @@
         (actionSelected)="presetFlow.undoDefault()"
         (dismissed)="presetFlow.defaultNoticeOpen.set(false)"
       />
+    </div>
+  }
+</ex-presence>
+
+<ex-presence [show]="presetFlow.removalOpen()">
+  @for (removal of presetFlow.removal() ? [presetFlow.removal()!] : []; track removal.action.expectedRevision) {
+    <div class="preset-toast">
+      <ex-toast [title]="'Removed “' + removal.label + '”'" [detail]="removal.detail || ''" action="Undo" [duration]="7000"
+        [dismissOnAction]="false" [busy]="blocked()"
+        (actionSelected)="presetFlow.undoRemoval()" (dismissed)="presetFlow.removalOpen.set(false)" />
     </div>
   }
 </ex-presence>

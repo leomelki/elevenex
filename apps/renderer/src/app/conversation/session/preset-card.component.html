@@ -4,7 +4,13 @@
   [class.selected]="selected()"
   [class.custom]="custom()"
   [class.compact]="compact()"
-  [attr.aria-pressed]="selected()"
+  [class.adaptive]="adaptive()"
+  [class.slim]="slim()"
+  [class.editing]="editing()"
+  [class.changed]="edited()"
+  [attr.aria-pressed]="editing() ? null : selected()"
+  [attr.aria-label]="editing() ? 'Edit ' + preset()?.preset : (slim() && edited() ? preset()?.preset + ', changed for this chat' : null)"
+  [attr.aria-keyshortcuts]="editing() ? 'Alt+ArrowLeft Alt+ArrowRight Delete' : null"
   (click)="picked.emit()"
 >
   <span class="top"
@@ -18,7 +24,11 @@
     @if (shortcut()) {
       <ex-kbd>{{ shortcut() }}</ex-kbd>
     }
-    @if (selected()) {
+    @if (editing() && !slim()) {
+      <ex-icon class="edit-mark" name="pencil" [size]="14" />
+    } @else if (edited() && !slim()) {
+      <span class="edited">Edited</span>
+    } @else if (selected() && !slim()) {
       <span class="check"><ex-icon name="check" [size]="12" /></span>
     }</span
   ><span class="name"
@@ -27,14 +37,17 @@
         ? "Custom"
         : preset()?.preset || preset()?.modelLabel || preset()?.model
     }}</span>
-    @if (!custom() && preset()?.default) {
+    @if (!custom() && preset()?.default && !slim() && !editing()) {
       <span class="default">Default</span>
     }
-    @if (preset()?.fast) {
+    @if (preset()?.fast && !slim()) {
       <ex-icon name="bolt" [size]="13" />
     }
   </span>
-  @if (!compact()) {
+  @if (slim() && editing()) {
+    <ex-icon class="edit-mark" name="pencil" [size]="13" />
+  }
+  @if (!compact() && !slim()) {
     <span class="sub">{{
       custom()
         ? "Choose your own mix"

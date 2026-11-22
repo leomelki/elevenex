@@ -157,7 +157,43 @@ button:disabled {
   .check {
     animation: none;
   }
+  .adaptive :is(ex-kbd, .edited, .check) {
+    transition: none;
+  }
 }
 
 .name .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .default { flex: none; margin-left: auto; color: var(--ink-muted); font-size: var(--text-overline-size); font-weight: var(--text-caption-weight); }
+.editing:not(.slim) .top {
+  padding-inline-end: var(--space-6);
+}
+.editing:hover:not(:disabled) .edit-mark { color: var(--accent); }
+.editing { cursor: grab; }
+.edited {
+  color: var(--accent);
+  font-size: var(--text-overline-size);
+  font-weight: var(--text-caption-weight);
+}
+.changed .sub { color: var(--accent); }
+.adaptive :is(ex-kbd, .edited, .check) {
+  opacity: var(--preset-indicator-opacity, 1);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.adaptive.slim {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  min-height: var(--space-8);
+}
+.slim .top { margin: 0; }
+.slim .name { flex: 1; }
+.slim:not(.editing):not(.custom):is(:hover, :focus-visible) .name { padding-inline-end: var(--space-6); }
+.slim.editing { padding-inline-end: var(--space-8); }
+.slim.editing .edit-mark { flex: none; }
+@container session-chat (max-height: 530px) {
+  .adaptive:not(.slim) { padding: var(--space-2); }
+  .adaptive .harness { display: none; }
+  .adaptive .top { margin-bottom: var(--space-1); }
+  .adaptive.slim .top { margin-bottom: 0; }
+}

@@ -8,6 +8,7 @@ import {
   chatId,
   chatObject,
   chatText,
+  defaultRevision,
   parseChatAction,
   parseChatCatalog,
   parseChatPage,
@@ -304,6 +305,22 @@ export function registerSessionChatIpc(
               code: "invalid-response",
               message: "The machine returned an incompatible default change.",
             });
+          const removal = reply["presetRemoval"] === undefined
+            ? undefined : chatObject(reply["presetRemoval"]);
+          const position = removal?.["position"];
+          if (action.type === "preset-delete" ? !removal : !!removal)
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine returned an incompatible preset removal.",
+            });
+          if (removal) {
+            if (typeof position !== "number" || !Number.isInteger(position) || position < 0 || position >= 24)
+              throw new BackendRequestError({
+                code: "invalid-response",
+                message: "The machine returned an invalid preset position.",
+              });
+            return { accepted: true as const, presetRemoval: { position, revision: defaultRevision(removal["revision"]) } };
+          }
           return {
             accepted: true as const,
             ...(change ? { defaultChange: change } : {}),

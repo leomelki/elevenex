@@ -44,10 +44,10 @@ import {
   type ToolContentSource,
 } from "../conversation";
 import {
-  AutoHeightDirective,
   ButtonComponent,
   IconComponent,
   DropdownComponent,
+  FoldComponent,
   PresenceComponent,
   ToastComponent,
 } from "../ui";
@@ -74,7 +74,6 @@ function equalViewData<T>(left: T, right: T): boolean {
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
   imports: [
-    AutoHeightDirective,
     OpensWhenBackComponent,
     SessionChatContentComponent,
     SessionActivityComponent,
@@ -91,6 +90,7 @@ function equalViewData<T>(left: T, right: T): boolean {
     ButtonComponent,
     IconComponent,
     DropdownComponent,
+    FoldComponent,
     PresenceComponent,
     ToastComponent,
   ],
@@ -287,12 +287,39 @@ export class SessionChatComponent {
     agent: (): AgentConfig | undefined => this.agent(),
     focusComposer: () => this.focusComposer(),
     closeAgent: () => this.composer()?.agentPicker()?.closePicker(),
+    focusPreset: (id) => this.focusPreset(id),
   });
+  focusPreset(id?: string): void {
+    afterNextRender(() => {
+      const card = id && this.element.querySelector(
+        `[data-flip="${CSS.escape(id)}"] ex-preset-card button`,
+      );
+      const fallback = this.element.querySelector<HTMLButtonElement>("[data-preset-edit]");
+      (card instanceof HTMLButtonElement ? card : fallback)?.focus();
+    }, { injector: this.injector });
+  }
+  editPreset(id: string): void {
+    this.presetFlow.setEditing(true);
+    this.presetFlow.openPresetEditor(id);
+  }
+  nameNewPreset(): void {
+    this.presetFlow.startNaming();
+    afterNextRender(() => {
+      this.element.querySelector<HTMLInputElement>(".preset-change input")?.focus();
+    }, { injector: this.injector });
+  }
+  cancelPresetName(): void {
+    this.presetFlow.naming.set(false);
+    afterNextRender(() => {
+      this.element.querySelector<HTMLButtonElement>("[data-name-preset]")?.focus();
+    }, { injector: this.injector });
+  }
   readonly agent = computed<AgentConfig | undefined>(() => {
     const state = this.store.state();
     if (!state) return undefined;
     return {
       preset: this.presetFlow.selectedPreset()?.preset,
+      presetEdited: this.showWelcome() && !!this.presetFlow.drift(),
       harnessLabel: this.providerLabel(),
       harness: state.provider,
       mark:
@@ -310,6 +337,11 @@ export class SessionChatComponent {
         : undefined,
       plan: sessionPlanUsage(state.planUsage, this.usageTime()),
     };
+  }, { equal: equalViewData });
+  readonly editedPreset = computed<AgentConfig | undefined>(() => {
+    const saved = this.presetFlow.drift()?.saved;
+    const agent = this.agent();
+    return saved && agent ? { ...agent, id: saved.id, preset: saved.preset, default: saved.default } : undefined;
   }, { equal: equalViewData });
   readonly fastAvailable = computed(() => {
     const state = this.store.state();
@@ -333,6 +365,9 @@ export class SessionChatComponent {
       this.store.loading()
     )
       return;
+    if (value.harness !== current.harness || value.model !== current.model ||
+      value.thinking !== current.thinking || value.fast !== current.fast)
+      this.presetFlow.trackTweak();
     if (value.harness !== current.harness)
       void this.chooseProvider(value.harness);
     else if (value.model !== current.model)

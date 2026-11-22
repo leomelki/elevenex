@@ -9,6 +9,7 @@ import {
   linkedSignal,
   output,
   signal,
+  untracked,
 } from "@angular/core";
 import {
   AutoHeightDirective,
@@ -46,6 +47,8 @@ import { AgentSettingsComponent } from "../composer/agent-settings.component";
 })
 export class PresetCreatorComponent {
   readonly initial = input.required<AgentConfig>();
+  readonly editing = input(false);
+  readonly chatSettings = input<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
   readonly harnessLocked = input(true);
   readonly catalogProvider = input<PresetCatalogProvider>();
@@ -89,7 +92,7 @@ export class PresetCreatorComponent {
   readonly closeRequested = output<void>();
   readonly closed = output<void>();
   readonly draft = linkedSignal(() => this.initial());
-  readonly name = signal("");
+  readonly name = linkedSignal(() => this.editing() ? this.initial().preset ?? "" : "");
   readonly nameId = `preset-name-${crypto.randomUUID()}`;
   readonly titleId = `preset-title-${crypto.randomUUID()}`;
   readonly issueId = `preset-issue-${crypto.randomUUID()}`;
@@ -112,7 +115,24 @@ export class PresetCreatorComponent {
     effect(() => {
       if (!this.open()) this.cancelCatalog();
     });
+    effect(() => {
+      if (!this.editing() || !this.open() || !this.catalogProvider()) return;
+      const initial = this.initial();
+      this.savedDrafts.set(initial.harness, initial);
+      void untracked(() => this.loadCatalog());
+    });
     this.destroy.onDestroy(() => this.cancelCatalog());
+  }
+  useChatSettings(): void {
+    const current = this.draft();
+    const chat = this.chatSettings();
+    if (!chat || !this.open() || this.busy() || this.blocked()) return;
+    this.savedDrafts.set(current.harness, current);
+    this.savedDrafts.set(chat.harness, chat);
+    this.cancelCatalog();
+    this.catalogError.set("");
+    this.draft.set(chat);
+    if (!this.catalogs().has(chat.harness)) void this.loadCatalog();
   }
   private cancelCatalog(): void {
     this.catalogRequest?.abort();

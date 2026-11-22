@@ -351,6 +351,52 @@ export class SettingsService implements OnModuleInit {
     return this.changePresetDefaults(revision, () => snapshot);
   }
 
+  /** Compare against the saved order and defaults in the same transaction as the write. */
+  editAgentModelPresets<T>(
+    revision: string,
+    edit: (presets: readonly AgentModelPreset[], defaultProvider: DefaultAgentProvider) => {
+      presets: readonly AgentModelPreset[];
+      clearLegacy?: readonly string[];
+      defaultProvider?: DefaultAgentProvider;
+      result: T;
+    },
+  ) {
+    return this.db.transaction((tx) => {
+      const row = tx
+        .select()
+        .from(schema.appSettings)
+        .where(eq(schema.appSettings.id, SINGLETON_SETTINGS_ID))
+        .get();
+      if (row) this.toResponse(row);
+      this.assertPresetDefaultRevision(revision);
+      const next = edit(this.defaultPresets, this.presetDefaultProvider);
+      const presets = this.normalizeAgentModelPresets(next.presets, true);
+      const models = { ...this.agentDefaultsCache.models };
+      const reasoningEfforts = { ...this.agentDefaultsCache.reasoningEfforts };
+      for (const provider of next.clearLegacy ?? []) {
+        delete models[provider];
+        delete reasoningEfforts[provider];
+      }
+      const values = {
+        defaultAgentProvider: next.defaultProvider ?? this.presetDefaultProvider,
+        agentModelPresets: JSON.stringify(presets),
+        defaultModelByProvider: this.serializeAgentPreferences(models),
+        defaultReasoningEffortByProvider: this.serializeAgentPreferences(reasoningEfforts),
+      };
+      tx.insert(schema.appSettings)
+        .values({ id: SINGLETON_SETTINGS_ID, ...values })
+        .onConflictDoUpdate({
+          target: schema.appSettings.id,
+          set: { ...values, updatedAt: new Date().toISOString() },
+        })
+        .run();
+      this.defaultPresets = presets;
+      this.presetDefaultProvider = values.defaultAgentProvider;
+      this.agentDefaultsCache = { models, reasoningEfforts };
+      return { result: next.result, revision: this.getAgentPresetDefault().revision };
+    });
+  }
+
   /** At most 24 small records: keep the comparison and write in one SQLite transaction. */
   private changePresetDefaults(
     revision: string,

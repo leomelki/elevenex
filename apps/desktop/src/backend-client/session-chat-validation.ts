@@ -84,7 +84,7 @@ function presetId(value: unknown): string {
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(id)) throw invalid();
   return id;
 }
-function defaultRevision(value: unknown): string {
+export function defaultRevision(value: unknown): string {
   const revision = chatText(value, 64);
   if (!/^[a-f0-9]{64}$/.test(revision)) throw invalid();
   return revision;
@@ -555,6 +555,9 @@ export function parseChatState(value: unknown): SessionChatState {
     ...(raw["presetCatalogs"] === undefined
       ? {}
       : { presetCatalogs: bool(raw["presetCatalogs"]) }),
+    ...(raw["presetEditing"] === undefined
+      ? {}
+      : { presetEditing: bool(raw["presetEditing"]) }),
     ...(raw["presetDefault"] === undefined
       ? {}
       : { presetDefault: parsePresetDefault(raw["presetDefault"]) }),
@@ -732,6 +735,33 @@ export function parseChatAction(value: unknown): SessionChatAction {
   switch (type) {
     case "mark-seen":
       return { type, completionAt: completionAt(raw["completionAt"]) };
+    case "preset-reorder": {
+      const ids = array(raw["ids"], 24, presetId);
+      if (!ids.length || new Set(ids).size !== ids.length) throw invalid();
+      return { type, ids, expectedRevision: defaultRevision(raw["expectedRevision"]) };
+    }
+    case "preset-delete":
+      return {
+        type, id: presetId(raw["id"]),
+        expectedRevision: defaultRevision(raw["expectedRevision"]),
+      };
+    case "preset-update":
+    case "preset-restore": {
+      const name = chatText(raw["name"], 48).trim();
+      if (!name) throw invalid();
+      const preset = {
+        id: presetId(raw["id"]), name, provider: presetId(raw["provider"]),
+        model: nullable(raw["model"]), reasoning: nullable(raw["reasoning"]),
+        fast: bool(raw["fast"]), expectedRevision: defaultRevision(raw["expectedRevision"]),
+      };
+      if (type === "preset-update") return { type, ...preset };
+      const position = raw["position"];
+      if (typeof position !== "number" || !Number.isInteger(position) || position < 0 || position >= 24)
+        throw invalid();
+      const defaultIds = array(raw["defaultIds"], 24, presetId);
+      if (new Set(defaultIds).size !== defaultIds.length) throw invalid();
+      return { type, ...preset, position, defaultProvider: presetId(raw["defaultProvider"]), defaultIds };
+    }
     case "preset-default":
       return {
         type,
@@ -749,12 +779,18 @@ export function parseChatAction(value: unknown): SessionChatAction {
         expectedRevision: defaultRevision(raw["expectedRevision"]),
       };
     }
-    case "preset":
+    case "preset": {
+      const mix = raw["expectedMix"] === undefined ? undefined : chatObject(raw["expectedMix"]);
       return {
         type,
         id: presetId(raw["id"]),
         expectedProvider: chatText(raw["expectedProvider"]),
+        ...(mix ? { expectedMix: {
+          model: nullable(mix["model"]), reasoning: nullable(mix["reasoning"]),
+          fast: bool(mix["fast"]), revision: defaultRevision(mix["revision"]),
+        } } : {}),
       };
+    }
     case "save-preset": {
       const name = chatText(raw["name"], 48).trim();
       if (

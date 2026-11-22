@@ -12,14 +12,14 @@
     (submit)="submit($event)"
   >
     <header>
-      <span class="symbol"><ex-icon name="plus" [size]="18" /></span>
+      <span class="symbol"><ex-icon [name]="editing() ? 'pencil' : 'plus'" [size]="18" /></span>
       <div>
-        <h2 [id]="titleId">Create a preset</h2>
-        <p>A familiar starting point, one click away.</p>
+        <h2 [id]="titleId">{{ editing() ? 'Edit preset' : 'Create a preset' }}</h2>
+        @if (!editing()) { <p>A familiar starting point, one click away.</p> }
       </div>
       <ex-icon-button
         icon="x"
-        label="Close preset creator"
+        [label]="editing() ? 'Close preset editor' : 'Close preset creator'"
         (pressed)="closeRequested.emit()"
       />
     </header>
@@ -62,6 +62,13 @@
             [fastAvailable]="supportsFast()"
             (changed)="change($event)"
           />
+          @if (chatSettings(); as chat) {
+            <ex-set-row label="This chat" [sub]="(chat.modelLabel || chat.model) + (chat.thinking ? ' · ' + chat.thinking : '')">
+              <button exButton variant="ghost" size="sm" type="button"
+                [disabled]="!open() || blocked() || busy() || catalogBusy()"
+                (click)="useChatSettings()">Use</button>
+            </ex-set-row>
+          }
           @if (catalogBusy()) {
             <p class="catalog-status" role="status">Loading models…</p>
           }
@@ -119,7 +126,7 @@
           duplicate()
         "
       >
-        Create preset
+        {{ editing() ? 'Save changes' : 'Create preset' }}
       </button>
     </footer>
   </form>

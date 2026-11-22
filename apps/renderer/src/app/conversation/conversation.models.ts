@@ -16,6 +16,8 @@ export type ThinkingLevel = "Off" | "Low" | "Medium" | "High" | "Max";
 export interface AgentConfig {
   readonly id?: string;
   readonly preset?: string;
+  /** The current chat's settings differ from the saved starting preset. */
+  readonly presetEdited?: boolean;
   /** Saved default; also seeds the creator's local choice and carries its submission. */
   readonly default?: boolean;
   readonly mark: string;

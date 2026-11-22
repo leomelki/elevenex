@@ -13,6 +13,85 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+.adaptive {
+  display: grid;
+  gap: var(--space-2);
+}
+.full {
+  grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 148px), 1fr));
+}
+.slim-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 112px), 1fr));
+}
+.editing .slim-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(50% - var(--space-1), 128px), 1fr));
+}
+.slim-grid:empty, .full:empty, .adaptive:not(.editing) .beyond-preview {
+  display: none;
+}
+.preset-tile {
+  position: relative;
+  min-width: 0;
+  display: grid;
+}
+.slim-grid .preset-tile {
+  opacity: 0.86;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.slim-grid .second-row {
+  opacity: 0.68;
+}
+.slim-grid .beyond-preview {
+  opacity: 0.59;
+}
+.slim-grid .preset-tile:is(:hover, :focus-within, .drop-target) {
+  opacity: 1;
+}
+.adaptive:not(.editing):has(.beyond-preview)
+  .second-row:not(.beyond-preview, :hover, :focus-within) {
+  mask-image: linear-gradient(#000 68%, transparent 125%);
+}
+.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-md);
+}
+.tile-action {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+  z-index: 1;
+}
+.slim-grid .tile-action {
+  inset-block-start: 50%;
+  inset-inline-end: var(--space-1);
+  transform: translateY(-50%);
+}
+.tile-action.edit {
+  opacity: 0;
+}
+.full .tile-action.remove {
+  inset-inline-end: var(--space-1);
+}
+.slim-grid .tile-action.remove {
+  opacity: 0;
+}
+.preset-tile:is(:hover, :focus-within) .tile-action {
+  opacity: 1;
+}
+.preset-tile:has(.tile-action.edit):is(:hover, :focus-within) {
+  --preset-indicator-opacity: 0;
+}
+@container session-chat (max-height: 620px) {
+  .adaptive:not(.editing) .second-row { display: none; }
+  .adaptive:not(.editing):has(.second-row)
+    .slim-grid .preset-tile:not(.second-row, :hover, :focus-within) {
+    mask-image: linear-gradient(#000 68%, transparent 125%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slim-grid .preset-tile { transition: none; }
+}
 
 .preset-enter {
   animation: preset-enter var(--dur-slow) var(--ease-out);

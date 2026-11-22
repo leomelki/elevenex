@@ -1,3 +1,18 @@
+@if (adaptive()) {
+  <div class="adaptive" [class.editing]="editing()" [exFlip]="order()" [exFlipReorderOnly]="true"
+    role="group" aria-label="Agent presets" [attr.aria-busy]="disabled()">
+    <div class="presets full">
+      @for (entry of fullEntries(); track entry.id; let i = $index) {
+        <ng-container [ngTemplateOutlet]="tile" [ngTemplateOutletContext]="{entry, slim: false, index: i}" />
+      }
+    </div>
+    <div class="presets slim-grid" #slimGrid>
+      @for (entry of slimEntries(); track entry.id; let i = $index) {
+        <ng-container [ngTemplateOutlet]="tile" [ngTemplateOutletContext]="{entry, slim: true, index: i}" />
+      }
+    </div>
+  </div>
+} @else {
 <div class="height" exAutoHeight>
   <div
     class="presets"
@@ -32,3 +47,46 @@
     }
   </div>
 </div>
+}
+
+<ng-template #tile let-entry="entry" let-slim="slim" let-index="index">
+  @let edited = !editing() && editedPreset()?.id === entry.id ? editedPreset() : undefined;
+  <div class="preset-tile"
+    tabindex="-1"
+    [class.second-row]="slim && index >= columns()"
+    [class.beyond-preview]="slim && index >= columns() * 2"
+    [class.drop-target]="over() === entry.id"
+    [attr.data-flip]="entry.id"
+    [attr.draggable]="editing() && !disabled()"
+    (dragstart)="startDrag($event, entry.id)"
+    (dragover)="dragOver($event, entry.id)"
+    (dragleave)="over() === entry.id && over.set('')"
+    (dragend)="stopDrag()"
+    (drop)="drop($event, entry.id)"
+    (keydown)="entry.preset && cardKey($event, entry.id)"
+    (contextmenu)="entry.preset && edit($event, entry.id)">
+    <ex-preset-card
+      [preset]="edited || entry.preset"
+      [custom]="!entry.preset"
+      [selected]="!editing() && value() === entry.id"
+      [edited]="!!edited"
+      [editing]="editing()"
+      [adaptive]="true"
+      [slim]="slim"
+      [shortcut]="entry.preset && !slim && !editing() ? '⌥' + (index + 1) : ''"
+      [disabled]="disabled()"
+      (picked)="activate(entry.id)"
+    />
+    @if (entry.preset) {
+      @if (editing()) {
+        <ex-icon-button class="tile-action remove" icon="x" size="sm"
+          [label]="'Remove ' + entry.preset.preset"
+          [disabled]="disabled()" (pressed)="removed.emit(entry.id)" />
+      } @else {
+        <ex-icon-button class="tile-action edit" icon="pencil" size="sm"
+          [label]="'Edit ' + entry.preset.preset"
+          [disabled]="disabled()" (pressed)="editRequested.emit(entry.id)" />
+      }
+    }
+  </div>
+</ng-template>

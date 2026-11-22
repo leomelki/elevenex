@@ -187,6 +187,7 @@ export class DesktopChatService implements OnModuleDestroy {
       browserElements: provider.info.capabilities.multimodalPrompts === true,
       sessionMentions: true,
       presetCatalogs: true,
+      presetEditing: true,
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
       controls: {
@@ -736,7 +737,8 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new ConflictException(
         'An agent configuration is being applied. Please wait.',
       );
-    const preset = ['preset', 'save-preset', 'preset-default', 'preset-default-restore'].includes(String(action.type));
+    const catalogEdit = ['preset-update', 'preset-reorder', 'preset-delete', 'preset-restore'].includes(String(action.type));
+    const preset = catalogEdit || ['preset', 'save-preset', 'preset-default', 'preset-default-restore'].includes(String(action.type));
     if (preset) this.configuring.add(sessionId);
     try {
       const result = preset
@@ -761,7 +763,7 @@ export class DesktopChatService implements OnModuleDestroy {
         'preset-default', 'send',
       ].includes(String(action.type)))
         await this.rememberConfiguration(sessionId);
-      if (action.type === 'save-preset' || action.type === 'preset-default' || action.type === 'preset-default-restore') {
+      if (catalogEdit || action.type === 'save-preset' || action.type === 'preset-default' || action.type === 'preset-default-restore') {
         for (const id of this.feeds.keys()) if (id !== sessionId) this.invalidate(id);
       }
       if (!preset && action.type !== 'provider') this.invalidate(sessionId);
