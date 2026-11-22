@@ -10,11 +10,20 @@ export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
 import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+import type { SessionChatTurnWorkReply, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
+import type { SessionChatStreamEvent, SessionChatWatch } from './session-chat';
 export type * from './session-chat';
+export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
+export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_STREAM_FRAME_BYTES } from './session-chat';
+export { sessionChatToolHeading } from './session-chat-tool-heading';
+import type { SessionChatDraftEdit, SessionChatDraftSnapshot, SessionChatDraftTarget } from './session-chat-draft';
+export type * from './session-chat-draft';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
-import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceArchiveSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
+import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
 export { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from './workspace';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
@@ -94,10 +103,17 @@ export interface InvokeContracts {
   'session-chat:catalog': { args: [scopeId: string, input: SessionChatCatalogRead]; result: BackendResult<SessionChatCatalog> };
   'session-chat:changes': { args: [scopeId: string, input: SessionChatChangesRead]; result: BackendResult<SessionChatChangesPage> };
   'session-chat:read': { args: [scopeId: string, input: SessionChatRead]; result: BackendResult<SessionChatPage> };
+  'session-chat:watch': { args: [scopeId: string, input: SessionChatWatch]; result: BackendResult<{ readonly accepted: true }> };
+  'session-chat:unwatch': { args: [scopeId: string, watchId: string]; result: void };
+  'session-chat:acknowledge': { args: [scopeId: string, watchId: string, delivery: number]; result: void };
+  'session-chat:turn-work': { args: [scopeId: string, input: SessionChatTurnWorkRead]; result: BackendResult<SessionChatTurnWorkReply> };
+  'session-chat:tool-details': { args: [scopeId: string, input: SessionChatToolDetailsRead]; result: BackendResult<SessionChatToolDetailsReply> };
   'session-chat:command': { args: [scopeId: string, input: SessionChatCommand]; result: BackendResult<SessionChatCommandReply> };
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
   'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
   'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
+  'session-chat:draft-read': { args: [expected: EnvironmentSelection, target: SessionChatDraftTarget]; result: SessionChatDraftSnapshot };
+  'session-chat:draft-save': { args: [expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit]; result: void };
   'machines:state': { args: []; result: MachineState };
   'machines:opened': { args: [selection: EnvironmentSelection]; result: MachineState };
   'machines:new-window': { args: [selection: EnvironmentSelection | null]; result: void };
@@ -136,7 +152,9 @@ export interface InvokeContracts {
   'workspace:sessions': { args: [scopeId: string, input: WorkspaceSessionQuery]; result: BackendResult<WorkspacePage<WorkspaceSession>> };
   'workspace:create-project': { args: [scopeId: string, input: WorkspaceCreateProject]; result: BackendResult<WorkspaceProjectDetail> };
   'workspace:create-task': { args: [scopeId: string, input: WorkspaceCreateTask]; result: BackendResult<WorkspaceTask> };
+  'workspace:delete-session': { args: [scopeId: string, input: WorkspaceDeleteSession]; result: BackendResult<{ readonly accepted: true }> };
   'workspace:archive-session': { args: [scopeId: string, input: WorkspaceArchiveSession]; result: BackendResult<{ readonly accepted: true }> };
+  'workspace:move-session': { args: [scopeId: string, input: WorkspaceMoveSession]; result: BackendResult<WorkspaceSession> };
   'workspace:restore-session': { args: [scopeId: string, input: WorkspaceRestoreSession]; result: BackendResult<WorkspaceSession> };
   'workspace:create-session': { args: [scopeId: string, input: WorkspaceCreateSession]; result: BackendResult<WorkspaceSession> };
   'workspace:rename-task': { args: [scopeId: string, input: WorkspaceRenameTask]; result: BackendResult<WorkspaceTask> };
@@ -158,6 +176,7 @@ export interface InvokeContracts {
   'environment:select': { args: [selection: EnvironmentSelection]; result: EnvironmentSnapshot };
   'environment:context': { args: [context: EnvironmentContext, expectedEnvironment: EnvironmentSelection]; result: EnvironmentSnapshot };
   'remote:retry': { args: []; result: EnvironmentSnapshot };
+  'remote:force-update': { args: [hostId: string, instance: string]; result: void };
   'remote:pause': { args: []; result: EnvironmentSnapshot };
   'remote:disconnect': { args: []; result: EnvironmentSnapshot };
   'remote:answer': { args: [challengeId: string, answer: string | null]; result: void };
@@ -168,6 +187,7 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'session-chat:stream': SessionChatStreamEvent;
   'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
   'code:changed': { readonly target: CodeTarget; readonly state: CodeSurfaceState };
@@ -252,11 +272,19 @@ export interface ElevenexBridge {
   sessionChatCatalog(scopeId: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>>;
   sessionChatChanges(scopeId: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>>;
   sessionChatRead(scopeId: string, input: SessionChatRead): Promise<BackendResult<SessionChatPage>>;
+  sessionChatWatch(scopeId: string, input: SessionChatWatch): Promise<BackendResult<{ readonly accepted: true }>>;
+  sessionChatUnwatch(scopeId: string, watchId: string): Promise<void>;
+  sessionChatAcknowledge(scopeId: string, watchId: string, delivery: number): Promise<void>;
+  onSessionChatStream(listener: (event: SessionChatStreamEvent) => void): () => void;
+  sessionChatTurnWork(scopeId: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>>;
+  sessionChatToolDetails(scopeId: string, input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>>;
   sessionChatCommand(scopeId: string, input: SessionChatCommand): Promise<BackendResult<SessionChatCommandReply>>;
   sessionChatCancel(scopeId: string, requestId: string): Promise<void>;
   sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
   sessionChatAgent(scopeId: string, input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>>;
   sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
+  sessionChatDraftRead(expected: EnvironmentSelection, target: SessionChatDraftTarget): Promise<SessionChatDraftSnapshot>;
+  sessionChatDraftSave(expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit): Promise<void>;
   readonly platform: DesktopPlatform;
   machineState(): Promise<MachineState>;
   editMachine(selection: EnvironmentSelection, input: MachineEditInput): Promise<MachineState>;
@@ -298,7 +326,9 @@ export interface ElevenexBridge {
   workspaceSessions(scopeId: string, input: WorkspaceSessionQuery): Promise<BackendResult<WorkspacePage<WorkspaceSession>>>;
   workspaceCreateProject(scopeId: string, input: WorkspaceCreateProject): Promise<BackendResult<WorkspaceProjectDetail>>;
   workspaceCreateTask(scopeId: string, input: WorkspaceCreateTask): Promise<BackendResult<WorkspaceTask>>;
+  workspaceDeleteSession(scopeId: string, input: WorkspaceDeleteSession): Promise<BackendResult<{ readonly accepted: true }>>;
   workspaceArchiveSession(scopeId: string, input: WorkspaceArchiveSession): Promise<BackendResult<{ readonly accepted: true }>>;
+  workspaceMoveSession(scopeId: string, input: WorkspaceMoveSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRestoreSession(scopeId: string, input: WorkspaceRestoreSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceCreateSession(scopeId: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRenameTask(scopeId: string, input: WorkspaceRenameTask): Promise<BackendResult<WorkspaceTask>>;
@@ -321,6 +351,7 @@ export interface ElevenexBridge {
   selectEnvironment(selection: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   saveEnvironmentContext(context: EnvironmentContext, expectedEnvironment: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   retryRemote(): Promise<EnvironmentSnapshot>;
+  forceRemoteUpdate(hostId: string, instance: string): Promise<void>;
   pauseRemoteRecovery(): Promise<EnvironmentSnapshot>;
   disconnectRemote(): Promise<EnvironmentSnapshot>;
   answerRemoteChallenge(id: string, answer: string | null): Promise<void>;

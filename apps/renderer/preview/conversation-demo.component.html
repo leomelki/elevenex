@@ -39,6 +39,18 @@
     </div>
     <ex-markdown source="![Workspace illustration](workspace.png)" [resolve]="resolvePreviewImage" />
   </section>
+  <section class="wide async-media">
+    <h2>Asynchronous media</h2>
+    <div class="controls">
+      <button exButton variant="ghost" (click)="mediaPhase.set('loading')">Loading</button>
+      <button exButton variant="ghost" (click)="mediaPhase.set('partial')">Second image ready</button>
+      <button exButton variant="ghost" (click)="mediaPhase.set('ready')">Images ready</button>
+      <button exButton variant="ghost" (click)="mediaPhase.set('error')">Unavailable</button>
+    </div>
+    <ex-markdown class="async-gallery" [source]="'![One](one.png)\n![Two](two.png)\n![Three](three.png)'" [resolve]="resolveAsyncMedia" />
+    <ex-markdown class="async-comparison" [source]="'![Before](before.png)\n![After](two-after.png)'" [resolve]="resolveAsyncMedia" />
+    <ex-markdown class="async-recording" source="![Walkthrough](recording.webm)" [resolve]="resolveAsyncMedia" />
+  </section>
   <section>
     <h2>Decisions · approval</h2>
     <ex-approval-card

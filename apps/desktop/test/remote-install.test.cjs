@@ -68,9 +68,11 @@ for (const mode of ['server', 'fallback', 'development']) test(`native bootstrap
   await writeFile(join(bin, 'node'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} --require ${shellQuote(preload)} "$@"\n`, { mode: 0o700 });
   const nonce = randomBytes(16).toString('hex');
   const namespace = development ? 'd'.repeat(32) : undefined;
-  const child = spawn('sh', ['-c', await bootstrapScript(release, nonce, !development, namespace)], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const { command, payload } = await bootstrapScript(release, nonce, !development, namespace);
+  const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise(resolve => child.once('close', resolve));
   t.after(() => child.kill('SIGTERM'));
+  child.stdin.write(payload);
   let output = ''; let diagnostics = ''; let sent = false;
   child.stderr.on('data', data => { diagnostics += data; });
   child.stdout.on('data', data => {

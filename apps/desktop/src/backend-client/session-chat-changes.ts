@@ -37,7 +37,16 @@ export function parseChangeSummary(
     throw invalid();
   const total = count(raw["total"]);
   if (total < files.length) throw invalid();
-  return { files, total };
+  if (raw["shared"] !== undefined && raw["shared"] !== true) throw invalid();
+  const totals = raw["lineTotals"] === undefined ? undefined : chatObject(raw["lineTotals"]);
+  const lineTotals = totals ? { add: count(totals["add"]), del: count(totals["del"]) } : undefined;
+  if (lineTotals) {
+    const add = files.reduce((sum, file) => sum + file.add, 0);
+    const del = files.reduce((sum, file) => sum + file.del, 0);
+    if (add > lineTotals.add || del > lineTotals.del ||
+        (files.length === total && (add !== lineTotals.add || del !== lineTotals.del))) throw invalid();
+  }
+  return { files, total, ...(lineTotals ? { lineTotals } : {}), ...(raw["shared"] ? { shared: true } : {}) };
 }
 export function parseChangesPage(
   value: unknown,

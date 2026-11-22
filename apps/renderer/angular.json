@@ -84,6 +84,11 @@
         },
         "serve": {
           "builder": "@angular/build:dev-server",
+          "options": {
+            "prebundle": {
+              "exclude": ["@elevenex/shared"]
+            }
+          },
           "configurations": {
             "development": {
               "buildTarget": "renderer:build:development"

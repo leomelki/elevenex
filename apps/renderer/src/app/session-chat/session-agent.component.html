@@ -138,7 +138,7 @@
       [historyLoading]="busy()"
       [historyError]="error()"
       [historyRevision]="windowRevision()"
-      (historyRequested)="$event === 'before' ? earlier() : later()"
+      (historyRequested)="$event.direction === 'before' ? earlier() : later()"
       (latestRequested)="latest()"
     >
       @if (busy() && !page()) {

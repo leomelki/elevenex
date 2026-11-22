@@ -56,6 +56,7 @@ export class SubtaskRowComponent implements OnChanges {
   readonly tip = input(false);
   readonly allowArchive = input(false);
   readonly archiveRequested = output<TaskSession>();
+  readonly deleteRequested = output<TaskSession>();
   readonly selected = input<string | null>(null);
   readonly reveal = input<{ readonly sessionId: string } | null>(null);
   readonly filter = input<SessionStatus | null>(null);

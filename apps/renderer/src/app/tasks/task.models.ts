@@ -89,7 +89,18 @@ export interface TaskSessionDisclosure {
   /** Reveals, newest batch first. IDs keep selection/status updates in place. */
   readonly batches?: readonly (readonly string[])[];
 }
+export interface SessionMoveIntent { readonly sessionId: string; readonly parentSessionId: string | null }
 export interface TaskSession {
+  /** Supplied by the owner only when the engine permits deleting an unstarted session. */
+  readonly canDelete?: boolean;
+  /** False for older engines without append-ordered child pages. */
+  readonly childrenAppendOrder?: boolean;
+  readonly parentId?: string | null;
+  readonly childCount?: number;
+  readonly childrenLoading?: boolean;
+  readonly childrenError?: string | null;
+  readonly moreChildren?: boolean;
+  readonly earlierChildren?: boolean;
   readonly id: string;
   /** Retain the mounted row when a local creation receives its durable ID. */
   readonly renderId?: string;
@@ -102,6 +113,11 @@ export interface TaskSession {
   readonly kind?: 'main' | 'fork' | 'side' | 'auto';
   readonly diff?: { readonly add: number; readonly del: number };
   readonly meta?: string;
+  /**
+   * Detached shell commands still running after the agent's turn. Independent of
+   * `status`: the glyph describes the agent, this describes what it left running.
+   */
+  readonly commands?: number;
   readonly unread?: boolean;
   readonly fresh?: boolean;
 }

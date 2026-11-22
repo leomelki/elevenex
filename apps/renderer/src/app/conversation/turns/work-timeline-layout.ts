@@ -88,7 +88,8 @@ function sectionSummary(steps: readonly WorkStep[]): readonly SectionFact[] {
   const counts = new Map<WorkStep["kind"], number>();
   let failures = 0;
   for (const step of steps) {
-    counts.set(step.kind, (counts.get(step.kind) ?? 0) + 1);
+    const count = step.kind === "media" ? step.media?.length ?? 0 : 1;
+    counts.set(step.kind, (counts.get(step.kind) ?? 0) + count);
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
   }
@@ -130,6 +131,7 @@ function sectionSummary(steps: readonly WorkStep[]): readonly SectionFact[] {
   add("test", "terminal", "test run");
   add("web", "globe", "web request");
   add("tool", "plug", "tool call");
+  add("media", "file", "preview");
   add("ask", "chat", "question");
   add("think", "bulb", "thought");
   return facts;

@@ -1,7 +1,6 @@
-# Elevenex desktop foundation
+# Elevenex desktop
 
-The new desktop lives alongside the existing application. Root `pnpm dev` and
-the existing frontend/backend/Electron scripts still run the existing app.
+Use `pnpm desktop:dev` from the repository root to develop the desktop app.
 
 The normal route now starts on machine Home and connects the local/SSH machine
 flow to the real lifecycle bridge. First-run completion is stored atomically in
@@ -24,10 +23,9 @@ see [code-first browser automation](../../docs/browser-agent.md) and
 [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
 Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
-The backend gains additive `desktop-workspace` routes;
-the existing app's routes and defaults remain available. A versioned capability
-probe reports an older engine clearly instead of assuming that readiness means
-it implements these features. The new metadata migration applies automatically.
+The app uses the backend's `desktop-workspace` routes. A versioned capability
+probe identifies engines that lack workspace support. The backend applies the
+metadata migration automatically.
 
 ## Run
 
@@ -38,6 +36,7 @@ Angular version. Install with the repository's pinned pnpm:
 pnpm install
 pnpm desktop:dev
 pnpm desktop:dev --linux
+pnpm desktop:dev:shared --linux
 pnpm desktop:preview
 pnpm desktop:build
 pnpm desktop:test
@@ -50,6 +49,7 @@ The standard names also work from this directory:
 ```sh
 cd apps/desktop
 pnpm dev
+pnpm dev:shared --linux
 pnpm build
 pnpm test
 pnpm lint
@@ -63,10 +63,21 @@ pnpm package --linux
 `ELEVENEX_DESKTOP_PORT`), opens Electron and reloads renderer changes with
 Angular HMR. Main/preload/shared changes compile before Electron restarts.
 Type errors leave the previous app running. Stop development with Ctrl+C.
+The Angular dev server bundles `@elevenex/shared` with the renderer so workspace
+package rebuilds and branch updates can add runtime exports without a lockfile
+change or a manual Vite cache reset.
+
+`pnpm desktop:dev:shared --linux` builds and launches the development app once.
+Restart the command to pick up source edits. It uses the same fixed SSH workspace
+ID on every computer. Use `--workspace <32-character-id>` to open an existing
+development workspace on the same SSH account. The shared mode saves machine
+settings and drafts separately for each workspace ID, so add the server in this
+mode the first time you use it. Use the same source and Linux target on both
+computers to connect to the same engine revision.
 
 `desktop:dev` also compiles and bundles the checkout's backend before opening
-Electron. **This Mac** runs that local bundle with the launcher's Node executable;
-it does not fetch a GitHub release. The development runtime is assembled under
+Electron. The local machine runs that bundle with the launcher's Node executable
+and skips the GitHub release download. The development runtime is assembled under
 `apps/desktop/.stage/development-backend/`, with links to the workspace's installed
 dependencies, migrations and assets. Mutable data remains under
 `~/.elevenex/desktop/data/`. Install dependencies for the Node version used to
@@ -77,19 +88,22 @@ that custom build over SSH, without trying GitHub. By default this archive match
 the client's OS and architecture. Failed default archive assembly leaves local
 development available and reports the reason in the terminal.
 
-To develop on a Mac and connect to a **Linux ARM64** server, start Docker Desktop
-or OrbStack, then run:
+To develop against a **Linux ARM64** server, start Docker with Buildx support.
+On Windows, use Docker Desktop in Linux container mode. On macOS, use Docker
+Desktop or OrbStack. Then run:
 
 ```sh
 pnpm desktop:dev --linux
 ```
 
-Electron, Angular HMR and **This Mac** still run locally. The launcher bundles your
-current backend code (including uncommitted edits), then uses Docker to install
-the lockfile's Linux dependencies, bundle portable Node and validate the runtime.
+Electron, Angular HMR and the local backend still run on the host. The launcher
+bundles your current backend code (including uncommitted edits), then uses Docker
+to install the lockfile's Linux dependencies, bundle portable Node and validate
+the runtime.
 Docker caches the dependency/build layers between launches. Only manifests and
-runtime inputs enter the isolated build context; the Mac's installed dependencies
-are left alone. The explicit Linux build must succeed before Electron opens.
+runtime inputs enter the isolated build context. The launcher normalizes the
+staged lockfile and Linux shell scripts for Windows checkouts with CRLF line
+endings. The explicit Linux build must succeed before Electron opens.
 The first build requires internet access and can take several minutes. The builder
 uses the [official Node image on ECR Public](https://gallery.ecr.aws/docker/library/node)
 for portable Node 24.22.3, the repository's pinned pnpm, and the
@@ -123,10 +137,11 @@ the ordinary test suite skips this Docker integration test.
 
 Development revisions include dirty/untracked backend sources. Remote development
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
-Explicitly opening/retrying a server replaces a daemon from a different build
-through authenticated handoff. This interrupts that daemon's agents and terminals;
-background recovery never replaces another revision. Daemons predating handoff
-need one manual stop as described in the remote guide. Production remote data is untouched.
+Explicitly opening or retrying a server prepares an authenticated handoff. The
+desktop checks active Elevenex connections and waits for the engine to become
+idle. **Force update** can interrupt connected users, agents and terminals.
+Background recovery never requests a handoff. Daemons predating authenticated
+handoff need the one-time migration in the remote guide.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
 HMR and main/preload restarts continue to work during the run.
 
@@ -176,7 +191,7 @@ Build, dev, preview and captures check source/tool/output hashes and regenerate
 only when necessary. `pnpm desktop:icons --force` forces a render;
 `pnpm desktop:icons --check` verifies freshness without changing files or
 launching Electron. Commit the source SVG and generator; assets and their manifest
-are generated locally. The existing app's `assets:icons` command stays separate.
+are generated locally.
 
 ## Layout
 
@@ -225,7 +240,7 @@ existing instance instead of opening a second database owner.
 - `data/elevenex.db`: the new desktop's database, separate from the legacy
   `~/.elevenex/elevenex.db`. Updates replace executable code, never this data.
   App-owned agent workspace, crash logs and model caches also live under `data/`
-  through `ELEVENEX_DATA_ROOT`; legacy launchers retain their existing defaults.
+  through `ELEVENEX_DATA_ROOT`.
   External tools' own authentication/session directories remain in the user's
   home, as they do when those tools run from a terminal.
 
@@ -254,7 +269,7 @@ native modules rebuilt for the old Electron ABI; they cannot run under this app.
 `pnpm desktop:backend` bundles the backend and produces the new host-platform
 archive and checksum in `dist-runtime/`. It reuses the curated assembly/pruning
 scripts with `ELEVENEX_EMBED_LOCAL_NODE=1` and an isolated staging directory under
-`apps/desktop/.stage/`. Existing legacy commands retain their original defaults.
+`apps/desktop/.stage/`.
 Use an official portable Node distribution (as provided by CI's setup-node),
 with dependencies installed for that same Node ABI. A Homebrew Node executable
 may depend on libraries outside its directory and fail the relocation smoke test.
@@ -376,9 +391,13 @@ ordering and a second stale-reply check. Future feature stores own domain data,
 pagination and task/session selection, with their own stale-selection guards.
 
 The guide covers incremental events, bounded caches, mutation outcomes and
-backward-compatible backend evolution. Agents may improve the backend to support
-the intended product and performance, and must ask the developer before useful
-breaking changes unless already authorized.
+the compatibility policy for supported desktop releases, remote runtimes and
+API/MCP consumers.
+
+To trace conversation requests, launch with `NODE_DEBUG=elevenex-chat pnpm desktop:dev`.
+Electron writes one dispatch and outcome line per HTTP request to stderr,
+including for an SSH backend. The logs show pagination, response size and timing
+using allowlisted metadata only.
 
 ## Agent UI captures
 
@@ -463,6 +482,22 @@ the sending window's selected machine and a main-issued configuration identity,
 so offline persistence needs no live backend scope. Backend dispatch still uses
 its ordinary current-scope and resource validation. Task creation reconciliation
 uses the additive, capability-gated `workspaceTaskRequest` read.
+
+## Chat drafts
+
+Unsent composer text is stored separately in the private
+`remote-settings.json.chat-drafts.json` sidecar in desktop application data.
+The named `sessionChatDraftRead` and `sessionChatDraftSave` methods target one
+conversation in the sending window's saved slot and verified machine
+configuration. The same store accepts a per-task draft during session creation
+and moves it to the confirmed session atomically. It needs no backend
+connection. Restoring text never submits it.
+
+Main batches edits for atomic writes and drains the last batch on quit. The
+sidecar holds up to 512 drafts and 16 MiB across windows, with up to 256,000
+UTF-16 code units per draft. An unavailable or full store surfaces retry
+feedback in the composer. Attachments, mention chips and transcript windows
+stay in memory.
 
 ## Task browser surfaces
 

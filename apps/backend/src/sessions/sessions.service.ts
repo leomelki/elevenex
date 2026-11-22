@@ -308,6 +308,20 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updateClaudeModelSelection(
+    id: number,
+    model: string | null,
+  ): Promise<void> {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ claudeModelSelection: { model } })
+      .where(eq(schema.sessions.id, id))
+      .returning({ id: schema.sessions.id });
+    if (!rows.length) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+  }
+
   async findAllCompletionStates() {
     return this.db
       .select({
@@ -687,6 +701,7 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
+    this.emit('session-provider-changed', { sessionId: id });
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
@@ -838,6 +853,48 @@ export class SessionsService extends EventEmitter {
       lastStateChangeAt: session.lastStateChangeAt,
     });
     return this.withInferredActiveAgentProvider(session);
+  }
+
+  /** Claim an unused row before releasing prewarmed runtimes and other session resources. */
+  async deleteUnstarted(
+    id: number,
+    canDelete: (session: typeof schema.sessions.$inferSelect) => boolean,
+  ) {
+    const original = this.db.transaction((tx) => {
+      const session = tx
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, id))
+        .get();
+      if (!session) throw new NotFoundException(`Session with id ${id} not found`);
+      if (
+        session.status !== 'created' ||
+        hasStartedAgentConversation(session) ||
+        session.lastCompletionAt ||
+        session.hasUnreviewedCompletion ||
+        !canDelete(session)
+      )
+        throw new BadRequestException('This session has started. Archive it instead.');
+      // Archived blocks new prompts while the existing cleanup path awaits
+      // prewarming, timers and process teardown. No archive event is published.
+      tx.update(schema.sessions)
+        .set({ status: 'archived' })
+        .where(eq(schema.sessions.id, id))
+        .run();
+      return session;
+    });
+    try {
+      return await this.delete(id);
+    } catch (error) {
+      // Keep an unused session available for retry if resource cleanup fails.
+      await this.agentRuntimeCleanup.reactivateSession?.(id);
+      await this.db
+        .update(schema.sessions)
+        .set({ status: original.status })
+        .where(and(eq(schema.sessions.id, id), eq(schema.sessions.status, 'archived')));
+      this.navigationEvents?.invalidate();
+      throw error;
+    }
   }
 
   async delete(id: number) {

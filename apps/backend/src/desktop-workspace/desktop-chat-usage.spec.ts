@@ -68,4 +68,28 @@ describe('desktop subscription allowance', () => {
       1,
     );
   });
+
+  it('projects native Claude subscription facts before first init and with no API key, but excludes explicit API-key sessions', () => {
+    for (const apiKeySource of [undefined, 'none', 'oauth']) {
+      expect(
+        chatPlanUsage(
+          {
+            sessionMetadata:
+              apiKeySource === undefined ? null : { apiKeySource },
+            planUsage: { ...usage, provider: 'claude', planName: 'Max' },
+          },
+          'claude',
+        ),
+      ).toMatchObject({ provider: 'claude', planName: 'Max' });
+    }
+    expect(
+      chatPlanUsage(
+        {
+          sessionMetadata: { apiKeySource: 'ANTHROPIC_API_KEY' },
+          planUsage: { ...usage, provider: 'claude' },
+        },
+        'claude',
+      ),
+    ).toBeNull();
+  });
 });

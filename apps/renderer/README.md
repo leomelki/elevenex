@@ -134,11 +134,18 @@ preview-only backend adapter. Its fixture never enters the production build.
   opt-in `unroll` API remains available for compatibility; caps no longer use it.
 - `FoldComponent` animates unknown height in place, preserves local state,
   releases clipping after settling, and makes closed descendants inert.
+  Use `animateOpenOnMount` when an explicit disclosure mounts a fold open.
+  The default keeps initial history still.
 - `AutoHeightDirective` observes one inner wrapper and eases meaningful height
   changes. Give that inner wrapper the same gap/direction as its content.
+  Block wrappers must contain descendant margins (for example with
+  `display: flow-root`); otherwise the observer excludes collapsed margins and
+  the animation's target height disagrees with the natural layout.
   Width-driven wrapping follows the panel/window resize directly and cancels
   competing height motion. The observer's delivered sizes establish the new
   baseline; subsequent content growth at that width still animates.
+  A wrapper can set `--auto-height-duration` and `--auto-height-easing` using
+  motion tokens to coordinate its resize with a neighbouring fold.
 - `FlipDirective` captures painted positions before keyed children update and
   animates only elements in its own `data-flip-scope`. Nested session scopes do
   not get transformed twice. Sidebar scopes use reordering only: Fold already
@@ -166,6 +173,10 @@ preview-only backend adapter. Its fixture never enters the production build.
   status changes; changing reduced motion cancels those effects immediately.
   Keep continuous motion off inner SVG paths, and avoid blanket layer hints
   across repository-sized lists.
+- Tooltips are pointer-transparent, close when dragging begins, and stay suppressed
+  until drop, drag cancellation or window blur. Delayed hover tooltips are cancelled
+  too; a fresh hover/focus restores ordinary behavior after the drag. Shared drag
+  listeners belong to the renderer injector and are released on destruction.
 - Menus/popovers use CDK overlay/focus facilities. Native buttons retain native
   disabled, keyboard and form semantics. The button primitive is used as
   `<button exButton variant="primary">…</button>`; icon actions require a label.

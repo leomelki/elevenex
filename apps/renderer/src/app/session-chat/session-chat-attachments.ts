@@ -39,7 +39,7 @@ export class SessionChatAttachments {
       return;
     this.cancel();
     this.selection = selection;
-    this.entry.set(this.drafts.entry(selection.scopeId, selection.sessionId));
+    this.entry.set(this.drafts.entry(selection));
     this.error.set("");
   }
   private cancel(): void {

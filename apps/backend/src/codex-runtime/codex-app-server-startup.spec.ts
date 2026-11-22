@@ -1,7 +1,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import { PassThrough } from 'node:stream';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
-import { resolveCodexBinary, codexBinaryIdentity } from './codex-binary.js';
+import { resolveCodexBinaryAsync, codexBinaryIdentity } from './codex-binary.js';
 import { CodexAppServerClient } from './codex-app-server.js';
 
 jest.mock('child_process', () => ({
@@ -16,7 +16,7 @@ jest.mock('../config/system-paths.js', () => ({
   buildSpawnCommand: (command: string) => ({ command, shell: false }),
 }));
 jest.mock('./codex-binary.js', () => ({
-  resolveCodexBinary: jest.fn(),
+  resolveCodexBinaryAsync: jest.fn(),
   codexBinaryIdentity: jest.fn(),
 }));
 
@@ -62,8 +62,8 @@ describe('Codex cold startup environment', () => {
     jest.mocked(buildAugmentedEnvAsync).mockReturnValue(environment.promise);
     let shellReady = false;
     jest
-      .mocked(resolveCodexBinary)
-      .mockImplementation(() => (shellReady ? '/shell/bin/codex' : 'codex'));
+      .mocked(resolveCodexBinaryAsync)
+      .mockImplementation(async () => (shellReady ? '/shell/bin/codex' : 'codex'));
     const child = appServerProcess();
     jest.mocked(spawn).mockReturnValue(child);
     const server = new CodexAppServerClient();
@@ -71,7 +71,7 @@ describe('Codex cold startup environment', () => {
     const second = server.request('model/list', {});
     try {
       await new Promise(setImmediate);
-      expect(resolveCodexBinary).not.toHaveBeenCalled();
+      expect(resolveCodexBinaryAsync).not.toHaveBeenCalled();
       expect(spawn).not.toHaveBeenCalled();
       expect(buildAugmentedEnvAsync).toHaveBeenCalledTimes(1);
 
@@ -87,7 +87,13 @@ describe('Codex cold startup environment', () => {
       expect(spawn).toHaveBeenCalledTimes(1);
       expect(spawn).toHaveBeenCalledWith(
         '/shell/bin/codex',
-        ['app-server', '--listen', 'stdio://'],
+        [
+          'app-server',
+          '--listen',
+          'stdio://',
+          '-c',
+          'model_context_window=1000000',
+        ],
         {
           env,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -107,7 +113,7 @@ describe('Codex cold startup environment', () => {
   it('does not spawn if shutdown occurs while the login shell is loading', async () => {
     const environment = deferredEnvironment();
     jest.mocked(buildAugmentedEnvAsync).mockReturnValue(environment.promise);
-    jest.mocked(resolveCodexBinary).mockReturnValue('/shell/bin/codex');
+    jest.mocked(resolveCodexBinaryAsync).mockResolvedValue('/shell/bin/codex');
     jest.mocked(spawn).mockReturnValue(appServerProcess());
     const server = new CodexAppServerClient();
     const ready = server.ensureReady();
@@ -122,7 +128,7 @@ describe('Codex cold startup environment', () => {
       .mocked(buildAugmentedEnvAsync)
       .mockRejectedValueOnce(new Error('Invalid subprocess environment'))
       .mockResolvedValue({ PATH: '/launch/bin' });
-    jest.mocked(resolveCodexBinary).mockReturnValue('/launch/bin/codex');
+    jest.mocked(resolveCodexBinaryAsync).mockResolvedValue('/launch/bin/codex');
     jest.mocked(spawn).mockReturnValue(appServerProcess());
     const server = new CodexAppServerClient();
     try {

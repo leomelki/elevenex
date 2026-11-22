@@ -2,15 +2,16 @@ import type {
   ChangedFile,
   TimelineEntry,
   WorkStep,
+  DeferredTurnWork,
 } from "../conversation.models";
 export interface WorkFact {
   readonly kind:
     | "failure" | "files" | "tests" | "commands" | "reads"
-    | "edits" | "searches" | "lists" | "web" | "tools";
+    | "edits" | "searches" | "lists" | "web" | "tools" | "questions";
   readonly label: string;
   readonly icon:
     | "x" | "changes" | "check" | "terminal"
-    | "file" | "search" | "globe" | "plug";
+    | "file" | "search" | "globe" | "plug" | "chat";
   readonly tone?: "ok" | "danger";
   readonly diff?: { readonly add: number; readonly del: number };
 }
@@ -19,28 +20,18 @@ export function summarizeWork(
   steps: readonly WorkStep[],
   files: readonly ChangedFile[],
   fileCount = files.length,
+  saved?: Pick<DeferredTurnWork, 'counts' | 'failures'>,
+  sharedChanges = false,
+  totals?: WorkFact['diff'],
 ): readonly WorkFact[] {
-  let failures = 0;
-  let commands = 0;
-  let reads = 0;
-  let edits = 0;
-  let searches = 0;
-  let lists = 0;
-  let web = 0;
-  let tools = 0;
+  let failures = saved?.failures ?? 0;
+  const counts: Partial<Record<WorkStep['kind'], number>> = { ...saved?.counts };
   let testResult = "";
   let testFailed = false;
-  for (const step of steps) {
-    if (step.status === 'unknown') continue;
+  for (const step of saved ? [] : steps) {
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
-    if (step.kind === "run") commands++;
-    if (step.kind === "read") reads++;
-    if (step.kind === "edit" || step.kind === "create") edits++;
-    if (step.kind === "search") searches++;
-    if (step.kind === "list") lists++;
-    if (step.kind === "web") web++;
-    if (step.kind === "tool") tools++;
+    counts[step.kind] = (counts[step.kind] ?? 0) + 1;
     if (
       step.kind === "test" &&
       step.result &&
@@ -51,6 +42,9 @@ export function summarizeWork(
       testFailed = step.status === "failed";
     }
   }
+  const { run: commands = 0, read: reads = 0, search: searches = 0,
+    list: lists = 0, web = 0, tool: tools = 0, ask: questions = 0 } = counts;
+  const edits = (counts.edit ?? 0) + (counts.create ?? 0);
   const facts: WorkFact[] = [];
   if (failures)
     facts.push({
@@ -60,13 +54,17 @@ export function summarizeWork(
       tone: "danger",
     });
   if (files.length) {
-    const added = files.reduce((sum, file) => sum + (file.add ?? 0), 0);
-    const removed = files.reduce((sum, file) => sum + (file.del ?? 0), 0);
+    const diff = totals ?? (fileCount === files.length ? {
+      add: files.reduce((sum, file) => sum + (file.add ?? 0), 0),
+      del: files.reduce((sum, file) => sum + (file.del ?? 0), 0),
+    } : undefined);
     facts.push({
       kind: "files",
-      label: `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
+      label: sharedChanges
+        ? `${fileCount} workspace ${fileCount === 1 ? "change" : "changes"}`
+        : `Edited ${fileCount} ${fileCount === 1 ? "file" : "files"}`,
       icon: "changes",
-      diff: fileCount === files.length ? { add: added, del: removed } : undefined,
+      diff,
     });
   }
   if (testResult)
@@ -80,15 +78,15 @@ export function summarizeWork(
     facts.push({
       kind: "commands",
       icon: "terminal",
-      label: `Ran ${commands} ${commands === 1 ? "command" : "commands"}`,
+      label: `${commands} ${commands === 1 ? "command" : "commands"}`,
     });
   if (reads)
     facts.push({
       kind: "reads",
       icon: "file",
-      label: `Read ${reads} ${reads === 1 ? "file" : "files"}`,
+      label: `${reads} ${reads === 1 ? "read" : "reads"}`,
     });
-  if (edits && !files.length)
+  if (edits && (sharedChanges || !files.length))
     facts.push({
       kind: "edits", icon: "changes",
       label: `${edits} ${edits === 1 ? "edit" : "edits"}`,
@@ -112,6 +110,11 @@ export function summarizeWork(
     facts.push({
       kind: "tools", icon: "plug",
       label: `${tools} tool ${tools === 1 ? "call" : "calls"}`,
+    });
+  if (questions)
+    facts.push({
+      kind: "questions", icon: "chat",
+      label: `${questions} ${questions === 1 ? "question" : "questions"}`,
     });
   return facts.slice(0, 4);
 }
@@ -190,6 +193,7 @@ export function stepVerb(step: WorkStep, live = false): string {
     run: "Ran",
     test: "Tested",
     tool: "Called",
+    media: "Previewed",
     web: "Browsed",
     ask: "Asked",
     say: "Said",
@@ -205,6 +209,7 @@ export function stepVerb(step: WorkStep, live = false): string {
     run: "Running",
     test: "Testing",
     tool: "Calling",
+    media: "Previewing",
     web: "Browsing",
     ask: "Asking",
     say: "Writing",

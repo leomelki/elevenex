@@ -176,8 +176,11 @@ header {
 /* While harnesses can change, the list keeps one height so the menu never jumps.
    A soft fade marks more rows below and leaves once the end is reached. */
 .models.fixed {
-  height: calc(6 * 30px + 5 * 2px);
-  max-height: none;
+  /* A host that eases its own height (the preset creator) may size the list
+     to its rows instead, up to the same six. */
+  height: var(--agent-menu-list-height, calc(6 * 30px + 5 * 2px));
+  min-height: calc(3 * 30px + 2 * 2px);
+  max-height: calc(6 * 30px + 5 * 2px);
   mask-image: linear-gradient(
     to bottom,
     #000 calc(100% - var(--list-fade)),
@@ -203,6 +206,10 @@ header {
   line-height: var(--text-ui-line);
   text-align: left;
   transition: background-color var(--dur-instant) var(--ease-out);
+}
+/* A new harness's models, or rows a cleared filter brings back, ink in. */
+.model-enter {
+  animation: model-enter var(--dur-base) var(--ease-out) both;
 }
 .model:hover:not(:disabled),
 .model:focus-visible {
@@ -240,6 +247,9 @@ header {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.refresh {
+  align-self: flex-start;
 }
 .empty {
   margin: 0;
@@ -360,6 +370,12 @@ footer button {
     --list-fade: 0px;
   }
 }
+@keyframes model-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -371,6 +387,7 @@ footer button {
   .model,
   .check,
   .fast,
+  .model-enter,
   .updating {
     transition: none;
     animation: none;

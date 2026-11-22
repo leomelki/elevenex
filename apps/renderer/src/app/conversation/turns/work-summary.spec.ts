@@ -2,14 +2,32 @@ import { describe, expect, it } from "vitest";
 import { formatDuration, groupWorkSteps, summarizeWork } from "./work-summary";
 
 describe("work timeline grouping", () => {
-  it('keeps unknown completion visible without counting it as completed work', () => {
+  it('uses the same file totals, ordering and fact limit for loaded and compact turns', () => {
+    const steps = [
+      { id: 'run', kind: 'run', status: 'failed' },
+      { id: 'read', kind: 'read', status: 'done' },
+      { id: 'edit', kind: 'edit', status: 'done' },
+      { id: 'search', kind: 'search', status: 'done' },
+    ] as const;
+    const files = Array.from({ length: 5 }, (_, i) => ({ path: `file-${i}.ts`, add: i, del: 1 }));
+    const full = summarizeWork(steps, files);
+    expect(full.map(fact => fact.label)).toEqual(['1 failed', 'Edited 5 files', '1 command', '1 read']);
+    expect(full[1]?.diff).toEqual({ add: 10, del: 5 });
+    expect(summarizeWork([], files.slice(0, 3), 5, {
+      counts: { run: 1, read: 1, edit: 1, search: 1 }, failures: 1,
+    }, false, { add: 10, del: 5 })).toEqual(full);
+  });
+
+  it('counts observed calls even when completion is unknown and leaves them outside discovery groups', () => {
     const steps = [
       { id: 'a', kind: 'read', status: 'done' },
       { id: 'b', kind: 'read', status: 'unknown' },
       { id: 'c', kind: 'read', status: 'done' },
     ] as const;
     expect(groupWorkSteps(steps).map(step => step.id)).toEqual(['a', 'b', 'c']);
-    expect(summarizeWork(steps, [])).toEqual([{ kind: 'reads', icon: 'file', label: 'Read 2 files' }]);
+    const facts = [{ kind: 'reads', icon: 'file', label: '3 reads' }];
+    expect(summarizeWork(steps, [])).toEqual(facts);
+    expect(summarizeWork([], [], 0, { counts: { read: 3 }, failures: 0 })).toEqual(facts);
   });
   it("groups adjacent discoveries while preserving failure evidence and stable keys", () => {
     const groups = groupWorkSteps([
@@ -57,7 +75,7 @@ describe("work timeline grouping", () => {
         diff: { add: 92, del: 12 },
       },
       { kind: "tests", label: "200/200 passed", icon: "check", tone: "ok" },
-      { kind: "commands", label: "Ran 2 commands", icon: "terminal" },
+      { kind: "commands", label: "2 commands", icon: "terminal" },
     ]);
   });
   it("marks a failed test result as persistent danger evidence", () => {

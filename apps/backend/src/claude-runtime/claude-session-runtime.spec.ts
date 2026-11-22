@@ -40,6 +40,9 @@ function createMockQuery() {
     stopTask: jest.fn().mockResolvedValue(undefined),
     backgroundTasks: jest.fn().mockResolvedValue(true),
     supportedModels: jest.fn().mockResolvedValue([]),
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: jest
+      .fn()
+      .mockResolvedValue({ rate_limits_available: false }),
     getContextUsage: jest.fn().mockResolvedValue({
       model: 'sonnet',
       totalTokens: 0,
@@ -135,6 +138,31 @@ async function waitForQuery(queries: MockQuery[], count = 1): Promise<void> {
 describe('ClaudeSessionRuntime', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('reads native usage without transcript scanning or starting a cold runtime', async () => {
+    const { runtime, queries } = createRuntime();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(queries).toHaveLength(0);
+    await runtime.ensureStarted('prewarm');
+    const read =
+      queries[0].usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    expect(await runtime.getUsage()).toEqual({ rate_limits_available: false });
+    expect(read).toHaveBeenCalledWith({ skipBehaviors: true });
+    await runtime.close();
+    expect(await runtime.getUsage()).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves usage unavailable when the installed SDK lacks the optional operation', async () => {
+    const { runtime, queries } = createRuntime();
+    await runtime.ensureStarted('prewarm');
+    Reflect.deleteProperty(
+      queries[0],
+      'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET',
+    );
+    expect(await runtime.getUsage()).toBeUndefined();
+    await runtime.close();
   });
 
   describe('idle shutdown', () => {

@@ -1,0 +1,15 @@
+<ex-fold #fold [open]="visible()">
+  @if (painted(); as error) {
+    <div class="frame">
+      <div class="surface">
+        <div class="error" role="status">
+          <ex-icon name="clock" [size]="14" />
+          <span>{{ error === 'changed' ? 'This activity has changed.' : 'Couldn’t load activity.' }}</span>
+        </div>
+        <button exButton variant="ghost" size="sm" type="button" (click)="retry()">
+          {{ error === 'changed' ? 'Return to latest' : 'Retry' }}
+        </button>
+      </div>
+    </div>
+  }
+</ex-fold>

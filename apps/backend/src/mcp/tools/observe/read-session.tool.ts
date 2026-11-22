@@ -8,7 +8,7 @@ export const readSessionTool = defineTool({
   title: 'Read session transcript',
   costClass: 'cached',
   description:
-    "Read bounded Markdown transcript pages (default 20 turns/12000 characters). Repeat to drain truncated pages, then receive deltas. refresh:true rereads history. Rewinds/provider changes reset automatically. 'small' shows user/final responses; 'medium' adds work; 'full' adds tool details. includeIds:true discovers fork anchors.",
+    "Read bounded Markdown transcript pages (default 20 turns/12000 characters). Repeat to drain truncated pages, then receive deltas. refresh:true rereads history. Rewinds/provider changes reset automatically. 'small' shows user messages and replies or the latest progress update; 'medium' adds work; 'full' adds tool details. includeIds:true discovers fork anchors.",
   annotations: { readOnlyHint: true },
   currentSessionScope: 'session',
   inputShape: {
@@ -50,7 +50,7 @@ export const readSessionTool = defineTool({
       .enum(['small', 'medium', 'full'])
       .default('small')
       .describe(
-        "'small' returns user messages + final responses only (cheapest). 'medium' adds intermediate work steps. 'full' adds thinking blocks and tool inputs/outputs with diffs. Changing rendering options starts a separate delta cursor.",
+        "'small' returns user messages and final replies, with the latest labeled Codex progress update when a turn has no final reply. 'medium' adds intermediate work steps. 'full' adds thinking blocks and tool inputs/outputs with diffs. Changing rendering options starts a separate delta cursor.",
       ),
     includeChanges: z
       .boolean()

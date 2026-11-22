@@ -8,6 +8,14 @@ export default async function* (capture) {
     await capture.settle();
     await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running'));
   };
+  // The creator shares the composer's agent menu and its stepped thinking slider.
+  const thinking = () => capture.evaluate(() => document.querySelector('.preset-creator input[type="range"]').getAttribute('aria-valuetext'));
+  const setThinking = async label => {
+    await capture.evaluate(() => document.querySelector('.preset-creator input[type="range"]').focus());
+    await capture.press('Home');
+    for (let step = 0; step < 8 && await thinking() !== label; step++) await capture.press('ArrowRight');
+    assert.equal(await thinking(), label);
+  };
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.viewport(1440, 960);
     await capture.waitFor(() => !!document.querySelector('ex-session-chat .start ex-preset-picker'));
@@ -20,15 +28,15 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my question while choosing a preset');
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-composer textarea')), true);
     await capture.click('ex-preset-picker button.custom');
-    await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
+    await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
     assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')), false);
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator input').value), '');
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[aria-label^="Harness:"]').textContent.includes('Codex')), true);
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[aria-label^="Model:"]').textContent.includes('GPT-6')), true);
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [aria-label="Thinking level"] button[aria-checked="true"]').getAttribute('aria-label')), 'Low');
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [role="switch"]').getAttribute('aria-checked')), 'true');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .identity input').value), '');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .heading').textContent.includes('Codex')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .models [aria-selected="true"]').textContent.includes('GPT-6')), true);
+    assert.equal(await thinking(), 'Low');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
     await settle(); yield { name: theme + '-custom-current-config', inspect: ['.preset-creator'] };
-    await capture.click('.preset-creator [aria-label="Thinking level"] button[aria-label="High"]');
+    await setThinking('High');
     await capture.press('Escape'); await capture.waitFor(() => !document.querySelector('.preset-creator'));
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-preset-picker button.custom')), true);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-preset-picker button[aria-pressed="true"]').textContent.includes('Quick pass')), true);
@@ -52,14 +60,13 @@ export default async function* (capture) {
       yield { name: theme + '-creator-opening-' + time, inspect: ['.preset-creator'], metadata: { animationTimeMs: time } };
     }
     await capture.motion.finish(); await capture.motion.play();
-    await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
-    await capture.fill('.preset-creator input', 'deep WORK');
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator input').getAttribute('aria-invalid')), 'true');
+    await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
+    await capture.fill('.preset-creator .identity input', 'deep WORK');
+    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .identity input').getAttribute('aria-invalid')), 'true');
     assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[type="submit"]').disabled), true);
     await settle(); yield { name: theme + '-duplicate-name', inspect: ['.preset-creator'] };
-    await capture.fill('.preset-creator input', theme === 'light' ? 'Careful review' : 'Ship it');
-    await capture.click('.preset-creator [aria-label="Thinking level"] button[aria-label="Low"]');
-    assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator [aria-label="Thinking level"] button[aria-checked="true"]').getAttribute('aria-label')), 'Low');
+    await capture.fill('.preset-creator .identity input', theme === 'light' ? 'Careful review' : 'Ship it');
+    await setThinking('Low');
     await settle(); yield { name: theme + '-creator', inspect: ['.preset-creator'] };
     await capture.viewport(1000, 760); await capture.reducedMotion(true); await settle();
     yield { name: theme + '-narrow-creator', inspect: ['.preset-creator'] };

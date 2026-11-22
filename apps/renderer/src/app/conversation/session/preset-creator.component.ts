@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  afterNextRender,
   effect,
   inject,
   computed,
@@ -9,15 +10,16 @@ import {
   linkedSignal,
   output,
   signal,
+  untracked,
 } from "@angular/core";
 import {
   AutoHeightDirective,
   ButtonComponent,
+  EaseSwapComponent,
   IconButtonComponent,
   IconComponent,
   ModalLayerComponent,
   SegmentedComponent,
-  SetRowComponent,
   type SegmentOption,
 } from "../../ui";
 import type { AgentConfig, AgentHarness } from "../conversation.models";
@@ -25,20 +27,27 @@ import type {
   PresetAgentCatalog,
   PresetCatalogProvider,
 } from "./preset-catalog.models";
-import { AgentSettingsComponent } from "../composer/agent-settings.component";
+import { thinkingLabel } from "../composer/agent-config";
+import { AgentMarkComponent } from "../composer/agent-mark.component";
+import { AgentMenuComponent } from "../composer/agent-menu.component";
 
-/** One retained draft. The integrating owner persists it and closes only after confirmation. */
+/**
+ * One retained draft. The integrating owner persists it and closes only after
+ * confirmation. The harness/model/thinking/fast choices are the composer's own
+ * AgentMenu, and the name field previews the composer chip the preset becomes.
+ */
 @Component({
   selector: "ex-preset-creator",
   imports: [
+    AgentMarkComponent,
+    AgentMenuComponent,
     AutoHeightDirective,
     ButtonComponent,
+    EaseSwapComponent,
     IconButtonComponent,
     IconComponent,
     ModalLayerComponent,
     SegmentedComponent,
-    SetRowComponent,
-    AgentSettingsComponent,
   ],
   templateUrl: "./preset-creator.component.html",
   styleUrl: "./preset-creator.component.css",
@@ -46,6 +55,8 @@ import { AgentSettingsComponent } from "../composer/agent-settings.component";
 })
 export class PresetCreatorComponent {
   readonly initial = input.required<AgentConfig>();
+  readonly editing = input(false);
+  readonly chatSettings = input<AgentConfig>();
   readonly harnesses = input<readonly AgentHarness[]>([]);
   readonly harnessLocked = input(true);
   readonly catalogProvider = input<PresetCatalogProvider>();
@@ -79,8 +90,10 @@ export class PresetCreatorComponent {
   readonly useAsDefault = linkedSignal(() => this.initial().default === true);
   readonly defaultOptions = computed<readonly SegmentOption[]>(() => {
     const disabled = !this.open() || this.busy() || this.blocked();
+    // A default always exists, so the preset that already is one cannot opt out.
+    const isDefault = this.editing() && this.initial().default === true;
     return [
-      { id: "keep", label: "Keep current", disabled },
+      { id: "keep", label: "Keep current", disabled: disabled || isDefault },
       { id: "use", label: "Use this preset", disabled },
     ];
   });
@@ -89,7 +102,7 @@ export class PresetCreatorComponent {
   readonly closeRequested = output<void>();
   readonly closed = output<void>();
   readonly draft = linkedSignal(() => this.initial());
-  readonly name = signal("");
+  readonly name = linkedSignal(() => this.editing() ? this.initial().preset ?? "" : "");
   readonly nameId = `preset-name-${crypto.randomUUID()}`;
   readonly titleId = `preset-title-${crypto.randomUUID()}`;
   readonly issueId = `preset-issue-${crypto.randomUUID()}`;
@@ -108,11 +121,92 @@ export class PresetCreatorComponent {
         ?.models.find((m) => m.id === this.draft().model)?.supportsFastMode ===
         true,
   );
+  /** The menu edits the mix only; the name, account usage and preset label
+   * belong to the preset being drafted. */
+  readonly menuValue = computed<AgentConfig>(() => ({
+    ...this.draft(),
+    preset: undefined,
+    context: undefined,
+    tokens: undefined,
+    plan: undefined,
+  }));
+  /** Keyed by harness so a new harness's mark enters as a new element. */
+  readonly identityMark = computed(() => [
+    { harness: this.draft().harness, mark: this.draft().mark },
+  ]);
+  /** Read in the composer chip after the preset name, as `model · thinking`. */
+  readonly summary = computed(() => {
+    const draft = this.draft();
+    if (this.catalogBusy()) return "Loading models…";
+    const model =
+      this.availableHarnesses()
+        .find((h) => h.id === draft.harness)
+        ?.models.find((m) => m.id === draft.model)?.label ||
+      draft.modelLabel ||
+      draft.model ||
+      "Choose model";
+    return [
+      model,
+      draft.thinking && this.canReason() ? thinkingLabel(draft.thinking) : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  });
+  readonly chatSummary = computed(() => {
+    const chat = this.chatSettings();
+    return chat
+      ? [chat.modelLabel || chat.model, chat.thinking ? thinkingLabel(chat.thinking) : ""]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
+  });
+  /** The draft already matches this chat's mix, so copying it changes nothing. */
+  readonly chatApplied = computed(() => {
+    const chat = this.chatSettings(),
+      draft = this.draft();
+    return (
+      !!chat &&
+      chat.harness === draft.harness &&
+      chat.model === draft.model &&
+      (chat.thinking ?? "") === (draft.thinking ?? "") &&
+      !!chat.fast === !!draft.fast
+    );
+  });
+  readonly submitLabel = computed(() =>
+    this.busy() ? "Saving…" : this.editing() ? "Save changes" : "Create preset",
+  );
+  /** Changes made while the dialog is open animate; its first paint is still. */
+  readonly live = signal(false);
   constructor() {
+    afterNextRender(() => this.live.set(true));
     effect(() => {
       if (!this.open()) this.cancelCatalog();
     });
+    effect(() => {
+      if (!this.editing() || !this.open() || !this.catalogProvider()) return;
+      const initial = this.initial();
+      this.savedDrafts.set(initial.harness, initial);
+      void untracked(() => this.loadCatalog());
+    });
     this.destroy.onDestroy(() => this.cancelCatalog());
+  }
+  useChatSettings(): void {
+    const current = this.draft();
+    const chat = this.chatSettings();
+    if (
+      !chat ||
+      this.chatApplied() ||
+      !this.open() ||
+      this.busy() ||
+      this.blocked()
+    )
+      return;
+    this.savedDrafts.set(current.harness, current);
+    this.savedDrafts.set(chat.harness, chat);
+    this.cancelCatalog();
+    this.catalogError.set("");
+    this.draft.set(chat);
+    if (!this.catalogs().has(chat.harness)) void this.loadCatalog();
   }
   private cancelCatalog(): void {
     this.catalogRequest?.abort();

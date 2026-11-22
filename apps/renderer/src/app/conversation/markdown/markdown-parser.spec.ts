@@ -77,6 +77,13 @@ describe("safe Markdown rendering model", () => {
 });
 
 describe("adjacent media", () => {
+  it('keeps a bracketed image path between the paragraphs that surround it', () => {
+    expect(parseMarkdown('Before\n![Capture](<results/Capture (1).png>)\nAfter')).toEqual([
+      { kind: 'paragraph', content: [{ kind: 'text', text: 'Before' }] },
+      { kind: 'embed', caption: 'Capture', path: 'results/Capture (1).png' },
+      { kind: 'paragraph', content: [{ kind: 'text', text: 'After' }] },
+    ]);
+  });
   it("groups complete images while withholding an incomplete streamed line", () => {
     expect(
       parseMarkdown("![Before](before.png)\n![After](after.png)\n", true),

@@ -1,12 +1,10 @@
-import { Injectable, signal } from "@angular/core";
+import { DestroyRef, Injectable, inject } from '@angular/core';
+import type { EnvironmentSelection, SessionChatDraftTarget, SessionChatItem, SessionChatState } from '@elevenex/shared';
+import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { SessionDraft } from './session-chat-draft';
+import type { ChatSelection } from './session-chat.store';
 
-import type { SessionChatItem, SessionChatState } from '@elevenex/shared';
-import type { ConversationAttachment, ConversationMention } from '../conversation';
-export interface AttachmentDraft extends ConversationAttachment { readonly file: File }
-export function createSessionDraft() {
-  return { text: signal(''), uncertain: signal(''), files: signal<readonly AttachmentDraft[]>([]), mentions: signal<readonly ConversationMention[]>([]) };
-}
-export type SessionDraft = ReturnType<typeof createSessionDraft>;
+export { SessionDraft, type AttachmentDraft } from './session-chat-draft';
 
 /** A local conversation has no backend identity until creation is confirmed. */
 export interface StartingSession {
@@ -18,48 +16,90 @@ export interface StartingSession {
   readonly error?: string;
 }
 
-/** Window/workspace-owned drafts. Navigation does not discard unfinished or uncertain sends. */
+/** Bounded live entries and transcript snapshots for the connected workspace. */
 @Injectable()
 export class SessionChatDrafts {
-  private scope = "";
-  private readonly snapshots = new Map<number, { readonly items: readonly SessionChatItem[]; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }>();
-  remember(session: number, snapshot: { readonly items: readonly SessionChatItem[]; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }): void {
-    this.snapshots.delete(session);
+  private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private environment?: EnvironmentSelection;
+  private scope = '';
+  private readonly entries = new Map<number, SessionDraft>();
+  private readonly snapshots = new Map<number, { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }>();
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => { this.environment = undefined; });
+  }
+
+  selectMachine(environment: EnvironmentSelection): void {
+    this.environment = environment;
+    this.scope = '';
+    this.entries.clear();
+    this.snapshots.clear();
+  }
+
+  remember({ scopeId, sessionId }: ChatSelection, snapshot: { readonly items: readonly SessionChatItem[]; readonly leadingPrompt?: SessionChatItem | null; readonly state: SessionChatState; readonly cursor?: string; readonly before: string | null }): void {
+    if (scopeId !== this.scope) return;
+    this.snapshots.delete(sessionId);
     // Five 1 MiB transcript snapshots, with the existing 320-item window cap.
     if (JSON.stringify(snapshot).length > 1_000_000) return;
-    this.snapshots.set(session, snapshot);
+    this.snapshots.set(sessionId, snapshot);
     if (this.snapshots.size > 5) this.snapshots.delete(this.snapshots.keys().next().value!);
   }
   snapshot(session: number) { return this.snapshots.get(session); }
-  private readonly entries = new Map<number, SessionDraft>();
   /** Same machine only, after workspace recovery; opaque scope IDs themselves are never persisted. */
   rebind(previous: string, next: string): void { if (this.scope === previous) this.scope = next; }
 
-  adopt(scope: string, session: number, draft: SessionDraft): void {
-    const existing = this.scope === scope ? this.entries.get(session) : undefined;
+  start(taskId: number): SessionDraft {
+    return this.open({ taskId, sessionId: null });
+  }
+
+  adopt({ scopeId, taskId, sessionId }: ChatSelection, draft: SessionDraft): void {
+    this.selectScope(scopeId);
+    const existing = this.entries.get(sessionId);
     // A revision read may expose the saved row before the create reply arrives.
     // Keep that entry's live sends and attachments, merging any earlier local writing.
     if (existing && existing !== draft) {
-      if (draft.text()) existing.text.update(text => [draft.text(), text].filter(Boolean).join('\n\n'));
+      existing.mergeCreation(draft);
       return;
     }
-    this.entry(scope, session);
-    this.entries.set(session, draft);
+    this.evict();
+    draft.promote({ taskId, sessionId });
+    this.entries.set(sessionId, draft);
   }
 
-  entry(scope: string, session: number) {
+  entry({ scopeId, taskId, sessionId }: ChatSelection): SessionDraft {
+    this.selectScope(scopeId);
+    const existing = this.entries.get(sessionId);
+    if (existing) {
+      this.entries.delete(sessionId);
+      this.entries.set(sessionId, existing);
+      return existing;
+    }
+    this.evict();
+    const entry = this.open({ taskId, sessionId });
+    this.entries.set(sessionId, entry);
+    return entry;
+  }
+
+  private selectScope(scope: string): void {
     if (this.scope !== scope) {
       this.scope = scope;
       this.entries.clear(); this.snapshots.clear();
     }
-    const existing = this.entries.get(session);
-    if (existing) return existing;
-    if (this.entries.size >= 20) {
-      const evict = [...this.entries].find(([, draft]) => !draft.uncertain());
-      if (evict) this.entries.delete(evict[0]);
+  }
+
+  private evict(): void {
+    for (const [id, draft] of this.entries) {
+      if (this.entries.size < 20) break;
+      if (!draft.uncertain() && !draft.hasUnsavedText()) this.entries.delete(id);
     }
-    const entry = createSessionDraft();
-    this.entries.set(session, entry);
+  }
+
+  private open(target: SessionChatDraftTarget): SessionDraft {
+    const entry = new SessionDraft(), environment = this.environment;
+    // Isolated component previews also work without a desktop draft store.
+    if (environment && typeof this.bridge?.sessionChatDraftRead === 'function' && typeof this.bridge.sessionChatDraftSave === 'function') {
+      entry.bind({ bridge: this.bridge, environment, target, readTarget: target, current: () => this.environment === environment });
+    }
     return entry;
   }
 }

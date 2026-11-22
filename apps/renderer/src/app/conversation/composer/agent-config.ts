@@ -13,8 +13,10 @@ export function withHarness(
     ...value,
     preset: undefined,
     harness: harness.id,
+    harnessLabel: harness.label,
     mark: harness.mark,
     model: model?.id ?? "",
+    modelLabel: model?.label,
     thinking: model?.thinking[0],
     fast: false,
     context: undefined,
@@ -32,6 +34,7 @@ export function withModel(
     ...value,
     preset: undefined,
     model: model.id,
+    modelLabel: model.label,
     thinking: model.thinking.includes(value.thinking ?? "")
       ? value.thinking
       : model.thinking[0],

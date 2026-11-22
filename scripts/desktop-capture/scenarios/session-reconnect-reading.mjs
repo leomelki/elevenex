@@ -7,14 +7,16 @@ export default async function* (capture) {
     await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
   };
   for (const theme of ['light', 'dark']) {
-    await capture.evaluate(() => { location.href = '/reconnect'; });
-    await capture.waitFor(() => document.querySelector('ex-reconnect-demo [data-machine="local"]'));
+    await capture.evaluate(theme => { location.href = '/reconnect?captureTheme=' + theme; }, theme);
+    await capture.waitFor(theme => location.search === '?captureTheme=' + theme &&
+      document.querySelector('ex-reconnect-demo [data-machine="local"]'), theme);
     await capture.theme(theme); await capture.viewport(1280, 860);
     await capture.component('ex-machine-app', async component => { const host = await component.connection.addHost({ name: 'dev-box', host: 'dev-box.internal' }); await component.launcher.choose(host.id); });
     await capture.component('ex-reconnect-demo', component => { component.platform.ready(); component.platform.chat.scenario('history'); });
     await capture.waitFor(() => document.querySelector('.launch.open ex-machine-workspace'));
     await capture.component('ex-machine-workspace', component => component.store.selectSession({ taskId: '11', sessionId: '101' }));
-    await capture.waitFor(() => document.querySelectorAll('ex-session-chat ex-message').length >= 20);
+    await capture.waitFor(() => document.querySelector('ex-session-chat ex-chat-scroll .viewport') &&
+      document.querySelectorAll('ex-session-chat ex-message').length >= 20);
     await quiet();
     const before = await capture.evaluate(() => {
       const viewport = document.querySelector('ex-session-chat ex-chat-scroll .viewport');
@@ -31,7 +33,11 @@ export default async function* (capture) {
     assert.ok(Math.abs(before - recovered.top) < 2, `Reconnection must keep the reading position: ${before} → ${recovered.top}`);
     assert.equal(recovered.unread, true);
     yield { name: `${theme}-recovered-reading-position`, inspect: ['ex-chat-scroll .viewport', 'ex-chat-scroll .return'], metadata: { before, recovered } };
-    await capture.component('ex-session-chat', component => component.store.older());
+    // Filling unused space still includes the live tail. Traverse far enough to
+    // evict it before asserting recovery of a genuinely historical window.
+    await capture.component('ex-session-chat', async component => {
+      for (let page = 0; page < 4 && !component.store.historical(); page++) await component.store.older();
+    });
     const historical = await capture.component('ex-session-chat', component => ({ first: component.store.items()[0]?.id, view: component.store.viewRevision() }));
     await capture.component('ex-reconnect-demo', component => component.platform.recover());
     await capture.waitFor(() => document.querySelector('.workspace-frame.ex-offline'));

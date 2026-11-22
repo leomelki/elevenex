@@ -5,36 +5,57 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  container: session-chat / size;
 }
 ex-chat {
   flex: 1;
+  z-index: 0;
 }
-.session-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  min-height: var(--control-height);
-  font-size: var(--text-caption-size);
-  color: var(--ink-muted);
+/* Fade the complete placeholder surface over the already positioned chat.
+   The layer stays outside the scroll layout and passes input to the ready view. */
+ex-chat-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
 }
-.provider {
-  color: var(--ink);
-  text-transform: capitalize;
-}
-.status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.grow {
+ex-chat-loading.hydrated { --chat-loading-exit-duration: var(--dur-fast); }
+.opening {
+  display: grid;
   flex: 1;
+  place-items: center;
+  padding: var(--space-6);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  text-align: center;
 }
-.metadata {
-  white-space: nowrap;
+.opening-error { max-width: var(--chat-max); overflow-wrap: anywhere; }
+.session-composer:has(.start) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
 }
-.start { padding-bottom: var(--space-6); }
+.session-composer:has(.start) > :not(.start) { flex-shrink: 0; }
+.session-composer > ex-composer {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.session-composer > ex-composer[inert] {
+  opacity: 0.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-composer > ex-composer { transition: none; }
+}
+.start {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-1) var(--space-1) var(--space-6);
+}
+.start.with-preset-change { padding-block-end: var(--space-3); }
+/* Leave room for the badges that sit on the upper-start edges of the cards. */
+.start.preset-editing { padding-inline: var(--space-2); }
 .start-content {
   display: flex;
   flex-direction: column;
@@ -55,10 +76,56 @@ ex-chat {
 .preset-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-2);
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
+}
+.preset-heading > :first-child { margin-inline-end: auto; }
+.preset-heading button[data-variant="ghost"] { color: var(--ink-muted); }
+.preset-change {
+  display: grid;
+  gap: var(--space-2);
+  margin-block-start: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: var(--text-caption-size);
+}
+.preset-result { display: flex; align-items: center; color: var(--accent); }
+.preset-diffs, .preset-change-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+}
+.preset-diffs { list-style: none; padding: 0; }
+.preset-diffs li {
+  overflow-wrap: anywhere;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.preset-diffs del { color: var(--ink-muted); }
+.preset-diffs span { color: var(--accent); font-weight: 600; }
+.preset-change-actions { justify-content: flex-end; }
+.preset-change-actions input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+}
+@container session-chat (max-height: 475px) {
+  .start { padding-block-end: var(--space-3); }
+  .start-content { gap: var(--space-2); }
+  .start h1 { margin: 0; font-size: var(--text-title-size); line-height: var(--text-title-line); }
 }
 .feedback {
   display: flex;
@@ -87,12 +154,6 @@ ex-chat {
   margin-block: var(--space-4);
 }
 @media (max-width: 760px) {
-  .metadata {
-    display: none;
-  }
-  .session-bar {
-    gap: var(--space-2);
-  }
   .feedback {
     align-items: flex-start;
     flex-wrap: wrap;

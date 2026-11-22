@@ -1,8 +1,10 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   type OnChanges,
+  type SimpleChanges,
   afterRenderEffect,
   computed,
   effect,
@@ -12,12 +14,16 @@ import {
   output,
   signal,
   viewChild,
+  untracked,
 } from "@angular/core";
 import { ButtonComponent, FoldComponent, IconComponent } from "../../ui";
 import type {
   ChangedFile,
+  DeferredTurnWork,
   TurnAction,
   TurnStatus,
+  TurnWorkAction,
+  TurnWorkToggle,
   WorkStep,
 } from "../conversation.models";
 import { WorkTimelineComponent } from "./work-timeline.component";
@@ -25,8 +31,17 @@ import { OutcomeBarComponent } from "./outcome-bar.component";
 import { TurnActsComponent } from "./turn-acts.component";
 import { formatDuration, isProse, summarizeWork } from "./work-summary";
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
-import type { ToolContentRequest } from "../tool-presentation";
+import type { ToolContentRequest, ToolDetailsProvider, ToolImageProvider } from "../tool-presentation";
 import { ReplyMarkComponent } from "./reply-mark.component";
+import { TurnWorkPanelComponent } from './turn-work-panel.component';
+
+// Intent tiers for warming saved activity. Resting over the reply is a weak
+// signal and must survive scroll fly-through; resting on Worked itself is
+// strong; pressing it starts at once so the read overlaps the click gesture.
+const WORK_PRELOAD_INTENT_MS = 220;
+const WORK_BUTTON_INTENT_MS = 60;
+// Only a read that outlasts an instant-feeling response gets a pending cue.
+export const WORK_PENDING_CUE_MS = 120;
 @Component({
   selector: "ex-turn",
   imports: [
@@ -37,6 +52,7 @@ import { ReplyMarkComponent } from "./reply-mark.component";
     OutcomeBarComponent,
     ReplyMarkComponent,
     TurnActsComponent,
+    TurnWorkPanelComponent,
   ],
   templateUrl: "./turn.component.html",
   styleUrl: "./turn.component.css",
@@ -49,6 +65,9 @@ import { ReplyMarkComponent } from "./reply-mark.component";
     "(keydown)": "onKey($event)",
     "(animationend)": "arrivalFinished($event)",
     "(focusin)": "arriving.set(false)",
+    "(pointerenter)": "trackWorkPointer($event, true)",
+    "(pointerleave)": "trackWorkPointer($event, false)",
+    "[class.pending]": "workPending()",
   },
 })
 export class TurnComponent implements OnChanges {
@@ -57,13 +76,28 @@ export class TurnComponent implements OnChanges {
   protected readonly arriving = signal(false);
   private initialized = false;
   readonly status = input<TurnStatus>("done");
+  readonly keepWorkOnCompletion = input(false);
   readonly steps = input<readonly WorkStep[]>([]);
+  readonly deferredWork = input<DeferredTurnWork>();
+  readonly workToggled = output<TurnWorkToggle>();
+  readonly workHint = output<void>();
+  readonly workHintEnded = output<void>();
+  readonly workRequested = output<TurnWorkAction>();
+  readonly workLayoutChanging = output<HTMLElement>();
+  protected readonly workId = 'work-' + crypto.randomUUID();
+  private readonly workHovered = signal(false);
+  private readonly workButtonHovered = signal(false);
+  private readonly workPressed = signal(false);
+  protected readonly workFocused = signal(false);
+  private reopenToolIds: readonly string[] = [];
   readonly answerBeforeStepId = input<string>();
   readonly answerId = input<string>();
   readonly answer = input<string>();
   readonly streaming = input(false);
   readonly copiedCode = input<string | null>(null);
   readonly resolve = input<MarkdownAssetResolver>();
+  readonly inspectTool = input<ToolDetailsProvider>();
+  readonly toolImages = input<ToolImageProvider>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();
   readonly copyCode = output<string>();
@@ -73,6 +107,8 @@ export class TurnComponent implements OnChanges {
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
   readonly filesTotal = input<number>();
+  readonly filesDiff = input<{ readonly add: number; readonly del: number }>();
+  readonly sharedChanges = input(false);
   readonly error = input("");
   readonly open = input(false);
   readonly maxVisible = input(5);
@@ -111,6 +147,19 @@ export class TurnComponent implements OnChanges {
       this.toggled() ??
       (this.status() === "live" || this.open() || this.inspecting()),
   );
+  /** Dwell before warming closed saved activity, or undefined without intent. */
+  private readonly workIntentDelay = computed(() => {
+    if (!this.deferredWork() || this.expanded()) return undefined;
+    if (this.workPressed()) return 0;
+    if (this.workButtonHovered()) return WORK_BUTTON_INTENT_MS;
+    return this.workHovered() || this.workFocused() ? WORK_PRELOAD_INTENT_MS : undefined;
+  });
+  /** Opened activity that is still reading after an instant-feeling interval. */
+  private readonly workWaiting = computed(() => {
+    const work = this.deferredWork();
+    return !!work?.busy && !work.ready && !work.error && this.expanded();
+  });
+  protected readonly workPending = signal(false);
   /** Epoch ms when a live turn began; it then counts its own elapsed time. */
   readonly startedAt = input<number>();
   private readonly now = signal(Date.now());
@@ -142,12 +191,12 @@ export class TurnComponent implements OnChanges {
     () => this.steps().filter((step) => !isProse(step)).length,
   );
   protected readonly timelineSteps = computed(() =>
-    this.stepCount()
+    this.deferredWork() || this.stepCount()
       ? this.steps()
       : this.steps().filter((step) => step.kind === "say"),
   );
   protected readonly showWork = computed(
-    () => this.status() === "live" || this.timelineSteps().length > 0,
+    () => !!this.deferredWork() || this.status() === "live" || this.timelineSteps().length > 0,
   );
   protected readonly facts = computed(() =>
     this.status() === "live"
@@ -156,6 +205,9 @@ export class TurnComponent implements OnChanges {
           this.steps().filter((step) => step.status !== "running"),
           this.files(),
           this.filesTotal() ?? this.files().length,
+          this.deferredWork(),
+          this.sharedChanges(),
+          this.filesDiff(),
         ),
   );
   private readonly factsElement =
@@ -186,12 +238,52 @@ export class TurnComponent implements OnChanges {
   });
   private readonly workButton =
     viewChild<ElementRef<HTMLButtonElement>>("workButton");
+  private readonly workPanel = viewChild(TurnWorkPanelComponent, { read: ElementRef });
+  private readonly timeline = viewChild(WorkTimelineComponent);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly workRegion = viewChild<unknown, ElementRef<HTMLElement>>(
     "workRegion",
     { read: ElementRef },
   );
   constructor() {
+    let open = false;
+    effect(() => {
+      const next = !!this.deferredWork() && this.expanded();
+      if (next === open) return;
+      open = next;
+      untracked(() => this.workToggled.emit({ open: next, toolIds: next ? this.reopenToolIds : [] }));
+    });
+    const destroy = inject(DestroyRef);
+    // One hint spans a dwell that escalates from the reply to Worked or a
+    // press; it ends when intent leaves or the disclosure opens.
+    let hinting = false;
+    effect(cleanup => {
+      const delay = this.workIntentDelay();
+      if (delay === undefined) {
+        if (hinting && !destroy.destroyed) untracked(() => this.workHintEnded.emit());
+        hinting = false;
+        return;
+      }
+      if (hinting) return;
+      const start = () => {
+        hinting = true;
+        this.workHint.emit();
+      };
+      if (!delay) {
+        untracked(start);
+        return;
+      }
+      const timer = setTimeout(start, delay);
+      cleanup(() => clearTimeout(timer));
+    });
+    effect(cleanup => {
+      if (!this.workWaiting()) {
+        this.workPending.set(false);
+        return;
+      }
+      const timer = setTimeout(() => this.workPending.set(true), WORK_PENDING_CUE_MS);
+      cleanup(() => clearTimeout(timer));
+    });
     afterRenderEffect((onCleanup) => {
       const element = this.factsElement()?.nativeElement;
       this.facts();
@@ -213,12 +305,22 @@ export class TurnComponent implements OnChanges {
     });
   }
 
-  ngOnChanges(): void {
+  ngOnChanges(changes: SimpleChanges): void {
     if (!this.initialized) {
       this.initialized = true;
       this.arriving.set(this.isNew());
     }
+    if (changes["status"]?.previousValue === "live" && this.status() !== "live" &&
+        this.keepWorkOnCompletion() && this.toggled() === null)
+      this.toggled.set(true);
     const focused = this.host.nativeElement.ownerDocument.activeElement;
+    const work = this.deferredWork(), previous = changes['deferredWork']?.previousValue as DeferredTurnWork | undefined;
+    if (changes['deferredWork'] && work && this.expanded()) {
+      if (!previous) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
+      if (work.ready !== previous?.ready || work.error !== previous?.error) this.notifyWorkLayout();
+    }
+    if (changes['deferredWork'] && previous?.error && !work?.error && this.workPanel()?.nativeElement.contains(focused))
+      (this.workButton()?.nativeElement ?? this.host.nativeElement).focus({ preventScroll: true });
     if (
       !this.showWork() &&
       this.workRegion()?.nativeElement.contains(focused)
@@ -242,7 +344,51 @@ export class TurnComponent implements OnChanges {
 
   protected toggleWork(): void {
     const open = !this.expanded();
+    if (!open) {
+      if (this.deferredWork()?.ready) this.reopenToolIds = this.timeline()?.activeToolIds() ?? [];
+      // Closing cancels the read. Require fresh hover or focus before warming it again.
+      this.workHovered.set(false);
+      this.workButtonHovered.set(false);
+      this.workPressed.set(false);
+      this.workFocused.set(false);
+    }
+    this.notifyWorkLayout();
     this.toggled.set(open);
+  }
+
+  protected notifyWorkLayout(): void {
+    const button = this.workButton()?.nativeElement;
+    if (button) this.workLayoutChanging.emit(button);
+  }
+
+  protected trackWorkPointer(event: PointerEvent, inside: boolean): void {
+    if (event.pointerType !== 'mouse') return;
+    this.workHovered.set(inside);
+    if (!inside) {
+      this.workButtonHovered.set(false);
+      this.workPressed.set(false);
+    }
+  }
+
+  protected trackWorkButton(event: PointerEvent, inside: boolean): void {
+    if (event.pointerType === 'mouse') this.workButtonHovered.set(inside);
+  }
+
+  /** Start reading on press rather than release. A touch press may begin a scroll. */
+  protected pressWork(event: PointerEvent | KeyboardEvent): void {
+    if (event instanceof KeyboardEvent
+      ? event.repeat || (event.key !== 'Enter' && event.key !== ' ')
+      : event.pointerType === 'touch' || event.button !== 0) return;
+    this.workPressed.set(true);
+  }
+
+  protected focusWork(): void {
+    this.workFocused.set(!!this.workButton()?.nativeElement.matches(':focus-visible'));
+  }
+
+  protected requestWork(action: TurnWorkAction): void {
+    this.workButton()?.nativeElement.focus({ preventScroll: true });
+    this.workRequested.emit(action);
   }
 
   protected arrivalFinished(event: AnimationEvent): void {

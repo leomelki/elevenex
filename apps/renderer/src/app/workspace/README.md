@@ -71,6 +71,8 @@ shell. `WorkspaceOnboardingComponent` is the first-project card. It emits
 `launching`; the machine container owns source retention and the existing
 `jumpHome`/`settleMark` flight into the rail. The task header accepts `panelOpen`
 and emits `panelToggle`; panel processes are outside this feature.
+Git loading, retry and behind-upstream Sync controls share the header's reserved
+metadata row. Late Git replies and failures keep the chat's viewport height fixed.
 
 Later projects open from the rail's supplied plus-button origin through
 `dialogFrom`. Cancellation keeps that origin for the return morph. A successful
@@ -168,9 +170,12 @@ changes. Same-machine recovery retains local writing, marks interrupted creation
 unconfirmed, and never resends it. Definite rejections offer explicit retry;
 unconfirmed creation offers Check sessions and explicit draft dismissal. These
 errors belong to the local session rather than disabling other workspace actions.
-As with ordinary unsent chat drafts, these local drafts live in this workspace
-window; they are not a durable disk outbox. Offline new-session requests retain
-the existing journaled waiting-session flow.
+The local composer saves unfinished text for the task in this window's saved
+workspace. If the app closes before confirmation, the text is recovered the next
+time the user chooses New session in that task. Confirmation moves it to the
+saved session in one local write. Discard draft clears the task's local text.
+Restoring text never initiates session creation. Offline new-session requests
+retain the existing journaled waiting-session flow.
 
 
 Task creation returns a preparing task. The store keeps `pendingTask()` and
@@ -273,8 +278,25 @@ Session rows expose archive only when the backend advertises `sessionArchive`.
 The owner removes a row from the normal list only after confirmed success, selects its next normal
 neighbour when necessary, and retains a scoped Toast/Undo. Main validates IDs,
 confirmation and response identity; backend checks task ownership/readiness and
-live activity before strict process cleanup. Desktop row archives retain
-`archivedByTask` so normal task reopen restores them, without changing legacy
+live activity before strict process cleanup.
+
+A session's `status` is the legacy value, in which detached shell commands make
+it read as `running`. Engines that separate them also send `turnStatus` (the
+agent's own state) and `commandCount`, only while commands run. The store prefers
+`turnStatus` for the glyph and the project and header counts, and passes
+`commandCount` to the row as `commands`. Archiving a session with commands
+requires `confirmStop`, because it stops them. Older engines omit both fields
+and keep their previous display.
+
+Unstarted sessions expose an engine-owned `canDelete` flag and use the named
+`workspaceDeleteSession` operation instead. The engine rechecks persisted
+conversation identity, completion and live activity while claiming the row;
+started sessions must be archived. Existing session cleanup releases prewarmed
+runtimes before removal; cleanup failures restore the unused row for retry. Empty deletion promotes children, removes the
+row and moves selection/focus like archive, but creates no archive or Undo.
+Older engines omit the flag and retain their archive behavior.
+
+Desktop row archives retain `archivedByTask` so normal task reopen restores them, without changing legacy
 standalone archive behavior. Completed and stopped conversations remain normal
 sessions in chronological order; only explicit archiving removes a row. Archiving
 the selected session selects the next remaining conversation, wrapping to the
@@ -370,3 +392,21 @@ active and one latest pending write. The private sidecar is bounded to 16 MiB,
 with one MiB per window/machine snapshot. Saving failures are visible and block
 queued dispatch. Restored sending claims become unknown. Opaque backend scopes,
 SSH credentials and authentication challenges are never saved with writing.
+
+## Session organization
+
+The optional `sessionNesting` capability enables two-level session groups.
+`workspaceSessions` retains flat paging when `parentSessionId` is omitted; null
+selects roots and an ID selects a bounded child page. Normal child windows contain
+20 conversations, replace rather than accumulate earlier pages, and are retained
+only for visible roots. `WorkspaceSessionHierarchy` owns pending reads, deduplication,
+errors and stale-result rejection. WorkspaceStore owns confirmed moves through
+`workspaceMoveSession`, task/scope validation and uncertain-outcome reconciliation.
+Moves do not restart agents or change tasks, workspaces or fork provenance.
+
+Archiving a parent affects that conversation only and returns its children to task
+level. Deleting a parent preserves children through `ON DELETE SET NULL`. Closing a
+task retains its organizational relationships for reopening. The automatic migration
+maps each old nonempty folder to its earliest active durable session (or earliest
+archived member), preserving names and archive states. Legacy folder tables and
+endpoints remain available for older clients; the new desktop does not create folders.

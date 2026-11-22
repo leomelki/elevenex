@@ -6,6 +6,9 @@ import type { BrowserSocketTarget } from '@elevenex/browser-network';
 
 export type WireMessage =
   | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean; browserProxy?: true }
+  | { type: 'update-waiting'; instance: string; connections: number | null }
+  | { type: 'update-starting'; instance: string }
+  | { type: 'force-update'; instance: string }
   | { type: 'ping' | 'pong'; id: number; ready?: boolean; instance?: string }
   | { type: 'open'; id: number; port: number; host?: string }
   | { type: 'browser-open'; id: number; port: number; host: string }
@@ -24,6 +27,10 @@ function message(value: unknown): WireMessage {
     if (typeof input['version'] !== 'string' || !/^[a-f0-9]{40}$/.test(input['version'])
       || typeof input['instance'] !== 'string' || input['instance'].length > 64 || typeof input['ready'] !== 'boolean' || typeof input['agentForwarding'] !== 'boolean') throw new Error('Invalid bridge greeting');
     if (input['browserProxy'] !== undefined && input['browserProxy'] !== true) throw new Error('Invalid browser proxy capability');
+  } else if (type === 'update-waiting' || type === 'update-starting' || type === 'force-update') {
+    if (typeof input['instance'] !== 'string' || !/^[a-f0-9-]{36}$/.test(input['instance'])) throw new Error('Invalid update instance');
+    const count = input['connections'];
+    if (type === 'update-waiting' && count !== null && (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 257)) throw new Error('Invalid update connection count');
   } else {
     if (!Number.isSafeInteger(input['id']) || Number(input['id']) < 1) throw new Error('Invalid bridge sequence');
     if (type === 'browser-open') {
@@ -49,7 +56,9 @@ function message(value: unknown): WireMessage {
 export class Wire extends EventEmitter {
   private buffered = Buffer.alloc(0);
   private closed = false;
+  private received = 0;
   private readonly data = (chunk: Buffer) => {
+    this.received = Date.now();
     try {
       this.buffered = Buffer.concat([this.buffered, chunk]);
       while (true) {
@@ -65,6 +74,8 @@ export class Wire extends EventEmitter {
   };
   private readonly ended = () => this.close();
   private readonly drained = () => this.emit('drain');
+  /** Time of the latest inbound bytes, including bulk frames queued ahead of a reply. */
+  get receivedAt(): number { return this.received; }
   get writable(): boolean { return !this.closed && !this.output.writableNeedDrain; }
   constructor(private readonly input: Readable, private readonly output: Writable) {
     super();

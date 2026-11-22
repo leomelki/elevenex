@@ -21,8 +21,8 @@ export default async function* (capture) {
   };
   const scroll = async selector => {
     await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
-    if (await capture.evaluate(() => !!document.querySelector('ex-chat-scroll .reminder-top button')))
-      await capture.click('ex-chat-scroll .reminder-top button');
+    if (await capture.evaluate(() => !!document.querySelector('ex-chat-scroll .reminder .hide')))
+      await capture.click('ex-chat-scroll .reminder .hide');
     await finish();
   };
   const tool = index => `ex-work-timeline > ol > li:nth-child(${index + 1}) ex-tool-step`;

@@ -46,7 +46,8 @@ export default async function* (capture) {
         return { layerOpacity: getComputedStyle(layer).opacity, surfaceOpacity: Number(getComputedStyle(surface).opacity),
           background: getComputedStyle(surface).backgroundColor,
           dimOpacity: Number(getComputedStyle(dim).opacity), dimBackground: getComputedStyle(dim).backgroundColor,
-          durations: document.getAnimations().filter(a => a.effect?.target?.closest?.('.ex-modal-layer')).map(a => a.effect.getTiming().duration) };
+          // Scroll-driven effects (the model list's edge fade) follow scrolling, not time.
+          durations: document.getAnimations().filter(a => a.timeline === document.timeline && a.effect?.target?.closest?.('.ex-modal-layer')).map(a => a.effect.getTiming().duration) };
       });
       assert.equal(motion.layerOpacity, '1');
       assert.notEqual(motion.background, 'rgba(0, 0, 0, 0)');
@@ -57,8 +58,8 @@ export default async function* (capture) {
       yield { name: theme + '-opening-' + time, inspect: ['.preset-creator', '.ex-modal-layer', '.ex-modal-dim'], metadata: { motion } };
     }
     await capture.motion.finish(); await capture.motion.play();
-    await capture.waitFor(() => document.activeElement?.matches('.preset-creator input'));
-    await capture.fill('.preset-creator input', 'Focused review');
+    await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
+    await capture.fill('.preset-creator .identity input', 'Focused review');
     await capture.press('Tab', 8);
     assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Close preset creator');
     await capture.press('Tab', 8);
@@ -72,7 +73,7 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('.preset-heading > button')), true);
     await capture.motion.freeze(); await capture.click(opener);
     await capture.evaluate(() => {
-      for (const animation of document.getAnimations()) if (animation.effect?.target?.closest?.('.ex-modal-layer')) animation.currentTime = 70;
+      for (const animation of document.getAnimations()) if (animation.timeline === document.timeline && animation.effect?.target?.closest?.('.ex-modal-layer')) animation.currentTime = 70;
     });
     await capture.press('Escape');
     assert.equal(await capture.evaluate(() => document.querySelector('.ex-modal-layer')?.hasAttribute('inert')), true);
@@ -87,7 +88,7 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'solid');
     yield { name: theme + '-custom-choice-focus', inspect: ['ex-preset-card button.custom'] };
     await capture.click(opener); await settle();
-    await capture.fill('.preset-creator input', 'Deep work'); await settle();
+    await capture.fill('.preset-creator .identity input', 'Deep work'); await settle();
     assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator button[type="submit"]').disabled), true);
     yield { name: theme + '-validation', inspect: ['.preset-creator'] };
     await capture.reducedMotion(true); await capture.viewport(420, 360); await settle();

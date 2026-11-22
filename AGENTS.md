@@ -2,16 +2,15 @@ The project must support repositories with thousands of files and folders, hundr
 
 ## Repository scope
 
-- The product hierarchy for the new desktop is **project → task → sessions**. A task owns a git branch and an isolated workspace; sessions are agent conversations within that task.
-- The existing application (`apps/frontend`, `apps/backend`, `apps/electron`) remains active. The new desktop foundation lives alongside it in `apps/renderer`, `apps/desktop`, and `packages/shared`.
-- Preserve the existing app's commands, dependencies, and behavior when working on the new foundation. Root `pnpm dev` runs the existing app; root `pnpm desktop:*` commands run the new foundation.
-- The **Frontend UI** section below applies to the existing `apps/frontend`. The new renderer follows **New desktop foundation** instead, including its component-library and theme rules.
-- Read the relevant package manifests, nearby implementation, and tests before changing code. See `apps/desktop/README.md` for the new app's setup and IPC workflow. Check nested `AGENTS.md` files for more specific instructions.
+- The desktop product hierarchy is **project → task → sessions**. A task owns a Git branch and an isolated workspace. Sessions are agent conversations within that task.
+- Develop the desktop in `apps/renderer` and `apps/desktop`, with shared contracts in `packages/shared` and services in `apps/backend`. Use the root `pnpm desktop:*` commands.
+- The legacy UI in `apps/frontend` and its Electron shell in `apps/electron` are slated for removal. Breaking changes to behavior, backend contracts, commands and dependencies used exclusively by those apps are already authorized when needed for the requested work. Validate against the supported desktop and affected backend consumers.
+- Read the relevant package manifests, nearby implementation, and tests before changing code. See `apps/desktop/README.md` for desktop setup and the IPC workflow. Check nested `AGENTS.md` files for more specific instructions.
 
 ## Working practices and tools
 
 - Use `rg` and `rg --files` for bounded searches. Inspect `git status` and the relevant diff before editing; preserve unrelated and uncommitted changes.
-- Use the repository's pnpm workspace and lockfile. Do not introduce npm/yarn lockfiles, upgrade the global toolchain, or migrate the existing app incidentally.
+- Use the repository's pnpm workspace and lockfile. Do not introduce npm/yarn lockfiles or upgrade the global toolchain.
 - Before a dependency upgrade, verify stable versions and peer/engine compatibility against the registry and official documentation. Read the package's `engines` and the Angular compatibility table; do not assume the newest TypeScript major is supported.
 - Ask before adding a direct dependency outside the user's approved stack. Previously authorized dependencies do not need approval again. Prefer existing tools and Node's built-in APIs when they meet the requirement.
 - Use the Angular CLI and the installed Angular build/test tools for renderer changes, TypeScript for contract checking, ESLint for linting, and electron-builder for packaging. Do not add a second build or test system to solve a local configuration issue.
@@ -41,8 +40,8 @@ The project must support repositories with thousands of files and folders, hundr
 ### Backend evolution and compatibility
 
 - Agents may change the backend while implementing frontend features: improve behavior, optimize performance, add endpoints/events/features, or refactor internals when that better serves the intended product. Prefer fixing a backend limitation over repeated client workarounds.
-- Preserve backward compatibility for the active legacy app, desktop releases, remote runtimes, and supported API/MCP consumers. Prefer additive contracts, bounded endpoints, optional capabilities and staged migrations; keep existing callers' defaults, response shapes and semantics working.
-- If a breaking change would be useful, ask the developer whether it is allowed before implementing it, unless that specific break is already authorized. Explain the benefit, affected consumers, migration plan and compatible alternative. Continue independent compatible work while awaiting the decision.
+- Preserve backward compatibility for supported `apps/desktop` releases, remote runtimes, and API/MCP consumers. Prefer additive contracts, bounded endpoints, optional capabilities and staged migrations. Keep the defaults, response shapes and semantics those consumers rely on.
+- Ask the developer before breaking a supported contract unless that break is already authorized. Explain the benefit, affected consumers, migration plan and compatible alternative. Continue independent compatible work while awaiting the decision.
 
 ### Git versions and performance
 
@@ -52,7 +51,7 @@ The project must support repositories with thousands of files and folders, hundr
 - Preserve repository configuration and modern Git optimizations. Do not automatically rewrite Git settings, migrate refs/index formats, start maintenance/monitor daemons, or force checkout parallelism. Benchmark proposed defaults on disposable repositories and account for shared worktrees and concurrent agents.
 - Validate relevant behavior with real modern Git and the legacy fallback where available. Modern-only tests must actually execute modern commands/storage, rather than passing through mocks or silently switching to the host's older Git.
 
-## New desktop foundation
+## Desktop app
 
 ### Ownership and dependency direction
 
@@ -64,14 +63,14 @@ The project must support repositories with thousands of files and folders, hundr
 | `scripts/desktop-shell.mjs` | Development orchestration, compilation, checks, and packaging commands |
 
 - Both apps may depend on `packages/shared`; shared code must not depend on either app, Angular, Electron, or Node runtime APIs. Keep this package focused on contracts rather than turning it into a miscellaneous utility collection.
-- The renderer must not import Electron, Node built-ins, desktop implementation files, or the existing backend. Git, filesystem access, process execution, and agent supervision belong in the main process or workers.
+- The renderer must not import Electron, Node built-ins, desktop implementation files, or backend implementation files. Git, filesystem access, process execution, and agent supervision belong in the main process or workers.
 - Keep main-process bootstrap and IPC adapters thin. When behavior grows, move domain operations into focused modules with explicit inputs and results; keep Electron-specific objects at the boundary.
 - Treat application state as owned data with defined lifetimes. Do not use a mutable global singleton to share unrelated state across windows or tasks. Clean up subscriptions, watchers, timers, and child processes with their owning window, task, or application.
-- Build only the requested foundation or feature. Do not port existing product features, introduce a backend server, or add a persistence framework without a concrete requirement.
+- Build only the requested feature. Add a backend server or persistence framework only for a concrete requirement.
 
 ### Backend client integration
 
-- Read `docs/backend-client-architecture.md` before adding backend-backed renderer features. Implement support incrementally with each frontend feature; the initial working slice is backend info, not a full API mirror.
+- Read `docs/backend-client-architecture.md` before adding backend-backed renderer features. Add backend support incrementally with each feature.
 - Use named methods through the existing `window.elevenex` bridge. Main owns HTTP/WebSocket transport, local/remote endpoint selection and private credentials; never expose a generic request API or loosen renderer CSP for networking.
 - Extend the existing per-window scoped client. Require an expected backend scope on domain operations, validate arguments/replies at runtime, and discard stale scope/task/session replies. Feature stores own selected-resource state and bounded caches; the connection service owns only connection state.
 - Use bounded pages, incremental cursors and focused invalidations for files, branches, history and transcripts. Own cancellation/cleanup, coalesce duplicate reads, and never replay mutations or agent prompts on reconnect. An interrupted mutation can have an unknown outcome; reconcile durable state before retrying.
@@ -82,7 +81,7 @@ The project must support repositories with thousands of files and folders, hundr
 - Keep local view state in the owning component. Introduce a focused service when state or behavior has a shared lifetime. Keep IPC calls and platform integration out of templates and presentational components.
 - Use lazy router routes and enable View Transitions. Keep the production router on history mode through `app://`; do not work around protocol problems by switching to hash routing.
 - Separate substantial behavior, markup, and styles into `.component.ts`, `.component.html`, and `.component.css` or `.component.scss`. Inline templates/styles are for genuinely small components.
-- Use Angular CDK for overlays, focus management, and eventual virtual scrolling. Do not add Zard, Angular Material, Spartan, `@angular/aria`, or another component library to the new renderer until authorized. The legacy app's Zard/Tailwind rules do not require adding those dependencies here.
+- Use Angular CDK for overlays, focus management, and eventual virtual scrolling. Ask before adding Zard, Angular Material, Spartan, `@angular/aria`, or another component library to the renderer.
 - Do not add `zone.js` or `@angular/animations`. Use plain CSS, the Web Animations API when needed, and Angular `animate.enter` / `animate.leave` for entry and exit.
 - Prefer native semantic controls. Provide accessible names, keyboard operation, visible focus, and correct disabled/loading states. Overlays must manage focus and restore it on close; hidden panels must not leave focusable controls in the tab order.
 - Use Angular lifecycle cleanup such as `DestroyRef` or `takeUntilDestroyed` for long-lived subscriptions. Keep async requests cancellable or reject stale replies when the selected task/session changes.
@@ -121,12 +120,12 @@ The project must support repositories with thousands of files and folders, hundr
 
 - Before writing UI, read `docs/design-system/project/README.md`, especially Motion, and inspect `project/tokens.css`. If these inputs are missing, request them and continue independent infrastructure work; do not invent replacement brand tokens or claim the designed UI is complete.
 - `docs/design-system/project/tokens.css` is authoritative. The build copies it verbatim into `apps/renderer/src/design-system/tokens.css`; edit the source rather than the generated copy.
-- Use the supplied tokens for colors, spacing, radii, typography, durations, and easing. Do not copy the legacy frontend's palette or scatter hard-coded alternatives through components.
-- Follow the system theme with `prefers-color-scheme` and a `data-theme` attribute on `<html>`, including native theme updates through the bridge. Do not introduce the legacy app's `.dark` theme model into this renderer.
+- Use the supplied tokens for colors, spacing, radii, typography, durations, and easing throughout renderer styles.
+- Follow the system theme with `prefers-color-scheme` and a `data-theme` attribute on `<html>`, including native theme updates through the bridge.
 - Bundle Instrument Sans and Geist Mono locally, retain their licenses, and use their local files. Do not load fonts from a CDN at runtime.
 - The requested shell has a title bar with a centered non-draggable island, a 56px project rail, 272px sidebar, main chat region, and closable 440px side panel. Use glass regions on the canvas with 8px gutters. Animate panel width with `dur-slow` and `ease-in-out` tokens.
 - Respect `prefers-reduced-motion`. Keep motion purposeful and avoid animating large lists or triggering expensive layout work during unrelated updates.
-- Check modified UI in light and dark mode, including contrast, focus, hover, disabled/loading/empty states, and open/closed panels. Capture the actual new renderer when verifying it; a screenshot of the legacy app is not evidence for this shell.
+- Check modified UI in light and dark mode, including contrast, focus, hover, disabled/loading/empty states, and open/closed panels. Capture the renderer in `apps/renderer` when verifying desktop UI.
 
 ### Electron and IPC security
 
@@ -147,13 +146,13 @@ The project must support repositories with thousands of files and folders, hundr
 - Use asynchronous filesystem, git, process, and network APIs in Electron main. Move expensive CPU work or long-running agent supervision to workers or utility processes as the need arises.
 - Coalesce duplicate in-flight work, debounce noisy file events, and guard against stale results after navigation, workspace changes, or window closure. Cancellation and cleanup must be part of the operation's ownership.
 - Execute programs with explicit argument arrays and an explicit workspace directory. Avoid interpolating user-controlled paths, branches, or prompts into shell commands. Handle process errors, cancellation, exit status, output limits, and shutdown cleanup.
-- Keep app data separate from the existing Elevenex app. Do not write mutable application state into a checkout or packaged application resources.
+- Store mutable app data in the desktop's documented data directories, outside checkouts and packaged application resources.
 
 ### Validation and delivery
 
-- For the **new desktop**, use `pnpm desktop:capture` and read `scripts/desktop-capture/README.md` for precise state setup, trusted input, animation scrubbing, PNGs and layout/focus/accessibility diagnostics. Prefer disposable stdin async-generator scenarios; reuse a warm Angular server with `--url` for iteration. Await actual UI conditions, inspect the resulting PNGs, and require `report.json` to say `verified: true`. Use `--fixture` only to verify the tool, never as product visual evidence. Keep feature mocks isolated from production and never add capture capabilities to `window.elevenex`. The legacy `screenshot:ui` command targets `apps/frontend`, not this renderer.
+- For desktop screenshots and visual verification, use `pnpm desktop:capture` and read `scripts/desktop-capture/README.md` for precise state setup, trusted input, animation scrubbing, PNGs and layout/focus/accessibility diagnostics. Prefer disposable stdin async-generator scenarios and reuse a warm Angular server with `--url` for iteration. Await actual UI conditions, inspect the resulting PNGs, and require `report.json` to say `verified: true`. Use `--fixture` only to verify the tool. Keep feature mocks isolated from production and never add capture capabilities to `window.elevenex`.
 
-- From the repository root, use `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`. `pnpm desktop:dev` starts the new app; `pnpm desktop:package` packages it. The standard command names are also available in `apps/desktop`.
+- From the repository root, use `pnpm desktop:lint`, `pnpm desktop:test`, and `pnpm desktop:build`. `pnpm desktop:dev` starts the desktop app and `pnpm desktop:package` packages it. The standard command names are also available in `apps/desktop`.
 - Keep Angular's default test runner. IPC type tests must also run through `tsc`; a transpile-only test runner cannot verify negative type assertions. Include runtime tests for security boundaries, payload handling, and event cleanup when changing them.
 - Add focused regression tests for meaningful behavior changes. Do not add brittle tests that mirror implementation details or unrelated tests for a documentation-only edit.
 - For Electron/preload/protocol changes, use `apps/desktop/test/electron-smoke.cjs` with the installed Electron after building. Disable inherited `ELECTRON_RUN_AS_NODE` when launching the native app; do not weaken security settings to make the smoke test pass.
@@ -165,30 +164,6 @@ The project must support repositories with thousands of files and folders, hundr
 
 - Follow the commit convention in `COMMIT_CONVENTION.md`.
 - Use Conventional Commits in the form `feat(scope): description` whenever a scope is applicable.
-
-## Frontend UI (existing `apps/frontend`)
-
-- Find the existing app's vendored Zard primitives and reusable controls in `apps/frontend/src/app/shared/components`; use their per-component `index.ts` exports where available through `@/shared/components/<name>`. Read the local [dropdown notes](apps/frontend/src/app/shared/components/dropdown/README.md) for overlay lifetime and focus behavior, and inspect existing callers for composition. Shared conversation components and their ownership rules are in [the agent-chat guide](apps/frontend/src/app/shared/agent-chat/README.md) and its `index.ts`. Search these locations and feature-local components before introducing duplicates. This app's imports, Zard controls and Tailwind styling remain separate from the new renderer's component families.
-- Use Zard UI components and Tailwind CSS utilities as much as possible when building or modifying frontend UI.
-- When a needed Zard UI component is not already installed, do not hesitate to install the relevant component instead of hand-rolling a replacement.
-- When a user asks to see an Elevenex UI change, use the repository skill at `.agents/skills/elevenex-screenshot/SKILL.md`. Its single capture command starts or reuses the app, verifies the requested state, saves the PNG in the repository, and returns the absolute path to embed in chat.
-
-### Angular component organization
-
-- Keep Angular components split by responsibility when they are more than trivially small: use `.component.ts` for behavior and wiring, `.component.html` for substantial templates, and `.component.scss` for substantial component styles.
-- Inline `template` and `styles` are acceptable only for very small, self-contained components where the markup and styling are brief enough to read comfortably inside the TypeScript file.
-- Prefer Zard UI components and Tailwind utilities for styling. Use component SCSS sparingly, only when utilities would be impractical or noisy, such as host selectors, third-party/rendered markdown/document styling, or edge-case component states. If styling or markup is reusable, create or extract an Angular component that owns the Tailwind/Zard implementation instead of sharing CSS rules across duplicated HTML.
-
-### Dark mode and color best practices
-
-- Dark mode is class-based. The app toggles the `dark` class on the root `html` element, and Tailwind dark variants should be written for that model.
-- Prefer semantic design tokens from `apps/frontend/src/styles.css` over hard-coded colors. Use tokens such as `background`, `foreground`, `card`, `popover`, `primary`, `muted`, `accent`, `border`, `input`, `destructive`, `success`, and `warning`.
-- When a color needs to be shared between light and dark mode, add or reuse a CSS variable in `styles.css` and map it through `@theme inline` when Tailwind utilities need it.
-- Avoid mixing component colors with literal `white`, `black`, `slate-*`, or fixed hex values for normal app surfaces. Use `var(--surface-tint)` and `var(--surface-shade)` in `color-mix()` when a lightening or darkening endpoint is needed.
-- Status UI should use semantic tokens: success for active/complete states, warning for pending/attention states, destructive for errors or dangerous actions, and muted for inactive states.
-- Keep terminals and embedded code/editor surfaces intentionally dark only when that is a product decision. Otherwise, derive wrappers, labels, borders, and loading states from the theme tokens.
-- Every new or modified UI surface should be checked in both light and dark mode. Verify readable contrast, visible focus rings, borders that do not disappear, hover/active states, disabled states, empty states, dialogs, and loading skeletons.
-- Do not solve dark mode with one-off `dark:` patches if a semantic token would make the component consistent everywhere.
 
 ## Database (apps/backend)
 

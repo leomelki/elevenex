@@ -11,8 +11,8 @@ export default async function* (capture) {
   };
   const scroll = async selector => {
     await capture.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center' }), selector);
-    if (await capture.evaluate(() => !!document.querySelector('.reminder-top button')))
-      await capture.click('.reminder-top button');
+    if (await capture.evaluate(() => !!document.querySelector('.reminder .hide')))
+      await capture.click('.reminder .hide');
     await finish();
   };
   for (const theme of ['light', 'dark']) {

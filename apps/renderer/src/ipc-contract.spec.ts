@@ -35,6 +35,9 @@ describe('IPC bridge contract', () => {
 // These negative assertions are checked by tsc in pnpm test. Vitest alone only
 // transpiles tests, which would silently miss an accidentally weakened contract.
 function checkContract(invoke: Invoke, subscribe: Subscribe): void {
+  void invoke('session-chat:read', 'scope', { taskId: 1, sessionId: 2, requestId: 'read', loadingMode: 'window' });
+  // @ts-expect-error Loading modes do not permit unbounded history requests.
+  void invoke('session-chat:read', 'scope', { taskId: 1, sessionId: 2, requestId: 'read', loadingMode: 'all' });
   expectTypeOf(invoke('workspace:wait', 'scope', { after: 1, requestId: 'request' })).toEqualTypeOf<Promise<BackendResult<import('@elevenex/shared').WorkspaceRevision>>>();
   // @ts-expect-error Navigation waits require a scalar cursor and cancellable request identity.
   void invoke('workspace:wait', 'scope', { after: '1' });
@@ -81,6 +84,11 @@ function checkContract(invoke: Invoke, subscribe: Subscribe): void {
   void invoke('session-chat:changes', 'scope', { path: '/etc/passwd', offset: 0 });
   // @ts-expect-error Chat reads must identify the expected backend scope.
   void invoke('session-chat:read', { taskId: 1, sessionId: 2, requestId: 'read' });
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Chat streams bind an expected backend scope.
+  void invoke('session-chat:watch', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive' });
+  // @ts-expect-error Renderer code cannot send an endpoint or credentials through the bridge.
+  void invoke('session-chat:watch', 'scope', { taskId: 1, sessionId: 2, watchId: 'chat', loadingMode: 'progressive', url: 'https://example.test' });
   // @ts-expect-error The conversation bridge never accepts generic shell actions.
   void invoke('session-chat:command', 'scope', { taskId: 1, sessionId: 2, action: { type: 'shell', command: 'anything' } });
   // @ts-expect-error Permission decisions are an explicit union.

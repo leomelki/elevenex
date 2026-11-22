@@ -34,6 +34,7 @@ export type ClaudeTranscriptItemKind =
 
 export type AgentToolKind =
   | 'read'
+  | 'image_view'
   | 'write'
   | 'edit'
   | 'notebook_edit'
@@ -86,6 +87,7 @@ export interface ClaudeTranscriptItem {
   agentId?: string;
   id: string;
   kind: ClaudeTranscriptItemKind;
+  assistantPhase?: import('@elevenex/shared').AssistantMessagePhase;
   contentType?: 'message' | 'plan';
   content?: string;
   /** Routing and readable payload of an incoming agent message, not assistant output. */
@@ -618,6 +620,7 @@ export interface ClaudeRuntimePromptTiming {
 }
 
 export interface ClaudeRuntimeStatePayload {
+  dispatchingPrompts?: readonly import('../agent-runtime/queued-prompt-dispatches.js').QueuedPromptDispatch[];
   sessionId: number;
   claudeSessionId: string | null;
   runPhase: ClaudeRunPhase;

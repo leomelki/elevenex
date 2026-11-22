@@ -17,6 +17,38 @@ const { backendRelease } = require('../dist/backend/release');
 const remoteContract = require('./remote-contract.cjs');
 const machineContract = require('./machine-contract.cjs');
 const workspaceContract = require('./workspace-contract.cjs');
+const outputRow = {
+  id: 'output', kind: 'tool_result', text: '', timestamp: '', toolId: 'command',
+  toolKind: null, toolName: null, input: '', error: false, truncated: false,
+};
+const chatTool = {
+  taskId: 1, sessionId: 2,
+  item: { id: 'command', revision: 'b'.repeat(64), record: {
+    id: 'command', kind: 'tool_use', text: '', timestamp: '', toolId: 'command',
+    toolKind: 'bash', toolName: 'Command', input: '{"command":"pnpm test"}', error: false, truncated: false,
+  } },
+  result: { id: 'output', revision: 'c'.repeat(64), record: {
+    ...outputRow, text: 'Tests passed', execution: { exitCode: 0 },
+  } },
+};
+const chatWork = {
+  taskId: 1, sessionId: 2, turnId: 'prompt', revision: 'a'.repeat(64), offset: 1, total: 2, nextOffset: null,
+  items: [{ ...outputRow, toolDetails: { revision: chatTool.result.revision },
+    invocation: { id: chatTool.item.id, toolKind: 'bash', toolDetails: { revision: chatTool.item.revision, summary: 'pnpm test' } } }],
+};
+const chatTimeline = {
+  taskId: chatWork.taskId, sessionId: chatWork.sessionId, turnId: chatWork.turnId, revision: chatWork.revision,
+  offset: 0, total: 2, nextOffset: null, timeline: [
+    { id: 'command', kind: 'call', toolKind: 'bash', label: 'pnpm test', resultId: 'output' }, null,
+  ],
+};
+const savedChatTool = {
+  ...chatTool, turnId: chatWork.turnId,
+  item: { ...chatTool.item, revision: chatWork.revision },
+  result: { ...chatTool.result, revision: chatWork.revision },
+};
+const chatStreamMethods = ['sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream'];
+const chatStreamCursor = 'a'.repeat(36) + ':1:0';
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -25,6 +57,7 @@ const backendRoot = mkdtempSync(join(tmpdir(), 'elevenex-electron-backend-'));
 app.setPath('appData', backendRoot);
 const revision = 'a'.repeat(40);
 let backendUrl;
+const deletedUnusedSessions = [];
 const terminalRows = new Map();
 const terminalOwners = [];
 let terminalCleanupCount = 0;
@@ -46,7 +79,13 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
       response.end(JSON.stringify({ taskId: 1, sessionId: 2, available: true }));
     };
     const http = createServer((request, response) => {
-      const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+      const { pathname, searchParams } = new URL(request.url, 'http://127.0.0.1');
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/delete') {
+        assert.equal(request.method, 'POST');
+        request.resume(); deletedUnusedSessions.push(2);
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ accepted: true })); return;
+      }
       if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
       if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
       if (pathname === '/release-browser-task') {
@@ -116,6 +155,21 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         response.end(JSON.stringify({ id: '11111111-1111-4111-8111-111111111111', offset: 3, path: '/private/chat-attachments/2/11111111-1111-4111-8111-111111111111/notes.txt' }));
         return;
       }
+      if (pathname === '/api/desktop-workspace/tasks/1/sessions/2/chat/events') {
+        assert.equal(request.headers.accept, 'text/event-stream');
+        assert.equal(searchParams.get('loadingMode'), 'progressive');
+        const page = {
+          taskId: 1, sessionId: 2, cursor: chatStreamCursor, reset: true, before: null, next: null, items: [], events: [],
+          state: {
+            provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [],
+            reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null,
+            queue: [], queuePaused: false, permission: null, question: null, activity: [],
+          },
+        };
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.write(`id: ${chatStreamCursor}\nevent: chat\ndata: ${JSON.stringify({ after: null, page })}\n\n`);
+        return;
+      }
       const responses = {
         '/api/info': { backendSha: revision },
         '/api/desktop-workspace/tasks/1/sessions/2/chat/agent': { agentId: 'child', label: 'Reviewer', status: 'waiting', prompt: '', model: null, context: null, items: [], before: null, availability: 'starting', message: 'Waiting for the first message' },
@@ -132,6 +186,8 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         '/api/desktop-workspace/tasks/1/git': { taskId: 1, branch: 'work', upstream: null, ahead: 0, behind: 0, files: 1, additions: 3, deletions: 1, conflicted: false, changesRevision: 'b'.repeat(64) },
         '/api/desktop-workspace/folders': [],
         '/api/desktop-workspace/tasks/1/sessions/2/chat/changes': { turnId: 'reply', revision: 'a'.repeat(64), offset: 0, files: [], total: 0, nextOffset: null, content: null },
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/turn-work': searchParams.has('timeline') ? chatTimeline : chatWork,
+        '/api/desktop-workspace/tasks/1/sessions/2/chat/tool-details': searchParams.has('turnId') ? savedChatTool : chatTool,
       };
       assert.equal(request.method, 'GET');
       assert.ok(Object.hasOwn(responses, pathname), `Unexpected smoke endpoint: ${pathname}`);
@@ -210,7 +266,7 @@ void (async () => {
     backend: await window.elevenex.retryBackend(),
   }))()`);
   assert.equal(bridge.node, 'undefined');
-  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
+  assert.deepEqual(bridge.keys, ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remoteContract.methods, ...machineContract.methods, ...workspaceContract.methods, ...terminalMethods, ...chatStreamMethods, 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserConfigure', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'].sort());
   assert.equal(typeof bridge.version, 'string');
   assert.deepEqual(bridge.status, { path: '/mock/workspace', branch: 'main', staged: [], modified: ['README.md'], untracked: [], mock: true });
   assert.equal(bridge.invalidRejected, true);
@@ -236,6 +292,57 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript('window.elevenex.openMachineWindow({kind:"remote",hostId:"unknown"}).then(()=>false,()=>true)'), true);
   const firstScope = await window.webContents.executeJavaScript('window.elevenex.backendClientState()');
   assert.equal(firstScope.scope.environment.kind, 'local');
+  const chatStream = await window.webContents.executeJavaScript(`(async () => {
+    const scope = ${JSON.stringify(firstScope.scope.id)};
+    const watch = { taskId: 1, sessionId: 2, watchId: 'native-stream', loadingMode: 'progressive' };
+    let stop;
+    let timer;
+    const first = new Promise((resolve, reject) => {
+      stop = window.elevenex.onSessionChatStream(event => { if (event.type === 'page') resolve(event); });
+      timer = setTimeout(() => reject(new Error('Chat stream smoke timed out')), 5000);
+    });
+    try {
+      const rejected = await window.elevenex.sessionChatWatch(scope, { ...watch, after: 'bad cursor' }).then(() => false, () => true);
+      const stale = await window.elevenex.sessionChatWatch('b'.repeat(36), watch);
+      const started = await window.elevenex.sessionChatWatch(scope, watch);
+      const event = await first;
+      await window.elevenex.sessionChatAcknowledge(scope, watch.watchId, event.delivery);
+      return { rejected, stale: stale.error?.code, started, event };
+    } finally {
+      clearTimeout(timer);
+      stop();
+      await window.elevenex.sessionChatUnwatch(scope, watch.watchId);
+    }
+  })()`);
+  assert.equal(chatStream.rejected, true);
+  assert.equal(chatStream.stale, 'stale-scope');
+  assert.equal(chatStream.started.ok, true);
+  assert.equal(chatStream.event.watchId, 'native-stream');
+  assert.equal(chatStream.event.page.cursor, chatStreamCursor);
+  assert.equal(chatStream.event.page.sessionId, 2);
+  const { taskId, sessionId, turnId, revision: turnRevision, offset } = chatWork;
+  const workRequest = { taskId, sessionId, turnId, revision: turnRevision, offset, requestId: 'activity', deferToolDetails: true, limit: 512 };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(workRequest)})`),
+  { ok: true, value: chatWork });
+  const toolRequest = { taskId, sessionId, item: { id: chatTool.item.id, revision: chatTool.item.revision },
+    result: { id: chatTool.result.id, revision: chatTool.result.revision }, requestId: 'tool-details' };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(toolRequest)})`),
+  { ok: true, value: chatTool });
+  const timelineRequest = { ...workRequest, requestId: 'timeline', offset: 0, timeline: true };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatTurnWork(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(timelineRequest)})`),
+  { ok: true, value: chatTimeline });
+  const savedToolRequest = { ...toolRequest, turnId, item: { id: 'command', revision: turnRevision }, result: { id: 'output', revision: turnRevision } };
+  assert.deepEqual(await window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatToolDetails(${JSON.stringify(firstScope.scope.id)}, ${JSON.stringify(savedToolRequest)})`),
+  { ok: true, value: savedChatTool });
+  const deletedUnused = await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:2})`);
+  assert.deepEqual(deletedUnused, {ok:true,value:{accepted:true}});
+  assert.deepEqual(deletedUnusedSessions, [2]);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:0}).then(()=>false,()=>true)`), true);
+  console.log('Unstarted session deletion passed through the sandboxed preload and scoped HTTP adapter');
   await require('./browser-picker-native.cjs')();
   await require('./browser-order-native.cjs')();
   await require('./browser-machine-native.cjs')();
@@ -359,10 +466,24 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [{ id: 'bad', taskId: 1, sessionId: 2, action: { type: 'credential', answer: 'forbidden' }, label: '', turnId: null, status: 'waiting' }], tasks: [] }).then(() => false, () => true)`), true);
   await window.webContents.executeJavaScript(`window.elevenex.workspaceWaitingSave({kind:"local"}, '${journal.identity}', { chat: [], tasks: [] })`);
 
+  const draftTarget = { taskId: 1, sessionId: 2 };
+  const draftText = '  A local draft\nwith café and 👩🏽‍💻  ';
+  const readDraft = (target) => window.webContents.executeJavaScript(`window.elevenex.sessionChatDraftRead({kind:"local"}, ${JSON.stringify(target)})`);
+  const { identity: draftIdentity } = await readDraft(draftTarget);
+  const edit = { target: draftTarget, draft: { text: draftText } };
+  const saveDraft = (identity, edit) => window.webContents.executeJavaScript(
+    `window.elevenex.sessionChatDraftSave({kind:"local"}, ${JSON.stringify(identity)}, ${JSON.stringify(edit)})`);
+  await assert.rejects(saveDraft('stale-identity', edit), /machine changed/);
+  await saveDraft(draftIdentity, edit);
+  assert.deepEqual((await readDraft({ ...draftTarget, sessionId: 3 })).draft, { text: '' });
+
   await window.loadURL('app://elevenex/smoke/history');
   assert.equal(window.webContents.getURL(), 'app://elevenex/smoke/history');
   assert.equal(await window.webContents.executeJavaScript('typeof window.elevenex.gitStatus'), 'function');
   assert.notEqual((await window.webContents.executeJavaScript('window.elevenex.backendClientState()')).scope.id, restartedScope.scope.id);
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: draftText });
+  await saveDraft(draftIdentity, { target: draftTarget, draft: { text: '' } });
+  assert.deepEqual((await readDraft(draftTarget)).draft, { text: '' });
   const assets = await window.webContents.executeJavaScript(`(async () => {
     const index = await fetch('/');
     const missing = await fetch('/missing-asset.js');
@@ -394,7 +515,7 @@ void (async () => {
   }
   app.once('will-quit', () => assert.equal(terminalCleanupCount, process.platform === 'darwin' ? 2 : 1));
   console.log('Electron smoke passed: sandbox, connected deferred workspace, scoped backend HTTP client/lifecycle IPC/events, runtime validation, native theme, multiple windows and app:// history/CSP. Backend runtime is a test fixture.');
-  await rm(backendRoot, { recursive: true, force: true });
+  await rm(backendRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   clearTimeout(timeout);
   app.quit();
 })().catch((error) => {

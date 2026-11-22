@@ -1,63 +1,22 @@
-<header class="session-bar">
-  @if (store.state(); as state) {
-    <span class="provider">{{ providerLabel() }}</span>
-    <span class="status" role="status"
-      ><ex-status-glyph [status]="status()" [size]="12" />{{
-        statusLabel()
-      }}</span
-    >
-    @if (status() === "attention") {
-      <button exButton variant="ghost" size="sm" (click)="focusDecision()">
-        View request
-      </button>
-    }
-    @if (state.reasoning) {
-      <span class="metadata">{{ state.reasoning }} thinking</span>
-    }
-    <span class="grow"></span>
-    @if (state.context; as context) {
-      <ex-context-meter
-        [used]="context.percentage / 100"
-        [tokens]="context.tokens + ' of ' + context.limit"
-      />
-    }
-    @if (state.work; as work) {
-      <!-- Keyed by conversation so seen issues and an open panel never carry across sessions. -->
-      @for (key of [identity()]; track key) {
-        <ex-session-activity
-          [work]="work"
-          [provider]="providerLabel()"
-          [disabledReason]="activityDisabledReason()"
-          [backgrounding]="store.busy() === 'background-agent'"
-          (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
-          (inspectRequested)="agentId.set($event)"
-          [stopDisabled]="blocked() || store.offline()"
-          [stopping]="store.busy() === 'stop-background'"
-          (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
-          [decisionPending]="!!state.permission || !!state.question"
-          (answerRequested)="focusDecision()"
-        />
-      }
-    }
-  } @else {
-    <span class="metadata">{{ store.starting() ? 'New session' : 'Connecting to conversation…' }}</span>
-  }
-  @if (archived()) {
-    <span class="metadata">Archived · Read only</span>
-  }
-</header>
+@for (view of chatViews(); track view.revision) {
+  <ex-chat-loading [pending]="opening()" [class.hydrated]="!!store.state()" label="Loading conversation…" />
+  @if (store.state() || store.starting()) {
 <ex-chat
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
+  [inspectTool]="store.tools.provider()"
+  [toolImages]="media.toolImages()"
   [exchanges]="store.exchanges()"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"
   [historyBefore]="!!store.before()"
   [historyAfter]="!!store.next()"
   [historyLoading]="store.historyLoading()"
+  [initialHistoryPrefetch]="store.progressiveLoading() && !store.running()"
   [historyError]="store.historyError()"
   [historyRevision]="store.windowRevision()"
-  (historyRequested)="$event === 'before' ? store.older() : store.newer()"
+  (historyRequested)="$event.direction === 'before' ? store.older($event.source) : store.newer()"
+  (historyCancelled)="store.cancelHistory()"
   (latestRequested)="latest()"
   [stoppable]="!archived() && !!store.state()?.canInterrupt"
   [retryable]="!blocked()"
@@ -65,6 +24,10 @@
   (stop)="store.perform({ type: 'stop' })"
   (retry)="continue()"
   (turnAction)="turnAction($event)"
+  (turnWorkToggled)="store.work.toggle($event.id, $event.open, $event.toolIds)"
+  (turnWorkHint)="store.work.hint($event)"
+  (turnWorkHintEnded)="store.work.endHint($event)"
+  (turnWorkRequested)="$event.action === 'refresh' ? latest() : store.work.retry($event.id)"
   (copyCode)="copy($event, true)"
   (openLink)="openLink($event)"
   (openPage)="openFile($event)"
@@ -74,10 +37,6 @@
   (toolContentRequested)="openToolContent($event)"
 >
   <div chatContent>
-    @if (store.offline() && !store.state()) { <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" /> }
-    @if (store.loading() && !store.starting() && !store.exchanges().length) {
-      <ex-skeleton variant="message" [count]="3" />
-    }
     @if (store.state()?.permission; as request) {
       <ex-approval-card
         #request
@@ -138,9 +97,12 @@
       </section>
     }
   </div>
-  <div chatComposer>
+  <div chatComposer class="session-composer">
     @if (showWelcome()) {
-      <section class="start" exAutoHeight><div class="start-content">
+      <section class="start"
+        [class.preset-editing]="presetEditing()"
+        [class.with-preset-change]="!presetEditing() && (!!presetFlow.drift() || presetFlow.changeNoticeOpen())">
+        <div class="start-content">
         <h1>What should we work on?</h1>
         @if (store.starting()) {
           <p role="status">{{ creation()?.status === 'creating' ? 'Creating session… You can start writing.' : creation() ? 'Your draft stays here while you finish creating the session.' : 'Getting your agent ready… You can keep writing.' }}</p>
@@ -148,7 +110,9 @@
           <p role="status">Your session is ready. Send when you’re ready.</p>
         } @else if (store.state()?.presets !== undefined) {
           <div class="preset-heading">
-            @if (presetFlow.defaultPreset() && presetFlow.presets().length) {
+            @if (presetEditing()) {
+              <span>Edit presets</span>
+            } @else if (presetFlow.defaultPreset() && presetFlow.presets().length) {
               <ex-dropdown
                 class="default-preset"
                 label="Default preset for new chats"
@@ -163,28 +127,78 @@
             } @else {
               <span>{{ presetFlow.presets().length ? 'Start with a preset' : 'Agent setup' }}</span>
             }
-            <button
-              exButton
-              variant="ghost"
-              size="sm"
-              [disabled]="blocked() || presetFlow.presets().length >= 24"
-              [title]="
-                presetFlow.presets().length >= 24
-                  ? 'You can save up to 24 presets'
-                  : 'Save a starting configuration'
-              "
-              (click)="presetFlow.openPresetCreator()"
-            >
-              <ex-icon name="plus" [size]="13" />New preset
-            </button>
+            @for (action of presetHeadingActions(); track action) {
+              @if (action === 'edit') {
+                <button exButton [variant]="presetEditing() ? 'primary' : 'ghost'" size="sm"
+                  data-preset-edit [disabled]="!presetEditing() && (blocked() || store.loading())"
+                  [attr.aria-pressed]="presetEditing()"
+                  [attr.aria-keyshortcuts]="presetEditing() ? 'Escape' : null"
+                  (click)="setPresetEditing(!presetEditing())">
+                  <ex-icon [name]="presetEditing() ? 'check' : 'pencil'" [size]="13" />
+                  {{ presetEditing() ? 'Done' : 'Edit' }}
+                </button>
+              } @else {
+                <button exButton variant="ghost" size="sm" data-preset-new
+                  [disabled]="blocked() || store.loading() || presetFlow.presets().length >= 24"
+                  [title]="presetFlow.presets().length >= 24 ? 'You can save up to 24 presets' : 'Save a starting configuration'"
+                  (click)="presetFlow.openPresetCreator()">
+                  <ex-icon name="plus" [size]="13" />New preset
+                </button>
+              }
+            }
           </div>
-          <ex-preset-picker
-            [presets]="presetFlow.visiblePresets()"
-            [value]="presetFlow.selectedPreset()?.id || 'custom'"
+          <div class="preset-grid-section"><ex-preset-picker
+            [adaptive]="presetFlow.canEdit()"
+            [presets]="presetFlow.canEdit() ? presetFlow.presets() : presetFlow.visiblePresets()"
+            [value]="presetFlow.drift()?.saved?.id || presetFlow.selectedPreset()?.id || 'custom'"
+            [editedPreset]="editedPreset()"
+            [editing]="presetEditing()"
             [disabled]="blocked() || store.loading()"
             (selected)="presetFlow.selectPreset($event)"
+            (editRequested)="presetFlow.openPresetEditor($event)"
+            (removed)="presetFlow.removePreset($event)"
+            (moved)="presetFlow.movePreset($event.id, $event.target, $event.restoreFocus)"
           />
-          @if (!presetFlow.presets().length) {
+          <ex-fold [open]="(!!presetFlow.drift() || presetFlow.changeNoticeOpen()) && !presetEditing()">
+            @if (presetFlow.drift(); as drift) {
+              <section class="preset-change" aria-label="Changes to saved preset">
+                <strong>“{{ drift.saved.preset }}” is changed for this chat</strong>
+                @if (presetFlow.naming()) {
+                  <form class="preset-change-actions" (submit)="presetFlow.saveChatAsNew($event)"
+                    (keydown.escape)="cancelPresetName(); $event.stopPropagation()">
+                    <input #presetName aria-label="New preset name" placeholder="Preset name" maxlength="48" required
+                      [value]="presetFlow.newName()" [disabled]="blocked()"
+                      (input)="presetFlow.newName.set(presetName.value)" />
+                    <button exButton variant="ghost" size="sm" type="button"
+                      (click)="cancelPresetName()">Cancel</button>
+                    <button exButton variant="primary" size="sm" type="submit"
+                      [disabled]="blocked() || presetFlow.invalidNewName()">Save preset</button>
+                  </form>
+                } @else {
+                  <p>New chats still use the saved preset.</p>
+                  <ul class="preset-diffs">
+                    @for (field of drift.fields; track field.label) {
+                      <li>{{ field.label }} <del>{{ field.from }}</del> → <span>{{ field.to }}</span></li>
+                    }
+                  </ul>
+                  <div class="preset-change-actions">
+                    <button exButton variant="ghost" size="sm" [disabled]="blocked()"
+                      (click)="presetFlow.selectPreset(drift.saved.id!)">Revert</button>
+                    <button exButton variant="ghost" size="sm" data-name-preset
+                      [disabled]="blocked() || presetFlow.presets().length >= 24"
+                      (click)="nameNewPreset()">Save as new…</button>
+                    <button exButton variant="primary" size="sm" [disabled]="blocked()"
+                      (click)="presetFlow.updateFromChat()">Update preset</button>
+                  </div>
+                }
+              </section>
+            } @else if (presetFlow.changeNotice()) {
+              <div class="preset-change preset-result" role="status">
+                <ex-icon name="check" [size]="14" />{{ presetFlow.changeNotice() }}
+              </div>
+            }
+          </ex-fold></div>
+          @if (!presetFlow.presets().length && !presetEditing()) {
             <p>Choose your agent below, or save your own starting point.</p>
           }
         } @else {
@@ -238,7 +252,7 @@
         }
       </div>
     }
-    @if (store.state()?.queuePaused && store.queue().length) {
+    @if (store.state()?.queuePaused && store.queue().length && !store.dispatching()) {
       <div class="feedback">
         <span>Queue paused</span
         ><button
@@ -246,7 +260,7 @@
           variant="secondary"
           size="sm"
           [disabled]="blocked()"
-          (click)="store.perform({ type: 'resume-queue' })"
+          (click)="resumeQueue()"
         >
           Resume queue
         </button>
@@ -259,6 +273,12 @@
         (dismissed)="focusComposer()"
       />
     }
+    @if (store.draftError(); as error) {
+      <div class="feedback error" role="alert">
+        <span>{{ error }}</span>
+        <button exButton variant="ghost" size="sm" [disabled]="store.draftRestoring()" (click)="store.retryDraft(); focusComposer()">Try again</button>
+      </div>
+    }
     @if (attachments.error()) { <p class="feedback error" role="alert">{{ attachments.error() }}</p> }
     @for (item of store.waiting(); track item.id) {
       @if (item.status === 'unknown' || item.status === 'failed') {
@@ -266,12 +286,13 @@
       }
     }
     <ex-composer
+      [attr.inert]="presetEditing() ? '' : null"
       [clearOnSubmit]="false"
       [draft]="store.draft()"
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
       [disabled]="archived()"
-      [sending]="!!creation() || store.loading() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
+      [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
       [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
       [waiting]="store.waitingMessages()"
@@ -338,15 +359,48 @@
               ? 'Message the agent, or @ to mention a session…'
               : 'Message the agent…'
       "
-      (submitted)="store.submit($event)"
+      (submitted)="submit($event)"
       (stop)="store.perform({ type: 'stop' })"
       (focusLastMessage)="chat()?.focusLastMessage()"
       (queueSteer)="queueAction('steer-queued', $event)"
       (queueRemove)="queueAction('cancel-queued', $event)"
     >
+      <ng-container composerSettings>
+        @if (store.state()?.work; as work) {
+          <!-- Keyed by conversation so seen issues and an open panel never carry across sessions. -->
+          @for (key of [identity()]; track key) {
+            <ex-session-activity
+              [work]="work"
+              [provider]="providerLabel()"
+              [disabledReason]="activityDisabledReason()"
+              [backgrounding]="store.busy() === 'background-agent'"
+              (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
+              (inspectRequested)="agentId.set($event)"
+              [stopDisabled]="blocked() || store.offline()"
+              [stopping]="store.busy() === 'stop-background'"
+              (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
+              [decisionPending]="!!store.state()?.permission || !!store.state()?.question"
+              (answerRequested)="focusDecision()"
+            />
+          }
+        }
+      </ng-container>
     </ex-composer>
   </div>
 </ex-chat>
+  } @else if (store.offline() || message()) {
+    <div class="opening" [attr.aria-busy]="store.loading()">
+      @if (store.offline()) {
+        <ex-opens-when-back [machine]="machineName()" what="This conversation" (tryRequested)="reconnectRequested.emit()" />
+      } @else {
+        <div class="opening-error" role="alert">
+          <p>{{ message() }}</p>
+          <button exButton variant="secondary" [disabled]="store.loading()" (click)="store.refresh()">Try again</button>
+        </div>
+      }
+    </div>
+  }
+}
 @if (contentId() && selection(); as selected) {
   <ex-session-chat-content
     [unreachable]="store.offline() ? machineName() : undefined"
@@ -366,6 +420,8 @@
 ) {
   <ex-preset-creator
     [initial]="draft.initial"
+    [editing]="!!draft.editing"
+    [chatSettings]="draft.editing && draft.editing.id === presetFlow.drift()?.saved?.id ? agent() : undefined"
     [harnesses]="draft.harnesses"
     [harnessLocked]="!draft.catalogProvider"
     [catalogProvider]="draft.catalogProvider"
@@ -379,7 +435,7 @@
     [error]="presetFlow.presetError()"
     (submitted)="presetFlow.savePreset($event)"
     (closeRequested)="presetFlow.creatorOpen.set(false)"
-    (closed)="presetFlow.presetDraft.set(null)"
+    (closed)="presetFlow.presetDraft.set(null); draft.editing && focusPreset(draft.editing.id)"
   />
 }
 
@@ -398,6 +454,16 @@
         (actionSelected)="presetFlow.undoDefault()"
         (dismissed)="presetFlow.defaultNoticeOpen.set(false)"
       />
+    </div>
+  }
+</ex-presence>
+
+<ex-presence [show]="presetFlow.removalOpen()">
+  @for (removal of presetFlow.removal() ? [presetFlow.removal()!] : []; track removal.action.expectedRevision) {
+    <div class="preset-toast">
+      <ex-toast [title]="'Removed “' + removal.label + '”'" [detail]="removal.detail || ''" action="Undo" [duration]="7000"
+        [dismissOnAction]="false" [busy]="blocked()"
+        (actionSelected)="presetFlow.undoRemoval()" (dismissed)="presetFlow.removalOpen.set(false)" />
     </div>
   }
 </ex-presence>

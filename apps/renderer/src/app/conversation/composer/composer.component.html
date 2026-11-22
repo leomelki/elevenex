@@ -165,9 +165,6 @@
       </ex-presence>
     }
     <span class="grow"></span>
-    @if (elementPickAvailable()) {
-      <ex-icon-button icon="target" label="Point at an element in the browser" [disabled]="disabled() || sending()" (pressed)="requestElementPick()" />
-    }
     @if (attachmentsEnabled()) {
       <input #fileInput type="file" multiple hidden (change)="filesChosen($event)" />
       <ex-icon-button icon="attach" label="Attach files (⌘U)" [disabled]="disabled() || sending()" (pressed)="chooseFiles()" />
@@ -200,7 +197,6 @@
     <button
       exButton
       variant="primary"
-      size="sm"
       #sendButton
       class="send"
       type="button"
@@ -215,9 +211,6 @@
       (click)="send()"
     >
       <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" />
-      @if (running()) {
-        <span>Queue</span>
-      }
     </button>
   </div>
 </div>

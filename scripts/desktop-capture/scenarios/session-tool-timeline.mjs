@@ -75,10 +75,10 @@ export default async function* (capture) {
     );
     if (
       await capture.evaluate(
-        () => !!document.querySelector(".reminder-top button"),
+        () => !!document.querySelector(".reminder .hide"),
       )
     )
-      await capture.click(".reminder-top button");
+      await capture.click(".reminder .hide");
     await finish();
   };
   const shown = (id) =>
@@ -191,9 +191,13 @@ export default async function* (capture) {
     await finish();
     await capture.click("ex-turn .work");
     await finish();
-    assert.equal(await shown("retry"), true);
-    assert.equal(await shown("edit"), true);
-    yield { name: theme + "-expand-all-activity", inspect: ["ex-turn"] };
+    assert.equal(await shown("retry"), false);
+    assert.equal(await shown("edit"), false);
+    assert.equal(
+      await capture.evaluate(() => document.querySelectorAll('.group-fold:not([inert]) .group[aria-expanded="false"]').length),
+      2,
+    );
+    yield { name: theme + "-reopen-work-with-sections-collapsed", inspect: ["ex-turn"] };
     await scroll("ex-turn .work");
     await capture.click("ex-turn .work");
     await finish();
@@ -344,17 +348,24 @@ export default async function* (capture) {
     await scene("long");
     await finish();
     const before = await capture.rect("ex-turn");
+    await capture.evaluate((selector) => {
+      document.querySelector(selector).dataset.retained = "reply";
+    }, row("timeline-next"));
     await scene("finished");
     await finish();
     const after = await capture.rect("ex-turn");
     assert.equal(await shown("check-19"), false);
-    assert.ok(
-      Math.abs(after.height - before.height) < 50,
-      JSON.stringify({ before, after }),
+    assert.ok(after.height < before.height, "The completed turn should fold its work and earlier commentary");
+    assert.equal(
+      await capture.evaluate((selector) => {
+        const reply = document.querySelector(selector);
+        return reply.dataset.retained === "reply" && !reply.querySelector(".step-fold").hasAttribute("inert");
+      }, row("timeline-next")),
+      true,
     );
     yield {
-      name: theme + "-completion-preserves-messages",
-      inspect: ["ex-turn"],
+      name: theme + "-completion-keeps-latest-reply",
+      inspect: ["ex-turn", row("timeline-next")],
       metadata: { before, after },
     };
 
@@ -413,8 +424,10 @@ export default async function* (capture) {
   await scroll(head("test"));
   await capture.click(head("test"));
   await finish();
-  await scroll(".full-content button");
-  await capture.click(".full-content button");
+  const fullOutput = row("test") + " .full-content button";
+  await capture.evaluate((selector) => document.querySelector(selector).focus(), fullOutput);
+  await capture.waitFor((selector) => document.activeElement.matches(selector), fullOutput);
+  await capture.press("Enter");
   await capture.waitFor(() =>
     document
       .querySelector(
@@ -474,9 +487,9 @@ export default async function* (capture) {
     inspect: ['[role="dialog"][aria-label="Full transcript content"]'],
   };
   await capture.press("Escape");
-  await finish();
-  assert.equal(
-    await capture.evaluate(() => document.activeElement?.textContent.trim()),
-    "View full output",
+  await capture.waitFor(
+    (selector) => !document.querySelector('[role="dialog"][aria-label="Full transcript content"]') &&
+      document.activeElement.matches(selector),
+    fullOutput,
   );
 }

@@ -41,7 +41,7 @@
       <span class="name">{{ harnessLabel() }}</span>
       @if (locked()) {
         <ex-icon class="lock" name="lock" [size]="12" />
-        <span class="visually-hidden">, fixed for this conversation</span>
+        <span class="visually-hidden">, {{ lockedHint() }}</span>
       }
       @if (value().preset; as preset) {
         <span class="preset">{{ preset }}</span>
@@ -50,6 +50,8 @@
     <span class="status" role="status">
       @if (busy()) {
         <span class="updating">Updating…</span>
+      } @else if (modelsLoading()) {
+        <span class="updating">Loading models…</span>
       } @else if (plan(); as plan) {
         <span
           class="plan"
@@ -82,7 +84,7 @@
     role="listbox"
     aria-label="Model"
     [class.fixed]="showRail()"
-    [attr.aria-busy]="busy() || null"
+    [attr.aria-busy]="choicesBusy() || null"
   >
     @for (model of visible(); track model.id) {
       @let chosen = model.id === value().model;
@@ -92,18 +94,19 @@
         class="model"
         [attr.data-label]="model.label"
         [attr.aria-selected]="chosen"
-        [attr.aria-disabled]="busy() || null"
+        [attr.aria-disabled]="choicesBusy() || null"
         [attr.cdkFocusInitial]="initialModel() === model.id ? '' : null"
         [tabindex]="model.id === tabbableModel() ? 0 : -1"
         [disabled]="disabled()"
         (click)="modelChange(model)"
         (keydown)="listKey($event, $index)"
+        [animate.enter]="live() ? 'model-enter' : ''"
       >
         <ex-icon class="check" name="check" [size]="14" />
         <span class="label">{{ model.label }}</span>
       </button>
     } @empty {
-      @if (busy()) {
+      @if (choicesBusy()) {
         <ex-skeleton [count]="3" />
       } @else {
         <p class="empty" role="status">
@@ -120,9 +123,9 @@
     <p class="empty" role="status">{{ modelsError() }}</p>
   }
   @if (modelsRefreshAvailable()) {
-    <button exButton variant="ghost" size="sm"
+    <button exButton variant="ghost" size="sm" class="refresh"
       [disabled]="disabled() || busy()"
-      (click)="modelsRefreshRequested.emit()">Refresh models</button>
+      (click)="modelsRefreshRequested.emit()">{{ modelsError() ? "Try again" : "Refresh models" }}</button>
   }
   @if (levels().length > 1 || fastAvailable()) {
     <div class="tune">
@@ -130,7 +133,7 @@
         <ex-thinking-slider
           [levels]="levels()"
           [value]="value().thinking"
-          [disabled]="disabled() || busy()"
+          [disabled]="disabled() || choicesBusy()"
           (changed)="thinkingChange($event)"
         >
           @if (fastAvailable()) {
@@ -196,7 +199,7 @@
     class="fast"
     aria-label="Fast mode"
     [attr.aria-pressed]="!!value().fast"
-    [disabled]="disabled() || busy()"
+    [disabled]="disabled() || choicesBusy()"
     exTooltip="Quicker replies"
     (click)="fastToggle()"
   >

@@ -153,13 +153,12 @@ export class DesktopWorkspaceGitService {
       if (current.archivedAt || current.path !== task.path)
         throw new ConflictException('Task worktree changed.');
       const checkout = worktreeSimpleGit(current.path);
+      // Tasks own a worktree, not a fixed branch. Git actions follow whatever
+      // the user or an agent checked out; finishing records the branch left behind.
+      // Detached HEAD reads as empty here because `--quiet` exits without stderr.
       const branch = (
         await checkout.raw(['symbolic-ref', '--quiet', '--short', 'HEAD'])
       ).trim();
-      if (!branch || branch !== current.taskBranch)
-        throw new ConflictException(
-          'Task branch changed. Refresh before continuing.',
-        );
       if (input.type === 'commit') {
         try {
           // Desktop commits have no active session provider. Use the same
@@ -231,6 +230,11 @@ export class DesktopWorkspaceGitService {
       }
       if (input.type === 'rename-branch') {
         const name = (input.branchName as string).trim();
+        if (!branch)
+          throw new ConflictException({
+            code: 'branch-detached',
+            message: 'The checkout is not on a branch.',
+          });
         await this.taskGit.validateBranch(repo.path, name);
         const held = await this.db
           .select({ id: schema.workspaces.id })

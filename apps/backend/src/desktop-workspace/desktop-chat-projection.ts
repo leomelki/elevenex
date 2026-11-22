@@ -1,13 +1,11 @@
 import { chatMedia } from './desktop-chat-media.js';
+import type { SessionChatRecord, SessionChatState } from '@elevenex/shared';
 import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js';
-import { capturedChangeSummary, changeSummary, toolChanges } from './desktop-chat-changes.js';
+import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
+import { chatItemFailed, commandExecution, record } from './desktop-chat-tool-outcome.js';
 
-export function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
+export { record } from './desktop-chat-tool-outcome.js';
 export function display(value: unknown, limit = 16000): string {
   const text =
     typeof value === 'string'
@@ -25,66 +23,67 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-export type ChatMediaCache = WeakMap<AgentTranscriptItem, ReturnType<typeof chatMedia>>;
+type ChatDisplayContent = Pick<SessionChatRecord, 'text' | 'truncated' | 'mentions' | 'media'>;
+export type ChatMediaCache = WeakMap<AgentTranscriptItem, ChatDisplayContent>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
-/** Keep execution facts separate from output without forwarding provider payloads. */
-function commandExecution(item: AgentTranscriptItem, call?: AgentTranscriptItem) {
-  const source = item.kind === 'tool_use' ? item : call;
-  const input = record(source?.toolInput);
-  if (source?.toolKind !== 'bash' && !input.command && !input.cmd) return undefined;
-  const result = record(item.providerToolResult);
-  const exitCode = result.exitCode ?? result.exit_code;
-  const cwd = input.cwd ?? input.workdir ?? result.cwd;
-  const interrupted = result.interrupted;
-  const execution = {
-    ...(typeof exitCode === 'number' && Number.isSafeInteger(exitCode)
-      ? { exitCode }
-      : {}),
-    ...(typeof cwd === 'string' && cwd.length <= 4000 ? { cwd } : {}),
-    ...(typeof interrupted === 'boolean' ? { interrupted } : {}),
-  };
-  return Object.keys(execution).length ? execution : undefined;
+
+export function chatItemChanges(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache) {
+  if (item.turnChanges) return changeSummary(item.turnChanges);
+  if (!call || !['write', 'edit', 'file_changes', 'notebook_edit', 'bash'].includes(call.toolKind ?? '')) return undefined;
+  const previous = cache?.get(call);
+  const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
+  const changes = previous?.result === item && previous.fingerprint === fingerprint
+    ? previous.changes : changeSummary(toolChanges(call, item));
+  cache?.set(call, { result: item, fingerprint, changes });
+  return changes;
 }
+
+export function chatDisplayContent(item: AgentTranscriptItem, cache?: ChatMediaCache): ChatDisplayContent {
+  const cached = cache?.get(item);
+  if (cached) return cached;
+  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
+  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
+  const content = chatMedia(context ? { ...item, content: context.text } : item);
+  const text = display(content.text, item.kind === 'user' ? 64000 : 16000);
+  const projected = {
+    text,
+    truncated: content.shortened || text.endsWith('… [display shortened]'),
+    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
+    ...(content.media.length ? { media: content.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+  };
+  cache?.set(item, projected);
+  return projected;
+}
+
 export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
-  const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
-  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
-  const projected = mediaCache?.get(item) ?? chatMedia(context ? { ...item, content: context.text } : item);
-  mediaCache?.set(item, projected);
-  const text = display(projected.text, item.kind === 'user' ? 64000 : 16000);
-  let changes = changeSummary(item.turnChanges);
-  if (!item.turnChanges && call) {
-    const previous = cache?.get(call);
-    const fingerprint = JSON.stringify([call.toolKind, display(call.toolInput, 32000), item.isError, call.toolKind === 'bash' ? display(item.providerToolResult, 32000) : null]);
-    changes = previous?.result === item && previous.fingerprint === fingerprint ? previous.changes : changeSummary(toolChanges(call, item));
-    cache?.set(call, { result: item, fingerprint, changes });
-  }
+  // Keep only bounded display data. Original text and media sources can be
+  // reconstructed from the transcript when their dedicated readers need them.
+  const projected = chatDisplayContent(item, mediaCache);
+  const changes = chatItemChanges(item, call, cache);
   return {
-    ...(context?.mentions.length ? { mentions: context.mentions } : {}),
-    ...(projected.media.length ? { media: projected.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
+    ...projected,
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
     id: item.id,
     kind: item.kind,
-    text,
+    ...(item.kind === 'assistant' && item.assistantPhase ? { assistantPhase: item.assistantPhase } : {}),
     timestamp: item.timestamp,
     toolId: item.toolUseId ?? null,
     toolName:
       item.toolDisplayName ?? item.providerToolName ?? item.toolName ?? null,
     toolKind: item.toolKind ?? null,
     input,
-    error: item.isError === true || execution?.interrupted === true || (execution?.exitCode !== undefined && execution.exitCode !== 0),
-    truncated:
-      projected.shortened || text.endsWith('… [display shortened]') ||
-      input.endsWith('… [display shortened]'),
+    error: chatItemFailed(item, execution),
+    truncated: projected.truncated || input.endsWith('… [display shortened]'),
   };
 }
 export function chatState(
   raw: Record<string, unknown>,
   provider: string,
   permissionModes: readonly string[],
-) {
+): Omit<SessionChatState, 'activity'> {
   const permission = record(raw.pendingPermissionRequest),
     usage = record(raw.contextUsage);
   const permissionQuestion =
@@ -133,13 +132,15 @@ export function chatState(
       });
     }
   }
+  const phase = String(raw.runPhase);
+  const activePrompt = phase === 'running' || phase === 'waiting'
+    ? record(list(raw.liveItems).findLast(item => record(item).kind === 'user')).id
+    : undefined;
   return {
     provider,
-    phase: ['idle', 'running', 'waiting', 'error'].includes(
-      String(raw.runPhase),
-    )
-      ? String(raw.runPhase)
-      : 'idle',
+    phase: phase === 'running' || phase === 'waiting' || phase === 'error' ? phase : 'idle',
+    ...(typeof activePrompt === 'string' && activePrompt.length > 0 && activePrompt.length <= 1000
+      ? { activePromptId: activePrompt } : {}),
     canInterrupt: raw.canInterrupt === true,
     error: nullable(raw.lastError),
     model: nullable(raw.selectedModel),
@@ -183,6 +184,21 @@ export function chatState(
         return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 64000) };
       }),
     queuePaused: raw.queuePaused === true,
+    ...(Array.isArray(raw.dispatchingPrompts) ? {
+      dispatchingPrompts: raw.dispatchingPrompts.slice(0, 8).map(value => {
+        const prompt = record(value);
+        const id = display(prompt.id, 1000), timestamp = display(prompt.timestamp, 100);
+        const { text, mentions, media } = chatDisplayContent({
+          id, timestamp, kind: 'user', content: typeof prompt.prompt === 'string' ? prompt.prompt : '',
+        });
+        return {
+          id, timestamp, text, ...(mentions?.length ? { mentions } : {}),
+          // A pending prompt can reference uploaded files. Native inline media
+          // is read using the eventual transcript item ID.
+          ...(media?.some(ref => !ref.inline) ? { media: media.filter(ref => !ref.inline) } : {}),
+        };
+      }),
+    } : {}),
     permission:
       permission.requestId && !permissionQuestion
         ? {
@@ -209,76 +225,5 @@ export function chatState(
           url: nullable(question.url),
         }
       : null,
-  };
-}
-
-/** Take bounded tails before merging; opening a long transcript never copies its full history. */
-export function chatWindow(
-  history: readonly AgentTranscriptItem[],
-  live: readonly AgentTranscriptItem[],
-  before?: string,
-  changesCache?: ChatChangesCache,
-  mediaCache?: ChatMediaCache,
-  following?: string,
-) {
-  const historyEnd = before
-    ? history.findIndex((item) => item.id === before)
-    : history.length;
-  const liveEnd = before
-    ? live.findIndex((item) => item.id === before)
-    : live.length;
-  if (before && historyEnd < 0 && liveEnd < 0) return null;
-  const candidates = new Map<string, AgentTranscriptItem>();
-  const hEnd = historyEnd < 0 ? history.length : historyEnd;
-  if (following) {
-    const hStart = history.findIndex(item => item.id === following);
-    const lStart = live.findIndex(item => item.id === following);
-    if (hStart < 0 && lStart < 0) return null;
-    // Copy only the next bounded candidates, even for million-item histories.
-    if (hStart >= 0)
-      for (const item of history.slice(hStart + 1, hStart + 161)) candidates.set(item.id, item);
-    if (lStart >= 0 || hStart >= 0)
-      for (const item of live.slice(Math.max(0, lStart + 1), Math.max(0, lStart + 1) + 160)) {
-        if (lStart >= 0 || hStart + 161 >= history.length || candidates.has(item.id))
-          candidates.set(item.id, item);
-      }
-  } else {
-    for (const item of history.slice(Math.max(0, hEnd - 160), hEnd))
-      candidates.set(item.id, item);
-    if (!before || liveEnd >= 0)
-      for (const item of live.slice(Math.max(0, liveEnd - 160), liveEnd))
-        candidates.set(item.id, item);
-    else
-      for (const item of live)
-        if (candidates.has(item.id)) candidates.set(item.id, item);
-  }
-  const all = [...candidates.values()],
-    items: ReturnType<typeof chatItem>[] = [];
-  const calls = new Map(all.filter(item => item.kind === 'tool_use').map(item => [item.toolUseId ?? item.id, item]));
-  let bytes = 0,
-    start = following ? 0 : all.length;
-  while ((following ? start < all.length : start > 0) && items.length < 80) {
-    const rawIndex = following ? start : start - 1;
-    const raw = all[rawIndex];
-    const item = chatItem(raw, raw.kind === 'tool_result' ? calls.get(raw.toolUseId ?? raw.id) : undefined, changesCache, mediaCache);
-    if (raw.turnChanges) {
-      let turnStart = rawIndex - 1;
-      while (turnStart >= 0 && all[turnStart].kind !== 'user') turnStart--;
-      item.changes = capturedChangeSummary(raw, all.slice(Math.max(0, turnStart), rawIndex).filter(value => value.kind === 'tool_result').map(result => {
-        const call = calls.get(result.toolUseId ?? result.id);
-        return call ? chatItem(result, call, changesCache, mediaCache).changes : undefined;
-      }));
-    }
-    const size = Buffer.byteLength(JSON.stringify(item));
-    if (bytes + size > 512 * 1024) break;
-    bytes += size;
-    if (following) { start++; items.push(item); }
-    else { start--; items.unshift(item); }
-  }
-  return {
-    items,
-    before:
-      following || start > 0 || hEnd > 160 || liveEnd > 160 ? (items[0]?.id ?? null) : null,
-    next: before || (following && start < all.length) ? (items.at(-1)?.id ?? null) : null,
   };
 }

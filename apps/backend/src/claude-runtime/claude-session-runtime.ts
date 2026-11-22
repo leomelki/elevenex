@@ -6,6 +6,7 @@ import {
   type PermissionMode,
   type Query,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKMessage,
   type SDKSessionStateChangedMessage,
   type SDKUserMessage,
@@ -165,6 +166,10 @@ export class ClaudeSessionRuntime {
     return this.deps.options.effort;
   }
 
+  get model(): Options['model'] {
+    return this.deps.options.model;
+  }
+
   async ensureStarted(reason: 'prewarm' | 'turn' = 'turn'): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');
@@ -290,6 +295,18 @@ export class ClaudeSessionRuntime {
       throw new Error('Claude runtime is not available.');
     }
     return this.queryInstance.getContextUsage({ detail: 'summary' });
+  }
+
+  async getUsage(): Promise<SDKControlGetUsageResponse | undefined> {
+    const runtimeQuery = this.queryInstance;
+    await this.startPromise;
+    if (this.closed || !runtimeQuery || this.queryInstance !== runtimeQuery)
+      return undefined;
+    // Optional/experimental in the SDK and absent in older CLIs. Never start
+    // a process for telemetry or scan the last week's transcripts for a meter.
+    return runtimeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.(
+      { skipBehaviors: true },
+    );
   }
 
   async close(): Promise<void> {

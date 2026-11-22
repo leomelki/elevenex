@@ -1,103 +1,108 @@
-@if (safeSource()) {
-  <figure>
-    <div
-      class="player"
-      [attr.tabindex]="compact() ? null : 0"
-      role="group"
-      [attr.aria-label]="
-        'Recording: ' +
-        caption() +
-        '. Space to play, arrow keys seek five seconds.'
-      "
-      (keydown)="onKey($event)"
-    >
+<figure>
+  <div
+    class="player"
+    [attr.tabindex]="compact() ? null : 0"
+    role="group"
+    [attr.aria-label]="
+      'Recording: ' +
+      caption() +
+      '. Space to play, arrow keys seek five seconds.'
+    "
+    (keydown)="onKey($event)"
+  >
+    <div class="media-window" [attr.aria-busy]="loading()">
+      @if (safeSource()) {
       <video
-        #video
-        [src]="safeSource()"
-        [poster]="safePoster()"
-        [width]="width()"
-        [height]="height()"
-        [preload]="compact() ? 'auto' : 'metadata'"
-        playsinline
-        [controls]="compact()"
-        [attr.aria-label]="caption()"
-        (timeupdate)="updateTime()"
-        (loadedmetadata)="updateTime()"
-        (play)="playing.set(true)"
-        (pause)="playing.set(false)"
-        (ended)="playing.set(false)"
-        (error)="mediaError.set(true)"
+      #video
+      [src]="safeSource()"
+      [poster]="safePoster()"
+      [width]="width()"
+      [height]="height()"
+      [preload]="compact() ? 'auto' : 'metadata'"
+      playsinline
+      [controls]="compact()"
+      [attr.aria-label]="caption()"
+      (timeupdate)="updateTime()"
+      (loadedmetadata)="updateTime()"
+      (play)="playing.set(true)"
+      (pause)="playing.set(false)"
+      (ended)="playing.set(false)"
+      (error)="mediaError.set(true)"
       ></video>
-      @if (!compact() && !playing() && currentTime() === 0) {
-        <button
-          type="button"
-          class="play-overlay"
-          aria-label="Play recording"
-          (click)="toggle()"
-        >
-          <span aria-hidden="true">▷</span>
-        </button>
       }
-      @if (!compact()) {
-        <div class="controls">
-          <button
-            type="button"
-            class="play"
-            [attr.aria-label]="playing() ? 'Pause recording' : 'Play recording'"
-            (click)="toggle()"
-          >
-            {{ playing() ? "Ⅱ" : "▷" }}</button
-          ><span class="time"
-            >{{ time(currentTime()) }} / {{ time(totalDuration()) }}</span
-          ><input
-            type="range"
-            min="0"
-            [max]="totalDuration() || 1"
-            step="0.1"
-            [value]="currentTime()"
-            aria-label="Recording position"
-            (input)="scrub($event)"
-          /><button
-            type="button"
-            (click)="setSpeed()"
-            [attr.aria-label]="'Playback speed ' + speed() + ' times'"
-          >
-            {{ speed() }}×</button
-          ><ex-icon-button
-            icon="expand"
-            label="Full screen recording"
-            size="sm"
-            (pressed)="fullscreen()"
-          />
-        </div>
-      }
-    </div>
-    @if (marks().length) {
-      <div class="marks" aria-label="Recording steps">
-        @for (mark of marks(); track mark.t + ":" + mark.label) {
-          <button
-            type="button"
-            (click)="seek(mark.t)"
-            [title]="'Jump to ' + time(mark.t)"
-          >
-            <span>{{ time(mark.t) }}</span
-            >{{ mark.label }}
-          </button>
+      @if (unavailable()) {
+      <div class="media-status" role="status">
+        <span>{{ loading() ? 'Loading recording…' : error() || 'The recording could not be played here.' }}</span>
+        @if (!loading()) {
+          <button type="button" (click)="openFile.emit()">Open recording</button>
         }
       </div>
     }
-    @if (showCaption()) {
-      <figcaption>{{ caption() }}</figcaption>
+    @if (!unavailable() && !compact() && !playing() && currentTime() === 0) {
+      <button
+        type="button"
+        class="play-overlay"
+        aria-label="Play recording"
+        (click)="toggle()"
+      >
+        <span aria-hidden="true">▷</span>
+      </button>
     }
-    @if (mediaError()) {
-      <p class="error" role="status">
-        The recording could not be played here.
-        <button type="button" (click)="openFile.emit()">Open recording</button>
-      </p>
+    </div>
+    @if (!compact()) {
+      <div class="controls">
+        <button
+          type="button"
+          class="play"
+          [disabled]="unavailable()"
+          [attr.aria-label]="playing() ? 'Pause recording' : 'Play recording'"
+          (click)="toggle()"
+        >
+          {{ playing() ? "Ⅱ" : "▷" }}</button
+        ><span class="time"
+          >{{ time(currentTime()) }} / {{ time(totalDuration()) }}</span
+        ><input
+          type="range"
+          [disabled]="unavailable()"
+          min="0"
+          [max]="totalDuration() || 1"
+          step="0.1"
+          [value]="currentTime()"
+          aria-label="Recording position"
+          (input)="scrub($event)"
+        /><button
+          type="button"
+          (click)="setSpeed()"
+          [disabled]="unavailable()"
+          [attr.aria-label]="'Playback speed ' + speed() + ' times'"
+        >
+          {{ speed() }}×</button
+        ><ex-icon-button
+          icon="expand"
+          label="Full screen recording"
+          [disabled]="unavailable()"
+          size="sm"
+          (pressed)="fullscreen()"
+        />
+      </div>
     }
-  </figure>
-} @else {
-  <button type="button" class="fallback" (click)="openFile.emit()">
-    Open recording {{ caption() }}
-  </button>
-}
+  </div>
+  @if (marks().length) {
+    <div class="marks" aria-label="Recording steps">
+      @for (mark of marks(); track mark.t + ":" + mark.label) {
+        <button
+          type="button"
+          (click)="seek(mark.t)"
+          [disabled]="unavailable()"
+          [title]="'Jump to ' + time(mark.t)"
+        >
+          <span>{{ time(mark.t) }}</span
+          >{{ mark.label }}
+        </button>
+      }
+    </div>
+  }
+  @if (showCaption()) {
+    <figcaption>{{ caption() }}</figcaption>
+  }
+</figure>

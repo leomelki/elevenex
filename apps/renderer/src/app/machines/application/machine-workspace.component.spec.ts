@@ -59,7 +59,7 @@ describe('Connected workspace composition', () => {
     expect(root.querySelector('ex-chat')).not.toBeNull();
     expect(root.querySelector('ex-composer')).not.toBeNull();
     expect(root.querySelector('textarea')).not.toBeNull();
-    expect(root.querySelector('ex-session-chat .provider')?.textContent).toContain('Codex');
+    expect(root.querySelector('ex-agent-picker button.trigger')?.getAttribute('aria-label')).toContain('Codex');
     fixture.componentRef.setInput('active', false);
     await settle(fixture);
     expect(component.store.selected()?.sessionId).toBe(101);
@@ -182,8 +182,8 @@ describe('Connected workspace composition', () => {
     const { fixture, component, platform } = setup(); await settle(fixture);
     component.store.selectSession({ taskId: '11', sessionId: '101' }); await settle(fixture);
     const selected = component.store.selected()!;
-    const entry = fixture.debugElement.injector.get(SessionChatDrafts).entry(selected.scopeId, selected.sessionId);
-    entry.text.set('Keep this writing.');
+    const entry = fixture.debugElement.injector.get(SessionChatDrafts).entry(selected);
+    entry.setText('Keep this writing.');
     const question = { scopeId: selected.scopeId, taskId: selected.taskId, command: 'npm test', code: 7, output: 'failure context' };
     component.askTerminal({ ...question, scopeId: 'stale-scope' });
     expect(entry.text()).toBe('Keep this writing.');

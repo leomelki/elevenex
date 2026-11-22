@@ -38,6 +38,7 @@ import {
   type QuestionAnswers,
   type WorkStep,
   type TurnNavigationItem,
+  type MarkdownAsset,
 } from "../src/app/conversation";
 import { ButtonComponent } from "../src/app/ui";
 import { previewChatImage } from "./session-chat-media-fixture";
@@ -78,6 +79,16 @@ import { previewChatImage } from "./session-chat-media-fixture";
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ConversationDemoComponent {
+  readonly mediaPhase = signal<'loading' | 'partial' | 'ready' | 'error'>('loading');
+  readonly resolveAsyncMedia = (path: string): MarkdownAsset => {
+    const phase = this.mediaPhase();
+    if (path.endsWith('.webm')) return { kind: 'video', src: '', w: 0, h: 0,
+      loading: phase !== 'error', error: phase === 'error' ? 'Recording unavailable' : undefined };
+    if (phase === 'error') return { kind: 'image', src: '', w: 0, h: 0, error: 'Image unavailable' };
+    if (phase === 'loading' || phase === 'partial' && !path.includes('two'))
+      return { kind: 'image', src: '', w: 0, h: 0, loading: true };
+    return { kind: 'image', src: previewChatImage(800, 1400), w: 800, h: 1400 };
+  };
   readonly imageShape = signal<"landscape" | "portrait" | "small">("landscape");
   private readonly previewImages = {
     landscape: { kind: "image" as const, src: previewChatImage(1600, 900), w: 1600, h: 900 },

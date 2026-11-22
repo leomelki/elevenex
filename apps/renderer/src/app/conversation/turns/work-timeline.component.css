@@ -32,11 +32,19 @@ li {
   width: 1px;
   background: var(--line);
 }
+.media-output {
+  padding-block: var(--space-2);
+}
 .prose,
 .answer {
   min-width: 0;
   font-size: var(--text-body-size);
   line-height: var(--text-body-line);
+}
+/* When a new fact wraps, resize on the same curve as the tool folding away. */
+.summary-size {
+  --auto-height-duration: var(--dur-slow);
+  --auto-height-easing: var(--ease-in-out);
 }
 .group {
   display: flex;
@@ -85,6 +93,11 @@ li {
 .answer.has-text {
   padding-block: var(--space-2);
 }
+.prose-content {
+  /* Markdown's last block can carry a margin (especially media). Contain it in
+     AutoHeight's observed wrapper so its measured and natural heights agree. */
+  display: flow-root;
+}
 .group:hover {
   color: var(--ink);
   background: var(--surface-sunken);
@@ -117,6 +130,26 @@ ex-fold.step-fold {
 .step-enter {
   animation: step-grow var(--dur-slow) var(--ease-in-out);
 }
+.activity-reveal {
+  animation: step-grow var(--dur-slow) var(--ease-in-out);
+}
+.activity-reveal > .row-clip {
+  overflow: clip;
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--space-3)), transparent);
+  animation: activity-ink var(--dur-slow) var(--ease-out) both;
+}
+@keyframes activity-ink {
+  /* Ink follows the growing edge closely (as Fold's 40ms content delay does);
+     a longer blank hold reads as latency even when the rows were cached. */
+  0%, 15% {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--space-1)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 .step-enter > .row-clip {
   overflow: clip;
   animation: step-ink var(--dur-slow) var(--ease-out);
@@ -142,10 +175,16 @@ ex-fold.step-fold {
 }
 @media (prefers-reduced-motion: reduce) {
   .step-enter,
-  .step-enter > .row-clip {
+  .step-enter > .row-clip,
+  .activity-reveal,
+  .activity-reveal > .row-clip {
     animation: none;
   }
   .disclosure {
     transition: none;
+  }
+  .activity-reveal > .row-clip {
+    overflow: visible;
+    mask-image: none;
   }
 }

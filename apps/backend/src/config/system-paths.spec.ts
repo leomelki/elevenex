@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 jest.mock('child_process', () => ({
@@ -342,6 +343,24 @@ describePosix('system-paths per-cwd env cache', () => {
 });
 
 describePosix('global shell environment replacement', () => {
+  let agentFolder: string;
+  let accountAgent: string;
+  let agentServer: net.Server;
+
+  beforeEach(async () => {
+    agentFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'evx-agent-'));
+    accountAgent = path.join(agentFolder, 'agent.sock');
+    agentServer = net.createServer();
+    await new Promise<void>((resolve) =>
+      agentServer.listen(accountAgent, resolve),
+    );
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => agentServer.close(() => resolve()));
+    fs.rmSync(agentFolder, { recursive: true, force: true });
+  });
+
   it('uses the remote account shell agent for agents and restores the desktop proxy when removed', async () => {
     const proxy = '/runtime/desktop/agent.sock';
     process.env.ELEVENEX_BACKEND_MODE = 'remote';
@@ -351,19 +370,17 @@ describePosix('global shell environment replacement', () => {
     const first = systemPaths.buildAugmentedEnvAsync();
     await closeShellProcess(
       children[0],
-      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/account/agent.sock\0'),
+      envOutput('/shell/bin', `SSH_AUTH_SOCK=${accountAgent}\0`),
     );
-    expect((await first).SSH_AUTH_SOCK).toBe('/account/agent.sock');
-    expect(process.env.SSH_AUTH_SOCK).toBe('/account/agent.sock');
-    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(
-      '/account/agent.sock',
-    );
+    expect((await first).SSH_AUTH_SOCK).toBe(accountAgent);
+    expect(process.env.SSH_AUTH_SOCK).toBe(accountAgent);
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(accountAgent);
     // Callers with an explicit base still get the shell account agent rather
     // than the app's managed default. Other explicit sockets keep precedence.
     expect(
       systemPaths.buildAugmentedEnv({ ...process.env, SSH_AUTH_SOCK: proxy })
         .SSH_AUTH_SOCK,
-    ).toBe('/account/agent.sock');
+    ).toBe(accountAgent);
     expect(
       systemPaths.buildAugmentedEnv({
         ...process.env,
@@ -378,6 +395,26 @@ describePosix('global shell environment replacement', () => {
     expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(proxy);
   });
 
+  it('falls back to the desktop proxy once a captured shell agent disappears', async () => {
+    const proxy = '/runtime/desktop/agent.sock';
+    process.env.ELEVENEX_BACKEND_MODE = 'remote';
+    process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
+    process.env.SSH_AUTH_SOCK = proxy;
+    mockSpawn.mockImplementation(() => createShellProcess());
+    const first = systemPaths.refreshLoginShellEnv(true);
+    await closeShellProcess(
+      children[0],
+      envOutput('/shell/bin', `SSH_AUTH_SOCK=${accountAgent}\0`),
+    );
+    await first;
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(accountAgent);
+    // The forwarded session ended after the cached capture, so the account's
+    // symlink no longer resolves. Git signing must use the connected proxy.
+    await new Promise<void>((resolve) => agentServer.close(() => resolve()));
+    expect(fs.existsSync(accountAgent)).toBe(false);
+    expect(systemPaths.buildAugmentedEnv().SSH_AUTH_SOCK).toBe(proxy);
+  });
+
   it('keeps later application overrides when refreshing a remote shell agent', async () => {
     process.env.ELEVENEX_BACKEND_MODE = 'remote';
     process.env.ELEVENEX_DATA_ROOT = '/runtime/desktop/data';
@@ -386,9 +423,10 @@ describePosix('global shell environment replacement', () => {
     const first = systemPaths.refreshLoginShellEnv(true);
     await closeShellProcess(
       children[0],
-      envOutput('/shell/bin', 'SSH_AUTH_SOCK=/account/agent.sock\0'),
+      envOutput('/shell/bin', `SSH_AUTH_SOCK=${accountAgent}\0`),
     );
     await first;
+    expect(process.env.SSH_AUTH_SOCK).toBe(accountAgent);
     process.env.SSH_AUTH_SOCK = '/application/agent.sock';
     const refresh = systemPaths.refreshLoginShellEnv(true);
     await closeShellProcess(
@@ -1090,7 +1128,9 @@ describePosix('system-paths bounded shell refreshes', () => {
       for (const environment of environments) {
         expect(environment.HOME).toBe(home || os.homedir());
         expect(environment.SHELL).toBe(process.env.SHELL);
-        expect(environment.ELEVENEX_TEST_APPLICATION_EXPORT).toBe('application-only');
+        expect(environment.ELEVENEX_TEST_APPLICATION_EXPORT).toBe(
+          'application-only',
+        );
         expect(environment.PWD).toBeUndefined();
         expect(environment.FNM_MULTISHELL_PATH).toBeUndefined();
         expect(environment.PATH).toBeTruthy();

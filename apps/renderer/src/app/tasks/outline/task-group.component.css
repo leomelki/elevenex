@@ -16,6 +16,7 @@ header {
   border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--surface) 88%, transparent);
   backdrop-filter: blur(var(--space-2));
+  transition: background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
 header:hover,
 header:focus-within {
@@ -144,3 +145,8 @@ button:focus-visible {
 .diff-del {
   color: var(--diff-del);
 }
+/* A depth destination on existing chrome; pickup never inserts a drop strip. */
+/* Dragging a child: the header is the task-level destination. */
+header.session-drop-ready { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--line-strong) 45%, transparent); }
+header.session-drop-root { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent); }
+header.session-drop-root .title { color: var(--accent); }

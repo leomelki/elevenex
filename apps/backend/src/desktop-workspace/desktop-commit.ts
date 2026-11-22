@@ -49,7 +49,10 @@ export async function commitSnapshot(
   );
   const before = await readFile(indexPath);
   const head = (await checkout.raw(['rev-parse', 'HEAD'])).trim();
-  const branch = (await checkout.raw(['symbolic-ref', 'HEAD'])).trim();
+  // Detached HEAD reads as empty, so a snapshot can still commit there.
+  const branch = (
+    await checkout.raw(['symbolic-ref', '--quiet', 'HEAD'])
+  ).trim();
   const folder = await mkdtemp(join(tmpdir(), 'elevenex-commit-'));
   const index = join(folder, 'index'),
     preserved = join(folder, 'preserved-index');
@@ -142,7 +145,8 @@ export async function commitSnapshot(
         if (
           (await stagedRevision(path)) !== beforeStaged ||
           (await checkout.raw(['rev-parse', 'HEAD'])).trim() !== head ||
-          (await checkout.raw(['symbolic-ref', 'HEAD'])).trim() !== branch
+          (await checkout.raw(['symbolic-ref', '--quiet', 'HEAD'])).trim() !==
+            branch
         )
           throw (guardError = new ConflictException({
             code: 'commit-changes-moved',

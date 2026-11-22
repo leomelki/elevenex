@@ -13,8 +13,8 @@ export default async function* (capture) {
   const tool = index => `[data-work-step="${index === 23 ? 'example-live' : 'example-' + index}"] ex-tool-step`;
   const scroll = selector => capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
   const hideReminder = async () => {
-    if (await capture.evaluate(() => !!document.querySelector('ex-chat-scroll .reminder-top button')))
-      await capture.click('ex-chat-scroll .reminder-top button');
+    if (await capture.evaluate(() => !!document.querySelector('ex-chat-scroll .reminder .hide')))
+      await capture.click('ex-chat-scroll .reminder .hide');
   };
   const examples = [
     ['command', '12 tests passed.', true],

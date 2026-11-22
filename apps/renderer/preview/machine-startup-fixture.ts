@@ -101,9 +101,14 @@ export class MachineStartupFixture {
   };
   retryBackend = async () => { this.setLocal({ phase: 'starting', version: 'a'.repeat(40) }); return this.state.localBackend; };
   retryRemote = async () => this.selectEnvironment(this.state.environment.selection);
+  forceRemoteUpdate = async (hostId: string, instance: string) => {
+    const connection = this.state.environment.connection;
+    if (connection?.hostId !== hostId || connection.updateWaiting?.instance !== instance) throw new Error('Stale remote update');
+    this.updateConnections(undefined);
+  };
   disconnectRemote = async () => {
     const environment = this.state.environment;
-    this.publish({ environment: { ...environment, challenge: null, connection: environment.connection ? { ...environment.connection, phase: 'disconnected' } : null } });
+    this.publish({ environment: { ...environment, challenge: null, connection: environment.connection ? { ...environment.connection, phase: 'disconnected', updateWaiting: undefined } : null } });
     return this.state.environment;
   };
   answerRemoteChallenge = async (id: string, answer: string | null) => {
@@ -116,6 +121,13 @@ export class MachineStartupFixture {
   };
 
   setLocal(status: BackendStatus): void { this.publish({ localBackend: status }); }
+  updateConnections(connections: number | null | undefined): void {
+    const environment = this.state.environment;
+    if (!environment.connection) throw new Error('Select a remote server first');
+    this.publish({ environment: { ...environment, connection: { ...environment.connection, phase: 'setting-up', stage: 'runtime', authenticated: true,
+      updateWaiting: connections === undefined ? undefined : { instance: '33333333-3333-4333-8333-333333333333', connections },
+    } } });
+  }
   ready(): void {
     const environment = this.state.environment;
     if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'ready', transport: 'healthy', application: 'ready', authenticated: true, generation: environment.connection.generation + 1, instanceId: 'test', retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, failure: null } } });

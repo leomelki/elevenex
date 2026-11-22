@@ -6,10 +6,9 @@ import type { BackendRelease } from '../backend/release';
 import { shellQuote } from './ssh';
 
 /** All script substitutions are application-owned revisions, source and nonces. */
-export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<string> {
+export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<{ command: string; payload: Buffer }> {
   if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
-  // The uploaded bridge needs only the pure address validator, not the SOCKS
-  // server. Keep the compressed bootstrap below Windows' command-line limit.
+  // The uploaded bridge needs only the pure address validator, not the SOCKS server.
   const modules = ['wire', 'runtime', 'runtime-control', 'runtime-start', 'runtime-handoff', 'agent-proxy', 'host', 'process-tree', 'browser-destination', 'node_modules/@elevenex/browser-network/dist/public-address'];
   const sources = await Promise.all(modules.map(name => {
     const path = name.startsWith('node_modules/')
@@ -77,21 +76,18 @@ printf 'EX11:${nonce}:runtime:start\\n'
 "$cache/backend/node/bin/node" --version >/dev/null 2>&1 || fail COMPATIBILITY 'The cached Node executable is incompatible or damaged; check OS and libc support'
 exec "$cache/backend/node/bin/node" "$client/runtime.js" bridge "$root" "$cache" '${release.version}' '${allowUpdate ? 'update' : 'join'}'
 `;
-  // Keep Windows CreateProcess and remote shell argv well below their limits.
-  // The bootstrap reads its script from a file, leaving stdin entirely for the
-  // archive transfer and subsequent wire protocol (sh -s would consume it).
-  const packed = await new Promise<Buffer>((resolve, reject) => gzip(script, (error, bytes) => error ? reject(error) : resolve(bytes)));
+  // Keep SSH argv bounded as the bridge grows. Read exactly one compressed
+  // script before giving the same input stream to the archive and wire protocol.
+  const payload = await new Promise<Buffer>((resolve, reject) => gzip(script, (error, bytes) => error ? reject(error) : resolve(bytes)));
   const loader = `set -eu
 umask 077
-for tool in base64 gzip mktemp; do command -v "$tool" >/dev/null 2>&1 || { printf 'EX11_COMPATIBILITY: Install %s\\n' "$tool" >&2; exit 1; }; done
+for tool in head gzip mktemp; do command -v "$tool" >/dev/null 2>&1 || { printf 'EX11_COMPATIBILITY: Install %s\\n' "$tool" >&2; exit 1; }; done
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
-printf '%s' '${packed.toString('base64')}' > "$stage/source.b64"
-if base64 -d < "$stage/source.b64" > "$stage/source.gz" 2>/dev/null; then :;
-else base64 -D < "$stage/source.b64" > "$stage/source.gz"; fi
+head -c ${payload.length} > "$stage/source.gz"
 gzip -dc "$stage/source.gz" > "$stage/source.sh"
 sh "$stage/source.sh"
 `;
-  return `sh -c ${shellQuote(loader)}`;
+  return { command: `sh -c ${shellQuote(loader)}`, payload };
 }
 

@@ -115,6 +115,7 @@ describe('TaskGitService checkout inspection with real Git', () => {
     const linked = join(root, 'linked');
     const alias = join(root, 'alias');
     const nested = join(root, 'nested', 'deeper');
+    const linkedNested = join(linked, 'nested', 'deeper');
     const nestedAlias = join(root, 'nested-alias');
     await worktreeSimpleGit(root).raw([
       'worktree',
@@ -126,7 +127,7 @@ describe('TaskGitService checkout inspection with real Git', () => {
     await symlink(linked, alias, 'dir');
     await symlink(nested, nestedAlias, 'dir');
     const key = await realpath(join(root, '.git'));
-    for (const checkout of [root, nested, nestedAlias, linked, alias]) {
+    for (const checkout of [root, nested, nestedAlias, linked, linkedNested, alias]) {
       expect(await service.repositoryKey(checkout)).toBe(key);
     }
   });

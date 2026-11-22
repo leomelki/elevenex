@@ -46,4 +46,3 @@ export function inlineMap(value: string): unknown {
     return text.length <= 2_097_152 ? JSON.parse(text) : undefined;
   } catch { return undefined; }
 }
-

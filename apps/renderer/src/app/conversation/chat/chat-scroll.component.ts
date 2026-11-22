@@ -6,20 +6,32 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   inject,
+  Injector,
   input,
   output,
   signal,
   viewChild,
-  type ElementRef,
+  ElementRef,
 } from "@angular/core";
-import { ButtonComponent, IconComponent, TooltipDirective } from "../../ui";
+import {
+  ButtonComponent,
+  IconComponent,
+  TooltipDirective,
+} from "../../ui";
 import { MessageComponent } from "./message.component";
+import { ChatHistoryScroll } from "./chat-history-scroll";
 import { ChatSendScroll } from "./chat-send-scroll";
+import type { ChatHistoryRequest } from "../conversation.models";
 interface Reminder {
   readonly id: string;
   readonly text: string;
 }
+/** Resting on the reminder this long reads as intent; passing over it doesn't.
+ * The capsule's charge transition in CSS lasts exactly as long. */
+const PEEK_DELAY = 320;
+const historyMargin = (height: number) => Math.min(480, height * 0.75);
 @Component({
   selector: "ex-chat-scroll",
   imports: [ButtonComponent, IconComponent, TooltipDirective],
@@ -38,19 +50,91 @@ export class ChatScrollComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
+  readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
-  readonly historyRequested = output<"before" | "following">();
+  readonly historyRequested = output<ChatHistoryRequest>();
+  readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
-  private readingAnchor?: { element: Element; top: number };
+  private readingAnchor?: {
+    readonly element: Element;
+    readonly top: number;
+    readonly rowId: string | null;
+    readonly anchorId: string | null;
+  };
+  private paintedScroll = { top: 0, height: 0 };
+  private historyScroll?: ChatHistoryScroll;
   private paintedRevision = 0;
   private historyPending = false;
   private lastHistoryDirection: "before" | "following" = "before";
-  private historyBudget = 4;
-  onViewportInteraction(): void {
+  private historyBudget = 0;
+  private requestedHeight = 0;
+  private disclosure?: {
+    readonly anchor: HTMLElement;
+    readonly turn: Element;
+    readonly top: number;
+    settledFrames: number;
+  };
+  private historyIntent: ChatHistoryRequest = { direction: "before", source: "prefetch" };
+  private nativeScrollOrigin: number | undefined;
+  onViewportWheel(event: WheelEvent): void {
+    if (event.defaultPrevented || event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    const viewport = this.viewport().nativeElement;
+    // Code, tool output and media can own their own scroll area inside a turn.
+    // Only use the wheel for history when it can reach the outer viewport.
+    let target = event.target instanceof Element ? event.target : null;
+    while (target && target !== viewport) {
+      const remaining = target.scrollHeight - target.clientHeight;
+      if (remaining > 0) {
+        const style = getComputedStyle(target);
+        const scrollable = style.overflowY === "auto" || style.overflowY === "scroll";
+        const canMove = event.deltaY < 0 ? target.scrollTop > 0 : remaining - target.scrollTop > 1;
+        if (scrollable && (canMove || style.overscrollBehaviorY === "contain" || style.overscrollBehaviorY === "none")) return;
+      }
+      target = target.parentElement;
+    }
+    this.beginHistoryScroll(event.deltaY < 0 ? "before" : "following");
+  }
+  onViewportPointerDown(event: PointerEvent): void {
+    const viewport = this.viewport().nativeElement;
+    const gutter = viewport.getBoundingClientRect().left + viewport.clientWidth;
+    // A disclosure click must not arm paging. Touch and scrollbar gestures
+    // get their direction from the first actual movement of the viewport.
+    this.nativeScrollOrigin = undefined;
+    if (event.pointerType === "mouse" && event.clientX < gutter) return;
+    this.nativeScrollOrigin = this.historyScroll?.top ?? viewport.scrollTop;
+    this.disclosure = undefined;
+    this.interruptSendReveal();
+  }
+  clearPointerScroll(): void {
+    this.nativeScrollOrigin = undefined;
+  }
+  private beginHistoryScroll(direction: "before" | "following"): void {
+    this.nativeScrollOrigin = undefined;
+    this.disclosure = undefined;
+    this.historyIntent = { direction, source: "reader" };
+    if (direction !== this.lastHistoryDirection) this.cancelPendingHistory();
     this.historyBudget = 4;
     this.interruptSendReveal();
     if (this.contentReady) this.scheduleMeasure();
+  }
+
+  /** Inline evidence grows below its control, even when the reply was pinned
+   * to the end. Its layout is also independent of new-message indicators. */
+  keepDisclosurePosition(anchor: HTMLElement): void {
+    const turn = anchor.closest('ex-turn');
+    if (!this.contentReady || !turn || !this.host.contains(anchor)) return;
+    const view = this.viewport().nativeElement.getBoundingClientRect();
+    const bounds = anchor.getBoundingClientRect();
+    if (bounds.bottom <= view.top || bounds.top >= view.bottom) return;
+    this.cancelPendingHistory();
+    this.historyBudget = 0;
+    if (this.disclosure?.anchor === anchor) this.disclosure.settledFrames = 0;
+    else this.disclosure = {
+      anchor, turn, settledFrames: 0,
+      top: bounds.top - view.top,
+    };
+    this.scheduleMeasure();
   }
 
   private rememberPosition(): void {
@@ -73,7 +157,9 @@ export class ChatScrollComponent {
     if (!arrivals.length) return;
     const fresh = arrivals.filter(message => message.isNew() && message.role() === "user");
     if (fresh.length) {
+      this.disclosure = undefined;
       this.interruptSendReveal();
+      this.historyScroll?.finish();
       const viewport = this.viewport().nativeElement;
       const anchor = this.paintedTail;
       // A bounded history refresh can remove rows above us in the same render.
@@ -121,14 +207,35 @@ export class ChatScrollComponent {
 
   onViewportKey(event: KeyboardEvent): void {
     if (event.target === event.currentTarget &&
-      ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
-      this.onViewportInteraction();
+      ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+      this.beginHistoryScroll(["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)
+        ? "before" : "following");
+    }
   }
   readonly startAtEnd = input(true);
   readonly reminder = input(true);
   readonly activeExchange = output<string>();
   readonly atEnd = signal(true);
   readonly pin = signal<Reminder | null>(null);
+  /** One line at rest; resting the pointer on it (or focusing it) reveals three. */
+  readonly peek = signal(false);
+  /** The pointer rests on a clipped prompt: the capsule charges before it opens. */
+  readonly arming = signal(false);
+  private peekTimer: ReturnType<typeof setTimeout> | null = null;
+  private surfaceMorph: Animation | null = null;
+  /** Keyed by prompt so a different exchange swaps its text instead of editing it. */
+  readonly pinQuotes = computed(() => {
+    const pin = this.pin();
+    return pin ? [pin] : [];
+  });
+  /** First paint is simply there; later appearances slide in. */
+  private readonly motionReady = signal(false);
+  /** Read when the reminder changes. Under reduced motion no motion class is
+   * applied at all, since an enter class without an animation never clears. */
+  private readonly motionAllowed = signal(true);
+  readonly reminderMotion = computed(() => this.motionReady() && this.motionAllowed());
+  /** Only a change between two exchanges blurs text; a fresh reminder slides as one. */
+  readonly quoteMotion = signal(false);
   readonly unread = signal(false);
   readonly returnLabel = computed(() =>
     this.unread() ? "New messages. Scroll to bottom" : "Scroll to bottom",
@@ -136,29 +243,60 @@ export class ChatScrollComponent {
   readonly viewport =
     viewChild.required<ElementRef<HTMLDivElement>>("viewport");
   readonly content = viewChild.required<ElementRef<HTMLDivElement>>("content");
+  private readonly track = viewChild.required<ElementRef<HTMLDivElement>>("track");
+  private readonly reminderElement = viewChild<ElementRef<HTMLElement>>("reminderElement");
   private readonly destroy = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private messages: HTMLElement[] = [];
-  private readonly dismissed = new Set<string>();
+  private scrollbarWidth = -1;
   private frame: number | null = null;
   private lastActive = "";
   private lastScrollHeight = 0;
+  private lastViewportHeight = 0;
   private highlight: Animation | null = null;
+  private readonly motion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
   constructor() {
+    effect(() => {
+      // The owner decides whether its opening window needs filling. Explicit
+      // scroll intent replenishes the budget independently of that policy.
+      const prefetch = this.initialHistoryPrefetch();
+      if (this.historyIntent.source === "prefetch") this.historyBudget = prefetch ? 4 : 0;
+      if (this.contentReady) this.scheduleMeasure();
+    });
+    effect(() => {
+      this.reminder();
+      this.historyLoading();
+      this.historyError();
+      if (this.contentReady) this.scheduleMeasure();
+    });
     afterEveryRender(() => {
       if (this.contentReady && this.paintedRevision !== this.historyRevision()) {
         const viewport = this.viewport().nativeElement;
         const anchor = this.readingAnchor;
-        if (anchor?.element.isConnected) {
+        const element = this.findReadingAnchor();
+        if (this.atEnd() && !this.historyAfter()) {
+          // A short tail can prefetch older history while still pinned. Its
+          // first partial turn may be replaced when its prompt arrives, so no
+          // retained DOM anchor can keep the latest reply in place.
+          this.historyScroll?.finish();
+          viewport.scrollTop = viewport.scrollHeight;
+        } else if (anchor && element && this.historyScroll) {
           // Account for native scroll anchoring instead of adding a height delta
           // twice. This also handles removing content at the opposite edge.
-          viewport.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+          const top = this.historyScroll.top + element.getBoundingClientRect().top - anchor.top;
+          this.historyScroll.restore(this.paintedScroll, top);
         }
         this.paintedRevision = this.historyRevision();
-        this.lastScrollHeight = viewport.scrollHeight;
+        this.lastScrollHeight = this.historyScroll?.height ?? viewport.scrollHeight;
         this.updatePosition();
       }
       if (!this.historyLoading() && this.historyPending) {
         this.historyPending = false;
+        // Hidden work is not progress towards filling the viewport. Repeated
+        // reads here can walk an entire long turn without the reader moving.
+        if ((this.historyScroll?.height ?? this.viewport().nativeElement.scrollHeight) <= this.requestedHeight)
+          this.historyBudget = 0;
         this.scheduleMeasure();
       }
       this.revealArrivals();
@@ -166,7 +304,10 @@ export class ChatScrollComponent {
       if (this.contentReady) this.rememberReadingAnchor();
     });
     this.destroy.onDestroy(() => {
+      this.endPeek();
+      this.surfaceMorph?.cancel();
       this.highlight?.cancel();
+      this.historyScroll?.cancel();
       this.sendScroll?.cancel();
       for (const message of this.arrivingMessages) message.finishArrival();
     });
@@ -174,10 +315,12 @@ export class ChatScrollComponent {
       this.contentReady = true;
       const viewport = this.viewport().nativeElement;
       const content = this.content().nativeElement;
+      this.historyScroll = new ChatHistoryScroll(viewport, this.track().nativeElement, content, this.motion);
       this.refreshMessages();
       this.atEnd.set(this.startAtEnd());
       if (this.startAtEnd()) viewport.scrollTop = viewport.scrollHeight;
       this.lastScrollHeight = viewport.scrollHeight;
+      this.lastViewportHeight = viewport.clientHeight;
       const resize = new ResizeObserver(() => this.scheduleMeasure());
       resize.observe(content);
       resize.observe(viewport);
@@ -209,28 +352,64 @@ export class ChatScrollComponent {
         if (this.frame !== null) cancelAnimationFrame(this.frame);
       });
       this.measure();
+      afterNextRender(() => this.motionReady.set(true), { injector: this.injector });
     });
   }
   onScroll(): void {
+    const top = this.historyScroll?.top ?? this.viewport().nativeElement.scrollTop;
+    if (this.nativeScrollOrigin !== undefined && top !== this.nativeScrollOrigin)
+      this.beginHistoryScroll(top < this.nativeScrollOrigin ? "before" : "following");
     if (!this.sendScroll) this.updatePosition();
+    this.cancelDistantHistory();
     this.rememberPosition();
     this.rememberReadingAnchor();
     this.scheduleMeasure();
   }
   private updatePosition(): void {
     const viewport = this.viewport().nativeElement;
+    const height = this.historyScroll?.height ?? viewport.scrollHeight;
+    const top = this.historyScroll?.top ?? viewport.scrollTop;
     this.atEnd.set(
-      !this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40,
+      !this.historyAfter() && height - top - viewport.clientHeight < 40,
     );
     if (this.atEnd()) this.unread.set(false);
   }
-  hideReminder(): void {
-    const pin = this.pin();
-    if (pin) this.dismissed.add(pin.id);
-    this.pin.set(null);
+  startPeek(event: PointerEvent): void {
+    // Touch has no resting pointer; a tap is a jump, not a peek. A prompt that
+    // already fits has nothing to reveal, so it must not promise to open.
+    if (event.pointerType !== "mouse" || this.peekTimer !== null || this.peek() || !this.promptClipped()) return;
+    this.arming.set(!this.reducedMotion());
+    this.peekTimer = setTimeout(() => {
+      this.peekTimer = null;
+      this.setPeek(true);
+    }, PEEK_DELAY);
+  }
+  /** Keyboard focus opens at once; a click's focus doesn't. */
+  peekOnFocus(event: FocusEvent): void {
+    if (event.target instanceof HTMLElement && event.target.matches(":focus-visible") && this.promptClipped())
+      this.setPeek(true);
+  }
+  endPeek(): void {
+    if (this.peekTimer !== null) clearTimeout(this.peekTimer);
+    this.peekTimer = null;
+    this.setPeek(false);
+  }
+  private promptClipped(): boolean {
+    const quote = this.reminderElement()?.nativeElement.querySelector<HTMLElement>(".quote:not(.quote-leave)");
+    return !!quote && quote.scrollHeight > quote.clientHeight + 1;
+  }
+  private setPeek(open: boolean): void {
+    this.arming.set(false);
+    if (this.peek() === open) return;
+    // Opening releases the charge on a spring; closing settles without bounce.
+    if (this.pin() && !this.reducedMotion())
+      this.morphSurface(open ? "--dur-deliberate" : "--dur-base", open ? "--ease-spring" : "--ease-out");
+    this.peek.set(open);
   }
   scrollToMessage(id: string): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
+    this.historyScroll?.finish();
     const target = this.messages.find(
       (message) => message.dataset["userMessage"] === id,
     );
@@ -253,7 +432,9 @@ export class ChatScrollComponent {
     }
   }
   scrollToEnd(behavior: ScrollBehavior = "smooth"): void {
+    this.disclosure = undefined;
     this.interruptSendReveal();
+    this.historyScroll?.finish();
     const viewport = this.viewport().nativeElement;
     // Keep the return control present until native smooth scrolling arrives.
     // Claiming the end early would hide/reveal it on intermediate scroll events.
@@ -272,10 +453,13 @@ export class ChatScrollComponent {
   retryHistory(): void {
     this.viewport().nativeElement.focus({ preventScroll: true });
     this.historyBudget = 4;
-    this.requestHistory(this.lastHistoryDirection);
+    this.historyIntent = { direction: this.lastHistoryDirection, source: "reader" };
+    this.requestHistory(this.historyIntent);
   }
   private rememberReadingAnchor(): void {
-    const top = this.viewport().nativeElement.getBoundingClientRect().top;
+    const viewport = this.viewport().nativeElement;
+    this.paintedScroll = { top: viewport.scrollTop, height: viewport.scrollHeight };
+    const top = viewport.getBoundingClientRect().top;
     const children = this.content().nativeElement.querySelectorAll("[data-chat-anchor]");
     // The DOM is bounded by the connected owner's transcript window. Keep the
     // first visible stable row, including a reply whose prompt is off screen.
@@ -285,18 +469,66 @@ export class ChatScrollComponent {
       if (children[middle]!.getBoundingClientRect().bottom <= top) low = middle + 1;
       else high = middle;
     }
-    const element = children[low];
-    this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top } : undefined;
+    const turn = children[low];
+    // A turn may grow above the answer as older work arrives. Anchor the actual
+    // visible row inside it, rather than the turn's unchanged outer edge.
+    const row = turn && Array.from(turn.querySelectorAll('[data-chat-row]')).find(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.height > 0 && bounds.bottom > top;
+    });
+    const element = row ?? turn;
+    this.readingAnchor = element ? { element, top: element.getBoundingClientRect().top,
+      rowId: element.getAttribute('data-chat-row'),
+      anchorId: turn?.getAttribute('data-chat-anchor') ?? null } : undefined;
   }
-  private requestHistory(direction: "before" | "following"): void {
+  private findReadingAnchor(): Element | undefined {
+    const anchor = this.readingAnchor;
+    if (!anchor) return undefined;
+    if (anchor.element.isConnected && anchor.element.getBoundingClientRect().height > 0) return anchor.element;
+    const content = this.content().nativeElement;
+    const turn = anchor.anchorId
+      ? content.querySelector(`[data-chat-anchor="${CSS.escape(anchor.anchorId)}"]`) : null;
+    if (!anchor.rowId) return turn ?? undefined;
+    const selector = `[data-chat-row="${CSS.escape(anchor.rowId)}"]`;
+    const row = turn?.querySelector(selector) ??
+      // Hydrating the prompt can change a partial turn's outer identity.
+      (anchor.rowId === '$answer' ? null : content.querySelector(selector));
+    return row && row.getBoundingClientRect().height > 0 ? row : undefined;
+  }
+  private requestHistory(intent: ChatHistoryRequest): void {
     if (this.historyLoading() || this.historyPending) return;
+    const { direction } = intent;
     this.interruptSendReveal();
     this.rememberReadingAnchor();
     this.lastHistoryDirection = direction;
     this.historyPending = true;
-    this.historyBudget--;
-    this.atEnd.set(false);
-    this.historyRequested.emit(direction);
+    // A collapsed page may add no scrollable content. Chaining more reads in
+    // that case can evict the answer still in view. Overflowing conversations
+    // prefetch once per gesture; only an underfilled viewport chains pages.
+    const viewport = this.viewport().nativeElement;
+    this.requestedHeight = this.historyScroll?.height ?? viewport.scrollHeight;
+    this.historyBudget = this.requestedHeight > viewport.clientHeight ? 0 : this.historyBudget - 1;
+    // Loading above a pinned tail must not relinquish end following. An actual
+    // reader scroll updates atEnd normally while the request is pending.
+    if (direction === 'following') this.atEnd.set(false);
+    this.historyRequested.emit(intent);
+  }
+  private cancelDistantHistory(): void {
+    if (!this.historyPending || !this.historyLoading() || !this.historyScroll) return;
+    const height = this.viewport().nativeElement.clientHeight;
+    const { top, height: contentHeight } = this.historyScroll;
+    const distance = this.lastHistoryDirection === "before" ? top : contentHeight - top - height;
+    // A quick reversal during a held read can put the reader inside the part
+    // of the window that the pending page would evict. Allow nearby scrolling.
+    if (distance <= height + historyMargin(height)) return;
+    this.cancelPendingHistory();
+  }
+  private cancelPendingHistory(): void {
+    if (this.historyPending && this.historyLoading()) {
+      this.historyPending = false;
+      this.historyBudget = 0;
+      this.historyCancelled.emit();
+    }
   }
   private refreshMessages(): void {
     this.messages = Array.from(
@@ -304,11 +536,6 @@ export class ChatScrollComponent {
         "[data-user-message]",
       ),
     );
-    const present = new Set(
-      this.messages.map((message) => message.dataset["userMessage"] ?? ""),
-    );
-    for (const id of this.dismissed)
-      if (!present.has(id)) this.dismissed.delete(id);
   }
   private scheduleMeasure(): void {
     if (this.frame !== null) return;
@@ -319,58 +546,136 @@ export class ChatScrollComponent {
   }
   private measure(): void {
     const viewport = this.viewport().nativeElement;
-    const changed = viewport.scrollHeight !== this.lastScrollHeight;
+    const revealing = this.maintainDisclosurePosition(viewport);
+    const height = this.historyScroll?.height ?? viewport.scrollHeight;
+    const top = this.historyScroll?.top ?? viewport.scrollTop;
+    const contentChanged = height !== this.lastScrollHeight;
+    const resized = viewport.clientHeight !== this.lastViewportHeight;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if (changed && this.atEnd()) viewport.scrollTop = viewport.scrollHeight;
-    else if (changed) this.unread.set(true);
-    this.lastScrollHeight = viewport.scrollHeight;
+    else if (!revealing && (resized || contentChanged) && this.atEnd()) {
+      this.historyScroll?.finish();
+      viewport.scrollTop = viewport.scrollHeight;
+    } else if (height > this.lastScrollHeight && !revealing) this.unread.set(true);
+    this.lastScrollHeight = height;
+    this.lastViewportHeight = viewport.clientHeight;
     if (!this.sendScroll) this.updatePosition();
-    const top = viewport.getBoundingClientRect().top;
-    let low = 0;
-    let high = this.messages.length - 1;
-    let candidate: HTMLElement | undefined;
-    // Binary search the ordered prompts; scrolling costs O(log n) layout reads, not a transcript scan.
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2);
-      const message = this.messages[middle];
-      if (message && message.getBoundingClientRect().top < top + 16) {
-        candidate = message;
-        low = middle + 1;
-      } else high = middle - 1;
+    const scrollbar = viewport.offsetWidth - viewport.clientWidth;
+    if (scrollbar !== this.scrollbarWidth) {
+      // The reminder's scrim stops at the scrollbar instead of fading it.
+      this.scrollbarWidth = scrollbar;
+      this.host.style.setProperty("--scrollbar-width", `${scrollbar}px`);
     }
+    const bounds = viewport.getBoundingClientRect();
+    const candidate = this.promptAt(bounds.top + 16);
     const id = candidate?.dataset["userMessage"] ?? "";
     if (id !== this.lastActive) {
       this.lastActive = id;
       this.activeExchange.emit(id);
     }
-    const shouldPin =
-      this.reminder() &&
-      candidate &&
-      candidate.getBoundingClientRect().bottom < top &&
-      !this.dismissed.has(id);
     this.rememberPosition();
-    this.pin.set(
-      shouldPin && candidate
-        ? {
-            id,
-            text:
-              candidate.querySelector(".content")?.textContent?.trim() ??
-              candidate.textContent?.trim() ??
-              "",
-          }
-        : null,
-    );
-    if (!this.historyError() && !this.sendScroll && this.historyBudget > 0 && viewport.clientHeight > 0) {
+    this.measureReminder(bounds);
+    if (!this.historyError() && !this.sendScroll && !revealing && this.historyBudget > 0 && viewport.clientHeight > 0) {
       // Prefetch before an edge is reached. One owner request remains in flight;
       // successful short pages can keep filling a tall viewport automatically.
-      const margin = Math.min(480, viewport.clientHeight * 0.75);
-      if (this.historyBefore() && viewport.scrollTop < margin)
-        this.requestHistory("before");
-      else if (this.historyAfter() && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < margin)
-        this.requestHistory("following");
+      const margin = historyMargin(viewport.clientHeight);
+      const underfilled = height <= viewport.clientHeight;
+      if (this.historyIntent.direction === "before" && this.historyBefore() && top < margin &&
+          (!this.atEnd() || underfilled))
+        this.requestHistory(this.historyIntent);
+      else if (this.historyIntent.direction === "following" && this.historyAfter() &&
+          height - top - viewport.clientHeight < margin)
+        this.requestHistory(this.historyIntent);
     }
   }
+  private maintainDisclosurePosition(viewport: HTMLDivElement): boolean {
+    const disclosure = this.disclosure;
+    if (!disclosure || !disclosure.anchor.isConnected || this.sendScroll) {
+      this.disclosure = undefined;
+      return false;
+    }
+    const top = disclosure.anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    if (Math.abs(top - disclosure.top) > 1) viewport.scrollTop += top - disclosure.top;
+    const animating = disclosure.turn.getAnimations?.({ subtree: true }).some(animation =>
+      animation.playState !== 'finished' && animation.playState !== 'idle' &&
+      Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    // Give newly rendered CSS transitions a paint to start. ResizeObserver
+    // drives the rest of the movement, including interrupted folds.
+    if (animating) disclosure.settledFrames = 0;
+    else if (++disclosure.settledFrames < 2) this.scheduleMeasure();
+    else this.disclosure = undefined;
+    return true;
+  }
+  private measureReminder(viewport: DOMRect): void {
+    // Match the legacy chat's reading probe: keep the previous prompt's context
+    // until the next prompt reaches the upper reading area, not the bottom edge.
+    const probe = viewport.top + Math.min(160, Math.max(48, viewport.height * 0.28));
+    const candidate = this.promptAt(probe);
+    const id = candidate?.dataset["userMessage"] ?? "";
+    const retained = this.pin()?.id === id;
+    // A small buffer prevents a barely clipped prompt from immediately being
+    // repeated. Relax it by 24px on return to avoid flickering at the boundary.
+    const distance = Math.min(96, Math.max(48, viewport.height * 0.12));
+    const useful = this.reminder() && candidate &&
+      viewport.height >= 240 &&
+      viewport.top - candidate.getBoundingClientRect().bottom >= distance - (retained ? 24 : 0);
+    const text = useful
+      ? (candidate.querySelector(".content")?.textContent ?? candidate.textContent)?.trim() ?? ""
+      : "";
+    this.setReminder(text ? { id, text } : null);
+  }
+  private promptAt(y: number): HTMLElement | undefined {
+    let low = 0, high = this.messages.length - 1;
+    let candidate: HTMLElement | undefined;
+    // Binary search the cached ordered prompts; scrolling stays O(log n).
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const message = this.messages[middle];
+      if (message && message.getBoundingClientRect().top <= y) {
+        candidate = message;
+        low = middle + 1;
+      } else high = middle - 1;
+    }
+    return candidate;
+  }
+  private setReminder(reminder: Reminder | null): void {
+    if (!reminder && this.reminderElement()?.nativeElement.contains(document.activeElement))
+      this.viewport().nativeElement.focus({ preventScroll: true });
+    const current = this.pin();
+    if (current?.id === reminder?.id && current?.text === reminder?.text) return;
+    const motion = !this.reducedMotion();
+    const swap = !!current && !!reminder && current.id !== reminder.id;
+    this.motionAllowed.set(motion);
+    this.quoteMotion.set(motion && swap);
+    if (!reminder) this.endPeek();
+    if (motion && swap) this.morphSurface("--dur-slow", "--ease-out");
+    this.pin.set(reminder);
+  }
+  /** The capsule sizes to its prompt. Ease its box from the painted size to the
+   * next one: between two prompts' widths, or between one and three lines. */
+  private morphSurface(duration: string, easing: string): void {
+    const surface = this.reminderElement()?.nativeElement.querySelector<HTMLElement>(".surface");
+    if (!surface || typeof surface.animate !== "function") return;
+    // Layout sizes ignore the charge's scale but include a running morph.
+    const from = { width: surface.offsetWidth, height: surface.offsetHeight };
+    this.surfaceMorph?.cancel();
+    afterNextRender(() => {
+      const to = { width: surface.offsetWidth, height: surface.offsetHeight };
+      if (!surface.isConnected ||
+        (Math.abs(to.width - from.width) < 2 && Math.abs(to.height - from.height) < 2)) return;
+      const style = getComputedStyle(surface);
+      this.surfaceMorph = surface.animate(
+        [
+          { width: `${from.width}px`, height: `${from.height}px`, overflow: "clip" },
+          { width: `${to.width}px`, height: `${to.height}px`, overflow: "clip" },
+        ],
+        {
+          duration: parseFloat(style.getPropertyValue(duration)) || 280,
+          easing: style.getPropertyValue(easing).trim() || "ease-out",
+        },
+      );
+    }, { injector: this.injector });
+  }
   private reducedMotion(): boolean {
-    return matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return this.motion?.matches ?? false;
   }
 }

@@ -19,7 +19,7 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
-`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative.
+`SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
 
 | Component | Main inputs | Intent outputs |
 | --- | --- | --- |
@@ -38,10 +38,10 @@ settles immediately under reduced motion.
 | `BranchChip` | `name`, `base`, `compact`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
 | `WorkspacePicker` | `value`, `items` | `valueChange(name or 'auto')`, `newWorkspace()`, `manageWorkspaces()` |
 | `NewTask` | `project`, optional `projectMenu`, `active`, `repos`, initial `repo`, pure `branchesFor(repoId)`, `branches`, `bases`, `base`, `branchPrefix`, initial `title`, initial `step`, initial `branchQuery`, `baseQuery`, `hi`, `workspace`, `workspaces`, `links`, `autoFocus` | `create(CreatedTask)`, `plan(PlannedTask)`, `cancelled()`, `linkRequested()`, `projectRequested()`, `addRepository()`, `workspaceRequested('new' or 'manage')` |
-| `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `restoreRequested(TaskSession)` |
+| `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)` |
 | `ArchivedSessions` | `archive: TaskSessionArchive`, `selected`, `disabled` | `requested(latest or earlier)`, `selectSession(sessionId)`, `restoreRequested(TaskSession)` |
-| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
-| `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
+| `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
+| `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `deleteRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
 | `PanelTabs` | `tabs`, `active`, `labelled`, `label` | `selectTab(id)` |
 | `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `busyLabel`, `compact`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
 
@@ -87,6 +87,11 @@ continues to work without these optional inputs. `canLink` and
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
 `TaskHeader.closed` hides stage/close controls for archived history.
+The optional `[gitStatus]` projection sits beside Git actions inside the reserved
+metadata row. Owners can show bounded loading, retry or Sync controls there;
+asynchronous status must not add rows below the header and displace a conversation.
+Keep projected content to one line, with long messages truncated visually while
+retaining their accessible text.
 `TaskHeader.disabled`, `canRenameBranch`, `canLink`, `gitAllowedActions` and
 `gitQuietLabel` let a production adapter expose only supported actions.
 `BranchChip.canRename` disables rename while keeping copy available.
@@ -194,13 +199,29 @@ fresh open after the exit resets it. `commit-panel-motion.mjs` verifies arriving
 content, entry/exit boundaries, reversals, focus and narrow reduced-motion states
 in both themes.
 
+## Detached commands
+
+`TaskSession.commands` is the number of shell commands still running after the
+agent's turn, such as a dev server or a watcher. It is independent of `status`:
+the glyph keeps describing the agent (working, needs you, new reply, done), and
+a static terminal icon with a count, shown from two commands up, sits before the
+diff. Its name and tooltip say that the agent may resume when a command
+finishes. Nothing animates, because motion means an agent is working. Delegated
+agents are not commands; they remain part of the agent's own `running` state.
+The owner decides what to count; omit the field when none run.
+
 ## Session archiving and working window
 
 Opt into archive actions with `allowArchive` and handle `archiveRequested` in the
-owner. The action is absent by default. Running rows require a second activation
-in the expanding Stop and archive button; Escape, blur and outside pointer input
-cancel it. Pointer leave retains confirmation. Nonrunning rows emit immediately.
-Sub-task rows forward the same intent. Consumers resolve the session's owning task
+owner. The action is absent by default. Running rows, and rows with detached
+`commands`, require a second activation in the expanding Stop and archive
+button; Escape, blur and outside pointer input cancel it. Pointer leave retains
+confirmation. Other rows emit immediately.
+A session with owner-supplied `canDelete: true`
+shows a trash icon and Delete session tooltip instead, emitting `deleteRequested`
+in one activation. Handle that intent separately: permanent removal offers no Undo.
+Omitted or false eligibility retains Archive, including queued work with history.
+Sub-task rows forward both intents. Consumers resolve the session's owning task
 when integrating a hierarchy. The connected workspace validates task/session
 ownership and current activity again in main/backend, retains history and edits,
 then removes the row and offers Undo. Restoring a stopped turn never restarts it.
@@ -276,3 +297,48 @@ seven seconds or the next action. `TaskHeader.unreachable` forwards the value.
 `NewTask.waitingFor` names the offline machine, and `[taskWaiting]` projects the
 owner's local waiting drafts above the form. Platform dispatch and exact request
 identity reconciliation belong to the workspace owner.
+
+## Session grouping
+
+The connected desktop uses two sidebar levels: root sessions and child sessions.
+`TaskSession.parentId` describes organization; fork `kind` still describes transcript
+provenance. `childCount` is authoritative for a root; the owner supplies only the
+current bounded child window with `childrenLoading`, `childrenError` and
+`moreChildren`. TaskList/TaskGroup accept `allowNesting` and emit
+`moveSessionRequested({taskId, sessionId, parentSessionId})` and
+`sessionChildrenRequested({taskId, sessionId, earlier?})`.
+
+Drag a leaf anywhere over another root's visible group in the same task to nest
+it (the Magnetic dock). The whole group is the destination: it takes an accent
+tint and outline, its title and tree guide turn accent, and its count fills with
+the pending total. The group's outline extends downward as a pointer-transparent
+overlay, and the dragged chip snaps from the pointer into that slot at child
+depth, so no row moves while aiming. The docked ghost breathes immediately to
+reveal the covered row, which remains a valid target. Groups that cannot accept
+the session recede. Reduced motion removes the reach, snap and breath and keeps a
+steady translucent ghost. Collapsed groups stay collapsed while aiming and show a
+stacked edge. On drop the ghost holds its slot (bounded to 1.5s) until the
+confirmed row arrives, then the row glides from the ghost into place and the
+destination opens. While a child is dragged its task header shows a quiet ready
+outline; holding it over the header lights the header and previews the moved row
+at task level in place, without implying a sort position. Edge scrolling never
+inserts padding into the list.
+
+The task-scoped `SessionNestingDragDirective` owns native transfer, overlay,
+announcements, edge scrolling and cancellation/cleanup. It keeps the existing
+session MIME data and copy/move semantics, so dragging into a composer still
+copies a mention. `TaskSession.childrenAppendOrder=false` supports older engines:
+the group still highlights, but the preview stays at the pointer rather than
+promising an unsupported landing position. Other supplied-data owners default
+to append placement. Each row's
+Move menu provides the keyboard alternative and “Move to task level”. A populated
+group must release its children before becoming a child itself. Disclosure never
+selects the parent; selected children reveal their group, and closed children are
+inert. Existing caps count root groups. Filtering retains loaded matching children
+with their parent context. Menus offer at most 20 roots from the loaded window.
+
+`session-nesting-dock.mjs` checks stable geometry, the joined group/extension and
+docked chip, both breathing phases, covered row targeting, receding groups,
+landing and append placement, header drag-out, composer mentions and reduced
+motion in both themes. `session-nesting.mjs` exercises the connected preview with native drops, keyboard
+moves, both themes and narrow reduced-motion layouts.

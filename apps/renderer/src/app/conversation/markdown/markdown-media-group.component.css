@@ -37,8 +37,7 @@ input:focus-visible {
 img {
   display: block;
   width: 100%;
-  max-height: 380px;
-  height: auto;
+  height: 100%;
   object-fit: contain;
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
@@ -56,6 +55,8 @@ figcaption {
 }
 .compare-images {
   position: relative;
+  inline-size: 100%;
+  aspect-ratio: 16 / 9;
   max-height: 380px;
 }
 .compare-images img {
@@ -64,7 +65,7 @@ figcaption {
   width: 100%;
   height: 100%;
   border-radius: 0;
-  object-fit: cover;
+  object-fit: contain;
 }
 .wipe-line {
   position: absolute;
@@ -162,3 +163,47 @@ dialog img {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
+
+.image-slot {
+  position: relative;
+  inline-size: 100%;
+  min-height: 148px;
+  aspect-ratio: 16 / 9;
+  max-height: 380px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+}
+.image-slot > .image {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+.image-slot > ex-markdown-media { position: absolute; inset: 0; margin: 0; overflow: auto; }
+.media-status,
+.compare-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  text-align: center;
+  overflow: auto;
+}
+.media-status .previous,
+.compare-status .previous { width: auto; height: auto; padding: var(--space-1) var(--space-2); }
+.compare-status { inset: 0 0 0 50%; background: var(--surface-sunken); }
+.compare-status.before-status { inset: 0 50% 0 0; }
+.compare-images .before { z-index: 1; }
+.compare-status { z-index: 2; }
+.compare-controls input:disabled { cursor: default; }
+
+.wipe-line,
+.before-label,
+.after-label { z-index: 2; }
+.compare-controls label { min-width: 0; }

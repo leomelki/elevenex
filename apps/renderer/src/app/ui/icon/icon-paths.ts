@@ -28,6 +28,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
   commit: "M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM1.5 8h4M10.5 8h4",
   push: "M8 11V3M4.5 6.5L8 3l3.5 3.5M3 13.5h10",
   more: "M3.5 8h.01M8 8h.01M12.5 8h.01",
+  grip: "M5 2.5h.01M11 2.5h.01M5 8h.01M11 8h.01M5 13.5h.01M11 13.5h.01",
   stop: "M5.5 4.5h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z",
   sidebar:
     "M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3zM6 3v10",

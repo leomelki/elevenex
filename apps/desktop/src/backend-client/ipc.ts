@@ -1,6 +1,7 @@
 import { registerTaskTerminalIpc } from './task-terminal';
 import { registerWorkspaceIpc } from './workspace';
 import { registerSessionChatIpc } from './session-chat';
+import { registerSessionChatStreamIpc } from './session-chat-stream-ipc';
 import { handleForWindow, type TrustedSender } from '../ipc';
 import type { BackendClient } from './client';
 import type { TerminalLifetime } from './terminal-lifetime';
@@ -22,8 +23,9 @@ export function registerBackendClientIpc(client: BackendClient, trusted: Trusted
   });
   const stopWorkspace = registerWorkspaceIpc(client, trusted);
   const stopChat = registerSessionChatIpc(client, trusted);
+  const stopChatStream = registerSessionChatStreamIpc(client, trusted);
   const stopTerminals = registerTaskTerminalIpc(client, trusted, terminals);
   const stopStreams = registerTerminalStreamIpc(client, trusted, diagnoseTerminal);
   const stopPreferences = registerTerminalPreferencesIpc(client, trusted, preferences);
-  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); stopTerminals(); stopStreams(); stopPreferences(); };
+  return () => { stopState(); stopInfo(); stopWorkspace(); stopChat(); stopChatStream(); stopTerminals(); stopStreams(); stopPreferences(); };
 }

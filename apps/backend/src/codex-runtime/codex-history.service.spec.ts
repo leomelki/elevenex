@@ -2,9 +2,34 @@ import { CodexHistoryService } from './codex-history.service.js';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { chatWindow } from '../desktop-workspace/desktop-chat-projection.js';
+import { chatWindow } from '../desktop-workspace/desktop-chat-window.js';
 
 describe('CodexHistoryService', () => {
+  it('restores commentary and final phases from saved assistant receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-assistant-phase-'));
+    try {
+      const timestamp = '2026-11-22T16:04:13.647Z';
+      await writeFile(join(root, 'phased.jsonl'), [
+        { type: 'session_meta', payload: { id: 'phased', cwd: '/repo' } },
+        { type: 'response_item', timestamp, payload: {
+          type: 'message', role: 'assistant', id: 'progress', phase: 'commentary',
+          content: [{ type: 'output_text', text: 'Still checking.' }],
+        } },
+        { type: 'event_msg', timestamp, payload: { type: 'item_completed', item: {
+          type: 'AgentMessage', id: 'final', phase: 'final_answer', content: [{ text: 'Passed.' }],
+        } } },
+      ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+
+      const history = await new CodexHistoryService(root).getHistory('phased');
+      expect(history).toMatchObject([
+        { id: 'progress', kind: 'assistant', assistantPhase: 'commentary', content: 'Still checking.' },
+        { id: 'final', kind: 'assistant', assistantPhase: 'final', content: 'Passed.' },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores native tools inside exec with stable live IDs, readable output and individual failures', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-native-tools-'));
     try {

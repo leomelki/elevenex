@@ -50,34 +50,83 @@ Older engines omit the capability and retain their original send contract.
 
 - `SessionChatClient` calls only named, scope-bound bridge operations. Main owns
   HTTP, credentials, validation, coalescing, deadlines and cancellation.
-- `SessionChatStore` owns one visible transcript window, long reads, mutation
-  epochs and feedback. It cancels reads on navigation, hiding or destruction.
-  Pending writes can finish on their original backend; their replies never
-  change a different conversation. No write is replayed by reconnect or refresh.
-  Idle heartbeats retain unchanged conversation inputs. Transient background
-  read failures retain the transcript and retry quietly; initial/explicit reads
-  and unsupported-engine errors still expose recovery feedback.
-  Confirmed non-configuration actions reconcile through that same quiet,
-  incremental read path. Repeated visibility notifications share the active read.
-- `SessionChatDrafts` retains at most 20 ordinary session drafts per workspace
-  scope. Unresolved writes are not evicted silently. A failed send restores its
-  text ahead of any newly typed draft. An uncertain outcome requires checking
-  delivery and explicit acknowledgement before another send. A new matching
+- `SessionChatStore` owns one visible transcript window, its live cursor,
+  mutation epochs and feedback. It releases the stream on navigation, hiding
+  or destruction. Main keeps the stream open between updates and resumes from
+  the last applied cursor after an interruption. Pending writes can finish on
+  their original backend, and their replies apply only to their original
+  conversation. Reconnect and refresh issue reads only.
+  Heartbeats stay in main. Live updates retain unchanged conversation inputs.
+  Backend resets reconcile the authoritative suffix, including rewinds while
+  a session was cached. An overlapping first row lets both background resets
+  and explicit refreshes retain the loaded prefix when the prompt context
+  still matches. Interruptions retain the transcript, scroll position and draft.
+  The reconnect message appears after a short delay. Confirmed non-configuration
+  actions reconcile through the open stream.
+- Adjacent history reads pause the watch and resume it when the page arrives.
+  Live updates refresh runtime state while the user reads a historical window.
+  The engine's optional `state.activePromptId` identifies the foreground turn
+  independently of paging. A visible slice of that turn keeps Working and its
+  open work timeline while the retained transcript waits for a return to latest.
+  Older engines omit the prompt ID and use the latest visible turn when following live.
+  A forward page that reaches latest establishes a fresh stream snapshot so it
+  cannot reapply text the history page included. Returning to latest keeps the
+  historical window and its cursors until the fresh snapshot succeeds.
+  Older engines without `chatStream` use bounded long reads and the same history controls.
+- Paging keeps at most 320 contiguous raw records. When hidden work leaves the
+  newer edge, `session-chat-tail` retains compact prompt/reply, media and outcome
+  context for up to 16 nearest turns, 80 records and 256,000 text/input characters.
+  Source message boundaries keep a progress update from merging into the answer
+  and changing its mounted identity. Context never supplies pagination or delivery
+  cursors; following pages consume it without duplicate replies. Explicit history
+  replacement and session navigation release it. This keeps short collapsed turns
+  readable without retaining every tool record or fetching the full transcript.
+- `SessionChatDrafts` keeps a 20-entry cache of live composers per workspace.
+  It reads unsent text on demand from the local app, keyed by saved window,
+  configured machine, task and session. Edits reach main independently of
+  backend availability, and a restart restores the text when that composer
+  opens. Attachments and mention chips have a window lifetime.
+  Entries with unsaved changes or unresolved writes stay in memory. A failed
+  send restores its text ahead of any newly typed draft. Accepted sends remove
+  their submitted text and keep later edits. If the app closes during a send,
+  reopening preserves the text and asks the user to check delivery and
+  acknowledge the outcome before sending again. A new matching
   user/queue receipt confirms delivery even if the command reply is lost;
   running state or assistant output alone does not confirm a particular send.
 - `session-chat-transcript` projects provider-neutral items into stable turns,
   pairing tools/results by tool ID and preserving commentary, reasoning,
   unknown tools, orphan results and explicit failures. Fresh prompts alone opt
-  into entry motion; initial history stays still.
+  into entry motion; initial history stays still. Claude's streamed and saved
+  blocks can use different IDs and indexes. The view pairs corresponding blocks
+  within the same provider message, keeps their position and render identity,
+  and uses the saved content. Across a reset the projection keeps only matching
+  render identities from the prior page. Raw history and pagination use the
+  current provider IDs.
+- The conversation-owned `ChatTranscriptProjection` reuses completed exchanges
+  and unchanged tool steps, including parsed presentations. Runtime-only queue,
+  usage and activity changes do not replace transcript inputs. Reset/paging
+  replies reconcile equal records before projection; eviction and navigation
+  release their cached turns. Streaming text changes only its active turn.
 - The store keeps a bounded mapping from durable prompt IDs to their temporary
   render IDs and ephemeral send origins for the current transcript window. Receipt
   reconciliation retains the mounted turn and its animation; a receipt before
   the first paint also retains `isNew`, so the bubble and Working enter together.
+  Older pages retain transcript order during a send. The pending prompt starts
+  after the last visible record known at submit, and a matching saved receipt
+  keeps its authoritative position in history.
   Domain intents keep the durable ID, and origin data never crosses the bridge.
   Paging prunes this mapping and session/backend navigation clears it.
 - Queued messages retain their optimistic render IDs through saved receipts, too.
   The mapping is bounded by the current queue, pruned when messages leave, and
   cleared on session/backend navigation. Queue actions use the saved ID.
+  Steer and an idle Resume show the outgoing prompt immediately. Automatic
+  sends follow the engine's optional `state.dispatchingPrompts` signal, even
+  before the native user item or any assistant output arrives. Queue removal
+  alone can be a cancellation. The handoff reuses the normal bubble entrance
+  and queue exit, preserves scroll following, and keeps the bubble mounted
+  when the native item arrives. A rejected handoff restores its queue row when
+  the engine still holds it. The temporary prompt never becomes a history
+  cursor or a saved transcript record.
 - `session-chat-tools` selects semantic verbs and bounded presentation blocks for all
   normalized tool kinds. Commands separate purpose, working directory, stdout/stderr
   and reported exit/interruption facts; file tools preserve code whitespace and
@@ -96,6 +145,14 @@ Older engines omit the capability and retain their original send contract.
   the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
   each tool. Envelopes without supported native receipts remain inspectable.
+  Codex assistant phases survive streaming and history reload. Commentary stays
+  with the turn's activity after it ends. Compact transcript exports label the
+  latest interim text as Progress update until a final reply arrives.
+- Claude tool calls share the same message/tool ID in live events and saved
+  history. Split thoughts and text use the API block index when the saved
+  record supplies it. The backend joins unsaved blocks at shared record IDs
+  before applying the page limit, so recent calls and their results keep their
+  place when reopening or resetting a live turn.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.
@@ -118,8 +175,8 @@ attaching a runtime.
 
 ## Background work and activity
 
-`SessionActivity` in the session bar summarizes work that outlives its turn and
-runtime events worth noticing. It reads the optional `state.work` field, which the
+`SessionActivity` in the composer controls summarizes work that outlives its turn
+and runtime events worth noticing. It reads the optional `state.work` field, which the
 backend's `desktop-chat-work` projection builds from the runtime's authoritative
 `backgroundWork` list, enriched by its task/agent records:
 
@@ -136,13 +193,13 @@ backend's `desktop-chat-work` projection builds from the runtime's authoritative
   running hooks, progress ticks and quota data (owned by the agent menu) are dropped.
 
 The trigger is absent when both lists are empty. With live work it reads
-“N in background” plus the longest elapsed time, and the session status becomes
-“Working in background” after the reply ends. Otherwise warnings/failures from the
-last 30 minutes flag “N issues” until the panel is opened; older history leaves a
-quiet clock button. The CDK dialog traps and restores focus, closes on Escape or
+“N in background” plus the longest elapsed time, including after the reply ends.
+Otherwise warnings/failures from the last 30 minutes flag “N issues” until the panel
+is opened; older history leaves a quiet clock button. The CDK dialog traps and
+restores focus, closes on Escape or
 outside click, and stays open with an empty state if the work finishes underneath it.
 Elapsed times tick locally (1s only while work runs); no extra reads are added:
-the data rides the existing long-poll feed.
+the data rides the selected chat feed.
 
 The panel lists **Needs you** (work waiting on a decision), **Running** and
 **Recent**. Every row has the same shape so the list scans quickly: a status glyph,
@@ -183,22 +240,158 @@ older desktops; engines without `work` show no activity trigger.
 reduced-motion states in both themes.
 
 The backend keeps at most 32 short-lived selected-session observations. It
-subscribes before hydration, then uses a pre-read cursor and idempotent changed
-item replacements to reconcile events during the snapshot. Reads wait up to
-eight seconds for activity; the renderer spaces active reads by 80ms. Persisted
-history is read at entry, explicit paging and durable history invalidation,
-never for each streamed token. Simultaneous runtime/history reads share their
-work. Provider APIs still own source transcript reading; their `getHistory`
-interface currently returns full history inside the backend. Only bounded tails
-are copied/projected and transported to the renderer.
+subscribes before hydration and samples the feed revision before reading. The
+next projection catches changes that arrived during the snapshot. When the
+resume cursor is available, changed records and appended text fill the gap.
+Persisted history is read at entry, explicit paging, history invalidation or
+after a gap in the bounded live window. Simultaneous runtime/history reads
+share their work. Providers still own source transcript reading. Their `getHistory`
+interface currently returns full history inside the backend. The selected feed
+caches a bounded set of emitted cursor offsets and the last prompt span for its
+current history revision. Pages project and transport only bounded candidates,
+and idle connections send transport heartbeats without projecting a transcript.
+Legacy reads still wait up to eight seconds with an unchanged cursor.
 
-History pages contain at most 80 items / 512 KiB; the visible live window retains
+Progressive loading is enabled by default through
+`SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
+**80 records / 512 KiB** with compact completed turns on supporting engines.
+The viewport can prefetch older pages when idle to fill available space, within
+a four-page budget and while each page adds visible height. Prefetch preserves
+the latest records when the buffer fills. A cold conversation
+open shows a transcript and composer skeleton after 150 ms. The real chat
+renders as soon as the page is ready, with the latest reply positioned before
+paint. The placeholder surface crossfades to that view over 140 ms while the
+composer stays interactive. Reduced motion swaps the surface immediately.
+Cached opens, new-session drafts and background history reads use their
+existing content immediately. History prefetch preserves the reading position.
+
+An override can start in window mode at **320 records / 2 MiB** and defer
+older pages until scroll intent. If an uncached opening takes more than
+**1,750 ms**, the application-wide `SessionChatLoadingPolicy` retries it in
+progressive mode and switches the other chats on that connection. The deadline
+applies only to uncached openings. Navigation, hiding, pausing and destruction
+cancel it. Backend scope rotation and app restart reset the adaptive choice.
+
+Preview application boundaries that override `BackendClientService` also provide
+`SessionChatLoadingPolicy` at that boundary. Individual chat/workspace owners
+inherit it, so recreating those owners cannot reset the connection's fallback.
+The connected workspace preview accepts `?chatLoading=window` for exercising
+the window-mode override and its fallback.
+
+The optional `loadingMode: 'window' | 'progressive'` request selects these bounds
+for latest/live reads. Adjacent history pages remain at most 80 / 512 KiB in both
+modes so paging retains overlapping raw records and an inspected tool's anchor.
+Omission retains legacy 80-item pages; older engines may
+ignore the new option and continue returning those pages. Main validates the
+option and the corresponding reply bound. Active-session fallback hydration shares
+the backend's in-flight source/runtime reads; cancelled responses skip projection.
+Cached reopening renders immediately and revalidates from its saved incremental
+cursor, without blocking the composer or repeating an initial history read when
+the feed is still current. The backend provider's source-history API remains a
+full-history read, so a cold provider parse can still dominate initial latency.
+
+### Saved turn activity
+
+- A settled turn can occupy one saved entry with its prompt, latest reply
+  blocks, elapsed time, counts by tool category, failures and the first three
+  changed files plus the full file and line totals. Complete saved turns in an
+  ordinary window and the paginated Changes review use the same reconciliation.
+  The default profile requests compact entries for recent saved turns too.
+  Older engines may return small recent turns inline. A prompt with no hidden
+  work stays inline. The engine selects at most 40 summaries per history read
+  and keeps the current live turn's stream and saved completion handoff
+  available. Replies exceeding eight blocks or 128 KiB use the ordinary
+  history window so all their visible text stays accessible.
+- Summary selection occurs only at complete saved turn boundaries. Backward
+  paging uses the prompt ID and forward paging uses the last source ID. A
+  page starting or ending inside a turn uses ordinary rows at that seam.
+  The renderer counts visible reply blocks toward its 320-record window.
+- Opening Worked requests a compact timeline. Each tool call carries the same
+  heading and outcome as the ordinary timeline, plus an optional result ID.
+  Its paired receipt uses an empty source slot or carries bounded image
+  references. Viewed images render inside the matching tool disclosure. Other
+  inline previews retain their receipt positions. Commentary and
+  the visible reply stay in order. The entire timeline appears in one update.
+  Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
+  order, independent of the chat's scroll direction. Older engines keep their
+  ordinary work pages. Every batch must match the turn revision and advance
+  contiguously before the view publishes the timeline. Repeated provider row IDs
+  retain their first position and latest value.
+- The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
+  serialized data, keyed by backend scope, task, session and turn revision.
+  A 220 ms mouse dwell over the reply, keyboard focus on Worked, a 60 ms dwell
+  on Worked itself or a press on it (before the click lands) can warm an
+  activity batch even while another disclosure is loading.
+  Moving within the same turn preserves the dwell. Opening joins an active read,
+  continues a warmed first batch from its cursor, or uses the complete snapshot
+  immediately. Up to three unopened warm-ups (one batch each) keep running, so
+  moving between turns lets earlier reads finish into the cache; returning to
+  an in-flight turn reuses its read. A fourth uncached dwell cancels the oldest
+  warm-up, including a held first batch of a large turn. Closing the
+  disclosure cancels its read until a fresh interaction. Hiding the chat or
+  switching conversations cancels pending reads.
+  Scope and revision changes discard stale results. A sustained dwell can warm
+  the current revision when the conversation is available again.
+- The reply and counts stay available throughout. Open sections and tool
+  disclosures survive releasing a turn's rows after collapse. Reopening
+  stages previously visible tool evidence alongside the compact timeline.
+  Unopened groups mount their count controls and defer their folded tool rows.
+  A failed read offers retry in place. The reveal respects reduced motion.
+
+### Tool evidence
+
+Normal windows, live updates and saved activity pages opt into deferred tool
+details. Compact timeline tools share their enclosing turn revision and resolve
+their call and receipt within that exact saved turn. Ordinary rows carry
+individual evidence revisions. Counts, file-change metadata and inline media
+references remain available. Older engines can send inline evidence with the
+same row UI.
+
+Viewed images load by receipt and media ID when the tool body opens. The same
+bounded media reader serves the live chat and saved timelines. Closing the
+tool releases the image after its exit. An image whose call is on another page
+opens in its Result row.
+
+Opening a tool starts one bounded read for its call and its receipt when
+available. A 100 ms hover or visible focus on a closed tool heading, or a press
+on it, warms that same read first. Up to four unobserved warm-ups run at once;
+a newer intent beyond them cancels the oldest, an open adopts its warm-up and
+frees that slot, and a completed warm-up leaves only its cached evidence. Failed warm-ups stay uncached, and hidden or disconnected
+chats drop them. A raw history page that contains only the receipt shows a named
+Result row and opens that same pair. A result without a known call opens by
+its own identity. Collapsed tool bodies stay deferred while the reader scans
+the timeline or expands a group. The
+conversation owner shares an in-flight request for matching open references and
+cancels it when the last observer closes, leaves the current page or changes
+session. A receipt arriving for an open call changes its reference and replaces
+the requested evidence in place. Hidden or disconnected chats pause pending
+reads. Closing the tool releases the mounted evidence after its exit.
+
+Successful reads are kept in a window-local LRU of 48 entries and 1 MiB of
+serialized evidence. Entries are scoped by machine, task, session and either the
+saved turn revision or the individual item revisions. The heading stays in place during a read, then the evidence
+opens in one fold. Failed reads can be retried in place. Evidence
+uses the existing preview, Details and original transcript reader.
+Counts describe observed operations, including calls whose completion is
+unknown. Codex compound reads show their other paths and reported command steps
+in the evidence. Saved image views are tool operations with recorded paths and
+use the same confined media reader as other transcript images.
+
+### History window and related reads
+
+History windows also carry an optional
+bounded `leadingPrompt` when the first item belongs to an earlier user message.
+That prompt supplies the turn identity and reminder without moving the page cursor
+or claiming that the intervening evidence has loaded. It survives item eviction
+and cached reopening, and disappears when its actual user row enters the window.
+Older engines can omit it. The visible live window retains
 at most 320 items. Scrolling near either edge automatically loads an adjacent page and evicts
 content at the opposite edge above 320 items. Stable row anchors preserve the
 reading position, and loaded history never opts into arrival motion. The optional
 `following`/`next` contract continues forward without gaps while live state keeps
-refreshing. Sending reconciles the live tail first; the draft stays editable while
-reading. Engines without forward cursors retain an automatic return to their tail
+refreshing. Live state changes update the composer and the identified active
+turn when a slice of it is visible. Sending reconciles the live tail first, and the draft
+stays editable while reading. Engines without forward cursors retain an automatic return to their tail
 when scrolling down through an evicted window. Ordinary display text is shortened at 16,000 characters,
 with explicit access to the original paged content. State, queue, model and
 activity collections have separate finite bounds; main caps the complete reply
@@ -291,11 +484,12 @@ applies changes through `set_thinking_level` before prompting. Catalog failures
 and unknown model capabilities do not invent supported efforts. Both live
 settings and preset catalogs carry these same per-model capabilities.
 
-Claude model selections retain their catalog aliases across startup and context
-updates, preserving custom display names and per-model thinking choices. When
-only a wire model ID is known, the SDK's `resolvedModel` catalog field supplies
-the match. Model changes publish state even before a runtime starts; a warm
-query applies them without rebuilding the process. Native model-change receipts
+An explicit Claude model selection is saved with its session and restored before
+the first chat read or CLI launch after a backend restart. It retains its catalog
+alias across context updates, preserving custom display names and per-model
+thinking choices. When the runtime only reports a wire model ID, the SDK's
+`resolvedModel` catalog field supplies the match. Model changes publish state
+before startup and apply to a warm query in place. Native model-change receipts
 are control traffic and are omitted from live and saved conversation turns.
 
 The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
@@ -345,8 +539,14 @@ cross the bridge. Their remaining percentages drive the clock ring, delayed
 hover/focus card, menu bars and low/exhausted notices above the composer.
 Reset times use the user's locale and refresh while mounted. Passing a reset
 does not invent replenished allowance: the display waits for a provider update.
-Claude data becomes available when its SDK emits subscription rate-limit events;
-Codex uses its existing coalesced account-limit refresh and notifications.
+Claude reads subscription windows through the optional native SDK usage API on
+prewarm, runtime reads and activity, with coalescing and a one-minute cache per
+runtime (including failures). The read skips behavioral transcript scans, never
+starts a process, and publishes independently of context/model reads. Its
+availability flag establishes subscription data before the first prompt; explicit
+API-key metadata suppresses it. Live subscription rate-limit events remain a
+fallback for older CLIs and supersede pending reads. Retired runtime replies are
+discarded. Codex uses its existing coalesced account-limit refresh and notifications.
 No extra repository reads, account credential access or renderer networking is added.
 The notice follows the design's context/quota priority and returns focus to the
 composer on dismissal. Automatic plan pausing/resume, Send at reset, cross-agent
@@ -364,9 +564,10 @@ missing/API-key data and narrow reduced-motion layouts in both themes.
 The component-owned `SessionChatPresets` controller owns preset view models, stable chosen identities, the retained creator draft and stale/disposed reply checks. Transcript state remains in `SessionChatStore`.
 
 Starting presets use the optional bounded `SessionChatState.presets` capability.
-The blank chat centers one composer beneath at most six reference preset cards
-and Custom, which opens the preset creator with the current harness, model,
-thinking and fast-mode configuration and an empty name. Editing or cancelling
+The blank chat centers one composer beneath the starting presets, with the
+welcome area scrolling independently on short windows. Custom opens the preset
+creator with the current harness, model, thinking and fast-mode configuration
+and an empty name. Editing or cancelling
 this local draft leaves the conversation settings unchanged. A saved-card
 selection submits one
 `preset` action, validates the entire mix before applying it, reconciles state,
@@ -392,9 +593,37 @@ state. Editing a preset never starts a runtime or sends a message; Create applie
 The optional `presetDefault` snapshot enables the quiet Default dropdown above
 the cards. It changes the connected machine's default provider/preset and applies
 that mix to the current blank chat. Ordinary card selection remains session-only.
-The Default card label and selected ring have separate meanings. A bounded
-six-card window retains a selected/default preset chosen beyond the first six;
-the dropdown lists the existing bounded 24-preset catalog.
+The Default card label and selected ring have separate meanings. The dropdown
+lists the existing bounded 24-preset catalog. Engines without `presetEditing`
+retain a six-card window that makes room for the selected and default presets.
+
+With `presetEditing`, the first six entries get full cards and Option+1–6.
+The remainder follow in responsive slim rows, with Custom last in the entire
+order. The blank chat previews up to two slim rows and compacts as vertical
+space shrinks. Edit shows the entire catalog and keeps New preset in the heading.
+The composer stays visible with its draft and becomes interactive again on Done
+or Escape. In Edit, click a card or its pencil to open the retained preset
+dialog. On the start screen, a pencil or E on a focused card opens that dialog
+in place.
+Drag a grip or use Option+Arrow keys to reorder. Remove or Delete offers a short
+undo window.
+Removing the default selects the first eligible preset in the remaining order.
+Undo restores the original position and defaults if the catalog revision is
+still current.
+
+When a user adjusts the starting preset through the composer, the grid retains
+the association with the saved preset and the callout shows the changed fields.
+Revert applies the saved mix to the current chat. Update preset writes the
+current mix to the saved preset, and Save as new gives the mix its own name.
+The existing edit dialog can also take the current mix as a draft. If the
+chat still uses the preset being edited, saving a changed mix reapplies it.
+Chat-specific adjustments are preserved.
+
+Update, reorder, remove and restore actions compare the catalog revision
+inside the settings transaction. They can change future defaults and update
+active chat feeds while leaving the current conversation's agent intact.
+Reorder preserves stored slots for unregistered harnesses, and deletion of a
+legacy default clears the legacy values that could regenerate it on reload.
 
 Default writes and creator choice reuse existing settings columns. A settings
 transaction compares a revision of the provider and canonical preset catalog,
@@ -449,6 +678,9 @@ older engines can omit it. Persisted net captures include shell edits and surviv
 history reloads. Successful native edits provide a fallback; failed/pending calls
 do not claim changed files. Captured unchanged paths remove reverted edits, while
 explicit edits outside the captured repository survive reconciliation.
+An ignored file observed without a starting state only contributes when a
+successful tool supplies evidence for that path. Verified binary and mode-only
+changes still contribute to the file count.
 
 `SessionChat.reviewRequested` carries the selected scope/task/session, stable
 reply ID and optional file path. `MachineWorkspace` owns that selection and
@@ -486,14 +718,18 @@ content stay distinct; display normalizes CRLF and removes one terminal split
 sentinel without stripping meaningful spaces or blank lines.
 
 Chat images use optional, bounded `SessionChatItem.media` references and the named
-`sessionChatMedia` bridge operation. Inline Codex/native/MCP image results join the
-answer, while Markdown image paths resolve through the same selected-session
-owner. Binary image data never enters the transcript preview or triggers its raw
-output overflow control. Ordinary shortened text keeps the full-content reader.
+`sessionChatMedia` bridge operation. Inline Codex/native/MCP previews stay at the
+tool receipt's position in the work timeline, including results that arrive
+after later messages. Authored Markdown images remain in their original message.
+Both resolve through the selected-session media owner. Binary image data never
+enters transcript text or triggers the raw output overflow control. Ordinary
+shortened text keeps the full-content reader.
 
-`SessionChatMedia` owns the latest 12 image references in the mounted transcript,
-three concurrent reads, a 48 MiB source budget, cancellation and stale-selection
-rejection. It supplies the existing Markdown resolver; loading/read/decode errors
+`SessionChatMedia` owns the newest 12 distinct media paths in the displayed
+transcript, including its retained prompt and reply context. It preserves loaded
+sources across paging, limits reads to three in flight and caps source data at
+48 MiB. Evicted references cancel their reads, and replies are validated against
+the current reference and selection. Loading/read/decode errors
 are explicit. Leaving the session releases sources and queued work. Older engines
 can omit media metadata. This slice supports PNG, JPEG, GIF and WebP; it does not
 fetch external URLs or execute SVG/HTML.
@@ -546,10 +782,12 @@ Provider history retains ordinary named Markdown links. Projection recognizes on
 our private upload namespace, emits bounded image/video/file metadata, and avoids
 duplicating provider-native image blocks. The transcript shows supplied images in
 the existing accessible image viewer, videos in the existing recording player,
-and documents as named cards with Copy path. Media reads select a recorded item
-and attachment ID, validate signatures, and confine real paths to that session's
-upload directory. Video data is limited to MP4/WebM/Ogg; codec failures remain
-readable. The desktop CSP permits local data media, with no external media hosts.
+and documents as named cards with Copy path. A standalone Markdown embed such as
+`![Walkthrough](artifacts/run.webm)` can also show a recording from the session
+workspace in an agent reply. Media reads select a recorded item and attachment ID,
+validate signatures, and confine recordings to the workspace or that session's
+upload directory. Video data is limited to MP4/WebM/Ogg and 20 MiB per file. Codec
+failures remain readable. The desktop CSP permits local data media.
 
 The preview adapter and `session-attachments.mjs` exercise native file selection,
 DOM paste/drop, files-only sends, retry/removal, viewer focus, playback and both
@@ -582,7 +820,8 @@ a retained receipt baseline require explicit conversation inspection.
 
 Draft text, files, mentions and in-flight uncertainty share the retained entry
 through a same-machine scope rebind. Late command results update their original
-draft entry without overwriting another session. Up to five transcript snapshots
+draft entry without overwriting another session. Local draft storage is
+independent of the waiting-action journal. It cannot dispatch messages. Up to five transcript snapshots
 of one million serialized characters each retain loaded conversations for offline
 navigation, alongside the existing 320-item live window and ordinary twenty-draft
 cache. Unresolved draft uncertainty keeps its existing preservation policy.
@@ -603,10 +842,10 @@ automatic delivery joins that queue instead of restarting the agent.
 
 ## Tool timeline and original content
 
-The production timeline has one recent-work budget across alternating messages
-and tool calls. Running/unknown work and unresolved failures stay outside age
-compaction; commentary stays in order. Discovery grouping and completion preserve
-inspection. `session-tool-timeline.mjs` exercises these transitions, repeated and
+Each activity section has its own recent-work budget. Running and unknown calls
+stay visible, and a late result updates its original call and section. Paired
+text-only results do not break adjacent reply blocks or interrupt newer
+thinking. `session-tool-timeline.mjs` exercises these transitions, repeated and
 interrupted disclosures, full-output paging and paired call/input selection with
 provider-shaped fixtures in the connected preview.
 

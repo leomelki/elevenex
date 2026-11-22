@@ -238,12 +238,12 @@ describe('ClaudeStatusBarComponent', () => {
     );
   });
 
-  it('shows provider-reported plan usage with a detailed allowance popover', async () => {
+  it.each([['codex', 'Plus'], ['claude', 'Max']] as const)('shows %s plan usage with the same detailed allowance popover', async (provider, planName) => {
     const fixture = await render();
-    fixture.componentRef.setInput('currentProvider', 'codex');
+    fixture.componentRef.setInput('currentProvider', provider);
     fixture.componentRef.setInput('planUsage', {
-      provider: 'codex',
-      planName: 'Plus',
+      provider,
+      planName,
       status: 'warning',
       windows: [
         {
@@ -270,10 +270,10 @@ describe('ClaudeStatusBarComponent', () => {
     fixture.detectChanges();
 
     const overlay = TestBed.inject(OverlayContainer).getContainerElement();
-    expect(overlay.textContent).toContain('Codex usage');
+    expect(overlay.textContent).toContain(provider === 'codex' ? 'Codex usage' : 'Claude usage');
     expect(overlay.textContent).toContain('5-hour limit');
     expect(overlay.textContent).toContain('Weekly limit');
-    expect(overlay.textContent).toContain('Plus');
+    expect(overlay.textContent).toContain(planName);
   });
 
   it('opens context details and updates the open popover with live token usage', async () => {

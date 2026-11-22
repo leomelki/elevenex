@@ -20,7 +20,12 @@ test('development target flags default Linux to ARM64 and reject ambiguous/unsup
   }
 });
 
-async function fixture(t) {
+const linuxShellFiles = [
+  'apps/backend/bin/plannotator-wrapper.sh',
+  ...['bashrc', 'integration.fish', 'zshenv', 'zshrc'].map(name => `apps/backend/bundle/shell-integration/scripts/${name}`),
+];
+
+async function fixture(t, lineEnding = '\n') {
   const root = await mkdtemp(join(tmpdir(), 'ex-linux-build-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = [
@@ -44,15 +49,21 @@ async function fixture(t) {
   await writeFile(join(root, 'apps/backend/package.json'), JSON.stringify({ name: 'elevenex-backend', dependencies: Object.fromEntries(
     ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
   ) }));
-  await writeFile(join(root, 'pnpm-lock.yaml'), `lockfileVersion: '6.0'\nimporters:\n  apps/backend:\n    dependencies:\n${
+  const lockfile = `lockfileVersion: '6.0'\nimporters:\n  apps/backend:\n    dependencies:\n${
     ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
-  }  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n`);
+  }  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n`;
+  await writeFile(join(root, 'pnpm-lock.yaml'), lockfile.replaceAll('\n', lineEnding));
+  for (const file of linuxShellFiles) {
+    const path = join(root, file);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${file}${lineEnding}`);
+  }
   return root;
 }
 
-for (const architecture of ['arm64', 'x64']) {
-  test(`Linux ${architecture} builds browser runtime without legacy VS Code assets and cleans its context`, async t => {
-    const root = await fixture(t);
+for (const [architecture, lineEnding] of [['arm64', '\r\n'], ['x64', '\n']]) {
+  test(`Linux ${architecture} stages a browser runtime from a checkout with ${lineEnding === '\r\n' ? 'CRLF' : 'LF'} endings`, async t => {
+    const root = await fixture(t, lineEnding);
     let context;
     const archiveName = `elevenex-backend-linux-${architecture}.tar.gz`;
     const output = await buildLinuxDevelopmentRuntime(root, version, architecture, async (command, args, cwd) => {
@@ -69,6 +80,9 @@ for (const architecture of ['arm64', 'x64']) {
       assert.ok(lockfile.includes("      'better-sqlite3':\n        specifier: 1.0.0\n        version: 1.2.3\n"));
       assert.ok(!lockfile.includes('unused-agent-cli'));
       assert.ok(lockfile.endsWith('  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n'));
+      for (const file of linuxShellFiles) {
+        assert.equal(await readFile(join(cwd, 'runtime', file), 'utf8'), `${file}\n`);
+      }
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
       assert.equal(backend.dependencies['playwright-core'], '1.0.0');
@@ -88,6 +102,8 @@ for (const architecture of ['arm64', 'x64']) {
     assert.equal(await readFile(`${output}.sha256`, 'utf8'), 'checksum');
     await assert.rejects(stat(context), { code: 'ENOENT' });
     assert.equal(await readFile(join(root, 'apps/backend/node_modules/native.node'), 'utf8'), 'apps/backend/node_modules/native.node');
+    assert.equal(await readFile(join(root, linuxShellFiles[0]), 'utf8'), `${linuxShellFiles[0]}${lineEnding}`);
+    assert.ok((await readFile(join(root, 'pnpm-lock.yaml'), 'utf8')).startsWith(`lockfileVersion: '6.0'${lineEnding}importers:`));
   });
 }
 

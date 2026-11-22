@@ -1,19 +1,23 @@
+import type { SessionChatPlanUsage } from '@elevenex/shared';
 import { record } from './desktop-chat-projection.js';
+import { allowsClaudePlanUsage } from '../claude-runtime/claude-plan-usage.js';
 
 /** Only expose bounded subscription facts, never authentication or provider payloads. */
-export function chatPlanUsage(raw: Record<string, unknown>, provider: string) {
+export function chatPlanUsage(raw: Record<string, unknown>, provider: string): SessionChatPlanUsage | null {
   if (
     (provider !== 'codex' && provider !== 'claude') ||
     (provider === 'codex'
       ? record(raw.authStatus).authMethod !== 'oauth'
-      : record(raw.sessionMetadata).apiKeySource !== 'oauth')
+      : !allowsClaudePlanUsage(record(raw.sessionMetadata).apiKeySource))
   )
     return null;
   const plan = record(raw.planUsage);
   const status = plan.status;
   if (
     plan.provider !== provider ||
-    (status !== 'available' && status !== 'warning' && status !== 'exhausted') ||
+    (status !== 'available' &&
+      status !== 'warning' &&
+      status !== 'exhausted') ||
     typeof plan.updatedAt !== 'string' ||
     plan.updatedAt.length > 100 ||
     !Number.isFinite(Date.parse(plan.updatedAt)) ||

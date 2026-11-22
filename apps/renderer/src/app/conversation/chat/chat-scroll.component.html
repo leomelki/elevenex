@@ -5,32 +5,53 @@
   role="region"
   aria-label="Conversation"
   (scroll)="onScroll()"
-  (wheel)="onViewportInteraction()"
-  (pointerdown)="onViewportInteraction()"
+  (wheel)="onViewportWheel($event)"
+  (pointerdown)="onViewportPointerDown($event)"
+  (pointerup)="clearPointerScroll()"
   (keydown)="onViewportKey($event)"
 >
-  <div #content class="content"><ng-content /></div>
+  <div #track class="track">
+    <div #content class="content"><ng-content /></div>
+  </div>
 </div>
-@if (historyLoading() || historyError()) {
+@if (historyError()) {
   <div class="history-status" role="status">
-    @if (historyError()) {
-      <span>{{ historyError() }}</span>
-      <button type="button" (click)="retryHistory()">Retry</button>
-    } @else {
-      <span>Loading messages…</span>
-    }
+    <span>{{ historyError() }}</span>
+    <button type="button" (click)="retryHistory()">Retry</button>
   </div>
 }
 @if (pin(); as pin) {
-  <aside class="reminder" aria-label="Message reminder">
-    <div class="reminder-top">
-      <strong>You asked</strong
-      ><button type="button" (click)="hideReminder()">Hide</button>
-    </div>
-    <button type="button" class="prompt" (click)="scrollToMessage(pin.id)">
-      {{ pin.text }}</button
-    ><button type="button" class="back" (click)="scrollToMessage(pin.id)">
-      <ex-icon name="arrow-up" [size]="12" />Back to your message
+  <aside
+    #reminderElement
+    class="reminder"
+    [class.arming]="arming()"
+    [class.peek]="peek()"
+    [animate.enter]="reminderMotion() ? 'reminder-enter' : ''"
+    animate.leave="reminder-leave"
+    aria-label="Your message for the reply in view"
+  >
+    <div class="scrim" aria-hidden="true"></div>
+    <button
+      type="button"
+      class="surface"
+      [attr.aria-label]="'Back to your message: ' + pin.text"
+      [attr.aria-expanded]="peek()"
+      (pointerenter)="startPeek($event)"
+      (pointerleave)="endPeek()"
+      (focus)="peekOnFocus($event)"
+      (blur)="endPeek()"
+      (click)="scrollToMessage(pin.id)"
+    >
+      <span class="glyph" aria-hidden="true"><ex-icon name="arrow-up" [size]="12" /></span>
+      <span class="quote-stack">
+        @for (quote of pinQuotes(); track quote.id) {
+          <span
+            class="quote"
+            [animate.enter]="quoteMotion() ? 'quote-enter' : ''"
+            [animate.leave]="quoteMotion() ? 'quote-leave' : ''"
+          >{{ quote.text }}</span>
+        }
+      </span>
     </button>
   </aside>
 }

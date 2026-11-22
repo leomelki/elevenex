@@ -15,7 +15,7 @@ const item = (content: string): AgentTranscriptItem => ({
   timestamp: '2026-11-01T12:00:00Z',
 });
 
-describe('chat image boundaries', () => {
+describe('chat media boundaries', () => {
   let root: string;
   let workspace: string;
   const home = process.env.CODEX_HOME;
@@ -53,6 +53,34 @@ describe('chat image boundaries', () => {
     };
     expect(chatMedia(raw).text).toBe('Here is your robot');
     expect(chatMedia(raw).media).toHaveLength(1);
+  });
+  it('projects a bracketed local image path without moving its Markdown embed', () => {
+    const content = 'Before\n![Capture](<results/Capture (1).png>)\nAfter';
+    const projection = chatMedia({ ...item(content), kind: 'assistant' });
+    expect(projection.text).toBe(content);
+    expect(projection.media).toMatchObject([{ path: 'results/Capture (1).png', inline: false }]);
+  });
+  it('projects explicit workspace video embeds as recordings at their position in the reply', () => {
+    const content = 'Before\n![Walkthrough](<clips/Walkthrough (1).webm>)\nAfter\n[Other clip](other.mp4)';
+    const projection = chatItem({ ...item(content), kind: 'assistant' });
+    expect(projection.text).toBe(content);
+    expect(projection.media).toEqual([
+      { id: '0', path: 'clips/Walkthrough (1).webm', caption: 'Walkthrough', inline: false, kind: 'video' },
+    ]);
+  });
+  it('reads valid workspace video signatures and keeps the generated-images directory image-only', async () => {
+    const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0]);
+    const recording = join(workspace, 'recording.webm');
+    const generated = join(root, 'codex', 'generated_images', 'recording.webm');
+    await writeFile(recording, webm);
+    await writeFile(generated, webm);
+    for (const path of [recording, 'recording.webm'])
+      await expect(readChatMedia(path, workspace, 'codex')).resolves.toBe(
+        `data:video/webm;base64,${webm.toString('base64')}`,
+      );
+    await expect(readChatMedia(generated, workspace, 'codex')).rejects.toThrow('Unsupported');
+    await symlink(generated, join(workspace, 'linked.webm'));
+    await expect(readChatMedia('linked.webm', workspace, 'codex')).rejects.toThrow('Unsupported');
   });
   it('loads workspace images and Codex generated images outside the checkout', async () => {
     await writeFile(join(workspace, 'image.png'), Buffer.from(png, 'base64'));

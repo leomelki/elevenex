@@ -1,4 +1,4 @@
-import { serializeBrowserElements } from '@elevenex/shared';
+import { SESSION_CHAT_TURN_WORK_MAX_LIMIT, serializeBrowserElements, type SessionChatStreamPage } from '@elevenex/shared';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { SettingsService } from '../settings/settings.service.js';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EventEmitter } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { DesktopChatService } from './desktop-chat.service.js';
+import { DesktopChatController } from './desktop-chat.controller.js';
+import { createEdgeProxyServer } from '../proxy/edge-proxy.server.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import { chatState, display } from './desktop-chat-projection.js';
 
@@ -52,6 +55,334 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  it('keeps legacy pages unchanged and validates opt-in bounded windows', async () => {
+    history = Array.from({ length: 1000 }, (_, i) => ({ ...item(String(i)), content: `Message ${i}` }));
+    const signal = new AbortController().signal;
+    expect((await chat.read(1, 2, undefined, undefined, signal))!.items).toHaveLength(80);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!.items).toHaveLength(320);
+    expect((await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive'))!.items).toHaveLength(80);
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'all')).rejects.toThrow('Invalid conversation loading mode');
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'window', '1')).rejects.toThrow('Invalid completed turn view');
+    await expect(chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', undefined, '1', '1')).rejects.toThrow('Invalid recent turn view');
+  });
+
+  it('sends only tool headings in opted-in history and resolves the exact paired evidence', async () => {
+    const command = 'pnpm test\n' + 'private command body'.repeat(100);
+    const output = 'private output'.repeat(1400);
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolUseId: 'operation', toolKind: 'bash', toolInput: { command, cwd: '/workspace' } },
+      { ...item('result', output), kind: 'tool_result', toolUseId: 'operation', providerToolResult: { exitCode: 2 } },
+      item('reply'),
+    ];
+    const signal = new AbortController().signal;
+    const inline = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window'))!;
+    expect(inline.items[1].input).toContain('private command body');
+    expect(inline.items[2].text).toContain('private output');
+    const detail = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    expect(JSON.stringify(detail.items)).not.toMatch(/private (command|output)|\/workspace/);
+    const [, call, result] = detail.items;
+    expect(call).toMatchObject({ id: 'call', text: '', input: '', toolDetails: { summary: 'pnpm test' } });
+    expect(result).toMatchObject({ id: 'result', text: '', input: '', error: true, toolDetails: { meta: 'Exit 2' } });
+    const source = { item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: result.id, revision: result.toolDetails!.revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({
+      taskId: 1, sessionId: 2,
+      item: { ...source.item, record: { input: inline.items[1].input } },
+      result: { ...source.result, record: { text: inline.items[2].text, truncated: true, error: true } },
+    });
+    expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+    await expect(chat.readToolDetails(9, 2, source, signal)).rejects.toThrow('does not belong');
+    await expect(chat.readToolDetails(1, 2, { item: source.result, result: source.item }, signal)).rejects.toThrow('has changed');
+    await expect(chat.readToolDetails(1, 2, { item: { id: 'call', revision: 'invalid' } }, signal)).rejects.toThrow('Invalid tool details');
+    expect(await chat.readToolDetails(1, 2, source, AbortSignal.abort())).toBeUndefined();
+  });
+
+  it('keeps the latest tool evidence available without rereading history after a large window', async () => {
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      ...Array.from({ length: 125 }, (_, index): AgentTranscriptItem[] => [
+        { ...item(`call-${index}`, ''), kind: 'tool_use', toolKind: 'read', toolUseId: `read-${index}`, toolInput: { path: `file-${index}.txt` } },
+        { ...item(`result-${index}`, `output ${index}\n`.repeat(2000)), kind: 'tool_result', toolUseId: `read-${index}` },
+      ]).flat(),
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const page = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    const [call, result] = page.items.slice(-3, -1);
+    expect(await chat.readToolDetails(1, 2, {
+      item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: result.id, revision: result.toolDetails!.revision },
+    }, signal)).toMatchObject({ result: { record: { text: expect.stringContaining('output 124') } } });
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('summarizes small recent turns for the new reader while preserving the legacy inline option', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'read', toolUseId: 'operation', toolInput: { path: 'file.txt' } },
+      { ...item('result', 'large hidden output\n'.repeat(2000)), kind: 'tool_result', toolUseId: 'operation' },
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const legacy = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(legacy.items[0].completedTurn?.total).toBe(2);
+    const compact = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    expect(compact.items.map(item => item.id)).toEqual(['prompt', 'call', 'result', 'answer']);
+    expect(compact.items[2]).toMatchObject({ text: '', toolDetails: { revision: expect.any(String) } });
+    const summarized = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    expect(summarized.items.map(item => item.id)).toEqual(['prompt']);
+    expect(summarized.items[0].completedTurn).toMatchObject({
+      total: 2, beforeReply: 2, counts: { read: 1 }, reply: [{ id: 'answer' }],
+    });
+    expect(JSON.stringify(summarized.items)).not.toMatch(/file\.txt|large hidden output/);
+  });
+
+  it('uses the matching command context when a receipt was cached on its own page', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'bash', toolUseId: 'operation', toolInput: { command: 'pnpm test', cwd: '/workspace' } },
+      ...Array.from({ length: 650 }, (_, index) => item(`note-${index}`)),
+      { ...item('result', 'Test failed'), kind: 'tool_result', toolUseId: 'operation', providerToolResult: { exitCode: 1 } },
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const latest = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    const result = latest.items.find(row => row.id === 'result')!;
+    expect(latest.items.some(row => row.id === 'call')).toBe(false);
+    expect(result).toMatchObject({
+      error: true,
+      toolDetails: { meta: 'Exit 1' },
+      invocation: { id: 'call', toolKind: 'bash', toolDetails: { summary: 'pnpm test' } },
+    });
+    const older = (await chat.read(1, 2, undefined, 'note-0', signal, undefined, 'progressive', undefined, '1'))!;
+    const call = older.items.find(row => row.id === 'call')!;
+    expect(call.receipt).toEqual({ id: result.id, error: true, toolDetails: result.toolDetails });
+    expect(result.invocation?.toolDetails).toEqual(call.toolDetails);
+    expect(older.items.some(row => row.id === result.id)).toBe(false);
+    expect(await chat.readToolDetails(1, 2, {
+      item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: result.id, revision: result.toolDetails!.revision },
+    }, signal)).toMatchObject({ result: { record: { error: true, execution: { exitCode: 1, cwd: '/workspace' } } } });
+  });
+
+  it('resolves a result beyond the first activity page and rejects rewritten evidence after cache invalidation', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'read', toolUseId: 'operation', toolInput: { file_path: 'important.ts' } },
+      ...Array.from({ length: 103 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      { ...item('result', 'Partial file contents'), kind: 'tool_result', toolUseId: 'operation' },
+      { ...item('result', 'Important file contents'), kind: 'tool_result', toolUseId: 'operation' },
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    const version = initial.items[0].completedTurn!.revision;
+    const complete = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT))!;
+    expect(complete).toMatchObject({ total: 105, offset: 0, nextOffset: null });
+    expect(complete.items.map(row => row.id)).toEqual([...new Set(history.slice(1, -1).map(row => row.id))]);
+    expect(JSON.stringify(complete.items)).not.toContain('Important file contents');
+    await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, undefined, 512)).rejects.toThrow('Invalid turn activity limit');
+    await expect(chat.turnWork(1, 2, 'prompt', version, 0, signal, '1', SESSION_CHAT_TURN_WORK_MAX_LIMIT + 1)).rejects.toThrow('Invalid turn activity limit');
+
+    const page = (await chat.turnWork(1, 2, 'prompt', version, 0, signal, '1'))!;
+    const call = page.items[0];
+    const receipt = call.receipt!;
+    expect(call).toMatchObject({ id: 'call', input: '', toolDetails: { summary: 'important.ts' }, receipt: { id: 'result' } });
+    expect(page.items.some(row => row.id === receipt.id)).toBe(false);
+    expect(page.nextOffset).toBe(40);
+    const last = (await chat.turnWork(1, 2, 'prompt', version, 80, signal, '1'))!;
+    expect(last.items.find(row => row.id === receipt.id)?.invocation)
+      .toEqual({ id: call.id, toolKind: 'read', toolDetails: call.toolDetails });
+    const source = { item: { id: call.id, revision: call.toolDetails!.revision },
+      result: { id: receipt.id, revision: receipt.toolDetails!.revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({
+      result: { record: { text: 'Important file contents' } },
+    });
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    // The same addresses work after the hot window has been invalidated.
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({ result: { record: { text: 'Important file contents' } } });
+    history[history.length - 2] = { ...history[history.length - 2], content: 'Rewritten file contents' };
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    await expect(chat.readToolDetails(1, 2, source, signal)).rejects.toThrow('has changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it('publishes fresh detail references when a compact live result changes', async () => {
+    live = [
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'bash', toolUseId: 'operation', toolInput: { command: 'pnpm test' } },
+      { ...item('result', 'Partial result'), kind: 'tool_result', toolUseId: 'operation' },
+    ];
+    const signal = new AbortController().signal;
+    const page = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'window', undefined, '1'))!;
+    live = [live[0], { ...live[1], content: 'Complete result' }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const update = (await chat.read(1, 2, page.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
+    expect(update.events).toHaveLength(2);
+    const result = update.events.find(event => event.item.id === 'result')!.item;
+    expect(result).toMatchObject({ id: 'result', text: '', input: '' });
+    expect(result.toolDetails!.revision).not.toBe(page.items[1].toolDetails!.revision);
+    expect(update.events.find(event => event.item.id === 'call')?.item.receipt?.toolDetails).toEqual(result.toolDetails);
+    expect(await chat.readToolDetails(1, 2, { item: { id: 'result', revision: result.toolDetails!.revision } }, signal))
+      .toMatchObject({ item: { record: { text: 'Complete result' } } });
+    live = [live[0], { ...live[1], providerToolResult: { exitCode: 1 } }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const changed = (await chat.read(1, 2, update.cursor, undefined, signal, undefined, 'window', undefined, '1'))!;
+    const failed = changed.events.find(event => event.item.id === 'result')!.item;
+    expect(failed).toMatchObject({ error: true, toolDetails: { meta: 'Exit 1' } });
+    expect(failed.toolDetails!.revision).not.toBe(result.toolDetails!.revision);
+  });
+
+  it('keeps a live receipt actionable when the call has left the progressive window', async () => {
+    live = [
+      { ...item('call', ''), kind: 'tool_use', toolKind: 'bash', toolInput: { command: 'pnpm test' } },
+      ...Array.from({ length: 190 }, (_, index) => item(`progress-${index}`)),
+    ];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    expect(initial.items.some(row => row.id === 'call')).toBe(false);
+    live = [...live, { ...item('result', 'Completed tests'), kind: 'tool_result', toolUseId: 'call' }];
+    runtime.emit('event', { type: 'transcript_item', payload: { sessionId: 2 } });
+    const update = (await chat.read(1, 2, initial.cursor, undefined, signal, undefined, 'progressive', '1', '1'))!;
+    expect(update.events.map(event => event.item.id)).toEqual(['result']);
+    const { invocation, toolDetails } = update.events[0].item;
+    expect(invocation).toMatchObject({ id: 'call', toolDetails: { summary: 'pnpm test' } });
+    expect(await chat.readToolDetails(1, 2, {
+      item: { id: invocation!.id, revision: invocation!.toolDetails.revision },
+      result: { id: 'result', revision: toolDetails!.revision },
+    }, signal)).toMatchObject({ result: { record: { text: 'Completed tests' } } });
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads exact saved activity for a task-owned version, including archived sessions and cancelled reads', async () => {
+    status = 'archived';
+    history = [
+      { ...item('prompt'), kind: 'user' },
+      { ...item('thought-0', ''), kind: 'thinking' },
+      ...Array.from({ length: 60 }, (_, index): AgentTranscriptItem => ({ ...item(`thought-${index}`), kind: 'thinking' })),
+      item('answer'),
+    ];
+    const signal = new AbortController().signal;
+    const open = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    const saved = open.items[0].completedTurn!;
+    expect(saved.total).toBe(60);
+    expect((await chat.read(1, 2, undefined, undefined, signal))!.items.some(item => item.completedTurn)).toBe(false);
+    const page = (await chat.turnWork(1, 2, 'prompt', saved.revision, 40, signal))!;
+    expect(page).toMatchObject({ taskId: 1, sessionId: 2, turnId: 'prompt', offset: 40, total: 60, nextOffset: null });
+    expect(page.items[0].id).toBe('thought-40');
+    await expect(chat.turnWork(5, 2, 'prompt', saved.revision, 0, signal)).rejects.toThrow('does not belong');
+    await expect(chat.turnWork(1, 2, 'answer', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
+    await expect(chat.turnWork(1, 2, 'prompt', saved.revision, NaN, signal)).rejects.toThrow('Invalid turn activity');
+    expect(await chat.turnWork(1, 2, 'prompt', saved.revision, 0, AbortSignal.abort())).toBeUndefined();
+    history[2] = { ...history[2], content: 'Rewritten evidence' };
+    await expect(chat.turnWork(1, 2, 'prompt', saved.revision, 0, signal)).rejects.toThrow('activity has changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it('retains the streamed timeline at completion and compacts independent fresh openings', async () => {
+    const prompt: AgentTranscriptItem = { ...item('prompt'), kind: 'user' };
+    live = [prompt, ...Array.from({ length: 60 }, (_, index): AgentTranscriptItem => ({
+      ...item(`tool-${index}`), kind: 'tool_use', toolKind: 'read',
+    }))];
+    const signal = new AbortController().signal;
+    const initial = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(initial.items[0].id).toBe(prompt.id);
+    history = [...live, item('answer')];
+    live = [];
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+    runtime.emit('event', { type: 'run_state', payload: { sessionId: 2, runPhase: 'idle' } });
+    const completion = (await chat.read(1, 2, initial.cursor, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(completion.items.map(item => item.id)).toEqual(history.map(item => item.id));
+    const fresh = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1'))!;
+    expect(fresh.items[0].completedTurn?.reply[0].id).toBe('answer');
+  });
+
+  it('resolves compact saved tool evidence within the exact turn and revision', async () => {
+    status = 'archived';
+    const call = { ...item('command', ''), kind: 'tool_use' as const, toolKind: 'bash', toolInput: { command: 'pnpm test' } };
+    const result = { ...item('receipt', 'full output'), kind: 'tool_result' as const, toolUseId: call.id };
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    history = [prompt, call, item('answer'), result, { ...prompt, id: 'other' }, { ...result, id: 'other-result' }];
+    const signal = new AbortController().signal;
+    const first = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    const revision = first.items.find(row => row.id === prompt.id)!.completedTurn!.revision;
+    const compact = await chat.turnWork(1, 2, prompt.id, revision, 0, signal, '1', 512, '1');
+    expect(compact).toMatchObject({ timeline: [{ kind: 'call', id: call.id, resultId: result.id, label: 'pnpm test' }, null] });
+    const source = { turnId: prompt.id, item: { id: call.id, revision }, result: { id: result.id, revision } };
+    expect(await chat.readToolDetails(1, 2, source, signal)).toMatchObject({ turnId: prompt.id,
+      item: { id: call.id, revision, record: { input: expect.stringContaining('pnpm test') } },
+      result: { id: result.id, revision, record: { text: 'full output' } },
+    });
+    await expect(chat.readToolDetails(1, 2, { ...source, turnId: 'other' }, signal)).rejects.toThrow('changed');
+    await expect(chat.readToolDetails(1, 2, { ...source, result: { id: 'other-result', revision } }, signal)).rejects.toThrow('changed');
+    await expect(chat.turnWork(1, 2, prompt.id, revision, 0, signal, undefined, 40, '1')).rejects.toThrow('format');
+    history[3] = { ...result, content: 'different output' };
+    runtime.emit('event', { type: 'history_snapshot', payload: { sessionId: 2 } });
+    await expect(chat.readToolDetails(1, 2, source, signal)).rejects.toThrow('changed');
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+  });
+
+  it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const original = new AbortController();
+    const first = chat.read(1, 2, undefined, undefined, original.signal, undefined, 'window');
+    await settle(); original.abort();
+    const replacement = chat.read(1, 2, undefined, undefined, new AbortController().signal, undefined, 'progressive');
+    await settle();
+    expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    release([item('latest')]);
+    expect(await first).toBeUndefined();
+    expect((await replacement)!.items.at(-1)!.id).toBe('latest');
+  });
+
+  it('also discards cancelled archived-session hydration without attaching its runtime', async () => {
+    status = 'archived';
+    let release!: (items: AgentTranscriptItem[]) => void;
+    runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));
+    const controller = new AbortController();
+    const pending = chat.read(1, 2, undefined, undefined, controller.signal, undefined, 'window');
+    await settle(); controller.abort(); release([item('latest')]);
+    expect(await pending).toBeUndefined();
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
+
+  it('pages a long archived session with bounded cursor and prompt lookups', async () => {
+    status = 'archived';
+    let reads = 0;
+    history = new Proxy(Array.from({ length: 10_000 }, (_, i) => item(String(i))), {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    history[0] = { ...history[0], kind: 'user' };
+    const latest = (await chat.read(1, 2, undefined, undefined, new AbortController().signal))!;
+    expect(latest.items[0]?.id).toBe('9920');
+    reads = 0;
+    const older = (await chat.read(1, 2, undefined, latest.before!, new AbortController().signal))!;
+    expect(older.items[0]?.id).toBe('9840');
+    expect(older.leadingPrompt?.id).toBe('0');
+    expect(reads).toBeLessThan(320);
+    expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+    expect(runtime.onClientAttached).not.toHaveBeenCalled();
+  });
+
+  it('serves a held poll from saved history if the session is archived while waiting', async () => {
+    history = [item('saved')];
+    const latest = (await read())!;
+    const waiting = read(latest.cursor);
+    await settle();
+    status = 'archived';
+    expect((await read())!.items.map(row => row.id)).toEqual(['saved']);
+    expect((await waiting)!.items.map(row => row.id)).toEqual(['saved']);
+    expect(runtime.getRuntimeState).toHaveBeenCalledTimes(1);
+    expect(runtime.onClientDetached).toHaveBeenCalledWith(2);
+  });
   it('does not pair a new completion marker with an older in-flight history read', async () => {
     let finish!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { finish = resolve; }));
@@ -129,8 +460,10 @@ describe('selected session chat', () => {
       workspaceArchivedAt: null,
     }));
     module = await Test.createTestingModule({
+      controllers: [DesktopChatController],
       providers: [
         DesktopChatService,
+        { provide: DesktopChatAttachments, useValue: {} },
         { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
           provide: SettingsService,
@@ -421,10 +754,12 @@ describe('selected session chat', () => {
   });
   it('pages history by stable identity and bounds payloads without hydrating other sessions', async () => {
     history = Array.from({ length: 240 }, (_, index) => item(String(index)));
+    history[0] = { ...history[0], kind: 'user' };
     const latest = (await read())!;
     expect(latest.items).toHaveLength(80);
     expect(latest.items[0].id).toBe('160');
     expect(latest.before).toBe('160');
+    expect(latest.leadingPrompt?.id).toBe('0');
     const older = (await read(undefined, latest.before!))!;
     expect(older.items[0].id).toBe('80');
     expect(older.items.at(-1)?.id).toBe('159');
@@ -453,14 +788,231 @@ describe('selected session chat', () => {
     emit('run_state');
     expect((await read(unchanged.cursor))!.reset).toBe(true);
   });
+
+  it('serves one HTTP stream through the edge, resumes missed text and activity, and closes archived sessions', async () => {
+    const app = module.createNestApplication();
+    app.setGlobalPrefix('api');
+    await app.listen(0, '127.0.0.1');
+    const proxy = createEdgeProxyServer({ repoRoot: join(__dirname, '../../../..'), upstreamOrigin: await app.getUrl() });
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+    const address = proxy.address();
+    if (!address || typeof address === 'string') throw new Error('Missing loopback test address.');
+    const base = `http://127.0.0.1:${address.port}/api/desktop-workspace/tasks`;
+    const path = `${base}/1/sessions/2/chat/events?loadingMode=progressive`;
+    const requests: AbortController[] = [];
+    const connect = async (after?: string) => {
+      const abort = new AbortController();
+      requests.push(abort);
+      const response = await fetch(path, {
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(3000)]),
+        headers: after ? { 'Last-Event-ID': after } : {},
+      });
+      expect(response.headers.get('content-type')).toMatch(/^text\/event-stream/);
+      expect(response.headers.get('cache-control')).toContain('no-transform');
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      return {
+        abort, reader,
+        next: async (): Promise<SessionChatStreamPage> => {
+          for (;;) {
+            const end = buffer.indexOf('\n\n');
+            if (end < 0) {
+              const part = await reader.read();
+              if (part.done) throw new Error('Unexpected conversation stream EOF.');
+              buffer += decoder.decode(part.value, { stream: true });
+              continue;
+            }
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            if (frame.startsWith(':')) continue;
+            const [id, event, data] = frame.split('\n');
+            const packet = JSON.parse(data.slice(6)) as SessionChatStreamPage;
+            expect(event).toBe('event: chat');
+            expect(id).toBe('id: ' + packet.page.cursor);
+            return packet;
+          }
+        },
+      };
+    };
+    try {
+      expect((await fetch(`${base}/9/sessions/2/chat/events?loadingMode=window`)).status).toBe(400);
+      expect((await fetch(path, { headers: { 'Last-Event-ID': 'bad cursor' } })).status).toBe(400);
+      live = [{ ...item('prompt'), kind: 'user' }, item('answer', 'Checking')];
+      const first = await connect();
+      const initial = await first.next();
+      expect(initial.after).toBeNull();
+      expect(initial.page.items.map(row => row.id)).toEqual(['prompt', 'answer']);
+      const reads = runtime.getRuntimeState.mock.calls.length;
+      runtime.emit('event', { type: 'message_delta', payload: { sessionId: 99 } });
+      await delay(65);
+      expect(runtime.getRuntimeState).toHaveBeenCalledTimes(reads);
+      live = [live[0], item('answer', 'Checking files')];
+      emit();
+      const incremental = await first.next();
+      expect(incremental).toMatchObject({ after: initial.page.cursor, page: {
+        reset: false, items: [], events: [{ type: 'delta', id: 'answer', text: ' files' }],
+      } });
+      first.abort.abort();
+      live = [live[0], item('answer', 'Checking files and tests'), item('check', 'Tests passed')];
+      emit();
+      const second = await connect(incremental.page.cursor);
+      const catchUp = await second.next();
+      expect(catchUp).toMatchObject({ after: incremental.page.cursor, page: {
+        reset: false, events: [
+          { type: 'delta', id: 'answer', text: ' and tests' },
+          { type: 'item', item: { id: 'check', text: 'Tests passed' } },
+        ],
+      } });
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+      history = live;
+      live = [];
+      emit('history_snapshot');
+      const saved = await second.next();
+      expect(saved.page.reset).toBe(true);
+      expect(saved.page.items.map(row => row.id)).toEqual(['prompt', 'answer', 'check']);
+      status = 'archived';
+      module.get(SessionsService).emit('session-status-changed', { sessionId: 2, status });
+      expect(await second.reader.read()).toEqual({ value: undefined, done: true });
+      expect((await fetch(path)).status).toBe(410);
+    } finally {
+      for (const signal of requests) signal.abort();
+      await new Promise<void>(resolve => { proxy.close(() => resolve()); proxy.closeAllConnections(); });
+      await app.close();
+    }
+  });
+
+  it('keeps saved tool calls in a long live turn and continues replaying new activity', async () => {
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    const exchanges = Array.from({ length: 55 }, (_, i): AgentTranscriptItem[] => [
+      { ...item(`msg_${i}:0`, 'Checking the file'), kind: 'thinking' },
+      { ...item(`call-${i}`, ''), kind: 'tool_use', toolUseId: `tool-${i}`, toolKind: 'read' },
+      { ...item(`result-${i}`, 'File contents'), kind: 'tool_result', toolUseId: `tool-${i}` },
+    ]).flat();
+    live = [prompt, ...exchanges];
+    // Include a legacy split thought with a different durable ID near the
+    // tail, along with older live rows outside the bounded history slice.
+    history = live.map(row => row.id === 'msg_54:0' ? { ...row, id: 'msg_54:thinking:0' } : row);
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    try {
+      const initial = (await stream.next()).value as SessionChatStreamPage;
+      expect(initial.page.items).toHaveLength(80);
+      expect(initial.page.items.slice(-4).map(row => row.id)).toEqual([
+        'msg_54:thinking:0', 'msg_54:0', 'call-54', 'result-54',
+      ]);
+      expect(initial.page.items.filter(row => row.kind === 'tool_use').length).toBeGreaterThan(20);
+
+      const call = { ...item('next-call', ''), kind: 'tool_use' as const, toolKind: 'bash', toolUseId: 'next-tool' };
+      live = [...live, call];
+      emit('tool_use');
+      const started = (await stream.next()).value as SessionChatStreamPage;
+      expect(started.page).toMatchObject({ reset: false, events: [{ type: 'item', item: { id: call.id } }] });
+
+      live = [...live, { ...item('next-result', 'Checks passed'), kind: 'tool_result', toolUseId: 'next-tool' }];
+      emit('tool_result');
+      const finished = (await stream.next()).value as SessionChatStreamPage;
+      expect(finished.page).toMatchObject({ reset: false, events: [
+        { type: 'item', item: { id: call.id, receipt: { id: 'next-result', error: false } } },
+        { type: 'item', item: { id: 'next-result' } },
+      ] });
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      abort.abort();
+      await stream.return(undefined);
+    }
+  });
+
+  it('resets a live window when a burst crosses its bound or changes source order', async () => {
+    const abort = new AbortController();
+    const source = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    try {
+      live = [item('one'), item('three')];
+      const first = (await source.next()).value as SessionChatStreamPage;
+      live = [live[0], item('two'), live[1]];
+      emit();
+      const reordered = (await source.next()).value as SessionChatStreamPage;
+      expect(reordered.after).toBe(first.page.cursor);
+      expect(reordered.page).toMatchObject({ reset: true, items: [
+        { id: 'one' }, { id: 'two' }, { id: 'three' },
+      ] });
+      live = [...live, ...Array.from({ length: 100 }, (_, i) => item(`work-${i}`))];
+      emit();
+      const burst = (await source.next()).value as SessionChatStreamPage;
+      expect(burst.page).toMatchObject({ reset: true, before: 'work-20', events: [] });
+      expect(burst.page.items).toHaveLength(80);
+    } finally {
+      abort.abort();
+      await source.return(undefined);
+    }
+  });
+
+  it('releases a closed stream while provider hydration is still pending', async () => {
+    let start!: () => void;
+    const started = new Promise<void>(resolve => { start = resolve; });
+    let finish!: (value: { liveItems: AgentTranscriptItem[] }) => void;
+    const hydration = new Promise<{ liveItems: AgentTranscriptItem[] }>(resolve => { finish = resolve; });
+    runtime.getRuntimeState.mockImplementationOnce(() => {
+      start();
+      return hydration;
+    });
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    const pending = stream.next();
+    try {
+      await started;
+      abort.abort();
+      expect(await pending).toEqual({ done: true, value: undefined });
+    } finally {
+      finish({ liveItems: [] });
+      abort.abort();
+    }
+  });
+
+  it('refreshes runtime state on an unchanged heartbeat without visiting transcript rows', async () => {
+    let reads = 0;
+    live = Array.from({ length: 360 }, (_, i) => ({
+      ...item(String(i)),
+      get content() { reads++; return `Live record ${i}`; },
+    }));
+    const readWindow = (after?: string) =>
+      chat.read(1, 2, after, undefined, new AbortController().signal, undefined, 'window');
+    const initial = (await readWindow())!;
+    expect(initial.items).toHaveLength(320);
+    reads = 0;
+    jest.useFakeTimers();
+    try {
+      runtime.getRuntimeState.mockResolvedValueOnce({ liveItems: live, selectedModel: 'updated' });
+      const waiting = readWindow(initial.cursor);
+      await jest.advanceTimersByTimeAsync(8000);
+      expect(await waiting).toMatchObject({
+        cursor: initial.cursor, reset: false, items: [], events: [],
+        before: initial.before, state: { model: 'updated' },
+      });
+      expect(reads).toBe(0);
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
   it('streams dequeued user receipts once and retains their identity through saved history', async () => {
     history = [{ ...item('initial'), kind: 'user' }, item('initial-answer')];
     const initial = (await read())!;
     const receipt: AgentTranscriptItem = { ...item('native-user', 'Queued follow-up'), kind: 'user' };
+    runtime.getRuntimeState.mockResolvedValueOnce({
+      runPhase: 'running', liveItems: live, pendingPrompts: [],
+      dispatchingPrompts: [{ id: 'queue-id', prompt: receipt.content, timestamp: receipt.timestamp }],
+    });
+    emit('message_start');
+    const dispatch = (await read(initial.cursor))!;
+    expect(dispatch.reset).toBe(false);
+    expect(dispatch.events).toEqual([]);
+    expect(dispatch.state.dispatchingPrompts).toEqual([{ id: 'queue-id', text: receipt.content, timestamp: receipt.timestamp }]);
     live = [receipt, item('follow-up-answer')];
     emit('message_start');
-    const update = (await read(initial.cursor))!;
+    const update = (await read(dispatch.cursor))!;
     expect(update.reset).toBe(false);
+    expect(update.state.activePromptId).toBe(receipt.id);
     expect(update.events.map(event => event.type === 'item' && event.item.id)).toEqual(['native-user', 'follow-up-answer']);
     expect(runtime.getHistory).toHaveBeenCalledTimes(1);
     history = [...history, ...live];
@@ -468,6 +1020,13 @@ describe('selected session chat', () => {
     const saved = (await read(update.cursor))!;
     expect(saved.items.map(item => item.id)).toEqual(['initial', 'initial-answer', 'native-user', 'follow-up-answer']);
     expect(saved.items.filter(item => item.kind === 'user')).toHaveLength(2);
+
+    const older = (await read(undefined, receipt.id))!;
+    expect(older.items.map(item => item.id)).toEqual(['initial', 'initial-answer']);
+    expect(older.state.activePromptId).toBe(receipt.id);
+
+    runtime.getRuntimeState.mockResolvedValueOnce({ runPhase: 'idle', liveItems: live });
+    expect((await read())!.state.activePromptId).toBeUndefined();
   });
   it('keeps a pre-read cursor so events during hydration are reconciled without losing or duplicating text', async () => {
     runtime.getRuntimeState.mockImplementationOnce(async () => {

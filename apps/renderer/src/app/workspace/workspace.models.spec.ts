@@ -19,4 +19,10 @@ describe('workspace session activity compatibility', () => {
     for (const status of ['running', 'attention', 'review', 'failed'] as const)
       expect(workspaceSessionStatus(session(status))).toBe(status);
   });
+  it('follows the agent turn when the engine separates detached commands from status', () => {
+    expect(workspaceSessionStatus({ ...session('running'), turnStatus: 'review', commandCount: 2 })).toBe('review');
+    expect(workspaceSessionStatus({ ...session('running'), turnStatus: 'done', commandCount: 1 })).toBe('done');
+    expect(workspaceSessionStatus({ ...session('running'), turnStatus: 'running', commandCount: 1 })).toBe('running');
+    expect(workspaceSessionStatus(session('running'))).toBe('running');
+  });
 });

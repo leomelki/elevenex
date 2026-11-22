@@ -5,6 +5,7 @@ import type {
   BackendResult,
   SessionChatItem,
   SessionChatPage,
+  SessionChatRead,
   SessionChatState,
   SessionChatCommandReply,
   SessionChatContentRead,
@@ -72,6 +73,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   TestBed.resetTestingModule();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -83,7 +85,7 @@ async function settle<T>(fixture: ComponentFixture<T>): Promise<void> {
   await fixture.whenStable();
 }
 
-function setup(items: readonly SessionChatItem[] = [], chatState = state) {
+function setup(items: readonly SessionChatItem[] = [], chatState = state, initialRead?: Promise<BackendResult<SessionChatPage>>) {
   let page: SessionChatPage = {
     taskId: 1,
     sessionId: 2,
@@ -107,7 +109,10 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
       },
     })),
     sessionChatMedia: vi.fn(async (_scope: string, input: { itemId: string; mediaId: string }) => ({ ok: true as const, value: { ...input, source: 'data:image/png;base64,iVBORw0KGgo=' } })),
-    sessionChatRead: vi.fn(async () => ({ ok: true as const, value: page })),
+    sessionChatRead: vi.fn<(scope: string, input: SessionChatRead) => Promise<BackendResult<SessionChatPage>>>(async () => {
+      if (initialRead) { const pending = initialRead; initialRead = undefined; return pending; }
+      return { ok: true as const, value: page };
+    }),
     sessionChatContent: vi.fn(async (_scope: string, input: SessionChatContentRead) => ({ ok: true as const,
       value: { itemId: input.itemId, part: input.part, offset: input.offset, text: `Complete ${input.part} for ${input.itemId}`, total: 100, nextOffset: null } })),
     sessionChatCommand: vi.fn(
@@ -156,7 +161,250 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state) {
   };
 }
 
+describe("connected chat preset editing", () => {
+  const editable = () => {
+    const presets: NonNullable<SessionChatState["presets"]> = [0, 1].map(index => ({
+      id: `preset-${index}`, name: `Preset ${index + 1}`, provider: "codex", providerLabel: "Codex",
+      model: "test", modelLabel: "Test model", reasoning: null, fast: false,
+    }));
+    const chatState: SessionChatState = {
+      ...state, providerLocked: false, presetEditing: true, presets,
+      presetDefault: { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "a".repeat(64) },
+    };
+    return setup([], chatState);
+  };
+  it("offers the default choice when editing, locking it on for the preset that already is the default", async () => {
+    const { fixture, root } = editable();
+    await settle(fixture);
+    const choice = (label: string) => document.querySelector<HTMLButtonElement>(`.default-choice button[aria-label="${label}"]`)!;
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-0'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    expect(choice("Use this preset").getAttribute("aria-checked")).toBe("true");
+    expect(choice("Keep current").disabled).toBe(true);
+    document.querySelector(".preset-creator")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-1'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    expect(choice("Keep current").getAttribute("aria-checked")).toBe("true");
+    expect(choice("Keep current").disabled).toBe(false);
+  });
+  it("saves an edit, then makes the preset the default against the new revision", async () => {
+    const { fixture, root, bridge, complete, publish } = editable();
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-1'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    document.querySelector<HTMLButtonElement>('.default-choice button[aria-label="Use this preset"]')!.click();
+    await settle(fixture);
+    document.querySelector(".preset-creator")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({ action: expect.objectContaining({ type: "preset-update", id: "preset-1" }) }));
+    const next = { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "c".repeat(64) };
+    publish({ taskId: 1, sessionId: 2, cursor: "new", reset: true, before: null, items: [], events: [], state: { ...state, providerLocked: false, presetEditing: true, presets: fixture.componentInstance.store.state()!.presets, presetDefault: next } });
+    complete(); await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({ action: { type: "preset-default", id: "preset-1", expectedProvider: "codex", expectedRevision: next.revision } }));
+    complete(); await settle(fixture);
+  });
+  it("opens individual preset edits separately from grid editing and keeps the composer draft", async () => {
+    const presets: NonNullable<SessionChatState["presets"]> = Array.from({ length: 8 }, (_, index) => ({
+      id: `preset-${index}`, name: `Preset ${index + 1}`, provider: "codex", providerLabel: "Codex",
+      model: "test", modelLabel: "Test model", reasoning: null, fast: false,
+    }));
+    const chatState: SessionChatState = {
+      ...state, providerLocked: false, presetEditing: true, presets,
+      presetDefault: { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "a".repeat(64) },
+    };
+    const { fixture, root, bridge, publish } = setup([], chatState);
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft("Keep the draft");
+    fixture.detectChanges();
+    const headingActions = () => Array.from(root.querySelectorAll(".preset-heading button[data-preset-edit], .preset-heading button[data-preset-new]"))
+      .map(button => button.textContent?.trim());
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-0'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    const name = document.querySelector<HTMLInputElement>(".preset-creator .identity input");
+    expect(name?.value).toBe("Preset 1");
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+    name!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(document.querySelector(".preset-creator")).toBeNull();
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(false);
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset", "Done"]);
+    expect(root.querySelector("[data-preset-edit]")?.getAttribute("data-variant")).toBe("primary");
+    expect(root.querySelectorAll(".full .grip")).toHaveLength(6);
+    expect(root.querySelectorAll(".slim-grid .grip")).toHaveLength(2);
+    expect(root.querySelectorAll(".preset-tile button[draggable='true']")).toHaveLength(8);
+    expect(root.querySelector("[data-flip='preset-0'] .default")?.textContent).toBe("Default");
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-edit]"));
+
+    const slimCard = root.querySelector<HTMLButtonElement>(".slim-grid ex-preset-card button")!;
+    slimCard.focus();
+    slimCard.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(false);
+    expect(root.querySelector<HTMLTextAreaElement>("ex-composer textarea")?.value).toBe("Keep the draft");
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-edit]"));
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    publish({
+      taskId: 1, sessionId: 2, cursor: "empty", reset: true, before: null, items: [], events: [],
+      state: { ...chatState, presets: [], presetDefault: { provider: "codex", id: null, defaultIds: [], revision: "b".repeat(64) } },
+    });
+    await fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset", "Done"]);
+    expect(root.querySelector(".start")?.textContent).not.toContain("Choose your agent below");
+
+    root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
+    await settle(fixture);
+    expect(headingActions()).toEqual(["New preset"]);
+    expect(document.activeElement).toBe(root.querySelector("[data-preset-new]"));
+    expect(root.querySelector<HTMLTextAreaElement>("ex-composer textarea")?.value).toBe("Keep the draft");
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+  });
+});
+
 describe("connected chat reply rendering", () => {
+  it('loads the leading prompt attachment outside the raw transcript page', async () => {
+    const { fixture, bridge } = setup([], state, Promise.resolve({ ok: true, value: {
+      taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'a1', events: [], state,
+      leadingPrompt: { ...item('u1', 'user', 'Inspect this screenshot'), media: [
+        { id: 'capture', path: '/capture.png', caption: 'Screenshot', inline: true },
+      ] },
+      items: [item('a1', 'assistant', 'I inspected it.')],
+    } }));
+    await settle(fixture);
+    expect(fixture.componentInstance.store.exchanges()[0]?.attachments?.[0]?.id).toBe('capture');
+    expect(bridge.sessionChatMedia).toHaveBeenCalledWith('scope', expect.objectContaining({ itemId: 'u1', mediaId: 'capture' }));
+  });
+
+  it('retains loaded media when history paging compacts the reply out of its raw window', async () => {
+    const clip = { ...item('video', 'tool_result', ''), media: [
+      { kind: 'video' as const, id: 'clip', path: '/clip.webm', caption: 'Recording', inline: true },
+    ] };
+    const prompt = item('u1', 'user', 'Record this flow');
+    const items = Array.from({ length: 320 }, (_, i) => item(`work-${i}`, 'system', 'Work'));
+    items.splice(-2, 2, clip, item('answer', 'assistant', 'Completed'));
+    const opening = { taskId: 1, sessionId: 2, cursor: 'opening', reset: true, before: 'work-0', events: [], state };
+    const { fixture, root, bridge, publish } = setup([], state,
+      Promise.resolve({ ok: true, value: { ...opening, leadingPrompt: prompt, items } }));
+    bridge.sessionChatMedia.mockImplementation(async (_scope, input) => ({
+      ok: true, value: { ...input, source: 'data:video/webm;base64,AAAA' },
+    }));
+    await settle(fixture);
+    const video = root.querySelector('video');
+    expect(video).not.toBeNull();
+    publish({ ...opening, items: [prompt, item('earlier-work', 'system', 'Earlier work')], before: null });
+    await fixture.componentInstance.store.older();
+    await settle(fixture);
+    expect(fixture.componentInstance.store.items().some(row => row.id === clip.id)).toBe(false);
+    expect(root.querySelector('video')).toBe(video);
+    expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains composer configuration and completed turn inputs through unrelated runtime activity', async () => {
+    const { fixture, root, publish } = setup([
+      item('u1', 'user', 'Earlier'), item('a1', 'assistant', 'Finished'),
+      item('u2', 'user', 'Latest'), item('a2', 'assistant', 'Working'),
+    ], { ...state, phase: 'running' });
+    await settle(fixture);
+    const owner = fixture.componentInstance;
+    const before = { models: owner.models(), harnesses: owner.harnesses(), agent: owner.agent(), permissions: owner.permissions(), exchange: owner.store.exchanges()[0], turn: root.querySelector('ex-turn') };
+    publish({ taskId: 1, sessionId: 2, cursor: 'updated', reset: false, before: null, items: [], events: [],
+      state: { ...state, phase: 'running', activity: [{ id: 'work', label: 'Reading', detail: 'Current file' }] } });
+    await owner.store.refresh(); await settle(fixture);
+    expect(owner.models()).toBe(before.models);
+    expect(owner.harnesses()).toBe(before.harnesses);
+    expect(owner.agent()).toBe(before.agent);
+    expect(owner.permissions()).toBe(before.permissions);
+    expect(owner.store.exchanges()[0]).toBe(before.exchange);
+    expect(root.querySelector('ex-turn')).toBe(before.turn);
+  });
+  it('shows a delayed, decorative skeleton on a cold open and replaces it with a retry on failure', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    const { fixture, root, bridge, publish } = setup([], state, new Promise(yes => { resolve = yes; }));
+    await settle(fixture);
+    const status = root.querySelector('ex-chat-loading [role="status"]')!;
+    vi.advanceTimersByTime(149);
+    fixture.detectChanges();
+    expect(status.textContent).toBe('');
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    vi.advanceTimersByTime(1);
+    fixture.detectChanges();
+    expect(status.textContent).toBe('Loading conversation…');
+    const skeleton = root.querySelector('ex-chat-loading .skeleton');
+    expect(skeleton?.getAttribute('aria-hidden')).toBe('true');
+    expect(skeleton?.querySelector('button, input, textarea, [tabindex]')).toBeNull();
+    expect(root.querySelector('ex-composer')).toBeNull();
+    resolve({ ok: false, error: { code: 'transport', message: 'Connection interrupted' } });
+    await settle(fixture);
+    expect(status.textContent).toBe('');
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('Connection interrupted');
+    expect(root.querySelector('ex-composer')).toBeNull();
+    publish({ taskId: 1, sessionId: 2, cursor: 'loaded', reset: true, before: null, events: [],
+      state: { ...state, providerLocked: true }, items: [item('reply', 'assistant', 'Loaded reply')] });
+    (root.querySelector('.opening button') as HTMLButtonElement).click();
+    await settle(fixture);
+    expect(bridge.sessionChatRead).toHaveBeenCalledTimes(2);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Loaded reply');
+  });
+
+  it('restarts the loading delay for a different session and shows its fast reply immediately', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { fixture, root, bridge } = setup([], state, new Promise(() => undefined));
+    await settle(fixture);
+    vi.advanceTimersByTime(100);
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(yes => { resolve = yes; }));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    vi.advanceTimersByTime(100);
+    fixture.detectChanges();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    resolve({ ok: true, value: { taskId: 1, sessionId: 3, cursor: 'latest', reset: true, before: null, events: [],
+      state, items: [item('reply', 'assistant', 'Latest reply')] } });
+    await settle(fixture);
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Latest reply');
+    expect(root.querySelector('ex-composer')).not.toBeNull();
+    vi.advanceTimersByTime(50);
+    fixture.detectChanges();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+  });
+
+  it('renders a cached session immediately with fresh scroll ownership while its refresh waits', async () => {
+    const { fixture, root, bridge } = setup([item('reply', 'assistant', 'Cached reply')]);
+    await settle(fixture);
+    const previous = fixture.componentInstance.chat()!.scroll();
+    fixture.componentInstance.store.setDraft('Retain my writing');
+    bridge.sessionChatRead.mockImplementation(() => new Promise(() => undefined));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+    expect(root.querySelector('ex-composer')).toBeNull();
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+    await settle(fixture);
+    expect(fixture.componentInstance.store.loading()).toBe(false);
+    expect(root.querySelector('.opening')).toBeNull();
+    expect(root.querySelector('ex-chat-loading .skeleton')).toBeNull();
+    expect(root.querySelector('ex-turn')?.textContent).toContain('Cached reply');
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBe('cursor');
+    expect(fixture.componentInstance.chat()!.scroll()).not.toBe(previous);
+    expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
+  });
+
   it('releases seen-view foreground listeners on teardown', async () => {
     const windowAdded = vi.spyOn(window, 'addEventListener');
     const documentAdded = vi.spyOn(document, 'addEventListener');
@@ -310,6 +558,37 @@ describe("connected chat reply rendering", () => {
     },
   );
 
+  it('clears native input when typing and submitting before the next render', async () => {
+    const { fixture, root, bridge, complete } = setup();
+    await settle(fixture);
+    const textarea = root.querySelector<HTMLTextAreaElement>('ex-composer textarea')!;
+    textarea.value = 'Submit immediately';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+    expect(textarea.value).toBe('');
+    expect(fixture.componentInstance.store.draft()).toBe('');
+    expect(bridge.sessionChatCommand).toHaveBeenCalledOnce();
+    complete();
+    await settle(fixture);
+  });
+
+  it('restores the native input when a rejected message comes back before the next render', async () => {
+    const { fixture, root, complete } = setup();
+    await settle(fixture);
+    const textarea = root.querySelector<HTMLTextAreaElement>('ex-composer textarea')!;
+    textarea.value = 'Keep this draft';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle(fixture);
+
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(textarea.value).toBe('');
+    complete({ ok: false, error: { code: 'outcome-unknown', message: 'Check delivery' } });
+    await settle(fixture);
+    expect(textarea.value).toBe('Keep this draft');
+    expect(fixture.componentInstance.store.uncertain()).toBe('Check delivery');
+  });
+
   it("keeps the live turn mounted when its durable prompt receipt arrives with completion", async () => {
     const { fixture, root, publish, complete } = setup();
     await settle(fixture);
@@ -340,16 +619,14 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector("ex-turn")).toBe(turn);
   });
   it("opens hydrated sessions at the end and preserves reading position on refresh", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root } = setup([
       item("prompt", "user", "An existing conversation"),
       item("reply", "assistant", "The latest reply"),
     ]);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 2000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
     await settle(fixture);
+    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(2000);
 
     viewport.scrollTop = 100;
@@ -360,13 +637,11 @@ describe("connected chat reply rendering", () => {
   });
 
   it("jumps to the end after a switched session's delayed history renders, including reopening", async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(3000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400);
     const { fixture, root, bridge } = setup([item("first", "user", "First session")]);
     await settle(fixture);
-    const viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
-    Object.defineProperties(viewport, {
-      scrollHeight: { configurable: true, value: 3000 },
-      clientHeight: { configurable: true, value: 400 },
-    });
+    let viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     viewport.scrollTop = 100;
     viewport.dispatchEvent(new Event("scroll"));
     let resolveRead!: (reply: { ok: true; value: SessionChatPage }) => void;
@@ -379,12 +654,14 @@ describe("connected chat reply rendering", () => {
       items: [item("second", "user", "Second session")], events: [], state,
     } });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
 
     viewport.scrollTop = 200;
     viewport.dispatchEvent(new Event("scroll"));
     fixture.componentRef.setInput("selection", { scopeId: "scope", taskId: 1, sessionId: 2 });
     await settle(fixture);
+    viewport = root.querySelector<HTMLDivElement>("ex-chat-scroll .viewport")!;
     expect(viewport.scrollTop).toBe(3000);
   });
 
@@ -473,7 +750,7 @@ describe("connected chat reply rendering", () => {
       const tool = turn.querySelector("ex-tool-step")!;
       expect(answer.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       if (phase === "idle") {
-        expect(turn.querySelector(".facts")?.textContent).toContain("Ran 1 command");
+        expect(turn.querySelector(".facts")?.textContent).toContain("1 command");
       } else {
         expect(turn.querySelector(".facts")).toBeNull();
       }
@@ -636,11 +913,15 @@ describe("connected composer controls", () => {
     custom.focus(); custom.click(); await settle(fixture);
     expect(document.querySelector('.agent-settings')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('.preset-creator input')?.value).toBe('');
-    expect(document.querySelector('.preset-creator button[aria-label="Model: GPT"]')).not.toBeNull();
-    expect(document.querySelector('.preset-creator [aria-label="Thinking level"] [aria-checked="true"]')?.getAttribute('aria-label')).toBe(reasoning === 'high' ? 'High' : 'Low');
-    expect(document.querySelector('.preset-creator [role="switch"]')?.getAttribute('aria-checked')).toBe(String(fast));
-    document.querySelector<HTMLButtonElement>(`.preset-creator [aria-label="Thinking level"] button[aria-label="${reasoning === 'high' ? 'Low' : 'High'}"]`)!.click();
+    // The creator edits the mix with the composer's own agent menu.
+    expect(document.querySelector('.preset-creator [role="option"][aria-selected="true"]')?.textContent).toContain('GPT');
+    const slider = document.querySelector<HTMLInputElement>('.preset-creator input[type="range"]')!;
+    expect(slider.getAttribute('aria-valuetext')).toBe(reasoning === 'high' ? 'High' : 'Low');
+    expect(document.querySelector('.preset-creator button[aria-label="Fast mode"]')?.getAttribute('aria-pressed')).toBe(String(fast));
+    slider.value = reasoning === 'high' ? '0' : '1';
+    slider.dispatchEvent(new Event('input')); slider.dispatchEvent(new Event('change'));
     await settle(fixture);
+    expect(slider.getAttribute('aria-valuetext')).toBe(reasoning === 'high' ? 'Low' : 'High');
     expect(fixture.componentInstance.store.state()).toMatchObject(chatState);
     document.querySelector('.preset-creator')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await settle(fixture);
@@ -990,14 +1271,43 @@ describe("connected subscription quota", () => {
 });
 
 
-it('shows generated images through the existing Markdown renderer without a full-output fallback', async () => {
+it('places images between their surrounding messages and hides them with their work disclosures', async () => {
   vi.stubGlobal('Image', class { src = ''; naturalWidth = 640; naturalHeight = 360; decode = async () => undefined; });
-  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'),
+  const output: SessionChatItem = { ...item('generated', 'tool_result', 'Image attachment'), toolId: 'capture',
     media: [{ id: '0', path: 'chat-image-generated-0', caption: 'Waving robot', inline: true }] };
-  const { fixture, root, bridge, publish } = setup([item('prompt', 'user', 'Draw a robot'), output, item('reply', 'assistant', 'Here is your robot.')]);
+  const { fixture, root, bridge, publish } = setup([
+    item('prompt', 'user', 'Draw a robot'),
+    { ...item('capture', 'tool_use', ''), toolId: 'capture' },
+    item('commentary', 'assistant', 'Rendering the robot.'),
+    output,
+    item('reply', 'assistant', 'Here is your robot.'),
+  ]);
   await settle(fixture);
   expect(bridge.sessionChatMedia).toHaveBeenCalledTimes(1);
-  expect(root.querySelector('ex-markdown-media img')?.getAttribute('src')).toContain('data:image/png;base64,');
+  const image = root.querySelector('ex-markdown-media img')!;
+  const fold = image.closest('ex-fold')!;
+  expect(image.getAttribute('src')).toContain('data:image/png;base64,');
+  expect([...root.querySelectorAll('[data-work-step]')].map(row => row.getAttribute('data-work-step')))
+    .toEqual(['capture', 'commentary', 'generated', 'reply']);
+  expect(root.querySelector('.answer img')).toBeNull();
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const work = root.querySelector<HTMLButtonElement>('button.work')!;
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  const group = root.querySelector<HTMLButtonElement>('[data-work-step="generated"] button.group')!;
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(false);
+  group.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  group.click();
+  await settle(fixture);
+  work.click();
+  await settle(fixture);
+  expect(fold.hasAttribute('inert')).toBe(true);
+  expect(root.querySelector('.answer')?.textContent).toContain('Here is your robot.');
   expect(root.textContent).not.toContain('Read full tool output');
   expect(root.textContent).not.toContain("isn't in the workspace");
   publish({ taskId: 1, sessionId: 3, cursor: 'new', reset: true, before: null, items: [], events: [], state });

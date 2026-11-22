@@ -9,10 +9,13 @@ import {
 } from "@angular/core";
 import type {
   ChatExchange,
+  ChatHistoryRequest,
   TurnAction,
+  TurnWorkAction,
+  TurnWorkToggle,
   TurnNavigationItem,
 } from "../conversation.models";
-import type { ToolContentRequest } from '../tool-presentation';
+import type { ToolContentRequest, ToolDetailsProvider, ToolImageProvider } from '../tool-presentation';
 import type { MarkdownAssetResolver } from "../markdown/markdown-parser";
 import { TurnComponent } from "../turns/turn.component";
 import { TurnNavComponent } from "../turns/turn-nav.component";
@@ -44,9 +47,11 @@ export class ChatComponent {
   readonly historyBefore = input(false);
   readonly historyAfter = input(false);
   readonly historyLoading = input(false);
+  readonly initialHistoryPrefetch = input(true);
   readonly historyError = input("");
   readonly historyRevision = input(0);
-  readonly historyRequested = output<"before" | "following">();
+  readonly historyRequested = output<ChatHistoryRequest>();
+  readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
   readonly exchanges = input<readonly ChatExchange[]>([]);
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
@@ -57,7 +62,13 @@ export class ChatComponent {
   readonly contentRequested = output<string>();
   readonly toolContentRequested = output<ToolContentRequest>();
   readonly resolve = input<MarkdownAssetResolver>();
+  readonly inspectTool = input<ToolDetailsProvider>();
+  readonly toolImages = input<ToolImageProvider>();
   readonly turnAction = output<{ id: string; action: TurnAction }>();
+  readonly turnWorkToggled = output<TurnWorkToggle & { readonly id: string }>();
+  readonly turnWorkHint = output<string>();
+  readonly turnWorkHintEnded = output<string>();
+  readonly turnWorkRequested = output<{ id: string; action: TurnWorkAction }>();
   readonly openFile = output<string>();
   readonly fileReview = output<{ readonly id: string; readonly path: string }>();
   readonly openLink = output<string>();

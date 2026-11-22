@@ -11,12 +11,18 @@ import type {
   SessionChatCommandReply,
   SessionChatPage,
   SessionChatRead,
+  SessionChatTurnWorkReply,
+  SessionChatTurnWorkRead,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
   SessionChatChangesRead,
   SessionChatChangesPage,
   SessionChatContentRead,
   SessionChatContent,
   SessionChatMediaRead,
   SessionChatMedia,
+  SessionChatStreamEvent,
+  SessionChatWatch,
 } from "@elevenex/shared";
 import {
   BackendClientService,
@@ -43,6 +49,36 @@ export class SessionChatClient {
     return this.invoke(scope, false, () =>
       this.bridge.sessionChatRead(scope, input),
     );
+  }
+  watch(scope: string, input: SessionChatWatch, receive: (event: SessionChatStreamEvent) => boolean) {
+    let active = true;
+    let delivery = 0;
+    const unsubscribe = this.bridge.onSessionChatStream(event => {
+      if (!active || this.backend.state().scope?.id !== scope ||
+          event.scopeId !== scope || event.watchId !== input.watchId ||
+          event.taskId !== input.taskId || event.sessionId !== input.sessionId) return;
+      if (event.type === 'page' && event.delivery !== delivery + 1) return;
+      if (receive(event) && active && event.type === 'page') {
+        delivery = event.delivery;
+        void this.bridge.sessionChatAcknowledge(scope, input.watchId, event.delivery).catch(() => undefined);
+      }
+    });
+    const started = this.invoke(scope, false, () => this.bridge.sessionChatWatch(scope, input));
+    return {
+      started,
+      close: () => {
+        if (!active) return;
+        active = false;
+        unsubscribe();
+        void this.bridge.sessionChatUnwatch(scope, input.watchId).catch(() => undefined);
+      },
+    };
+  }
+  turnWork(scope: string, input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatTurnWork(scope, input));
+  }
+  toolDetails(scope: string, input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatToolDetails(scope, input));
   }
   catalog(scope: string, input: SessionChatCatalogRead): Promise<BackendResult<SessionChatCatalog>> {
     return this.invoke(scope, false, () => this.bridge.sessionChatCatalog(scope, input));

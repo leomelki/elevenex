@@ -214,7 +214,7 @@ never grants filesystem access. Missing source does not prevent a visual referen
 A manual pick stages the snapshot in the original selected session as soon as it
 is captured and drops its pin at the composer caret; nothing is sent. The browser
 runs `BrowserView` in `pin` mode, so no question card appears. `beginElementPick(tabId?)`
-arms the picker for the Composer's ⌖ button, `@` command and chip Pick again,
+arms the picker for the composer's `@` command and chip Pick again,
 on the named tab or the current page. Arming and cancelling keep the current
 document and live display; selecting the current tab does not rehost it.
 The conversation's ElementPin chip owns the

@@ -58,11 +58,20 @@ export interface WorkspaceTaskSetupIssue {
   readonly canExceedWorktreeLimit?: boolean;
 }
 export interface WorkspaceSession {
+  /** Engine permits permanent removal only before any conversation starts. */
+  readonly canDelete?: boolean;
+  readonly parentSessionId?: number | null;
+  readonly childCount?: number;
   readonly id: number;
   readonly taskId: number;
   readonly repoId: number;
   readonly name: string;
+  /** Legacy status: detached commands make a session read as `running`. */
   readonly status: string;
+  /** The agent's own state, supplied only while detached commands run. Prefer it over `status`. */
+  readonly turnStatus?: string;
+  /** Detached shell commands still running. Omitted by older engines and when none run. */
+  readonly commandCount?: number;
   readonly provider: string;
   readonly updatedAt: string;
 }
@@ -71,6 +80,10 @@ export interface WorkspaceTaskQuery extends WorkspacePageQuery {
   readonly state?: 'active' | 'finished';
 }
 export interface WorkspaceSessionQuery extends WorkspacePageQuery {
+  /** Omit for legacy flat pages; null selects roots, an ID selects children. */
+  readonly parentSessionId?: number | null;
+  /** Opt-in append order for child pages. Requires sessionNestingOrder. */
+  readonly childOrder?: 'nested';
   /** Explicit lifecycle window; omission preserves older callers, including closed-task history. */
   readonly state?: 'normal' | 'archived';
   /** Newest bounded page, still returned in chronological display order. Omission preserves oldest-first callers. */
@@ -197,9 +210,19 @@ export interface WorkspaceArchiveSession {
   readonly sessionId: number;
   readonly confirmStop: boolean;
 }
+export interface WorkspaceDeleteSession {
+  readonly taskId: number;
+  readonly sessionId: number;
+}
 export interface WorkspaceRestoreSession {
   readonly taskId: number;
   readonly sessionId: number;
+}
+
+export interface WorkspaceMoveSession {
+  readonly taskId: number;
+  readonly sessionId: number;
+  readonly parentSessionId: number | null;
 }
 
 /** Optional capability retains compatibility with engines using revision polling. */
@@ -207,6 +230,9 @@ export interface WorkspaceRevision {
   readonly revision: number;
   readonly version: 1;
   readonly revisionWait?: true;
+  readonly chatStream?: true;
+  readonly sessionNesting?: true;
+  readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;

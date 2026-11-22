@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
-import type { RemoteChallenge } from '@elevenex/shared';
+import type { RemoteChallenge, RemoteConnectionStatus } from '@elevenex/shared';
 import { ButtonComponent, IconComponent, ModalLayerComponent, ToastComponent, ToastStackComponent } from '../../ui';
 import { AddMachineComponent, GettingReadyComponent, IslandNameComponent, MachineHomeComponent, MachineLaunchComponent, MachinePanelComponent, TitleBarComponent, TitleIslandComponent, machineHomeStatus, EditMachineComponent, MachineMenuPopupComponent } from '../index';
 import { MachineConnectionService } from './machine-connection.service';
@@ -11,6 +11,8 @@ import { MachineActionsService } from './machine-actions.service';
 import { MachineWorkspaceComponent } from './machine-workspace.component';
 import { machineReach } from './machine-reach';
 import { MachineErrorDialogComponent } from './machine-error-dialog.component';
+
+type WaitingUpdate = NonNullable<RemoteConnectionStatus['updateWaiting']> & { readonly hostId: string; readonly name: string };
 
 /** Production composition. Presentational families remain supplied-data APIs. */
 @Component({
@@ -38,6 +40,19 @@ export class MachineAppComponent {
   readonly reviewTrust = signal(false);
   readonly backOnline = signal(false);
   readonly challengeError = signal('');
+  readonly updateActionBusy = signal(false);
+  readonly updateActionError = signal('');
+  readonly waitingUpdate = computed<WaitingUpdate | null>(() => {
+    const environment = this.connection.state()?.environment;
+    if (!environment || environment.selection.kind !== 'remote') return null;
+    const update = environment.connection?.updateWaiting;
+    if (!update) return null;
+    const hostId = environment.selection.hostId;
+    return { ...update, hostId, name: this.launcher.machines().find(machine => machine.id === hostId)?.name ?? 'this server' };
+  });
+  readonly retainedUpdate = linkedSignal<WaitingUpdate | null, WaitingUpdate | null>({
+    source: this.waitingUpdate, computation: (update, previous) => update ?? previous?.value ?? null,
+  });
   readonly challenge = computed(() => this.connection.state()?.environment.challenge ?? null);
   // Keep the last dialog and its data mounted throughout ModalLayer's exit.
   readonly retainedChallenge = linkedSignal<RemoteChallenge | null, RemoteChallenge | null>({
@@ -139,7 +154,7 @@ export class MachineAppComponent {
   }
   private pointAt(id: string): void { this.ping.update(previous => ({ id, at: (previous?.at ?? 0) + 1 })); }
   shortcut(event: KeyboardEvent): void {
-    if (!event.defaultPrevented && !event.isComposing && !this.launcher.open() && !this.ssh.open() && !this.challenge() && !this.pairingOpen() && !this.actions.editOpen() && !this.actions.detailsOpen() && !this.actions.menu() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); this.find(); }
+    if (!event.defaultPrevented && !event.isComposing && !this.launcher.open() && !this.ssh.open() && !this.challenge() && !this.waitingUpdate() && !this.pairingOpen() && !this.actions.editOpen() && !this.actions.detailsOpen() && !this.actions.menu() && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); this.find(); }
   }
   home(): void { this.panelOpen.set(false); this.launcher.home(); }
   pair(from: HTMLElement): void { this.pairingFrom.set(from); this.pairingOpen.set(true); }
@@ -160,5 +175,19 @@ export class MachineAppComponent {
   async retry(): Promise<void> {
     try { await this.connection.retry(); }
     catch { if (!this.destroy.destroyed) this.launcher.error.set('The connection could not be retried. Try opening the machine again.'); }
+  }
+  async respondToUpdate(force: boolean): Promise<void> {
+    const update = this.waitingUpdate();
+    if (!update || this.updateActionBusy()) return;
+    this.updateActionBusy.set(true);
+    this.updateActionError.set('');
+    try {
+      if (force) await this.connection.forceUpdate(update.hostId, update.instance);
+      else await this.connection.disconnect();
+    } catch {
+      if (!this.destroy.destroyed && this.waitingUpdate()?.instance === update.instance) this.updateActionError.set('The request could not be sent. Try again.');
+    } finally {
+      if (!this.destroy.destroyed) this.updateActionBusy.set(false);
+    }
   }
 }

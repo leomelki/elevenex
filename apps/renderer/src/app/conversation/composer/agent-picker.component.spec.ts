@@ -133,6 +133,22 @@ function key(target: HTMLElement, key: string): KeyboardEvent {
 }
 
 describe("AgentPicker controlled settings and focus", () => {
+  it('retains an owner-supplied display label while a secondary catalog arrives', async () => {
+    const { fixture, trigger, open } = await setup();
+    fixture.componentRef.setInput('value', { ...agent, preset: undefined, modelLabel: 'Configured model' });
+    fixture.componentRef.setInput('harnesses', []);
+    await settle(fixture);
+    expect(trigger.textContent).toContain('Configured model');
+    fixture.componentRef.setInput('harnesses', harnesses);
+    await settle(fixture);
+    expect(trigger.textContent).toContain('Configured model');
+    expect(trigger.textContent).not.toContain('Opus 5.5');
+    fixture.componentInstance.changed.subscribe(value => fixture.componentRef.setInput('value', value));
+    await open();
+    option('Sonnet 5.5').click(); await settle(fixture);
+    expect(trigger.textContent).toContain('Sonnet 5.5');
+    expect(trigger.textContent).not.toContain('Configured model');
+  });
   it("shows the harness, its models and a thinking track, and emits a committed level", async () => {
     const { fixture, open } = await setup();
     const changed = vi.fn();

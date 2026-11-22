@@ -1,8 +1,7 @@
 # Remote development backend
 
-This implements the new desktop's system and typed IPC boundary. It does not
-add frontend UI or port the legacy frontend/backend clients. The legacy app and
-the application-owned local backend keep their existing behavior.
+Electron main manages the desktop's SSH connections and remote backend
+lifecycle. The renderer accesses them through typed IPC.
 
 ## Ownership and transport
 
@@ -112,7 +111,7 @@ receive cloned context snapshots during a download or typing burst.
 
 ## Setup and remote work lifetime
 
-The host must provide a POSIX shell, uname, Git, tar, gzip, base64, head with `-c`,
+The host must provide a POSIX shell, uname, Git, tar, gzip, head with `-c`,
 mktemp, and sha256sum or shasum. Supported remote targets are **Linux glibc and macOS,
 x64/arm64**, subject to the OS/libc requirements of the selected release's
 bundled Node and native modules. Alpine/musl and Windows SSH servers need a
@@ -185,17 +184,26 @@ connect/retry installs the corrected archive without deleting remote data.
 The SSH host needs neither a compiler nor a separately installed Node. Optional
 browser downloads have their own OS requirements; Alpine/musl is not covered.
 
-The current build supports the launcher's OS and architecture. A different
-remote target gets an explicit compatibility error. There is no implicit cross
-compilation or copying of macOS native binaries to Linux. Local development still
-works if archive assembly is unavailable; the terminal reports why.
+By default the archive matches the launcher's OS and architecture. On a Mac,
+`pnpm desktop:dev --linux` explicitly builds a Linux ARM64 archive with Docker;
+add `--x64` for Linux x64. macOS native binaries never enter the Linux archive.
+An explicit Linux build must succeed before Electron opens. Local development
+still works if default host-platform archive assembly is unavailable; the
+terminal reports why.
 
 Dirty and untracked backend sources contribute to the development revision;
 the generated revision file itself does not. Development runtime caches, daemon
-ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<checkout-id>/`,
-separate from release data. Identical builds reuse their installation. The existing
-handoff replaces a daemon from another build on explicit open/retry, just as for
-release builds. Background recovery never interrupts another build's backend.
+ownership, sockets and data use `~/.elevenex/desktop-remote-dev/<workspace-id>/`,
+separate from release data. Regular dev derives its workspace ID from the local
+checkout path. `pnpm desktop:dev:shared --linux` uses a fixed ID and builds once
+per launch. Pass `--workspace <32-character-id>` with the same value on both
+computers to reuse an existing development database. Shared Linux builds use the
+target architecture, pinned runtime and checkout sources for the engine revision.
+Git CRLF and LF checkout endings produce the same revision for those text sources.
+Identical builds reuse their installation. An explicit
+open or Retry waits for that workspace's daemon to become idle before handing
+off to the requested revision. Background recovery follows an accepted update
+for its revision and never initiates a handoff.
 
 Validation on 2026-11-02: desktop lint, build, type checks, 129 desktop tests,
 7 capture-tool tests and 605 renderer tests passed (two Vitest workers), together
@@ -221,8 +229,13 @@ legacy remote data and local desktop data:
 | `daemon.json` | Atomic mode-0600 discovery record for the current control listener |
 | `handoff-<revision>.json` | Private prepared runtime/shim descriptor, atomically published before handoff |
 
-The daemon reserves a deterministic remote loopback UDP port in 20000–39999 as
-its kernel database ownership lock. The HTTP control listener uses an
+The release daemon reserves a deterministic remote loopback UDP port in 20000–39999
+as its kernel database ownership lock. Each development checkout derives its own
+port in 10000–19999 from its namespace. During a handoff from a development daemon
+using the old account-wide port, the replacement acquires the checkout's port
+before announcing readiness. If an older discovery record is unreachable, a
+cold start must acquire its account-wide lock before migrating the checkout.
+The HTTP control listener uses an
 OS-allocated TCP port recorded in `daemon.json`, so an unrelated TCP service
 cannot prevent setup. Requests and responses authenticate with fresh nonces,
 timestamps and HMAC proofs; the token is never sent to a stale/reused TCP port.
@@ -265,9 +278,16 @@ invent automatic agent-run resumption.
 ### Updating a remote backend
 
 Explicitly opening a server or choosing Retry prepares this desktop's backend
-revision, then replaces a different running revision automatically. Preparation
-finishes before shutdown: failed download, checksum, extraction or Node checks
-leave the old backend running. The authenticated handoff is bound to the exact
+revision. If another revision has active Elevenex connections, the desktop shows
+the count and checks again over the existing SSH connection until the last one
+closes. **Force update** can interrupt those connections and their agents and
+terminals. **Cancel connection** stops waiting. The count covers Elevenex
+transports. Other SSH sessions and background work after disconnect are outside
+this count. An engine that supports handoff but cannot report connections requires
+an explicit force. The daemon rechecks active leases before accepting a normal
+handoff so a connection opened during preparation can keep using the engine.
+Download, checksum, extraction and bundled Node checks finish before shutdown.
+The authenticated handoff is bound to the exact
 daemon instance, source revision and target revision. The daemon accepts only
 an already installed runtime and uploaded shim beneath its own root. No process
 discovery, PID file, broad kill command or public shutdown API is involved.
@@ -367,6 +387,10 @@ an end-to-end `/api/info` response at the exact expected revision. Neither a liv
 SSH process nor an open listener qualifies. Health checks also run immediately
 after native resume/unlock notifications. Timeouts bound SSH authentication,
 setup stages, downloads, bridge requests and application health.
+Health replies share the SSH stream with forwarded data, so on a slow link they
+can queue behind a transcript or media transfer. While a connected transport
+keeps delivering bytes, a delayed health reply logs `delayed` and keeps the
+transport for up to 60 seconds; a silent transport or a longer delay reconnects.
 Intentional pause/disconnect publishes the owning window's state before socket
 cleanup or settings writes finish. That window reports no authenticated transport
 and its saved forwards report `stopped`; another window sharing the host can

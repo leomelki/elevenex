@@ -64,6 +64,28 @@ async function setup(t, overrides = {}) {
 }
 const ready = (manager, window = 1) => until(() => manager.snapshot(window), value => value.connection?.phase === 'ready');
 
+test('only the selected window and currently waiting daemon can authorize force once', async t => {
+  const instance = '11111111-1111-4111-8111-111111111111';
+  let forced = 0;
+  const { manager, remote } = await setup(t, { connect: options => {
+    options.progress('runtime');
+    options.waitingForUpdate({ instance, connections: 2 }, () => { forced++; });
+    return new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    });
+  } });
+  await manager.select(1, remote);
+  const waiting = await until(() => manager.snapshot(1).connection?.updateWaiting, Boolean);
+  assert.equal(waiting.connections, 2);
+  assert.throws(() => manager.forceUpdate(2, remote.hostId, instance));
+  assert.throws(() => manager.forceUpdate(1, 'different-host', instance));
+  assert.throws(() => manager.forceUpdate(1, remote.hostId, '22222222-2222-4222-8222-222222222222'));
+  assert.equal(forced, 0);
+  manager.forceUpdate(1, remote.hostId, instance);
+  assert.throws(() => manager.forceUpdate(1, remote.hostId, instance));
+  assert.equal(forced, 1);
+});
+
 test('remote inputs reject shell syntax, extra properties, credentials and unsafe forwarding addresses', () => {
   for (const input of [ { ...host, host: '-oProxyCommand=evil' }, { ...host, host: 'x;id' }, { ...host, password: 'secret' }, { ...host, port: 0 }, { ...host, identityFile: '../key' }, { ...host, user: 'me$(id)' } ]) assert.throws(() => validate.hostInput(input));
   assert.deepEqual(validate.hostInput({ ...host, host: '::1' }), { ...host, host: '::1' });
@@ -504,17 +526,20 @@ test('real bootstrap reuses a healthy runtime and daemon across dropped transpor
   assert.notEqual(third.instance, second.instance); assert.equal(await readFile(join(home, 'starts'), 'utf8'), '11');
   assert.throws(() => process.kill(initialInfo.pid, 0), { code: 'ESRCH' }); await third.close();
   assert.equal(occupied.listening, true);
-  const script = await bootstrapScript(release, 'abc123'); assert.ok(script.includes('base64')); assert.ok(Buffer.byteLength(script) < 30000);
+  const { command, payload } = await bootstrapScript(release, 'abc123');
+  assert.ok(command.includes(`head -c ${payload.length}`));
+  assert.ok(Buffer.byteLength(command) < 8192);
 });
 
 test('an interrupted runtime transfer removes only its staging files and preserves older installations', async t => {
   if (process.platform === 'win32') return t.skip('POSIX remote runtime');
   const home = await mkdtemp('/tmp/ex-remote-interrupt-'); const root = join(home, '.elevenex/desktop-remote');
   const old = join(root, 'runtimes/older-working-release'); await mkdir(old, { recursive: true }); await writeFile(join(old, 'keep'), 'working');
-  const command = await bootstrapScript(release, 'transfer-test', false);
+  const { command, payload } = await bootstrapScript(release, 'transfer-test', false);
   const child = spawn('sh', ['-c', command], { env: { ...process.env, HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(async () => { child.kill('SIGTERM'); await rm(home, { recursive: true, force: true }); });
   let output = ''; child.stdout.on('data', bytes => { output += bytes; }); child.stderr.resume();
+  child.stdin.write(payload);
   await until(() => output, value => value.includes('cache:no'));
   // Closing the SSH input in the middle of a declared archive is an interrupted
   // upload. It must never produce a completed cache or harm an older version.

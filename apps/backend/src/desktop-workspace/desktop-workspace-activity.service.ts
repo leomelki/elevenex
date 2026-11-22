@@ -18,8 +18,25 @@ function record(value: unknown): Record<string, unknown> {
     ? (value as Record<string, unknown>)
     : {};
 }
-function stateActivity(value: unknown): Activity {
+/** Detached shells and monitors. Delegated agents stay part of the agent's own work. */
+function commandCount(value: unknown): number {
+  const { backgroundWork } = record(value);
+  return Array.isArray(backgroundWork)
+    ? backgroundWork.filter((item) => record(item).kind === 'task').length
+    : 0;
+}
+/**
+ * `countCommands` keeps the legacy sidebar meaning, where a detached command
+ * makes the whole session read as running. Without it, only the agent's own turn
+ * and delegated agents do.
+ */
+function stateActivity(value: unknown, countCommands = true): Activity {
   const state = record(value);
+  const background = Array.isArray(state.backgroundWork)
+    ? state.backgroundWork.filter(
+        (item) => countCommands || record(item).kind !== 'task',
+      ).length
+    : 0;
   if (
     state.pendingPermissionRequest ||
     state.pendingUserInputRequest ||
@@ -34,7 +51,7 @@ function stateActivity(value: unknown): Activity {
     state.runPhase === 'running' ||
     state.sessionState === 'running' ||
     state.backgroundRunActive === true ||
-    (Array.isArray(state.backgroundWork) && state.backgroundWork.length > 0)
+    background > 0
   )
     return 'running';
   if (state.lastError) return 'failed';
@@ -43,12 +60,27 @@ function stateActivity(value: unknown): Activity {
   return 'idle';
 }
 
+/** What the sidebar shows for one session. */
+export interface WorkspaceSessionView {
+  /** Legacy status: detached commands count as running. */
+  readonly status: string;
+  /** The agent's own state; present only while detached commands run. */
+  readonly turnStatus?: string;
+  /** Detached shell commands still running; present only when above zero. */
+  readonly commandCount?: number;
+}
+interface ObservedActivity {
+  readonly activity: Activity;
+  readonly turn: Activity;
+  readonly commands: number;
+}
+
 /** Scalar sidebar activity only. Never hydrates provider histories, catalogs or runtimes. */
 @Injectable()
 export class DesktopWorkspaceActivityService
   implements OnModuleInit, OnModuleDestroy
 {
-  private readonly runtime = new Map<string, Activity>();
+  private readonly runtime = new Map<string, ObservedActivity>();
   private readonly hookSignatures = new Map<number, string>();
   private readonly stop: (() => void)[] = [];
   constructor(
@@ -68,19 +100,29 @@ export class DesktopWorkspaceActivityService
         )
           return;
         const key = `${info.id}:${event.payload.sessionId}`,
-          next = stateActivity(event.payload),
+          activity = stateActivity(event.payload),
+          next: ObservedActivity = {
+            activity,
+            turn: stateActivity(event.payload, false),
+            commands: commandCount(event.payload),
+          },
           previous = this.runtime.get(key);
         this.runtime.delete(key);
         // Idle is recoverable from persisted session metadata. Keeping idle
         // snapshots would let many quiet sessions evict genuinely live work.
-        if (next !== 'idle') this.runtime.set(key, next);
+        if (activity !== 'idle') this.runtime.set(key, next);
         while (this.runtime.size > capacity) {
           const [oldest] = this.runtime.keys();
           if (oldest === undefined) break;
           this.runtime.delete(oldest);
         }
         // Token and tool updates often repeat snapshots; only semantic status changes invalidate visible pages.
-        if (next !== (previous ?? 'idle')) this.navigation.invalidate();
+        if (
+          next.activity !== (previous?.activity ?? 'idle') ||
+          next.turn !== (previous?.turn ?? 'idle') ||
+          next.commands !== (previous?.commands ?? 0)
+        )
+          this.navigation.invalidate();
       };
       provider.on('event', listener);
       this.stop.push(() => provider.off('event', listener));
@@ -92,10 +134,8 @@ export class DesktopWorkspaceActivityService
       // leave a cached spinner or input request alive after runtime teardown.
       if (snapshot.activityStatus === 'idle' && !snapshot.backgroundActive) {
         const key = `${event.provider ?? 'claude'}:${event.sessionId}`;
-        if (
-          this.runtime.get(key) === 'running' ||
-          this.runtime.get(key) === 'attention'
-        )
+        const observed = this.runtime.get(key)?.activity;
+        if (observed === 'running' || observed === 'attention')
           cleared = this.runtime.delete(key);
       }
       const signature = `${snapshot.activityStatus}:${snapshot.actionKind}:${snapshot.backgroundActive}:${snapshot.failed === true}`;
@@ -130,19 +170,46 @@ export class DesktopWorkspaceActivityService
     this.hookSignatures.clear();
   }
   status(session: WorkspaceSessionActivity): string {
+    return this.resolve(session, true);
+  }
+  /** Legacy status plus the additive fields newer desktops use to separate commands. */
+  view(session: WorkspaceSessionActivity): WorkspaceSessionView {
+    const status = this.resolve(session, true);
+    if (session.status === 'archived' || session.status === 'stopped')
+      return { status };
+    const commands =
+      this.runtime.get(`${sessionAgentProvider(session)}:${session.id}`)
+        ?.commands ?? 0;
+    return commands > 0
+      ? {
+          status,
+          turnStatus: this.resolve(session, false),
+          commandCount: commands,
+        }
+      : { status };
+  }
+  private resolve(
+    session: WorkspaceSessionActivity,
+    countCommands: boolean,
+  ): string {
     if (session.status === 'archived' || session.status === 'stopped')
       return inactiveSessionStatus(session);
-    const observed = this.runtime.get(
+    const entry = this.runtime.get(
         `${sessionAgentProvider(session)}:${session.id}`,
       ),
+      observed = countCommands ? entry?.activity : entry?.turn,
       hooks = this.hooks.getActivity(session.id);
+    // Hook background flags cannot tell commands from agents. When the runtime
+    // reported its own work, that report is the authority.
+    const hookBackground =
+      hooks.backgroundActive && (countCommands || entry === undefined);
     if (observed === 'attention' || hooks.activityStatus === 'waiting')
       return 'attention';
     if (observed === 'failed' || hooks.failed) return 'failed';
     if (
       observed === 'running' ||
       hooks.activityStatus === 'running' ||
-      hooks.backgroundActive
+      hookBackground
     )
       return 'running';
     if (observed === 'queued') return 'queued';

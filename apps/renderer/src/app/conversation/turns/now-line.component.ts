@@ -19,6 +19,11 @@ import { StreamTextComponent } from "./stream-text.component";
 export class NowLineComponent {
   readonly step = input.required<WorkStep>();
   readonly streaming = input(true);
+  protected readonly reasoningText = computed(() => {
+    const step = this.step();
+    // Keep the caret at the last visible text while the next paragraph streams in.
+    return step.kind === "think" ? step.text?.trimEnd() ?? "" : "";
+  });
   readonly verb = computed(() => stepVerb(this.step(), true));
   readonly icon = computed(() => stepIcon(this.step()));
   readonly time = computed(() => formatDuration(this.step().elapsed ?? 0));

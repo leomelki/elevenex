@@ -30,7 +30,7 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
   try {
     for (const file of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']) await copy(file, `manifests/${file}`);
     await copy('apps/backend/package.json', 'manifests/apps/backend/package.json');
-    // JS is already bundled on the Mac. Installing the entire backend again
+    // JS is already bundled on the host. Installing the entire backend again
     // would also download unused agent CLIs and image/ML dependencies.
     const backendManifest = JSON.parse(await readFile(join(root, 'apps/backend/package.json'), 'utf8'));
     const browserRuntime = typeof backendManifest.dependencies['playwright-core'] === 'string';
@@ -46,7 +46,7 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
     // pnpm 8's generated v6 lockfile has a fixed importer indentation. Retain
     // the original dependency entries and entire package graph verbatim: a new
     // resolution here could silently upgrade transitive runtime dependencies.
-    const lockfile = await readFile(join(root, 'pnpm-lock.yaml'), 'utf8');
+    const lockfile = (await readFile(join(root, 'pnpm-lock.yaml'), 'utf8')).replaceAll('\r\n', '\n');
     const importer = /^ {2}apps\/backend:\n(?: {4,}.*\n|\n)*/m.exec(lockfile)?.[0];
     if (!/^lockfileVersion: '6\.0'$/m.test(lockfile) || !importer) throw new Error('Expected the pinned pnpm 8 lockfile format');
     const entries = runtimeDependencies.map(name => {
@@ -68,6 +68,15 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
       'apps/backend/node_modules/@openai/codex-sdk/package.json', 'apps/backend/node_modules/@openai/codex-sdk/dist',
       'apps/backend/node_modules/@openai/codex-sdk/LICENSE', 'apps/backend/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
     ]) await copy(file, `runtime/${file}`);
+    // Windows checkouts can contain CRLF, which breaks POSIX shebangs and shell syntax.
+    for (const file of [
+      'apps/backend/bin/plannotator-wrapper.sh',
+      ...['bashrc', 'integration.fish', 'zshenv', 'zshrc'].map(name => `apps/backend/bundle/shell-integration/scripts/${name}`),
+    ]) {
+      const path = join(context, 'runtime', file);
+      const script = await readFile(path, 'utf8');
+      await writeFile(path, script.replaceAll('\r\n', '\n'));
+    }
     await copy('scripts/desktop-backend-linux.Dockerfile', 'Dockerfile');
     console.log(`Building the SSH Linux ${architecture} runtime with Docker (dependencies are cached)…`);
     try {

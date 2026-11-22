@@ -67,7 +67,7 @@ describe("selected file uploads", () => {
     reply({ ok: true, value: { id, offset: 5, path: "/late" } });
     await Promise.resolve();
     expect(owner.files()).toEqual([]);
-    expect(drafts.entry("scope", 2).files()[0]?.status).toBe("error");
+    expect(drafts.entry(selection).files()[0]?.status).toBe("error");
   });
   it("keeps failed files for explicit retry and rejects excessive selections", async () => {
     const { owner, upload } = setup();

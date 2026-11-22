@@ -24,6 +24,7 @@ const IDLE_SHUTDOWN_MS = 5 * 60_000;
 
 const INITIALIZE_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_CODEX_CONTEXT_TOKENS = 1_000_000;
 
 interface PendingRequest {
   resolve(value: unknown): void;
@@ -299,11 +300,18 @@ export class CodexAppServerClient implements OnModuleDestroy {
   private spawnChild(codexBin: string, env: NodeJS.ProcessEnv): void {
     this.logger.log(`Spawning codex app-server (${codexBin})`);
     const { command, shell } = buildSpawnCommand(codexBin);
-    const child = spawn(command, ['app-server', '--listen', 'stdio://'], {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell,
-    });
+    const child = spawn(
+      command,
+      [
+        'app-server',
+        '--listen',
+        'stdio://',
+        // Codex clamps this override to the model's advertised maximum.
+        '-c',
+        `model_context_window=${MAX_CODEX_CONTEXT_TOKENS}`,
+      ],
+      { env, stdio: ['pipe', 'pipe', 'pipe'], shell },
+    );
     this.child = child;
 
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });

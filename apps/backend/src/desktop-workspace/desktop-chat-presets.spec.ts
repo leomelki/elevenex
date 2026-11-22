@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { SessionsService } from '../sessions/sessions.service.js';
-import type { SettingsService } from '../settings/settings.service.js';
+import { SettingsService } from '../settings/settings.service.js';
+import { createTestDb } from '../database/testing/create-test-db.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
 
 function setup() {
@@ -56,11 +57,11 @@ function setup() {
     status: 'active',
     workspaceArchivedAt: null,
   } as Awaited<ReturnType<SessionsService['findOne']>>;
-  const run = (action: Record<string, unknown>) =>
+  const run = (action: Record<string, unknown>, savedSettings?: SettingsService) =>
     executePresetAction(
       sessions as unknown as SessionsService,
       registry as unknown as AgentRuntimeRegistryService,
-      settings as unknown as SettingsService,
+      savedSettings ?? settings as unknown as SettingsService,
       2,
       session,
       action,
@@ -68,6 +69,62 @@ function setup() {
   return { preset, runtime, registry, settings, sessions, session, run };
 }
 describe('starting presets', () => {
+  it('persists arrangement, edits and undo without changing the current agent', async () => {
+    const { db, sqlite } = createTestDb();
+    try {
+      const settings = new SettingsService(db);
+      await settings.update({
+        defaultAgentProvider: 'codex',
+        defaultModelByProvider: { codex: 'model' },
+        agentModelPresets: [
+          { id: 'quick', name: 'Quick', provider: 'codex', model: 'model', reasoningEffort: 'low' },
+          { id: 'hidden', name: 'Hidden', provider: 'missing', model: null, reasoningEffort: null },
+        ],
+      });
+      // Load the synthetic preset through the legacy default settings path.
+      await settings.update({ defaultModelByProvider: { codex: 'model' }, defaultReasoningEffortByProvider: { codex: 'high' } });
+      await settings.findOne();
+      const { run, runtime } = setup();
+      const revision = () => settings.getAgentPresetDefault().revision;
+      const initialRevision = revision();
+      await run({
+        type: 'preset-reorder', ids: ['default-codex', 'quick'], expectedRevision: initialRevision,
+      }, settings);
+      expect(settings.getAgentModelPresets().map(preset => preset.id)).toEqual(['default-codex', 'hidden', 'quick']);
+      await expect(run({
+        type: 'preset-delete', id: 'quick', expectedRevision: initialRevision,
+      }, settings)).rejects.toThrow('changed');
+      await expect(run({
+        type: 'preset-delete', id: 'hidden', expectedRevision: revision(),
+      }, settings)).rejects.toThrow('no longer available');
+      const fields = { id: 'default-codex', name: 'Focused', provider: 'codex', model: 'model', reasoning: 'low', fast: true };
+      await expect(run({
+        type: 'preset-update', ...fields, model: 'unavailable', expectedRevision: revision(),
+      }, settings)).rejects.toThrow('no longer available');
+      await run({ type: 'preset-update', ...fields, expectedRevision: revision() }, settings);
+      expect(settings.getAgentPresetDefault().id).toBe(fields.id);
+      const reply = await run({
+        type: 'preset-delete', id: fields.id, expectedRevision: revision(),
+      }, settings);
+      expect(reply.presetRemoval).toEqual({ position: 0, revision: revision() });
+      const afterRemoval = await settings.findOne();
+      expect(afterRemoval.defaultModelByProvider.codex).toBeUndefined();
+      expect(settings.getAgentPresetDefault().id).toBe('quick');
+      await run({
+        type: 'preset-restore', ...fields, position: reply.presetRemoval?.position,
+        defaultProvider: 'codex', defaultIds: [fields.id], expectedRevision: reply.presetRemoval?.revision,
+      }, settings);
+      const restarted = new SettingsService(db);
+      await restarted.onModuleInit();
+      expect(restarted.getAgentPresetDefault().id).toBe(fields.id);
+      expect(restarted.getAgentModelPresets().map(preset => preset.id)).toEqual([fields.id, 'hidden', 'quick']);
+      expect(restarted.getAgentProviderDefaults('codex')).toEqual({ model: 'model', reasoningEffort: 'low', fastMode: true });
+      expect(runtime.getRuntimeState).not.toHaveBeenCalled();
+      expect(runtime.setSelectedModel).not.toHaveBeenCalled();
+    } finally {
+      sqlite.close();
+    }
+  });
   it('validates and applies the complete saved mix, including a harness change', async () => {
     const { run, runtime, sessions } = setup();
     await run({ type: 'preset', id: 'deep', expectedProvider: 'codex' });
@@ -104,6 +161,14 @@ describe('starting presets', () => {
     expect(runtime.setSelectedModel).not.toHaveBeenCalled();
     expect(sessions.updateActiveAgentProvider).not.toHaveBeenCalled();
     expect(settings.addAgentModelPreset).not.toHaveBeenCalled();
+  });
+  it('checks the current chat mix before reapplying an edited preset', async () => {
+    const { run, runtime } = setup();
+    await expect(run({
+      type: 'preset', id: 'deep', expectedProvider: 'codex',
+      expectedMix: { model: 'model', reasoning: 'low', fast: false, revision: 'a'.repeat(64) },
+    })).rejects.toThrow('agent settings changed');
+    expect(runtime.setSelectedModel).not.toHaveBeenCalled();
   });
   it('saves only validated configurations and reports a partial provider failure for reconciliation', async () => {
     const { run, settings, runtime } = setup();

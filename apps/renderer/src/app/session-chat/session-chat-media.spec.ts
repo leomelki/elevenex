@@ -67,9 +67,10 @@ function setup() {
   return { media: TestBed.inject(SessionChatMedia), client, pending };
 }
 describe("selected chat images", () => {
-  it("renders tool images with the answer without an overflow button", () => {
+  it("keeps orphaned tool images on their receipt without an overflow button", () => {
     const [exchange] = chatExchanges(items(1), null, new Set());
-    expect(exchange?.answer).toContain("![Robot](image-0)");
+    expect(exchange?.answer).toBe("");
+    expect(exchange?.steps[0]?.media).toEqual([{ path: "image-0", caption: "Robot" }]);
     expect(exchange?.overflow).toEqual([]);
   });
   it("bounds concurrent reads and continues queued images across streaming updates", async () => {
@@ -78,6 +79,7 @@ describe("selected chat images", () => {
     media.update(selection, items(5));
     expect(client.media).toHaveBeenCalledTimes(3);
     expect(media.resolve("image-0")).toMatchObject({ loading: true });
+    expect(media.resolve("image-4")).toMatchObject({ kind: 'image', loading: true });
     pending[0]!.resolve({
       ok: true,
       value: {
@@ -97,6 +99,52 @@ describe("selected chat images", () => {
     expect(media.resolve("image-1")).toMatchObject({
       error: expect.stringContaining("Could not load"),
     });
+  });
+  it('reads viewed images on inspection and cancels an interrupted read without changing a shared-path attachment', async () => {
+    const { media, client, pending } = setup();
+    const attachment = items(1)[0]!;
+    const call = { ...attachment, id: 'call', kind: 'tool_use' as const, toolId: 'view', toolKind: 'image_view', media: undefined };
+    const result = { ...attachment, id: 'result', toolId: 'view' };
+    const image = { itemId: result.id, mediaId: '0', path: 'image-0', caption: 'Screenshot' };
+    media.update(selection, [attachment, call, result]);
+    expect(pending.map(({ input }) => input.itemId)).toEqual([attachment.id]);
+    const abort = new AbortController();
+    const resolve = media.toolImages()!([image], abort.signal);
+    expect(pending.map(({ input }) => input.itemId)).toEqual([attachment.id, result.id]);
+    expect(resolve(image)).toMatchObject({ loading: true });
+    abort.abort();
+    expect(client.cancel).toHaveBeenCalledWith(selection.scopeId, pending[1]!.input.requestId);
+    pending[1]!.resolve({ ok: true, value: { itemId: result.id, mediaId: '0', source: 'data:image/png;base64,AA==' } });
+    await settle();
+    expect(resolve(image)).toBeUndefined();
+    expect(media.resolve(image.path)).toMatchObject({ loading: true });
+    const reopened = media.toolImages()!([image], new AbortController().signal);
+    pending[2]!.resolve({ ok: true, value: { itemId: result.id, mediaId: '0', source: 'data:image/png;base64,AQ==' } });
+    await settle();
+    expect(reopened(image)).toMatchObject({ src: 'data:image/png;base64,AQ==' });
+  });
+  it('uses the newest reference at a shared path and discards an evicted read', async () => {
+    const { media, client, pending } = setup();
+    const original = items(1)[0]!;
+    const replacement = { ...original, id: 'new-receipt' };
+    media.update(selection, [original]);
+    media.update(selection, [original, replacement]);
+    expect(client.cancel).toHaveBeenCalledWith(selection.scopeId, pending[0]!.input.requestId);
+    expect(client.media).toHaveBeenCalledTimes(2);
+    pending[0]!.resolve({
+      ok: true, value: { itemId: original.id, mediaId: '0', source: 'data:image/png;base64,AA==' },
+    });
+    await settle();
+    expect(media.resolve('image-0')).toMatchObject({ loading: true });
+    pending[1]!.resolve({
+      ok: true, value: { itemId: replacement.id, mediaId: '0', source: 'data:image/png;base64,AQ==' },
+    });
+    await settle();
+    const asset = media.resolve('image-0');
+    expect(asset).toMatchObject({ src: 'data:image/png;base64,AQ==' });
+    media.update(selection, [original, { ...replacement, text: 'Streamed text' }]);
+    expect(media.resolve('image-0')).toBe(asset);
+    expect(client.media).toHaveBeenCalledTimes(2);
   });
   it("cancels selection-owned work and rejects late replies; destruction releases requests", async () => {
     const { media, client, pending } = setup();

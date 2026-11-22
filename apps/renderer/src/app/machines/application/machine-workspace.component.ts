@@ -82,9 +82,10 @@ export class MachineWorkspaceComponent {
   askTerminal(question: TerminalQuestion): void {
     const selected = this.store.selected();
     if (!selected || selected.scopeId !== question.scopeId || selected.taskId !== question.taskId || this.store.offline()) return;
-    const entry = this.chatDrafts.entry(selected.scopeId, selected.sessionId);
+    const entry = this.chatDrafts.entry(selected);
     const context = `Help me understand this terminal failure.\n\nCommand: ${question.command.slice(0, 4096)}\nExit code: ${question.code}\n\nTerminal output (last 80 lines, bounded):\n${question.output.slice(-8000)}`;
-    entry.text.update(text => (text ? text + '\n\n' : '') + context);
+    const text = entry.text();
+    entry.setText((text ? text + '\n\n' : '') + context);
     this.wideReview.set(false);
     if (this.composerFocusFrame !== undefined) cancelAnimationFrame(this.composerFocusFrame);
     this.composerFocusFrame = requestAnimationFrame(() => {

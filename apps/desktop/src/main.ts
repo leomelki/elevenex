@@ -59,7 +59,7 @@ const remoteArchives = new RemoteArchiveCache(remoteRoot, remoteDevelopment?.arc
 const remote = new RemoteManager({
   root: remoteRoot,
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
-  settingsPath: join(app.getPath('userData'), 'remote-settings.json'),
+  settingsPath: join(app.getPath('userData'), remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
   release: remoteDevelopment?.release ?? (() => readBackendRelease(__dirname)),
   developmentNamespace: remoteDevelopment?.namespace,

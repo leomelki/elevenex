@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { getBackendRuntimeMode } from './backend-runtime-mode.js';
 
@@ -109,5 +110,17 @@ export function shellConfiguredSshAgentSocket(
     base.SSH_AUTH_SOCK !== join(dirname(dataRoot), 'agent.sock')
   )
     return undefined;
-  return shell.SSH_AUTH_SOCK;
+  const selected = shell.SSH_AUTH_SOCK;
+  // An empty value is a deliberate opt-out and needs no socket.
+  if (!selected) return selected;
+  // Shells often export a stable symlink (for example ~/.ssh/ssh_auth_sock)
+  // that a watcher retargets to the newest forwarded agent and removes while
+  // no SSH session is attached. The shell capture is cached, so check the
+  // socket at use time; otherwise signing, fetches and pushes fail although
+  // the desktop proxy is connected. This is one local stat in remote proxy
+  // mode only: no agent connection, key listing or copying. It is synchronous
+  // because environment construction is synchronous for every spawn site.
+  return statSync(selected, { throwIfNoEntry: false })?.isSocket()
+    ? selected
+    : undefined;
 }

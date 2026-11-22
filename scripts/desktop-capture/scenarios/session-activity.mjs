@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-/** Session-bar background work and runtime events, driven through the preview chat feed. */
+/** Composer background work and runtime events, driven through the preview chat feed. */
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => !!document.querySelector('ex-workspace-navigation ex-task-list'));
@@ -20,7 +20,7 @@ export default async function* (capture) {
   });
   const publish = value => capture.component('ex-connected-workspace-demo', (c, value) => c.fixture.chat.work(value, 101, 'claude'), value);
   const trigger = () => capture.evaluate(() => {
-    const button = document.querySelector('.session-bar ex-session-activity .trigger');
+    const button = document.querySelector('ex-composer ex-session-activity .trigger');
     return button && { mode: button.dataset.mode, text: button.textContent.replace(/\s+/g, ' ').trim(), label: button.getAttribute('aria-label') };
   });
   const finish = async () => {
@@ -28,31 +28,38 @@ export default async function* (capture) {
     await capture.waitFor(() => document.getAnimations().every(a => !Number.isFinite(a.effect?.getComputedTiming().endTime) || a.playState !== 'running'));
   };
   const open = async () => {
-    await capture.click('.session-bar ex-session-activity .trigger');
+    await capture.click('ex-composer ex-session-activity .trigger');
     await capture.waitFor(() => !!document.querySelector('.cdk-overlay-container ex-session-activity, .cdk-overlay-container .panel'));
     await finish();
   };
   const close = async () => {
     await capture.press('Escape');
     await capture.waitFor(() => !document.querySelector('.cdk-overlay-container .panel'));
-    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('.session-bar ex-session-activity .trigger')), true);
+    assert.equal(await capture.evaluate(() => document.activeElement === document.querySelector('ex-composer ex-session-activity .trigger')), true);
   };
 
   for (const theme of ['light', 'dark']) {
     await capture.theme(theme); await capture.viewport(1440, 960); await capture.reducedMotion(false);
     await publish({ running: [], recent: [] });
-    await capture.waitFor(() => !document.querySelector('.session-bar ex-session-activity .trigger'));
-    assert.equal(await capture.evaluate(() => document.querySelector('.session-bar .status')?.textContent.trim()), 'Ready');
+    await capture.waitFor(() => !document.querySelector('ex-composer ex-session-activity .trigger'));
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-session-chat > header')), false);
+    const topGap = await capture.evaluate(() => {
+      const chat = document.querySelector('ex-session-chat');
+      return chat.querySelector('ex-chat').getBoundingClientRect().top - chat.getBoundingClientRect().top;
+    });
+    assert.equal(topGap, 0);
+    await finish();
+    yield { name: theme + '-chat-without-header', inspect: ['ex-session-chat', 'ex-chat', 'ex-composer'] };
 
     await publish(work());
-    await capture.waitFor(() => document.querySelector('.session-bar ex-session-activity .trigger')?.dataset.mode === 'running');
+    await capture.waitFor(() => document.querySelector('ex-composer ex-session-activity .trigger')?.dataset.mode === 'running');
     const running = await trigger();
     assert.match(running.text, /^2 in background ?41m$/);
     assert.match(running.label, /Delegated work: 2 active, longest 41m/);
-    // An idle reply with live background work is not "Ready".
-    assert.equal(await capture.evaluate(() => document.querySelector('.session-bar .status')?.textContent.trim()), 'Working in background');
+    // Background work stays available in the composer without a separate status row.
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-session-chat > header')), false);
     await finish();
-    yield { name: theme + '-activity-running', selector: '.session-bar', inspect: ['.session-bar', 'ex-session-activity .trigger'] };
+    yield { name: theme + '-activity-running', selector: 'ex-composer', inspect: ['ex-composer', 'ex-session-activity .trigger'] };
 
     await open();
     const panel = await capture.evaluate(() => {
@@ -70,7 +77,7 @@ export default async function* (capture) {
     assert.deepEqual(panel.stops, ['Stop Review concurrency boundary · Explore', 'Stop pnpm test --watch payments']);
     assert.equal(panel.orphan, true);
     assert.deepEqual(panel.events, ['PostToolUse:Edit hook failed', 'Update API notes finished', 'Context compacted']);
-    yield { name: theme + '-activity-panel', inspect: ['.cdk-overlay-container .panel', '.session-bar'] };
+    yield { name: theme + '-activity-panel', inspect: ['.cdk-overlay-container .panel', 'ex-composer'] };
 
     await capture.hover('.cdk-overlay-container .panel .work:last-child');
     await capture.waitFor(() => getComputedStyle(document.querySelector('.panel .work:last-child .actions')).opacity === '1');
@@ -84,20 +91,20 @@ export default async function* (capture) {
 
     // Opening acknowledged the failure; a fresh one flags the trigger again.
     await publish({ running: [], recent: [{ id: 'hook:new', kind: 'hook', tone: 'danger', title: 'Stop hook failed', detail: 'exit 1\nnotify-send: not found', at: new Date().toISOString() }, ...work().recent] });
-    await capture.waitFor(() => document.querySelector('.session-bar ex-session-activity .trigger')?.dataset.mode === 'issue');
+    await capture.waitFor(() => document.querySelector('ex-composer ex-session-activity .trigger')?.dataset.mode === 'issue');
     assert.equal((await trigger()).text, '1 issue');
-    assert.equal(await capture.evaluate(() => document.querySelector('.session-bar .status')?.textContent.trim()), 'Ready');
+    assert.equal(await capture.evaluate(() => !!document.querySelector('ex-session-chat > header')), false);
     await finish();
-    yield { name: theme + '-activity-issue', selector: '.session-bar', inspect: ['.session-bar', 'ex-session-activity .trigger'] };
+    yield { name: theme + '-activity-issue', selector: 'ex-composer', inspect: ['ex-composer', 'ex-session-activity .trigger'] };
     await open(); await close();
-    await capture.waitFor(() => document.querySelector('.session-bar ex-session-activity .trigger')?.dataset.mode === 'quiet');
+    await capture.waitFor(() => document.querySelector('ex-composer ex-session-activity .trigger')?.dataset.mode === 'quiet');
     assert.equal((await trigger()).label, 'Recent activity');
 
     await publish(work());
     await capture.viewport(760, 760); await capture.reducedMotion(true);
-    await capture.waitFor(() => document.querySelector('.session-bar ex-session-activity .trigger')?.dataset.mode === 'running');
+    await capture.waitFor(() => document.querySelector('ex-composer ex-session-activity .trigger')?.dataset.mode === 'running');
     await open();
-    yield { name: theme + '-activity-narrow', inspect: ['.cdk-overlay-container .panel', '.session-bar'] };
+    yield { name: theme + '-activity-narrow', inspect: ['.cdk-overlay-container .panel', 'ex-composer'] };
     await close();
   }
   await publish({ running: [], recent: [] });

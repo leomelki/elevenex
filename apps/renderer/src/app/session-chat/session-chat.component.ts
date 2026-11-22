@@ -5,11 +5,13 @@ import { SessionChatAttachments } from './session-chat-attachments';
 import { SessionChatMedia } from './session-chat-media';
 import { SessionChatModels } from './session-chat-models';
 import {
+  afterNextRender,
   afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
   computed,
   effect,
   inject,
@@ -23,12 +25,14 @@ import {
   ApprovalCardComponent,
   AgentUsageNoticeComponent,
   ChatComponent,
+  ChatLoadingComponent,
   ComposerComponent,
   QuestionCardComponent,
   PresetPickerComponent,
   PresetCreatorComponent,
   ToolContentComponent,
   type AgentQuestion,
+  type ComposerSubmission,
   type QuestionAnswers,
   type TurnAction,
   type AgentConfig,
@@ -40,15 +44,12 @@ import {
   type ToolContentSource,
 } from "../conversation";
 import {
-  AutoHeightDirective,
   ButtonComponent,
-  ContextMeterComponent,
   IconComponent,
   DropdownComponent,
+  FoldComponent,
   PresenceComponent,
   ToastComponent,
-  SkeletonComponent,
-  StatusGlyphComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -63,16 +64,22 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 
 const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
+// These bounded, serializable view models can arrive with new IPC identities.
+// Activity/token updates must not invalidate unchanged composer configuration.
+function equalViewData<T>(left: T, right: T): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
 @Component({
   selector: "ex-session-chat",
   providers: [SessionChatStore, SessionChatMedia, SessionChatAttachments],
   imports: [
-    AutoHeightDirective,
     OpensWhenBackComponent,
     SessionChatContentComponent,
     SessionActivityComponent,
     SessionAgentComponent,
     ChatComponent,
+    ChatLoadingComponent,
     ComposerComponent,
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
@@ -81,18 +88,16 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
     PresetCreatorComponent,
     ToolContentComponent,
     ButtonComponent,
-    ContextMeterComponent,
-    StatusGlyphComponent,
-    SkeletonComponent,
     IconComponent,
     DropdownComponent,
+    FoldComponent,
     PresenceComponent,
     ToastComponent,
   ],
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
   host: {
-    "(keydown)": "presetFlow.presetShortcut($event)",
+    "(keydown)": "onKey($event)",
     "(dragover)": "dragOver($event)",
     "(drop)": "dropFiles($event)",
     "(dragleave)": "composer()?.dragLeave($event)",
@@ -107,17 +112,18 @@ export class SessionChatComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private copyRevision = 0;
   openToolContent(request: ToolContentRequest): void {
-    const items = this.store.items();
-    const item = items.find(item => item.id === request.itemId);
+    const items = this.store.presentedItems();
+    const item = items.find(item => item.id === request.itemId) ?? items.find(item => item.receipt?.id === request.itemId);
     const toolId = item?.toolId ?? item?.id;
     this.contentSource.set(item?.kind === 'tool_use' || item?.kind === 'tool_result' ? {
       inputId: item.kind === 'tool_use' ? item.id : items.find(value => value.kind === 'tool_use' && (value.toolId ?? value.id) === toolId)?.id,
-      outputId: item.kind === 'tool_result' ? item.id : [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
+      outputId: item.kind === 'tool_result' ? item.id : item.receipt?.id ?? [...items].reverse().find(value => value.kind === 'tool_result' && value.toolId === toolId)?.id,
     } : undefined);
     this.contentPart.set(request.part);
     this.contentId.set(request.itemId);
   }
   readonly selection = input<ChatSelection | null>(null);
+  readonly streamAvailable = input(false);
   readonly creation = input<StartingSession | null>(null);
   /** Stable through a create receipt, including one that arrives before first paint. */
   readonly creationKey = input<string | null>(null);
@@ -139,6 +145,8 @@ export class SessionChatComponent {
   }
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  /** One scroll/editor lifetime per selected session, retained through recovery. */
+  readonly chatViews = computed(() => [{ revision: this.store.viewRevision() }]);
   readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
   private readonly catalogTarget = computed(() => {
     const selection = this.selection();
@@ -187,6 +195,7 @@ export class SessionChatComponent {
   }
   readonly composer = viewChild(ComposerComponent);
   readonly chat = viewChild(ChatComponent);
+  private readonly injector = inject(Injector);
   readonly requestElement = viewChild<unknown, ElementRef<HTMLElement>>(
     "request",
     {
@@ -194,8 +203,10 @@ export class SessionChatComponent {
     },
   );
   readonly message = computed(
-    () => this.store.error() || this.store.state()?.error || "",
+    () => this.store.error() || this.store.uncertain() || this.store.streamError() || this.store.state()?.error || "",
   );
+  protected readonly opening = computed(() => !!this.selection() && this.active() && this.store.loading() &&
+    !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
   /** The inspected agent's live Activity record, while it is still listed. */
@@ -215,30 +226,6 @@ export class SessionChatComponent {
   );
   private copyTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly usageTime = signal(Date.now());
-  /** Work outliving its turn keeps the session busy even after the reply ends. */
-  readonly background = computed(
-    () => !!this.store.state()?.work?.running.some(item => item.background !== false),
-  );
-  readonly status = computed(() =>
-    this.store.state()?.permission || this.store.state()?.question
-      ? "attention"
-      : this.store.running() || this.background()
-        ? "running"
-        : this.store.state()?.phase === "error"
-          ? "failed"
-          : "done",
-  );
-  readonly statusLabel = computed(() =>
-    this.status() === "attention"
-      ? "Needs you"
-      : this.status() === "running"
-        ? this.store.running()
-          ? "Running"
-          : "Working in background"
-        : this.status() === "failed"
-          ? "Failed"
-          : "Ready",
-  );
   readonly blocked = computed(
     () =>
       (this.store.offline() && !this.store.outbox) ||
@@ -260,8 +247,8 @@ export class SessionChatComponent {
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
     }));
-  });
-  readonly providers = computed(() => this.store.state()?.providers ?? []);
+  }, { equal: equalViewData });
+  readonly providers = computed(() => this.store.state()?.providers ?? [], { equal: equalViewData });
   readonly harnesses = computed<readonly AgentHarness[]>(() => {
     const state = this.store.state();
     if (!state) return [];
@@ -278,7 +265,7 @@ export class SessionChatComponent {
         )[provider.id] ?? provider.label.slice(0, 2),
       models: provider.id === state.provider ? this.models() : [],
     }));
-  });
+  }, { equal: equalViewData });
   readonly showWelcome = computed(
     () =>
       !this.archived() &&
@@ -300,18 +287,67 @@ export class SessionChatComponent {
     agent: (): AgentConfig | undefined => this.agent(),
     focusComposer: () => this.focusComposer(),
     closeAgent: () => this.composer()?.agentPicker()?.closePicker(),
+    focusPreset: (id) => this.focusPreset(id),
   });
+  protected readonly presetEditing = computed(() =>
+    this.showWelcome() && this.presetFlow.canEdit() && this.presetFlow.editing() &&
+    !this.store.starting() && !this.store.compactStart(),
+  );
+  protected readonly presetHeadingActions = computed<readonly ("edit" | "new")[]>(() => {
+    if (!this.presetFlow.canEdit() || (!this.presetFlow.presets().length && !this.presetEditing())) return ["new"];
+    return this.presetEditing() ? ["new", "edit"] : ["edit", "new"];
+  });
+  focusPreset(id?: string): void {
+    afterNextRender(() => {
+      const card = id && this.element.querySelector(
+        `[data-flip="${CSS.escape(id)}"] ex-preset-card button`,
+      );
+      const fallback = this.element.querySelector<HTMLButtonElement>("[data-preset-edit]") ??
+        this.element.querySelector<HTMLButtonElement>("[data-preset-new]");
+      (card instanceof HTMLButtonElement ? card : fallback)?.focus();
+    }, { injector: this.injector });
+  }
+  setPresetEditing(editing: boolean): void {
+    this.presetFlow.setEditing(editing);
+    this.focusPreset();
+  }
+  protected onKey(event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.presetEditing() && !this.presetFlow.creatorOpen() &&
+      !event.defaultPrevented && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setPresetEditing(false);
+      return;
+    }
+    this.presetFlow.presetShortcut(event);
+  }
+  nameNewPreset(): void {
+    this.presetFlow.startNaming();
+    afterNextRender(() => {
+      this.element.querySelector<HTMLInputElement>(".preset-change input")?.focus();
+    }, { injector: this.injector });
+  }
+  cancelPresetName(): void {
+    this.presetFlow.naming.set(false);
+    afterNextRender(() => {
+      this.element.querySelector<HTMLButtonElement>("[data-name-preset]")?.focus();
+    }, { injector: this.injector });
+  }
   readonly agent = computed<AgentConfig | undefined>(() => {
     const state = this.store.state();
     if (!state) return undefined;
     return {
       preset: this.presetFlow.selectedPreset()?.preset,
+      presetEdited: this.showWelcome() && !!this.presetFlow.drift(),
       harnessLabel: this.providerLabel(),
       harness: state.provider,
       mark:
         this.harnesses().find((harness) => harness.id === state.provider)
           ?.mark ?? "Ag",
       model: state.model ?? "",
+      // The closed control uses the first page's display data. A secondary
+      // model catalog may enrich the menu without resizing the toolbar.
+      modelLabel: state.models.find(model => model.id === state.model)?.label ?? state.model ?? '',
       thinking: state.reasoning ?? undefined,
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
@@ -320,7 +356,12 @@ export class SessionChatComponent {
         : undefined,
       plan: sessionPlanUsage(state.planUsage, this.usageTime()),
     };
-  });
+  }, { equal: equalViewData });
+  readonly editedPreset = computed<AgentConfig | undefined>(() => {
+    const saved = this.presetFlow.drift()?.saved;
+    const agent = this.agent();
+    return saved && agent ? { ...agent, id: saved.id, preset: saved.preset, default: saved.default } : undefined;
+  }, { equal: equalViewData });
   readonly fastAvailable = computed(() => {
     const state = this.store.state();
     return (
@@ -343,6 +384,9 @@ export class SessionChatComponent {
       this.store.loading()
     )
       return;
+    if (value.harness !== current.harness || value.model !== current.model ||
+      value.thinking !== current.thinking || value.fast !== current.fast)
+      this.presetFlow.trackTweak();
     if (value.harness !== current.harness)
       void this.chooseProvider(value.harness);
     else if (value.model !== current.model)
@@ -399,6 +443,7 @@ export class SessionChatComponent {
           } as Readonly<Record<string, string>>
         )[id] ?? id,
     })),
+    { equal: equalViewData },
   );
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
@@ -407,13 +452,18 @@ export class SessionChatComponent {
       kind: q.multiple ? "multi" : "single",
       options: q.options.map((o) => ({ label: o.label, detail: o.detail })),
     })),
+    { equal: equalViewData },
   );
 
   dragOver(event: DragEvent): void {
-    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.dragOver(event);
+    if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+    if (this.presetEditing()) event.preventDefault();
+    else if (this.store.state()?.attachments) this.composer()?.dragOver(event);
   }
   dropFiles(event: DragEvent): void {
-    if (!event.defaultPrevented && event.dataTransfer?.types.includes('Files') && this.store.state()?.attachments) this.composer()?.drop(event);
+    if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+    if (this.presetEditing()) event.preventDefault();
+    else if (this.store.state()?.attachments) this.composer()?.drop(event);
   }
   constructor() {
     effect((cleanup) => {
@@ -445,12 +495,19 @@ export class SessionChatComponent {
     });
     effect(() => {
       const selection = this.selection();
-      this.store.setActive(this.active());
       const creation = this.creation();
-      if (creation) this.store.openDraft(creation);
-      else if (selection) this.store.open(selection, this.archived());
-      untracked(() => this.attachments.open(creation ? null : selection));
-      this.media.update(creation ? null : selection, this.store.items());
+      const active = this.active(), archived = this.archived(), streamAvailable = this.streamAvailable();
+      untracked(() => {
+        this.store.setActive(active);
+        if (creation) this.store.openDraft(creation);
+        else if (selection) this.store.open(selection, archived, streamAvailable);
+        this.attachments.open(creation ? null : selection);
+      });
+    });
+    effect(() => {
+      const selection = this.creation() ? null : this.selection();
+      const items = this.store.presentedItems();
+      untracked(() => this.media.update(selection, items));
     });
     effect(() => {
       this.identity();
@@ -477,7 +534,9 @@ export class SessionChatComponent {
         scrollIdentity = identity;
         opening = true;
       }
-      const ready = !this.store.loading() && !!this.store.state();
+      // Cached history is already usable while its refresh is pending. Position
+      // that first render too; a refresh must never pull an active reader down.
+      const ready = !!this.store.state();
       const scroll = this.chat()?.scroll();
       if (!opening || !ready || !scroll) return;
       opening = false;
@@ -505,8 +564,11 @@ export class SessionChatComponent {
     });
   }
   async latest(): Promise<void> {
-    await this.store.refresh();
-    this.chat()?.scroll()?.scrollToEnd("instant");
+    const revision = this.store.viewRevision();
+    if (!await this.store.refresh()) return;
+    afterNextRender(() => {
+      if (this.store.viewRevision() === revision) this.chat()?.scroll()?.scrollToEnd("instant");
+    }, { injector: this.injector });
   }
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();
@@ -515,9 +577,17 @@ export class SessionChatComponent {
   focusComposer(): void {
     this.composer()?.focusEditor();
   }
+  submit(submission: ComposerSubmission): void {
+    if (this.presetEditing()) return;
+    void this.store.submit(submission, text => this.composer()?.writeDraft(text));
+  }
   queueAction(type: "steer-queued" | "cancel-queued", id: string): void {
     this.focusComposer();
     void this.store.perform({ type, id });
+  }
+  resumeQueue(): void {
+    this.focusComposer();
+    void this.store.perform({ type: 'resume-queue' });
   }
   continue(): void {
     this.store.setDraft("Please continue.");

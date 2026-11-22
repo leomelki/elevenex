@@ -14,11 +14,16 @@ export default async function* (capture) {
     const bar = document.querySelector('ex-composer .bar');
     return bar.scrollWidth <= bar.clientWidth + 1;
   }), true, 'Composer toolbar must fit on one row');
+  const assertSquare = async () => assert.equal(await capture.evaluate(() => {
+    const button = document.querySelector('ex-composer button.send');
+    return button.offsetWidth === button.offsetHeight &&
+      button.offsetHeight === parseFloat(getComputedStyle(button).getPropertyValue('--control-height'));
+  }), true, 'Send and Queue must use the same square control size');
   for (const theme of ['light', 'dark']) {
     await capture.viewport(1440, 960); await capture.theme(theme); await mode('ready');
     await capture.waitFor(() => document.querySelector('ex-composer .input-height') && document.querySelector('ex-agent-picker > button')?.disabled === false);
     await capture.fill('ex-composer textarea', 'Trace the retry path, then verify concurrent requests.');
-    await finish(); await assertRow();
+    await finish(); await assertRow(); await assertSquare();
     yield { name: theme + '-composer', inspect: ['ex-composer', 'ex-composer .bar', 'ex-composer textarea'] };
     // Keyboard access, nested menu dismissal and retained textarea focus.
     await capture.press('j', 4);
@@ -62,7 +67,8 @@ export default async function* (capture) {
     await capture.fill('ex-composer textarea', '');
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer button.send').disabled), true);
     await mode('running');
-    await capture.waitFor(() => document.querySelector('ex-composer button.send')?.textContent.includes('Queue'));
+    await capture.waitFor(() => document.querySelector('ex-composer button.send[aria-label^="Queue message"]'));
+    await assertSquare();
     await capture.fill('ex-composer textarea', 'Also verify delayed retries'); await capture.press('Enter');
     await capture.waitFor(() => document.querySelectorAll('ex-composer-queue .item').length === 1);
     await capture.waitFor(() => document.querySelector('ex-composer-queue button[aria-label="Remove queued message"]')?.disabled === false);
@@ -80,16 +86,16 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement?.tagName), 'TEXTAREA');
     await capture.cdp('Input.insertText', { text: 'Keep the current provider' }); await capture.press('Enter', 1);
     await capture.waitFor(() => document.querySelector('ex-composer textarea').value === '');
-    await capture.waitFor(() => document.querySelector('ex-session-chat .status')?.textContent.includes('Ready'));
+    await capture.waitFor(() => document.querySelector('ex-composer button[aria-label="Send message (Enter)"]:not([aria-busy="true"])'));
     await capture.fill('ex-composer textarea', 'A longer draft\nwith a second line\nand one more line for context.');
-    await capture.viewport(760, 760); await capture.reducedMotion(true); await finish(); await assertRow();
+    await capture.viewport(760, 760); await capture.reducedMotion(true); await finish(); await assertRow(); await assertSquare();
     yield { name: theme + '-narrow-reduced', inspect: ['ex-composer', 'ex-composer .bar', 'ex-mode-toggle', 'ex-agent-picker', 'ex-permission-picker'] };
     await capture.click('ex-agent-picker > button'); await finish();
     yield { name: theme + '-narrow-settings', inspect: ['.agent-settings', '.models', '.tune'] };
     await capture.press('Escape'); await capture.reducedMotion(false);
     await mode('running');
     await capture.click('ex-composer textarea'); await capture.press('.', 4);
-    await capture.waitFor(() => document.querySelector('ex-session-chat .status')?.textContent.includes('Ready'));
+    await capture.waitFor(() => document.querySelector('ex-composer button[aria-label="Send message (Enter)"]:not([aria-busy="true"])'));
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value.startsWith('A longer draft')), true);
   }
   await capture.viewport(1440, 960); await mode('ready');

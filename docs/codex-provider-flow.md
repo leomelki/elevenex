@@ -42,6 +42,23 @@ permissions, MCP handling, terminal fallback, and transcript behavior.
 8. The Codex thread id is stored in `sessions.codex_session_id`; Claude's
    `sessions.claude_session_id` is not reused or modified.
 
+Elevenex starts Codex app-server with `model_context_window=1000000` for new
+and resumed conversations. Codex applies the selected model's advertised
+maximum and reserves headroom, so the usable window it reports can be smaller.
+
+## Background commands
+
+When a Codex turn launches a terminal, Elevenex checks the app-server's live
+`thread/backgroundTerminals/list` after the turn ends. The sidebar shows its
+terminal indicator alongside the turn's regular status, including unread
+replies. Owned child threads are checked the same way. Command completion
+events refresh the list, with a periodic check while commands remain.
+
+These commands keep their app-server alive until they exit. Session cleanup
+asks Codex to stop them and checks that its live list is empty before allowing
+worktree release. Older CLIs without the experimental list method omit the
+indicator. The list covers terminals managed by Codex.
+
 ## Conversation Editing And Forking
 
 Both operations create a native Codex fork at a turn boundary and verify that

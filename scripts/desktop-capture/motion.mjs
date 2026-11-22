@@ -15,6 +15,9 @@ export class CaptureMotion {
   initialize() { return this.page.cdp('Animation.enable'); }
 
   async freeze() {
+    // Each freeze starts a new sample sequence. Earlier animations may have
+    // finished with removed elements, which CDP can no longer seek.
+    this.animations.clear();
     await this.page.cdp('Animation.setPlaybackRate', { playbackRate: 0 });
     await this.page.settle();
   }

@@ -1,0 +1,41 @@
+<div class="branch" [attr.data-session-root]="!session().parentId ? session().id : null" [class.drop-active]="dropActive()" [class.docked]="dropActive() && drag?.docked()"
+  [class.unavailable]="unavailable()" [class.drag-source]="moving()" [class.outdent-preview]="outdentPreview()">
+  <div class="branch-row">
+    @if (childCount()) {
+      <button class="disclosure" type="button" [attr.aria-label]="(expanded() ? 'Collapse children of ' : 'Expand children of ') + session().title"
+        [attr.aria-expanded]="expanded()" (click)="toggle()" [exTooltip]="(session().childCount ?? children().length) + ' child sessions'">
+        <ex-icon name="chevron-down" [size]="12" [class.closed]="!expanded()" />
+      </button>
+    } @else { <span class="disclosure-space"></span> }
+    <ex-session-row [session]="session()" [selected]="selected() === session().id" [muted]="muted()" [emphasis]="dropActive() || outdentPreview()" [receded]="unavailable() && !outdentPreview()"
+      [allowArchive]="allowArchive()" (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
+    @if (childCount() || pending()) {
+      <span class="child-count" [class.pending]="pending()" [attr.aria-label]="childCount() + ' child sessions'"><ex-ticker [value]="childCount() + (pending() ? 1 : 0)" /></span>
+    }
+    @if (allowNesting() && !session().local) {
+      <button class="move-menu" type="button" [attr.aria-label]="'Move ' + session().title" exTooltip="Move session" [cdkMenuTriggerFor]="moves"><ex-icon name="more" [size]="14" /></button>
+      <ng-template #moves>
+        <ex-dropdown-menu label="Move session">
+          @if (session().parentId) { <button exDropdownItem (triggered)="moveRequested.emit({sessionId:session().id,parentSessionId:null})">Move to task level</button> }
+          @if (!session().childCount) {
+            @for (target of targets(); track target.id) {
+              <button exDropdownItem [disabled]="session().parentId === target.id" (triggered)="moveRequested.emit({sessionId:session().id,parentSessionId:target.id})">Under {{ target.title }}</button>
+            } @empty { <button exDropdownItem [disabled]="true">No other sessions in this window</button> }
+          } @else { <button exDropdownItem [disabled]="true">Move children to task level first</button> }
+        </ex-dropdown-menu>
+      </ng-template>
+    }
+  </div>
+  <ex-fold [open]="expanded() && (!!session().childCount || !!children().length)">
+    <div class="children">
+      @for (child of children(); track child.renderId ?? child.id) {
+        <ex-session-branch [session]="child" [sessions]="sessions()" [selected]="selected()" [allowArchive]="allowArchive()" [allowNesting]="allowNesting()"
+          (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" (moveRequested)="moveRequested.emit($event)" />
+      }
+      @if (session().childrenLoading) { <p role="status">Loading children…</p> }
+      @if (session().childrenError; as error) { <p role="alert">{{ error }} <button type="button" (click)="childrenRequested.emit({sessionId:session().id})">Retry</button></p> }
+      @if (session().earlierChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id})">Latest child sessions</button> }
+      @if (session().moreChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id,earlier:true})">Earlier child sessions</button> }
+    </div>
+  </ex-fold>
+</div>

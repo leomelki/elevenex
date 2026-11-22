@@ -1,5 +1,86 @@
 # Desktop backend client
 
+Conversation reads optionally select `loadingMode: 'window' | 'progressive'`
+through the existing scope-bound `sessionChatRead`. Window mode caps records at
+320 / 2 MiB; progressive mode and omitted options retain 80 / 512 KiB. Adjacent
+pages use 80 / 512 KiB in either mode to preserve overlap in the rolling window.
+Main validates the mode and reply count and retains its 4 MiB transport limit.
+The renderer requests progressive pages from the first read. With the
+window-mode override, an uncached opening still pending after 1.75 seconds
+switches to progressive pages for the application connection. The root
+`SessionChatLoadingPolicy` owns that transient choice separately from connection
+state and per-chat drafts. Scope rotation and application restart reset it.
+The renderer cancels superseded reads and discards stale replies. The backend
+shares in-flight hydration with the replacement.
+The progressive profile opts into completed-turn summaries with
+`summarizeCompleted` and also requests summaries for small recent turns with
+`summarizeRecent`. A summary occupies one paging entry at the prompt and
+advances past the saved turn's last source item in the forward direction.
+Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
+history reads, including when a single turn spans hundreds of tool records.
+An optional `limit` up to 512 increases the compact activity batch size to at
+most 1 MiB. Main validates the turn, revision, offset and reply bounds under the
+same cancellable window lease. The renderer collects the batches before showing
+the complete timeline. Older clients keep their 40-record activity pages, and
+older engines can keep returning those pages or raw history windows.
+Completed turns reconcile repeated row identities before computing the visible
+reply, counts and activity offsets. Both history formats use the same saved
+change reconciliation as Review and can carry full line totals with their
+three-file preview.
+
+Both history modes and turn activity reads can opt into `deferToolDetails`.
+Tool records then carry headings and versioned evidence addresses while their
+input and output strings stay empty. `sessionChatToolDetails` fetches one tool
+record and an optional related receipt under the same scoped, cancellable
+lease. Main checks the exact task, session, item IDs, evidence revisions,
+pairing and payload sizes. The backend rechecks session ownership and serves
+matching evidence from a bounded per-feed cache or from the provider history
+and live overlay. Optional call and receipt references keep the same evidence
+pair accessible when a history window or activity page splits the operation.
+The engine resolves missing peers in one pass over the available source and
+caches up to 1,024 saved offsets per feed without retaining their payloads.
+The evidence cache favors the requested paging edge, including the
+newest rows on the initial open. It retains up to 256 records and 1 MiB of
+UTF-8 string data per feed. History revision changes invalidate the engine cache.
+The original-content reader still pages the full transcript when requested.
+See the
+[session adapter](../apps/renderer/src/app/session-chat/README.md) for policy and
+cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
+within a history revision, and skips transcript projection on idle heartbeats.
+The provider still supplies the complete source snapshot for history reads.
+
+### Selected chat stream
+
+Engines advertising `chatStream: true` in `workspaceRevision` serve
+`GET /api/desktop-workspace/tasks/:taskId/sessions/:sessionId/chat/events`.
+Main opens the stream against the selected backend with its private credentials.
+The request carries a bounded loading profile and the last applied cursor in
+`Last-Event-ID`. The first event supplies the current state and either a
+snapshot or the changes since that cursor. Subsequent events carry ordered
+record replacements, text appends and changed state. SSE comments keep the
+connection alive without reading the runtime or waking Angular. The existing
+JSON read still serves adjacent history pages, archived chat and older desktop
+clients. Older engines keep their current long-poll behavior.
+
+Runtime and persisted session events wake the selected feeds. Provider
+listeners are shared across feeds, and updates arriving during hydration or a
+slow write are reconciled on the next projection. The backend retains bounded
+fingerprint checkpoints for each feed and view. A new provider, saved-history
+revision, expired cursor or gap in the live window returns a bounded authoritative
+snapshot with history cursors. Transcript payloads are limited to 4 MiB per
+frame, and backpressure prevents a slow network socket from growing a queue of
+pending projections.
+
+The named watch, acknowledge and unwatch bridge operations allow one live chat
+per window. Main validates the cursor chain, the scoped resource and each
+frame before forwarding it. A single outstanding delivery bounds Electron
+IPC. Main waits for the renderer to apply the page before advancing the resume
+cursor. On EOF or a stalled connection it reconnects with jittered backoff and
+the applied cursor. Scope rotation, session navigation, visibility changes and
+destruction release the watch. After backend identity changes, workspace
+restoration verifies the selection before opening a new watch. Reconnects and
+refreshes issue only reads.
+
 Terminal service URLs use the named `taskTerminalOpenPort` and
 `taskTerminalCopyPort` bridge operations. Both accept only a scoped
 task/terminal/port, freshly verify the owned listener and use the window's
@@ -23,16 +104,16 @@ only) derived from saved prompt headers. Main validates these optional fields;
 older engines omit them. Snapshot contents and export paths remain outside this
 metadata. Saved history and incremental item events use the same projection.
 
-The new desktop supports the backend incrementally as frontend features are
-implemented. Build complete vertical slices for those features rather than
-mirroring every legacy endpoint in advance. The product model is **project →
-task → sessions**; a task owns its branch/workspace and conversations belong to
-that task. Repositories remain resources within projects, not a replacement for
-the task model.
+Engines advertising `presetEditing` accept saved preset update, reorder,
+delete and restore actions through `sessionChatCommand`. The desktop
+validates each action and the deletion receipt. The engine checks the same
+catalog revision used by default changes inside the settings transaction.
+An automatic application of an edited preset also carries the expected chat
+mix and catalog revision. Older engines retain the original preset controls.
 
-This design applies to `apps/renderer` and `apps/desktop`. The existing
-`apps/frontend` retains its HTTP/WebSocket clients and the backend retains their
-supported contracts.
+Add backend operations as each desktop feature needs them. The product model
+is **project → task → sessions**. A task owns its branch and workspace, and
+conversations belong to that task. Repositories are resources within projects.
 
 ## Boundaries
 
@@ -74,15 +155,15 @@ Main resolves the endpoint from `BackendManager` and `RemoteManager` for the
 verified sending window. A remote request uses `RemoteManager.backendAccess`,
 including its transient private capability. URLs, methods, headers, filesystem
 paths and credentials cannot be chosen through the client bridge. Keep the
-production CSP unchanged. Do not copy the legacy renderer's direct networking
-into this renderer, import backend implementation types into Angular, or expose
-a generic `request`, `fetch`, IPC dispatch or socket API.
+production CSP restrictive. Main owns HTTP and WebSocket traffic. Angular uses
+shared contracts and calls named domain operations through the bridge.
 
 Shared contains public contracts, not Nest, Drizzle, Electron, Angular or runtime
 validation code. Main validates untrusted arguments and server responses at
 runtime and maps wire DTOs explicitly into those contracts. Accept additive
-server fields without forwarding them by accident. Keep legacy naming and
-transport quirks in the adapter; expose the intended task/session model to views.
+server fields without forwarding them by accident. Normalize wire field names
+and transport details in the adapter before exposing the task/session model to
+views.
 
 ## Implemented slice
 
@@ -142,8 +223,8 @@ The reply advertises protocol version 1 and a monotonic navigation revision.
 An unsupported/older engine produces an explicit update message. Projects,
 tasks and sessions use bounded keyset pages; repositories, branch search and
 one-directory folder suggestions have separate bounds. Project appearance and
-task stages live in an additive desktop metadata table, independent of the
-legacy task preparation lifecycle. Existing endpoints remain compatible.
+task stages live in a desktop metadata table separate from task preparation
+state.
 
 The workspace owns navigation state and preparation polling. Conversation and
 git state have separate owners for the selected resource. Background updates
@@ -196,11 +277,19 @@ Quota failures expose a safe count/limit explanation and optional
 older desktop clients. Explicit quota recovery delegates to `confirmOverLimit`
 on the saved task; it does not change the configured repository limit.
 
+Session rows may include `canDelete`, an optional engine-owned eligibility flag.
+The named `workspaceDeleteSession(scope, {taskId, sessionId})` permanently removes
+only unstarted sessions in a ready active task. The backend rechecks lifecycle,
+provider identities, completion and live activity without yielding before claiming
+the row. The deletion lifecycle releases prewarmed runtimes and processes. Cleanup
+failure restores the unused row for retry. Children return to task level. The
+desktop falls back to its archive action when an older engine omits the flag.
+
 ## Adding a frontend feature
 
-1. Read the backend controller, DTOs, service behavior, relevant legacy consumer
-   and tests. Establish the intended resource ownership and performance budget.
-   Use IDs, explicit bounds and cursors; avoid whole-repository payloads.
+1. Review the backend controller, DTOs, service behavior, tests and affected
+   supported consumers. Establish the resource ownership and performance budget.
+   Use IDs, explicit bounds and cursors to keep payloads bounded.
 2. Design the smallest named domain operation and public DTO needed by the UI.
    Define arguments/results/events in shared and extend `ElevenexBridge` and
    preload together. Reads and mutations must carry an expected backend scope.
@@ -249,7 +338,7 @@ transcript windows and cursors rather than sending an entire conversation again.
 Watch only visible/selected resources and relevant ancestors. Unrelated commits
 must not rescan the file tree or reload every branch/history page.
 
-Future live adapters stay in main, speaking the backend's actual protocol
+Live adapters stay in main, speaking the backend's actual protocol
 (currently raw WebSocket for several domains and Socket.IO for others). A native
 WebSocket client cannot impersonate Socket.IO. Add a protocol dependency only
 under the repository's dependency policy when a concrete feature needs it.
@@ -268,7 +357,6 @@ Distinguish replaceable status from ordered agent/token/terminal output.
 On reconnect, generation/instance changes invalidate old work. Reconcile selected
 resources and consumed cursors before restoring watches. Never recreate a task,
 replay a command or resubmit an agent prompt because a connection recovered.
-There is no event streaming or replay implementation in this initial slice.
 
 ## Mutations and backend evolution
 
@@ -280,7 +368,7 @@ failures keep project history for retry; concurrent task creation is checked
 again in the final delete transaction. Duplicate in-flight deletion requests for
 one project share the same backend operation. The desktop gives cleanup a
 three-minute deadline and retains unknown-outcome reconciliation on interruption.
-Existing legacy and MCP project-delete contracts keep their defaults and guards.
+The MCP project-delete contract uses its own defaults and guards.
 
 Reads may gain bounded retry only for classified transient errors while their
 scope is still current. Mutations need an explicit domain policy. If transport
@@ -299,21 +387,23 @@ and adjust internal architecture when that improves performance, correctness,
 or alignment with the intended product. The backend is not a frozen constraint.
 Prefer fixing a backend limitation to adding repeated client workarounds.
 
-Preserve backward compatibility for the active legacy app, desktop releases,
-remote runtimes and other supported API/MCP consumers. Prefer additive optional
-fields, new bounded endpoints, explicit capabilities and staged migrations;
-retain existing defaults, response shapes and semantics for existing callers.
-New desktop adapters may map old DTOs without renaming or removing their wire
-fields. When introducing capabilities, check them explicitly rather than assuming
-that a matching `/api/info` SHA implies a future optional protocol exists.
-An additive bounded endpoint can coexist with an existing unbounded legacy one.
+The legacy frontend in `apps/frontend` and its Electron shell in
+`apps/electron` are slated for removal. Agents are authorized to break or
+remove backend contracts used exclusively by those apps as part of the
+requested work.
 
-**If a breaking change would be useful, ask the developer whether it is allowed
-before implementing it**, unless that exact break was already authorized. State
-the concrete benefit, affected callers, migration/versioning plan and alternative
-that preserves compatibility. Do independent compatible work while awaiting the
-decision. Database changes follow the existing Drizzle migration workflow;
-client integration does not authorize data loss or destructive migrations.
+Preserve backward compatibility for supported `apps/desktop` releases, remote
+runtimes and API/MCP consumers. Prefer additive optional fields, bounded
+endpoints, explicit capabilities and staged migrations. Preserve the defaults,
+response shapes and semantics those consumers rely on. Check optional protocol
+support through the relevant capability. The `/api/info` SHA identifies the
+backend build.
+
+**Ask the developer before breaking a supported contract**, unless that break
+is already authorized. State the concrete benefit, affected callers, migration
+plan and compatible alternative. Do independent compatible work while awaiting
+the decision. Use the existing Drizzle workflow and preserve user data through
+migrations.
 
 ## Validation and current limits
 
@@ -356,8 +446,7 @@ real sandboxed preload/protocol verification; it uses disposable fixture assets
 and a backend, and does not certify a packaged app or a published remote runtime.
 
 The product renderer uses the supplied design system and the connected workspace
-slice above. There is no full backend API catalog, event replay client, offline
-mutation queue or packaged-app verification in this slice. See the
+slice above. See the
 [desktop README](../apps/desktop/README.md),
 [remote ownership/recovery guide](../apps/desktop/REMOTE_DEVELOPMENT.md) and
 [capture guide](../scripts/desktop-capture/README.md) when extending it.
@@ -507,10 +596,10 @@ validated domain packets. Credits span the socket and Electron IPC and are retur
 after xterm consumes output. Input is pipelined and never replayed. Scope/document
 changes abort both bounded reads and live leases.
 
-The edge proxy's shared `apps/frontend/proxy.conf.json` must expose the
-`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`. Runtime
-assembly copies this allowlist, so updating a desktop alone cannot repair an
-older remote runtime that omits the route; rebuild and install the backend too.
+Runtime assembly currently reads the edge proxy allowlist from
+`apps/frontend/proxy.conf.json`. The shipped allowlist must expose the
+`/desktop-terminal` WebSocket prefix, including `/desktop-terminal/v1`.
+Rebuild and install the backend runtime to update this allowlist.
 Unpackaged desktop launches log bounded WebSocket errors and close codes/reasons
 in main's console, with private capability values redacted. These diagnostics
 do not enter renderer events or change the no-replay input contract.
@@ -536,5 +625,17 @@ expire on engine shutdown/startup. Existing clients may omit the owner and retai
 engine-lifetime desktop shells. Cleanup waits for pending launches and strict PTY
 termination; opening an empty Terminal pane creates a fresh shell through the
 existing explicit opening flow. There is no shutdown channel in the preload.
+
+The optional `sessionNestingOrder: true` workspace capability enables
+`workspaceSessions` child queries with `childOrder: 'nested'`. This mode orders
+by the persisted per-group nesting rank, then session ID. Successful moves append
+at the end; repeated moves to the same parent preserve order. Migrated children
+have rank zero and retain their ID order. A `(rank, ID)` keyset cursor remains
+usable after the cursor row is removed. Pages stay bounded to 100; the renderer
+keeps a 20-child window and reloads its latest page after a confirmed move.
+Omitting the option preserves existing flat/root/child ordering and numeric
+cursors. Main validates the opt-in mode and its bounded cursor without changing
+other resource pagination. Older engines keep the group highlight and keyboard
+moves; the renderer withholds the dock's append-position promise.
 
 The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.

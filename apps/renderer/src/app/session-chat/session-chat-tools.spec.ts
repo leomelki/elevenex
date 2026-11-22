@@ -42,6 +42,24 @@ function result(
 }
 
 describe("session tool presentation", () => {
+  it("shows the complete read and search sequence of a compound shell invocation", () => {
+    const call = tool("read", {
+      file_path: "docs/client.md",
+      command: "nl -ba docs/client.md; nl -ba src/frame.ts; rg frame src",
+      commandActions: [
+        { type: "read", path: "docs/client.md" },
+        { type: "read", path: "src/frame.ts" },
+        { type: "search", path: "src", query: "frame" },
+      ],
+    });
+    const detail = presentSessionTool(call, result("lines from both files", { execution: { exitCode: 0 } }));
+    expect(detail.summary).toBe("docs/client.md +1 more");
+    expect(detail.preview?.[0]).toMatchObject({ kind: "list", items: [
+      { label: "Read · docs/client.md" }, { label: "Read · src/frame.ts" }, { label: "Search · src" },
+    ] });
+    expect(detail.blocks).toContainEqual({ kind: "code", title: "Command output", text: "lines from both files" });
+    expect(presentSessionTool(call, result("search failed", { error: true, execution: { exitCode: 2 } })).meta).toBe("Exit 2");
+  });
   it("renders native Codex whole-file additions and deletions as before/after diffs", () => {
     const content =
       "Hello! This text file was created to test my file-writing capability.\n";

@@ -91,10 +91,14 @@ export class TaskListComponent {
   readonly restoreRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly archivedSessionsRequested = output<{ readonly taskId: string; readonly page: 'latest' | 'earlier' }>();
   readonly archiveRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
+  readonly deleteRequested = output<{ readonly taskId: string; readonly session: TaskSession }>();
   readonly selected = input<string | null>(null);
   readonly filter = input<SessionStatus | null>(null);
   readonly showProjects = input(true);
   readonly disabled = input(false);
+  readonly allowNesting = input(false);
+  readonly moveSessionRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }>();
+  readonly sessionChildrenRequested = output<{ readonly taskId: string; readonly sessionId: string; readonly earlier?: boolean }>();
   readonly selectSession = output<{
     readonly taskId: string;
     readonly sessionId: string;

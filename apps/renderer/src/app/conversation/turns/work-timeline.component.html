@@ -1,56 +1,65 @@
 <ol>
-  @for (row of rows(); track row.step.id) {
+  @for (row of renderedRows(); track row.step.id) {
     @let step = row.step;
     <li
       class="timeline-row"
       [class.reply]="step.id === replyId()"
       [attr.data-work-step]="step.id"
-      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : ''"
+      [attr.data-chat-row]="step.id"
+      [animate.enter]="arrivals().has(step.id) ? 'step-enter' : hydrated().has(step.id) ? 'activity-reveal' : ''"
     >
       <div class="row-clip">
         <ex-fold class="group-fold" [open]="groupVisible(row)">
           @if (row.section; as group) {
             @if (group.id === step.id) {
-              <button
-                type="button"
-                class="group"
-                [attr.aria-expanded]="groupOpen(row)"
-                [attr.aria-label]="
-                  (groupOpen(row) ? 'Hide ' : 'Show ') +
-                  (group.earlier ? 'earlier activity: ' : 'activity: ') +
-                  group.label
-                "
-                (click)="toggleGroup(group.id)"
-              >
-                <ex-icon
-                  class="disclosure"
-                  name="chevron-right"
-                  [size]="12"
-                  [class.turned]="groupOpen(row)"
-                />
-                @if (group.earlier) {
-                  <span class="summary-lead">Earlier</span>
-                }
-                <span class="summary-facts">
-                  @for (fact of group.facts; track fact.kind) {
-                    <span class="summary-fact" [class.failure]="fact.danger">
-                      @if (fact.danger) {
-                        <ex-status-glyph status="failed" [size]="12" />
-                      } @else {
-                        <ex-icon [name]="fact.icon" [size]="12" />
-                      }
-                      <span
-                        ><ex-ticker [value]="fact.count" />
-                        {{ fact.noun }}</span
-                      >
-                    </span>
+              <div class="summary-size" exAutoHeight>
+                <button
+                  #groupControl
+                  type="button"
+                  class="group"
+                  [attr.aria-expanded]="groupOpen(row)"
+                  [attr.aria-label]="
+                    (groupOpen(row) ? 'Hide ' : 'Show ') +
+                    (group.earlier ? 'earlier activity: ' : 'activity: ') +
+                    group.label
+                  "
+                  (click)="toggleGroup(group.id, groupControl)"
+                >
+                  <ex-icon
+                    class="disclosure"
+                    name="chevron-right"
+                    [size]="12"
+                    [class.turned]="groupOpen(row)"
+                  />
+                  @if (group.earlier) {
+                    <span class="summary-lead">Earlier</span>
                   }
-                </span>
-              </button>
+                  <span class="summary-facts">
+                    @for (fact of group.facts; track fact.kind) {
+                      <span class="summary-fact" [class.failure]="fact.danger">
+                        @if (fact.danger) {
+                          <ex-status-glyph status="failed" [size]="12" />
+                        } @else {
+                          <ex-icon [name]="fact.icon" [size]="12" />
+                        }
+                        <span
+                          ><ex-ticker [value]="fact.count" />
+                          {{ fact.noun }}</span
+                        >
+                      </span>
+                    }
+                  </span>
+                </button>
+              </div>
             }
           }
         </ex-fold>
-        <ex-fold class="step-fold" [open]="visible(row)">
+        @let rowVisible = visible(row);
+        <ex-fold
+          class="step-fold"
+          [open]="rowVisible"
+          [animateOpenOnMount]="revealWork() && groupOpen(row) && !hydrated().has(step.id)"
+        >
           @if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"
@@ -58,7 +67,7 @@
               [class.prose]="step.id !== replyId()"
               exAutoHeight
             >
-              <div>
+              <div class="prose-content">
                 @if (
                   step.id === replyId() &&
                     answer() === undefined &&
@@ -71,6 +80,7 @@
                     [source]="step.text || ''"
                     [streaming]="step.id === replyId() && streaming()"
                     [resolve]="resolve()"
+                    [active]="rowVisible"
                     [copiedCode]="copiedCode()"
                     (openFile)="openFile.emit($event)"
                     (openLink)="openLink.emit($event)"
@@ -80,53 +90,76 @@
                 }
               </div>
             </div>
-          } @else {
+          } @else if (!revealWork() || mountedWorkRows().has(step.id)) {
             <div
               class="tool-row"
               [class.recovered]="step.recovered"
-              exAutoHeight
             >
-              <div>
-                @if (
-                  step.kind === "think" && step.status === "running" && live()
-                ) {
+              @if (
+                step.kind === "think" && step.status === "running" && live()
+              ) {
+                <div exAutoHeight>
                   <ex-now-line [step]="step" />
-                } @else {
-                  <ex-tool-step
-                    [icon]="icon(step)"
-                    [verb]="verb(step)"
-                    [detail]="step.title || step.detail || ''"
-                    [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
-                    [status]="
-                      step.recovered || step.expected
-                        ? 'done'
-                        : step.status || 'done'
-                    "
-                    [meta]="
-                      step.recovered
-                        ? 'fixed'
-                        : step.expected
-                          ? 'reproduced'
-                          : step.result ||
-                            step.meta ||
-                            (step.duration && step.duration > 1
-                              ? duration(step.duration)
-                              : '')
-                    "
-                    [output]="
-                      step.kind === 'think'
-                        ? step.text || ''
-                        : step.output || step.hunk?.join('\n') || ''
-                    "
-                    [presentation]="step.presentation"
-                    [copiedCode]="copiedCode()"
-                    (copyCode)="copyCode.emit($event)"
-                    [fullContent]="step.fullContent"
-                    (expandedChange)="toolExpanded(step.id, $event)"
-                    (contentRequested)="contentRequested.emit($event)"
-                  />
-                }
-              </div>
+                </div>
+              } @else if (step.kind !== 'media') {
+                <ex-tool-step
+                  [icon]="icon(step)"
+                  [verb]="verb(step)"
+                  [detail]="step.title || step.detail || ''"
+                  [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
+                  [status]="
+                    step.recovered || step.expected
+                      ? 'done'
+                      : step.status || 'done'
+                  "
+                  [meta]="
+                    step.recovered
+                      ? 'fixed'
+                      : step.expected
+                        ? 'reproduced'
+                        : step.result ||
+                          step.meta ||
+                          (step.duration && step.duration > 1
+                            ? duration(step.duration)
+                            : '')
+                  "
+                  [output]="
+                    step.kind === 'think'
+                      ? step.text || ''
+                      : step.output || step.hunk?.join('\n') || ''
+                  "
+                  [presentation]="step.presentation"
+                  [fullContent]="step.fullContent"
+                  [deferred]="step.deferredTool"
+                  [inspect]="inspectTool()"
+                  [images]="step.images"
+                  [inspectImages]="toolImages()"
+                  [open]="openTools().has(step.id)"
+                  [active]="rowVisible"
+                  [copiedCode]="copiedCode()"
+                  (openFile)="openFile.emit($event)"
+                  (copyCode)="copyCode.emit($event)"
+                  (expandedChange)="toolExpanded(step.id, $event)"
+                  (contentRequested)="contentRequested.emit($event)"
+                  (layoutChanging)="layoutChanging.emit($event)"
+                />
+              }
+              @if (step.media?.length) {
+                <div exAutoHeight><div>
+                  @for (media of step.media; track media.path) {
+                    <ex-markdown-media
+                      class="media-output"
+                      [path]="media.path"
+                      [caption]="media.caption"
+                      [showCaption]="media.caption !== 'Image'"
+                      [asset]="resolve()?.(media.path)"
+                      [active]="rowVisible"
+                      (openFile)="openFile.emit($event)"
+                      (openPage)="openPage.emit($event)"
+                    />
+                  }
+                </div></div>
+              }
             </div>
           }
         </ex-fold>

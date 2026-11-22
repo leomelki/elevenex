@@ -33,10 +33,10 @@ export class WorkspaceNavigationComponent {
   protected readonly visibleError = computed(() => (this.store.pendingTask()?.setupIssue?.message === this.store.error() ? null : this.store.error()) ?? this.store.resumeError());
   protected readonly label = computed(() => this.store.selectedProject()?.name ?? 'All projects');
   protected readonly projectMark = computed(() => this.store.projects().find(project => project.id === this.store.activeProject()));
-  protected async archiveSession(intent: { readonly taskId: string; readonly session: TaskSession }): Promise<void> {
+  protected async removeSession(intent: { readonly taskId: string; readonly session: TaskSession }, deleting = false): Promise<void> {
     const origin = this.root.ownerDocument.activeElement, scope = this.store.scopeId();
-    await this.store.archiveSession(intent);
-    if (this.destroy.destroyed || this.store.scopeId() !== scope || this.store.sessionArchiveUndo()?.session.id !== Number(intent.session.id)) return;
+    const removed = await (deleting ? this.store.deleteSession(intent) : this.store.archiveSession(intent));
+    if (!removed || this.destroy.destroyed || this.store.scopeId() !== scope) return;
     afterNextRender(() => {
       const document = this.root.ownerDocument;
       if (document.activeElement !== origin && document.activeElement !== document.body) return;
@@ -59,6 +59,25 @@ export class WorkspaceNavigationComponent {
         const row = this.root.querySelector<HTMLButtonElement>(`[data-task-id="${Number(intent.taskId)}"] .tree > ex-fold [data-session-id="${Number(intent.session.id)}"] .select`);
         if (row && !row.closest('[inert]')) { row.focus({ preventScroll: true }); return; }
         // ListPresence establishes the new row closed before opening it on the next paint.
+        if (remainingFrames-- > 0) this.restoreFocusFrame = requestAnimationFrame(focus);
+      };
+      focus();
+    }, { injector: this.injector });
+  }
+  protected async moveSession(intent: { readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }): Promise<void> {
+    const scope = this.store.scopeId(), origin = this.root.ownerDocument.activeElement;
+    await this.store.moveSession(intent);
+    if (this.destroy.destroyed || this.store.scopeId() !== scope || this.store.error()) return;
+    afterNextRender(() => {
+      if (this.restoreFocusFrame !== undefined) cancelAnimationFrame(this.restoreFocusFrame);
+      let remainingFrames = 12;
+      const focus = () => {
+        this.restoreFocusFrame = undefined;
+        const document = this.root.ownerDocument;
+        if (this.destroy.destroyed || this.store.scopeId() !== scope || (document.activeElement !== origin && document.activeElement !== document.body && !origin?.contains(document.activeElement))) return;
+        const rows = this.root.querySelectorAll<HTMLButtonElement>(`[data-task-id="${Number(intent.taskId)}"] [data-session-id="${Number(intent.sessionId)}"] .select`);
+        const row = [...rows].find(row => !row.closest('[inert]'));
+        if (row) { row.focus({ preventScroll: true }); return; }
         if (remainingFrames-- > 0) this.restoreFocusFrame = requestAnimationFrame(focus);
       };
       focus();

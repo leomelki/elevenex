@@ -22,6 +22,10 @@ export class PresetCardComponent {
   readonly custom = input(false);
   readonly compact = input(false);
   readonly disabled = input(false);
+  readonly adaptive = input(false);
+  readonly slim = input(false);
+  readonly editing = input(false);
+  readonly edited = input(false);
   readonly thinking = computed(() => {
     const value = this.preset()?.thinking;
     return value === "xhigh"
@@ -29,6 +33,12 @@ export class PresetCardComponent {
       : value
         ? value.charAt(0).toUpperCase() + value.slice(1)
         : "";
+  });
+  protected readonly modelSummary = computed(() => {
+    const preset = this.preset();
+    const model = preset?.modelLabel || preset?.model || "Provider default";
+    const thinking = this.thinking();
+    return thinking ? `${model} · ${thinking}` : model;
   });
   readonly picked = output<void>();
 }

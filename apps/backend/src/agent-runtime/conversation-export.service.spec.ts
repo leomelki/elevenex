@@ -83,6 +83,29 @@ describe('buildExportModel', () => {
     expect(model.preamble.map((i) => i.id)).toEqual(['s0']);
     expect(model.turns).toHaveLength(1);
   });
+
+  it('labels Codex commentary as progress until an explicit final reply arrives', () => {
+    const user = item({ id: 'user', kind: 'user', content: 'Run the checks' });
+    const first = item({ id: 'first', kind: 'assistant', content: 'Starting the checks.', assistantPhase: 'commentary' });
+    const update = item({ id: 'update', kind: 'assistant', content: 'Still checking.', assistantPhase: 'commentary' });
+    const final = item({ id: 'final', kind: 'assistant', content: 'The checks passed.', assistantPhase: 'final' });
+    const meta = { ...META, provider: 'codex' };
+    const partial = buildExportModel([user, first, update], meta);
+    expect(partial.turns[0]).toMatchObject({ finalResponse: null, progress: update });
+    const small = renderMarkdown(partial, { precision: 'small', ...ALL_ON });
+    expect(small).toContain('### Progress update {#update}\n\nStill checking.');
+    expect(small).not.toContain('### Response');
+    expect(small).not.toContain('Starting the checks.');
+    const medium = renderMarkdown(partial, { precision: 'medium', ...ALL_ON });
+    expect(medium).toContain('### Work');
+    expect(medium).toContain('Starting the checks.');
+    expect(medium).not.toContain('### Progress update');
+
+    const completed = buildExportModel([user, first, final, update], meta);
+    expect(completed.turns[0]).toMatchObject({ finalResponse: final, steps: [first, update] });
+    expect(renderMarkdown(completed, { precision: 'small', ...ALL_ON }))
+      .toContain('### Response {#final}\n\nThe checks passed.');
+  });
 });
 
 describe('renderMarkdown precision', () => {

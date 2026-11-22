@@ -3,6 +3,7 @@ import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionShellItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
+import { SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   SessionChatAgentRead,
@@ -15,6 +16,13 @@ import type {
   SessionChatItem,
   SessionChatPage,
   SessionChatRead,
+  SessionChatRecord,
+  SessionChatTurnTimelineRow,
+  SessionChatTurnWorkRead,
+  SessionChatTurnWorkReply,
+  SessionChatToolDetailsReply,
+  SessionChatToolDetailsRead,
+  SessionChatToolEvidence,
   SessionChatState,
   SessionChatPreset,
   SessionChatCommandReply,
@@ -192,9 +200,21 @@ export class SessionChatFixture {
   private defaultProvider = 'codex';
   private defaultIds: readonly string[] = ['deep'];
   private defaultVersion = 1;
+  private presetEditing = false;
   /** Exercise first-use layout without replacing the connected chat components. */
-  presetCatalog(mode: 'empty' | 'saved'): void {
+  presetCatalog(mode: 'empty' | 'saved' | 'editing' | 'full'): void {
+    this.presetEditing = mode === 'editing' || mode === 'full';
     this.presets = mode === 'empty' ? [] : [...savedPresets];
+    if (this.presetEditing) {
+      const count = mode === 'full' ? 24 : 8;
+      this.presets.push(...Array.from({ length: count - savedPresets.length }, (_, index) => ({
+        ...savedPresets[index % savedPresets.length]!,
+        id: `review-${index + 1}`,
+        name: `Review ${index + 1}`,
+      })));
+    }
+    this.defaultProvider = 'codex';
+    this.defaultIds = this.presets.length ? ['deep'] : [];
     this.defaultVersion++;
     this.changed();
   }
@@ -206,9 +226,9 @@ export class SessionChatFixture {
   private catalogFailure = false;
   catalogBehavior(delay: number, fail = false): void { this.catalogDelay = Math.min(5000, Math.max(0, delay)); this.catalogFailure = fail; }
   /** Cold conversation state must not prevent independent catalog discovery. */
-  coldModels(id = 102): void {
+  coldModels(id = 102, model: string | null = null): void {
     const session = this.session(id);
-    session.state = { ...session.state, model: null, models: [] };
+    session.state = { ...session.state, model, models: [] };
     this.changed();
   }
   private catalogData(provider: string): SessionChatCatalog {
@@ -245,6 +265,30 @@ export class SessionChatFixture {
   deferUserReceipts(value: boolean | 'completion'): void {
     this.delayedReceipts = value;
   }
+  dispatchQueuedPrompt(sessionId = 101, queueId?: string): void {
+    const session = this.session(sessionId);
+    const next = queueId ? session.state.queue.find(item => item.id === queueId) : session.state.queue[0];
+    if (!next) return;
+    const timestamp = new Date().toISOString();
+    session.state = {
+      ...session.state, phase: 'running', canInterrupt: true, queuePaused: false,
+      queue: session.state.queue.filter(item => item.id !== next.id),
+      dispatchingPrompts: [...(session.state.dispatchingPrompts ?? []), { ...next, timestamp }],
+    };
+    this.changed();
+  }
+  finishQueuedPrompt(sessionId = 101): void {
+    const session = this.session(sessionId);
+    const [next, ...rest] = session.state.dispatchingPrompts ?? [];
+    if (!next) return;
+    const userId = `sent-${this.version}`;
+    session.items.push(
+      item(userId, 'user', next.text, { timestamp: next.timestamp }),
+      item(`reply-${this.version}`, 'assistant', 'Applying the queued guidance.', { timestamp: next.timestamp }),
+    );
+    session.state = { ...session.state, activePromptId: userId, dispatchingPrompts: rest };
+    this.changed();
+  }
   /** Incoming reply growth without a local submission or transcript reset. */
   appendAssistant(text: string, id = 101): void {
     this.session(id).items.push(item(`incoming-${this.version}`, 'assistant', text, { timestamp: new Date().toISOString() }));
@@ -252,6 +296,7 @@ export class SessionChatFixture {
   }
   constructor(destroy: DestroyRef) {
     destroy.onDestroy(() => {
+      this.holdReads(false);
       for (const done of this.waiting.values()) done();
       for (const timer of this.timers) clearTimeout(timer);
     });
@@ -503,9 +548,111 @@ export class SessionChatFixture {
     this.changed();
   }
   cancel(id: string): void {
+    this.heldReads.get(id)?.();
     this.waiting.get(id)?.();
+    const detail = this.heldToolDetails.get(id);
+    if (detail) {
+      this.toolDetailsCancelled++;
+      detail();
+    }
   }
+  private readsHeld = false;
+  private readonly heldReads = new Map<string, () => void>();
+  /** Controlled transport latency for first-frame/session-switch regressions. */
+  holdReads(held: boolean): void {
+    this.readsHeld = held;
+    if (!held) for (const done of [...this.heldReads.values()]) done();
+  }
+  /** Replay a bounded recorded page without importing task data into production. */
+  seed(id: number, page: Pick<SessionChatPage, 'items' | 'state' | 'leadingPrompt'>): void {
+    this.sessions.set(id, { items: [...(page.leadingPrompt ? [page.leadingPrompt] : []), ...page.items], state: page.state });
+    this.changed();
+  }
+  private readonly turnActivities = new Map<string, readonly SessionChatRecord[]>();
+  private readonly turnTimelines = new Map<string, readonly SessionChatTurnTimelineRow[]>();
+  private readonly heldActivity = new Set<() => void>();
+  private workBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  turnWorkReads = 0;
+
+  seedTurnWork(sessionId: number, turnId: string, records: readonly SessionChatRecord[]): void {
+    this.turnActivities.set(`${sessionId}/${turnId}`, records);
+  }
+  seedTurnTimeline(sessionId: number, turnId: string, timeline: readonly SessionChatTurnTimelineRow[]): void {
+    this.turnTimelines.set(`${sessionId}/${turnId}`, timeline);
+  }
+
+  turnWorkBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.workBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldActivity) release();
+  }
+
+  async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
+    this.turnWorkReads++;
+    if (this.workBehavior === 'held') await new Promise<void>(resolve => {
+      const release = () => {
+        this.heldActivity.delete(release);
+        this.waiting.delete(input.requestId);
+        resolve();
+      };
+      this.heldActivity.add(release);
+      this.waiting.set(input.requestId, release);
+    });
+    if (this.workBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
+    const { taskId, sessionId, turnId, revision, offset } = input;
+    const key = `${sessionId}/${turnId}`;
+    const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
+    const timeline = input.timeline ? this.turnTimelines.get(key) : undefined;
+    if (timeline && revision === summary?.revision) {
+      const rows = timeline.slice(offset, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
+      const end = offset + rows.length;
+      return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+        timeline: rows, total: timeline.length, nextOffset: end < timeline.length ? end : null } };
+    }
+    const work = this.turnActivities.get(key);
+    if (!work || revision !== summary?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Activity changed.' } };
+    const items = work.slice(offset, offset + (input.limit ?? SESSION_CHAT_TURN_WORK_LIMIT));
+    const end = offset + items.length;
+    return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
+      items, total: work.length, nextOffset: end < work.length ? end : null } };
+  }
+  private readonly toolEvidence = new Map<number, ReadonlyMap<string, SessionChatToolEvidence>>();
+  private readonly heldToolDetails = new Map<string, () => void>();
+  private detailBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  toolDetailsReads = 0;
+  toolDetailsCancelled = 0;
+
+  seedToolDetails(sessionId: number, records: readonly SessionChatToolEvidence[]): void {
+    this.toolEvidence.set(sessionId, new Map(records.map(value => [value.id, value])));
+  }
+
+  toolDetailsBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+    this.detailBehavior = behavior;
+    if (behavior !== 'held') for (const release of this.heldToolDetails.values()) release();
+  }
+
+  async toolDetails(input: SessionChatToolDetailsRead): Promise<BackendResult<SessionChatToolDetailsReply>> {
+    this.toolDetailsReads++;
+    if (this.detailBehavior === 'held') await new Promise<void>(resolve => {
+      this.heldToolDetails.set(input.requestId, () => {
+        this.heldToolDetails.delete(input.requestId);
+        resolve();
+      });
+    });
+    if (this.detailBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Could not read tool details.' } };
+    const { taskId, sessionId, item, result, turnId } = input;
+    const records = this.toolEvidence.get(sessionId);
+    const primary = records?.get(item.id);
+    const output = result ? records?.get(result.id) : undefined;
+    if (!primary || primary.revision !== item.revision || output?.revision !== result?.revision)
+      return { ok: false, error: { code: 'http', status: 409, message: 'Tool evidence changed.' } };
+    return { ok: true, value: { taskId, sessionId, item: primary, ...(output ? { result: output } : {}), ...(turnId ? { turnId } : {}) } };
+  }
+
   async read(input: SessionChatRead): Promise<BackendResult<SessionChatPage>> {
+    if (this.readsHeld) await new Promise<void>(resolve => {
+      this.heldReads.set(input.requestId, () => { this.heldReads.delete(input.requestId); resolve(); });
+    });
     if (input.after === String(this.version))
       await new Promise<void>((resolve) => {
         const done = () => {
@@ -517,11 +664,12 @@ export class SessionChatFixture {
         this.waiting.set(input.requestId, done);
       });
     const session = this.session(input.sessionId),
+      limit = input.loadingMode === 'window' && !input.before && !input.following ? 320 : 80,
       start = input.following ? session.items.findIndex(item => item.id === input.following) + 1 : -1,
-      end = input.following ? Math.min(session.items.length, start + 80) : input.before
+      end = input.following ? Math.min(session.items.length, start + limit) : input.before
         ? session.items.findIndex((item) => item.id === input.before)
         : session.items.length;
-    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - 80), end).map((item) =>
+    const items = session.items.slice(start >= 0 ? start : Math.max(0, end - limit), end).map((item) =>
       item.truncated
         ? {
             ...item,
@@ -538,11 +686,12 @@ export class SessionChatFixture {
         sessionId: input.sessionId,
         cursor: String(this.version),
         reset,
+        leadingPrompt: items[0]?.kind === 'user' ? null : session.items.slice(0, start >= 0 ? start : Math.max(0, end - limit)).reverse().find(item => item.kind === 'user') ?? null,
         items: reset ? items : [],
         events: !reset ? items.map((item) => ({ type: "item", item })) : [],
-        before: (start > 0 || end > 80) ? (items[0]?.id ?? null) : null,
+        before: (start > 0 || end > limit) ? (items[0]?.id ?? null) : null,
         next: end < session.items.length ? (items.at(-1)?.id ?? null) : null,
-        state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot() },
+        state: { ...session.state, presets: this.presets, presetDefault: this.defaultSnapshot(), presetEditing: this.presetEditing },
       },
     };
   }
@@ -615,7 +764,53 @@ export class SessionChatFixture {
       return { ok: true, value: { accepted: true } };
     }
     let defaultChange: SessionChatCommandReply['defaultChange'];
-    if (action.type === 'preset-default-restore') {
+    if (action.type === 'preset-reorder' || action.type === 'preset-update' ||
+        action.type === 'preset-delete' || action.type === 'preset-restore') {
+      if (action.expectedRevision !== this.defaultSnapshot().revision)
+        return { ok: false, error: { code: 'http', status: 409, message: 'The saved presets changed. Refresh before trying again.' } };
+      let position = -1;
+      if (action.type === 'preset-reorder') {
+        const byId = new Map(this.presets.map(preset => [preset.id, preset]));
+        this.presets = action.ids.map(id => byId.get(id)!);
+      } else if (action.type === 'preset-delete') {
+        position = this.presets.findIndex(preset => preset.id === action.id);
+        if (position < 0) return { ok: false, error: { code: 'http', status: 404, message: 'Preset unavailable' } };
+        const replacingDefault = this.defaultSnapshot().id === action.id;
+        this.presets = this.presets.filter(preset => preset.id !== action.id);
+        this.defaultIds = this.defaultIds.filter(id => id !== action.id);
+        const fallback = replacingDefault && this.presets[0];
+        if (fallback) {
+          this.defaultProvider = fallback.provider;
+          this.defaultIds = [...this.defaultIds.filter(id => this.presets.find(preset => preset.id === id)?.provider !== fallback.provider), fallback.id];
+        }
+      } else {
+        const catalog = this.catalogData(action.provider);
+        const preset: SessionChatPreset = {
+          id: action.id, name: action.name, provider: action.provider, providerLabel: catalog.label,
+          model: action.model, modelLabel: catalog.models.find(model => model.id === action.model)?.label ?? 'Provider default',
+          reasoning: action.reasoning, fast: action.fast,
+        };
+        if (action.type === 'preset-update') {
+          const original = this.presets.find(item => item.id === preset.id);
+          if (original && original.provider !== preset.provider) {
+            if (this.defaultSnapshot().id === original.id) {
+              this.defaultProvider = preset.provider;
+              this.defaultIds = this.defaultIds.filter(id => this.presets.find(item => item.id === id)?.provider !== preset.provider);
+            } else this.defaultIds = this.defaultIds.filter(id => id !== action.id);
+          }
+          this.presets = this.presets.map(item => item.id === preset.id ? preset : item);
+        } else {
+          this.presets = [...this.presets.slice(0, action.position), preset, ...this.presets.slice(action.position)];
+          this.defaultProvider = action.defaultProvider;
+          this.defaultIds = action.defaultIds;
+        }
+      }
+      this.defaultVersion++;
+      this.changed();
+      return { ok: true, value: { accepted: true, ...(position < 0 ? {} : {
+        presetRemoval: { position, revision: this.defaultSnapshot().revision },
+      }) } };
+    } else if (action.type === 'preset-default-restore') {
       if (action.expectedRevision !== this.defaultSnapshot().revision)
         return { ok: false, error: { code: 'http', status: 409, message: 'The default changed. Refresh before trying again.' } };
       this.defaultProvider = action.provider; this.defaultIds = [...action.defaultIds]; this.defaultVersion++;
@@ -623,6 +818,10 @@ export class SessionChatFixture {
       if (session.state.providerLocked || session.state.provider !== action.expectedProvider)
         return { ok: false, error: { code: 'http', status: 409, message: 'This conversation has already started.' } };
       const before = this.defaultSnapshot();
+      if (action.type === 'preset' && action.expectedMix &&
+        (action.expectedMix.revision !== before.revision || action.expectedMix.model !== session.state.model ||
+        action.expectedMix.reasoning !== session.state.reasoning || action.expectedMix.fast !== !!session.state.fast))
+        return { ok: false, error: { code: 'http', status: 409, message: 'This chat’s agent settings changed.' } };
       const makeDefault = action.type === 'preset-default' || (action.type === 'save-preset' && action.makeDefault === true);
       const revision = action.type === 'preset-default' ? action.expectedRevision : action.type === 'save-preset' ? action.expectedDefaultRevision : undefined;
       if (makeDefault && revision !== before.revision)
@@ -634,6 +833,7 @@ export class SessionChatFixture {
           model: action.model, modelLabel: this.catalogData(action.provider ?? action.expectedProvider).models.find(m => m.id === action.model)?.label ?? 'Provider default',
           reasoning: action.reasoning, fast: action.fast };
         this.presets = [preset, ...this.presets.filter(p => p.id !== action.id)];
+        if (!makeDefault) this.defaultVersion++;
       }
       if (!preset) return { ok: false, error: { code: 'http', message: 'Preset unavailable' } };
       if (preset.provider !== session.state.provider)
@@ -789,21 +989,10 @@ export class SessionChatFixture {
         queue: session.state.queue.filter((item) => item.id !== action.id),
       };
     else if (action.type === "steer-queued" || action.type === "resume-queue") {
-      const next = action.type === "steer-queued"
-        ? session.state.queue.find(item => item.id === action.id)
-        : session.state.phase === "idle" ? session.state.queue[0] : undefined;
       session.state = { ...session.state, queuePaused: false };
-      if (next) {
-        const timestamp = new Date().toISOString();
-        session.items.push(
-          item(`sent-${this.version}`, "user", next.text, { timestamp }),
-          item(`reply-${this.version}`, "assistant", "Applying the queued guidance.", { timestamp }),
-        );
-        session.state = {
-          ...session.state, phase: "running", canInterrupt: true,
-          queue: session.state.queue.filter(item => item.id !== next.id),
-        };
-      }
+      if (action.type === 'steer-queued' || session.state.phase === 'idle')
+        this.dispatchQueuedPrompt(input.sessionId, action.type === 'steer-queued' ? action.id : undefined);
+      if (!this.delayedReceipts) this.finishQueuedPrompt(input.sessionId);
     }
     else if (action.type === "plan")
       session.state = { ...session.state, plan: action.enabled };

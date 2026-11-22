@@ -11,7 +11,7 @@ export default async function* (capture) {
     await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
     await capture.evaluate(() => document.querySelector('.agent-settings [aria-label="Harness"] [aria-checked="true"]').focus());
     await capture.press(key);
-    await capture.waitFor(label => document.querySelector('ex-session-chat .provider')?.textContent.includes(label), label);
+    await capture.waitFor(label => document.querySelector('ex-agent-picker > button')?.getAttribute('aria-label').includes(label), label);
     await capture.waitFor(() => document.querySelector('.agent-settings')?.getAttribute('aria-busy') === 'false');
     assert.equal(await capture.evaluate(() => !!document.querySelector('.agent-settings')?.contains(document.activeElement)), true);
     assert.equal(await capture.evaluate(() => document.querySelector('ex-composer textarea').value), 'Keep my message while changing agents');

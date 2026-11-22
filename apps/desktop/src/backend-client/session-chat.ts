@@ -8,13 +8,20 @@ import {
   chatId,
   chatObject,
   chatText,
+  defaultRevision,
   parseChatAction,
   parseChatCatalog,
   parseChatPage,
   parsePresetDefault,
+  parseTurnWorkPage,
+  parseTurnWorkRead,
+  deferredToolDetails,
+  parseToolDetailsRead,
+  parseToolDetailsReply,
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
+import { SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 
 /** Transport stays on the existing per-window lease, including capability routing and cancellation. */
 export function registerSessionChatIpc(
@@ -42,6 +49,20 @@ export function registerSessionChatIpc(
         sessionId = chatId(raw["sessionId"]);
       const key = "session-chat:" + requestId(raw["requestId"]),
         query = new URLSearchParams();
+      const loadingMode = raw['loadingMode'];
+      if (loadingMode !== undefined && loadingMode !== 'window' && loadingMode !== 'progressive')
+        throw new Error('Invalid conversation loading mode.');
+      if (loadingMode !== undefined) query.set('loadingMode', loadingMode);
+      const summarizeCompleted = raw['summarizeCompleted'];
+      if (summarizeCompleted !== undefined && (summarizeCompleted !== true || loadingMode !== 'progressive'))
+        throw new Error('Invalid completed turn view.');
+      if (summarizeCompleted) query.set('summarizeCompleted', '1');
+      const summarizeRecent = raw['summarizeRecent'];
+      if (summarizeRecent !== undefined && (summarizeRecent !== true || !summarizeCompleted))
+        throw new Error('Invalid recent turn view.');
+      if (summarizeRecent) query.set('summarizeRecent', '1');
+      const deferDetails = deferredToolDetails(raw['deferToolDetails']);
+      if (deferDetails) query.set('deferToolDetails', '1');
       if (raw["after"] !== undefined)
         query.set("after", chatText(raw["after"], 200));
       if (raw["before"] !== undefined)
@@ -67,11 +88,51 @@ export function registerSessionChatIpc(
             ),
             taskId,
             sessionId,
+            loadingMode,
+            summarizeCompleted,
+            deferDetails,
           ),
         15000,
       );
     },
   );
+  const turnWork = handleForWindow('session-chat:turn-work', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid turn activity arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseTurnWorkRead(args[1]);
+    const { taskId, sessionId, turnId, revision, offset, requestId, limit } = input;
+    const query = new URLSearchParams({ turnId, revision, offset: String(offset) });
+    if (input.deferToolDetails) query.set('deferToolDetails', '1');
+    if (limit !== undefined) query.set('limit', String(limit));
+    if (input.timeline) query.set('timeline', '1');
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
+      async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/turn-work?' + query,
+        limit: (limit ?? 0) > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES + 16 * 1024 : 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
+  const toolDetails = handleForWindow('session-chat:tool-details', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid tool detail arguments.');
+    const scopeId = scope(args[0]);
+    const input = parseToolDetailsRead(args[1]);
+    const { taskId, sessionId, item, result, requestId } = input;
+    const query = new URLSearchParams({ itemId: item.id, revision: item.revision });
+    if (input.turnId) query.set('turnId', input.turnId);
+    if (result) {
+      query.set('resultId', result.id);
+      query.set('resultRevision', result.revision);
+    }
+    return client.execute(
+      window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:tool-details:${query}`, false,
+      async (endpoint, signal) => parseToolDetailsReply(await requestBackendJson(endpoint, {
+        path: path(taskId, sessionId) + '/tool-details?' + query, limit: 512 * 1024,
+      }, signal), input),
+      15000,
+    );
+  });
   const catalog = handleForWindow(
     "session-chat:catalog",
     trusted,
@@ -244,6 +305,22 @@ export function registerSessionChatIpc(
               code: "invalid-response",
               message: "The machine returned an incompatible default change.",
             });
+          const removal = reply["presetRemoval"] === undefined
+            ? undefined : chatObject(reply["presetRemoval"]);
+          const position = removal?.["position"];
+          if (action.type === "preset-delete" ? !removal : !!removal)
+            throw new BackendRequestError({
+              code: "invalid-response",
+              message: "The machine returned an incompatible preset removal.",
+            });
+          if (removal) {
+            if (typeof position !== "number" || !Number.isInteger(position) || position < 0 || position >= 24)
+              throw new BackendRequestError({
+                code: "invalid-response",
+                message: "The machine returned an invalid preset position.",
+              });
+            return { accepted: true as const, presetRemoval: { position, revision: defaultRevision(removal["revision"]) } };
+          }
           return {
             accepted: true as const,
             ...(change ? { defaultChange: change } : {}),
@@ -339,6 +416,8 @@ export function registerSessionChatIpc(
     media();
     changes();
     read();
+    turnWork();
+    toolDetails();
     catalog();
     command();
     cancel();
