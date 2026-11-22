@@ -280,6 +280,14 @@ neighbour when necessary, and retains a scoped Toast/Undo. Main validates IDs,
 confirmation and response identity; backend checks task ownership/readiness and
 live activity before strict process cleanup.
 
+A session's `status` is the legacy value, in which detached shell commands make
+it read as `running`. Engines that separate them also send `turnStatus` (the
+agent's own state) and `commandCount`, only while commands run. The store prefers
+`turnStatus` for the glyph and the project and header counts, and passes
+`commandCount` to the row as `commands`. Archiving a session with commands
+requires `confirmStop`, because it stops them. Older engines omit both fields
+and keep their previous display.
+
 Unstarted sessions expose an engine-owned `canDelete` flag and use the named
 `workspaceDeleteSession` operation instead. The engine rechecks persisted
 conversation identity, completion and live activity while claiming the row;

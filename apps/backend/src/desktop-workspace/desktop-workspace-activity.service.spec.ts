@@ -103,6 +103,50 @@ describe('bounded workspace sidebar activity', () => {
       }
     },
   );
+  describe('detached commands', () => {
+    const shell = (id: string) => ({ id: `task:${id}`, kind: 'task', label: 'npm run dev' });
+    const agent = { id: 'subagent:a', kind: 'subagent', label: 'reviewer' };
+    const finished = session(1, { status: 'active', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-15T00:00:00.000Z' });
+    it('separates the agent turn from commands while the legacy status keeps counting them', () => {
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1'), shell('2')] });
+      expect(service.view(finished)).toEqual({ status: 'running', turnStatus: 'review', commandCount: 2 });
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1')] });
+      expect(service.view(session(1, { status: 'active' }))).toEqual({ status: 'running', turnStatus: 'done', commandCount: 1 });
+    });
+    it('keeps delegated agents as the agent working and omits the additive fields without commands', () => {
+      emit(1, { runPhase: 'idle', backgroundWork: [agent] });
+      expect(service.view(finished)).toEqual({ status: 'running' });
+      emit(1, { runPhase: 'idle', backgroundWork: [agent, shell('1')] });
+      expect(service.view(finished)).toEqual({ status: 'running', turnStatus: 'running', commandCount: 1 });
+      emit(1, { runPhase: 'idle', backgroundWork: [] });
+      expect(service.view(finished)).toEqual({ status: 'review' });
+    });
+    it('reports a live turn, input requests and failures alongside the commands', () => {
+      emit(1, { runPhase: 'running', backgroundWork: [shell('1')] });
+      expect(service.view(finished)).toMatchObject({ turnStatus: 'running', commandCount: 1 });
+      emit(1, { runPhase: 'idle', pendingUserInputRequest: { requestId: 'q' }, backgroundWork: [shell('1')] });
+      expect(service.view(finished)).toEqual({ status: 'attention', turnStatus: 'attention', commandCount: 1 });
+      emit(1, { runPhase: 'idle', lastError: 'Failed', backgroundWork: [shell('1')] });
+      expect(service.view(finished)).toEqual({ status: 'running', turnStatus: 'failed', commandCount: 1 });
+    });
+    it('ignores hook background flags that only reflect the commands, but not hook-only work', () => {
+      snapshots.set(1, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: true });
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1')] });
+      expect(service.view(finished)).toMatchObject({ turnStatus: 'review', commandCount: 1 });
+      snapshots.set(2, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: true });
+      expect(service.view(session(2, { status: 'active' }))).toEqual({ status: 'running' });
+    });
+    it('drops commands for stopped and archived sessions and invalidates only on a count or turn change', () => {
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1')] });
+      expect(service.view(session(1, { status: 'archived' }))).toEqual({ status: 'archived' });
+      expect(service.view(session(1, { status: 'stopped' }))).toEqual({ status: 'done' });
+      const revision = navigation.revision;
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1')], tokens: 5 });
+      expect(navigation.revision).toBe(revision);
+      emit(1, { runPhase: 'idle', backgroundWork: [shell('1'), shell('2')] });
+      expect(navigation.revision).toBeGreaterThan(revision);
+    });
+  });
   it('retains a terminal failure until the next turn, with explicit input taking priority', () => {
     snapshots.set(1, { activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: false, failed: true });
     hooks.emit('status-changed', { sessionId: 1 });

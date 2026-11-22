@@ -66,7 +66,12 @@ export interface WorkspaceSession {
   readonly taskId: number;
   readonly repoId: number;
   readonly name: string;
+  /** Legacy status: detached commands make a session read as `running`. */
   readonly status: string;
+  /** The agent's own state, supplied only while detached commands run. Prefer it over `status`. */
+  readonly turnStatus?: string;
+  /** Detached shell commands still running. Omitted by older engines and when none run. */
+  readonly commandCount?: number;
   readonly provider: string;
   readonly updatedAt: string;
 }

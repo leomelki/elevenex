@@ -919,6 +919,18 @@ describe('workspace session archive', () => {
     bridge.workspaceRestoreSession.mockResolvedValue({ok:false,error:{code:'http',message:'Try again.'}});
     await store.undoSessionArchive(); expect(store.sessionArchiveUndo()).not.toBeNull();
   });
+  it('shows the agent turn plus a command count, and confirms stopping when commands remain', async () => {
+    const {store,bridge,start} = setup();
+    bridge.workspaceSessions.mockResolvedValue(ok(page([{ ...session, status: 'running', turnStatus: 'review', commandCount: 2 }, { ...session, id: 6, status: 'running' }])));
+    await start();
+    const [finished, working] = store.tasks()[0]!.sessions;
+    expect(finished).toMatchObject({ id: '5', status: 'review', commands: 2 });
+    expect(working).toMatchObject({ id: '6', status: 'running' });
+    expect(working && 'commands' in working).toBe(false);
+    expect(store.counts().running).toBe(1);
+    await store.archiveSession({taskId:'3',session:{id:'5',status:'review'}});
+    expect(bridge.workspaceArchiveSession).toHaveBeenLastCalledWith('scope',{taskId:3,sessionId:5,confirmStop:true});
+  });
   it('rejects late replies and clears Undo when the backend scope changes', async () => {
     const {store,bridge,start,emit} = setup(); await start();
     let complete!: (value: BackendResult<{readonly accepted:true}>)=>void;

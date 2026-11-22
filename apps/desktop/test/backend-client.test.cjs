@@ -731,12 +731,19 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.deepEqual(requests.at(-1),{path:'/api/desktop-workspace/tasks/1/sessions/2/delete',body:null});
   reply = {accepted:false};
   assert.equal((await remove({taskId:1,sessionId:2})).error.code,'outcome-unknown');
+  reply = {items:[{id:2,taskId:1,repoId:3,name:'Busy',status:'running',turnStatus:'review',commandCount:2,provider:'codex',updatedAt:''}],nextCursor:null};
+  const busy = await handlers.get('workspace:sessions')(event,scope,{taskId:1});
+  assert.equal(busy.ok,true); assert.equal(busy.value.items[0].turnStatus,'review'); assert.equal(busy.value.items[0].commandCount,2);
+  for (const invalid of [{commandCount:-1},{commandCount:1.5},{commandCount:'2'},{turnStatus:7}]) {
+    reply = {items:[{id:2,taskId:1,repoId:3,name:'Busy',status:'running',provider:'codex',updatedAt:'',...invalid}],nextCursor:null};
+    assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1})).ok,false);
+  }
   reply = {items:[{id:2,taskId:1,repoId:3,name:'Invalid flag',status:'queued',provider:'codex',updatedAt:'',canDelete:'yes'}],nextCursor:null};
   assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1})).ok,false);
   client.reset(42);
   assert.equal((await remove({taskId:1,sessionId:2})).error.code,'stale-scope');
   assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:false})).error.code,'stale-scope');
-  assert.equal(requests.length,10);
+  assert.equal(requests.length,15);
   stop(); assert.equal(handlers.size,0);
 });
 

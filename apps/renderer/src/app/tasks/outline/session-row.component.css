@@ -93,6 +93,17 @@
 .meta {
   font-size: 11.5px;
 }
+/* Static on purpose: motion is reserved for an agent that is working. */
+.commands {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
 .unread {
   width: 6px;
   height: 6px;
@@ -141,7 +152,7 @@
 .has-archive:hover .select, .has-archive:focus-within .select { padding-right: 32px; }
 .has-archive:hover .diff, .has-archive:hover .meta,
 .has-archive:focus-within .diff, .has-archive:focus-within .meta,
-.confirming .diff, .confirming .meta { display: none; }
+.confirming .diff, .confirming .meta, .confirming .commands { display: none; }
 .has-archive.confirming .select { padding-right: 134px; }
 .archive {
   position: absolute; top: 3px; right: var(--space-1); height: 22px;

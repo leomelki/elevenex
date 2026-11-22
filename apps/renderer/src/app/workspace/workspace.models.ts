@@ -13,8 +13,12 @@ export function workspaceTaskStage(task: WorkspaceTask): TaskStage {
   return task.stage;
 }
 
+/**
+ * Detached commands are shown separately (`TaskSession.commands`), so the glyph
+ * follows the agent's own state. Older engines fold commands into `status`.
+ */
 export function workspaceSessionStatus(session: WorkspaceSession): SessionStatus {
-  switch (session.status) {
+  switch (session.turnStatus ?? session.status) {
     case 'running': return 'running';
     case 'attention': case 'waiting': case 'waiting_for_input': return 'attention';
     case 'failed': case 'error': return 'failed';

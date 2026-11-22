@@ -113,6 +113,11 @@ export interface TaskSession {
   readonly kind?: 'main' | 'fork' | 'side' | 'auto';
   readonly diff?: { readonly add: number; readonly del: number };
   readonly meta?: string;
+  /**
+   * Detached shell commands still running after the agent's turn. Independent of
+   * `status`: the glyph describes the agent, this describes what it left running.
+   */
+  readonly commands?: number;
   readonly unread?: boolean;
   readonly fresh?: boolean;
 }

@@ -176,3 +176,40 @@ describe('session row archive intent', () => {
     expect(view.nativeElement.querySelector('.archive')).toBeNull();
   });
 });
+
+describe('session row detached commands', () => {
+  function row(session: Partial<TaskSession>) {
+    const fixture = TestBed.createComponent(SessionRowComponent);
+    fixture.componentRef.setInput('session', { id: 'one', title: 'Fix flaky login test', status: 'review', ...session });
+    fixture.componentRef.setInput('allowArchive', true);
+    const archived = vi.fn();
+    fixture.componentInstance.archiveRequested.subscribe(archived);
+    fixture.detectChanges();
+    return { fixture, archived, commands: () => fixture.nativeElement.querySelector('.commands') as HTMLElement | null, archive: fixture.nativeElement.querySelector('.archive') as HTMLButtonElement };
+  }
+  it('keeps the agent status glyph and adds a named, static commands marker', () => {
+    const { fixture, commands } = row({ commands: 2 });
+    expect(fixture.nativeElement.querySelector('ex-status-glyph svg').getAttribute('data-status')).toBe('review');
+    expect(commands()?.getAttribute('aria-label')).toBe('2 commands still running · the agent may resume when they finish');
+    expect(commands()?.textContent?.trim()).toBe('2');
+    expect(fixture.nativeElement.querySelector('.unread')).toBeNull();
+  });
+  it('omits the count for one command, and the marker when none run', () => {
+    const one = row({ commands: 1 });
+    expect(one.commands()?.textContent?.trim()).toBe('');
+    expect(one.commands()?.getAttribute('aria-label')).toBe('1 command still running · the agent may resume when it finishes');
+    expect(row({ commands: 0 }).commands()).toBeNull();
+    expect(row({}).commands()).toBeNull();
+  });
+  it('asks before archiving a finished session that still has commands, since archiving stops them', () => {
+    const { archive, archived, fixture } = row({ status: 'done', commands: 1 });
+    archive.click(); fixture.detectChanges();
+    expect(archived).not.toHaveBeenCalled();
+    expect(archive.getAttribute('aria-label')).toContain('press again to confirm');
+    archive.click(); expect(archived).toHaveBeenCalledOnce();
+  });
+  it('archives a finished session without commands in one click', () => {
+    const { archive, archived } = row({ status: 'done' });
+    archive.click(); expect(archived).toHaveBeenCalledOnce();
+  });
+});

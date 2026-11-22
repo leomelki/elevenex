@@ -177,7 +177,7 @@ export class WorkspaceStore {
         ...(this.sessionNestingAvailable() && !this.closed() ? { childrenAppendOrder: this.sessionNestingOrderAvailable(), parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
           childrenLoading: this.hierarchy.windows().get(session.id)?.loading ?? false,
           childrenError: this.hierarchy.windows().get(session.id)?.error ?? null,
-          earlierChildren: this.hierarchy.windows().get(session.id)?.earlier ?? false, moreChildren: !!this.hierarchy.windows().get(session.id)?.nextCursor } : {}), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
+          earlierChildren: this.hierarchy.windows().get(session.id)?.earlier ?? false, moreChildren: !!this.hierarchy.windows().get(session.id)?.nextCursor } : {}), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session), ...(session.commandCount ? { commands: session.commandCount } : {}) })),
       ...this.sessionCreation.items().filter(item => item.taskId === task.id).map(item => ({ id: item.id, renderId: item.id, title: 'New session', status: 'queued' as const, local: true, fresh: true, meta: item.status === 'creating' ? 'Creating…' : item.status === 'unknown' ? 'Check creation' : 'Try again' })),
     ],
   })));
@@ -593,7 +593,7 @@ export class WorkspaceStore {
     this.busy.set(true);
     const result = await this.mutate(scope, () => deleting
       ? this.bridge.workspaceDeleteSession(scope, { taskId, sessionId })
-      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' }));
+      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' || !!session.commandCount }));
     if (result) {
       if (deleting) this.drafts?.entry({ scopeId: scope, taskId, sessionId }).discard();
       this.closeUndo.set(null); this.archiveUndo.set(null);

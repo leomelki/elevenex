@@ -199,12 +199,24 @@ fresh open after the exit resets it. `commit-panel-motion.mjs` verifies arriving
 content, entry/exit boundaries, reversals, focus and narrow reduced-motion states
 in both themes.
 
+## Detached commands
+
+`TaskSession.commands` is the number of shell commands still running after the
+agent's turn, such as a dev server or a watcher. It is independent of `status`:
+the glyph keeps describing the agent (working, needs you, new reply, done), and
+a static terminal icon with a count, shown from two commands up, sits before the
+diff. Its name and tooltip say that the agent may resume when a command
+finishes. Nothing animates, because motion means an agent is working. Delegated
+agents are not commands; they remain part of the agent's own `running` state.
+The owner decides what to count; omit the field when none run.
+
 ## Session archiving and working window
 
 Opt into archive actions with `allowArchive` and handle `archiveRequested` in the
-owner. The action is absent by default. Running rows require a second activation
-in the expanding Stop and archive button; Escape, blur and outside pointer input
-cancel it. Pointer leave retains confirmation. Nonrunning rows emit immediately.
+owner. The action is absent by default. Running rows, and rows with detached
+`commands`, require a second activation in the expanding Stop and archive
+button; Escape, blur and outside pointer input cancel it. Pointer leave retains
+confirmation. Other rows emit immediately.
 A session with owner-supplied `canDelete: true`
 shows a trash icon and Delete session tooltip instead, emitting `deleteRequested`
 in one activation. Handle that intent separately: permanent removal offers no Undo.

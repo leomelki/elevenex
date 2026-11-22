@@ -12,6 +12,7 @@ import { TaskGitService } from '../tasks/task-git.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { inactiveSessionStatus, type WorkspaceSessionActivity } from './desktop-session-status.js';
 import { DesktopWorkspaceService } from './desktop-workspace.service.js';
 
 describe('DesktopWorkspaceService', () => {
@@ -22,6 +23,7 @@ describe('DesktopWorkspaceService', () => {
   let taskId: number;
   const retryTask = jest.fn();
   const activityStatus = jest.fn<string | undefined, []>();
+  const detachedCommands = jest.fn<number, []>();
   const archiveSession = jest.fn();
   const restoreSession = jest.fn();
   it('appends older sessions with bounded nesting cursors while preserving legacy order', async () => {
@@ -55,6 +57,7 @@ describe('DesktopWorkspaceService', () => {
   });
   beforeEach(async () => {
     activityStatus.mockReset();
+    detachedCommands.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();
     archiveSession.mockImplementation(async (id: number) => {
       await database.db.update(schema.sessions).set({status: 'archived'}).where(eq(schema.sessions.id, id));
@@ -90,7 +93,13 @@ describe('DesktopWorkspaceService', () => {
       providers: [
         DesktopWorkspaceService,
         TaskGitService,
-        { provide: DesktopWorkspaceActivityService, useValue: {status: activityStatus} },
+        { provide: DesktopWorkspaceActivityService, useValue: {
+          status: activityStatus,
+          view: (row: WorkspaceSessionActivity) => ({
+            status: activityStatus() ?? inactiveSessionStatus(row),
+            ...(detachedCommands() ? { turnStatus: 'review', commandCount: detachedCommands() } : {}),
+          }),
+        } },
         ProjectsService,
         { provide: DRIZZLE, useValue: db },
         {
@@ -350,6 +359,13 @@ describe('DesktopWorkspaceService', () => {
         await service.listSessions(taskId, { cursor: first.nextCursor! })
       ).items.map((session) => session.name),
     ).toEqual(['Second']);
+  });
+  it('adds the agent turn and command count only for sessions with detached commands', async () => {
+    await database.db.insert(schema.sessions).values({ repoId, workspaceId: taskId, name: 'Busy', branchName: 'build', worktreePath: '/repo/task' });
+    activityStatus.mockReturnValue('running');
+    expect((await service.listSessions(taskId, {})).items[0]).not.toHaveProperty('commandCount');
+    detachedCommands.mockReturnValue(2);
+    expect((await service.listSessions(taskId, {})).items[0]).toMatchObject({ status: 'running', turnStatus: 'review', commandCount: 2 });
   });
   it('persists project name, appearance and instructions and validates the supported token vocabulary', async () => {
     await service.updateProject(projectId, {

@@ -41,6 +41,12 @@
       <span class="context" [title]="context">{{ context }}</span>
     }
   </span>
+  @if (session().commands; as commands) {
+    <span class="commands" role="img" [attr.aria-label]="commandsLabel()" [exTooltip]="commandsLabel()">
+      <ex-icon name="terminal" [size]="12" />
+      @if (commands > 1) { <span>{{ commands }}</span> }
+    </span>
+  }
   @if (!context()) {
     @if (session().diff; as diff) {
       @if (diff.add || diff.del) {

@@ -202,7 +202,9 @@ export class DesktopWorkspaceService {
     row: typeof schema.sessions.$inferSelect,
     taskId: number,
   ) {
-    const status = this.activity?.status(row) ?? inactiveSessionStatus(row);
+    const { status, turnStatus, commandCount } = this.activity?.view(row) ?? {
+      status: inactiveSessionStatus(row),
+    };
     return {
       id: row.id,
       taskId,
@@ -210,6 +212,8 @@ export class DesktopWorkspaceService {
       repoId: row.repoId,
       name: row.name ?? 'Session',
       status,
+      // Additive: older desktops keep the legacy status above.
+      ...(commandCount ? { turnStatus, commandCount } : {}),
       provider: sessionAgentProvider(row),
       updatedAt: row.updatedAt,
       parentSessionId: row.parentSessionId,

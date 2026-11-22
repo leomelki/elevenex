@@ -40,6 +40,14 @@ export class SessionRowComponent implements OnChanges {
   readonly archiveRequested = output<TaskSession>();
   readonly deleteRequested = output<TaskSession>();
   protected readonly confirming = signal(false);
+  /** Archiving stops both a working agent and the commands it left running. */
+  private readonly live = computed(() => this.session().status === 'running' || !!this.session().commands);
+  protected readonly commandsLabel = computed(() => {
+    const count = this.session().commands ?? 0;
+    return count === 1
+      ? '1 command still running · the agent may resume when it finishes'
+      : `${count} commands still running · the agent may resume when they finish`;
+  });
   protected readonly dragging = signal(false);
   protected startDrag(event: DragEvent): void {
     if (!event.dataTransfer || this.confirming() || this.session().local) { event.preventDefault(); return; }
@@ -52,13 +60,13 @@ export class SessionRowComponent implements OnChanges {
 
   constructor() { inject(DestroyRef).onDestroy(() => this.cancelArchive()); }
   ngOnChanges(): void {
-    if (!this.allowArchive() || this.session().status !== 'running' || this.session().id !== this.confirmationSession) this.cancelArchive();
+    if (!this.allowArchive() || !this.live() || this.session().id !== this.confirmationSession) this.cancelArchive();
   }
 
   protected archive(event: Event): void {
     if (!this.allowArchive()) return;
     if (this.session().canDelete) { this.deleteRequested.emit(this.session()); return; }
-    if (this.session().status === 'running' && !this.confirming()) {
+    if (this.live() && !this.confirming()) {
       this.confirmationSession = this.session().id;
       this.confirming.set(true);
       const button = event.currentTarget;

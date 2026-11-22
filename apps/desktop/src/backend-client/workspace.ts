@@ -228,6 +228,8 @@ function session(value: unknown): WorkspaceSession {
     repoId: id(raw['repoId']),
     name: text(raw['name'], 160),
     status: text(raw['status'], 64),
+    ...(raw['turnStatus'] === undefined ? {} : { turnStatus: text(raw['turnStatus'], 64) }),
+    ...(raw['commandCount'] === undefined ? {} : { commandCount: nonnegativeCount(raw['commandCount']) }),
     provider: text(raw['provider'], 64),
     updatedAt: text(raw['updatedAt'], 64),
     ...(raw['canDelete'] === undefined ? {} : { canDelete: boolean(raw['canDelete']) }),
