@@ -213,6 +213,7 @@ type HistoryMessage = {
   timestamp?: string;
   parent_tool_use_id?: string | null;
   tool_use_result?: unknown;
+  apiBlockIndex?: number;
 };
 
 interface ActivePermissionRequest {
@@ -7304,6 +7305,10 @@ export class ClaudeRuntimeService
           typeof payload.id === 'string' && payload.id
             ? payload.id
             : message.uuid;
+        // Claude saves each streamed block separately. Its array index may
+        // reset to zero; the recorded API index matches the live block ID.
+        const apiBlockIndex = payload.content.length === 1 ? message.apiBlockIndex : undefined;
+        const streamBlockId = apiBlockIndex === undefined ? undefined : `${apiMessageId}:${apiBlockIndex}`;
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -7311,7 +7316,7 @@ export class ClaudeRuntimeService
             part.text.trim()
           ) {
             normalized.push({
-              id: `${apiMessageId}:assistant:${index}`,
+              id: streamBlockId ?? `${apiMessageId}:assistant:${index}`,
               kind: 'assistant',
               content: part.text,
               parentToolUseId,
@@ -7325,7 +7330,7 @@ export class ClaudeRuntimeService
             typeof part.thinking === 'string'
           ) {
             normalized.push({
-              id: `${apiMessageId}:thinking:${index}`,
+              id: streamBlockId ?? `${apiMessageId}:thinking:${index}`,
               kind: 'thinking',
               content: part.thinking,
               parentToolUseId,
@@ -7388,6 +7393,9 @@ export class ClaudeRuntimeService
             : new Date().toISOString(),
         message: record.message,
         tool_use_result: record.toolUseResult ?? record.tool_use_result,
+        apiBlockIndex: typeof record.apiBlockIndex === 'number' &&
+          Number.isSafeInteger(record.apiBlockIndex) && record.apiBlockIndex >= 0
+          ? record.apiBlockIndex : undefined,
       }));
 
     return this.normalizeHistory(messages, interactionsByToolUseId);

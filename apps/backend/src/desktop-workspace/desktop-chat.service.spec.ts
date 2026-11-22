@@ -882,6 +882,47 @@ describe('selected session chat', () => {
     }
   });
 
+  it('keeps saved tool calls in a long live turn and continues replaying new activity', async () => {
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    const exchanges = Array.from({ length: 55 }, (_, i): AgentTranscriptItem[] => [
+      { ...item(`msg_${i}:0`, 'Checking the file'), kind: 'thinking' },
+      { ...item(`call-${i}`, ''), kind: 'tool_use', toolUseId: `tool-${i}`, toolKind: 'read' },
+      { ...item(`result-${i}`, 'File contents'), kind: 'tool_result', toolUseId: `tool-${i}` },
+    ]).flat();
+    live = [prompt, ...exchanges];
+    // Include a legacy split thought with a different durable ID near the
+    // tail, along with older live rows outside the bounded history slice.
+    history = live.map(row => row.id === 'msg_54:0' ? { ...row, id: 'msg_54:thinking:0' } : row);
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    try {
+      const initial = (await stream.next()).value as SessionChatStreamPage;
+      expect(initial.page.items).toHaveLength(80);
+      expect(initial.page.items.slice(-4).map(row => row.id)).toEqual([
+        'msg_54:thinking:0', 'msg_54:0', 'call-54', 'result-54',
+      ]);
+      expect(initial.page.items.filter(row => row.kind === 'tool_use').length).toBeGreaterThan(20);
+
+      const call = { ...item('next-call', ''), kind: 'tool_use' as const, toolKind: 'bash', toolUseId: 'next-tool' };
+      live = [...live, call];
+      emit('tool_use');
+      const started = (await stream.next()).value as SessionChatStreamPage;
+      expect(started.page).toMatchObject({ reset: false, events: [{ type: 'item', item: { id: call.id } }] });
+
+      live = [...live, { ...item('next-result', 'Checks passed'), kind: 'tool_result', toolUseId: 'next-tool' }];
+      emit('tool_result');
+      const finished = (await stream.next()).value as SessionChatStreamPage;
+      expect(finished.page).toMatchObject({ reset: false, events: [
+        { type: 'item', item: { id: call.id, receipt: { id: 'next-result', error: false } } },
+        { type: 'item', item: { id: 'next-result' } },
+      ] });
+      expect(runtime.getHistory).toHaveBeenCalledTimes(1);
+    } finally {
+      abort.abort();
+      await stream.return(undefined);
+    }
+  });
+
   it('resets a live window when a burst crosses its bound or changes source order', async () => {
     const abort = new AbortController();
     const source = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);

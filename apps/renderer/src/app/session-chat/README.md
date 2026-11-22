@@ -149,8 +149,10 @@ Older engines omit the capability and retain their original send contract.
   with the turn's activity after it ends. Compact transcript exports label the
   latest interim text as Progress update until a final reply arrives.
 - Claude tool calls share the same message/tool ID in live events and saved
-  history, so reopening an active turn merges each call once and keeps its
-  result in the bounded transcript page.
+  history. Split thoughts and text use the API block index when the saved
+  record supplies it. The backend joins unsaved blocks at shared record IDs
+  before applying the page limit, so recent calls and their results keep their
+  place when reopening or resetting a live turn.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.

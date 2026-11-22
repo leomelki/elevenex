@@ -3732,6 +3732,27 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('uses the wire indexes of split Claude blocks so live and saved tools keep their order', async () => {
+    const timestamp = '2026-11-22T12:00:00.000Z';
+    const block = (uuid: string, content: unknown, apiBlockIndex?: number) => ({
+      type: 'assistant', uuid, timestamp, apiBlockIndex,
+      message: { id: 'msg_split', content: [content] },
+    });
+    mockTranscript([
+      block('first-thought', { type: 'thinking', thinking: 'First' }, 0),
+      block('second-thought', { type: 'thinking', thinking: 'Second' }, 1),
+      block('progress', { type: 'text', text: 'Running checks.' }, 2),
+      block('call', { type: 'tool_use', id: 'tool', name: 'Bash', input: { command: 'pnpm test' } }, 3),
+      block('legacy-thought', { type: 'thinking', thinking: 'Legacy' }),
+    ]);
+    const history = await service.getHistory(7);
+    expect(history.map(row => row.id)).toEqual([
+      'msg_split:0', 'msg_split:1', 'msg_split:2', 'msg_split:tool_use:tool', 'msg_split:thinking:0',
+    ]);
+    const live = history.slice(0, 4);
+    expect(chatWindow(history, live)?.items.map(row => row.id)).toEqual(history.map(row => row.id));
+  });
+
   it('drops a prompt that was edited and re-submitted before anything answered it', async () => {
     mockTranscript([
       {

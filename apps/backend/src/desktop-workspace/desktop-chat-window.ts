@@ -95,6 +95,36 @@ interface Candidate {
   readonly summary?: SessionChatItem;
 }
 
+/** Interleave unsaved live rows with the saved order at shared record IDs.
+ * Appending them after saved rows can put older live blocks after recent
+ * calls and crowd those calls out of the bounded tail on a stream reset. */
+function orderedCandidates(candidates: ReadonlyMap<string, Candidate>): Candidate[] {
+  const saved: Candidate[] = [], liveOnly: Candidate[] = [];
+  let lastShared = -1;
+  for (const candidate of candidates.values()) {
+    if (candidate.historyIndex < 0) {
+      liveOnly.push(candidate);
+      continue;
+    }
+    if (candidate.liveIndex >= 0) {
+      // If the provider reordered saved receipts, keep their durable order.
+      if (candidate.liveIndex < lastShared) return [...candidates.values()];
+      lastShared = candidate.liveIndex;
+    }
+    saved.push(candidate);
+  }
+  if (lastShared < 0 || !liveOnly.length) return [...saved, ...liveOnly];
+
+  const ordered: Candidate[] = [];
+  let live = 0;
+  for (const candidate of saved) {
+    while (live < liveOnly.length && liveOnly[live].liveIndex < candidate.liveIndex)
+      ordered.push(liveOnly[live++]);
+    ordered.push(candidate);
+  }
+  return ordered.concat(liveOnly.slice(live));
+}
+
 /** A raw window can carry the same outcome as a compact turn once it has
  * the whole saved span. Partial windows and live rows use their available evidence. */
 function savedWindowTurnChanges(
@@ -174,11 +204,21 @@ export function chatWindow(
   const livePosition = cursor ? live.findIndex(item => item.id === cursor) : live.length;
   if (cursor && historyPosition < 0 && livePosition < 0) return null;
 
-  const historyEnd = historyPosition < 0 ? history.length : historyPosition;
+  let historyStart = following ? (historyPosition < 0 ? history.length : historyPosition + 1) : 0;
+  let historyEnd = before && historyPosition >= 0 ? historyPosition : history.length;
+  // A page can start on an unsaved row interleaved with saved rows.
+  // Use the next shared row as the saved edge in either direction.
+  if (cursor && historyPosition < 0) {
+    const laterLive = new Set(live.slice(livePosition + 1).map(item => item.id));
+    const edge = history.findIndex(item => laterLive.has(item.id));
+    if (edge >= 0) {
+      if (following) historyStart = edge;
+      else historyEnd = edge;
+    }
+  }
   const toolPage = options.toolDetails?.projectPage();
   const saved = historyCandidates(
-    history, following ? (historyPosition < 0 ? history.length : historyPosition + 1) : 0,
-    following ? history.length : historyEnd, !!following,
+    history, historyStart, historyEnd, !!following,
     options.completedTurns ? limit : candidateLimit, historyIndex, live, options, toolPage?.project,
   );
   const candidates = new Map<string, Candidate>();
@@ -194,19 +234,22 @@ export function chatWindow(
         candidates.set(item.id, { item, historyIndex: saved?.historyIndex ?? -1, historyEnd: saved?.historyEnd ?? -1, liveIndex: index });
     }
   };
-  const moreHistory = !!following && historyPosition >= 0 && (saved.at(-1)?.historyEnd ?? historyPosition) + 1 < history.length;
+  const moreHistory = !!following && (saved.at(-1)?.historyEnd ?? historyStart - 1) + 1 < history.length;
   let moreLive = false;
   if (following) {
     const start = Math.max(0, livePosition + 1);
     const end = Math.min(start + candidateLimit, live.length);
-    addLive(start, end, moreHistory);
+    const overlapEnd = moreHistory
+      ? start + live.slice(start, end).findLastIndex(item => candidates.has(item.id)) + 1
+      : end;
+    addLive(start, overlapEnd, false);
     moreLive = end < live.length;
   } else {
     if (livePosition >= 0) addLive(Math.max(0, livePosition - candidateLimit), livePosition, false);
     else addLive(0, live.length, true);
   }
 
-  const ordered = [...candidates.values()];
+  const ordered = orderedCandidates(candidates);
   const links = new ChatToolLinks(ordered.map(({ item }) => item));
   if (toolPage) {
     links.findMissing(live);

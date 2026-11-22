@@ -141,6 +141,23 @@ describe('completed turn history', () => {
     expect(forward.items.some(item => item.completedTurn)).toBe(false);
   });
 
+  it('pages in both directions from a live-only row between saved tools', () => {
+    const history = [
+      row('prompt', 'user'),
+      ...activity('first', 1),
+      ...activity('later', 100),
+    ];
+    const incoming = row('live-thought', 'thinking', 'Checking the results');
+    const live = [history[1], incoming, ...history.slice(2)];
+    const options = { loadingMode: 'progressive' as const, completedTurns: new ChatCompletedTurns(), liveTurn: true };
+
+    expect(chatWindow(history, live, { ...options, before: incoming.id })?.items.map(row => row.id))
+      .toEqual(['prompt', 'first-read-0']);
+    expect(chatWindow(history, live, { ...options, following: incoming.id })?.items[0]?.id).toBe('later-read-0');
+    expect(chatWindow(history, live, { ...options, following: 'first-read-0' })?.items.slice(0, 2).map(row => row.id))
+      .toEqual([incoming.id, 'later-read-0']);
+  });
+
   it('fits hundreds of paired tools in one compact timeline and keeps media at the receipt position', () => {
     const turns = new ChatCompletedTurns();
     const calls = activity('large', 600);
