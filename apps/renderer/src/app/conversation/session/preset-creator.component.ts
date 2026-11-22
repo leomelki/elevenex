@@ -90,8 +90,10 @@ export class PresetCreatorComponent {
   readonly useAsDefault = linkedSignal(() => this.initial().default === true);
   readonly defaultOptions = computed<readonly SegmentOption[]>(() => {
     const disabled = !this.open() || this.busy() || this.blocked();
+    // A default always exists, so the preset that already is one cannot opt out.
+    const isDefault = this.editing() && this.initial().default === true;
     return [
-      { id: "keep", label: "Keep current", disabled },
+      { id: "keep", label: "Keep current", disabled: disabled || isDefault },
       { id: "use", label: "Use this preset", disabled },
     ];
   });

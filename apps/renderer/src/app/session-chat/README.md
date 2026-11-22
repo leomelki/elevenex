@@ -484,11 +484,12 @@ applies changes through `set_thinking_level` before prompting. Catalog failures
 and unknown model capabilities do not invent supported efforts. Both live
 settings and preset catalogs carry these same per-model capabilities.
 
-Claude model selections retain their catalog aliases across startup and context
-updates, preserving custom display names and per-model thinking choices. When
-only a wire model ID is known, the SDK's `resolvedModel` catalog field supplies
-the match. Model changes publish state even before a runtime starts; a warm
-query applies them without rebuilding the process. Native model-change receipts
+An explicit Claude model selection is saved with its session and restored before
+the first chat read or CLI launch after a backend restart. It retains its catalog
+alias across context updates, preserving custom display names and per-model
+thinking choices. When the runtime only reports a wire model ID, the SDK's
+`resolvedModel` catalog field supplies the match. Model changes publish state
+before startup and apply to a warm query in place. Native model-change receipts
 are control traffic and are omitted from live and saved conversation turns.
 
 The connected chat now uses `Composer`’s Plan/Code switch, agent chip and
@@ -601,8 +602,9 @@ The remainder follow in responsive slim rows, with Custom last in the entire
 order. The blank chat previews up to two slim rows and compacts as vertical
 space shrinks. Edit shows the entire catalog and keeps New preset in the heading.
 The composer stays visible with its draft and becomes interactive again on Done
-or Escape. Click a card or its pencil to open the retained preset dialog.
-On the start screen, E on a focused card opens that dialog and enters Edit.
+or Escape. In Edit, click a card or its pencil to open the retained preset
+dialog. On the start screen, a pencil or E on a focused card opens that dialog
+in place.
 Drag a grip or use Option+Arrow keys to reorder. Remove or Delete offers a short
 undo window.
 Removing the default selects the first eligible preset in the remaining order.

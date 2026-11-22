@@ -155,7 +155,7 @@
             [editing]="presetEditing()"
             [disabled]="blocked() || store.loading()"
             (selected)="presetFlow.selectPreset($event)"
-            (editRequested)="editPreset($event)"
+            (editRequested)="presetFlow.openPresetEditor($event)"
             (removed)="presetFlow.removePreset($event)"
             (moved)="presetFlow.movePreset($event.id, $event.target, $event.restoreFocus)"
           />
@@ -426,7 +426,7 @@
     [harnessLocked]="!draft.catalogProvider"
     [catalogProvider]="draft.catalogProvider"
     [names]="presetFlow.presetNames()"
-    [defaultAvailable]="!draft.editing && !!presetFlow.defaultPreset()"
+    [defaultAvailable]="!!presetFlow.defaultPreset()"
     [open]="presetFlow.creatorOpen()"
     [busy]="presetFlow.presetSaving()"
     [blocked]="!!store.uncertain() || draft.identity !== identity()"

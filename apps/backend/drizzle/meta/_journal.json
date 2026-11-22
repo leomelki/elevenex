@@ -379,6 +379,13 @@
       "when": 1794786500000,
       "tag": "0053_session_nesting_order",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1795375371436,
+      "tag": "0054_claude_model_selection",
+      "breakpoints": true
     }
   ]
 }

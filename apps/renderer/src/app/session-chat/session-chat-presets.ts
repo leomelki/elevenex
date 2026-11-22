@@ -342,14 +342,39 @@ export class SessionChatPresets {
         this.preferredId.set(draft.id);
         this.tweakBase.set(undefined);
       }
+      // An edit saves the preset first, then makes it the default against the
+      // revision that save produced. Both are guarded mutations on their own.
+      const makeDefault = !!draft.editing && !!value.default && !draft.initial.default;
+      const defaulted = makeDefault ? await this.makeEditedDefault(draft.editing!.id, draft) : true;
+      if (this.disposed || this.presetDraft() !== draft || draft.identity !== this.owner.identity()) return;
+      if (!defaulted) {
+        this.presetError.set(
+          this.owner.store.error() ||
+            "The preset was saved, but could not be made the default. Try again.",
+        );
+        return;
+      }
       this.creatorOpen.set(false);
       this.owner.store.notice.set(draft.editing ? "Preset updated" : "Preset created");
-      if (!draft.editing && value.default) this.showDefaultUndo();
+      if (value.default && (!draft.editing || makeDefault)) this.showDefaultUndo();
     } else
       this.presetError.set(
         this.owner.store.error() ||
           "Could not save this preset. Your draft is retained.",
       );
+  }
+  private async makeEditedDefault(id: string, draft: NonNullable<ReturnType<typeof this.presetDraft>>): Promise<boolean> {
+    const current = this.defaultPreset();
+    const state = this.owner.store.state();
+    if (!current || !state || current.id === id) return true;
+    return (
+      (await this.owner.store.perform({
+        type: "preset-default",
+        id,
+        expectedProvider: state.provider,
+        expectedRevision: current.revision,
+      })) && !this.disposed && this.presetDraft() === draft
+    );
   }
   async selectPreset(id: string): Promise<void> {
     if (

@@ -308,6 +308,20 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
+  async updateClaudeModelSelection(
+    id: number,
+    model: string | null,
+  ): Promise<void> {
+    const rows = await this.db
+      .update(schema.sessions)
+      .set({ claudeModelSelection: { model } })
+      .where(eq(schema.sessions.id, id))
+      .returning({ id: schema.sessions.id });
+    if (!rows.length) {
+      throw new NotFoundException(`Session with id ${id} not found`);
+    }
+  }
+
   async findAllCompletionStates() {
     return this.db
       .select({

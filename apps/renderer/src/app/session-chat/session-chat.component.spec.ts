@@ -162,7 +162,49 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
 }
 
 describe("connected chat preset editing", () => {
-  it("shows and exits the grid editing controls without losing the composer draft", async () => {
+  const editable = () => {
+    const presets: NonNullable<SessionChatState["presets"]> = [0, 1].map(index => ({
+      id: `preset-${index}`, name: `Preset ${index + 1}`, provider: "codex", providerLabel: "Codex",
+      model: "test", modelLabel: "Test model", reasoning: null, fast: false,
+    }));
+    const chatState: SessionChatState = {
+      ...state, providerLocked: false, presetEditing: true, presets,
+      presetDefault: { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "a".repeat(64) },
+    };
+    return setup([], chatState);
+  };
+  it("offers the default choice when editing, locking it on for the preset that already is the default", async () => {
+    const { fixture, root } = editable();
+    await settle(fixture);
+    const choice = (label: string) => document.querySelector<HTMLButtonElement>(`.default-choice button[aria-label="${label}"]`)!;
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-0'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    expect(choice("Use this preset").getAttribute("aria-checked")).toBe("true");
+    expect(choice("Keep current").disabled).toBe(true);
+    document.querySelector(".preset-creator")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-1'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    expect(choice("Keep current").getAttribute("aria-checked")).toBe("true");
+    expect(choice("Keep current").disabled).toBe(false);
+  });
+  it("saves an edit, then makes the preset the default against the new revision", async () => {
+    const { fixture, root, bridge, complete, publish } = editable();
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-1'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    document.querySelector<HTMLButtonElement>('.default-choice button[aria-label="Use this preset"]')!.click();
+    await settle(fixture);
+    document.querySelector(".preset-creator")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({ action: expect.objectContaining({ type: "preset-update", id: "preset-1" }) }));
+    const next = { provider: "codex", id: "preset-0", defaultIds: ["preset-0"], revision: "c".repeat(64) };
+    publish({ taskId: 1, sessionId: 2, cursor: "new", reset: true, before: null, items: [], events: [], state: { ...state, providerLocked: false, presetEditing: true, presets: fixture.componentInstance.store.state()!.presets, presetDefault: next } });
+    complete(); await settle(fixture);
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({ action: { type: "preset-default", id: "preset-1", expectedProvider: "codex", expectedRevision: next.revision } }));
+    complete(); await settle(fixture);
+  });
+  it("opens individual preset edits separately from grid editing and keeps the composer draft", async () => {
     const presets: NonNullable<SessionChatState["presets"]> = Array.from({ length: 8 }, (_, index) => ({
       id: `preset-${index}`, name: `Preset ${index + 1}`, provider: "codex", providerLabel: "Codex",
       model: "test", modelLabel: "Test model", reasoning: null, fast: false,
@@ -179,6 +221,18 @@ describe("connected chat preset editing", () => {
       .map(button => button.textContent?.trim());
     expect(headingActions()).toEqual(["Edit", "New preset"]);
     expect(root.querySelector(".grip")).toBeNull();
+
+    root.querySelector<HTMLButtonElement>("[data-flip='preset-0'] button.tile-action.edit")!.click();
+    await settle(fixture);
+    const name = document.querySelector<HTMLInputElement>(".preset-creator .identity input");
+    expect(name?.value).toBe("Preset 1");
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector(".grip")).toBeNull();
+    name!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await settle(fixture);
+    expect(document.querySelector(".preset-creator")).toBeNull();
+    expect(headingActions()).toEqual(["Edit", "New preset"]);
+    expect(root.querySelector("ex-composer")?.hasAttribute("inert")).toBe(false);
 
     root.querySelector<HTMLButtonElement>("[data-preset-edit]")!.click();
     await settle(fixture);

@@ -326,6 +326,7 @@ interface AgentRuntimeSession {
   worktreePath: string;
   transcriptWorktreePath?: string | null;
   claudeSessionId: string | null;
+  claudeModelSelection?: schema.ClaudeModelSelection | null;
   surface?: string;
   agentAutonomyMode?: string | null;
 }
@@ -375,6 +376,9 @@ interface RuntimeState {
   liveItems: ClaudeTranscriptItem[];
   lastError: string | null;
   selectedModel: string | null;
+  // Undefined until a session row has been read. Inferred SDK metadata is
+  // separate from the saved choice passed to the next query.
+  modelSelection: schema.ClaudeModelSelection | null | undefined;
   reasoningEffort: ClaudeReasoningEffort | null;
   fastMode: boolean;
   selectedPermissionMode: ClaudePermissionMode | null;
@@ -607,6 +611,10 @@ export class ClaudeRuntimeService
   private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
+  private readonly modelChanges = new Map<
+    number,
+    Promise<ClaudeRuntimeStatePayload>
+  >();
   // Runtime-scoped: project settings can select different credentials. Weak
   // keys release telemetry bookkeeping with the owning process.
   private readonly planUsageReads = new WeakMap<
@@ -707,8 +715,8 @@ export class ClaudeRuntimeService
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
+    const state = this.ensureSessionState(sessionId, session);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
       this.recordHistorySnapshot(state, [], null);
       return [];
     }
@@ -739,11 +747,7 @@ export class ClaudeRuntimeService
           messages,
           interactionsByToolUseId,
         );
-        this.recordHistorySnapshot(
-          this.ensureRuntimeState(sessionId, session.claudeSessionId),
-          normalized,
-          'sdk',
-        );
+        this.recordHistorySnapshot(state, normalized, 'sdk');
         return normalized;
       }
     } catch (error) {
@@ -780,7 +784,7 @@ export class ClaudeRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
 
     await this.recoverSubagents(sessionId, session, state);
 
@@ -994,7 +998,7 @@ export class ClaudeRuntimeService
 
   async getSavedSubagents(sessionId: number): Promise<ClaudeSubagentState[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     await this.recoverSubagents(sessionId, session, state);
     return state.subagents.map((agent) => ({
       ...agent,
@@ -1015,7 +1019,7 @@ export class ClaudeRuntimeService
     if (!/^[\w-]{1,256}$/.test(id))
       throw new BadRequestException('A valid agentId is required.');
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     if (!state.subagents.some((agent) => agent.agentId === id))
       await this.recoverSubagents(sessionId, session, state);
     const agent = state.subagents.find((item) => item.agentId === id);
@@ -1419,10 +1423,7 @@ export class ClaudeRuntimeService
         });
     }
 
-    const state = this.ensureRuntimeState(
-      sessionId,
-      hasRetainedConversation ? session.claudeSessionId : '-1',
-    );
+    const state = this.ensureSessionState(sessionId, session);
     if (!hasRetainedConversation) {
       state.claudeSessionId = null;
       state.lastHistoryItemCount = 0;
@@ -1531,15 +1532,60 @@ export class ClaudeRuntimeService
     sessionId: number,
     model: string | null,
   ): Promise<ClaudeRuntimeStatePayload> {
-    const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
-    const selectedModel = model ?? null;
-    const runtime = this.sessionRuntimes.get(sessionId);
-    if (runtime) {
-      await runtime.setModel(selectedModel ?? undefined);
+    const generation = this.sessionGenerations.get(sessionId);
+    const previous = this.modelChanges.get(sessionId) ?? Promise.resolve();
+    const change = previous.catch(() => undefined).then(() =>
+      this.applySelectedModel(sessionId, model, generation),
+    );
+    this.modelChanges.set(sessionId, change);
+    try {
+      return await change;
+    } finally {
+      if (this.modelChanges.get(sessionId) === change) {
+        this.modelChanges.delete(sessionId);
+      }
     }
-    state.selectedModel = selectedModel;
-    if (runtime) {
+  }
+
+  private async applySelectedModel(
+    sessionId: number,
+    model: string | null,
+    generation: number | undefined,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    const session = await this.sessionsService.findOne(sessionId);
+    const creating = this.sessionRuntimeCreateInFlight.get(sessionId);
+    if (creating) await creating.catch(() => undefined);
+    const assertCurrent = () => {
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        this.sessionGenerations.get(sessionId) !== generation
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
+    };
+    assertCurrent();
+    const state = this.ensureSessionState(sessionId, session);
+    const runtime = this.sessionRuntimes.get(sessionId);
+    const previousModel = runtime?.model;
+    if (runtime) await runtime.setModel(model ?? undefined);
+    try {
+      assertCurrent();
+      await this.sessionsService.updateClaudeModelSelection(sessionId, model);
+    } catch (error) {
+      if (runtime && this.sessionRuntimes.get(sessionId) === runtime) {
+        await runtime.setModel(previousModel).catch((rollbackError) => {
+          this.logger.warn(
+            `Claude model rollback failed session=${sessionId}: ${String(rollbackError)}`,
+          );
+        });
+      }
+      throw error;
+    }
+    state.modelSelection = { model };
+    state.selectedModel = model;
+    if (runtime && this.sessionRuntimes.get(sessionId) === runtime) {
       // Context/model discovery is optional UI metadata. Publish the accepted
       // selection immediately rather than holding the picker on a CLI probe.
       void this.refreshRuntimeMetadata(sessionId, {
@@ -1562,7 +1608,7 @@ export class ClaudeRuntimeService
     mode: ClaudePermissionMode | null,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const normalized = this.normalizePermissionModeSelection(
       mode,
       state.selectedPermissionMode,
@@ -1595,7 +1641,7 @@ export class ClaudeRuntimeService
     enabled: boolean,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     state.planMode = enabled;
 
     const runtime = this.sessionRuntimes.get(sessionId);
@@ -1620,7 +1666,7 @@ export class ClaudeRuntimeService
     mode: string,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const normalized = normalizeAutonomyMode(mode);
     const policy = permissionModeForAutonomy(normalized);
     state.surface = 'agent';
@@ -1675,7 +1721,7 @@ export class ClaudeRuntimeService
     effort: ClaudeReasoningEffort | null,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     state.reasoningEffort = effort;
     this.restartIdleRuntimeForOptionChange(sessionId);
     this.emitRunState(sessionId);
@@ -1687,7 +1733,7 @@ export class ClaudeRuntimeService
     enabled: boolean,
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     state.fastMode = enabled;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -1704,7 +1750,7 @@ export class ClaudeRuntimeService
     sessionId: number,
   ): Promise<ClaudeAutocompleteItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+    const state = this.ensureSessionState(sessionId, session);
     const [commandItems, claudeSkillItems, externalSkillItems] =
       await Promise.all([
         this.collectCommandItems(session.worktreePath),
@@ -2127,7 +2173,7 @@ export class ClaudeRuntimeService
         return;
       }
 
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      const state = this.ensureSessionState(sessionId, session);
       const runtime = await this.ensureSessionRuntime(
         sessionId,
         session,
@@ -2156,6 +2202,10 @@ export class ClaudeRuntimeService
     session: AgentRuntimeSession,
     state: RuntimeState,
   ): Promise<ClaudeSessionRuntime> {
+    // A cold runtime should start with the same model as the accepted picker
+    // change. An already-building runtime is updated in place by that change.
+    const modelChange = this.modelChanges.get(sessionId);
+    if (modelChange) await modelChange.catch(() => undefined);
     const existing = this.sessionRuntimes.get(sessionId);
     if (existing) {
       // A level changed during a turn cannot rebuild the process until that
@@ -2170,6 +2220,9 @@ export class ClaudeRuntimeService
       }
       this.sessionRuntimes.delete(sessionId);
       await existing.close();
+      const modelChangeWhileClosing = this.modelChanges.get(sessionId);
+      if (modelChangeWhileClosing)
+        await modelChangeWhileClosing.catch(() => undefined);
     }
 
     const inFlight = this.sessionRuntimeCreateInFlight.get(sessionId);
@@ -2215,7 +2268,7 @@ export class ClaudeRuntimeService
       sessionId,
       session.worktreePath,
       session.claudeSessionId,
-      state.selectedModel,
+      state.modelSelection ? state.modelSelection.model : state.selectedModel,
       state.reasoningEffort,
       state.fastMode,
       state.selectedPermissionMode,
@@ -2575,7 +2628,7 @@ export class ClaudeRuntimeService
         hasClaudeSessionId:
           Boolean(session.claudeSessionId) && session.claudeSessionId !== '-1',
       });
-      const state = this.ensureRuntimeState(sessionId, session.claudeSessionId);
+      const state = this.ensureSessionState(sessionId, session);
       initializationState = state;
       state.liveItems = [];
       state.pendingPermissionRequest = null;
@@ -2835,10 +2888,7 @@ export class ClaudeRuntimeService
     human = false,
   ): Promise<void> {
     const existingSession = await this.sessionsService.findOne(sessionId);
-    const existingState = this.ensureRuntimeState(
-      sessionId,
-      existingSession.claudeSessionId,
-    );
+    const existingState = this.ensureSessionState(sessionId, existingSession);
     existingState.pendingPrompts = [
       ...existingState.pendingPrompts,
       {
@@ -5838,11 +5888,20 @@ export class ClaudeRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     claudeSessionId?: string | null,
+    modelSelection?: schema.ClaudeModelSelection | null,
   ): RuntimeState {
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (claudeSessionId && claudeSessionId !== '-1') {
         existing.claudeSessionId = claudeSessionId;
+      }
+      if (existing.modelSelection === undefined && modelSelection !== undefined) {
+        existing.modelSelection = modelSelection;
+        if (modelSelection)
+          Object.assign(
+            existing,
+            this.startupModelSettings(existing.availableModels, modelSelection),
+          );
       }
       return existing;
     }
@@ -5850,11 +5909,6 @@ export class ClaudeRuntimeService
     const availableModels = this.modelsCache?.length
       ? [...this.modelsCache]
       : [...FALLBACK_MODELS];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('claude'),
-      availableModels,
-    );
-
     const state: RuntimeState = {
       claudeSessionId:
         claudeSessionId && claudeSessionId !== '-1' ? claudeSessionId : null,
@@ -5878,13 +5932,8 @@ export class ClaudeRuntimeService
       queuePaused: false,
       liveItems: [],
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('claude').fastMode ===
-          true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(availableModels, modelSelection),
+      modelSelection,
       selectedPermissionMode: 'auto',
       planMode: false,
       availableModels,
@@ -5927,6 +5976,35 @@ export class ClaudeRuntimeService
     };
     this.runtimeStates.set(sessionId, state);
     return state;
+  }
+
+  private ensureSessionState(
+    sessionId: number,
+    session: AgentRuntimeSession,
+  ): RuntimeState {
+    return this.ensureRuntimeState(
+      sessionId,
+      session.claudeSessionId,
+      session.claudeModelSelection ?? null,
+    );
+  }
+
+  private startupModelSettings(
+    availableModels: readonly ClaudeModelOption[],
+    selection: schema.ClaudeModelSelection | null | undefined,
+  ) {
+    const defaults = this.settingsService.getAgentProviderDefaults('claude');
+    const startup = resolveAgentStartupSelection(
+      { ...defaults, ...selection },
+      availableModels,
+    );
+    return {
+      ...startup,
+      fastMode:
+        defaults.fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
+    };
   }
 
   private emitRunState(sessionId: number): void {
@@ -6890,7 +6968,8 @@ export class ClaudeRuntimeService
           if (!isCurrent()) return;
           const mappedModels = models.map((model) => this.toModelOption(model));
           if (mappedModels.length) state.availableModels = mappedModels;
-          state.selectedModel = this.catalogModelId(state, state.selectedModel);
+          if (!state.modelSelection?.model)
+            state.selectedModel = this.catalogModelId(state, state.selectedModel);
           // Warm sessions may still run the previous CLI or have project-only
           // settings. They can seed a cold cache, but cannot replace a probe.
           if (mappedModels.length && !this.modelsCacheFromGlobalProbe) {

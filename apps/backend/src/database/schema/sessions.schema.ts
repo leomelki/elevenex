@@ -3,6 +3,8 @@ import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
 import { sessionFolders } from './session-folders.schema.js';
 
+export type ClaudeModelSelection = { model: string | null };
+
 export const sessions = sqliteTable(
   'sessions',
   {
@@ -61,6 +63,10 @@ export const sessions = sqliteTable(
       .notNull()
       .default('claude'),
     claudeSessionId: text('claude_session_id').default('-1'),
+    // A null column inherits Elevenex settings. { model: null } explicitly
+    // delegates model selection to Claude Code.
+    claudeModelSelection: text('claude_model_selection', { mode: 'json' })
+      .$type<ClaudeModelSelection>(),
     codexSessionId: text('codex_session_id').default('-1'),
     piSessionPath: text('pi_session_path').default('-1'),
     opencodeSessionId: text('opencode_session_id').default('-1'),

@@ -166,6 +166,10 @@ export class ClaudeSessionRuntime {
     return this.deps.options.effort;
   }
 
+  get model(): Options['model'] {
+    return this.deps.options.model;
+  }
+
   async ensureStarted(reason: 'prewarm' | 'turn' = 'turn'): Promise<void> {
     if (this.closed) {
       throw new Error('Claude runtime is closed.');

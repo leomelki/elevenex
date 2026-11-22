@@ -69,6 +69,8 @@ export default async function* (capture) {
   await capture.click(pencil('deep'));
   await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
   assert.equal(await capture.evaluate(() => document.querySelector('.preset-creator .identity input').value), 'Deep work');
+  assert.deepEqual(await headingButtons(), ['Edit', 'New preset']);
+  assert.equal(await capture.evaluate(() => !!document.querySelector('.preset-tile .grip')), false);
   await settle();
   yield { name: 'light-existing-editor', inspect: ['.preset-creator', '[aria-busy]'] };
   await capture.fill('.preset-creator .identity input', 'Focused work');
@@ -77,6 +79,12 @@ export default async function* (capture) {
   await capture.waitFor(() => document.activeElement === document.querySelector('[data-flip="deep"] ex-preset-card button'));
   assert.equal(await capture.evaluate(() => document.querySelector('[data-flip="deep"] .label').textContent.trim()), 'Focused work');
   assert.equal(await capture.component('ex-session-chat', component => component.store.state().reasoning), 'high');
+  assert.equal(await capture.evaluate(() => !!document.querySelector('[data-flip="custom"]')), true);
+  assert.deepEqual(await headingButtons(), ['Edit', 'New preset']);
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-composer').inert), false);
+  yield { name: 'light-after-direct-edit', inspect: ['.preset-heading', 'ex-preset-picker', composer] };
+
+  await capture.click(edit);
   assert.equal(await capture.evaluate(() => !!document.querySelector('[data-flip="custom"]')), false);
   assert.deepEqual(await headingButtons(), ['New preset', 'Done']);
   await capture.hover(edit);
@@ -181,6 +189,14 @@ export default async function* (capture) {
   assert.ok(await composerFits(), 'The composer must fit with a full preset catalog');
   await settle();
   yield { name: 'dark-narrow-full-catalog', inspect: ['.start', 'ex-preset-picker', composer] };
+  await capture.evaluate(selector => document.querySelector(selector).focus(), card('deep'));
+  await capture.press('e');
+  await capture.waitFor(() => document.activeElement?.matches('.preset-creator .identity input'));
+  assert.deepEqual(await headingButtons(), ['Edit', 'New preset']);
+  await capture.press('Escape');
+  await capture.waitFor(() => !document.querySelector('.preset-creator'));
+  assert.equal(await capture.evaluate(() => document.querySelector('ex-composer').inert), false);
+  yield { name: 'dark-after-direct-edit-cancel', inspect: ['.preset-heading', 'ex-preset-picker', composer] };
   await capture.click(edit);
   assert.equal(await capture.evaluate(() => document.querySelectorAll('.adaptive [data-flip]').length), 24);
   assert.equal(await capture.evaluate(() => document.querySelector('[data-preset-new]').disabled), true);

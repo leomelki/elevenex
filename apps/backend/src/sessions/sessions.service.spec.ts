@@ -975,6 +975,26 @@ describe('SessionsService', () => {
     });
   });
 
+  it('stores Claude model choices independently of the native session ID', async () => {
+    const created = await service.create({
+      repoId,
+      branchName: 'main',
+      worktreePath: '/tmp/wt',
+    });
+    expect(created.claudeModelSelection).toBeNull();
+
+    await service.updateClaudeModelSelection(created.id, 'custom-alias');
+    await service.updateClaudeSessionId(created.id, 'claude-session-1');
+    expect((await service.findOne(created.id)).claudeModelSelection).toEqual({
+      model: 'custom-alias',
+    });
+
+    await service.updateClaudeModelSelection(created.id, null);
+    expect((await service.findOne(created.id)).claudeModelSelection).toEqual({
+      model: null,
+    });
+  });
+
   describe('updateCodexSessionId', () => {
     it('stores a Codex session id and marks Codex as the active provider', async () => {
       const created = await service.create({

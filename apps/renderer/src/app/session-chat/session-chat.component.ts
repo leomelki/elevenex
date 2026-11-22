@@ -321,10 +321,6 @@ export class SessionChatComponent {
     }
     this.presetFlow.presetShortcut(event);
   }
-  editPreset(id: string): void {
-    this.presetFlow.setEditing(true);
-    this.presetFlow.openPresetEditor(id);
-  }
   nameNewPreset(): void {
     this.presetFlow.startNaming();
     afterNextRender(() => {
