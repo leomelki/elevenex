@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 const STORAGE_KEY = 'elevenex.compact-layout';
+export const LINKED_FILES_VIEW = 'elevenex.linkedFiles';
 const FILE_VIEW = 'workbench.explorer.fileView';
 const FILE_CONTAINER = 'workbench.view.extension.elevenex-files';
 const SETTINGS = [
@@ -16,6 +17,7 @@ export class CompactLayout implements vscode.Disposable {
   private compact?: boolean;
   private browsing = false;
   private moved = false;
+  private linkedViewMoved = false;
   private stopped = false;
   private applying = false;
   private activeTab: vscode.Tab | undefined;
@@ -39,9 +41,12 @@ export class CompactLayout implements vscode.Disposable {
   }
   dispose(): void { this.stopped = true; for (const subscription of this.subscriptions) subscription.dispose(); }
   set(compact: boolean): Promise<void> { return this.run(() => this.setMode(compact)); }
-  browse(): Promise<void> { return this.run(async () => {
-    if (!this.compact) { await this.command('workbench.view.explorer'); return; }
-    await this.showFiles();
+  browse(view = FILE_VIEW): Promise<void> { return this.run(async () => {
+    if (!this.compact) {
+      await this.command(view === FILE_VIEW ? 'workbench.view.explorer' : view + '.focus');
+      return;
+    }
+    await this.showFiles(view);
   }); }
   dismiss(): Promise<void> { return this.run(async () => { if (this.hasEditors()) await this.showEditor(); }); }
   revealEditor(): Promise<void> { return this.run(() => this.showEditor()); }
@@ -68,7 +73,8 @@ export class CompactLayout implements vscode.Disposable {
       await this.command('workbench.action.restoreAuxiliaryBar');
       await this.command('workbench.action.closeAuxiliaryBar');
       await this.command('vscode.moveViews', { viewIds: [FILE_VIEW], destinationId: 'workbench.view.explorer' });
-      this.moved = false; this.browsing = false;
+      if (this.linkedViewMoved || saved) await this.command('vscode.moveViews', { viewIds: [LINKED_FILES_VIEW], destinationId: 'workbench.view.explorer' });
+      this.moved = false; this.linkedViewMoved = false; this.browsing = false;
       if (saved) for (const { key, value } of saved) await configuration.update(key, value, vscode.ConfigurationTarget.Global);
       await this.state.update(STORAGE_KEY, undefined);
       await this.command('workbench.view.explorer');
@@ -85,15 +91,19 @@ export class CompactLayout implements vscode.Disposable {
     }
     await this.context();
   }
-  private async showFiles(): Promise<void> {
+  private async showFiles(view = FILE_VIEW): Promise<void> {
     if (!this.moved) {
       await this.command('vscode.moveViews', { viewIds: [FILE_VIEW], destinationId: FILE_CONTAINER });
       this.moved = true;
     }
+    if (view === LINKED_FILES_VIEW && !this.linkedViewMoved) {
+      await this.command('vscode.moveViews', { viewIds: [view], destinationId: FILE_CONTAINER });
+      this.linkedViewMoved = true;
+    }
     await this.command('workbench.action.maximizeAuxiliaryBar');
     this.browsing = true;
     await this.context();
-    await this.command('workbench.explorer.fileView.focus');
+    await this.command(view + '.focus');
   }
   private async showEditor(): Promise<void> {
     const restore = !!this.compact && (this.browsing || this.moved);

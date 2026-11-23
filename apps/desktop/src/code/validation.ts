@@ -35,17 +35,21 @@ export function action(value: unknown): CodeAction {
 }
 export function file(value: unknown): CodeOpenFile {
   const raw = object(value), path = string(raw['path']);
-  if (Object.keys(raw).some(k => !['path', 'line', 'column'].includes(k)) || !path || path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.' || p.toLowerCase() === '.git') || /(?:^|[\\/])\.\.?(?:[\\/]|$)/.test(path)) throw new Error('Invalid task file');
-  const result: CodeOpenFile = { path, ...(raw['line'] === undefined ? {} : { line: number(raw['line'], 10_000_000) }), ...(raw['column'] === undefined ? {} : { column: number(raw['column'], 10_000_000) }) };
+  const fromChat = raw['fromChat'];
+  if (Object.keys(raw).some(k => !['path', 'line', 'column', 'fromChat'].includes(k)) || !path ||
+      fromChat !== undefined && (fromChat !== true || raw['line'] !== undefined || raw['column'] !== undefined) ||
+      (fromChat ? Array.from(path).some(character => character.charCodeAt(0) < 32) : path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.' || p.toLowerCase() === '.git') || /(?:^|[\\/])\.\.?(?:[\\/]|$)/.test(path)))
+    throw new Error('Invalid Code path');
+  const result: CodeOpenFile = { path, ...(fromChat ? { fromChat: true } : {}), ...(raw['line'] === undefined ? {} : { line: number(raw['line'], 10_000_000) }), ...(raw['column'] === undefined ? {} : { column: number(raw['column'], 10_000_000) }) };
   if (result.line !== undefined && (!Number.isInteger(result.line) || result.line < 1) || result.column !== undefined && (!Number.isInteger(result.column) || result.column < 1)) throw new Error('Invalid file position');
   return result;
 }
-export interface WorkspaceDescriptor { readonly version: 1; readonly taskId: number; readonly identity: string; readonly storageIdentity: string; readonly name: string; readonly branch: string }
+export interface WorkspaceDescriptor { readonly version: 1; readonly taskId: number; readonly identity: string; readonly storageIdentity: string; readonly name: string; readonly branch: string; readonly fileLinks?: boolean }
 export function descriptor(value: unknown, taskId: number): WorkspaceDescriptor {
   const raw = object(value), identity = string(raw['identity'], 64);
   if (raw['version'] !== 1 || raw['taskId'] !== taskId || !/^[a-f0-9]{64}$/.test(identity)) throw invalidResponse();
   const storageIdentity = raw['storageIdentity'] === undefined ? identity : revision(raw['storageIdentity']);
-  return { version: 1, taskId, identity, storageIdentity, name: string(raw['name'], 256), branch: string(raw['branch'], 256) };
+  return { version: 1, taskId, identity, storageIdentity, name: string(raw['name'], 256), branch: string(raw['branch'], 256), ...(raw['fileLinks'] === true ? { fileLinks: true } : {}) };
 }
 const list = (value: unknown, max: number): unknown[] => { if (!Array.isArray(value) || value.length > max) throw invalidResponse(); return value; };
 const bool = (value: unknown): boolean => { if (typeof value !== 'boolean') throw invalidResponse(); return value; };

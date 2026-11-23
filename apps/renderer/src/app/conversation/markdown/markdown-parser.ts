@@ -91,13 +91,17 @@ export function safeMarkdownTarget(target: string): "web" | "file" | null {
       return null;
     }
   }
-  // A link is an intent to open a task file, not a browser navigation.
-  return target &&
-    !/^[a-z][a-z\d+.-]*:/i.test(target) &&
-    !target.startsWith("//") &&
-    !Array.from(target).some((character) => character.charCodeAt(0) < 32)
-    ? "file"
-    : null;
+  if (!target || Array.from(target).some(character => character.charCodeAt(0) < 32) || /^[\\/]{2}/.test(target)) return null;
+  if (/^file:/i.test(target)) {
+    try {
+      const url = new URL(target);
+      return /^file:\/\/\//i.test(target) && !url.host && !url.search ? "file" : null;
+    } catch { return null; }
+  }
+  if (/^(?:javascript|vbscript|data|command|blob|https?|mailto):/i.test(target)) return null;
+  const path = target.replace(/:\d+(?::\d+)?$/, "");
+  if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) return null;
+  return "file";
 }
 export function parseInline(
   source: string,

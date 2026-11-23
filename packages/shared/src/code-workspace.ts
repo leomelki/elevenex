@@ -21,6 +21,8 @@ export interface CodeBounds {
 export type CodeAction = 'browse-files' | 'dismiss-files' | 'find-file' | 'search-text' | 'save';
 export interface CodeOpenFile {
   readonly path: string;
+  /** Resolve a Markdown file link on the task's machine. Omitted paths are task-relative. */
+  readonly fromChat?: true;
   readonly line?: number;
   readonly column?: number;
 }

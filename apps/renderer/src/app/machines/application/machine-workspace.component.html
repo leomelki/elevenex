@@ -1,5 +1,5 @@
 <div class="workspace-frame" [class.ex-offline]="store.offline() || !active()" [class.onboarding]="onboarding() && launch() !== 'flying'" [attr.inert]="onboarding() && launch() !== 'flying' ? '' : null" [attr.aria-hidden]="onboarding() && launch() !== 'flying' ? 'true' : null">
-  <ex-app-shell #shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (panelCloseRequested)="panelOpen.set(false); wideReview.set(false)" (reviewExited)="wideReview.set(false)">
+  <ex-app-shell #shell [titleBar]="false" [panelOpen]="panelOpen()" [wideReview]="wideReview()" [panelLabel]="panel() + ' panel'" (panelCloseRequested)="closePanel()" (reviewExited)="wideReview.set(false)">
     <ex-workspace-project-rail shellRail />
     <ex-workspace-navigation shellSidebar />
     <div shellMain class="main-content">
@@ -15,7 +15,7 @@
       <ex-fold class="snapshot-region" [open]="store.offline()"><p class="as-of" role="status">As of {{ store.asOfLabel() }} · updates resume when {{ machine().name }} is back</p></ex-fold>
       @if (store.chatOpen()) {
         <ex-workspace-task-header [panelOpen]="panelOpen()" (panelToggle)="togglePanel()" />
-        <ex-session-chat [reconnectAction]="reconnectAction()" [active]="active()" [machineName]="machine().name" [outageSince]="store.asOf()" (reconnectRequested)="reconnectRequested.emit()" [mentionItems]="store.sessionMentionItems()" [selection]="store.selected()" [streamAvailable]="store.chatStreamAvailable()" [creation]="store.selectedCreation()" [creationKey]="store.selectedCreationKey()" (creationRetry)="store.retrySessionCreation()" (creationCheck)="store.refresh()" (creationDiscard)="discardSessionDraft()" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (reviewRequested)="review($event)" (browserPickRequested)="pickBrowserElement($event)" />
+        <ex-session-chat [reconnectAction]="reconnectAction()" [active]="active()" [machineName]="machine().name" [outageSince]="store.asOf()" (reconnectRequested)="reconnectRequested.emit()" [mentionItems]="store.sessionMentionItems()" [selection]="store.selected()" [streamAvailable]="store.chatStreamAvailable()" [creation]="store.selectedCreation()" [creationKey]="store.selectedCreationKey()" (creationRetry)="store.retrySessionCreation()" (creationCheck)="store.refresh()" (creationDiscard)="discardSessionDraft()" [archived]="store.selectedSession()?.status === 'archived' || store.selectedTask()?.state === 'finished'" (fileLinkRequested)="openChatFile($event)" (reviewRequested)="review($event)" (browserPickRequested)="pickBrowserElement($event)" />
       } @else if (store.pendingTask(); as task) {
         <ex-workspace-task-setup [task]="task" [busy]="store.busy()" [paused]="store.preparationPaused()" [uncertain]="store.mutationUncertain()" [error]="store.error()" (retryRequested)="store.retryPreparation($event)" (refreshRequested)="store.reconcilePreparation()" />
       } @else {

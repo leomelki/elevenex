@@ -685,6 +685,25 @@ describe("connected chat reply rendering", () => {
     expect(root.querySelector('ex-turn .summary-facts')?.textContent).not.toContain('edit');
   });
 
+  it("routes Markdown files and folders to Code with the selected conversation", async () => {
+    const { fixture, root } = setup([
+      item("u", "user", "Where are the files?"),
+      item("a", "assistant", "[Source](./src/main.ts:12:3) [Folder](/tmp/notes/) [Report](file:///tmp/report.md#L2)"),
+    ]);
+    const open = vi.fn(), review = vi.fn();
+    fixture.componentInstance.fileLinkRequested.subscribe(open);
+    fixture.componentInstance.reviewRequested.subscribe(review);
+    await settle(fixture);
+    const paths = ["./src/main.ts:12:3", "/tmp/notes/", "file:///tmp/report.md#L2"];
+    const links = root.querySelectorAll<HTMLButtonElement>("ex-markdown-inline button.file");
+    expect(links).toHaveLength(paths.length);
+    links.forEach((link, index) => {
+      link.click();
+      expect(open).toHaveBeenLastCalledWith({ scopeId: "scope", taskId: 1, sessionId: 2, path: paths[index] });
+    });
+    expect(review).not.toHaveBeenCalled();
+  });
+
   it("renders the designed outcome after the answer and routes Review and a file chip to their reply", async () => {
     const { fixture, root } = setup([
       item("u", "user", "Create a test file"),

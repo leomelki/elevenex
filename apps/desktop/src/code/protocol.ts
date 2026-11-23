@@ -10,6 +10,7 @@ import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescr
 import { codePolicy, CODE_EXTENSION_PATH, EXTENSION, workbenchDocument } from './document';
 import { isMarkdownPreviewOrigin, isMarkdownPreviewResource, markdownPreviewAsset, markdownPreviewPolicy } from './markdown-preview';
 import { codeTransferCall } from './transfer-client';
+import { CodeLinks } from './links';
 import { CodeTransfers } from './transfers';
 import type { TransferDialogs } from './transfer-contracts';
 
@@ -22,6 +23,7 @@ export class CodeProtocol {
   private ready = false;
   private readonly readyWaiters = new Set<(ready: boolean) => void>();
   private transportRevision = 0;
+  readonly links: CodeLinks;
   private transfers?: CodeTransfers;
   private transferId?: string;
   dirty = 0;
@@ -38,7 +40,7 @@ export class CodeProtocol {
     originIdentity = workspace.storageIdentity,
     private readonly presented: (filesOpen: boolean, hasEditors: boolean) => void = () => undefined,
     private readonly transferDialogs?: TransferDialogs,
-  ) { this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
+  ) { this.links = new CodeLinks(this.client, this.lifetime.signal); this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
   allows(value: string): boolean {
     try {
       const url = new URL(value);
@@ -46,7 +48,7 @@ export class CodeProtocol {
     } catch { return false; }
   }
   bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId || target.taskId !== this.target.taskId; if (changed) this.reset(); this.target = target; return changed; }
-  reset(): void { this.transfers?.dispose(); this.transportRevision++; this.ready = false; }
+  reset(): void { this.transfers?.dispose(); this.links.clear(); this.transportRevision++; this.ready = false; }
   whenReady(): Promise<boolean> {
     if (this.ready) return Promise.resolve(true);
     if (this.closed || this.readyWaiters.size >= 32) return Promise.resolve(false);
@@ -56,7 +58,7 @@ export class CodeProtocol {
       this.readyWaiters.add(done);
     });
   }
-  dispose(): void { this.closed = true; this.transfers?.dispose(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
+  dispose(): void { this.closed = true; this.transfers?.dispose(); this.links.clear(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const preview = markdownPreviewAsset(url, this.authority);
@@ -124,6 +126,16 @@ export class CodeProtocol {
     finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     let input: Record<string, unknown>;
     try { input = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return new Response(null, { status: 400 }); }
+    if (operation === 'link-stat' || operation === 'link-read' || operation === 'link-directory') {
+      const { windowId, target: { scopeId, taskId }, workspace: { identity: generation }, transportRevision } = this;
+      const current = () => !this.closed && this.active && this.ready && this.windowId === windowId &&
+        this.workspace.identity === generation && this.transportRevision === transportRevision &&
+        this.client.state(windowId).scope?.id === scopeId;
+      if (!current() || input['generation'] !== generation || input['transportRevision'] !== transportRevision)
+        return new Response(null, { status: 409, headers });
+      const op = operation === 'link-stat' ? 'stat' : operation === 'link-read' ? 'read' : 'directory';
+      return this.links.read({ windowId, scopeId, taskId, generation }, op, input, request, headers, current);
+    }
     if (['transfer-start', 'transfer-status', 'transfer-cancel'].includes(operation)) {
       if (!this.ready || input['generation'] !== this.workspace.identity || input['transportRevision'] !== this.transportRevision) return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
       try {

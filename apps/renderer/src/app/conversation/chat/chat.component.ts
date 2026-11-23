@@ -73,6 +73,7 @@ export class ChatComponent {
   readonly turnWorkHintEnded = output<string>();
   readonly turnWorkRequested = output<{ id: string; action: TurnWorkAction }>();
   readonly openFile = output<string>();
+  readonly fileLink = output<string>();
   readonly fileReview = output<{ readonly id: string; readonly path: string }>();
   readonly openLink = output<string>();
   readonly openPage = output<string>();

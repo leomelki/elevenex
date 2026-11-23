@@ -33,6 +33,7 @@
   (turnWorkRequested)="$event.action === 'refresh' ? latest() : store.work.retry($event.id)"
   (copyCode)="copy($event, true)"
   (openLink)="openLink($event)"
+  (fileLink)="openFileLink($event)"
   (openPage)="openFile($event)"
   (fileReview)="review($event.id, $event.path)"
   (review)="review($event)"
@@ -479,7 +480,7 @@
   @if (agentId(); as id) {
     @for (key of [identity() + ':' + id]; track key) {
       <ex-session-agent [selection]="selected" [agentId]="id" [work]="agentWork()" [unreachable]="store.offline()"
-        [copiedCode]="copiedCode()" (copyRequested)="copy($event, true)" (linkRequested)="openLink($event)"
+        [copiedCode]="copiedCode()" (copyRequested)="copy($event, true)" (linkRequested)="openLink($event)" (fileLinkRequested)="agentId.set(null); openFileLink($event)"
         (closed)="agentId.set(null)" />
     }
   }

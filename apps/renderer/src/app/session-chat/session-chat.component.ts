@@ -145,6 +145,7 @@ export class SessionChatComponent {
     const selection = this.selection();
     if (selection && !this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...selection, ...(tabId ? { tabId } : {}) });
   }
+  readonly fileLinkRequested = output<ChatSelection & { readonly path: string }>();
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
   /** One scroll/editor lifetime per selected session, retained through recovery. */
@@ -656,6 +657,10 @@ export class SessionChatComponent {
   review(turnId: string, path?: string): void {
     const selection = this.selection();
     if (selection) this.reviewRequested.emit({ ...selection, turnId, ...(path ? { path } : {}) });
+  }
+  openFileLink(path: string): void {
+    const selection = this.selection();
+    if (selection && !this.store.offline()) this.fileLinkRequested.emit({ ...selection, path });
   }
   openFile(path: string): void {
     this.store.notice.set(path);

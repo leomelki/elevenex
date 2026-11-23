@@ -6,6 +6,7 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 export class CodeWorkspaceStore {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private epoch = 0;
+  private fileRequest = 0;
   private selected: CodeTarget | null = null;
   private opening?: Promise<void>;
   private destroyed = false;
@@ -47,11 +48,12 @@ export class CodeWorkspaceStore {
   }
   async detach(): Promise<void> { const epoch = this.epoch; await this.open(); if (epoch !== this.epoch || this.destroyed || this.error()) return; try { if (this.selected && this.state()) await this.bridge.codeDetach(this.selected); } catch { if (epoch === this.epoch) this.error.set('The editor window could not open. Your current editor is retained.'); } }
   async openFile(file: CodeOpenFile): Promise<void> {
-    const target = this.selected, epoch = this.epoch;
-    await this.open();
-    if (!target || epoch !== this.epoch || this.destroyed || !this.state()) return;
+    const target = this.selected, epoch = this.epoch, request = ++this.fileRequest;
+    if (!file.fromChat) await this.open();
+    if (!target || epoch !== this.epoch || request !== this.fileRequest || this.destroyed || !this.state()) return;
+    this.error.set('');
     let result; try { result = await this.bridge.codeOpenFile(target, file); } catch { result = { ok: false as const, error: { message: 'This path could not be opened in the current task.' } }; }
-    if (!result.ok && epoch === this.epoch) this.error.set(result.error.message);
+    if (!result.ok && epoch === this.epoch && request === this.fileRequest) this.error.set(result.error.message);
   }
   async recover(): Promise<void> {
     const target = this.selected, epoch = this.epoch; if (!target || this.busy()) return;

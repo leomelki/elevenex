@@ -1,5 +1,6 @@
 import { registerTransfers } from './transfers';
 import { CompactLayout } from './compact-layout';
+import { openEditorResource, registerLinkedFiles } from './linked-files';
 import * as vscode from 'vscode';
 import type { Changes, DirectoryPage, FileRead, SearchPage } from './contracts';
 
@@ -331,6 +332,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
   registerTransfers(context, root, (operation, input) => files.call(operation, input));
   const layout = new CompactLayout(context.workspaceState, (filesOpen, hasEditors) => files.call('presentation', {filesOpen, hasEditors}));
+  registerLinkedFiles(context, layout, (operation, input) => files.call(operation, input));
   context.subscriptions.push(layout,
     vscode.commands.registerCommand('elevenex.code.find-file', () => vscode.commands.executeCommand('workbench.action.quickOpen')),
     vscode.commands.registerCommand('elevenex.code.browse-files', () => layout.browse()),
@@ -344,11 +346,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.return-to-chat', () => files.call('return-to-chat')));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.set-theme', (dark: unknown) => { if (typeof dark !== 'boolean') throw new Error('Invalid editor theme.'); return files.setTheme(dark); }));
   context.subscriptions.push(vscode.commands.registerCommand('elevenex.code.open-file', async (path: unknown, line: unknown, column: unknown) => {
-    if (typeof path !== 'string' || path.length > 4096 || path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git') || typeof line !== 'number' || !Number.isSafeInteger(line) || line < 1 || typeof column !== 'number' || !Number.isSafeInteger(column) || column < 1) throw new Error('Invalid task file position.');
-    await layout.revealEditor();
-    try {
-      await vscode.window.showTextDocument(root.with({ path: '/' + path }), { preview: false, preserveFocus: false, selection: new vscode.Range(line - 1, column - 1, line - 1, column - 1) });
-    } catch (error) { await layout.focus(); throw error; }
+    if (typeof path !== 'string' || path.length > 4096 || path.startsWith('/') || path.split('/').some(part => (!part && path !== '') || part === '.' || part === '..' || part.toLowerCase() === '.git') || typeof line !== 'number' || !Number.isSafeInteger(line) || line < 1 || typeof column !== 'number' || !Number.isSafeInteger(column) || column < 1) throw new Error('Invalid task file position.');
+    const uri = root.with({ path: '/' + path });
+    const stat = await vscode.workspace.fs.stat(uri);
+    if (stat.type === vscode.FileType.Directory) {
+      await layout.browse();
+      if (path) {
+        await vscode.commands.executeCommand('revealInExplorer', uri);
+        await vscode.commands.executeCommand('list.expand');
+      }
+    } else {
+      await openEditorResource(layout, uri, line, column);
+    }
   }));
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => { void files.documentChanged(document); }));
   context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => { void files.documentChanged(event.document); void files.call('ready', { dirty: vscode.workspace.textDocuments.filter(d => d.isDirty).length }).catch(() => undefined); }));

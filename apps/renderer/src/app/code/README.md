@@ -240,6 +240,17 @@ embedded. Its local view intent is
 validated against visibility, window kind, checkout generation and transport;
 it never sends a backend mutation. The binding is disabled in a separate window.
 
+A chat file link selects the Code panel and resolves on the task's machine.
+Relative paths start at the checkout. Absolute paths and local `file://` URLs
+are also supported, including `:line[:column]` and `#Lline[Ccolumn]` positions.
+Workspace files open in native editor tabs and folders expand in Explorer.
+Files outside the checkout open read-only. External folders expand in
+**Linked folders** with paged directory entries. The current editor lease holds
+a bounded set of read-only grants for paths selected in chat. The backend
+rechecks the physical root on every read and rejects symlink traversal.
+An older engine can still open plain task-relative links. Update the engine for
+absolute paths and outside links.
+
 The workbench owns explorer, tabs, Quick Open, search, editing, language basics
 and backups. Its built-in Markdown preview commands work in the side panel and
 separate Code window, including images resolved relative to a task file.

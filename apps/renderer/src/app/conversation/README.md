@@ -548,9 +548,10 @@ context. Closing surfaces retain the prior snapshot until exit completes.
 `ChatExchange.filesTotal` (and `Turn`/`OutcomeBar.filesTotal`) can carry the full
 count when `files` is a bounded metadata window. Overflow uses that total;
 work facts omit partial aggregate line counts. `Chat.fileReview` carries
-`{ id, path }` for file chips and Markdown file links, so connected owners can
-open the correct reply even when several replies edit the same file. The existing
-`openFile` path output remains available for other consumers.
+`{ id, path }` for outcome file chips, so Changes opens the correct reply even
+when several replies edit the same file. `Chat.fileLink` sends Markdown file
+links and file intents from the timeline to Code. `Chat.openFile` carries the
+path for both uses.
 
 
 `WorkStep.presentation` accepts a readonly `ToolPresentation` with a short summary,

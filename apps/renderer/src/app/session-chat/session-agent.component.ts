@@ -88,6 +88,7 @@ export class SessionAgentComponent {
   readonly copiedCode = input<string | null>(null);
   readonly copyRequested = output<string>();
   readonly linkRequested = output<string>();
+  readonly fileLinkRequested = output<string>();
   readonly closed = output<void>();
   readonly open = signal(true);
   readonly page = signal<SessionChatAgentPage | null>(null);
@@ -122,7 +123,6 @@ export class SessionAgentComponent {
   protected readonly status = computed(() => this.work()?.status ?? this.page()?.status);
   readonly state = computed(() => sessionWorkStatus(this.status()));
   protected readonly titleId = `session-agent-${crypto.randomUUID()}`;
-  protected readonly fileNotice = "Open this file from the task’s Files view.";
   protected readonly pageNotice =
     "Open page previews from the main conversation.";
   /** Long assignments start folded so the transcript keeps the space. */

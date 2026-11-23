@@ -111,7 +111,9 @@ export class CodeSurfaces {
       if (surface.detached && surface.detached.webContents.id !== windowId) { const detached = surface.detached; surface.detached = undefined; detached.close(); }
       surface.target = target; const rebound = surface.host.bind(target); surface.host.windowId = windowId; surface.host.embedded = !this.windowContexts.has(windowId);
       if (rebound) { surface.reconcileExplorer = true; surface.state = { ...surface.state, phase: 'loading', message: 'Reconnecting task workspace…' }; }
-      if (surface.host.workspace.identity !== result.value.identity) {
+      if (surface.host.workspace.identity === result.value.identity) {
+        surface.host.workspace = result.value;
+      } else {
         if (acceptChange) { surface.host.workspace = result.value; surface.host.reset(); surface.state = { ...surface.state, identity: result.value.identity, phase: 'loading', message: 'Updating workspace · retained edits stay here', recovery: false, recoveryAvailable: false }; }
         else surface.state = { ...surface.state, phase: 'disconnected', message: 'Workspace changed · saves blocked', recovery: true, recoveryAvailable: true };
       }
@@ -176,18 +178,46 @@ export class CodeSurfaces {
     if (surface) { BrowserWindow.fromWebContents(this.ownerContents(surface.owner))?.focus(); if (surface.wasReady) await surface.frame.focus(); }
   }
   async openFile(windowId: number, target: CodeTarget, file: CodeOpenFile): Promise<BackendResult<{ readonly accepted: true }>> {
-    const current = await this.open(windowId, target, true); if (!current.ok) return current;
+    if (!file.fromChat) {
+      const current = await this.open(windowId, target, true);
+      if (!current.ok) return current;
+    }
     const surface = this.owned(windowId, target);
     if (!surface || this.client.state(windowId).scope?.id !== target.scopeId) return failure('Open Code for the current task first.');
     if (!await surface.host.whenReady()) return failure('Editor is still opening. Try opening the file again.');
-    if (this.client.state(windowId).scope?.id !== target.scopeId || this.owned(windowId, target) !== surface) return failure('Code selection changed.');
+    const generation = surface.host.workspace.identity;
+    const currentSelection = () => {
+      const desired = this.desired.get(windowId);
+      return desired?.scopeId === target.scopeId && desired.taskId === target.taskId &&
+        this.client.state(windowId).scope?.id === target.scopeId && this.owned(windowId, target) === surface &&
+        surface.host.workspace.identity === generation;
+    };
+    if (!currentSelection()) return failure('Code selection changed.');
     try {
-      // Fixed named upstream embedder operation. No caller-supplied program or
-      // general evaluator crosses IPC; the URI is validated task-relative data.
-      await surface.frame.command('elevenex.code.open-file', file.path, file.line ?? 1, file.column ?? 1);
-      if (this.client.state(windowId).scope?.id !== target.scopeId || surface.owner !== windowId) return failure('Code selection changed.');
+      if (file.fromChat) {
+        this.ownerContents(windowId).focus();
+        await surface.frame.focusWindow();
+        if (!currentSelection() || !surface.visible) return failure('Code selection changed.');
+      }
+      if (file.fromChat && surface.host.workspace.fileLinks) {
+        const result = await surface.host.links.resolve({ windowId, ...target, generation }, file.path);
+        if (!currentSelection() || !surface.visible) return failure('Code selection changed.');
+        if (!result.ok) return failure(result.error.status === 404 ? 'The linked path was not found on this machine.' : 'The linked file or folder could not be opened.');
+        const link = result.value;
+        if (link.kind === 'external') {
+          const id = surface.host.links.grant(link);
+          await surface.frame.command('elevenex.code.open-link', id, link.name, link.type, link.line, link.column);
+        } else {
+          await surface.frame.command('elevenex.code.open-file', link.path.slice(1), link.line, link.column);
+        }
+      } else {
+        // Older engines can still open plain task-relative links.
+        const path = file.fromChat ? decodeURIComponent(file.path).replace(/^\.\//, '') : file.path;
+        await surface.frame.command('elevenex.code.open-file', path, file.line ?? 1, file.column ?? 1);
+      }
+      if (!currentSelection()) return failure('Code selection changed.');
       return { ok: true, value: { accepted: true } };
-    } catch { return failure('File could not open. Check the task connection and try again.'); }
+    } catch { return failure('File or folder could not open. Check the path and task connection, then try again.'); }
   }
   recover(windowId: number, target: CodeTarget): Promise<BackendResult<CodeSurfaceState>> {
     // Explicit acceptance revalidates the task before rebinding its transport.

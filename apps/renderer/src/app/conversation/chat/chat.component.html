@@ -88,10 +88,9 @@
         (workHintEnded)="turnWorkHintEnded.emit(exchange.id)"
         (workRequested)="turnWorkRequested.emit({ id: exchange.id, action: $event })"
         (workLayoutChanging)="scroll()?.keepDisclosurePosition($event)"
-        (openFile)="
-          openFile.emit($event);
-          fileReview.emit({ id: exchange.id, path: $event })
-        "
+        (openFile)="openFile.emit($event)"
+        (fileLink)="fileLink.emit($event)"
+        (reviewFile)="fileReview.emit({ id: exchange.id, path: $event })"
         (review)="review.emit(exchange.id)"
         (stop)="stop.emit(exchange.id)"
         (retry)="retry.emit(exchange.id)"

@@ -71,6 +71,9 @@ test('Code controls accept resource identities and bounded file positions, never
   for (const input of [{ ...target, url: 'https://example.com' }, { ...target, taskId: -1 }, { ...target, scopeId: 'old' }]) assert.throws(() => validate.target(input));
   for (const path of ['/absolute', '../escape', 'file/../escape', '.git/config', 'a\0']) assert.throws(() => validate.file({ path }));
   assert.deepEqual(validate.file({ path: 'unicode é #?.ts', line: 10, column: 2 }), { path: 'unicode é #?.ts', line: 10, column: 2 });
+  assert.deepEqual(validate.file({ path: '/outside/notes.md#L4', fromChat: true }), { path: '/outside/notes.md#L4', fromChat: true });
+  for (const request of [{ path: 'a\0', fromChat: true }, { path: '/outside', fromChat: false }, { path: '/outside', fromChat: true, line: 2 }])
+    assert.throws(() => validate.file(request));
   assert.throws(() => validate.file({ path: 'ok', line: 1.2 }));
   for (const action of ['browse-files', 'dismiss-files', 'find-file', 'search-text', 'save']) assert.equal(validate.action(action), action);
   for (const action of ['workbench.action.terminal.new', 'raw-shell', null, { action: 'save' }]) assert.throws(() => validate.action(action));
@@ -102,6 +105,8 @@ test('Code HTTPS is confined to its task origin, rejects foreign origins, confin
     assert.equal((await request('/api/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/file","generation":"old"}' })).status, 409);
     assert.equal((await request('/api/read', { method: 'POST', headers: { Origin: 'https://example.com', 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
     assert.equal((await request('/api/raw-shell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404);
+    assert.equal((await request('/api/link-resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/outside"}' })).status, 404);
+    assert.equal((await request('/api/link-read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/outside"}' })).status, 409);
     assert.equal((await request('/api/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/file","generation":"old"}' })).status, 409);
     assert.equal((await request('/api/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"path":"/file"}' })).status, 503);
     const changes = () => request('/api/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation: 'a'.repeat(64), after: 0 }) });

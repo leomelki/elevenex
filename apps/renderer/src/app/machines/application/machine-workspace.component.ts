@@ -58,6 +58,15 @@ export class MachineWorkspaceComponent {
     return target && selected && target.scopeId === selected.scopeId && target.taskId === selected.taskId && target.sessionId === selected.sessionId ? target : null;
   });
   openCode(path: string): void { const target = this.codeTarget(); if (!target) return; this.codeFile.set({ ...target, file: { path } }); this.store.selectPanel('code'); this.panelOpen.set(true); this.wideReview.set(true); }
+  openChatFile(intent: CodeTarget & { readonly sessionId: number; readonly path: string }): void {
+    const selected = this.store.selected(), target = this.codeTarget();
+    if (!target || this.store.offline() || selected?.scopeId !== intent.scopeId ||
+        selected.taskId !== intent.taskId || selected.sessionId !== intent.sessionId ||
+        target.scopeId !== intent.scopeId || target.taskId !== intent.taskId) return;
+    this.codeFile.set({ ...target, file: { path: intent.path, fromChat: true } });
+    this.store.selectPanel('code');
+    this.panelOpen.set(true);
+  }
   review(target: ChatReviewTarget): void {
     this.reviewTarget.set(target); this.store.selectPanel('changes'); this.panelOpen.set(true);
   }
@@ -147,6 +156,10 @@ export class MachineWorkspaceComponent {
   private readonly preparationMachineId = computed(() => this.machine().id);
 
   constructor() {
+    effect(() => {
+      const file = this.codeFile(), target = this.codeTarget();
+      if (file && (file.scopeId !== target?.scopeId || file.taskId !== target.taskId)) this.codeFile.set(null);
+    });
     effect(() => {
       const selected = this.store.selected(), target = this.reviewTarget();
       if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
@@ -267,7 +280,7 @@ export class MachineWorkspaceComponent {
     });
   }
   focusWriting(): void { this.root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.focus({ preventScroll: true }); }
-  closePanel(): void { this.panelOpen.set(false); this.wideReview.set(false); }
+  closePanel(): void { this.codeFile.set(null); this.panelOpen.set(false); this.wideReview.set(false); }
   togglePanel(): void { if (this.panelOpen()) this.closePanel(); else this.panelOpen.set(true); }
 
   shortcut(event: KeyboardEvent): void {

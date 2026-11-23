@@ -96,7 +96,7 @@
     [toolImages]="toolImages()"
     [copiedCode]="copiedCode()"
     (inspectionChanged)="inspecting.set($event)"
-    (openFile)="openFile.emit($event)"
+    (openFile)="openFile.emit($event); fileLink.emit($event)"
     (openLink)="openLink.emit($event)"
     (openPage)="openPage.emit($event)"
     (copyCode)="copyCode.emit($event)"
@@ -130,7 +130,7 @@
         [files]="files()"
         [filesTotal]="filesTotal()"
         action=""
-        (openFile)="openFile.emit($event)"
+        (openFile)="openFile.emit($event); reviewFile.emit($event)"
         (review)="review.emit()"
       /><ex-turn-acts [actions]="actions()" (action)="action.emit($event)" />
       @if (files().length) {

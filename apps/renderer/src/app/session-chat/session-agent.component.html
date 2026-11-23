@@ -239,7 +239,7 @@
                       [copiedCode]="copiedCode()"
                       (copyCode)="copyRequested.emit($event)"
                       (openLink)="linkRequested.emit($event)"
-                      (openFile)="notice.set(fileNotice)"
+                      (openFile)="fileLinkRequested.emit($event)"
                       (openPage)="notice.set(pageNotice)"
                     />
                   </div>
@@ -251,7 +251,7 @@
                     [copiedCode]="copiedCode()"
                     (copyCode)="copyRequested.emit($event)"
                     (openLink)="linkRequested.emit($event)"
-                    (openFile)="notice.set(fileNotice)"
+                    (openFile)="fileLinkRequested.emit($event)"
                     (openPage)="notice.set(pageNotice)"
                   />
                 }

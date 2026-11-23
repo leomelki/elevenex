@@ -9,7 +9,7 @@ import type { CodeWorkspace } from './code-authorization.service.js';
 const MAX_FILE = 8 * 1024 * 1024;
 const inside = (root: string, path: string) => path === root || (!relative(root, path).startsWith('..' + sep) && relative(root, path) !== '..' && !isAbsolute(relative(root, path)));
 /** Symlinks are intentionally not traversed, including links into another task. */
-export async function confinedPath(workspace: CodeWorkspace, value: unknown, missing = false): Promise<string> {
+export async function confinedPath(workspace: Pick<CodeWorkspace, 'root'>, value: unknown, missing = false): Promise<string> {
   const path = codePath(value);
   const parts = path.slice(1).split('/').filter(Boolean);
   let actual = workspace.root;
@@ -28,14 +28,14 @@ export async function confinedPath(workspace: CodeWorkspace, value: unknown, mis
   return actual;
 }
 export const isMissing = (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
-export async function codeStat(workspace: CodeWorkspace, path: unknown) {
+export async function codeStat(workspace: Pick<CodeWorkspace, 'root'>, path: unknown) {
   const actual = await confinedPath(workspace, path);
   const info = await lstat(actual);
   if (!info.isFile() && !info.isDirectory()) throw new BadRequestException('Only regular files and folders are supported.');
   const readonly = info.isFile() && !await access(actual, constants.W_OK).then(() => true, () => false);
   return { type: info.isDirectory() ? 2 : 1, size: info.size, ctime: info.birthtimeMs, mtime: info.mtimeMs, ...(readonly ? { permissions: 1 } : {}) };
 }
-export async function codeRead(workspace: CodeWorkspace, path: unknown) {
+export async function codeRead(workspace: Pick<CodeWorkspace, 'root'>, path: unknown) {
   const actual = await confinedPath(workspace, path);
   const file = await open(actual, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -55,7 +55,7 @@ export async function codeRead(workspace: CodeWorkspace, path: unknown) {
     return { content: content.toString('base64'), revision: codeRevision(content) };
   } finally { await file.close(); }
 }
-export async function codeDirectory(workspace: CodeWorkspace, path: unknown, after = '', signal?: AbortSignal) {
+export async function codeDirectory(workspace: Pick<CodeWorkspace, 'root'>, path: unknown, after = '', signal?: AbortSignal) {
   const actual = await confinedPath(workspace, path);
   const directory = await opendir(actual);
   // Keep only the next page while iterating; never materialize an entire directory.

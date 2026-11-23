@@ -140,6 +140,8 @@ export class TurnComponent implements OnChanges {
   readonly retry = output<void>();
   readonly action = output<TurnAction>();
   readonly openFile = output<string>();
+  readonly fileLink = output<string>();
+  readonly reviewFile = output<string>();
   readonly review = output<void>();
   readonly toggled = signal<boolean | null>(null);
   readonly expanded = computed(

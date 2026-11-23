@@ -13,6 +13,7 @@ const { CodeSurfaces } = require('../dist/code/surfaces');
 const { CodeArtifact } = require('../dist/code/artifact');
 const files = require('../../backend/dist/code-workspace/code-files');
 const { CodeSearch } = require('../../backend/dist/code-workspace/code-search.service');
+const { readCodeLink, resolveCodeLink } = require('../../backend/dist/code-workspace/code-links');
 const { CodeWatch } = require('../../backend/dist/code-workspace/code-watch.service');
 const execute = promisify(execFile);
 protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
@@ -34,6 +35,14 @@ app.whenReady().then(async () => {
   await mkdir(repository); await execute('git', ['init', repository]);
   await execute('git', ['-C', repository, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   const large = process.argv.includes('--large');
+  const links = process.argv.includes('--chat-links');
+  const linkedFolder = join(root, 'linked-notes'), linkedFile = join(linkedFolder, 'outside.md');
+  if (links) {
+    await mkdir(join(repository, 'src'));
+    await writeFile(join(repository, 'src', 'nested.ts'), 'export const nested = true;');
+    await mkdir(linkedFolder);
+    await writeFile(linkedFile, '# External notes\nRead-only content\n');
+  }
   if (large) { for (let folder = 0; folder < 120; folder++) { const path = join(repository, `group-${folder}`); await mkdir(path); await Promise.all(Array.from({ length: 100 }, (_, index) => writeFile(join(path, `module-${folder * 100 + index}.ts`), `export const needle${folder * 100 + index} = ${folder * 100 + index};\n`))); } }
   await writeFile(join(repository, 'hello.ts'), 'export const message = "hello workbench";\n');
   await writeFile(join(repository, 'README.md'), '# Task Markdown preview\n\n**Formatted text**\n\n![Task diagram](./diagram.svg)\n');
@@ -46,13 +55,15 @@ app.whenReady().then(async () => {
   server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     try {
-      if (request.method === 'GET') { response.end(JSON.stringify({ version: 1, ...workspace, root: undefined })); return; }
+      if (request.method === 'GET') { response.end(JSON.stringify({ version: 1, ...workspace, root: undefined, fileLinks: links })); return; }
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const input = JSON.parse(Buffer.concat(chunks).toString());
       assert.equal(input.identity, workspace.identity);
       const op = request.url.split('/').at(-1);
       let value;
-      if (op === 'read') value = await files.codeRead(workspace, input.path);
+      if (op === 'link-resolve') value = await resolveCodeLink(workspace, input.path);
+      else if (op === 'link-directory' || op === 'link-stat' || op === 'link-read') value = await readCodeLink(op, input, new AbortController().signal);
+      else if (op === 'read') value = await files.codeRead(workspace, input.path);
       else if (op === 'stat') value = await files.codeStat(workspace, input.path);
       else if (op === 'directory') value = await files.codeDirectory(workspace, input.path, input.after);
       else if (op === 'write') {
@@ -103,6 +114,43 @@ app.whenReady().then(async () => {
   assert.equal(await view.webContents.executeJavaScript('typeof require'), 'undefined');
   assert.equal(await view.webContents.executeJavaScript("(()=>{try{void parent.document;return false;}catch{return true;}})()"), true, 'Editor must not access the shell DOM');
   assert.equal(await view.webContents.executeJavaScript("fetch('https://example.invalid/exfiltrate').then(()=>false,()=>true)"), true, 'Editor CSP must block external network');
+  const finish = async message => {
+    await code.dispose(); client.dispose(); stopRouting();
+    // Stop Chromium's profile writer before removing its files. The workbench
+    // may have just persisted configuration or hot-exit state during shutdown.
+    const session = window.webContents.session;
+    window.destroy(); await session.clearStorageData();
+    watches.onModuleDestroy(); search.onModuleDestroy();
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    console.log(message); clearTimeout(deadline); app.exit(0);
+  };
+  if (links) {
+    await wait(() => codeState?.phase === 'ready', 'Task editor did not connect');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='432px'");
+    await code.present(window.webContents.id, target, { visible: true, compact: true });
+    const openLink = async path => {
+      const result = await code.openFile(window.webContents.id, target, { path, fromChat: true });
+      assert.equal(result.ok, true, JSON.stringify(result));
+    };
+    await openLink('./src/');
+    await wait(() => frame.executeJavaScript('document.querySelector(".explorer-folders-view")?.innerText.includes("nested.ts")'), 'Workspace folder did not expand');
+    await openLink(join(worktree, 'hello.ts') + ':1:8');
+    await wait(() => frame.executeJavaScript('/Ln 1, Col 8/.test(document.body.innerText) && !!document.querySelector(".tab[aria-label*=hello]")'), 'Absolute task file did not open at its position');
+    await openLink(require('node:url').pathToFileURL(linkedFile).href + '#L2');
+    await wait(() => frame.executeJavaScript('!!document.querySelector(".tab[aria-label*=outside]") && /Ln 2, Col 1/.test(document.body.innerText)'), 'Outside file did not open at its position');
+    await frame.executeJavaScript('document.querySelector(".monaco-editor textarea.inputarea").focus()');
+    window.webContents.debugger.attach('1.3');
+    try {
+      await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+      await window.webContents.debugger.sendCommand('Input.insertText', { text: 'unexpected edit' });
+      assert.equal(await frame.executeJavaScript('!!document.querySelector(".tab.dirty") || document.body.innerText.includes("unexpected edit")'), false);
+    } finally { window.webContents.debugger.detach(); }
+    await openLink(linkedFolder);
+    await wait(() => frame.executeJavaScript('Array.from(document.querySelectorAll("[role=treeitem]")).some(item => item.textContent.includes("outside.md"))'), 'Outside folder did not expand');
+    await finish('CHAT_LINKS_SMOKE_OK');
+    return;
+  }
   assert.equal((await code.openFile(window.webContents.id, target, { path: 'hello.ts', line: 1 })).ok, true);
   await wait(() => view.webContents.executeJavaScript('!!document.querySelector(".monaco-editor") && !!document.querySelector(".tab[aria-label*=hello], .tab[title*=hello]")'), 'File did not open', 45_000);
   metrics.usableFileMs = Math.round(performance.now() - started); console.log('Usable file ms:', metrics.usableFileMs);
@@ -201,15 +249,7 @@ app.whenReady().then(async () => {
   assert.equal(await view.webContents.executeJavaScript('!!document.querySelector(".tab.dirty") && document.querySelector(".monaco-editor")?.textContent.includes("retainedAfterSaveFailure")'), true);
   await view.webContents.capturePage().then(image => writeFile(join(process.cwd(), 'artifacts/code-autosave-failure.png'), image.toPNG()));
   view.webContents.debugger.detach();
-  await code.dispose(); client.dispose(); stopRouting();
-  // Stop Chromium's profile writer before removing its files. The workbench
-  // may have just persisted configuration or hot-exit state during shutdown.
-  const session = window.webContents.session;
-  window.destroy(); await session.clearStorageData();
-  watches.onModuleDestroy(); search.onModuleDestroy();
-  await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  console.log('CODE_WORKBENCH_SMOKE_PASSED'); clearTimeout(deadline); app.exit(0);
+  await finish('CODE_WORKBENCH_SMOKE_PASSED');
 }).catch(async error => {
   console.error(error);
   if (currentView && !currentView.webContents.isDestroyed()) {

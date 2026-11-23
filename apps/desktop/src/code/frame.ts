@@ -17,6 +17,7 @@ export class CodeFrame {
     if (!frame) throw new Error('The task editor is still opening.');
     return frame.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(command)},...${JSON.stringify(args)}))`);
   }
+  async focusWindow(): Promise<void> { await this.current()?.executeJavaScript("window.focus()"); }
   async focus(): Promise<void> {
     const frame = this.current();
     if (frame) await frame.executeJavaScript("window.focus();import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand('elevenex.code.focus'))");

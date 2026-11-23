@@ -74,7 +74,19 @@ export class CodePanelComponent {
       if (!active || !connected || !target) this.openingSelection = null;
       this.previousWide = wide;
     });
-    effect(() => { const file = this.file(), target = this.target(); if (file && file !== this.consumedFile && target && file.scopeId === target.scopeId && file.taskId === target.taskId && this.active() && this.connected()) untracked(() => { this.consumedFile = file; void this.store.openFile(file.file).then(() => { if (this.file() === file && this.target()?.scopeId === target.scopeId && this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target); }); }); });
+    effect(() => {
+      const file = this.file(), target = this.target(), placed = this.placedTarget();
+      if (!file || file === this.consumedFile || !target || file.scopeId !== target.scopeId ||
+          file.taskId !== target.taskId || !this.active() || !this.connected() ||
+          file.file.fromChat && (placed?.scopeId !== target.scopeId || placed.taskId !== target.taskId)) return;
+      untracked(() => {
+        this.consumedFile = file;
+        void this.store.openFile(file.file).then(() => {
+          if (!file.file.fromChat && this.file() === file && this.target()?.scopeId === target.scopeId &&
+              this.target()?.taskId === target.taskId && !this.store.error()) this.focusRequest.set(target);
+        });
+      });
+    });
     effect(() => { if (!this.active()) untracked(() => this.store.suspend()); });
     afterRenderEffect(onCleanup => {
       const container = this.frameContainer()?.nativeElement, url = this.frameResource();

@@ -11,6 +11,7 @@ export const EXTENSION = {
   capabilities: { virtualWorkspaces: true, untrustedWorkspaces: { supported: true } },
   contributes: {
     viewsContainers: { secondarySidebar: [{ id: 'elevenex-files', title: 'Files', icon: '$(files)' }] },
+    views: { explorer: [{ id: 'elevenex.linkedFiles', name: 'Linked folders', when: 'elevenex.hasLinkedFolder' }] },
     menus: {
       'explorer/context': [
         { command: 'elevenex.code.upload', when: 'resourceScheme == elevenex-task && !explorerResourceIsFolder', group: '5b_importexport@20' },
