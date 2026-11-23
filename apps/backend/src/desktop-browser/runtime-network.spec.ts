@@ -94,3 +94,22 @@ it('coalesces system resolution and pins multiple public answers without allowin
     f.network.close();
   }
 });
+
+it('limits task-server diagnostics to granted loopback ports outside application control', () => {
+  const network = new RuntimeBrowserNetwork(
+    () => true,
+    (port) => port === 3200,
+  );
+  const loopback = new URL('http://localhost.:3100');
+  const control = new URL('http://127.0.0.1:3200');
+  expect(network.isAuthorizedTaskServer(loopback)).toBe(false);
+  network.authorize(loopback);
+  network.authorize(control);
+  expect(network.isAuthorizedTaskServer(loopback)).toBe(true);
+  expect(network.isAuthorizedTaskServer(control)).toBe(false);
+  expect(
+    network.isAuthorizedTaskServer(new URL('http://example.com:3100')),
+  ).toBe(false);
+  network.close();
+  expect(network.isAuthorizedTaskServer(loopback)).toBe(false);
+});

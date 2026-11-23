@@ -12,6 +12,7 @@ describe('Code-first browser execution', () => {
   let allowed: boolean;
   const send = jest.fn<Promise<unknown>, [string, Record<string, unknown>]>();
   const interrupt = jest.fn();
+  const diagnostics = jest.fn<Promise<unknown>, [number, number]>();
   const target = (): BrowserAgentTarget => ({
     id: 'tab',
     assert: () => {
@@ -19,6 +20,7 @@ describe('Code-first browser execution', () => {
     },
     send,
     subscribe: () => () => undefined,
+    diagnostics,
     goto: () => Promise.resolve(),
     close: () => Promise.resolve(),
     interrupt,
@@ -38,6 +40,7 @@ describe('Code-first browser execution', () => {
     allowed = true;
     send.mockReset();
     interrupt.mockReset();
+    diagnostics.mockReset();
     send.mockImplementation((method) =>
       Promise.resolve(
         method === 'Runtime.evaluate' ? { result: { value: 7 } } : {},
@@ -105,6 +108,25 @@ describe('Code-first browser execution', () => {
       value: 2,
       sandboxId: first.sandboxId,
     });
+  });
+  it('validates diagnostic cursors and stops serving entries after takeover', async () => {
+    diagnostics.mockResolvedValue({
+      items: [{ seq: 5, kind: 'console', text: 'task log' }],
+      next: 5,
+    });
+    const code = 'return await state.tab.diagnostics({since: 4, limit: 1})';
+    await run('state.tab = await browser.tabs.get("tab")');
+    expect((await run(code)).value).toEqual({
+      items: [{ seq: 5, kind: 'console', text: 'task log' }],
+      next: 5,
+    });
+    expect(diagnostics).toHaveBeenCalledWith(4, 1);
+    expect(
+      (await run('return await state.tab.diagnostics({limit: 101})')).error,
+    ).toBeDefined();
+    allowed = false;
+    expect((await run(code)).error?.message).toContain('Human takeover');
+    expect(diagnostics).toHaveBeenCalledTimes(1);
   });
   it('passes no host references into code, even through RPC results and errors', async () => {
     expect(

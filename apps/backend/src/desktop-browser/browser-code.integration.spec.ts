@@ -24,6 +24,10 @@ describe('Browser code in sandboxed Chromium', () => {
     oldRoot = process.env['ELEVENEX_DATA_ROOT'];
     process.env['ELEVENEX_DATA_ROOT'] = root;
     fixture = createServer((req, res) => {
+      if (req.url === '/diagnostics-missing') {
+        res.writeHead(404).end();
+        return;
+      }
       res.setHeader('Content-Type', 'text/html');
       res.end(
         `<!doctype html><title>Code browser</title><style>body{font:20px sans-serif;padding:30px}input,button{font:inherit;display:block;margin:20px}</style><h1>Code-first browser</h1><input aria-label="Name"><button onclick="document.querySelector('h1').textContent=document.querySelector('input').value;console.log('saved');fetch('/saved')">Save</button><script>window.trusted=[];for(const type of ['mousedown','input','keydown']) addEventListener(type,e=>trusted.push([type,e.isTrusted]));console.log('loaded');</script>`,
@@ -79,7 +83,7 @@ describe('Browser code in sandboxed Chromium', () => {
         ['mousedown', true],
       ]),
     );
-    // Console events would require the Runtime domain, which sites can time.
+    // Diagnostics are separate from the legacy protocol event history.
     expect(
       value.events.items.some(
         (event) => event.method === 'Runtime.consoleAPICalled',
@@ -131,5 +135,36 @@ describe('Browser code in sandboxed Chromium', () => {
     );
     expect(reacquired.error).toBeUndefined();
     expect(reacquired.value).toBe('Code browser');
+  });
+
+  it('returns browser logs and task-server console text with a bounded cursor', async () => {
+    const result = await run(`
+      const tab = await browser.tabs.new(${JSON.stringify(url)});
+      await tab.diagnostics();
+      await tab.evaluate(async () => {
+        console.info('task console message');
+        setTimeout(() => { throw new Error('task page exception'); }, 0);
+        await fetch('/diagnostics-missing');
+      });
+      const expected = {
+        console: 'task console message',
+        pageerror: 'task page exception',
+        browser: '404',
+      };
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const batch = await tab.diagnostics({limit: 100});
+        const found = Object.entries(expected).every(([kind, text]) =>
+          batch.items.some(item => item.kind === kind && item.text.includes(text))
+        );
+        if (found) {
+          const next = await tab.diagnostics({since: batch.next});
+          return {found, noDuplicates: next.items.every(item => item.seq > batch.next)};
+        }
+        await browser.wait(50);
+      }
+      return await tab.diagnostics({limit: 100});
+    `);
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual({ found: true, noDuplicates: true });
   });
 });

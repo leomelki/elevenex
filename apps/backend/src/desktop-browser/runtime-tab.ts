@@ -13,6 +13,7 @@ import type {
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
+import { RuntimeBrowserDiagnostics } from './runtime-diagnostics.js';
 import { RuntimePageWorld } from './runtime-page-world.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
 import { detectBrowserSources } from '@elevenex/browser-inspection';
@@ -20,7 +21,7 @@ import { detectBrowserSources } from '@elevenex/browser-inspection';
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 
-/** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
+/** A tab owns its driver, navigation generation and frame waiter. */
 export class RuntimeBrowserTab {
   private readonly presentationFeedback = new BrowserAgentPresentation(() => this.changed());
   agentPicker?: (x: number, y: number) => Promise<void>;
@@ -131,6 +132,18 @@ export class RuntimeBrowserTab {
           };
         },
         authorize,
+        ...(!human
+          ? {
+              diagnostics: async (since: number, limit: number) => {
+                assert();
+                const result = await this.diagnostics?.read(since, limit);
+                assert();
+                if (!result)
+                  throw new Error('Browser diagnostics are unavailable for this tab');
+                return result;
+              },
+            }
+          : {}),
         subscribeDownloads: (listener) => {
           this.agentDownloads.add(listener);
           return () => this.agentDownloads.delete(listener);
@@ -231,6 +244,7 @@ export class RuntimeBrowserTab {
   private stopNavigation?: () => void;
   private input?: RuntimeBrowserInput;
   private cursorReader?: RuntimeBrowserCursor;
+  private diagnostics?: RuntimeBrowserDiagnostics;
   private pageWorld?: RuntimePageWorld;
   private disposed = false;
   private crashed = false;
@@ -284,6 +298,7 @@ export class RuntimeBrowserTab {
     this.ownership++;
     this.waiting = this.agentPaused;
     this.driver = needs ? 'needs' : 'you';
+    this.diagnostics?.control(false);
     this.generation++;
     this.target = undefined;
     this.controlChanged();
@@ -297,6 +312,7 @@ export class RuntimeBrowserTab {
     this.ownership++;
     this.agentSessionId = sessionId;
     this.driver = 'agent';
+    this.diagnostics?.control(true);
     this.waiting = false;
     this.generation++;
     this.step = { n: 1, text: 'Waiting for a browser action' };
@@ -379,8 +395,6 @@ export class RuntimeBrowserTab {
     // lane and capability stay in place for when a Runtime-free observer exists.
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // Patchright never enables the Console domain, so the error count covers
-    // failed requests and HTTP errors rather than console messages.
     page.on('request', request => {
       if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
       this.documentRequest = request;
@@ -408,6 +422,8 @@ export class RuntimeBrowserTab {
       if (response.status() >= 400) this.countError();
     });
     page.on('crash', () => {
+      if (this.disposed || this.page !== page) return;
+      this.stopNavigation?.();
       void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
@@ -417,6 +433,7 @@ export class RuntimeBrowserTab {
     });
     page.on('close', () => {
       if (this.disposed || this.page !== page) return;
+      this.stopNavigation?.();
       void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
@@ -440,10 +457,41 @@ export class RuntimeBrowserTab {
     const { frameTree } = await cdp.send('Page.getFrameTree');
     if (this.disposed || this.page !== page || this.cdp !== cdp) return;
     let mainFrameId = frameTree.frame.id;
+    const context = page.context();
+    const diagnostics = new RuntimeBrowserDiagnostics(
+      cdp,
+      () => context.newCDPSession(page),
+      (url) => this.network.isAuthorizedTaskServer(url),
+      () => this.countError(),
+    );
+    this.diagnostics = diagnostics;
+    diagnostics.control(this.driver === 'agent');
+    diagnostics.committed(frameTree.frame);
+    const navigationStarted = ({
+      frameId,
+      navigationType,
+    }: {
+      frameId: string;
+      navigationType: string;
+    }) => {
+      if (
+        frameId === mainFrameId &&
+        navigationType !== 'sameDocument' &&
+        navigationType !== 'historySameDocument'
+      )
+        diagnostics.navigationStarted();
+    };
     const documentChanged = ({ frame }: { frame: { id: string; parentId?: string; url: string; urlFragment?: string } }) => {
       if (frame.parentId) return;
       mainFrameId = frame.id;
+      diagnostics.committed(frame);
       this.navigated(page, frame.url + (frame.urlFragment ?? ''), false);
+    };
+    const navigationStopped = ({ frameId }: { frameId: string }) => {
+      if (frameId === mainFrameId)
+        void diagnostics.navigationStopped(
+          async () => (await cdp.send('Page.getFrameTree')).frameTree.frame,
+        );
     };
     const withinDocument = ({ frameId, url }: { frameId: string; url: string }) => {
       if (frameId === mainFrameId) this.navigated(page, url, true);
@@ -451,14 +499,21 @@ export class RuntimeBrowserTab {
     // New documents and explicit document.open invalidate human coordinates.
     // SPA panels often route before data arrives and retain their document.
     cdp.on('Page.frameNavigated', documentChanged);
+    cdp.on('Page.frameStartedNavigating', navigationStarted);
+    cdp.on('Page.frameStoppedLoading', navigationStopped);
     cdp.on('Page.documentOpened', documentChanged);
     cdp.on('Page.navigatedWithinDocument', withinDocument);
     this.stopNavigation = () => {
       cdp.off('Page.frameNavigated', documentChanged);
+      cdp.off('Page.frameStartedNavigating', navigationStarted);
+      cdp.off('Page.frameStoppedLoading', navigationStopped);
       cdp.off('Page.documentOpened', documentChanged);
       cdp.off('Page.navigatedWithinDocument', withinDocument);
+      diagnostics.dispose();
+      this.diagnostics = undefined;
+      this.stopNavigation = undefined;
     };
-    await cdp.send('Page.enable');
+    await Promise.all([cdp.send('Page.enable'), diagnostics.start()]);
   }
   private navigated(page: Page, address: string, sameDocument: boolean): void {
     if (this.disposed || this.page !== page) return;
@@ -937,7 +992,7 @@ export class RuntimeBrowserTab {
     this.cursorReader = undefined;
     this.pageWorld?.destroy();
     this.pageWorld = undefined;
-    this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.stopNavigation?.();
     const workflowCleanup = this.workflows.destroy();
     this.takeover();
     const pointerCleanup = this.pointerLock.detach();
@@ -961,7 +1016,7 @@ export class RuntimeBrowserTab {
     this.pageWorld = undefined;
     const workflowCleanup = this.workflows.clear();
     this.invalidateDisplay();
-    this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.stopNavigation?.();
     const page = this.page,
       cdp = this.cdp;
     const pointerCleanup = this.pointerLock.detach();

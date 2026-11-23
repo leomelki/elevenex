@@ -179,6 +179,17 @@ export class BrowserAgentBroker {
       return target.evaluate(args[1], args[2], args[3] === true);
     if (method === 'snapshot') return target.snapshot(object(args[1]));
     if (method === 'events') return target.events(object(args[1]));
+    if (method === 'diagnostics') {
+      const options = object(args[1]);
+      const since = integer(options['since'], 0, 0, Number.MAX_SAFE_INTEGER);
+      const limit = integer(options['limit'], 50, 1, 100);
+      if (!target.target.diagnostics)
+        throw new Error('Browser diagnostics are unavailable on this host');
+      const result = await target.target.diagnostics(since, limit);
+      signal.throwIfAborted();
+      target.target.assert();
+      return result;
+    }
     if (method === 'screenshot') {
       const attempts = this.captures.get(images) ?? 0;
       if (attempts >= 4) throw new Error('At most four screenshots per call');

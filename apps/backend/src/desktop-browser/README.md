@@ -164,6 +164,25 @@ host configuration, and pins validated answers while racing address families.
 Authorized localhost aliases can reach IPv4- or IPv6-only task servers. Private
 answers, unknown task ports and application control destinations stay denied.
 
+## Browser diagnostics
+
+Each runtime tab reads Chromium's Log domain for failed resource loads,
+security notices, deprecations and other browser messages. The error badge
+counts request and HTTP failures plus browser errors from other sources.
+While an agent controls an authorized loopback task server, the runtime also
+records console text and uncaught exceptions from the top-level document.
+These errors contribute to the badge.
+
+`tab.diagnostics({ since, limit })` reads a memory-only window of up to 128
+entries through an owned `browser.tabs` handle. The default page size is 50,
+the maximum is 100, and the result includes `next`, `hasMore` and `dropped`.
+Entries carry a sequence, kind, level and bounded text. The buffer resets when
+top-level navigation starts or control changes. Console capture uses a separate
+CDP session that detaches on navigation, human takeover or tab teardown.
+Only the committed task-server origin's top-level execution context supplies
+console and exception entries. Browser Log messages are available for other
+destinations. Entries are never saved to a profile or included in viewer state.
+
 ## Site-facing browser identity
 
 People drive streamed pages directly, so sites must see an ordinary Chrome
@@ -171,13 +190,9 @@ rather than a test harness. The engine remains genuine Chromium with its own
 TLS/HTTP stack, client-hint brands, GPU path and fonts; nothing below spoofs a
 different browser, device or OS.
 
-- The driver is pinned `patchright-core`/`patchright` 1.64.3: Playwright's API
-  with patches that never enable the CDP Runtime or Console domains. While a
-  client receives console events, Chromium serializes every logged value, and
-  sites can time that cost. The runtime keeps the same rule: `RuntimePageWorld`
-  and the code-first `browser.tabs` engine never send `Runtime.enable`. Page
-  `console` and `pageerror` events are therefore unavailable everywhere, and the
-  tab error count covers failed requests and HTTP errors only.
+- The driver is pinned `patchright-core`/`patchright` 1.64.3. The runtime
+  enables the CDP Runtime domain only for diagnostics on authorized task
+  servers under agent control.
 - `runtime-launch` starts full new-headless Chrome (never the headless shell)
   with `--disable-blink-features=AutomationControlled`, so `navigator.webdriver`
   is false. It restores `--disable-back-forward-cache`, which Patchright drops:

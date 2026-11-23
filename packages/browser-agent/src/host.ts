@@ -13,6 +13,8 @@ export interface BrowserAgentTarget {
   subscribe(
     listener: (method: string, params: unknown, sessionId?: string) => void,
   ): () => void;
+  /** Bounded, agent-owned diagnostics from the current tab. */
+  diagnostics?(since: number, limit: number): Promise<unknown>;
   /** Grants the destination without navigating; the scoped Playwright connection owns navigation. */
   authorize?(url: string, signal: AbortSignal): Promise<void>;
   dispose?(): void | Promise<void>;
