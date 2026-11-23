@@ -14,7 +14,7 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
     const context = await pool.acquire('d'.repeat(64), {});
     const page = await context.newPage();
     await page.setContent(
-      '<input id="field"><script>window.keys=[];document.addEventListener("keydown",e=>keys.push([e.key,e.repeat]));window.releases=0;document.addEventListener("mouseup",()=>releases++)</script>',
+      '<input id="field"><script>window.keys=[];window.keyUps=[];document.addEventListener("keydown",e=>keys.push([e.key,e.repeat,e.location,e.isTrusted]));document.addEventListener("keyup",e=>keyUps.push([e.code,e.location,e.isTrusted]));window.releases=0;document.addEventListener("mouseup",()=>releases++)</script>',
     );
     const cdp = await context.newCDPSession(page);
     const input = new RuntimeBrowserInput(page, cdp);
@@ -71,8 +71,8 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
     expect(
       await page.evaluate('window.keys.filter(e=>e[0]==="Shift")'),
     ).toEqual([
-      ['Shift', false],
-      ['Shift', true],
+      ['Shift', false, 1, true],
+      ['Shift', true, 1, true],
     ]);
     await input.dispatch(
       {
@@ -90,7 +90,17 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
     await input.dispatch({ kind: 'release' }, current);
     expect(await page.evaluate('window.releases')).toBe(1);
     await input.dispatch(key, current);
-    expect(await page.evaluate('window.keys.at(-1)')).toEqual(['Shift', false]);
+    expect(await page.evaluate('window.keys.at(-1)')).toEqual(['Shift', false, 1, true]);
+    expect(await page.evaluate('window.keyUps.at(-1)')).toEqual(['ShiftLeft', 1, true]);
+    await input.dispatch({ ...key, type: 'up' }, current);
+    await input.dispatch({ ...key, code: 'ShiftRight' }, current);
+    expect(await page.evaluate('window.keys.at(-1)')).toEqual(['Shift', false, 2, true]);
+    await input.dispatch({ ...key, code: 'ShiftRight', type: 'up' }, current);
+    const keypad = { ...key, key: '1', code: 'Numpad1', keyCode: 97, modifiers: 0 };
+    await input.dispatch(keypad, current);
+    expect(await page.evaluate('window.keys.at(-1)')).toEqual(['1', false, 3, true]);
+    await input.dispatch({ ...keypad, type: 'up' }, current);
+    expect(await page.evaluate('window.keyUps.at(-1)')).toEqual(['Numpad1', 3, true]);
     let valid = true;
     const check = () => {
       if (!valid) throw new Error('Control changed');

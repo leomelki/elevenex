@@ -95,13 +95,23 @@ export async function launchRuntimeBrowser(
 /** Shared by task startup and the disposable host verification. */
 export function browserLaunchOptions(extension: string): LaunchOptions {
   return {
+    // The Chromium channel uses the full browser in unified headless mode,
+    // including the APIs needed by the WebAuthn extension.
+    channel: 'chromium',
     headless: true,
     chromiumSandbox: true,
     handleSIGINT: false,
     handleSIGTERM: false,
     handleSIGHUP: false,
     timeout: 30000,
-    ignoreDefaultArgs: ['--disable-extensions'],
+    ignoreDefaultArgs: [
+      '--disable-extensions', // The remaining flags allow only the app-owned relay.
+      // Keep Chrome's browser behavior where test-runner defaults differ.
+      '--disable-background-timer-throttling',
+      '--disable-ipc-flooding-protection',
+      '--disable-popup-blocking',
+      '--hide-scrollbars',
+    ],
     args: [
       '--disable-extensions-except=' + extension,
       '--load-extension=' + extension,

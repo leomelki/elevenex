@@ -188,6 +188,27 @@ describe('remote browser document and in-page navigation', () => {
     await waitForState(() => tab.snapshot().cursor === 'pointer');
   });
 
+  it('observes tab titles without adding a binding to the site’s JavaScript world', async () => {
+    const tab = task.page(tabId);
+    expect(await page.evaluate(() => Object.hasOwn(globalThis, '__elevenexPageTitle'))).toBe(false);
+    await page.evaluate(() => {
+      // Pages are free to use the same global name without affecting the stream.
+      Object.defineProperty(globalThis, '__elevenexPageTitle', { value: 'site-owned' });
+      history.pushState(null, '', '?title=changed');
+      document.title = '  Updated    panel title  ';
+    });
+    await waitForState(() => tab.snapshot().title === 'Updated panel title');
+    expect(tab.snapshot().url).toBe(url + '/?title=changed');
+    await page.evaluate(() => {
+      document.open();
+      document.write('<title>Replaced panel title</title>');
+      document.close();
+    });
+    await waitForState(() => tab.snapshot().title === 'Replaced panel title');
+    await task.command({ kind: 'navigate', tabId, url });
+    await waitForState(() => tab.snapshot().title === 'Panel navigation');
+  });
+
   it('delivers panel gestures and subsequent typing without waiting for cursor inspection', async () => {
     const tab = task.page(tabId),
       generation = tab.generation;

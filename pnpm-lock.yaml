@@ -59,8 +59,8 @@ importers:
         specifier: 2.0.26
         version: 2.0.26
       '@playwright/test':
-        specifier: 1.61.0
-        version: 1.61.0
+        specifier: 1.65.1
+        version: 1.65.1
       '@vscode/ripgrep':
         specifier: ^1.18.0
         version: 1.18.0
@@ -113,8 +113,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.0
       playwright-core:
-        specifier: 1.61.0
-        version: 1.61.0
+        specifier: 1.65.1
+        version: 1.65.1
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -492,11 +492,11 @@ importers:
         specifier: workspace:*
         version: link:../shared
       '@playwright/test':
-        specifier: 1.61.0
-        version: 1.61.0
+        specifier: 1.65.1
+        version: 1.65.1
       playwright-core:
-        specifier: 1.61.0
-        version: 1.61.0
+        specifier: 1.65.1
+        version: 1.65.1
     devDependencies:
       '@types/node':
         specifier: 26.6.5
@@ -6155,6 +6155,14 @@ packages:
     dependencies:
       playwright: 1.61.0
     dev: true
+
+  /@playwright/test@1.65.1:
+    resolution: {integrity: sha512-y+NCIRm2LvY4slUVWvGh1nujJ8RF/hEisIsq2mtUPgdQC4L701bq5hZGMhrpeXjACvwvO9tj5dJqhvM6TP9lbw==}
+    engines: {node: '>=20'}
+    hasBin: true
+    dependencies:
+      playwright: 1.65.1
+    dev: false
 
   /@protobufjs/aspromise@1.1.2:
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -14013,6 +14021,12 @@ packages:
     hasBin: true
     dev: true
 
+  /playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+    dev: false
+
   /playwright@1.61.0:
     resolution: {integrity: sha512-Z+7BeeqQPRRzklHsVFP4KTGIyMxKUmfeRA4WisM6G3/XW6nwGeX6fX9qYaDa+CiUqpOkb2f6X3nar05R3kSuJQ==}
     engines: {node: '>=18'}
@@ -14022,6 +14036,14 @@ packages:
     optionalDependencies:
       fsevents: 2.3.2
     dev: true
+
+  /playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
+    engines: {node: '>=20'}
+    hasBin: true
+    dependencies:
+      playwright-core: 1.65.1
+    dev: false
 
   /plist@3.1.0:
     resolution: {integrity: sha512-uysumyrvkUX0rX/dEVqt8gC3sTBzd4zoWfLeS29nb53imdaXVvLINYXTI2GNqzaMuvacNx4uJQ8+b3zXR0pkgQ==}

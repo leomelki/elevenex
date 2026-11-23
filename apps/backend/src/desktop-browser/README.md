@@ -13,7 +13,11 @@ replies. The old `task_browser` MCP tool is removed. The renderer bridge does no
 expose code execution. Optional `agentCode: 1` state distinguishes the new agent
 observation policy from older hosts; `privacy` retains its legacy wire value.
 
-The remote host uses pinned `playwright-core@1.61.0` over a private Chromium pipe.
+The remote host uses the full Chrome for Testing browser pinned by
+`playwright-core@1.65.1` (Chromium 159.0.8154.6) over a private Chromium pipe.
+The unified headless mode runs the same browser engine on hosts without a display
+server. Task browsers keep Chromium's popup blocking, scrollbars, background
+timer scheduling and IPC flood protection.
 Streamed WebAuthn uses Chromium's fixed proxy extension and a human-approved
 desktop authenticator broker. See [WebAuthn architecture and native limits](../../../../docs/task-browser-webauthn.md).
 `RuntimeBrowserPool` owns up to four sandboxed Chromium processes, persistent
@@ -21,10 +25,11 @@ task profiles and the bounded managed installation;
 `RuntimeBrowserTask` owns its persistent shared profile, task SOCKS connector,
 persistence and twelve tabs; `RuntimeBrowserTab` owns its page, debugger, viewport,
 human-input generation and bounded JPEG producer. Four tasks may be retained.
-Startup tries the managed browser, installed Chrome, then an owned, cancellable
-three-minute browser install under application data. Installation needs network
-access and a supported Chromium host. It never adds `--no-sandbox`, disables TLS
-validation, or bypasses CSP. Debug logging that could expose page data is refused.
+Startup tries the managed browser, the configured Playwright cache, then
+installed Chrome before an owned, cancellable three-minute browser install under
+application data. Installation needs network access and a supported Chromium
+host. The runtime enforces sandboxing, TLS validation and site CSP.
+Debug logging that could expose page data is refused.
 
 `runtime-browser.controller.ts` provides additive `/api/desktop-browser/runtime/tasks/:taskId`
 initial/connect/state/command/layout/input/frame/disconnect routes. **They require
@@ -122,8 +127,10 @@ or zero-copy capture, audio or WebRTC is implied by this capability.
 Hidden/noninteractive presentations, resize, document replacement and ownership
 changes invalidate queued writes and release held keys/buttons/composition. Agent mouse
 actions await that cleanup. Editing intents use fixed Blink commands so the
-viewing device's undo/redo/select-all do not depend on the host OS. Focus emulation
-is page-owned rather than bringing companion pages to front on every heartbeat.
+viewing device's undo/redo/select-all do not depend on the host OS. Key presses
+and cleanup releases preserve left/right modifier and numeric-keypad location.
+Page-owned focus emulation lets companion pages stay interactive as their layout
+heartbeats arrive.
 Congestion reduction applies to the attainable frame rate after CPU/pixel budgets.
 See the [remote interaction audit](../../../../docs/task-browser-remote-audit.md)
 for this revision's behavior and the remaining feature boundaries.
@@ -157,6 +164,9 @@ including normal presentation expiry. Receipt deadlines tolerate fifteen seconds
 of jitter; no input is replayed. Layout acknowledges intent while installation is
 pending, and concurrent tasks share one managed installer. Unviewed blank user
 tabs may be evicted for capacity; live pages and agent-owned tabs are retained.
+
+The tab's CDP session observes title changes in an isolated world. The observer
+only reports a bounded title and its current URL for the human tab strip.
 
 Task networking handles public IP literals without DNS, uses the OS resolver for
 host configuration, and pins validated answers while racing address families.

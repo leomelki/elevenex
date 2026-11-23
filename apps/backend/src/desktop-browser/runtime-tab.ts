@@ -14,10 +14,13 @@ import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
+import { observeRuntimePageTitle } from './runtime-page-title.js';
 import { detectBrowserSources } from '@elevenex/browser-inspection';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
+
+const agentProtocolEvents: ReadonlySet<string> = new Set(PROTOCOL_EVENTS);
 
 /** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
 export class RuntimeBrowserTab {
@@ -86,14 +89,13 @@ export class RuntimeBrowserTab {
           await cdp.detach();
         },
       );
-      const events = PROTOCOL_EVENTS.map((method) => {
-        const receive = (params: unknown) =>
-          nested.receive(method, params, (method, params, child) =>
-            lease.receive(method, params, child),
-          );
-        cdp.on(method, receive);
-        return () => cdp.off(method, receive);
-      });
+      const receive = ({ method, params }: { method: string; params?: object }) => {
+        if (!agentProtocolEvents.has(method)) return;
+        nested.receive(method, params, (event, payload, child) =>
+          lease.receive(event, payload, child),
+        );
+      };
+      cdp.on('event', receive);
       this.agentInputs.add(input);
       return {
         id: this.id,
@@ -146,7 +148,7 @@ export class RuntimeBrowserTab {
           if (playing && --this.playwrightConnections === 0 && this.driver === 'agent') this.presentationFeedback.interrupt();
           input.release();
           await lease.dispose();
-          for (const stop of events) stop();
+          cdp.off('event', receive);
           nested.dispose();
           this.agentInputs.delete(input);
         },
@@ -228,6 +230,7 @@ export class RuntimeBrowserTab {
   private context?: BrowserContext;
   private cdp?: CDPSession;
   private stopNavigation?: () => void;
+  private stopPageTitle?: () => void;
   private input?: RuntimeBrowserInput;
   private cursorReader?: RuntimeBrowserCursor;
   private disposed = false;
@@ -341,6 +344,7 @@ export class RuntimeBrowserTab {
       return;
     }
     this.page = page;
+    this.pageTitle = undefined;
     this.mediaUpdate = Promise.resolve();
     this.appliedColorScheme = undefined;
     this.crashed = false;
@@ -366,39 +370,6 @@ export class RuntimeBrowserTab {
     await this.pointerLock.attach(page, this.cdp);
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // Headless Chromium target metadata does not report document.title changes.
-    // This page-owned binding accepts only bounded human-facing title data.
-    const bindingName = '__elevenexPageTitle';
-    await page.exposeBinding(bindingName, ({ frame }, url: unknown, title: unknown) => {
-      if (this.disposed || this.page !== page || frame !== page.mainFrame() || url !== page.url() || typeof title !== 'string' || title.length > 200) return;
-      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
-      this.changed();
-    });
-    await page.addInitScript((name: string) => {
-      if (window !== window.top) return;
-      document.addEventListener('DOMContentLoaded', () => {
-        let previous: string | undefined;
-        const publish = () => {
-          const title = document.title.replace(/\s+/gu, ' ').trim().slice(0, 200);
-          if (title === previous) return;
-          previous = title;
-          const send: unknown = Reflect.get(globalThis, name);
-          if (typeof send === 'function') {
-            const result: unknown = Reflect.apply(send, globalThis, [location.href, title]);
-            void Promise.resolve(result).catch(() => undefined);
-          }
-        };
-        // The observers and binding die with their owning document/page.
-        const head = new MutationObserver(publish);
-        const observeHead = () => {
-          head.disconnect();
-          head.observe(document.head ?? document.documentElement, { childList: true, subtree: true, characterData: true });
-          publish();
-        };
-        new MutationObserver(observeHead).observe(document.documentElement, { childList: true });
-        observeHead();
-      }, { once: true });
-    }, bindingName);
     page.on('console', (message) => {
       if (message.type() === 'error') this.countError();
     });
@@ -447,11 +418,22 @@ export class RuntimeBrowserTab {
       this.capture.invalidate();
       this.changed();
     });
-    await this.watchNavigation(page, this.cdp);
+    const cdp = this.cdp;
+    await this.watchNavigation(page, cdp);
+    const stopPageTitle = await observeRuntimePageTitle(cdp, (url, text) => {
+      if (this.disposed || this.page !== page || this.cdp !== cdp || url !== page.url()) return;
+      if (this.pageTitle?.url === url && this.pageTitle.text === text) return;
+      this.pageTitle = { url, text };
+      this.changed();
+    });
+    if (this.disposed || this.page !== page || this.cdp !== cdp) {
+      stopPageTitle();
+      return;
+    }
+    this.stopPageTitle = stopPageTitle;
     if (adopted) {
       try { this.url = runtimeUrl(page.url()).href; this.documentUrl = this.url; } catch { /* about:blank popup */ }
       this.loading = false;
-      this.pageTitle = { url: this.url, text: (await page.title()).replace(/\s+/gu, ' ').trim().slice(0, 200) };
       await this.history();
       this.changed();
     }
@@ -487,6 +469,7 @@ export class RuntimeBrowserTab {
     if (!sameDocument) {
       void this.workflows.documentChanged();
       this.cursor = 'default';
+      this.pageTitle = undefined;
       this.navigation++;
       this.generation++;
       this.invalidateDisplay();
@@ -502,16 +485,8 @@ export class RuntimeBrowserTab {
     } catch {
       /* Initial blank page. */
     }
-    const previousTitle = this.pageTitle, navigation = this.navigation, url = this.url;
-    if (sameDocument && previousTitle) {
-      this.pageTitle = { url, text: previousTitle.text };
-    } else if (previousTitle && previousTitle.url !== url) {
-      void page.title().then(title => {
-        if (this.disposed || this.page !== page || this.navigation !== navigation || this.url !== url || this.pageTitle !== previousTitle) return;
-        this.pageTitle = { url, text: title.replace(/\s+/gu, ' ').trim().slice(0, 200) };
-        this.changed();
-      }).catch(() => undefined);
-    }
+    if (sameDocument && this.pageTitle)
+      this.pageTitle = { url: this.url, text: this.pageTitle.text };
     this.target = undefined;
     void this.history();
     this.changed();
@@ -949,6 +924,7 @@ export class RuntimeBrowserTab {
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
     this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.stopPageTitle?.(); this.stopPageTitle = undefined;
     const workflowCleanup = this.workflows.destroy();
     this.takeover();
     const pointerCleanup = this.pointerLock.detach();
@@ -971,6 +947,7 @@ export class RuntimeBrowserTab {
     const workflowCleanup = this.workflows.clear();
     this.invalidateDisplay();
     this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.stopPageTitle?.(); this.stopPageTitle = undefined;
     const page = this.page,
       cdp = this.cdp;
     const pointerCleanup = this.pointerLock.detach();

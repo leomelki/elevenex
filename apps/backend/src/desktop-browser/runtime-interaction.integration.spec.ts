@@ -364,27 +364,34 @@ describe('remote browser interaction and display ownership', () => {
     let after = 0;
     const untilPixel = async (green: boolean) => {
       const deadline = Date.now() + 5000;
+      let latest: number[] | undefined;
       while (Date.now() < deadline) {
         const frame = await tab.nextFrame(after, signal, 1000);
         if (!frame) continue;
         after = frame.sequence;
-        const pixel = await page.evaluate(async ({ jpeg }) => {
+        const pixel = await page.evaluate(async ({ jpeg, width, height }) => {
           const bitmap = await createImageBitmap(new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }));
           try {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width; canvas.height = bitmap.height;
             const context = canvas.getContext('2d')!;
             context.drawImage(bitmap, 0, 0);
-            return [...context.getImageData(350, 150, 1, 1).data];
+            // Sample a solid part of the button outside the text. The capture
+            // can have a different pixel density from the CSS viewport.
+            const x = Math.floor(310 * bitmap.width / width);
+            const y = Math.floor(110 * bitmap.height / height);
+            return [...context.getImageData(x, y, 1, 1).data];
           } finally { bitmap.close(); }
-        }, { jpeg: [...frame.jpeg] });
+        }, { jpeg: [...frame.jpeg], width: frame.width, height: frame.height });
+        latest = pixel;
         if (green ? pixel[1] > 150 && pixel[2] < 100 : pixel[2] > 150 && pixel[1] < 100) return;
       }
-      throw new Error('The streamed hover image did not update');
+      throw new Error(`Expected a ${green ? 'green' : 'blue'} button in the stream. Last sample: ${latest?.join(', ') ?? 'no frame'}`);
     };
     await task.layout(800, 600, true, true);
-    await untilPixel(false);
     const generation = tab.generation;
+    await task.input(tabId, generation, { kind: 'pointer-exit' });
+    await untilPixel(false);
     const pointer = { kind: 'pointer' as const, x: 350, y: 150, button: 'none' as const, buttons: 0, clicks: 0, modifiers: 0 };
     await task.input(tabId, generation, { ...pointer, type: 'move' });
     await untilPixel(true);

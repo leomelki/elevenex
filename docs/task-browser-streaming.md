@@ -178,10 +178,12 @@ not start Nest, agents, the database or a listener. Source checkouts use the sam
 implementation through `pnpm browser:setup` after `pnpm backend:build`.
 
 Run it on the **browser backend machine**, as the backend's normal user, with
-that backend's data directory. Setup downloads the locked Playwright Chromium
-when absent, then verifies a disposable sandboxed browser can render and capture
-a page using the same security/extension launch options as task browsers. Linux
-also needs fontconfig and a usable system font. `--check` performs verification
+that backend's data directory. Setup downloads the full Chrome for Testing
+build pinned by Playwright when absent. It verifies rendering and capture in
+unified headless mode with a disposable profile and the task browser's sandbox
+and extension settings. [Chrome Headless documentation](https://developer.chrome.com/docs/automation-and-testing/headless)
+
+Linux also needs fontconfig and a usable system font. `--check` performs verification
 without installing a browser or system packages. Both modes leave task profiles
 and live browsers alone.
 
@@ -247,19 +249,20 @@ only a successful normal-user rendering check establishes browser readiness.
 Startup prefers the app-owned distribution, then an existing Playwright cache
 (respecting `PLAYWRIGHT_BROWSERS_PATH`), then the existing system Chrome fallback.
 It downloads only when neither Chromium distribution exists. Reload retries
-explicitly after a host repair. Full Chromium remains necessary for Elevenex's
-extension-backed WebAuthn; the existing system Chrome fallback retains platform
-and enterprise-policy limitations. Do not substitute a headless-shell binary
-without verifying those features. Basic fonts do not guarantee coverage for every
-language; install additional distribution fonts as needed.
+explicitly after a host repair. The full browser supports the task's persistent
+profile and extension-backed WebAuthn. Extension availability in installed
+Chrome depends on the browser build and enterprise policy. Basic fonts cover a
+limited set of languages. Install additional distribution fonts as needed.
+[Playwright extension guidance](https://playwright.dev/docs/chrome-extensions)
+
+Chromium supplies the browser identity and native input events. Site access
+policies may still challenge a remote session based on the host network,
+browser environment or sign-in history.
 
 Use [Playwright's supported platforms](https://playwright.dev/docs/intro#system-requirements)
 and [container guidance](https://playwright.dev/docs/docker#recommended-docker-configuration).
 Older releases and other distributions are best effort. A newer libc requirement
-calls for a supported OS/image, not replacing host libc or pinning an obsolete
-browser. The provisioning/diagnosis separation follows
-[T3 Code's host setup](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/cli/browser.ts),
-with exact-path policy attachments and actual sandboxed rendering verification.
+calls for a supported OS or runtime image.
 
 ## Owners and lifetimes
 
@@ -417,23 +420,11 @@ loopback smoke test cannot establish WAN smoothness or native-browser parity.
   decoder lifetime, latency optimization and explicit frame resource ownership.
 * [RFC 8835](https://www.rfc-editor.org/rfc/rfc8835.html) describes WebRTC's
   transport/connectivity requirements. The current SSH tunnel supplies no UDP path.
-* [Selkies architecture](https://docs.selkies.io/latest/component/) demonstrates
-  that video codecs and media transport are independent choices; adopting its
-  capture/server stack would be a separate deployment and security decision.
-
-* [T3 Code stream source](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowserStream.ts)
-  demonstrates persistent streaming, bounded replacement frames and paced receipts.
-  This implementation uses Elevenex's existing transport/domain boundaries rather
-  than adopting T3's Effect runtime or its deployment/security assumptions.
 * [Chrome DevTools Page protocol](https://chromedevtools.github.io/devtools-protocol/tot/Page/)
   defines screencast events, acknowledgments and still capture. APIs used here are
   also checked against the locked Playwright/CDP types.
 * [Playwright persistent context](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-persistent-context)
   documents browser-profile storage and context ownership.
-* [Browserless session management](https://docs.browserless.io/baas/session-management)
-  distinguishes reconnecting to a live browser from persistent profile restoration.
-  That distinction is essential to the guarantees above; no external browser
-  service/dependency is introduced.
 
 ## Verification
 

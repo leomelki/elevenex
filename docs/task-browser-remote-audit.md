@@ -69,10 +69,6 @@ arbitrary macOS synced passkeys remain unsupported by the current adapter.
 
 ## Research and verification
 
-[T3 Code's server browser](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/preview/ServerBrowser.ts)
-provides useful comparison points for viewer-owned pressed keys/buttons, clipboard,
-file transfer, popup and dialog lifetimes. Its framework and security assumptions
-are independent of Elevenex's.
 [Chromium's Input protocol](https://chromedevtools.github.io/devtools-protocol/tot/Input/)
 defines fixed editing commands, held-button state and composition cancellation;
 the APIs used here were also checked against the locked Playwright protocol types.

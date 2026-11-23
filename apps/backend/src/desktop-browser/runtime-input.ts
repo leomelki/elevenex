@@ -4,12 +4,29 @@ import { RuntimeInputLane } from './runtime-input-lane.js';
 import { RuntimeBrowserClipboard } from './runtime-clipboard.js';
 import type { RuntimePointerLock } from './runtime-pointer-lock.js';
 
+type StreamKey = Extract<TaskBrowserStreamEvent, { kind: 'key' }>;
+
+function chromiumKey(input: StreamKey) {
+  // The viewer sends the physical DOM code even when the key's text depends on
+  // its keyboard layout. Blink uses both location and isKeypad for native events.
+  const isKeypad = input.code.startsWith('Numpad');
+  const side = /^(?:Alt|Control|Meta|Shift)(Left|Right)$/.exec(input.code)?.[1];
+  let location = 0;
+  if (isKeypad) location = 3;
+  else if (side === 'Left') location = 1;
+  else if (side === 'Right') location = 2;
+  return {
+    key: input.key,
+    code: input.code,
+    windowsVirtualKeyCode: input.keyCode,
+    location,
+    isKeypad,
+  };
+}
+
 /** Page-owned human input. Cleanup is ordered after accepted writes and before new input. */
 export class RuntimeBrowserInput {
-  private readonly keys = new Map<
-    string,
-    Extract<TaskBrowserStreamEvent, { kind: 'key' }>
-  >();
+  private readonly keys = new Map<string, StreamKey>();
   private readonly buttons = new Map<
     string,
     Extract<TaskBrowserStreamEvent, { kind: 'pointer' }>
@@ -94,9 +111,7 @@ export class RuntimeBrowserInput {
         await this.cdp
           .send('Input.dispatchKeyEvent', {
             type: 'keyUp',
-            key: key.key,
-            code: key.code,
-            windowsVirtualKeyCode: key.keyCode,
+            ...chromiumKey(key),
             modifiers: 0,
           })
           .catch(() => undefined);
@@ -193,9 +208,7 @@ export class RuntimeBrowserInput {
       } else this.keys.delete(id);
       await this.cdp.send('Input.dispatchKeyEvent', {
         type: input.type === 'down' ? 'keyDown' : 'keyUp',
-        key: input.key,
-        code: input.code,
-        windowsVirtualKeyCode: input.keyCode,
+        ...chromiumKey(input),
         modifiers: input.modifiers,
         autoRepeat: input.type === 'down' && repeat,
         ...(input.type === 'down' && (input.text !== undefined || input.key === 'Enter')

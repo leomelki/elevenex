@@ -2,20 +2,24 @@ import { chromium, type BrowserContext } from 'playwright-core';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { launchRuntimeBrowser } from './runtime-launch.js';
+import * as diagnostics from '../browser-host/diagnostics.js';
+import {
+  browserLaunchOptions,
+  launchRuntimeBrowser,
+} from './runtime-launch.js';
 import { browserStartError } from './runtime-start-error.js';
 
 describe('Browser host startup and recovery', () => {
   let root: string, configured: string, managed: string;
   const launch = jest.spyOn(chromium, 'launchPersistentContext');
   const executable = jest.spyOn(chromium, 'executablePath');
+  const appArmorRestricted = jest.spyOn(diagnostics, 'appArmorRestricted');
   const userId = process.getuid ? jest.spyOn(process, 'getuid') : undefined;
   const install = jest.fn<Promise<void>, []>();
   // The launcher only returns this opaque context; page initialization belongs to the pool.
   const context = {} as BrowserContext;
   const options = {
-    headless: true,
-    chromiumSandbox: true,
+    ...browserLaunchOptions('/app/webauthn-proxy-v1'),
     proxy: { server: 'http://private-proxy:1234' },
   };
   const run = (signal = new AbortController().signal) =>
@@ -32,15 +36,16 @@ describe('Browser host startup and recovery', () => {
   };
   beforeEach(async () => {
     userId?.mockReturnValue(1000);
+    appArmorRestricted.mockResolvedValue(false);
     root = await mkdtemp(join(tmpdir(), 'browser-launch-'));
     configured = join(
       root,
       'configured',
-      'chromium-1228',
+      'chromium-1255',
       'chrome-linux',
       'chrome',
     );
-    managed = join(root, 'app', 'chromium-1228', 'chrome-linux', 'chrome');
+    managed = join(root, 'app', 'chromium-1255', 'chrome-linux', 'chrome');
     executable.mockReturnValue(configured);
     launch
       .mockReset()
@@ -53,6 +58,7 @@ describe('Browser host startup and recovery', () => {
   afterAll(() => {
     launch.mockRestore();
     executable.mockRestore();
+    appArmorRestricted.mockRestore();
     userId?.mockRestore();
   });
 

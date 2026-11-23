@@ -17,7 +17,11 @@ describe('remote human browser workflows', () => {
       if (req.url === '/download') { res.setHeader('Content-Disposition', 'attachment; filename="example.txt"'); res.end('download bytes'); return; }
       if (req.url === '/large') { res.setHeader('Content-Disposition', 'attachment; filename="large.txt"'); res.setHeader('Content-Length', 40 * 1024 * 1024); res.write(Buffer.alloc(1024)); return; }
       res.setHeader('Content-Type', 'text/html');
-      res.end('<!doctype html><title>Workflows</title><input type="file" id="file" multiple><a id="download" href="/download">Download</a><a id="large" href="/large">Large</a><button id="pointer" style="cursor:crosshair">Pointer</button>');
+      res.end(`<!doctype html><title>Workflows</title>
+        <input type="file" id="file" multiple><a id="download" href="/download">Download</a>
+        <a id="large" href="/large">Large</a><button id="pointer" style="cursor:crosshair">Pointer</button>
+        <button id="oauth" onclick="window.open('/popup')">Sign in</button>
+        ${req.url === '/' ? "<script>document.documentElement.dataset.popupBlocked = String(window.open('/unsolicited') === null)</script>" : ''}`);
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing fixture');
@@ -36,7 +40,15 @@ describe('remote human browser workflows', () => {
   });
   const workflows = () => task.page(tabId).snapshot().workflows ?? [];
   it('adopts OAuth popups with opener, cookies, postMessage and close returning to the originating tab', async () => {
-    await page.evaluate(url => { document.cookie = 'workflow=shared'; window.addEventListener('message', event => { document.title = event.data; }); window.open(url + '/popup'); }, url);
+    expect(await page.locator('html').getAttribute('data-popup-blocked')).toBe('true');
+    await page.evaluate(() => { document.cookie = 'workflow=shared'; window.addEventListener('message', event => { document.title = event.data; }); });
+    const button = await page.locator('#oauth').boundingBox();
+    if (!button) throw new Error('Sign-in control unavailable');
+    const point = { x: button.x + button.width / 2, y: button.y + button.height / 2, button: 'left' as const, clicks: 1, modifiers: 0 };
+    await task.input(tabId, task.page(tabId).generation, { kind: 'batch', events: [
+      { kind: 'pointer', type: 'down', buttons: 1, ...point },
+      { kind: 'pointer', type: 'up', buttons: 0, ...point },
+    ] });
     await wait(() => task.tabs.size === 2 && task.active !== tabId);
     const popup = context.pages().find(candidate => candidate !== page && candidate.url() !== 'about:blank')!;
     expect(await popup.evaluate(() => !!window.opener && document.cookie.includes('workflow=shared'))).toBe(true);

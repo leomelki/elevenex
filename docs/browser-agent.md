@@ -11,19 +11,12 @@ Research reviewed on 2026-11-09:
 
 | Project | Useful idea | Application here |
 | --- | --- | --- |
-| [T3 Code tools](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/mcp/toolkits/preview/tools.ts) and [broker](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/mcp/PreviewAutomationBroker.ts) | Shared human/agent tabs, bounded snapshots, explicit ownership, desktop/server routing | Task/session-scoped capabilities; agent observations require ownership; common engine with two host adapters |
 | [Codex / ChatGPT browser](https://learn.chatgpt.com/docs/browser?surface=app) | Integrated visual verification, separate browser profiles, native input and page inspection; full CDP is a distinct capability | Task profiles remain separate from the user's regular browser; screenshots are first-class MCP images; protocol scope is explicit |
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Accessibility targeting; its README recommends CLI/skills for coding agents to reduce schema and output costs | One execution tool, on-demand API discovery, explicit bounded snapshots, condition waits |
 | [Playwriter](https://github.com/remorses/playwriter) | Stateful code execution, batching and browser handles | Persistent per-conversation `state`, async code, normal control flow, parallel independent tabs |
 | [agent-browser](https://github.com/vercel-labs/agent-browser) | Compact element references and an observe/act/check loop | Document-scoped AX references, CSS selectors and native coordinate input |
 | [Chrome DevTools MCP principles](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/design-principles.md) | Small composable operations, progressive complexity, concise diagnostics and actionable errors | Thin helpers plus page CDP; incremental event windows; explicit output budgets |
 | [Cloudflare Code Mode](https://blog.cloudflare.com/code-mode/) | Code composes many tool operations without many model round trips | Agent code runs off the host thread and communicates through a JSON-only capability broker |
-
-These sources inform the design; no external project's implementation is copied.
-Codex's public documentation describes behavior, not a reusable internal browser
-runtime. T3's current tools and broker were inspected directly; its
-[evaluate timeout report](https://github.com/pingdotgg/t3code/issues/13513) also
-motivates a specific recovery regression.
 
 ## Design iterations and decisions
 
