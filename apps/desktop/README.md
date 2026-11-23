@@ -27,6 +27,23 @@ The app uses the backend's `desktop-workspace` routes. A versioned capability
 probe identifies engines that lack workspace support. The backend applies the
 metadata migration automatically.
 
+## Antigravity
+
+Install the [official Antigravity CLI](https://antigravity.google/docs/getting-started#download-and-install)
+on the machine that runs the Elevenex engine. For an SSH machine, install it
+under the same remote account that runs the engine. Confirm that `agy --version`
+works, then sign in with `agy acp --login` from a terminal on that machine.
+Choose **Antigravity** in the harness picker of a new session and send a message.
+
+Elevenex uses [Google’s interactive ACP workflow](https://antigravity.google/docs/ide/extensions/acp/).
+Antigravity owns authentication, tool execution and its native helpers. Elevenex
+relays messages you submit in desktop chat, renders decisions, and restores
+the conversation after reconnecting. Follow-ups wait in the queue. Models and
+thinking levels appear as Antigravity advertises them in the session. Google’s
+[interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
+distinguishes this workflow from third-party agent delegation. Antigravity turns
+in Elevenex require a desktop chat submission, including when using an API key.
+
 ## Run
 
 Use Node **22.22.3+**, **24.15.0+**, or **26+**. Node 24.12 is too old for this

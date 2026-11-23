@@ -77,7 +77,12 @@ export async function executeChatAction(
         prompt,
         undefined,
         images,
-        { human: true, queue: action.queue, waitForCompletion: false },
+        {
+          human: true,
+          ...(provider.info.id === 'antigravity' ? { origin: 'desktop-chat' } : {}),
+          queue: action.queue,
+          waitForCompletion: false,
+        },
       );
       break;
     }
@@ -124,7 +129,8 @@ export async function executeChatAction(
       await provider.steerPendingPrompt(sessionId, text(action.id));
       break;
     case 'resume-queue':
-      await provider.resumePendingPrompts(sessionId);
+      if (provider.info.id === 'antigravity') await provider.resumePendingPrompts(sessionId, 'desktop-chat');
+      else await provider.resumePendingPrompts(sessionId);
       break;
     case 'permission': {
       const raw = record(await provider.getRuntimeState(sessionId)),

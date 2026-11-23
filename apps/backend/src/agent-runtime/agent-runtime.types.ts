@@ -147,6 +147,9 @@ export interface AgentImageInput {
   data: string;
 }
 
+/** Set by desktop chat handlers, never copied from prompt request bodies. */
+export type InteractivePromptOrigin = 'desktop-chat';
+
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
@@ -170,6 +173,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     images?: AgentImageInput[],
     options?: {
       human?: boolean;
+      origin?: InteractivePromptOrigin;
       queue?: boolean;
       /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
       waitForCompletion?: boolean;
@@ -178,7 +182,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
   steerPendingPrompt(sessionId: number, id: string): Promise<void>;
-  resumePendingPrompts(sessionId: number): Promise<void>;
+  resumePendingPrompts(sessionId: number, origin?: InteractivePromptOrigin): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
   reactivateSession?(sessionId: number): Promise<void> | void;

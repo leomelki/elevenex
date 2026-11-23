@@ -367,6 +367,7 @@ export class SessionChatFixture {
       | "permission"
       | "question"
       | "running"
+      | "antigravity-running"
       | "failed"
       | "history"
       | "panel-reflow"
@@ -450,13 +451,24 @@ export class SessionChatFixture {
         phase: "waiting",
         question: retryQuestion,
       };
-    if (mode === "running") {
+    if (mode === "running" || mode === "antigravity-running") {
       session.items = session.items.slice(0, 6);
       session.state = {
         ...session.state,
         phase: "running",
         canInterrupt: true,
         work: previewChatWork(),
+      };
+    }
+    if (mode === "antigravity-running") {
+      const harness = { id: 'antigravity', label: 'Antigravity' };
+      const model = { id: 'gemini', label: 'Gemini' };
+      session.state = {
+        ...session.state, provider: harness.id,
+        providers: [...(session.state.providers ?? []), harness],
+        model: model.id, models: [model], canSteer: false, providerLocked: true,
+        reasoning: null, fast: false, permissionMode: null, permissionModes: [],
+        controls: { plan: false, reasoning: false, fast: false },
       };
     }
     if (mode === "failed")

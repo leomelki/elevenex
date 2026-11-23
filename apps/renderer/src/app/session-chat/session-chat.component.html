@@ -295,6 +295,7 @@
       [draft]="store.draft()"
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
+      [steeringEnabled]="store.state()?.canSteer !== false"
       [disabled]="archived()"
       [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
@@ -358,7 +359,7 @@
         archived()
           ? 'Restore this session to send messages'
           : store.running()
-            ? 'Add a follow-up · Alt Enter to steer'
+            ? (store.state()?.canSteer === false ? 'Add a follow-up…' : 'Add a follow-up · Alt Enter to steer')
             : store.state()?.sessionMentions
               ? 'Message the agent, or @ to mention a session…'
               : 'Message the agent…'

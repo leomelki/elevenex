@@ -288,6 +288,7 @@ export interface SessionChatState {
   readonly fast?: boolean;
   readonly phase: "idle" | "running" | "waiting" | "error";
   readonly canInterrupt: boolean;
+  readonly canSteer?: boolean;
   readonly error: string | null;
   readonly model: string | null;
   readonly models: readonly {

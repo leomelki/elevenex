@@ -85,6 +85,14 @@ describe("Composer public interactions", () => {
       "steer",
     ]);
   });
+  it("queues Alt Enter follow-ups when the harness only accepts queued messages", () => {
+    fixture.componentRef.setInput("running", true);
+    fixture.componentRef.setInput("steeringEnabled", false);
+    fixture.detectChanges();
+    press(type("Follow up after this turn"), { altKey: true });
+    expect(sent.map((value) => value.intent)).toEqual(["queue"]);
+    expect(fixture.nativeElement.querySelector("button.send").title).toBe("Queue · ↵");
+  });
   it("keeps newlines and IME composition local, and prevents empty or disabled sends", () => {
     press(type("line one"), { shiftKey: true });
     press(type("composing"), { isComposing: true });

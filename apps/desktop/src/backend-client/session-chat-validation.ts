@@ -664,6 +664,7 @@ export function parseChatState(value: unknown): SessionChatState {
       return { id: chatText(q["id"]), text: chatText(q["text"], 64000) };
     }),
     queuePaused: bool(raw["queuePaused"]),
+    ...(raw["canSteer"] === undefined ? {} : { canSteer: bool(raw["canSteer"]) }),
     ...(raw["dispatchingPrompts"] === undefined ? {} : {
       dispatchingPrompts: array(raw["dispatchingPrompts"], 8, value => {
         const prompt = chatObject(value);

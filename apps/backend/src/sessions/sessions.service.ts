@@ -723,11 +723,11 @@ export class SessionsService extends EventEmitter {
         activeAgentProvider: normalized,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(schema.sessions.id, id))
+      .where(and(eq(schema.sessions.id, id), isNull(schema.sessions.antigravitySessionId)))
       .returning();
 
     if (rows.length === 0) {
-      throw new NotFoundException(`Session with id ${id} not found`);
+      throw new ConflictException('The session changed while choosing a provider.');
     }
 
     this.emit('session-provider-changed', { sessionId: id });

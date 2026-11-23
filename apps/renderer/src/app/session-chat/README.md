@@ -176,8 +176,15 @@ Older engines omit the capability and retain their original send contract.
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.
 
-The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Codex
+The backend adapter supports Claude, Codex, Pi, OpenCode and Antigravity.
+Antigravity connects to the official CLI over ACP in the task workspace.
+It starts only on direct desktop chat submission, restores saved transcripts
+without launching the CLI, and resumes the native conversation when it
+receives the next message. Its runtime advertises `canSteer: false` so the
+composer queues follow-ups and disables steering on queued rows. See
+[Antigravity setup](../../../../desktop/README.md#antigravity).
+
+Codex
 projects native user-message receipts into the live transcript, including prompts
 dispatched from the queue or steered into an active turn. Live and saved native
 receipts share the provider item ID; rewind/fork retain their saved record anchors.

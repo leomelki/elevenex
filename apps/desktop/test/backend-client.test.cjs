@@ -782,6 +782,9 @@ test('conversation replies validate resource identity, bounded fields and suppor
 test('chat accepts bounded queued handoffs from engines using the capability', () => {
   const { parseChatState } = require('../dist/backend-client/session-chat-validation');
   const prompt = { id: 'q1', text: 'Queued follow-up', timestamp: '2026-11-14T12:00:00.000Z' };
+  assert.equal(parseChatState(chatState).canSteer, undefined);
+  assert.equal(parseChatState({ ...chatState, provider: 'antigravity', canSteer: false }).canSteer, false);
+  assert.throws(() => parseChatState({ ...chatState, canSteer: 'false' }));
   assert.equal(parseChatState(chatState).dispatchingPrompts, undefined);
   assert.deepEqual(parseChatState({ ...chatState, dispatchingPrompts: [] }).dispatchingPrompts, []);
   assert.deepEqual(parseChatState({

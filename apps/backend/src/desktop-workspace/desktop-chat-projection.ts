@@ -142,6 +142,7 @@ export function chatState(
     ...(typeof activePrompt === 'string' && activePrompt.length > 0 && activePrompt.length <= 1000
       ? { activePromptId: activePrompt } : {}),
     canInterrupt: raw.canInterrupt === true,
+    ...(raw.canSteer === false ? { canSteer: false } : {}),
     error: nullable(raw.lastError),
     model: nullable(raw.selectedModel),
     models: list(raw.availableModels)
