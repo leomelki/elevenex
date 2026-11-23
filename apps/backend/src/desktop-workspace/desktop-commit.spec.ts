@@ -5,6 +5,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Test } from '@nestjs/testing';
 import { GitService } from '../git/git.service.js';
+import {
+  configureWorktreeStatusReader,
+  readWorktreeStatusDetailed,
+  resetWorktreeStatusReader,
+} from '../git/worktree-status-reader.js';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 import { commitSnapshot } from './desktop-commit.js';
 import { commitSelection, commitRevision } from './desktop-commit-selection.js';
@@ -152,6 +157,31 @@ describe('desktop commit snapshot', () => {
     expect(await git('show', 'HEAD:work.txt')).toBe('staged\n');
     expect(await readFile(join(path, 'work.txt'), 'utf8')).toBe('unstaged\n');
     expect(await git('diff', '--cached')).toBe('');
+  });
+
+  it('commits unstaged changes while the live index status cache is warm', async () => {
+    await git('config', 'core.untrackedCache', 'true');
+    await writeFile(join(path, 'work.txt'), 'chosen\n');
+    configureWorktreeStatusReader({ indexSettleMs: 0 });
+    try {
+      const live = await readWorktreeStatusDetailed(path);
+      expect(live.strategy).toBe('untracked-cache');
+      expect(live.status.staged).toEqual([]);
+
+      await commitSnapshot(
+        path,
+        service,
+        await service.getStatusSummary(path),
+        selection,
+        'Save working changes',
+        () => {},
+      );
+      expect(await git('show', 'HEAD:work.txt')).toBe('chosen\n');
+      expect(await git('status', '--porcelain')).toBe('');
+    } finally {
+      resetWorktreeStatusReader(path);
+      configureWorktreeStatusReader(null);
+    }
   });
   it('rejects index changes during message generation without committing or losing staging', async () => {
     await writeFile(join(path, 'work.txt'), 'chosen\n');

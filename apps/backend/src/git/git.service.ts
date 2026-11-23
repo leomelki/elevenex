@@ -485,7 +485,11 @@ export class GitService {
         this.logger.log(`[commit:${requestId}] git add --all completed`);
       }
 
-      const status = await readWorktreeStatus(worktreePath, git);
+      // The worktree status cache copies the live index. Desktop commits
+      // validate the staged files in their private snapshot instead.
+      const status = options.indexFile
+        ? await git.status(['--untracked-files=no', '--no-ahead-behind'])
+        : await readWorktreeStatus(worktreePath, git);
       const stagedFiles = this.getUniqueStagedFiles(status);
       this.logger.log(
         `[commit:${requestId}] status loaded branch="${status.current || 'HEAD'}" staged=${stagedFiles.length} modified=${status.modified.length} deleted=${status.deleted.length} renamed=${status.renamed.length} untracked=${status.not_added.length} conflicted=${status.conflicted.length} stagedFiles=${this.previewList(stagedFiles)}`,
