@@ -24,6 +24,7 @@
   ],
   "npmRebuild": false,
   "mac": {
+    "artifactName": "elevenex-new-desktop-macos-${arch}.${ext}",
     "icon": "assets/icons/icon.icns",
     "category": "public.app-category.developer-tools",
     "target": [
@@ -32,6 +33,7 @@
     ]
   },
   "win": {
+    "artifactName": "elevenex-new-desktop-windows-${arch}.${ext}",
     "icon": "assets/icons/icon.ico",
     "target": [
       "nsis"
@@ -46,6 +48,8 @@
     "icon": "assets/icons/icon.icns"
   },
   "linux": {
+    "artifactName": "elevenex-new-desktop-linux-${arch}.${ext}",
+    "executableName": "elevenex-desktop",
     "icon": "assets/icons/png",
     "category": "Development",
     "target": [

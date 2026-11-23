@@ -1,3 +1,6 @@
+// The desktop and runtime builds generate their own assets.
+if (process.env.ELEVENEX_SKIP_LEGACY_ICONS === '1') process.exit(0);
+
 const { execSync } = require('child_process');
 const { join } = require('path');
 const root = join(__dirname, '..');

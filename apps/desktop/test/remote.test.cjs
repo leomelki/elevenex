@@ -435,10 +435,11 @@ test('native OpenSSH configuration owns connection policy while the app reserves
   for (const line of ['hostname 127.0.0.1', 'user nobody', 'port 1', 'proxyjump jump-alias', 'forwardagent yes',
     'stricthostkeychecking false', 'verifyhostkeydns true', 'updatehostkeys true', 'fingerprinthash MD5',
     'forwardx11 yes', 'tunnel point-to-point', 'permitlocalcommand yes', 'localcommand true', 'connecttimeout 42',
-    'connectionattempts 3', 'serveraliveinterval 17', 'serveralivecountmax 8', 'numberofpasswordprompts 4', 'loglevel QUIET',
+    'connectionattempts 3', 'serveraliveinterval 17', 'serveralivecountmax 8', 'numberofpasswordprompts 4',
     'clearallforwardings no', 'controlmaster false', 'controlpath /chosen/control.sock', 'controlpersist 90', 'requesttty false',
     'stdinnull no', 'forkafterauthentication no', 'sessiontype default',
     'localforward 9999 [localhost]:80', 'remoteforward 9998 [localhost]:81', 'dynamicforward 9997']) assert.ok(output.includes(line), `${line}\n${output}`);
+  assert.match(output, /^loglevel (QUIET|SILENT)$/m);
   assert.equal(output.includes('remotecommand false'), false);
 });
 
