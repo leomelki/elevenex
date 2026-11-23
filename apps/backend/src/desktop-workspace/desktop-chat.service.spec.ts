@@ -1,3 +1,4 @@
+import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import { SESSION_CHAT_TURN_WORK_MAX_LIMIT, serializeBrowserElements, type SessionChatStreamPage } from '@elevenex/shared';
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -538,11 +539,13 @@ describe('selected session chat', () => {
     await expect(chat.media(1, 2, 'image', '1')).rejects.toThrow('no longer available');
     await expect(chat.media(1, 2, 'image', '../secret')).rejects.toThrow('Invalid image');
   });
+  const reviewDetails = jest.fn<TurnChangesService['reviewDetails']>();
   beforeEach(async () => {
     history = [];
     live = [];
     status = 'active';
     jest.clearAllMocks();
+    reviewDetails.mockReset();
     rememberAgentConfig.mockReset().mockResolvedValue(undefined);
     started.mockReturnValue(true);
     advertised.mockReturnValue([
@@ -571,6 +574,7 @@ describe('selected session chat', () => {
       controllers: [DesktopChatController],
       providers: [
         DesktopChatService,
+        { provide: TurnChangesService, useValue: { reviewDetails } },
         { provide: DesktopChatAttachments, useValue: {} },
         { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
@@ -760,6 +764,32 @@ describe('selected session chat', () => {
     emit('history_snapshot');
     await chat.changes(1, 2, 'u', 0);
     expect(runtime.getHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads one scoped capture when opening the net diff and reuses it across source and line reads', async () => {
+    const capture = {
+      files: 0, additions: 0, deletions: 0, filesChanged: [],
+      capture: { root: '/workspace', complete: true, shared: false },
+    };
+    history = [{ ...item('u'), kind: 'user' }, {
+      ...item('stored'), kind: 'system', turnChanges: { ...capture, summaryOnly: true,
+        evidence: { version: 1, tools: [], sources: ['provider'] } },
+    }];
+    reviewDetails.mockResolvedValue({
+      ...capture, evidence: { version: 1, tools: [{
+        kind: 'provider', toolId: 'patch', toolName: 'Apply patch',
+        files: [{ path: 'file.txt', status: 'created', additions: 1, deletions: 0,
+          hunks: [{ id: 'patch', label: 'Apply patch', toolName: 'Apply patch', oldString: '', newString: 'saved', additions: 1, deletions: 0 }] }],
+      }] },
+    });
+    expect(await chat.changes(1, 2, 'u', 0)).toMatchObject({ total: 0, sources: ['provider'] });
+    const provider = await chat.changes(1, 2, 'u', 0, undefined, 0, undefined, 'provider');
+    expect(await chat.changes(1, 2, 'u', 0, 'file.txt', 0, provider.revision, 'provider')).toMatchObject({
+      total: 1, source: 'provider', content: { lines: [{ text: 'saved', evidence: 'Apply patch · patch' }] },
+    });
+    expect(reviewDetails.mock.calls).toEqual([[2, 'codex', 'stored']]);
+    expect(runtime.getHistory).toHaveBeenCalledWith(2, { changeDetails: 'summary' });
+    await expect(chat.changes(1, 2, 'u', 0, undefined, 0, undefined, 'other')).rejects.toThrow('Invalid changes');
   });
 
   it('reads archived reply diffs without attaching a runtime and validates task ownership', async () => {

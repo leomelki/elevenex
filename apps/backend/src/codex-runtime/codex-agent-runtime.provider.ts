@@ -60,8 +60,8 @@ export class CodexAgentRuntimeProvider
     });
   }
 
-  getHistory(sessionId: number) {
-    return this.runtimeService.getHistory(sessionId);
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
+    return this.runtimeService.getHistory(sessionId, options);
   }
 
   getRuntimeState(sessionId: number) {

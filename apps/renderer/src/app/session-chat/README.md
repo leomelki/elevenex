@@ -698,15 +698,15 @@ keep their locked creator rather than issuing unsupported reads.
 
 ## Reply changes
 
-Completed replies supply the designed file chips, counts, overflow and Review
-button from optional bounded transcript `changes` metadata. Main validates it;
-older engines can omit it. Persisted net captures include shell edits and survive
-history reloads. Successful native edits provide a fallback; failed/pending calls
-do not claim changed files. Captured unchanged paths remove reverted edits, while
-explicit edits outside the captured repository survive reconciliation.
-An ignored file observed without a starting state only contributes when a
-successful tool supplies evidence for that path. Verified binary and mode-only
-changes still contribute to the file count.
+Completed replies supply file chips, counts and Review from bounded transcript
+metadata. The default review compares worktree versions at the start and end of
+the reply. It counts each changed path once, includes shell and manual edits, and
+omits net-zero paths. The source control also opens successful **Provider edits**
+and **Command observations** when available, even when the net diff is empty.
+Provider edits show the tool ID. Command observations can include edits made by
+another process during the window. Overlapping local windows with the same
+verified transition show that diff once and retain both tool IDs. Older turns
+keep their existing saved diffs and successful transcript-tool fallback.
 
 `SessionChat.reviewRequested` carries the selected scope/task/session, stable
 reply ID and optional file path. `MachineWorkspace` owns that selection and
@@ -720,7 +720,9 @@ Summaries include at most 200 file entries plus the full count. Reviews page
 100 file records, render the existing 12-file window, and lazily read at most
 three diffs concurrently. The backend coalesces and briefly retains one prepared
 reply per feed, invalidated by transcript revisions, so scrolling does not reread
-the complete provider history for each file. Content pages contain at most 400 lines / 128 KiB,
+the complete provider history for each file. Saved captures load a compact
+summary in transcript reads and fetch patches only when Review opens. Each
+source has its own review revision. Content pages contain at most 400 lines / 128 KiB,
 with bounded line text and explicit next/previous controls. The owner caches at
 most one file page and one content page per file (100 maximum). Captured patches
 are decoded linearly in the backend; native fallback computation is limited to

@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,7 @@ import { ProjectsService } from '../projects/projects.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { DesktopWorkspaceGitService } from './desktop-workspace-git.service.js';
 import { SettingsService } from '../settings/settings.service.js';
+import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
 
 const execute = promisify(execFile);
@@ -182,6 +184,47 @@ describe('desktop workspace git boundary', () => {
       message: 'Save the selected task',
       includeUnstaged: true,
     });
+  });
+
+  it('keeps workspace Git changes current across sessions, manual edits and later restores', async () => {
+    const testing = await Test.createTestingModule({
+      providers: [GitService, { provide: TextAgentGenerationService, useValue: {} }],
+    }).compile();
+    const realGit = testing.get(GitService);
+    gitBoundary.getStatusSummary = realGit.getStatusSummary.bind(realGit);
+    const [first, second] = await database.db.insert(schema.sessions).values([
+      { repoId, workspaceId: taskId, branchName: 'task', worktreePath: checkout, name: 'First' },
+      { repoId, workspaceId: taskId, branchName: 'task', worktreePath: checkout, name: 'Second' },
+    ]).returning();
+    const detector = new TurnChangesService(database.db);
+    const waitForFiles = async (files: number) => {
+      const deadline = Date.now() + 3500;
+      let summary = await service.summary(taskId);
+      while (summary.files !== files && Date.now() < deadline) {
+        await delay(50);
+        summary = await service.summary(taskId);
+      }
+      expect(summary.files).toBe(files);
+      return summary;
+    };
+    try {
+      const clean = await service.summary(taskId);
+      const a = await detector.begin(first.id, 'codex', checkout);
+      const b = await detector.begin(second.id, 'pi', checkout);
+      await writeFile(join(checkout, 'from-agent'), 'agent\n');
+      await writeFile(join(checkout, 'initial'), 'manual edit\n');
+      const dirty = await waitForFiles(2);
+      expect(dirty.changesRevision).not.toBe(clean.changesRevision);
+      expect((await detector.finish(a, 'a'))?.turnChanges?.capture?.shared).toBe(true);
+      await rm(join(checkout, 'from-agent'));
+      await waitForFiles(1);
+      expect((await detector.finish(b, 'b'))?.turnChanges?.filesChanged.map(file => file.path)).toEqual(['initial']);
+      await git(checkout, 'restore', '--', 'initial');
+      await waitForFiles(0);
+    } finally {
+      await detector.onModuleDestroy();
+      await testing.close();
+    }
   });
 
   describe('AI commits through the generation boundary', () => {

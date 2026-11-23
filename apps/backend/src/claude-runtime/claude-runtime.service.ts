@@ -708,11 +708,11 @@ export class ClaudeRuntimeService
     }
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'claude', session.claudeSessionId, history);
+    return this.turnChanges.attachHistory(sessionId, 'claude', session.claudeSessionId, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -2801,7 +2801,7 @@ export class ClaudeRuntimeService
         await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
         const run = this.activeRuns.get(sessionId);
         if (run && run.runId === runId && !run.interruptRequested) {
-          changeCapture = await this.turnChanges?.begin(sessionId, 'claude', session.worktreePath);
+          changeCapture = await this.turnChanges?.begin(sessionId, 'claude', session.worktreePath, state.claudeSessionId);
           if (!run.interruptRequested && this.activeRuns.get(sessionId) === run) await runtime.submitTurn(
             this.buildSdkUserMessage(
               trimmedPrompt,
@@ -6461,6 +6461,25 @@ export class ClaudeRuntimeService
     const environment = await buildAugmentedEnvAsync(process.env, worktreePath);
     const pathToClaudeCodeExecutable = await this.resolveClaudeBinary();
     const mcpAgentToken = await this.mcpAgentTokens.ensureToken(sessionId);
+    const observeFileTool: HookCallback = async (input) => {
+      if (input.hook_event_name === 'PreToolUse' || input.hook_event_name === 'PostToolUse' ||
+          input.hook_event_name === 'PostToolUseFailure')
+        await this.turnChanges?.claudeTool(sessionId, input).catch(() => undefined);
+      return {};
+    };
+    const hooks: Options['hooks'] = {
+      PreToolUse: [
+        ...(isAgentSession ? [{ hooks: [
+          ...(normalizeAutonomyMode(agentAutonomyMode) === 'review' && effectivePermissionMode === 'auto'
+            ? [askOnDestructiveElevenexTool] : []), constrainOperatorChild,
+        ] }] : []),
+        ...(this.turnChanges ? [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }] : []),
+      ],
+      ...(this.turnChanges ? {
+        PostToolUse: [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }],
+        PostToolUseFailure: [{ matcher: 'Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit', hooks: [observeFileTool] }],
+      } : {}),
+    };
     const options: Options & {
       fastMode?: boolean;
       fastModePerSessionOptIn?: boolean;
@@ -6478,6 +6497,7 @@ export class ClaudeRuntimeService
           ? claudeSessionId
           : undefined,
       includeHookEvents: true,
+      ...(isAgentSession || this.turnChanges ? { hooks } : {}),
       includePartialMessages: true,
       extraArgs: { 'replay-user-messages': null },
       promptSuggestions: true,
@@ -6523,19 +6543,6 @@ export class ClaudeRuntimeService
                 prompt:
                   'You are a delegated Elevenex operator. Follow the assigned task and use the Elevenex MCP tools for workspace and session operations. Application code, builds, tests, and git work belong in separate Elevenex coding sessions. Do not read or change application code directly or use shell commands. Respect the parent mission and autonomy policy; return concise findings to the parent. Do not duplicate another worker’s assignment.',
               },
-            },
-            hooks: {
-              PreToolUse: [
-                {
-                  hooks: [
-                    ...(normalizeAutonomyMode(agentAutonomyMode) === 'review' &&
-                    effectivePermissionMode === 'auto'
-                      ? [askOnDestructiveElevenexTool]
-                      : []),
-                    constrainOperatorChild,
-                  ],
-                },
-              ],
             },
           }
         : {}),

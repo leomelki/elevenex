@@ -7,6 +7,7 @@ import { prepareTurnChanges, preparedChangesPage, type PreparedTurnChanges } fro
 import { executeChatAction } from './desktop-chat-actions.js';
 import { assertChatEditIdle, chatEditProvider, savedChatPrompt, validateChatEditId } from './desktop-chat-edit.js';
 import { chatPromptImages } from './desktop-chat-input.js';
+import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import {
   BadRequestException,
@@ -16,6 +17,7 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  Optional,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -134,6 +136,7 @@ export class DesktopChatService implements OnModuleDestroy {
     private readonly registry: AgentRuntimeRegistryService,
     private readonly settings: SettingsService,
     private readonly conversationExports: ConversationExportService,
+    @Optional() private readonly turnCaptures?: TurnChangesService,
   ) {
     this.sessions.on('session-completion-changed', this.completionChanged);
     this.sessions.on('session-status-changed', this.sessionChanged);
@@ -323,7 +326,7 @@ export class DesktopChatService implements OnModuleDestroy {
   private history(feed: ChatFeed, sessionId: number): Promise<AgentTranscriptItem[]> {
     if (feed.history?.revision === feed.historyRevision) return feed.history.pending;
     const revision = feed.historyRevision;
-    const pending = feed.provider.getHistory(sessionId).finally(() => {
+    const pending = feed.provider.getHistory(sessionId, { changeDetails: 'summary' }).finally(() => {
       if (feed.history?.pending === pending) feed.history = undefined;
     });
     feed.history = { revision, pending };
@@ -897,8 +900,10 @@ export class DesktopChatService implements OnModuleDestroy {
     path?: string,
     lineOffset = 0,
     revision?: string,
+    source: unknown = 'net',
   ) {
     if (
+      (source !== 'net' && source !== 'provider' && source !== 'command') ||
       !turnId ||
       turnId.length > 1000 ||
       !Number.isSafeInteger(offset) ||
@@ -930,7 +935,11 @@ export class DesktopChatService implements OnModuleDestroy {
         const live = runtimeChatItems(raw);
         const settling = session.status !== 'archived' && !session.workspaceArchivedAt ? feed.handoff.carry(history) : [];
         const { rows } = mergeTranscriptRows(history, settling.length ? [...settling, ...live] : live);
-        return prepareTurnChanges(rows, turnId);
+        const prepared = prepareTurnChanges(rows, turnId);
+        if (!prepared.markerId || !prepared.details?.summaryOnly) return prepared;
+        const details = await this.turnCaptures?.reviewDetails(sessionId, session.activeAgentProvider, prepared.markerId);
+        if (!details) throw new GoneException('These changes are no longer available. Reopen the session.');
+        return prepareTurnChanges(rows, turnId, details);
       })();
       feed.review = {
         turnId,
@@ -949,6 +958,7 @@ export class DesktopChatService implements OnModuleDestroy {
       path,
       lineOffset,
       revision,
+      source,
     );
   }
 

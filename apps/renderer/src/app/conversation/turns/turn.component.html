@@ -133,7 +133,7 @@
         (openFile)="openFile.emit($event); reviewFile.emit($event)"
         (review)="review.emit()"
       /><ex-turn-acts [actions]="actions()" (action)="action.emit($event)" />
-      @if (files().length) {
+      @if (files().length || reviewAvailable()) {
         <button exButton variant="secondary" size="sm" (click)="review.emit()">
           Review
         </button>

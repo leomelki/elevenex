@@ -1,3 +1,4 @@
+import { OverlayContainer } from "@angular/cdk/overlay";
 import { TestBed } from "@angular/core/testing";
 import type {
   BackendResult,
@@ -133,5 +134,60 @@ describe("selected reply review ownership", () => {
     const request = pending.at(-1)!.input;
     fixture.destroy();
     expect(client.cancel).toHaveBeenCalledWith("scope", request.requestId);
+  });
+
+  it('opens provider edits and shell observations from an empty net diff', async () => {
+    const changes = vi.fn(async (_scope: string, input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>> => {
+      const source = input.source ?? 'net';
+      const files = source === 'net' ? [] : [{ path: 'same.txt', status: 'M' as const, add: 401, del: 0 }];
+      return { ok: true, value: {
+        source, sources: ['provider', 'command'], files, total: files.length,
+        turnId: input.turnId, revision: (source === 'provider' ? 'b' : 'c').repeat(64), offset: 0, nextOffset: null,
+        ...(source === 'command' ? { notice: 'Observed during the command. Other writers may be included.' } : {}),
+        content: input.path ? { path: input.path, nextOffset: null, lines: [{
+          id: '1', kind: 'add', newNumber: 1, text: source === 'provider' ? 'provider change' : 'shell change',
+          evidence: source === 'provider' ? 'Apply patch · patch' : 'Bash · command',
+        }] } : null,
+      } };
+    });
+    TestBed.configureTestingModule({ providers: [{ provide: SessionChatClient, useValue: { changes, cancel: vi.fn() } }] });
+    const fixture = TestBed.createComponent(SessionChatReviewComponent);
+    fixture.componentRef.setInput('target', { scopeId: 'scope', taskId: 1, sessionId: 2, turnId: 'reply' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const overlay = TestBed.inject(OverlayContainer).getContainerElement();
+    expect(changes.mock.calls[0]?.[1].source).toBe('net');
+    expect(host.textContent).toContain('No changes');
+
+    for (const [source, label, heading, line] of [
+      ['provider', 'Provider edits', 'Apply patch · patch', 'provider change'],
+      ['command', 'Command observations', 'Bash · command', 'shell change'],
+    ] as const) {
+      const trigger = host.querySelector<HTMLButtonElement>('ex-dropdown button')!;
+      trigger.focus();
+      trigger.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      const choice = [...overlay.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+        .find(item => item.textContent?.includes(label));
+      expect(choice).toBeTruthy();
+      choice!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(changes.mock.calls.at(-1)?.[1]).toMatchObject({ source, offset: 0 });
+      expect(document.activeElement).toBe(trigger);
+
+      host.querySelector<HTMLButtonElement>('ex-diff-file .load button')!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+      expect(changes.mock.calls.at(-1)?.[1]).toMatchObject({ source, path: 'same.txt', lineOffset: 0 });
+      expect(host.textContent).toContain(heading);
+      expect(host.textContent).toContain(line);
+    }
+    expect(host.textContent).toContain('Other writers may be included.');
   });
 });

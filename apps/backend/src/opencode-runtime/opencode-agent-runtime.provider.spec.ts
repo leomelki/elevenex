@@ -1,3 +1,4 @@
+import type { TurnChangeCapture, TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 /* Async mocks intentionally implement the native promise API without I/O. */
 /* eslint-disable @typescript-eslint/require-await */
 import { EventEmitter } from 'node:events';
@@ -26,7 +27,7 @@ function deferred<T>() {
   return { resolve, promise };
 }
 
-function fixture(nativeSessionId = '-1') {
+function fixture(nativeSessionId = '-1', changes?: Pick<TurnChangesService, 'begin' | 'finish' | 'forSession' | 'openCodeTool'>) {
   const events: Event[] = [
     { id: 'connected', type: 'server.connected', properties: {} },
   ];
@@ -129,6 +130,7 @@ function fixture(nativeSessionId = '-1') {
     {
       ensureToken: jest.fn().mockResolvedValue('evx_opencode_test'),
     } as unknown as McpAgentTokenService,
+    changes as TurnChangesService | undefined,
   );
   provider.onModuleInit();
   return {
@@ -648,6 +650,37 @@ describe('OpenCode runtime lifecycle', () => {
       }
     },
   );
+  it('forwards the current OpenCode tool lifecycle and excludes historical or foreign tool events', async () => {
+    const startedAt = new Date();
+    const capture = { startedAt: startedAt.toISOString() } as TurnChangeCapture;
+    const changes = { begin: jest.fn(async () => capture), finish: jest.fn(async () => undefined),
+      forSession: jest.fn(() => capture), openCodeTool: jest.fn() };
+    const f = fixture('-1', changes);
+    try {
+      await f.provider.submitPrompt(1, 'modify files');
+      await tick();
+      const start = startedAt.getTime() + 1;
+      const input = { filePath: '/tmp/repo/edit' };
+      const tool = { id: 'part', type: 'tool' as const, sessionID: 's', messageID: 'message',
+        callID: 'edit', tool: 'edit' };
+      const send = (part: Part) => f.send({ id: part.id, type: 'message.part.updated', properties: { part } });
+      send({ ...tool, state: { status: 'pending', input, raw: '' } });
+      send({ ...tool, state: { status: 'running', input, time: { start: start - 100 } } });
+      send({ ...tool, sessionID: 'other', state: { status: 'running', input, time: { start } } });
+      send({ ...tool, state: { status: 'running', input, time: { start } } });
+      const metadata = { filediff: { file: input.filePath, patch: '@@ -1 +1 @@\n-before\n+after' } };
+      send({ ...tool, state: { status: 'completed', input, time: { start, end: start + 1 }, output: 'edited', title: 'edit', metadata } });
+      await tick();
+      const normalized = expect.objectContaining({ file_path: input.filePath });
+      expect(changes.openCodeTool.mock.calls).toEqual([
+        [capture, 'edit', 'Edit', 'edit', 'running', normalized, undefined, 'message'],
+        [capture, 'edit', 'Edit', 'edit', 'completed', normalized, metadata, 'message'],
+      ]);
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('publishes recovered history and replaces stale live content without repeated history reads', async () => {
     const f = fixture();
     const emitted: ClaudeRuntimeEvent[] = [];

@@ -1,4 +1,9 @@
 @if (unreachable() && !page()) { <ex-opens-when-back [machine]="unreachable()!" what="These changes" [compact]="true" (tryRequested)="reconnectRequested.emit()" /> } @else {
+@if (sourceOptions().length > 1) {
+  <div class="review-source">
+    <ex-dropdown label="Change source" [value]="source()" [options]="sourceOptions()" (changed)="selectSource($event)" />
+  </div>
+}
 @if (busy()) {
   <p class="feedback" role="status">Loading changes…</p>
 } @else if (error()) {
@@ -7,8 +12,8 @@
     <button exButton variant="secondary" (click)="load()">Retry</button>
   </div>
 } @else if (page(); as page) {
-  @if (page.shared) {
-    <p class="shared-changes">This worktree was shared during the turn. Changes may include edits from other sessions.</p>
+  @if (page.notice || page.shared) {
+    <p class="shared-changes">{{ page.notice || 'This worktree was shared during the turn. Changes may include edits from other sessions.' }}</p>
   }
   @if (page.total > 100) {
     <nav class="pages" aria-label="Reply changes pages">

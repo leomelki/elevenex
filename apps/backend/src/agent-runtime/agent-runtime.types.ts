@@ -150,7 +150,7 @@ export interface AgentImageInput {
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
-  getHistory(sessionId: number): Promise<AgentTranscriptItem[]>;
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<AgentTranscriptItem[]>;
   /** initialize=false permits pre-start selection without creating a native conversation. */
   getRuntimeState(
     sessionId: number,

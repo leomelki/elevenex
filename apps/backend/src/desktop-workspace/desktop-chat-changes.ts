@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import type { SessionChatChangeSummary } from '@elevenex/shared';
+import type { SessionChatChangeSource, SessionChatChangeSummary } from '@elevenex/shared';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import {
   UNKNOWN_IGNORED_FILE_BASELINE,
@@ -11,6 +11,7 @@ import {
 } from '../agent-runtime/turn-change-stats.js';
 import { chatItemFailed, commandExecution, record } from './desktop-chat-tool-outcome.js';
 import { ChatToolLinks } from './desktop-chat-tool-links.js';
+import { reviewEvidence } from '../agent-runtime/turn-change-evidence.js';
 
 const fileTools = new Set(['write', 'edit', 'file_changes', 'notebook_edit', 'bash']);
 
@@ -32,16 +33,28 @@ function sharedChanges(details: TurnChangeDetails) {
     ? { shared: true as const } : {};
 }
 
+function evidenceMetadata(details: TurnChangeDetails): Pick<SessionChatChangeSummary, 'sources' | 'notice'> {
+  if (!details.evidence) return {};
+  const sources = details.evidence.sources ?? [...new Set(details.evidence.tools.map(tool => tool.kind))];
+  const notice = [details.capture?.message, details.evidence.partial ? 'Some tool changes could not be captured.' : undefined].filter(Boolean).join(' ');
+  return { ...(sources.length ? { sources } : {}), ...(notice ? { notice } : {}) };
+}
+
 export function changeSummary(details: TurnChangeDetails | null | undefined, limit = 200): SessionChatChangeSummary | undefined {
   if (!details) return undefined;
-  const files = details.filesChanged;
-  const lineTotals = files.length > limit ? files.reduce((totals, file) => {
+  const files = details.evidence
+    ? details.filesChanged.filter(file => file.diffUnavailable !== UNKNOWN_IGNORED_FILE_BASELINE)
+    : details.filesChanged;
+  const total = details.summaryOnly ? details.files : files.length;
+  const lineTotals = details.summaryOnly && total > limit
+    ? { add: details.additions, del: details.deletions }
+    : files.length > limit ? files.reduce((totals, file) => {
     totals.add += file.additions;
     totals.del += file.deletions;
     return totals;
   }, { add: 0, del: 0 }) : undefined;
-  return { files: files.slice(0, limit).map(changedFile), total: files.length,
-    ...(lineTotals ? { lineTotals } : {}), ...sharedChanges(details) };
+  return { files: files.slice(0, limit).map(changedFile), total,
+    ...(lineTotals ? { lineTotals } : {}), ...sharedChanges(details), ...evidenceMetadata(details) };
 }
 
 /** Never run fallback diff computation on unbounded provider tool arguments. */
@@ -140,9 +153,10 @@ function nativeChanges(turn: readonly AgentTranscriptItem[]) {
   return computeTurnChangeDetailsFromItems(pairs);
 }
 
-function turnChanges(turn: readonly AgentTranscriptItem[], native = nativeChanges(turn)) {
+function turnChanges(turn: readonly AgentTranscriptItem[]) {
   const capture = turn.findLast(item => item.turnChanges);
-  return reconcileCapturedChanges(native, capture ? [verifiedCapture(capture)] : []);
+  if (capture?.turnChanges?.evidence) return verifiedCapture(capture).turnChanges;
+  return reconcileCapturedChanges(nativeChanges(turn), capture ? [verifiedCapture(capture)] : []);
 }
 
 /** The compact and full transcript use the same reconciled change list as Review. */
@@ -156,10 +170,12 @@ export interface ChangeLine {
   oldNumber?: number;
   newNumber?: number;
   text: string;
+  evidence?: string;
 }
 /** Linear patch decoding only; expensive diff generation already belongs to turn capture. */
 function* fileLines(file: TurnChangedFile): Generator<ChangeLine> {
   for (const [index, hunk] of file.hunks.entries()) {
+    const evidence = hunk.evidenceLabel ? { evidence: hunk.evidenceLabel } : {};
     let old =
       hunk.oldStartLine ??
       hunk.startLine ??
@@ -188,6 +204,7 @@ function* fileLines(file: TurnChangedFile): Generator<ChangeLine> {
           text[0] === '+' ? 'add' : text[0] === '-' ? 'del' : 'context';
         yield {
           id: `${index}:${lineIndex++}`,
+          ...evidence,
           kind,
           ...(kind !== 'add' && old !== undefined ? { oldNumber: old++ } : {}),
           ...(kind !== 'del' && next !== undefined
@@ -205,6 +222,7 @@ function* fileLines(file: TurnChangedFile): Generator<ChangeLine> {
         for (const [lineIndex, line] of lines.entries())
           yield {
             id: `${index}:${kind}:${lineIndex}`,
+            ...evidence,
             kind,
             ...(kind === 'del' && old !== undefined
               ? { oldNumber: old++ }
@@ -224,11 +242,15 @@ export interface PreparedTurnChanges {
   readonly revision: string;
   readonly files: readonly TurnChangedFile[];
   readonly shared?: true;
+  readonly details?: TurnChangeDetails;
+  readonly markerId?: string;
+  readonly evidenceFiles: Map<Exclude<SessionChatChangeSource, 'net'>, TurnChangedFile[]>;
 }
 
 export function prepareTurnChanges(
   items: readonly AgentTranscriptItem[],
   turnId: string,
+  hydrated?: TurnChangeDetails,
 ): PreparedTurnChanges {
   const start = items.findIndex(
     (item) => item.id === turnId || `history-${item.id}` === turnId,
@@ -240,15 +262,17 @@ export function prepareTurnChanges(
   let end = start + 1;
   while (end < items.length && items[end].kind !== 'user') end++;
   const turn = items.slice(start, end);
-  // A persisted capture is already a net diff, including shell and external edits.
-  const native = nativeChanges(turn);
-  const details = turnChanges(turn, native);
+  const marker = turn.findLastIndex(item => item.turnChanges);
+  if (hydrated && marker >= 0) turn[marker] = { ...turn[marker], turnChanges: hydrated };
+  const markerId = turn[marker]?.id;
+  const details = turnChanges(turn) ?? undefined;
   const files = details?.filesChanged ?? [];
   const revision = createHash('sha256')
-    .update(turn.findLast((item) => item.turnChanges)?.id ?? '')
-    .update(JSON.stringify(native))
+    .update(markerId ?? '')
+    .update(details?.evidence ? 'evidence-v1' : JSON.stringify(details ?? null))
     .digest('hex');
-  return { turnId, revision, files, ...(details ? sharedChanges(details) : {}) };
+  return { turnId, revision, files, details, markerId, evidenceFiles: new Map(),
+    ...(details ? sharedChanges(details) : {}) };
 }
 
 export function turnChangesPage(
@@ -258,6 +282,7 @@ export function turnChangesPage(
   path?: string,
   lineOffset = 0,
   expectedRevision?: string,
+  source: SessionChatChangeSource = 'net',
 ) {
   return preparedChangesPage(
     prepareTurnChanges(items, turnId),
@@ -265,6 +290,7 @@ export function turnChangesPage(
     path,
     lineOffset,
     expectedRevision,
+    source,
   );
 }
 
@@ -274,8 +300,30 @@ export function preparedChangesPage(
   path?: string,
   lineOffset = 0,
   expectedRevision?: string,
+  source: SessionChatChangeSource = 'net',
 ) {
-  const { turnId, revision, files, shared } = prepared;
+  const { turnId, details } = prepared;
+  const revision = source === 'net' ? prepared.revision
+    : createHash('sha256').update(prepared.revision).update(source).digest('hex');
+  let files = prepared.files;
+  if (source !== 'net') {
+    const cached = prepared.evidenceFiles.get(source);
+    if (cached) files = cached;
+    else {
+      const grouped = reviewEvidence(details?.evidence?.tools ?? [], source);
+      prepared.evidenceFiles.set(source, grouped);
+      files = grouped;
+    }
+  }
+  const shared = source === 'net' ? prepared.shared : files.some(file => file.attribution === 'shared');
+  const metadata = details ? evidenceMetadata(details) : {};
+  const notice = [
+    source === 'command' ? 'These edits were observed while tools ran and may include other writers.'
+      : source === 'net' && details?.evidence && files.some(file => file.attribution === 'observed' || file.attribution === 'shared')
+        ? 'Net worktree changes can include manual edits or changes from other sessions.'
+        : undefined,
+    metadata.notice,
+  ].filter(Boolean).join(' ');
   if (expectedRevision && revision !== expectedRevision)
     throw new BadRequestException(
       'These changes were updated. Reopen the review.',
@@ -311,7 +359,10 @@ export function preparedChangesPage(
     offset: pageOffset,
     files: files.slice(pageOffset, pageOffset + 100).map(changedFile),
     total: files.length,
-    ...(shared ? { shared } : {}),
+    ...(shared ? { shared: true as const } : {}),
+    ...(source !== 'net' ? { source } : {}),
+    ...(metadata.sources ? { sources: metadata.sources } : {}),
+    ...(notice ? { notice } : {}),
     nextOffset: pageOffset + 100 < files.length ? pageOffset + 100 : null,
     content: selected
       ? {

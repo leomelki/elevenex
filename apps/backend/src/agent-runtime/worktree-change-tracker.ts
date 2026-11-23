@@ -1,12 +1,15 @@
-import { spawn } from 'node:child_process';
-import { constants, watch } from 'node:fs';
-import { lstat, mkdtemp, open, readlink, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import chokidar from 'chokidar';
-import { formatPatch, parsePatch, structuredPatch } from 'diff';
-import { buildAugmentedEnv } from '../config/system-paths.js';
-import { isolateGitEnvironment } from '../config/git-environment.js';
+import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
+import { lstat, open, readlink, realpath } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { clearWorktreeFingerprintCache } from '../git/git-worktree-fingerprint.js';
+import {
+  WorktreeChangeObserver,
+  generatedPath,
+  safeRelativePath,
+} from './worktree-change-observer.js';
+import { git, nulStrings, renderPatch } from './worktree-content-diff.js';
 import {
   UNKNOWN_IGNORED_FILE_BASELINE,
   type TurnChangeDetails,
@@ -15,25 +18,16 @@ import {
 
 const FILE_BYTES = 256 * 1024;
 const BOUNDARY_BYTES = 8 * 1024 * 1024;
-const OUTPUT_BYTES = 32 * 1024 * 1024;
+const TURN_PATCH_BYTES = 6 * 1024 * 1024;
+const COMMAND_PATHS = 128;
+const COMMAND_BYTES = 512 * 1024;
+const COMMAND_WINDOW_MS = 120_000;
 const JOURNAL_PATHS = 20_000;
 const CONCURRENCY = 8;
 /** A cold ignored-file inventory can take tens of seconds in a large checkout.
  * Turns wait briefly so small repositories keep complete ignored-file diffs,
  * while prompt acceptance never depends on finishing that directory walk. */
 const IGNORED_INVENTORY_WAIT_MS = 2_000;
-const GENERATED_DIRECTORIES = new Set([
-  'node_modules',
-  'vendor',
-  'dist',
-  'build',
-  'out',
-  'target',
-  'coverage',
-  '.next',
-  '.cache',
-]);
-
 interface SavedFile {
   signature: string;
   mode: string;
@@ -41,17 +35,34 @@ interface SavedFile {
   reason?: string;
   references: number;
 }
+interface Inventory {
+  head: string | null;
+  paths: Set<string>;
+  ignoredInventory: boolean;
+}
 interface Boundary {
   head: string | null;
   files: Map<string, SavedFile | null>;
   /** Whether ignored files were inventoried when this state was read. */
   ignoredInventory: boolean;
 }
+export interface WorktreeCommandCapture {
+  readonly turn: WorktreeTurnCapture;
+  readonly paths: Set<string>;
+  readonly before: Map<string, SavedFile | null>;
+  readonly baselineReady: Promise<void>;
+  readonly priorPaths: Set<string>;
+  readonly targets?: ReadonlySet<string>;
+  readonly started: number;
+  readonly expires: number;
+  shared: boolean;
+  partial: boolean;
+}
+
 export interface WorktreeTurnCapture {
   baseline: Boundary;
   paths: Set<string>;
   shared: boolean;
-  startedAt: string;
   finished?: boolean;
   cancelled?: boolean;
 }
@@ -83,16 +94,20 @@ export class WorktreeChangeTracker {
   private readonly cache = new Map<string, SavedFile>();
   private cacheBytes = 0;
   private readonly turns = new Set<WorktreeTurnCapture>();
+  private readonly commands = new Set<WorktreeCommandCapture>();
+  private readonly commandWork = new Set<Promise<unknown>>();
   private readonly ignoredFiles = new Set<string>();
   private ignoredInventorySettled = false;
   private ignoredInventory?: Promise<void>;
   private watcherStartup?: Promise<void>;
   private readonly lifetime = new AbortController();
-  private watcher?: { close(): unknown };
+  private observer?: WorktreeChangeObserver;
+  private inventoryInFlight?: Promise<Inventory>;
   private boundaryInFlight?: Promise<Boundary>;
   private latestBoundary?: Boundary;
   private closed = false;
   private observerFailed = false;
+  private statusInvalidation?: NodeJS.Timeout;
   private readonly finishing = new Set<Promise<TurnChangeDetails>>();
 
   private constructor(
@@ -105,7 +120,7 @@ export class WorktreeChangeTracker {
     return realpath(
       (await git(directory, ['rev-parse', '--show-toplevel']))
         .toString('utf8')
-        .trim(),
+        .replace(/\r?\n$/, ''),
     );
   }
 
@@ -134,9 +149,11 @@ export class WorktreeChangeTracker {
       baseline: { head: null, files: new Map(), ignoredInventory: false },
       paths: new Set(),
       shared: this.turns.size > 0,
-      startedAt: new Date().toISOString(),
     };
-    if (this.turns.size) for (const turn of this.turns) turn.shared = true;
+    if (this.turns.size) {
+      for (const turn of this.turns) turn.shared = true;
+      for (const command of this.commands) command.shared = true;
+    }
     this.turns.add(capture);
     try {
       if (this.ignoredInventory && !this.ignoredInventorySettled) {
@@ -151,6 +168,16 @@ export class WorktreeChangeTracker {
       }
       capture.baseline = await this.boundary();
       this.retainBoundary(capture.baseline);
+      // Give the advisory watcher a brief chance to arm in a small checkout.
+      for (
+        let attempt = 0;
+        attempt < 5 &&
+        !this.observer?.ready &&
+        !this.observerFailed &&
+        !this.closed;
+        attempt++
+      )
+        await delay(10);
       return capture;
     } catch (error) {
       this.turns.delete(capture);
@@ -158,8 +185,252 @@ export class WorktreeChangeTracker {
     }
   }
 
-  finish(capture: WorktreeTurnCapture): Promise<TurnChangeDetails> {
-    const pending = this.finishCapture(capture);
+  notePaths(paths: readonly string[]): void {
+    for (const path of paths) this.observe(path);
+  }
+
+  beginCommand(
+    turn: WorktreeTurnCapture,
+    targets?: readonly string[],
+    beforeExecution = false,
+  ): WorktreeCommandCapture | undefined {
+    if (this.closed || turn.finished || turn.cancelled || !this.turns.has(turn))
+      return;
+    const priorPaths = targets ? new Set<string>() : new Set(turn.paths);
+    const previous =
+      targets ??
+      [
+        ...new Set(
+          [...priorPaths].reverse().concat([...turn.baseline.files.keys()]),
+        ),
+      ].slice(0, COMMAND_PATHS);
+    const before = new Map<string, SavedFile | null>();
+    const quota = { bytes: COMMAND_BYTES };
+    const started = Date.now();
+    const command: WorktreeCommandCapture = {
+      turn,
+      before,
+      priorPaths,
+      targets: targets ? new Set(targets) : undefined,
+      paths: new Set(),
+      started,
+      expires: started + COMMAND_WINDOW_MS,
+      shared: turn.shared || this.commands.size > 0,
+      partial: !targets && (!this.observer?.ready || this.observerFailed),
+      baselineReady: bounded(previous, async (path) => {
+        const file = await this.read(path, quota);
+        // An asynchronous start notification can reach us after the write.
+        // Do not use a new version for a path already seen in this window.
+        if (!beforeExecution && command.paths.has(path)) {
+          if (file) this.release(file);
+          command.partial = true;
+        } else before.set(path, file);
+      }),
+    };
+    for (const active of this.commands) active.shared = true;
+    this.commands.add(command);
+    return command;
+  }
+
+  endCommand(
+    command: WorktreeCommandCapture,
+  ): Promise<{ files: TurnChangedFile[]; partial: boolean }> {
+    return this.trackCommandWork(this.finishCommand(command));
+  }
+
+  discardCommand(command: WorktreeCommandCapture): void {
+    if (!this.commands.delete(command)) return;
+    void this.trackCommandWork(
+      command.baselineReady.finally(() => this.releaseCommand(command)),
+    ).catch(() => undefined);
+  }
+
+  private trackCommandWork<T>(pending: Promise<T>): Promise<T> {
+    this.commandWork.add(pending);
+    void pending
+      .finally(() => this.commandWork.delete(pending))
+      .catch(() => undefined);
+    return pending;
+  }
+
+  private async finishCommand(command: WorktreeCommandCapture) {
+    // A short drain admits notifications already queued by the OS. If a new
+    // command starts during this interval both observations are marked shared.
+    if (!command.targets) await delay(25);
+    if (!this.commands.delete(command)) return { files: [], partial: true };
+    const { turn, before } = command;
+    const files: TurnChangedFile[] = [];
+    let originals = new Map<string, SavedFile>();
+    const current = new Map<string, SavedFile | null>();
+    try {
+      await command.baselineReady;
+      if (this.closed || turn.cancelled || Date.now() > command.expires)
+        return { files, partial: true };
+      const paths = [...new Set([...command.paths, ...before.keys()])].sort();
+      const readBudget = { bytes: COMMAND_BYTES };
+      // Freeze postimages before Git or patch rendering can widen this window.
+      await bounded(paths, async (path) => {
+        current.set(path, await this.read(path, readBudget));
+      });
+      const unseen = paths.filter(
+        (path) => !before.has(path) && !turn.baseline.files.has(path),
+      );
+      if (turn.baseline.head && unseen.length)
+        originals = await this.originalFiles(turn.baseline.head, unseen);
+      // Git can distinguish a genuinely new untracked path from ignored files
+      // whose preimages were outside the initial inventory.
+      const ignored = await this.ignored(
+        unseen.filter((path) => !originals.has(path)),
+      );
+      const patchBudget = { bytes: COMMAND_BYTES };
+      for (const path of paths) {
+        if (turn.cancelled || this.closed) return { files: [], partial: true };
+        if (
+          !before.has(path) &&
+          (command.targets || command.priorPaths.has(path) || ignored.has(path))
+        ) {
+          command.partial = true;
+          continue;
+        }
+        const old = before.has(path)
+          ? before.get(path)
+          : (turn.baseline.files.get(path) ?? originals.get(path));
+        const after = current.get(path);
+        const file = await this.compare(
+          path,
+          old,
+          after,
+          command.shared,
+          patchBudget,
+          'Changes observed during this command',
+        );
+        if (file) {
+          // Match exact observed transitions across overlapping windows. The
+          // after version identity prevents collapsing a later identical edit.
+          if ((!old || old.content) && (!after || after.content))
+            file.observationKey = createHash('sha256')
+              .update(old?.mode ?? 'absent')
+              .update('\0')
+              .update(old?.content ?? '')
+              .update('\0')
+              .update(after?.signature ?? 'absent')
+              .digest('hex');
+          files.push(file);
+        }
+      }
+      return {
+        files,
+        partial: command.partial || (!command.targets && this.observerFailed),
+      };
+    } finally {
+      this.releaseCommand(command);
+      this.releaseBoundary({ files: current });
+      for (const file of originals.values()) this.release(file);
+    }
+  }
+
+  private releaseCommand(command: WorktreeCommandCapture): void {
+    this.releaseBoundary({ files: command.before });
+    command.before.clear();
+    command.paths.clear();
+    command.priorPaths.clear();
+  }
+
+  private async ignored(paths: string[]): Promise<Set<string>> {
+    if (!paths.length) return new Set();
+    const safe: string[] = [];
+    await bounded(paths, async (path) => {
+      const parent = resolve(this.root, path, '..');
+      const physical = await realpath(parent).catch(() => null);
+      if (physical === parent) safe.push(path);
+    });
+    if (!safe.length) return new Set();
+    const result = await git(
+      this.root,
+      ['check-ignore', '--stdin', '-z'],
+      Buffer.from(safe.map((path) => `./${path}`).join('\0') + '\0'),
+      [0, 1],
+      this.lifetime.signal,
+    );
+    return new Set(nulStrings(result).map((path) => path.slice(2)));
+  }
+
+  private async compare(
+    path: string,
+    before: SavedFile | null | undefined,
+    after: SavedFile | null | undefined,
+    shared: boolean,
+    quota: { bytes: number },
+    label: string,
+  ): Promise<TurnChangedFile | undefined> {
+    if (!before && !after) return;
+    if (
+      before &&
+      after &&
+      before.mode === after.mode &&
+      (before.signature === after.signature ||
+        (before.content &&
+          after.content &&
+          before.content.equals(after.content)))
+    )
+      return;
+    const old = before ? before.content : Buffer.alloc(0);
+    const next = after ? after.content : Buffer.alloc(0);
+    let reason = before?.reason ?? after?.reason;
+    let patch: string | undefined;
+    let additions = 0;
+    let deletions = 0;
+    if (old && next) {
+      if (old.includes(0) || next.includes(0)) reason = 'Binary file changed';
+      else if (!quota.bytes)
+        reason = 'Inline diffs reached the capture size limit';
+      else {
+        const rendered = await renderPatch(
+          path,
+          old.toString('utf8'),
+          next.toString('utf8'),
+        );
+        if (rendered) {
+          ({ additions, deletions } = rendered);
+          const bytes = Buffer.byteLength(rendered.patch);
+          if (bytes <= quota.bytes) {
+            patch = rendered.patch;
+            quota.bytes -= bytes;
+          } else {
+            quota.bytes = 0;
+            reason = 'Inline diffs reached the capture size limit';
+          }
+        } else
+          reason = 'The diff could not be generated from the captured contents';
+      }
+    }
+    return {
+      path,
+      status: !before ? 'created' : !after ? 'deleted' : 'modified',
+      additions,
+      deletions,
+      attribution: shared ? 'shared' : 'observed',
+      diffUnavailable: reason,
+      hunks: [
+        {
+          id: `filesystem:${path}`,
+          toolName: 'Filesystem',
+          label,
+          oldString: '',
+          newString: '',
+          additions,
+          deletions,
+          patch,
+        },
+      ],
+    };
+  }
+
+  finish(
+    capture: WorktreeTurnCapture,
+    drain?: Promise<unknown>,
+  ): Promise<TurnChangeDetails> {
+    const pending = this.finishCapture(capture, drain);
     this.finishing.add(pending);
     void pending
       .finally(() => this.finishing.delete(pending))
@@ -169,193 +440,141 @@ export class WorktreeChangeTracker {
 
   private async finishCapture(
     capture: WorktreeTurnCapture,
+    drain?: Promise<unknown>,
   ): Promise<TurnChangeDetails> {
     if (this.closed || capture.finished || !this.turns.has(capture))
       throw new Error('Turn change capture is no longer active');
     capture.finished = true;
-    let end: Boundary | undefined;
     try {
-      end = await this.boundary();
-      this.retainBoundary(end);
+      const end = await this.inventory();
       const paths = new Set(capture.baseline.files.keys());
       // Without an inventoried starting state, an ignored file present at the
       // end is not known to be new. Only journaled edits mark those changed.
-      for (const path of end.files.keys())
+      for (const path of end.paths)
         if (capture.baseline.ignoredInventory || !this.ignoredFiles.has(path))
           paths.add(path);
       const unknownOriginals = new Set<string>();
       const journal: string[] = [];
       await bounded(
-        [...capture.paths].filter(safeRelativePath),
+        [...capture.paths].filter(
+          (path) => safeRelativePath(path) && !paths.has(path),
+        ),
         async (path) => {
-          // Git rejects pathspecs crossing symlinked directories. Real source
-          // paths and tracked deletions are independently covered by status.
           const parent = resolve(this.root, path, '..');
           if ((await realpath(parent).catch(() => null)) === parent)
             journal.push(path);
         },
       );
-      if (journal.length) {
-        const ignored = new Set(
-          nulStrings(
-            await git(
-              this.root,
-              ['check-ignore', '--stdin', '-z'],
-              // check-ignore rejects literal pathspec magic. A ./ prefix
-              // protects leading colons while its stdin keeps names literal.
-              Buffer.from(journal.map((path) => `./${path}`).join('\0') + '\0'),
-              [0, 1],
-            ),
-          ).map((path) => path.slice(2)),
-        );
-        for (const path of journal) {
-          if (!ignored.has(path)) paths.add(path);
-          else if (
-            !path.split('/').some((part) => GENERATED_DIRECTORIES.has(part))
-          ) {
-            paths.add(path);
-            if (!capture.baseline.files.has(path)) unknownOriginals.add(path);
-            if (this.ignoredFiles.size < JOURNAL_PATHS)
-              this.ignoredFiles.add(path);
-            else this.observerFailed = true;
-          }
+      const ignored = await this.ignored(journal);
+      for (const path of journal) {
+        paths.add(path);
+        if (!ignored.has(path)) continue;
+        if (generatedPath(path)) {
+          paths.delete(path);
+          continue;
         }
+        unknownOriginals.add(path);
+        if (this.ignoredFiles.size < JOURNAL_PATHS) this.ignoredFiles.add(path);
+        else this.observerFailed = true;
       }
       if (capture.baseline.head !== end.head) {
         if (capture.baseline.head && end.head) {
-          const committed = await git(this.root, [
-            'diff',
-            '--name-only',
-            '--no-renames',
-            '-z',
-            capture.baseline.head,
-            end.head,
-            '--',
-          ]);
+          const committed = await git(
+            this.root,
+            [
+              'diff',
+              '--name-only',
+              '--no-renames',
+              '-z',
+              capture.baseline.head,
+              end.head,
+              '--',
+            ],
+            undefined,
+            [0],
+            this.lifetime.signal,
+          );
           for (const path of nulStrings(committed)) paths.add(path);
         } else if (capture.baseline.head || end.head) {
           for (const path of nulStrings(
-            await git(this.root, [
-              'ls-tree',
-              '-r',
-              '--name-only',
-              '-z',
-              (capture.baseline.head ?? end.head)!,
-            ]),
+            await git(
+              this.root,
+              [
+                'ls-tree',
+                '-r',
+                '--name-only',
+                '-z',
+                (capture.baseline.head ?? end.head)!,
+              ],
+              undefined,
+              [0],
+              this.lifetime.signal,
+            ),
           ))
             paths.add(path);
         }
       }
-      const candidates = [...paths].filter(safeRelativePath).sort();
-      if (capture.cancelled || this.closed) throw new Error('Change capture was cancelled');
+      const supportedPaths = [...paths]
+        .filter((path) => safeRelativePath(path) && path.length <= 1000)
+        .sort();
+      const limited =
+        supportedPaths.length !== paths.size ||
+        supportedPaths.length > JOURNAL_PATHS;
+      const candidates = supportedPaths.slice(0, JOURNAL_PATHS);
+      if (capture.cancelled || this.closed)
+        throw new Error('Change capture was cancelled');
       const cleanPaths = candidates.filter(
         (path) => !capture.baseline.files.has(path),
       );
-      const originals = capture.baseline.head
-        ? await this.originalFiles(capture.baseline.head, cleanPaths)
-        : new Map<string, SavedFile>();
+      const current = await this.readVersions(candidates);
       const filesChanged: TurnChangedFile[] = [];
       const unchangedPaths: string[] = [];
+      const patchBudget = { bytes: TURN_PATCH_BYTES };
+      let originals = new Map<string, SavedFile>();
       try {
-        // Batch inventory reads, then render in deterministic order. Simple
-        // comparisons stay in process; only expensive ones need a Git fallback.
-        for (
-          let offset = 0;
-          offset < candidates.length;
-          offset += CONCURRENCY
-        ) {
-          if (capture.cancelled || this.closed) throw new Error('Change capture was cancelled');
-          const batch = candidates.slice(offset, offset + CONCURRENCY);
-          const current = await Promise.all(
-            batch.map(async (path) => {
-              const file = await this.read(path, { bytes: BOUNDARY_BYTES });
-              if (file) file.references++;
-              return file;
-            }),
+        if (capture.baseline.head)
+          originals = await this.originalFiles(
+            capture.baseline.head,
+            cleanPaths,
           );
-          try {
-            for (const [index, path] of batch.entries()) {
-              const after = current[index];
-              const before = capture.baseline.files.has(path)
-                ? capture.baseline.files.get(path)
-                : (originals.get(path) ??
-                  (unknownOriginals.has(path) && after
-                    ? {
-                        signature: 'unknown',
-                        mode: after.mode,
-                        references: 0,
-                        reason: UNKNOWN_IGNORED_FILE_BASELINE,
-                      }
-                    : undefined));
-              if (!before && !after) {
-                unchangedPaths.push(path);
-                continue;
-              }
-              if (
-                before &&
-                after &&
-                before.mode === after.mode &&
-                (before === after ||
-                  (before.content &&
-                    after.content &&
-                    before.content.equals(after.content)))
-              ) {
-                unchangedPaths.push(path);
-                continue;
-              }
-              let reason = before?.reason ?? after?.reason;
-              let patch: string | undefined;
-              let additions = 0;
-              let deletions = 0;
-              const oldContent = before ? before.content : Buffer.alloc(0);
-              const newContent = after ? after.content : Buffer.alloc(0);
-              if (oldContent && newContent) {
-                if (oldContent.includes(0) || newContent.includes(0))
-                  reason = 'Binary file changed';
-                else {
-                  const rendered = await renderPatch(
-                    path,
-                    oldContent.toString('utf8'),
-                    newContent.toString('utf8'),
-                  );
-                  if (rendered) {
-                    ({ patch, additions, deletions } = rendered);
-                  } else
-                    reason =
-                      'The diff could not be generated from the captured contents';
-                }
-              }
-              filesChanged.push({
-                path,
-                status: !before ? 'created' : !after ? 'deleted' : 'modified',
-                additions,
-                deletions,
-                attribution: capture.shared ? 'shared' : 'observed',
-                diffUnavailable: reason,
-                hunks: [
-                  {
-                    id: `filesystem:${path}`,
-                    toolName: 'Filesystem',
-                    label: 'Changes during this turn',
-                    oldString: '',
-                    newString: '',
-                    additions,
-                    deletions,
-                    patch,
-                  },
-                ],
-              });
-            }
-          } finally {
-            for (const file of current) if (file) this.release(file);
-          }
-          // Rendering many small changes must not monopolize the backend loop.
-          await new Promise<void>((done) => setImmediate(done));
+        for (const [index, path] of candidates.entries()) {
+          if (capture.cancelled || this.closed)
+            throw new Error('Change capture was cancelled');
+          const after = current.get(path);
+          const before = capture.baseline.files.has(path)
+            ? capture.baseline.files.get(path)
+            : (originals.get(path) ??
+              (unknownOriginals.has(path) && after
+                ? {
+                    signature: 'unknown',
+                    mode: after.mode,
+                    references: 0,
+                    reason: UNKNOWN_IGNORED_FILE_BASELINE,
+                  }
+                : undefined));
+          const file = await this.compare(
+            path,
+            before,
+            after,
+            capture.shared,
+            patchBudget,
+            'Changes during this turn',
+          );
+          if (file) filesChanged.push(file);
+          else unchangedPaths.push(path);
+          if (index % CONCURRENCY === CONCURRENCY - 1)
+            await new Promise<void>((done) => setImmediate(done));
         }
       } finally {
+        this.releaseBoundary({ files: current });
         for (const file of originals.values()) this.release(file);
       }
+      if (filesChanged.length) clearWorktreeFingerprintCache(this.root);
+      // A turn can overlap after the endpoint scan began, while patches render.
+      if (capture.shared)
+        for (const file of filesChanged) file.attribution = 'shared';
       const notices = [
+        ...(limited ? ['The worktree comparison reached its file limit.'] : []),
         ...(!capture.baseline.ignoredInventory
           ? [
               'Ignored files were still being inventoried when this turn started; their changes may be incomplete.',
@@ -374,21 +593,23 @@ export class WorktreeChangeTracker {
         filesChanged,
         capture: {
           root: this.root,
-          complete: true,
+          complete: !limited,
           shared: capture.shared,
           unchangedPaths,
           ...(notices.length ? { message: notices.join(' ') } : {}),
         },
       };
     } finally {
+      await drain?.catch(() => undefined);
       this.turns.delete(capture);
       this.releaseBoundary(capture.baseline);
-      if (end) this.releaseBoundary(end);
     }
   }
 
   cancel(capture: WorktreeTurnCapture): void {
     capture.cancelled = true;
+    for (const command of this.commands)
+      if (command.turn === capture) this.discardCommand(command);
     if (capture.finished) return; // A finishing capture owns its cleanup.
     if (this.turns.delete(capture)) this.releaseBoundary(capture.baseline);
   }
@@ -410,69 +631,125 @@ export class WorktreeChangeTracker {
     return pending;
   }
 
-  private async head(): Promise<string | null> {
+  private inventory(): Promise<Inventory> {
+    if (this.inventoryInFlight) return this.inventoryInFlight;
+    const pending = this.readInventory();
+    this.inventoryInFlight = pending;
+    void pending
+      .finally(() => {
+        if (this.inventoryInFlight === pending)
+          this.inventoryInFlight = undefined;
+      })
+      .catch(() => undefined);
+    return pending;
+  }
+
+  private async readInventory(): Promise<Inventory> {
+    const status = nulStrings(
+      await git(
+        this.root,
+        [
+          'status',
+          '--porcelain=v2',
+          '-z',
+          '--branch',
+          '--no-ahead-behind',
+          '--no-renames',
+          '--untracked-files=all',
+          '--ignore-submodules=all',
+        ],
+        undefined,
+        [0],
+        this.lifetime.signal,
+      ),
+    );
+    const oid = status
+      .find((record) => record.startsWith('# branch.oid '))
+      ?.slice(13);
+    if (!oid) throw new Error('Git status omitted the current revision');
+    const paths = new Set(this.ignoredFiles);
+    for (const record of status) {
+      const fields =
+        record[0] === '1'
+          ? 8
+          : record[0] === 'u'
+            ? 10
+            : record[0] === '?'
+              ? 1
+              : 0;
+      if (!fields) continue;
+      let position = -1;
+      for (let field = 0; field < fields; field++)
+        position = record.indexOf(' ', position + 1);
+      const path = record.slice(position + 1);
+      if (safeRelativePath(path)) paths.add(path);
+    }
+    return {
+      head: oid === '(initial)' ? null : oid,
+      paths,
+      ignoredInventory: this.ignoredInventorySettled,
+    };
+  }
+
+  private async readBoundary(): Promise<Boundary> {
+    const { head, paths, ignoredInventory } = await this.inventory();
+    if (paths.size > JOURNAL_PATHS)
+      throw new Error('Starting state exceeds the path limit');
+    const files = await this.readVersions([...paths]);
     try {
-      return (await git(this.root, ['rev-parse', '--verify', 'HEAD']))
-        .toString('utf8')
-        .trim();
+      const verifiedHead =
+        (
+          await git(
+            this.root,
+            ['rev-parse', '--verify', '-q', 'HEAD'],
+            undefined,
+            [0, 1],
+            this.lifetime.signal,
+          )
+        )
+          .toString('utf8')
+          .trim() || null;
+      if (verifiedHead !== head)
+        throw new Error('The checkout changed revisions during capture');
+      return { head, files, ignoredInventory };
     } catch (error) {
-      // Empty repositories have no HEAD but still have a useful inventory.
-      if ((error as GitFailure).code === 128) return null;
+      this.releaseBoundary({ files });
       throw error;
     }
   }
 
-  private async readBoundary(): Promise<Boundary> {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const head = await this.head();
-      const status = await git(this.root, [
-        'status',
-        '--porcelain=v1',
-        '-z',
-        '--no-renames',
-        '--untracked-files=all',
-        '--ignore-submodules=all',
-      ]);
-      // Read with the ignored-file snapshot below, in the same synchronous step.
-      const ignoredInventory = this.ignoredInventorySettled;
-      const paths = [
-        ...new Set([
-          ...nulStrings(status).map((record) => record.slice(3)),
-          ...this.ignoredFiles,
-        ]),
-      ].filter(safeRelativePath);
-      const files = new Map<string, SavedFile | null>();
-      const quota = { bytes: BOUNDARY_BYTES };
-      try {
-        await bounded(paths, async (path) => {
-          const file = await this.read(path, quota);
-          if (file) file.references++;
-          files.set(path, file);
-        });
-        if (head === (await this.head()))
-          return { head, files, ignoredInventory };
-      } catch (error) {
-        this.releaseBoundary({ head, files, ignoredInventory });
-        throw error;
-      }
-      this.releaseBoundary({ head, files, ignoredInventory });
+  private async readVersions(
+    paths: string[],
+  ): Promise<Map<string, SavedFile | null>> {
+    const files = new Map<string, SavedFile | null>();
+    const quota = { bytes: BOUNDARY_BYTES };
+    try {
+      await bounded(paths, async (path) => {
+        files.set(path, await this.read(path, quota));
+      });
+      return files;
+    } catch (error) {
+      this.releaseBoundary({ files });
+      throw error;
     }
-    throw new Error(
-      'The checkout changed revisions repeatedly while capturing its starting state',
-    );
   }
 
   private async read(
     path: string,
     quota: { bytes: number },
   ): Promise<SavedFile | null> {
-    if (!safeRelativePath(path)) return null;
+    if (this.closed || !safeRelativePath(path)) return null;
     const absolute = resolve(this.root, path);
     // Refuse symlinked ancestors rather than reading files outside the checkout.
     try {
       const parent = await realpath(resolve(absolute, '..'));
       const local = relative(this.root, parent);
-      if (isAbsolute(local) || local === '..' || local.startsWith(`..${sep}`))
+      if (
+        parent !== resolve(absolute, '..') ||
+        isAbsolute(local) ||
+        local === '..' ||
+        local.startsWith(`..${sep}`)
+      )
         return null;
       const info = await lstat(absolute);
       if (!info.isFile() && !info.isSymbolicLink()) {
@@ -481,7 +758,13 @@ export class WorktreeChangeTracker {
       }
       const signature = `${info.dev}:${info.ino}:${info.mode}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
       const cached = this.cache.get(path);
-      if (cached?.signature === signature) return cached;
+      if (
+        cached?.signature === signature &&
+        (cached.content || info.size > FILE_BYTES)
+      ) {
+        cached.references++;
+        return cached;
+      }
       const mode = info.isSymbolicLink()
         ? '120000'
         : info.mode & 0o111
@@ -582,6 +865,7 @@ export class WorktreeChangeTracker {
 
   private remember(path: string, file: SavedFile): SavedFile {
     this.forget(path);
+    file.references++; // The cache and the caller each own a lease.
     this.cache.set(path, file);
     this.cacheBytes += file.content?.length ?? 0;
     while (
@@ -602,15 +886,21 @@ export class WorktreeChangeTracker {
       { oid: string; mode: string; size: number }
     >();
     for (let offset = 0; offset < paths.length; offset += 128) {
-      const listing = await git(this.root, [
-        'ls-tree',
-        '-r',
-        '-l',
-        '-z',
-        head,
-        '--',
-        ...paths.slice(offset, offset + 128),
-      ]);
+      const listing = await git(
+        this.root,
+        [
+          'ls-tree',
+          '-r',
+          '-l',
+          '-z',
+          head,
+          '--',
+          ...paths.slice(offset, offset + 128),
+        ],
+        undefined,
+        [0],
+        this.lifetime.signal,
+      );
       for (const record of nulStrings(listing)) {
         const tab = record.indexOf('\t');
         const [mode, type, oid, size] = record
@@ -652,6 +942,8 @@ export class WorktreeChangeTracker {
           this.root,
           ['cat-file', '--batch'],
           Buffer.from(selected.map(([, blob]) => blob.oid).join('\n') + '\n'),
+          [0],
+          this.lifetime.signal,
         );
         let position = 0;
         for (const [path, blob] of selected) {
@@ -680,7 +972,7 @@ export class WorktreeChangeTracker {
   private retainBoundary(boundary: Boundary): void {
     for (const file of boundary.files.values()) if (file) file.references++;
   }
-  private releaseBoundary(boundary: Boundary): void {
+  private releaseBoundary(boundary: Pick<Boundary, 'files'>): void {
     for (const file of boundary.files.values()) if (file) this.release(file);
   }
   private release(file: SavedFile): void {
@@ -688,26 +980,40 @@ export class WorktreeChangeTracker {
       this.budget.release(file.content.length);
   }
 
-  private async startWatcher(): Promise<void> {
-    const observe = (path: string | null) => {
-      if (path === null) {
-        this.observerFailed = true;
-        return;
-      }
-      const local = path.replaceAll('\\', '/');
+  private observe(path: string | null): void {
+    if (path === null) {
+      this.observerFailed = true;
+      return;
+    }
+    const local = sep === '\\' ? path.replaceAll('\\', '/') : path;
+    if (!safeRelativePath(local) || generatedPath(local)) return;
+    if (!this.statusInvalidation) {
+      // A watcher burst only invalidates cached Git metadata. Selected-task
+      // readers still coalesce and run on their existing refresh schedule.
+      clearWorktreeFingerprintCache(this.root);
+      this.statusInvalidation = setTimeout(() => {
+        this.statusInvalidation = undefined;
+        clearWorktreeFingerprintCache(this.root);
+      }, 50);
+      this.statusInvalidation.unref();
+    }
+    for (const command of this.commands) {
       if (
-        !safeRelativePath(local) ||
-        local
-          .split('/')
-          .some((part) => part === '.git' || GENERATED_DIRECTORIES.has(part))
+        Date.now() > command.expires ||
+        (command.targets && !command.targets.has(local))
       )
-        return;
-      for (const turn of this.turns) {
-        if (turn.paths.size < JOURNAL_PATHS) turn.paths.add(local);
-        else this.observerFailed = true; // Boundary reconciliation remains authoritative.
-      }
-    };
-    const signal = this.lifetime.signal;
+        continue;
+      if (command.paths.size < COMMAND_PATHS || command.paths.has(local))
+        command.paths.add(local);
+      else command.partial = true;
+    }
+    for (const turn of this.turns) {
+      if (turn.paths.size < JOURNAL_PATHS) turn.paths.add(local);
+      else this.observerFailed = true; // Boundary reconciliation remains authoritative.
+    }
+  }
+
+  private async startWatcher(): Promise<void> {
     const inventory = git(
       this.root,
       [
@@ -720,83 +1026,37 @@ export class WorktreeChangeTracker {
       ],
       undefined,
       [0],
-      signal,
+      this.lifetime.signal,
     ).then((output) => {
-      const ignoredPaths = nulStrings(output);
-      for (const path of ignoredPaths)
+      const paths = nulStrings(output);
+      for (const path of paths)
         if (
           !path.endsWith('/') &&
           safeRelativePath(path) &&
-          !path.split('/').some((part) => GENERATED_DIRECTORIES.has(part))
+          !generatedPath(path) &&
+          this.ignoredFiles.size < JOURNAL_PATHS
         )
           this.ignoredFiles.add(path);
-      return ignoredPaths;
+      return paths;
     });
-    // A failed inventory settles as empty, so boundaries stay mutually comparable.
-    this.ignoredInventory = inventory
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .finally(() => {
+    this.ignoredInventory = inventory.then(
+      () => {
         this.ignoredInventorySettled = true;
-      });
+      },
+      () => undefined,
+    );
     try {
-      const ignoredPaths = await inventory;
+      const ignored = await inventory;
       if (this.closed) return;
-      if (process.platform === 'darwin' || process.platform === 'win32') {
-        const watcher = watch(
-          this.root,
-          { recursive: true, persistent: false },
-          (_event, path) => observe(path?.toString() ?? null),
-        );
-        watcher.on('error', () => {
+      this.observer = await WorktreeChangeObserver.start(
+        this.root,
+        ignored,
+        this.lifetime.signal,
+        (path) => this.observe(path),
+        () => {
           this.observerFailed = true;
-        });
-        this.watcher = watcher;
-      } else {
-        // Prune ignored dependency trees without hiding tracked generated files.
-        const ignored = ignoredPaths.filter(
-          (path) =>
-            path.endsWith('/') &&
-            path.split('/').some((part) => GENERATED_DIRECTORIES.has(part)),
-        );
-        const tracked = new Set(
-          nulStrings(
-            await git(this.root, ['ls-files', '-z'], undefined, [0], signal),
-          ),
-        );
-        if (this.closed) return;
-        const parents = new Set<string>();
-        for (const path of tracked) {
-          const parts = path.split('/');
-          while (parts.pop() && parts.length) parents.add(parts.join('/'));
-        }
-        const watcher = chokidar.watch(this.root, {
-          ignoreInitial: true,
-          persistent: false,
-          followSymlinks: false,
-          ignored: (path: string) => {
-            const local = relative(this.root, path).replaceAll('\\', '/');
-            return (
-              local.split('/').includes('.git') ||
-              (!tracked.has(local) &&
-                !parents.has(local) &&
-                ignored.some((prefix) => `${local}/`.startsWith(prefix)))
-            );
-          },
-        });
-        watcher.on('all', (_event: string, path: string) =>
-          observe(relative(this.root, path)),
-        );
-        watcher.on('error', () => {
-          this.observerFailed = true;
-          void watcher.close();
-        });
-        this.watcher = watcher;
-        // Chokidar initialization is advisory; baseline reconciliation covers
-        // its initial scan and no provider startup waits for a directory crawl.
-      }
+        },
+      );
     } catch {
       this.observerFailed = true;
     }
@@ -805,9 +1065,13 @@ export class WorktreeChangeTracker {
   async close(): Promise<void> {
     this.closed = true;
     this.lifetime.abort();
+    clearTimeout(this.statusInvalidation);
     await this.watcherStartup;
-    await this.watcher?.close();
+    await this.observer?.close();
     await this.boundaryInFlight?.catch(() => undefined);
+    await this.inventoryInFlight?.catch(() => undefined);
+    for (const command of this.commands) this.discardCommand(command);
+    await Promise.allSettled([...this.commandWork]);
     await Promise.allSettled([...this.finishing]);
     for (const capture of this.turns) this.releaseBoundary(capture.baseline);
     this.turns.clear();
@@ -818,22 +1082,8 @@ export class WorktreeChangeTracker {
   }
 }
 
-export function safeRelativePath(path: string): boolean {
-  return (
-    !!path &&
-    !isAbsolute(path) &&
-    path !== '..' &&
-    !path.split(/[\\/]/).includes('..') &&
-    !path.includes('\0')
-  );
-}
-
-function nulStrings(buffer: Buffer): string[] {
-  return buffer.toString('utf8').split('\0').filter(Boolean);
-}
-
 async function bounded<T>(
-  items: T[],
+  items: readonly T[],
   action: (item: T) => Promise<void>,
 ): Promise<void> {
   let next = 0;
@@ -844,122 +1094,4 @@ async function bounded<T>(
   );
   const failed = results.find((result) => result.status === 'rejected');
   if (failed?.status === 'rejected') throw failed.reason;
-}
-
-type GitFailure = Error & { code?: number | null };
-
-function git(
-  cwd: string,
-  args: string[],
-  input?: Buffer,
-  allowedCodes = [0],
-  signal?: AbortSignal,
-): Promise<Buffer> {
-  return new Promise((done, reject) => {
-    const env = isolateGitEnvironment(buildAugmentedEnv());
-    env.GIT_OPTIONAL_LOCKS = '0';
-    // Only ls-tree receives filename pathspecs; check-ignore rejects this mode.
-    if (args[0] === 'ls-tree') env.GIT_LITERAL_PATHSPECS = '1';
-    const child = spawn('git', ['--no-optional-locks', ...args], {
-      cwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-      signal,
-    });
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-    let failure: Error | undefined;
-    const timer = setTimeout(() => {
-      failure = new Error('Change capture git operation timed out');
-      child.kill();
-    }, 15_000);
-    child.stdout.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > OUTPUT_BYTES) {
-        failure = new Error('Change capture exceeded its path inventory limit');
-        child.kill();
-      } else chunks.push(chunk);
-    });
-    // Errors must never expose repository contents or subprocess credentials.
-    child.stderr.resume();
-    child.stdin.on('error', () => undefined);
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (failure || code === null || !allowedCodes.includes(code))
-        reject(
-          Object.assign(
-            failure ??
-              new Error(`Change capture git ${args[0]} failed (${code})`),
-            { code },
-          ),
-        );
-      else done(Buffer.concat(chunks, bytes));
-    });
-    child.stdin.end(input);
-  });
-}
-
-async function renderPatch(
-  path: string,
-  before: string,
-  after: string,
-): Promise<
-  { patch: string; additions: number; deletions: number } | undefined
-> {
-  const rendered = await new Promise<
-    { patch: string; additions: number; deletions: number } | undefined
-  >((done) => {
-    structuredPatch(path, path, before, after, undefined, undefined, {
-      context: 3,
-      timeout: 50,
-      maxEditLength: 10_000,
-      callback: (diff) => {
-        if (!diff) return done(undefined);
-        let additions = 0;
-        let deletions = 0;
-        for (const hunk of diff.hunks)
-          for (const line of hunk.lines) {
-            if (line.startsWith('+')) additions++;
-            else if (line.startsWith('-')) deletions++;
-          }
-        done({ patch: formatPatch(diff), additions, deletions });
-      },
-    });
-  });
-  if (rendered) return rendered;
-
-  // Keep expensive comparisons off the backend event loop. Use the captured
-  // bytes, never the live checkout, so later edits cannot change this turn's diff.
-  const directory = await mkdtemp(join(tmpdir(), 'elevenex-turn-diff-'));
-  try {
-    await Promise.all([
-      writeFile(join(directory, 'before'), before, { mode: 0o600 }),
-      writeFile(join(directory, 'after'), after, { mode: 0o600 }),
-    ]);
-    const output = await git(directory, [
-      'diff', '--no-index', '--no-ext-diff', '--no-textconv', '--text',
-      '--no-color', '--diff-algorithm=myers', '--unified=3', '--', 'before', 'after',
-    ], undefined, [0, 1]);
-    const diff = parsePatch(output.toString('utf8'))[0];
-    if (!diff) return undefined;
-    diff.oldFileName = path;
-    diff.newFileName = path;
-    let additions = 0;
-    let deletions = 0;
-    for (const hunk of diff.hunks)
-      for (const line of hunk.lines) {
-        if (line.startsWith('+')) additions++;
-        else if (line.startsWith('-')) deletions++;
-      }
-    return { patch: formatPatch(diff), additions, deletions };
-  } catch {
-    return undefined;
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 }

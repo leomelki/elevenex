@@ -31,3 +31,7 @@ ex-diff-review {
   color: var(--ink-muted);
   font-size: var(--text-caption-size);
 }
+.review-source {
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--line);
+}

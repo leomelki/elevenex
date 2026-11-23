@@ -364,11 +364,11 @@ export class CodexRuntimeService
     this.modelCatalogRetry.stop();
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'codex', session.codexSessionId, history);
+    return this.turnChanges.attachHistory(sessionId, 'codex', session.codexSessionId, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -1865,6 +1865,7 @@ export class CodexRuntimeService
         resolvedWorktreePath,
         turnInput,
         abortController.signal,
+        changeCapture,
       )) {
         if (!ownsSession() || this.activeRuns.get(sessionId) !== activeRun) {
           break;
@@ -2885,7 +2886,7 @@ export class CodexRuntimeService
         content: item.changes
           .map((change) => `${change.kind}: ${change.path}`)
           .join('\n'),
-        isError: item.status === 'failed',
+        isError: item.status !== 'completed',
         timestamp,
         authoredAt: timestamp,
       };
@@ -3789,6 +3790,7 @@ export class CodexRuntimeService
       { type: 'text'; text: string } | { type: 'localImage'; path: string }
     >,
     signal: AbortSignal,
+    changeCapture?: TurnChangeCapture,
   ): AsyncGenerator<CodexTurnEvent> {
     this.appServer.addRef();
     const queue: CodexTurnEvent[] = [];
@@ -3955,6 +3957,10 @@ export class CodexRuntimeService
         case 'item/started': {
           if (!matchesThread(params)) return;
           if (completedItems.has(params?.item?.id)) return;
+          if (changeCapture && params.item?.type === 'commandExecution')
+            void this.turnChanges?.startCommand(changeCapture, params.item.id, 'Command');
+          if (changeCapture && params.item?.type === 'fileChange')
+            this.turnChanges?.startCodexEdit(changeCapture, params.item.id, params.item.changes);
           if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
           const message = codexUserMessage(params?.item);
           if (message) { push({ type: 'user.message', message }); return; }
@@ -3971,7 +3977,20 @@ export class CodexRuntimeService
         case 'item/completed': {
           if (!matchesThread(params)) return;
           const id = params?.item?.id;
-          if (typeof id === 'string') completedItems.add(id);
+          if (typeof id === 'string') {
+            if (completedItems.has(id)) return;
+            completedItems.add(id);
+            const item = params.item;
+            if (changeCapture && item.type === 'fileChange') {
+              if (item.status === 'completed')
+                this.turnChanges?.recordCodexPatch(changeCapture, id, turnIdFilter ?? undefined, item.changes);
+              void this.turnChanges?.endCommand(changeCapture, id, item.status === 'completed' ? 'completed' : 'failed');
+            }
+            if (changeCapture && item.type === 'commandExecution')
+              void this.turnChanges?.endCommand(changeCapture, id,
+                item.interrupted ? 'interrupted'
+                  : item.status === 'declined' || item.status === 'failed' || item.exitCode ? 'failed' : 'completed');
+          }
           if (params?.item?.type === 'contextCompaction') {
             state.activityNotifications = [...(state.activityNotifications ?? []).filter(note => note.key !== 'compaction'), {
               key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString(),

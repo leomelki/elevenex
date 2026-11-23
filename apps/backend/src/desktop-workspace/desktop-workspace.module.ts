@@ -1,5 +1,6 @@
 import { DesktopChatAttachments } from './desktop-chat-attachments.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { TurnChangesModule } from '../agent-runtime/turn-changes.module.js';
 import { AgentRuntimeModule } from '../agent-runtime/agent-runtime.module.js';
 import { DesktopChatController } from './desktop-chat.controller.js';
 import { DesktopChatService } from './desktop-chat.service.js';
@@ -22,6 +23,7 @@ import { DesktopProjectDeletionService } from './desktop-project-deletion.servic
     SettingsModule,
     GitModule,
     AgentRuntimeModule,
+    TurnChangesModule,
     ClaudeHooksModule,
     NavigationEventsModule,
     ProjectsModule,

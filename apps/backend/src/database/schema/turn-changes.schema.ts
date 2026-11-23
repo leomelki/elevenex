@@ -13,6 +13,7 @@ export const turnChanges = sqliteTable(
     conversationId: text('conversation_id').notNull(),
     startedAt: text('started_at').notNull(),
     finishedAt: text('finished_at').notNull(),
+    summary: text('summary', { mode: 'json' }).$type<TurnChangeDetails>(),
     details: text('details', { mode: 'json' })
       .$type<TurnChangeDetails>()
       .notNull(),

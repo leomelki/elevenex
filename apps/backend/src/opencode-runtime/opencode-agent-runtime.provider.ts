@@ -5,6 +5,7 @@ import {
 import type { OpenCodeClient } from './opencode-client.js';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 import { OpenCodeSessionTree } from './opencode-session-tree.js';
+import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
 import { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
 import {
   BadRequestException,
@@ -254,13 +255,13 @@ export class OpenCodeAgentRuntimeProvider
       dispatchingPrompts: this.queuedDispatches.current(state),
     };
   }
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const state = await this.state(sessionId);
     if (!state.claudeSessionId) return [];
     const entry = await this.ensure(sessionId);
     if (!entry.historyLoaded) await this.restore(entry);
     const history = this.history(entry);
-    return this.turnChanges?.attachHistory(sessionId, 'opencode', state.claudeSessionId, history) ?? history;
+    return this.turnChanges?.attachHistory(sessionId, 'opencode', state.claudeSessionId, history, options?.changeDetails) ?? history;
   }
   async getSnapshot(sessionId: number) {
     const history = await this.getHistory(sessionId);
@@ -674,6 +675,14 @@ export class OpenCodeAgentRuntimeProvider
             this.emitState(entry);
           }
           break;
+        }
+        if (this.turnChanges && part.type === 'tool' && part.state.status !== 'pending') {
+          const capture = this.turnChanges.forSession(state.sessionId, 'opencode');
+          if (capture && part.state.time.start >= Date.parse(capture.startedAt)) {
+            const tool = canonicalizeAgentTool(part.tool, part.state.input);
+            this.turnChanges.openCodeTool(capture, part.callID, tool.toolDisplayName, tool.toolKind,
+              part.state.status, tool.toolInput, part.state.metadata, part.messageID);
+          }
         }
         entry.transcript.putPart(part);
         this.emitPart(entry, part);

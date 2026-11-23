@@ -52,8 +52,8 @@ export class PiAgentRuntimeProvider
 
   reloadMcpConfiguration(sessionId: number) { return this.runtimeService.reloadMcpConfiguration(sessionId); }
 
-  getHistory(sessionId: number) {
-    return this.runtimeService.getHistory(sessionId);
+  getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
+    return this.runtimeService.getHistory(sessionId, options);
   }
 
   getRuntimeState(sessionId: number) {

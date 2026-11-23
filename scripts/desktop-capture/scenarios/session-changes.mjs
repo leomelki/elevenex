@@ -67,5 +67,31 @@ export default async function* (capture) {
     await capture.reducedMotion(false);
     await capture.click('[aria-label="Close side panel"]');
     await finish();
+    await scenario('evidence');
+    await capture.waitFor(() => document.querySelector('ex-turn footer > button')?.textContent.includes('Review'));
+    assert.equal(await capture.evaluate(() => document.querySelectorAll('ex-file-chip').length), 0);
+    await capture.click('ex-turn footer > button');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review .empty'));
+    yield { name: theme + '-net-zero-review', inspect: ['ex-session-chat-review .review-source', 'ex-session-chat-review .empty'] };
+    const choose = async (current, next) => {
+      const trigger = `ex-session-chat-review [aria-label="Change source: ${current}"]`;
+      await capture.evaluate(selector => document.querySelector(selector).focus(), trigger);
+      await capture.press('ArrowDown');
+      await capture.waitFor(() => document.querySelectorAll('[role="menuitemradio"]').length === 3);
+      await capture.press('Home');
+      const position = ['Net changes', 'Provider edits', 'Command observations'].indexOf(next);
+      for (let i = 0; i < position; i++) await capture.press('ArrowDown');
+      await capture.press('Enter');
+      await capture.waitFor(label => document.activeElement?.getAttribute('aria-label') === `Change source: ${label}`, next);
+    };
+    await choose('Net changes', 'Provider edits');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review [data-kind="add"]')?.textContent.includes('Provider patch line'));
+    yield { name: theme + '-provider-edits', inspect: ['ex-session-chat-review .review-source', 'ex-diff-file .hunk', ':focus'] };
+    await capture.viewport(1000, 760);
+    await choose('Provider edits', 'Command observations');
+    await capture.waitFor(() => document.querySelector('ex-session-chat-review [data-kind="add"]')?.textContent.includes('Observed command line'));
+    yield { name: theme + '-command-observations', inspect: ['ex-session-chat-review .review-source', 'ex-session-chat-review .shared-changes', 'ex-diff-file'] };
+    await capture.click('[aria-label="Close side panel"]');
+    await finish();
   }
 }
