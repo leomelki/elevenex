@@ -18,6 +18,10 @@ const BOUNDARY_BYTES = 8 * 1024 * 1024;
 const OUTPUT_BYTES = 32 * 1024 * 1024;
 const JOURNAL_PATHS = 20_000;
 const CONCURRENCY = 8;
+/** A cold ignored-file inventory can take tens of seconds in a large checkout.
+ * Turns wait briefly so small repositories keep complete ignored-file diffs,
+ * while prompt acceptance never depends on finishing that directory walk. */
+const IGNORED_INVENTORY_WAIT_MS = 2_000;
 const GENERATED_DIRECTORIES = new Set([
   'node_modules',
   'vendor',
@@ -40,6 +44,8 @@ interface SavedFile {
 interface Boundary {
   head: string | null;
   files: Map<string, SavedFile | null>;
+  /** Whether ignored files were inventoried when this state was read. */
+  ignoredInventory: boolean;
 }
 export interface WorktreeTurnCapture {
   baseline: Boundary;
@@ -78,6 +84,10 @@ export class WorktreeChangeTracker {
   private cacheBytes = 0;
   private readonly turns = new Set<WorktreeTurnCapture>();
   private readonly ignoredFiles = new Set<string>();
+  private ignoredInventorySettled = false;
+  private ignoredInventory?: Promise<void>;
+  private watcherStartup?: Promise<void>;
+  private readonly lifetime = new AbortController();
   private watcher?: { close(): unknown };
   private boundaryInFlight?: Promise<Boundary>;
   private latestBoundary?: Boundary;
@@ -107,7 +117,8 @@ export class WorktreeChangeTracker {
       await WorktreeChangeTracker.resolveRoot(path),
       budget,
     );
-    await tracker.startWatcher();
+    // Observation starts in the background; close() owns its cancellation.
+    tracker.watcherStartup = tracker.startWatcher();
     return tracker;
   }
 
@@ -120,7 +131,7 @@ export class WorktreeChangeTracker {
     // Reserve the observation window BEFORE asynchronous baseline acquisition.
     // Every overlapping capture is marked, including one ending during a scan.
     const capture: WorktreeTurnCapture = {
-      baseline: { head: null, files: new Map() },
+      baseline: { head: null, files: new Map(), ignoredInventory: false },
       paths: new Set(),
       shared: this.turns.size > 0,
       startedAt: new Date().toISOString(),
@@ -128,6 +139,16 @@ export class WorktreeChangeTracker {
     if (this.turns.size) for (const turn of this.turns) turn.shared = true;
     this.turns.add(capture);
     try {
+      if (this.ignoredInventory && !this.ignoredInventorySettled) {
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          this.ignoredInventory,
+          new Promise<void>((done) => {
+            timer = setTimeout(done, IGNORED_INVENTORY_WAIT_MS);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
       capture.baseline = await this.boundary();
       this.retainBoundary(capture.baseline);
       return capture;
@@ -156,10 +177,12 @@ export class WorktreeChangeTracker {
     try {
       end = await this.boundary();
       this.retainBoundary(end);
-      const paths = new Set([
-        ...capture.baseline.files.keys(),
-        ...end.files.keys(),
-      ]);
+      const paths = new Set(capture.baseline.files.keys());
+      // Without an inventoried starting state, an ignored file present at the
+      // end is not known to be new. Only journaled edits mark those changed.
+      for (const path of end.files.keys())
+        if (capture.baseline.ignoredInventory || !this.ignoredFiles.has(path))
+          paths.add(path);
       const unknownOriginals = new Set<string>();
       const journal: string[] = [];
       await bounded(
@@ -332,6 +355,18 @@ export class WorktreeChangeTracker {
       } finally {
         for (const file of originals.values()) this.release(file);
       }
+      const notices = [
+        ...(!capture.baseline.ignoredInventory
+          ? [
+              'Ignored files were still being inventoried when this turn started; their changes may be incomplete.',
+            ]
+          : []),
+        ...(this.observerFailed
+          ? [
+              'Filesystem observation was unavailable; changes were reconciled at turn boundaries.',
+            ]
+          : []),
+      ];
       return {
         files: filesChanged.length,
         additions: filesChanged.reduce((n, file) => n + file.additions, 0),
@@ -342,12 +377,7 @@ export class WorktreeChangeTracker {
           complete: true,
           shared: capture.shared,
           unchangedPaths,
-          ...(this.observerFailed
-            ? {
-                message:
-                  'Filesystem observation was unavailable; changes were reconciled at turn boundaries.',
-              }
-            : {}),
+          ...(notices.length ? { message: notices.join(' ') } : {}),
         },
       };
     } finally {
@@ -403,6 +433,8 @@ export class WorktreeChangeTracker {
         '--untracked-files=all',
         '--ignore-submodules=all',
       ]);
+      // Read with the ignored-file snapshot below, in the same synchronous step.
+      const ignoredInventory = this.ignoredInventorySettled;
       const paths = [
         ...new Set([
           ...nulStrings(status).map((record) => record.slice(3)),
@@ -417,12 +449,13 @@ export class WorktreeChangeTracker {
           if (file) file.references++;
           files.set(path, file);
         });
-        if (head === (await this.head())) return { head, files };
+        if (head === (await this.head()))
+          return { head, files, ignoredInventory };
       } catch (error) {
-        this.releaseBoundary({ head, files });
+        this.releaseBoundary({ head, files, ignoredInventory });
         throw error;
       }
-      this.releaseBoundary({ head, files });
+      this.releaseBoundary({ head, files, ignoredInventory });
     }
     throw new Error(
       'The checkout changed revisions repeatedly while capturing its starting state',
@@ -674,17 +707,22 @@ export class WorktreeChangeTracker {
         else this.observerFailed = true; // Boundary reconciliation remains authoritative.
       }
     };
-    try {
-      const ignoredPaths = nulStrings(
-        await git(this.root, [
-          'ls-files',
-          '--others',
-          '--ignored',
-          '--exclude-standard',
-          '--directory',
-          '-z',
-        ]),
-      );
+    const signal = this.lifetime.signal;
+    const inventory = git(
+      this.root,
+      [
+        'ls-files',
+        '--others',
+        '--ignored',
+        '--exclude-standard',
+        '--directory',
+        '-z',
+      ],
+      undefined,
+      [0],
+      signal,
+    ).then((output) => {
+      const ignoredPaths = nulStrings(output);
       for (const path of ignoredPaths)
         if (
           !path.endsWith('/') &&
@@ -692,6 +730,20 @@ export class WorktreeChangeTracker {
           !path.split('/').some((part) => GENERATED_DIRECTORIES.has(part))
         )
           this.ignoredFiles.add(path);
+      return ignoredPaths;
+    });
+    // A failed inventory settles as empty, so boundaries stay mutually comparable.
+    this.ignoredInventory = inventory
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        this.ignoredInventorySettled = true;
+      });
+    try {
+      const ignoredPaths = await inventory;
+      if (this.closed) return;
       if (process.platform === 'darwin' || process.platform === 'win32') {
         const watcher = watch(
           this.root,
@@ -710,8 +762,11 @@ export class WorktreeChangeTracker {
             path.split('/').some((part) => GENERATED_DIRECTORIES.has(part)),
         );
         const tracked = new Set(
-          nulStrings(await git(this.root, ['ls-files', '-z'])),
+          nulStrings(
+            await git(this.root, ['ls-files', '-z'], undefined, [0], signal),
+          ),
         );
+        if (this.closed) return;
         const parents = new Set<string>();
         for (const path of tracked) {
           const parts = path.split('/');
@@ -749,6 +804,8 @@ export class WorktreeChangeTracker {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.lifetime.abort();
+    await this.watcherStartup;
     await this.watcher?.close();
     await this.boundaryInFlight?.catch(() => undefined);
     await Promise.allSettled([...this.finishing]);
@@ -796,6 +853,7 @@ function git(
   args: string[],
   input?: Buffer,
   allowedCodes = [0],
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   return new Promise((done, reject) => {
     const env = isolateGitEnvironment(buildAugmentedEnv());
@@ -807,6 +865,7 @@ function git(
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      signal,
     });
     const chunks: Buffer[] = [];
     let bytes = 0;
