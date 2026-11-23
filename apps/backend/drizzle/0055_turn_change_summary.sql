@@ -1,0 +1,1 @@
+ALTER TABLE `turn_changes` ADD `summary` text;

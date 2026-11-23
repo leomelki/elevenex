@@ -107,6 +107,7 @@ export class TurnComponent implements OnChanges {
   readonly elapsed = input(0);
   readonly files = input<readonly ChangedFile[]>([]);
   readonly filesTotal = input<number>();
+  readonly reviewAvailable = input(false);
   readonly filesDiff = input<{ readonly add: number; readonly del: number }>();
   readonly sharedChanges = input(false);
   readonly error = input("");

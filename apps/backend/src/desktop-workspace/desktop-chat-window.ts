@@ -226,7 +226,7 @@ export function chatWindow(
       const turnChanges = savedWindowTurnChanges(ordered, position, history, liveItems, !!options.liveTurn);
       if (turnChanges) item = { ...item, turnChanges };
     }
-    if (!summary && raw.turnChanges) {
+    if (!summary && raw.turnChanges && !raw.turnChanges.evidence) {
       let turnStart = position - 1;
       while (turnStart >= 0 && ordered[turnStart].item.kind !== 'user') turnStart--;
       const changes = [];

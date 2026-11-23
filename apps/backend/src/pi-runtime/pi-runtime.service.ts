@@ -237,11 +237,11 @@ export class PiRuntimeService
     );
   }
 
-  async getHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
+  async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }): Promise<ClaudeTranscriptItem[]> {
     const history = await this.loadProviderHistory(sessionId);
     if (!this.turnChanges) return history;
     const session = await this.sessionsService.findOne(sessionId);
-    return this.turnChanges.attachHistory(sessionId, 'pi', session.piSessionPath, history);
+    return this.turnChanges.attachHistory(sessionId, 'pi', session.piSessionPath, history, options?.changeDetails);
   }
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
@@ -1443,6 +1443,12 @@ export class PiRuntimeService
           toolName,
           providerToolInput,
         );
+        const capture = this.turnChanges?.forSession(sessionId, 'pi');
+        if (canonicalTool.toolKind === 'bash')
+          void this.turnChanges?.startCommand(capture, toolUseId, toolName);
+        else if (canonicalTool.toolKind === 'write' || canonicalTool.toolKind === 'edit')
+          void this.turnChanges?.startEditor(capture, toolUseId, canonicalTool.toolKind === 'edit' ? 'Edit' : 'Write',
+            canonicalTool.toolInput);
         this.pushItem(
           sessionId,
           {
@@ -1466,6 +1472,8 @@ export class PiRuntimeService
       case 'tool_execution_update':
         return;
       case 'tool_execution_end':
+        if (typeof event.toolCallId === 'string')
+          this.turnChanges?.piToolEnd(this.turnChanges.forSession(sessionId, 'pi'), event.toolCallId, event.result, Boolean(event.isError));
         this.pushItem(
           sessionId,
           {

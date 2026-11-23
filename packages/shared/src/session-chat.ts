@@ -603,6 +603,8 @@ export interface SessionChatChangedFile {
   readonly add: number;
   readonly del: number;
 }
+export type SessionChatChangeSource = "net" | "provider" | "command";
+
 export interface SessionChatChangeSummary {
   readonly files: readonly SessionChatChangedFile[];
   readonly total: number;
@@ -610,6 +612,8 @@ export interface SessionChatChangeSummary {
   readonly lineTotals?: { readonly add: number; readonly del: number };
   /** The worktree capture includes changes observed during overlapping work. */
   readonly shared?: true;
+  readonly sources?: readonly Exclude<SessionChatChangeSource, "net">[];
+  readonly notice?: string;
 }
 export interface SessionChatChangesRead extends SessionChatTarget {
   readonly requestId: string;
@@ -618,6 +622,7 @@ export interface SessionChatChangesRead extends SessionChatTarget {
   readonly path?: string;
   readonly lineOffset?: number;
   readonly revision?: string;
+  readonly source?: SessionChatChangeSource;
 }
 export interface SessionChatChangeLine {
   readonly id: string;
@@ -625,11 +630,13 @@ export interface SessionChatChangeLine {
   readonly oldNumber?: number;
   readonly newNumber?: number;
   readonly text: string;
+  readonly evidence?: string;
 }
 export interface SessionChatChangesPage extends SessionChatChangeSummary {
   readonly turnId: string;
   readonly revision: string;
   readonly offset: number;
+  readonly source?: SessionChatChangeSource;
   readonly nextOffset: number | null;
   readonly content: {
     readonly path: string;

@@ -244,6 +244,43 @@ describe('CodexRuntimeService', () => {
     }
   });
 
+  it('forwards only successful patch completions and command boundaries for the owned turn', async () => {
+    const capture = { id: 'capture' };
+    const changes = {
+      begin: jest.fn(async () => capture), finish: jest.fn(async () => undefined),
+      recordCodexPatch: jest.fn(), startCodexEdit: jest.fn(), startCommand: jest.fn(), endCommand: jest.fn(),
+    };
+    const { service, appServer } = createService(undefined, changes);
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Apply a patch then run a command');
+      await new Promise(setImmediate);
+      const patch = { type: 'fileChange', id: 'patch', changes: [{ kind: { type: 'add' }, path: 'file.txt', diff: 'new\n' }] };
+      notify('item/started', { item: { ...patch, status: 'inProgress' } });
+      notify('item/completed', { item: { ...patch, id: 'failed', status: 'failed' } });
+      notify('item/completed', { item: { ...patch, id: 'declined', status: 'declined' } });
+      notify('item/completed', { item: { ...patch, status: 'completed' }, turnId: 'other-turn' });
+      notify('item/completed', { item: { ...patch, status: 'completed' }, threadId: 'other-thread' });
+      notify('item/completed', { item: { ...patch, status: 'completed' } });
+      notify('item/completed', { item: { ...patch, status: 'completed' } });
+      const command = { type: 'commandExecution', id: 'command', command: 'run', cwd: '/tmp/project' };
+      notify('item/started', { item: { ...command, status: 'inProgress' } });
+      notify('item/completed', { item: { ...command, status: 'failed', exitCode: 1 } });
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'interrupted' } });
+      await pending;
+      expect(changes.recordCodexPatch.mock.calls).toEqual([[capture, 'patch', 'turn-1', patch.changes]]);
+      expect(changes.startCommand.mock.calls).toEqual([[capture, 'command', 'Command']]);
+      expect(changes.startCodexEdit.mock.calls).toEqual([[capture, 'patch', patch.changes]]);
+      expect(changes.endCommand.mock.calls).toEqual([
+        [capture, 'failed', 'failed'], [capture, 'declined', 'failed'],
+        [capture, 'patch', 'completed'], [capture, 'command', 'failed'],
+      ]);
+      expect(changes.finish).toHaveBeenCalledWith(capture, 'thread-1');
+    } finally { service.onModuleDestroy(); }
+  });
+
   it('adds a saved permission denial without resorting native activity by its receipt time', async () => {
     const { service, sessionsService, historyService, interactionRows } = createService();
     sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'thread' });
@@ -1583,9 +1620,17 @@ describe('CodexRuntimeService', () => {
       provider: 'codex',
       root: '/tmp/project',
       startedAt: '2026-10-23T11:00:00Z',
+      cwd: '/tmp/project',
+      accepting: true,
+      tools: new Map(),
+      commands: new Map(),
+      evidenceBytes: 0,
+      claudeTools: new Map(),
     };
     const turnChanges = {
       begin: jest.fn<TurnChangesService['begin']>().mockResolvedValue(capture),
+      startCommand: jest.fn(),
+      endCommand: jest.fn(),
       finish: jest
         .fn<TurnChangesService['finish']>()
         .mockRejectedValue(new Error('capture cleanup failed')),
@@ -1758,6 +1803,7 @@ describe('CodexRuntimeService', () => {
       '/tmp/project',
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 

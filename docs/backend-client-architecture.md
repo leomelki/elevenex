@@ -661,3 +661,38 @@ other resource pagination. Older engines keep the group highlight and keyboard
 moves; the renderer withholds the dock's append-position promise.
 
 The optional `browserElements` chat capability advertises native-image element references. Browser state optionally supplies `elementSnapshots: 1` and `capturePending`; older engines remain usable. Explicit human captures cross the existing task-owned browser boundary as bounded raster snapshots, then the existing scoped upload/send pipeline. A versioned prompt envelope associates each stable reference with its exact attachment filename and one-based native image input. No renderer networking or generic IPC capability is added. See [the visual-element contract](browser-element-mentions.md) for lifetime, stale-document and recovery behavior.
+
+### Reply change review
+
+Turn capture lives in the backend, with one advisory filesystem observer per
+canonical checkout. A read-only Git inventory and file preimages establish the
+starting state. A second inventory and targeted content reads compare net worktree
+versions, including new untracked files and changes committed during the turn.
+The implementation leaves the real index, branches, refs and Git objects alone.
+The workspace Git Changes panel continues to read the checkout directly, including
+edits from outside the active session. Observed writes coalesce cache
+invalidations while the configured refresh still catches external edits when
+there is no active observer.
+
+Codex app-server contributes completed `fileChange` deltas after thread and turn
+matching. Claude's SDK hooks contribute successful editor receipts and native
+`bashEditDiff` observations. Pi edit receipts and OpenCode edit or patch receipts
+contribute native diffs when available. All four harnesses use tool lifecycle
+events for bounded observations. Known editor paths are sampled individually.
+Shell windows compare known dirty paths and paths reported by the observer.
+Postimages are captured before Git preimage lookup or diff rendering. Matching
+provider and observed editor diffs appear once. Differing observations for the
+same shell call and file keep both versions with their sources labeled.
+
+The turn comparison covers incomplete windows, tools without lifecycle events,
+and older engines with sparse events. Overlapping sessions can share net and
+tool observations while completed provider receipts retain their tool identity.
+
+Captures save bounded inline patches and compact summaries. Desktop transcript
+windows load summaries, and the authorized reply review hydrates one capture on
+demand. Paths, lines, command preimages, observer journals and Git output are
+bounded. Binary and oversized files may have metadata only. Ignored directory
+preimages, background commands and missed filesystem notifications can limit
+command review. A rename in net review is represented by the paths that were
+removed and added; an explicit Codex move also retains its source and destination
+in provider review.

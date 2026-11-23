@@ -199,7 +199,9 @@ export function registerSessionChatIpc(
         raw["revision"] === undefined
           ? undefined
           : chatText(raw["revision"], 64);
+      const source = raw["source"] ?? "net";
       if (
+        (source !== "net" && source !== "provider" && source !== "command") ||
         !turnId ||
         (filePath !== undefined && !filePath) ||
         typeof offset !== "number" ||
@@ -217,6 +219,7 @@ export function registerSessionChatIpc(
         lineOffset: String(lineOffset),
       });
       if (filePath !== undefined) query.set("path", filePath);
+      if (source !== "net") query.set("source", source);
       if (revision !== undefined) query.set("revision", revision);
       return client.execute(
         window,
@@ -235,6 +238,7 @@ export function registerSessionChatIpc(
             ),
             turnId,
             filePath,
+            source,
           );
           if (filePath === undefined && page.offset !== offset)
             throw new Error("The review page changed.");

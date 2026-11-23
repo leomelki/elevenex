@@ -1369,6 +1369,23 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   assert.equal((await chatRead({ ...recent, deferToolDetails: true })).ok, true);
   assert.match(requests.at(-1), /loadingMode=progressive&summarizeCompleted=1&summarizeRecent=1&deferToolDetails=1$/);
 
+  const review = value => handlers.get('session-chat:changes')({ senderFrame: frame, sender }, scope,
+    { taskId: 5, sessionId: 9, requestId: 'review', turnId: 'prompt', offset: 0, ...value });
+  response = { turnId: 'prompt', revision, offset: 0, nextOffset: null, files: [], total: 0, content: null };
+  assert.equal((await review({})).ok, true, 'Older backends can omit a source');
+  const provider = { ...response, source: 'provider', sources: ['provider', 'command'], total: 1,
+    files: [{ path: 'file.txt', status: 'A', add: 1, del: 0 }],
+    content: { path: 'file.txt', nextOffset: null, lines: [
+      { id: '1', kind: 'add', text: 'new', evidence: 'Apply patch · patch' },
+    ] } };
+  response = provider;
+  const readProvider = () => review({ source: 'provider', path: 'file.txt', revision });
+  assert.equal((await readProvider()).value.content.lines[0].evidence, 'Apply patch · patch');
+  assert.match(requests.at(-1), /source=provider/);
+  response = { ...provider, source: 'command' };
+  assert.equal((await readProvider()).error.code, 'invalid-response');
+  assert.throws(() => review({ source: 'unknown' }), /Invalid review/);
+
   const item = { id: 'call', revision }, receipt = { id: 'result', revision };
   const details = { taskId: 5, sessionId: 9, item, result: receipt, requestId: 'details' };
   const body = { ...item, record: { ...tool, input: 'bounded command' } };

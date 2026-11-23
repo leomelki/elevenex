@@ -460,6 +460,7 @@ function projectExchanges(
       files: previous?.exchange.files?.length === files.length && files.every((file, i) => file === previous.exchange.files?.[i])
         ? previous.exchange.files : files,
       filesTotal,
+      reviewAvailable: !!captured?.sources?.length || !!captured?.notice,
       filesDiff: captured?.lineTotals,
       sharedChanges,
       answerBeforeStepId:

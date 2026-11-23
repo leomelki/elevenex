@@ -30,6 +30,7 @@ export interface TurnChangeHunk {
   deletions: number;
   patch?: string;
   startLine?: number;
+  evidenceLabel?: string;
 }
 
 export interface TurnChangedFile {
@@ -40,10 +41,23 @@ export interface TurnChangedFile {
   hunks: TurnChangeHunk[];
   attribution?: 'tool' | 'observed' | 'shared';
   diffUnavailable?: string;
+  observationKey?: string;
+}
+
+export interface TurnToolEvidence {
+  kind: 'provider' | 'command';
+  toolId: string;
+  toolName: string;
+  providerTurnId?: string;
+  window?: { start: number; end: number };
+  files: TurnChangedFile[];
 }
 
 export interface TurnChangeDetails extends TurnChangeSummary {
   filesChanged: TurnChangedFile[];
+  /** Versioned independently of legacy transcript-derived change statistics. */
+  evidence?: { version: 1; tools: TurnToolEvidence[]; sources?: TurnToolEvidence['kind'][]; partial?: true };
+  summaryOnly?: true;
   capture?: { root: string; complete: boolean; shared: boolean; message?: string; unchangedPaths?: string[]; aliases?: string[] };
 }
 
@@ -509,6 +523,7 @@ export function reconcileCapturedChanges(
 ): TurnChangeDetails | null {
   const snapshot = items.findLast((item) => item.turnChanges)?.turnChanges;
   if (!snapshot) return native;
+  if (snapshot.evidence) return snapshot;
   const roots = [snapshot.capture?.root, ...(snapshot.capture?.aliases ?? [])]
     .filter((root): root is string => !!root)
     .map((root) => root.replaceAll('\\', '/').replace(/\/$/, ''));

@@ -503,31 +503,40 @@ export class SessionChatFixture {
     this.changed();
     this.resetVersion = this.version;
   }
-  private changeMode: 'created' | 'many' | 'empty' | 'failed' = 'created';
-  changedFiles(mode: 'created' | 'many' | 'empty' | 'failed', id = 101): void {
+  private changeMode: 'created' | 'many' | 'empty' | 'failed' | 'evidence' = 'created';
+  changedFiles(mode: 'created' | 'many' | 'empty' | 'failed' | 'evidence', id = 101): void {
     this.changeMode = mode;
     const files = this.changeRows();
     const session = this.session(id);
     session.state = { ...previewChatState(), providerLocked: true };
     session.items = [
       item('change-prompt', 'user', 'Create a small file to test the agent.'),
-      item('change-answer', 'assistant', mode === 'empty' ? 'No files changed.' : 'Created `skill-test.txt` with a short test message.'),
-      item('change-capture', 'system', '', { changes: { total: files.length, files: files.slice(0, 200) } }),
+      item('change-answer', 'assistant', mode === 'empty' || mode === 'evidence' ? 'No net changes.' : 'Created `skill-test.txt` with a short test message.'),
+      item('change-capture', 'system', '', { changes: { total: files.length, files: files.slice(0, 200),
+        ...(mode === 'evidence' ? { sources: ['provider', 'command'] } : {}) } }),
     ];
     this.changed(); this.resetVersion = this.version;
   }
-  private changeRows() {
+  private changeRows(source?: SessionChatChangesRead['source']) {
+    if (this.changeMode === 'evidence') return source && source !== 'net'
+      ? [{ path: 'example.ts', status: 'M' as const, add: 1, del: 0 }] : [];
     return Array.from({ length: this.changeMode === 'empty' ? 0 : this.changeMode === 'many' ? 1001 : 1 }, (_, i) => ({ path: i ? `src/example-${i}.ts` : 'skill-test.txt', status: 'A' as const, add: i ? 401 : 1, del: 0 }));
   }
   async changes(input: SessionChatChangesRead): Promise<BackendResult<SessionChatChangesPage>> {
     if (this.changeMode === 'failed') return { ok: false, error: { code: 'transport', message: 'Could not load the reply changes.' } };
-    const files = this.changeRows(), index = input.path ? files.findIndex(file => file.path === input.path) : -1;
+    const files = this.changeRows(input.source), index = input.path ? files.findIndex(file => file.path === input.path) : -1;
     const offset = index >= 0 ? Math.floor(index / 100) * 100 : input.offset;
     const lineOffset = input.lineOffset ?? 0;
     const totalLines = index > 0 ? 401 : 1;
     const count = Math.min(400, Math.max(0, totalLines - lineOffset));
-    return { ok: true, value: { turnId: input.turnId, revision: 'a'.repeat(64), offset, files: files.slice(offset, offset + 100), total: files.length, nextOffset: offset + 100 < files.length ? offset + 100 : null,
-      content: input.path ? { path: input.path, lines: Array.from({ length: count }, (_, n) => ({ id: `line-${lineOffset + n}`, kind: 'add' as const, newNumber: lineOffset + n + 1, text: index > 0 ? `export const value${lineOffset + n} = true;` : 'A short test message.' })), nextOffset: lineOffset + count < totalLines ? lineOffset + count : null } : null } };
+    const evidence = this.changeMode === 'evidence';
+    return { ok: true, value: { turnId: input.turnId, revision: (input.source === 'provider' ? 'b' : input.source === 'command' ? 'c' : 'a').repeat(64), offset,
+      ...(evidence ? { sources: ['provider', 'command'], source: input.source,
+        ...(input.source === 'command' ? { notice: 'These edits were observed during command execution and may include other writers.' } : {}) } : {}),
+      files: files.slice(offset, offset + 100), total: files.length, nextOffset: offset + 100 < files.length ? offset + 100 : null,
+      content: input.path ? { path: input.path, lines: Array.from({ length: count }, (_, n) => ({ id: `line-${lineOffset + n}`, kind: 'add' as const, newNumber: lineOffset + n + 1, text: evidence ? input.source === 'provider' ? 'Provider patch line' : 'Observed command line'
+        : index > 0 ? `export const value${lineOffset + n} = true;` : 'A short test message.',
+        ...(evidence ? { evidence: input.source === 'provider' ? 'Apply patch · patch-1' : 'Bash · shell-1' } : {}) })), nextOffset: lineOffset + count < totalLines ? lineOffset + count : null } : null } };
   }
   private changed(): void {
     this.version++;

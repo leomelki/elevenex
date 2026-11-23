@@ -2,6 +2,7 @@ import {
   afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   effect,
   ElementRef,
@@ -9,17 +10,19 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from "@angular/core";
-import type { SessionChatChangesPage } from "@elevenex/shared";
+import type { SessionChatChangesPage, SessionChatChangeSource } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import { OpensWhenBackComponent } from '../machines';
-import { ButtonComponent } from "../ui";
+import { ButtonComponent, DropdownComponent } from "../ui";
 import {
   DiffReviewComponent,
   type ChangeFile,
   type DiffFileContent,
   type DiffFileRequest,
+  type DiffLine,
 } from "../views";
 import type { ChatSelection } from "./session-chat.store";
 
@@ -31,7 +34,7 @@ export type ChatReviewTarget = ChatSelection & {
 /** One selected reply, with bounded file/content windows and owned cancellation. */
 @Component({
   selector: "ex-session-chat-review",
-  imports: [DiffReviewComponent, ButtonComponent, OpensWhenBackComponent],
+  imports: [DiffReviewComponent, ButtonComponent, DropdownComponent, OpensWhenBackComponent],
   templateUrl: "./session-chat-review.component.html",
   styleUrl: "./session-chat-review.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -44,6 +47,12 @@ export class SessionChatReviewComponent {
   readonly wideChange = output<boolean>();
   readonly exitRequested = output<void>();
   readonly openFileRequested = output<string>();
+  protected readonly source = signal<SessionChatChangeSource>("net");
+  private readonly sources = signal<NonNullable<SessionChatChangesPage["sources"]>>([]);
+  protected readonly sourceOptions = computed(() => [
+    { id: "net", label: "Net changes" },
+    ...this.sources().map(id => ({ id, label: id === "provider" ? "Provider edits" : "Command observations" })),
+  ]);
   readonly page = signal<SessionChatChangesPage | null>(null);
   readonly files = signal<readonly ChangeFile[]>([]);
   readonly contents = signal<readonly DiffFileContent[]>([]);
@@ -75,7 +84,11 @@ export class SessionChatReviewComponent {
     effect(() => {
       const target = this.target();
       if (this.unreachable()) { this.cancel(); this.busy.set(false); }
-      else void this.load(target, 0, target.path);
+      else untracked(() => {
+        this.source.set("net");
+        this.sources.set([]);
+        void this.load(target, 0, target.path);
+      });
     });
     afterRenderEffect(() => {
       const fileId = this.linePending();
@@ -101,11 +114,19 @@ export class SessionChatReviewComponent {
     this.requests.clear();
     this.queue = [];
   }
-  async load(target = this.target(), offset = 0, path?: string): Promise<void> {
+  protected selectSource(source: string): void {
+    if ((source !== "provider" && source !== "command" && source !== "net") ||
+        source === this.source() || !this.sourceOptions().some(option => option.id === source)) return;
+    this.source.set(source);
+    void this.load(this.target(), 0, undefined, false);
+  }
+
+  async load(target = this.target(), offset = 0, path?: string, focus = true): Promise<void> {
     if (this.unreachable()) { this.reconnectRequested.emit(); return; }
     this.cancel();
     const generation = this.generation,
       requestId = crypto.randomUUID();
+    this.focusPending.set(false);
     this.busy.set(true);
     this.error.set("");
     this.page.set(null);
@@ -120,6 +141,7 @@ export class SessionChatReviewComponent {
       requestId,
       offset,
       path,
+      source: this.source(),
     });
     if (generation !== this.generation) return;
     this.requests.delete(requestId);
@@ -130,6 +152,7 @@ export class SessionChatReviewComponent {
     }
     const page = result.value;
     this.page.set(page);
+    this.sources.set(page.sources ?? []);
     this.files.set(
       page.files.map((file) => ({
         ...file,
@@ -139,7 +162,7 @@ export class SessionChatReviewComponent {
     );
     this.activeFile.set(path ?? page.files[0]?.path);
     if (page.content) this.applyContent(page, 0);
-    this.focusPending.set(true);
+    this.focusPending.set(focus);
   }
   pageFiles(direction: -1 | 1): void {
     const page = this.page();
@@ -227,6 +250,7 @@ export class SessionChatReviewComponent {
       path: request.fileId,
       lineOffset,
       revision: page.revision,
+      source: page.source,
     });
     if (generation !== this.generation) return;
     this.requests.delete(key);
@@ -275,21 +299,23 @@ export class SessionChatReviewComponent {
     if (content.nextOffset !== null)
       this.nextLines.set(content.path, content.nextOffset);
     else this.nextLines.delete(content.path);
+    const hunks: Array<{ id: string; heading: string; lines: DiffLine[] }> = [];
+    for (const line of content.lines) {
+      const heading = line.evidence ?? (offset ? `Changes · lines after ${offset}` : "Changes in this reply");
+      let hunk = hunks.at(-1);
+      if (hunk?.heading !== heading) {
+        hunk = { id: `${content.path}:${line.id}`, heading, lines: [] };
+        hunks.push(hunk);
+      }
+      hunk.lines.push(line);
+    }
     this.putContent({
       fileId: content.path,
       rev: page.revision,
       mode: "changes",
       state: content.error ? "error" : "ready",
       error: content.error,
-      hunks: [
-        {
-          id: `${content.path}:${offset}`,
-          heading: offset
-            ? `Changes · lines after ${offset}`
-            : "Changes in this reply",
-          lines: content.lines,
-        },
-      ],
+      hunks,
       hasMoreLines: content.nextOffset !== null,
       hasPreviousLines: offset > 0,
     });
