@@ -8,7 +8,7 @@ import {
   relative,
   sep,
 } from 'node:path';
-import { chromium } from 'playwright-core';
+import { chromium } from 'patchright-core';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
 
 export function managedBrowserExecutable(
@@ -24,7 +24,7 @@ export function managedBrowserExecutable(
 
 export function playwrightInstaller(): string {
   return join(
-    dirname(createRequire(__filename).resolve('playwright-core/package.json')),
+    dirname(createRequire(__filename).resolve('patchright-core/package.json')),
     'cli.js',
   );
 }

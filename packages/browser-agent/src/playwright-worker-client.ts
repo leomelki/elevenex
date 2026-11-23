@@ -10,6 +10,7 @@ import type {
   BrowserHumanRequest,
 } from '@elevenex/shared';
 import {
+  integer,
   object,
   type BrowserAgentDownload,
   type BrowserAgentHost,
@@ -123,8 +124,8 @@ export class PlaywrightWorkerClient {
         workerData: {
           artifacts: this.directory,
           modules: {
-            'playwright-core': require.resolve('playwright-core'),
-            '@playwright/test': require.resolve('@playwright/test'),
+            'patchright-core': require.resolve('patchright-core'),
+            'patchright/test': require.resolve('patchright/test'),
           },
         },
         resourceLimits: {
@@ -395,6 +396,14 @@ export class PlaywrightWorkerClient {
         args[3] as string | undefined,
       );
       if (profile) this.assertProfile();
+    } else if (method === 'target-diagnostics') {
+      if (!target.diagnostics) throw new Error('Browser diagnostics are unavailable on this host');
+      const since = integer(args[1], 0, 0, Number.MAX_SAFE_INTEGER);
+      const limit = integer(args[2], 50, 1, 100);
+      const kind = args[3];
+      if (kind !== 'console' && kind !== 'pageerror')
+        throw new Error('Expected console or page error history');
+      result = await target.diagnostics(since, limit, kind);
     } else if (method === 'target-present') {
       if (!target.present) throw new Error('Update this browser host to show agent feedback');
       if (args[2] !== undefined && typeof args[2] !== 'string') throw new Error('Invalid document identity');

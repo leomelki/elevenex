@@ -7,8 +7,8 @@ const backendDistEntry = path.join(backendRoot, 'dist', 'main.js');
 const backendBundleRoot = path.join(backendRoot, 'bundle');
 const backendBundleEntry = path.join(backendBundleRoot, 'main.cjs');
 const EXTERNAL_MODULES = [
-  'playwright-core',
-  '@playwright/test',
+  'patchright-core',
+  'patchright',
   'ffmpeg-static',
   'better-sqlite3',
   'node-pty',
@@ -154,7 +154,7 @@ async function main() {
     entryPoints: [path.join(backendRoot, 'dist/browser-host/cli.js')],
     outfile: path.join(backendBundleRoot, 'browser-setup.cjs'),
     bundle: true, platform: 'node', format: 'cjs', target: 'node22',
-    external: ['playwright-core'], sourcemap: true,
+    external: ['patchright-core'], sourcemap: true,
   });
 
   // Screen parsing runs outside the backend event loop in local and SSH builds.

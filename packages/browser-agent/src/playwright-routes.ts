@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Request, Route } from 'playwright-core';
+import type { BrowserContext, Page, Request, Route } from 'patchright-core';
 
 type Routable = Page | BrowserContext;
 type Matcher = string | RegExp | ((url: URL) => Promise<unknown>);

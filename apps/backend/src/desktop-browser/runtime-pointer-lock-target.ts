@@ -1,4 +1,4 @@
-import type { CDPSession } from 'playwright-core';
+import type { CDPSession } from 'patchright-core';
 import { randomUUID } from 'node:crypto';
 import { pointerLockObserver } from './runtime-pointer-lock-observer.js';
 

@@ -77,16 +77,14 @@ const REQUIRED_NATIVE_RUNTIME_ARTIFACTS = [
     : []),
 ];
 const FINAL_RUNTIME_PACKAGE_PLANS = {
-  // Playwright stays external to main.cjs. Keep its loader, browser registry,
-  // installer CLI and platform helpers together; Chromium is installed later.
-  '@playwright/test': {
-    files: ['package.json', 'index.js', 'index.mjs', 'LICENSE', 'NOTICE'],
-  },
-  'playwright': {
+  // The Patchright driver stays external to main.cjs. Keep its loader, browser
+  // registry, installer CLI and platform helpers together; Chromium is
+  // installed later. Staging restores the LICENSE/NOTICE its npm packages omit.
+  'patchright': {
     files: ['package.json', 'index.js', 'index.mjs', 'test.js', 'test.mjs', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
     directories: ['lib'],
   },
-  'playwright-core': {
+  'patchright-core': {
     files: ['package.json', 'index.js', 'index.mjs', 'cli.js', 'browsers.json', 'LICENSE', 'NOTICE', 'ThirdPartyNotices.txt'],
     directories: ['lib', 'bin'],
   },
@@ -391,6 +389,7 @@ function getBundledNodeExecutable() {
 function validateRuntimeLoad() {
   const script = [
     "const path = require('path');",
+    "const fs = require('fs');",
     "const root = process.argv[1];",
     "const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));",
     "const db = new Database(':memory:');",
@@ -407,9 +406,11 @@ function validateRuntimeLoad() {
     // download/launch Chromium here; exercise its registry and installer loader.
     "const assert = require('node:assert/strict');",
     "const { execFileSync } = require('node:child_process');",
-    "const playwrightRoot = path.join(root, 'node_modules', 'playwright-core');",
-    "assert.equal(typeof require(playwrightRoot).chromium.launch, 'function');",
-    "execFileSync(process.execPath, [path.join(playwrightRoot, 'cli.js'), '--version'], { timeout: 10000, stdio: 'pipe' });",
+    "const driverRoot = path.join(root, 'node_modules', 'patchright-core');",
+    "assert.equal(typeof require(driverRoot).chromium.launch, 'function');",
+    "assert.equal(typeof require(path.join(root, 'node_modules', 'patchright', 'test.js')).expect, 'function');",
+    "for (const name of ['patchright', 'patchright-core']) for (const file of ['LICENSE', 'NOTICE']) fs.accessSync(path.join(root, 'node_modules', name, file));",
+    "execFileSync(process.execPath, [path.join(driverRoot, 'cli.js'), '--version'], { timeout: 10000, stdio: 'pipe' });",
     // Resolve the managed binary directly, as the backend does, so FFMPEG_BIN
     // cannot make a missing packaged executable pass validation.
     "const ffmpegRoot = path.dirname(require.resolve(path.join(root, 'node_modules', 'ffmpeg-static', 'package.json')));",

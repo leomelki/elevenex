@@ -1,3 +1,21 @@
+export type BrowserDiagnostic = Readonly<{
+  seq: number;
+  kind: 'browser' | 'console' | 'pageerror';
+  level: string;
+  text: string;
+  source?: string;
+  timestamp?: number;
+  location?: Readonly<{ url: string; line: number; column: number }>;
+  errorName?: string;
+}>;
+
+export interface BrowserDiagnosticsPage {
+  readonly items: readonly BrowserDiagnostic[];
+  readonly next: number;
+  readonly hasMore: boolean;
+  readonly dropped: boolean;
+}
+
 /** Privileged adapters implement these operations; agent code only receives JSON RPC handles. */
 export interface BrowserAgentTarget {
   readonly id: string;
@@ -13,6 +31,12 @@ export interface BrowserAgentTarget {
   subscribe(
     listener: (method: string, params: unknown, sessionId?: string) => void,
   ): () => void;
+  /** Bounded, agent-owned diagnostics from the current tab. */
+  diagnostics?(
+    since: number,
+    limit: number,
+    kind?: BrowserDiagnostic['kind'],
+  ): Promise<BrowserDiagnosticsPage>;
   /** Grants the destination without navigating; the scoped Playwright connection owns navigation. */
   authorize?(url: string, signal: AbortSignal): Promise<void>;
   dispose?(): void | Promise<void>;
@@ -36,10 +60,10 @@ export interface BrowserAgentHost {
   readonly playwright?: true;
   watch?(listener: () => void): () => void;
   profile?: {
-    cookies(): Promise<import('playwright-core').Cookie[]>;
+    cookies(): Promise<import('patchright-core').Cookie[]>;
     addCookies(
       cookies: Parameters<
-        import('playwright-core').BrowserContext['addCookies']
+        import('patchright-core').BrowserContext['addCookies']
       >[0],
     ): Promise<void>;
     clearCookies(): Promise<void>;

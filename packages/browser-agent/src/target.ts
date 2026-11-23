@@ -48,8 +48,11 @@ export class AgentTarget {
     });
   }
   async start(): Promise<void> {
+    // Never Runtime.enable: while a client receives console events Chromium
+    // serializes every logged value, which sites can time. Evaluation works
+    // without it; console and exception events are unavailable, as with the
+    // Patchright driver. DOM.documentUpdated still tracks document identity.
     for (const [method, params] of [
-      ["Runtime.enable", {}],
       ["DOM.enable", {}],
       ["Page.enable", {}],
       [

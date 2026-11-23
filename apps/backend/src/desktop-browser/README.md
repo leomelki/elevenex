@@ -13,7 +13,8 @@ replies. The old `task_browser` MCP tool is removed. The renderer bridge does no
 expose code execution. Optional `agentCode: 1` state distinguishes the new agent
 observation policy from older hosts; `privacy` retains its legacy wire value.
 
-The remote host uses pinned `playwright-core@1.61.0` over a private Chromium pipe.
+The remote host uses pinned `patchright-core@1.64.3` (Playwright's API; see
+[site-facing browser identity](#site-facing-browser-identity)) over a private Chromium pipe.
 Streamed WebAuthn uses Chromium's fixed proxy extension and a human-approved
 desktop authenticator broker. See [WebAuthn architecture and native limits](../../../../docs/task-browser-webauthn.md).
 `RuntimeBrowserPool` owns up to four sandboxed Chromium processes, persistent
@@ -163,6 +164,77 @@ host configuration, and pins validated answers while racing address families.
 Authorized localhost aliases can reach IPv4- or IPv6-only task servers. Private
 answers, unknown task ports and application control destinations stay denied.
 
+## Browser diagnostics
+
+Each runtime tab reads Chromium's Log domain for failed resource loads,
+security notices, deprecations and other browser messages. The error badge
+counts request and HTTP failures plus browser errors from other sources.
+While an agent controls an authorized loopback task server, the runtime also
+records console text and uncaught exceptions from the top-level document.
+These errors contribute to the badge.
+
+`tab.diagnostics({ since, limit })` reads a memory-only window of up to 128
+entries through an owned `browser.tabs` handle. The default page size is 50,
+the maximum is 100, and the result includes `next`, `hasMore` and `dropped`.
+Entries carry a sequence, kind, level and bounded text. The buffer resets when
+top-level navigation starts or control changes. Console capture uses a separate
+CDP session that detaches on navigation, human takeover or tab teardown.
+Only the committed task-server origin's top-level execution context supplies
+console and exception entries. Browser Log messages are available for other
+destinations. Entries are never saved to a profile or included in viewer state.
+Playwright's `page.consoleMessages()` and `page.pageErrors()` read the latest
+100 entries of their respective kinds from the same buffer.
+
+## Site-facing browser identity
+
+People drive streamed pages directly, so sites must see an ordinary Chrome
+rather than a test harness. The engine remains genuine Chromium with its own
+TLS/HTTP stack, client-hint brands, GPU path and fonts; nothing below spoofs a
+different browser, device or OS.
+
+- The driver is pinned `patchright-core`/`patchright` 1.64.3. The runtime
+  enables the CDP Runtime domain only for diagnostics on authorized task
+  servers under agent control.
+- `runtime-launch` starts full new-headless Chrome (never the headless shell)
+  with `--disable-blink-features=AutomationControlled`, so `navigator.webdriver`
+  is false. It restores `--disable-back-forward-cache`, which Patchright drops:
+  a back-forward cache restore fires no load event, so Back/Forward waits would
+  time out. Popup blocking also stays disabled because headless has no
+  blocked-popup UI through which a person could allow a legitimate window.
+- `runtime-user-agent` replaces Chrome's `HeadlessChrome` product token with
+  `--user-agent`, using Chrome's frozen reduced-UA format for the host OS. The
+  switch is browser-wide: documents, workers, service workers and requests agree.
+  Per-target CDP overrides leak the headless token in service workers and replace
+  Chrome's real brand list, so they are not used. The major version comes from
+  the pinned driver build and is verified after launch; an installed Chrome
+  with another version is relaunched once before any site opens and remembered
+  for the pool's lifetime. Chrome withholds high-entropy UA client hints (full
+  version list, architecture) when this switch is present.
+- Playwright's `--hide-scrollbars` is removed, so pages get real scrollbars that
+  people can drag. The single `--disable-features` list replaces the driver's
+  (Chromium honors only the last switch). It keeps Playwright's request
+  interception and page-close requirements plus `PaintHolding`, and leaves
+  third-party storage partitioning, HTTPS-Upgrades and the Media Router at
+  Chrome's defaults. Reconcile it whenever the driver pin changes.
+- `RuntimePageWorld` owns a private CDP isolated world in the top-level document
+  for passive presentation work: title sampling and cursor hit testing. Site
+  scripts cannot enumerate it or intercept its DOM reads. Without Runtime events
+  it resolves the world by name with `Page.createIsolatedWorld`, re-resolves after
+  main-frame navigation, and samples the title on navigation events and once a
+  second. The runtime's own driver calls (clipboard, inspection) use Patchright's
+  isolated world; human-picked source inspection and element selection markers
+  stay in the main world because they need framework expando properties.
+- Agent code keeps Playwright's main-world `evaluate` semantics; see
+  [the driver contract](../../../../docs/browser-playwright.md#api-and-compatibility).
+  The runtime registers no init scripts or bindings, so Patchright never rewrites
+  its HTML documents or their CSP; agent `addInitScript` can.
+
+Known limits: Chrome for Testing (and Playwright's Linux ARM64 Chromium) reports
+the `Chromium` brand and lacks proprietary H.264/AAC codecs, GPU-less hosts
+expose SwiftShader WebGL, `screen` matches the streamed viewport, and permissions
+default to denied. Branded Chrome ignores `--load-extension` (Chrome 137+), so the
+WebAuthn relay is unavailable when the installed-Chrome fallback is used.
+
 ## Capture reliability
 
 `RuntimeBrowserCapture` owns the tab's CDP screencast listener, serialized
@@ -230,12 +302,22 @@ persistence. Viewer loss clears pending requests without replay.
 
 Popup adoption keeps the actual page and opener in the task context rather than
 reopening a URL. Background popups do not steal another selected user tab.
-`pointerLock: true` advertises genuine Chromium lock state and bounded relative
+`pointerLock: true` (currently withheld; see the status below) advertises genuine Chromium lock state and bounded relative
 motion input; the viewing device requires its own explicit user gesture. Native
 cursor metadata is restricted to CSS keywords. These optional fields leave older
 JPEG/video/input contracts available.
 
 ### Pointer-lock ownership and input ordering
+
+**Status: disabled.** Its target observer needs the CDP Runtime domain for
+context and binding events, which conflicts with the Runtime-free rule above.
+Hosts omit the optional `pointerLock: true` capability, so viewers keep the
+absolute-pointer behavior they use for older hosts, and relative motion is
+rejected because no lease is ever granted. Headless Chromium still lets a page
+take a native lock after a gesture; as in ordinary Chrome, a human Escape key
+exits it through the private page world. The design below, its lease, input
+lane and the macOS window anchor are retained for a Runtime-free observer; the
+pointer-lock integration suite is skipped until then.
 
 `runtime-pointer-lock` owns a tab's current lock and monotonic acquisition epoch.
 `runtime-pointer-lock-target` owns CDP subscriptions for each renderer target;

@@ -19,7 +19,7 @@ test('archived browser setup works without checkout, pnpm, native addons or back
   const stage = join(root, 'stage');
   await mkdir(join(stage, 'backend/node_modules'), { recursive: true });
   await cp(new URL('../apps/backend/bundle/browser-setup.cjs', import.meta.url), join(stage, 'backend/browser-setup.cjs'));
-  await cp(dirname(backendRequire.resolve('playwright-core/package.json')), join(stage, 'backend/node_modules/playwright-core'), { recursive: true, dereference: true });
+  await cp(dirname(backendRequire.resolve('patchright-core/package.json')), join(stage, 'backend/node_modules/patchright-core'), { recursive: true, dereference: true });
   await run('tar', ['-czf', join(root, 'backend.tar.gz'), '-C', stage, 'backend']);
   await run('tar', ['-xzf', join(root, 'backend.tar.gz'), '-C', root]);
   await rm(stage, { recursive: true });

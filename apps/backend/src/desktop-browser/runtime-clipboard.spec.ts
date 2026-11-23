@@ -1,4 +1,4 @@
-import type { Page } from 'playwright-core';
+import type { Page } from 'patchright-core';
 import { RuntimeBrowserClipboard } from './runtime-clipboard.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 

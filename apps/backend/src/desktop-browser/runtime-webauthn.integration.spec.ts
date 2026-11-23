@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page } from 'playwright-core';
+import { chromium, type BrowserContext, type Page } from 'patchright-core';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,15 +78,15 @@ describe('Chromium WebAuthn proxy', () => {
           () => 'success',
           (error: DOMException) => error.name,
         );
-    });
+    }, undefined, undefined, false);
   const outcome = () =>
     page.evaluate(
-      () => (window as typeof window & { ceremony: Promise<string> }).ceremony,
+      () => (window as typeof window & { ceremony: Promise<string> }).ceremony, undefined, undefined, false,
     );
   it('receives engine-validated origin and options without patching page APIs', async () => {
     expect(
       await page.evaluate(() =>
-        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(), undefined, undefined, false,
       ),
     ).toBe(true);
     await begin();
@@ -135,7 +135,7 @@ describe('Chromium WebAuthn proxy', () => {
         } catch (error) {
           return error instanceof DOMException ? error.name : 'unknown';
         }
-      }),
+      }, undefined, undefined, false),
     ).toBe('SecurityError');
     expect(relay.snapshot()).toBeUndefined();
   });
@@ -159,7 +159,7 @@ describe('Chromium WebAuthn proxy', () => {
     await wait(() => !!relay.snapshot());
     const first = relay.snapshot()!.id;
     await page.evaluate(() =>
-      (window as typeof window & { abort: AbortController }).abort.abort(),
+      (window as typeof window & { abort: AbortController }).abort.abort(), undefined, undefined, false,
     );
     expect(await outcome()).toBe('AbortError');
     await wait(() => !relay.snapshot());
@@ -176,7 +176,7 @@ describe('Chromium WebAuthn proxy', () => {
     expect(await outcome()).toBe('NotAllowedError');
     expect(
       await page.evaluate(() =>
-        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(), undefined, undefined, false,
       ),
     ).toBe(false);
   });

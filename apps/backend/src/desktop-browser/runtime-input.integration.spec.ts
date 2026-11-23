@@ -69,7 +69,7 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
     await input.dispatch(key, current);
     await input.dispatch(key, current);
     expect(
-      await page.evaluate('window.keys.filter(e=>e[0]==="Shift")'),
+      await page.evaluate('window.keys.filter(e=>e[0]==="Shift")', undefined, undefined, false),
     ).toEqual([
       ['Shift', false],
       ['Shift', true],
@@ -88,9 +88,9 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
       current,
     );
     await input.dispatch({ kind: 'release' }, current);
-    expect(await page.evaluate('window.releases')).toBe(1);
+    expect(await page.evaluate('window.releases', undefined, undefined, false)).toBe(1);
     await input.dispatch(key, current);
-    expect(await page.evaluate('window.keys.at(-1)')).toEqual(['Shift', false]);
+    expect(await page.evaluate('window.keys.at(-1)', undefined, undefined, false)).toEqual(['Shift', false]);
     let valid = true;
     const check = () => {
       if (!valid) throw new Error('Control changed');
@@ -123,12 +123,12 @@ it('uses native Chromium composition, platform-independent editing, key repeat a
       shadow.innerHTML = '<input value="shadow-text">';
       const field = shadow.querySelector('input')!;
       field.focus(); field.select();
-    });
+    }, undefined, undefined, false);
     expect(await input.dispatch({ kind: 'clipboard', operation: 'copy' }, current)).toEqual({ clipboard: 'shadow-text' });
     await page.evaluate(() => {
       const field = document.querySelector('#shadow')!.shadowRoot!.querySelector('input')!;
       field.type = 'password'; field.focus(); field.select();
-    });
+    }, undefined, undefined, false);
     expect(await input.dispatch({ kind: 'clipboard', operation: 'copy' }, current)).toEqual({});
   } finally {
     await pool.onModuleDestroy();

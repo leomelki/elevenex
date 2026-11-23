@@ -1,4 +1,4 @@
-import type { BrowserContext } from 'playwright-core';
+import type { BrowserContext } from 'patchright-core';
 import { workflowLimit } from './runtime-workflows.js';
 
 /** Chromium disk/network admission, including unknown content lengths and chunked responses. */

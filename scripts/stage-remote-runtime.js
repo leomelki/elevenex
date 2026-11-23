@@ -1,4 +1,9 @@
-const { formatSize, getDirectorySize, removeGitArtifacts } = require("./runtime-stage-utils");
+const {
+  formatSize,
+  getDirectorySize,
+  removeGitArtifacts,
+  restoreDriverLicenses,
+} = require("./runtime-stage-utils");
 const {
   cpSync,
   existsSync,
@@ -46,8 +51,8 @@ const TARGETS = [
 ];
 const NATIVE_RUNTIME_DEPENDENCIES = [
   // Externalized browser driver, including its managed Chromium installer assets.
-  "playwright-core",
-  "@playwright/test",
+  "patchright-core",
+  "patchright",
   "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
@@ -432,6 +437,7 @@ function installRuntimeDependencies(targetRoot, target) {
       env,
     },
   );
+  restoreDriverLicenses(path.join(targetRoot, "node_modules"));
 }
 
 function validateRemoteNativeRuntime(targetRoot, target) {

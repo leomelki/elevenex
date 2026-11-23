@@ -1,5 +1,5 @@
 import { RuntimeWorkflowBudget } from './runtime-workflows.js';
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'patchright-core';
 import { RuntimeBrowserStartError } from './runtime-start-error.js';
 import { BrowserAgentEngine, BrowserInteractionController, RelatedBrowserTabs } from '@elevenex/browser-agent';
 import type { BrowserCodeCommand, BrowserCodeResult } from '@elevenex/shared';
@@ -276,7 +276,8 @@ export class RuntimeBrowserTask {
       webAuthn: true,
       ...(this.webAuthn.snapshot() ? { webAuthnRequest: this.webAuthn.snapshot() } : {}),
       workflows: true,
-      pointerLock: true,
+      // Pointer lock is withheld until it has a Runtime-free observer; viewers
+      // then keep the absolute-pointer behavior used for hosts without it.
       streamVersion: 1,
       videoStream: 'h264',
       videoWindow: 8,

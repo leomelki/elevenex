@@ -3,7 +3,7 @@ import { BrowserAgentPresentation } from '@elevenex/browser-agent';
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
 import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
-import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
+import type { BrowserContext, CDPSession, Page, Request } from 'patchright-core';
 import { randomUUID } from 'node:crypto';
 import type {
   BrowserElement,
@@ -13,13 +13,15 @@ import type {
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
+import { RuntimeBrowserDiagnostics } from './runtime-diagnostics.js';
+import { RuntimePageWorld } from './runtime-page-world.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
 import { detectBrowserSources } from '@elevenex/browser-inspection';
 
 import { RuntimeBrowserCapture, type RuntimeFrame, type RuntimeVideoCapture } from './runtime-capture.js';
 export type { RuntimeFrame, RuntimeVideoCapture } from './runtime-capture.js';
 
-/** A tab has one driver, one navigation generation, one frame waiter and no text observation. */
+/** A tab owns its driver, navigation generation and frame waiter. */
 export class RuntimeBrowserTab {
   private readonly presentationFeedback = new BrowserAgentPresentation(() => this.changed());
   agentPicker?: (x: number, y: number) => Promise<void>;
@@ -130,6 +132,18 @@ export class RuntimeBrowserTab {
           };
         },
         authorize,
+        ...(!human
+          ? {
+              diagnostics: async (...args: Parameters<NonNullable<BrowserAgentTarget['diagnostics']>>) => {
+                assert();
+                const result = await this.diagnostics?.read(...args);
+                assert();
+                if (!result)
+                  throw new Error('Browser diagnostics are unavailable for this tab');
+                return result;
+              },
+            }
+          : {}),
         subscribeDownloads: (listener) => {
           this.agentDownloads.add(listener);
           return () => this.agentDownloads.delete(listener);
@@ -230,6 +244,8 @@ export class RuntimeBrowserTab {
   private stopNavigation?: () => void;
   private input?: RuntimeBrowserInput;
   private cursorReader?: RuntimeBrowserCursor;
+  private diagnostics?: RuntimeBrowserDiagnostics;
+  private pageWorld?: RuntimePageWorld;
   private disposed = false;
   private crashed = false;
   private layoutRevision = 0;
@@ -282,6 +298,7 @@ export class RuntimeBrowserTab {
     this.ownership++;
     this.waiting = this.agentPaused;
     this.driver = needs ? 'needs' : 'you';
+    this.diagnostics?.control(false);
     this.generation++;
     this.target = undefined;
     this.controlChanged();
@@ -295,6 +312,7 @@ export class RuntimeBrowserTab {
     this.ownership++;
     this.agentSessionId = sessionId;
     this.driver = 'agent';
+    this.diagnostics?.control(true);
     this.waiting = false;
     this.generation++;
     this.step = { n: 1, text: 'Waiting for a browser action' };
@@ -356,52 +374,27 @@ export class RuntimeBrowserTab {
       void this.capture.start(); this.changed();
     });
     this.cdp = await this.context.newCDPSession(page);
+    // Headless Chromium target metadata does not report document.title changes.
+    // The private world reports only bounded human-facing title data.
+    const pageWorld = new RuntimePageWorld(this.cdp, (url, title) => {
+      if (this.disposed || this.page !== page || this.pageWorld !== pageWorld || url !== page.url()) return;
+      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
+      this.changed();
+    });
+    this.pageWorld = pageWorld;
+    await pageWorld.start();
     this.input = new RuntimeBrowserInput(page, this.cdp, this.pointerLock);
-    this.cursorReader = new RuntimeBrowserCursor(page, cursor => {
+    this.cursorReader = new RuntimeBrowserCursor(expression => pageWorld.evaluate(expression), cursor => {
       if (cursor === this.cursor) return;
       this.cursor = cursor;
       this.changed();
     });
     this.capture.attach(this.cdp);
-    await this.pointerLock.attach(page, this.cdp);
+    // Pointer lock support is disabled: its observer depends on the CDP Runtime
+    // domain, whose console serialization sites can measure. The lease, input
+    // lane and capability stay in place for when a Runtime-free observer exists.
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // Headless Chromium target metadata does not report document.title changes.
-    // This page-owned binding accepts only bounded human-facing title data.
-    const bindingName = '__elevenexPageTitle';
-    await page.exposeBinding(bindingName, ({ frame }, url: unknown, title: unknown) => {
-      if (this.disposed || this.page !== page || frame !== page.mainFrame() || url !== page.url() || typeof title !== 'string' || title.length > 200) return;
-      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
-      this.changed();
-    });
-    await page.addInitScript((name: string) => {
-      if (window !== window.top) return;
-      document.addEventListener('DOMContentLoaded', () => {
-        let previous: string | undefined;
-        const publish = () => {
-          const title = document.title.replace(/\s+/gu, ' ').trim().slice(0, 200);
-          if (title === previous) return;
-          previous = title;
-          const send: unknown = Reflect.get(globalThis, name);
-          if (typeof send === 'function') {
-            const result: unknown = Reflect.apply(send, globalThis, [location.href, title]);
-            void Promise.resolve(result).catch(() => undefined);
-          }
-        };
-        // The observers and binding die with their owning document/page.
-        const head = new MutationObserver(publish);
-        const observeHead = () => {
-          head.disconnect();
-          head.observe(document.head ?? document.documentElement, { childList: true, subtree: true, characterData: true });
-          publish();
-        };
-        new MutationObserver(observeHead).observe(document.documentElement, { childList: true });
-        observeHead();
-      }, { once: true });
-    }, bindingName);
-    page.on('console', (message) => {
-      if (message.type() === 'error') this.countError();
-    });
     page.on('request', request => {
       if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
       this.documentRequest = request;
@@ -429,6 +422,8 @@ export class RuntimeBrowserTab {
       if (response.status() >= 400) this.countError();
     });
     page.on('crash', () => {
+      if (this.disposed || this.page !== page) return;
+      this.stopNavigation?.();
       void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
@@ -438,6 +433,7 @@ export class RuntimeBrowserTab {
     });
     page.on('close', () => {
       if (this.disposed || this.page !== page) return;
+      this.stopNavigation?.();
       void this.workflows.clear();
       this.crashed = true;
       this.takeover(true);
@@ -461,10 +457,41 @@ export class RuntimeBrowserTab {
     const { frameTree } = await cdp.send('Page.getFrameTree');
     if (this.disposed || this.page !== page || this.cdp !== cdp) return;
     let mainFrameId = frameTree.frame.id;
+    const context = page.context();
+    const diagnostics = new RuntimeBrowserDiagnostics(
+      cdp,
+      () => context.newCDPSession(page),
+      (url) => this.network.isAuthorizedTaskServer(url),
+      () => this.countError(),
+    );
+    this.diagnostics = diagnostics;
+    diagnostics.control(this.driver === 'agent');
+    diagnostics.committed(frameTree.frame);
+    const navigationStarted = ({
+      frameId,
+      navigationType,
+    }: {
+      frameId: string;
+      navigationType: string;
+    }) => {
+      if (
+        frameId === mainFrameId &&
+        navigationType !== 'sameDocument' &&
+        navigationType !== 'historySameDocument'
+      )
+        diagnostics.navigationStarted();
+    };
     const documentChanged = ({ frame }: { frame: { id: string; parentId?: string; url: string; urlFragment?: string } }) => {
       if (frame.parentId) return;
       mainFrameId = frame.id;
+      diagnostics.committed(frame);
       this.navigated(page, frame.url + (frame.urlFragment ?? ''), false);
+    };
+    const navigationStopped = ({ frameId }: { frameId: string }) => {
+      if (frameId === mainFrameId)
+        void diagnostics.navigationStopped(
+          async () => (await cdp.send('Page.getFrameTree')).frameTree.frame,
+        );
     };
     const withinDocument = ({ frameId, url }: { frameId: string; url: string }) => {
       if (frameId === mainFrameId) this.navigated(page, url, true);
@@ -472,14 +499,21 @@ export class RuntimeBrowserTab {
     // New documents and explicit document.open invalidate human coordinates.
     // SPA panels often route before data arrives and retain their document.
     cdp.on('Page.frameNavigated', documentChanged);
+    cdp.on('Page.frameStartedNavigating', navigationStarted);
+    cdp.on('Page.frameStoppedLoading', navigationStopped);
     cdp.on('Page.documentOpened', documentChanged);
     cdp.on('Page.navigatedWithinDocument', withinDocument);
     this.stopNavigation = () => {
       cdp.off('Page.frameNavigated', documentChanged);
+      cdp.off('Page.frameStartedNavigating', navigationStarted);
+      cdp.off('Page.frameStoppedLoading', navigationStopped);
       cdp.off('Page.documentOpened', documentChanged);
       cdp.off('Page.navigatedWithinDocument', withinDocument);
+      diagnostics.dispose();
+      this.diagnostics = undefined;
+      this.stopNavigation = undefined;
     };
-    await cdp.send('Page.enable');
+    await Promise.all([cdp.send('Page.enable'), diagnostics.start()]);
   }
   private navigated(page: Page, address: string, sameDocument: boolean): void {
     if (this.disposed || this.page !== page) return;
@@ -779,6 +813,14 @@ export class RuntimeBrowserTab {
     }
     const result = await this.input!.dispatch(input, current);
     this.capture.changed();
+    if (!(input.kind === 'wheel' || input.kind === 'pointer-exit' || (input.kind === 'pointer' && input.type === 'move')))
+      this.pageWorld?.titleMayChange();
+    // Ordinary Chrome releases pointer lock on Escape. While pointer lock support
+    // is disabled, nothing else returns a natively locked page to the viewer.
+    if (input.kind === 'key' && input.type === 'down' && input.key === 'Escape')
+      void this.pageWorld
+        ?.evaluate('document.pointerLockElement && document.exitPointerLock()')
+        .catch(() => undefined);
     if (input.kind === 'pointer' || input.kind === 'pointer-exit') {
       const x = input.kind === 'pointer' ? input.x : -1, y = input.kind === 'pointer' ? input.y : -1;
       this.cursorReader?.update(x, y, () =>
@@ -948,7 +990,9 @@ export class RuntimeBrowserTab {
     this.pickerHover.destroy();
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
-    this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.pageWorld?.destroy();
+    this.pageWorld = undefined;
+    this.stopNavigation?.();
     const workflowCleanup = this.workflows.destroy();
     this.takeover();
     const pointerCleanup = this.pointerLock.detach();
@@ -968,9 +1012,11 @@ export class RuntimeBrowserTab {
     this.engineRevision++;
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
+    this.pageWorld?.destroy();
+    this.pageWorld = undefined;
     const workflowCleanup = this.workflows.clear();
     this.invalidateDisplay();
-    this.stopNavigation?.(); this.stopNavigation = undefined;
+    this.stopNavigation?.();
     const page = this.page,
       cdp = this.cdp;
     const pointerCleanup = this.pointerLock.detach();

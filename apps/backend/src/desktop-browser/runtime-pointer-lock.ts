@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CDPSession, Frame, Page } from 'playwright-core';
+import type { CDPSession, Frame, Page } from 'patchright-core';
 import {
   PointerLockTarget,
   type PointerLockContext,

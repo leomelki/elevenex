@@ -22,6 +22,6 @@ boundary. Older viewers require messages no longer than 400 characters. Full
 commands that exceed that limit remain in backend logs, never truncated in place.
 
 `bundle-electron-backend.js` emits `browser-setup.cjs` alongside `main.cjs` and
-keeps Playwright external. Local, development and remote runtime assembly must
+keeps the Patchright driver (`patchright-core`, `patchright`) external. Local, development and remote runtime assembly must
 copy it with the driver. The helper uses built-in Node APIs and the locked driver;
 it must not depend on a global pnpm, global Playwright or a source checkout.

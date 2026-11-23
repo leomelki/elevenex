@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'patchright-core';
 import { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import { RuntimeBrowserTask } from './runtime-task.js';
 
@@ -118,7 +118,7 @@ describe('browser responsiveness and explicit recovery', () => {
       while (performance.now() < end) {
         /* Block input acknowledgments. */
       }
-    });
+    }, undefined, undefined, false);
     await beganPromise;
     const input = task
       .input(tabId, task.page(tabId).generation, {
@@ -157,7 +157,7 @@ describe('browser responsiveness and explicit recovery', () => {
         while (true) {
           /* Only closing this target can end this fixture. */
         }
-      })
+      }, undefined, undefined, false)
       .catch(() => undefined);
     await beganPromise;
     const writing = task

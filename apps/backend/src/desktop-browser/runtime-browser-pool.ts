@@ -3,7 +3,7 @@ import {
   type BrowserContext,
   type BrowserContextOptions,
   type Page,
-} from 'playwright-core';
+} from 'patchright-core';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { installDownloadPolicy } from './runtime-download-policy.js';
@@ -13,6 +13,7 @@ import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { prepareWebAuthnExtension } from './runtime-webauthn-extension.js';
 import { launchRuntimeBrowser, browserLaunchOptions } from './runtime-launch.js';
 import { browserStartError } from './runtime-start-error.js';
+import { RuntimeUserAgents } from './runtime-user-agent.js';
 
 export function privateBrowserLoggingEnabled(
   environment: NodeJS.ProcessEnv,
@@ -69,6 +70,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
   private readonly cleanup = new Set<Promise<void>>();
   private installation?: Promise<void>;
   private extension?: Promise<string>;
+  private readonly userAgents = new RuntimeUserAgents();
   private readonly cache = join(getElevenexDataRoot(), 'browser-runtime');
   async acquire(identity: string, contextOptions: BrowserContextOptions): Promise<BrowserContext> {
     if (!/^[a-f0-9]{64}$/.test(identity)) throw new Error('Invalid browser profile identity');
@@ -123,6 +125,7 @@ export class RuntimeBrowserPool implements OnModuleDestroy {
         options,
         () => this.install(),
         this.lifetime.signal,
+        this.userAgents,
       );
     } catch (error) {
       await rm(downloadsPath, { recursive: true, force: true });

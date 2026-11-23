@@ -1,5 +1,25 @@
 import { browserCursors, type TaskBrowserCursor } from '@elevenex/shared';
-import type { Page } from 'playwright-core';
+
+/** Runs in the tab's private page world, never the site's JavaScript realm. */
+export function cursorAt(x: number, y: number): string {
+  let element = document.elementFromPoint(x, y);
+  while (element?.shadowRoot) {
+    const inner = element.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === element) break;
+    element = inner;
+  }
+  if (!element) return 'default';
+  const cursor = getComputedStyle(element).cursor;
+  if (
+    cursor === 'auto' &&
+    element.closest(
+      'input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true]',
+    )
+  )
+    return 'text';
+  // Never relay custom cursor URLs or page-provided CSS expressions.
+  return cursor.split(',').at(-1)?.trim() ?? 'default';
+}
 
 interface CursorRead {
   readonly x: number;
@@ -17,7 +37,7 @@ export class RuntimeBrowserCursor {
   private timer?: ReturnType<typeof setTimeout>;
 
   constructor(
-    private readonly page: Page,
+    private readonly evaluate: (expression: string) => Promise<unknown>,
     private readonly publish: (cursor: TaskBrowserCursor) => void,
   ) {}
 
@@ -53,27 +73,8 @@ export class RuntimeBrowserCursor {
     if (!read || !read.current() || this.disposed) return;
     this.reading = true;
     try {
-      const cursor = await this.page.evaluate(
-        ({ x, y }) => {
-          let element = document.elementFromPoint(x, y);
-          while (element?.shadowRoot) {
-            const inner = element.shadowRoot.elementFromPoint(x, y);
-            if (!inner || inner === element) break;
-            element = inner;
-          }
-          if (!element) return 'default';
-          const cursor = getComputedStyle(element).cursor;
-          if (
-            cursor === 'auto' &&
-            element.closest(
-              'input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true]',
-            )
-          )
-            return 'text';
-          // Never relay custom cursor URLs or page-provided CSS expressions.
-          return cursor.split(',').at(-1)?.trim() ?? 'default';
-        },
-        { x: read.x, y: read.y },
+      const cursor = await this.evaluate(
+        `(${cursorAt.toString()})(${JSON.stringify(read.x)},${JSON.stringify(read.y)})`,
       );
       if (!this.disposed && this.latest === read && read.current())
         this.publish(

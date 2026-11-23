@@ -1,4 +1,4 @@
-import type { BrowserContext } from 'playwright-core';
+import type { BrowserContext } from 'patchright-core';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,10 +24,10 @@ it('keeps a scrolled viewport stable through idle refreshes at both pixel densit
     const cdp = await context.newCDPSession(page);
     for (const pixelRatio of [1, 2]) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 440, height: 800, deviceScaleFactor: pixelRatio, mobile: false });
-      await page.evaluate(() => scrollTo(0, 1800));
+      await page.evaluate(() => scrollTo(0, 1800), undefined, undefined, false);
       await page.waitForFunction(() => scrollY === 1800);
       // Wait for the compositor, not only the synchronous scroll offset.
-      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))), undefined, undefined, false);
       const state = { width: 440, height: 800, pixelRatio, displayEpoch: pixelRatio, visible: true, ready: true };
       const capture = new RuntimeBrowserCapture(() => state);
       capture.attach(cdp);
@@ -50,7 +50,7 @@ it('keeps a scrolled viewport stable through idle refreshes at both pixel densit
               ctx.drawImage(bitmap, 0, 0);
               return { width: bitmap.width, height: bitmap.height, pixel: [...ctx.getImageData(bitmap.width / 2, bitmap.height / 2, 1, 1).data] };
             } finally { bitmap.close(); }
-          }, [...frame.jpeg]);
+          }, [...frame.jpeg], undefined, false);
           expect(sample.width).toBeLessThanOrEqual(396);
           expect(sample.height).toBeLessThanOrEqual(720);
           expect(sample.pixel[1]).toBeGreaterThan(150);
@@ -60,8 +60,8 @@ it('keeps a scrolled viewport stable through idle refreshes at both pixel densit
         expect(received).toBeGreaterThan(0);
         expect(commands.mock.calls.filter(([method]) => method === 'Page.startScreencast').length).toBeGreaterThanOrEqual(2);
         expect(commands.mock.calls.some(([method]) => method === 'Page.captureScreenshot')).toBe(false);
-        expect(await page.evaluate(() => scrollY)).toBe(1800);
-        expect(await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width: 440, height: 800 });
+        expect(await page.evaluate(() => scrollY, undefined, undefined, false)).toBe(1800);
+        expect(await page.evaluate(() => ({ width: innerWidth, height: innerHeight }), undefined, undefined, false)).toEqual({ width: 440, height: 800 });
       } finally { input.abort(); capture.detach(); await capture.stop(); commands.mockRestore(); }
     }
     await cdp.detach();

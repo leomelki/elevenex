@@ -1,4 +1,4 @@
-import type { BrowserContext, Frame, Page } from 'playwright-core';
+import type { BrowserContext, Frame, Page } from 'patchright-core';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,7 +28,9 @@ interface Trace {
   keys: { key: string; type: string; x: number }[];
 }
 
-describe('pointer lock through public runtime input', () => {
+// Pointer lock support is disabled while its observer depends on the CDP Runtime
+// domain (see the desktop-browser README). Re-enable with that support.
+describe.skip('pointer lock through public runtime input', () => {
   let root: string, previous: string | undefined, server: Server, url: string;
   let pool: RuntimeBrowserPool,
     task: RuntimeBrowserTask,

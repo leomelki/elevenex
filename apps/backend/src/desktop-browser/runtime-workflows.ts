@@ -1,4 +1,4 @@
-import type { Dialog, Download, FileChooser } from 'playwright-core';
+import type { Dialog, Download, FileChooser } from 'patchright-core';
 import { randomUUID } from 'node:crypto';
 import { open, type FileHandle } from 'node:fs/promises';
 import type { TaskBrowserWorkflow } from '@elevenex/shared';

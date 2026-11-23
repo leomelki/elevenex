@@ -21,6 +21,15 @@ export function runtimeUrl(value: unknown): URL {
     );
   return url;
 }
+
+function taskServerPort(url: URL): number {
+  return Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+}
+
+function loopbackHost(host: string): boolean {
+  return browserLoopbackHost(host.replace(/\.$/, ''));
+}
+
 /** The browser's task-local origin is preserved; no page can fall through to other server services. */
 export class RuntimeBrowserNetwork {
   private readonly ports = new Set<number>();
@@ -33,13 +42,23 @@ export class RuntimeBrowserNetwork {
     private readonly applicationPort: (port: number) => boolean = () => false,
   ) {}
   authorize(url: URL): void {
-    if (browserLoopbackHost(url.hostname.replace(/\.$/, ''))) {
-      if (this.ports.size >= 32 && !this.ports.has(Number(url.port)))
+    if (loopbackHost(url.hostname)) {
+      const port = taskServerPort(url);
+      if (this.ports.size >= 32 && !this.ports.has(port))
         throw new Error('Task server limit reached');
-      this.ports.add(
-        Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
-      );
+      this.ports.add(port);
     }
+  }
+  isAuthorizedTaskServer(url: URL): boolean {
+    const port = taskServerPort(url);
+    return (
+      !this.closed &&
+      this.active() &&
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      loopbackHost(url.hostname) &&
+      this.ports.has(port) &&
+      !this.applicationPort(port)
+    );
   }
   setPorts(ports: readonly number[]): void {
     for (const port of ports.slice(0, 32))

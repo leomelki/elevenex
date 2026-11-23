@@ -33,10 +33,10 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
     // JS is already bundled on the host. Installing the entire backend again
     // would also download unused agent CLIs and image/ML dependencies.
     const backendManifest = JSON.parse(await readFile(join(root, 'apps/backend/package.json'), 'utf8'));
-    const browserRuntime = typeof backendManifest.dependencies['playwright-core'] === 'string';
+    const browserRuntime = typeof backendManifest.dependencies['patchright-core'] === 'string';
     const runtimeDependencies = ['better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node',
-      ...(browserRuntime ? ['playwright-core', 'ffmpeg-static',
-        ...(typeof backendManifest.dependencies['@playwright/test'] === 'string' ? ['@playwright/test'] : [])] : [])];
+      ...(browserRuntime ? ['patchright-core', 'ffmpeg-static',
+        ...(typeof backendManifest.dependencies['patchright'] === 'string' ? ['patchright'] : [])] : [])];
     const dependencies = Object.fromEntries(runtimeDependencies.map(name => {
       const specifier = backendManifest.dependencies[name];
       if (typeof specifier !== 'string') throw new Error(`Missing backend runtime dependency: ${name}`);

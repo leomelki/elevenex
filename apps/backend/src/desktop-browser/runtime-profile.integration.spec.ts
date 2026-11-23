@@ -42,11 +42,11 @@ it('retains Chromium site data after host restart and isolates task profiles', a
       });
       const cache = await caches.open('profile');
       await cache.put('/cached', new Response('retained'));
-    });
+    }, undefined, undefined, false);
     const other = await pool.acquire('c'.repeat(64), {});
     const otherPage = await other.newPage();
     await otherPage.goto(url);
-    expect(await otherPage.evaluate(() => [document.cookie, localStorage.getItem('preference')])).toEqual(['', null]);
+    expect(await otherPage.evaluate(() => [document.cookie, localStorage.getItem('preference')], undefined, undefined, false)).toEqual(['', null]);
     await pool.onModuleDestroy();
     pool = new RuntimeBrowserPool();
     const restored = await pool.acquire(identity, {});
@@ -65,7 +65,7 @@ it('retains Chromium site data after host restart and isolates task profiles', a
         };
       });
       return [document.cookie, localStorage.getItem('preference'), databaseValue, await (await caches.match('/cached'))?.text()];
-    })).toEqual(['login=retained', 'retained', 'retained', 'retained']);
+    }, undefined, undefined, false)).toEqual(['login=retained', 'retained', 'retained', 'retained']);
     expect((await stat(join(root, 'task-browser-profiles', identity))).mode & 0o777).toBe(0o700);
     await expect(pool.acquire('../escape', {})).rejects.toThrow('Invalid browser profile');
   } finally {

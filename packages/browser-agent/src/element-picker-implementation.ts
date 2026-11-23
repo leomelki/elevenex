@@ -1,6 +1,6 @@
 import { captureElementSnapshot } from './element-snapshot.js';
 import { randomUUID } from 'node:crypto';
-import { chromium, type Frame } from 'playwright-core';
+import { chromium, type Frame } from 'patchright-core';
 import type { BrowserHumanElement } from '@elevenex/shared';
 import { selectedBrowserElement, frameLoader, selectionFingerprintExpression } from './element-selection.js';
 import { PlaywrightTransport } from './playwright-transport.js';
@@ -78,7 +78,8 @@ export async function pickBrowserElement(
     const page = browser.contexts()[0]?.pages()[0];
     if (!page) throw new Error('Inspection page unavailable');
     if (fingerprint !== undefined) {
-      const actual = object(await page.evaluate(selectionFingerprintExpression(x, y))), expected = object(fingerprint);
+      // The selection marker lives in the main world, shared with direct CDP picks.
+      const actual = object(await page.evaluate(selectionFingerprintExpression(x, y), undefined, undefined, false)), expected = object(fingerprint);
       // Native CDP may reorder object keys while relaying values.
       if (Object.keys(actual).length !== Object.keys(expected).length || Object.keys(expected).some(key => actual[key] !== expected[key])) throw new Error('The page moved before selection; pick the element again');
     }
@@ -92,6 +93,9 @@ export async function pickBrowserElement(
       if (!current()) throw new Error('Element request changed');
       const result: unknown = await frame.evaluate(
         `(${POINT})(${JSON.stringify({ x: localX, y: localY, marker })})`,
+        undefined,
+        undefined,
+        false,
       );
       if (!result) throw new Error('No element at that point');
       picked = object(result);

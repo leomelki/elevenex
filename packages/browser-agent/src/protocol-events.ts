@@ -1,4 +1,4 @@
-// Event names from the protocol shipped with pinned Playwright 1.61.
+// Event names from the protocol shipped with pinned Patchright 1.64 (Chromium 156).
 export const PROTOCOL_EVENTS = [
   'Accessibility.loadComplete',
   'Accessibility.nodesUpdated',
@@ -70,7 +70,6 @@ export const PROTOCOL_EVENTS = [
   'Network.eventSourceMessageReceived',
   'Network.loadingFailed',
   'Network.loadingFinished',
-  'Network.requestIntercepted',
   'Network.requestServedFromCache',
   'Network.requestWillBeSent',
   'Network.resourceChangedPriority',
@@ -176,11 +175,7 @@ export const PROTOCOL_EVENTS = [
   'Storage.cacheStorageListUpdated',
   'Storage.indexedDBContentUpdated',
   'Storage.indexedDBListUpdated',
-  'Storage.interestGroupAccessed',
-  'Storage.interestGroupAuctionEventOccurred',
-  'Storage.interestGroupAuctionNetworkRequestCreated',
-  'Storage.sharedStorageAccessed',
-  'Storage.sharedStorageWorkletOperationExecutionFinished',
+  'Storage.privateVerificationTokensUpdated',
   'Storage.storageBucketCreatedOrUpdated',
   'Storage.storageBucketDeleted',
   'Target.attachedToTarget',

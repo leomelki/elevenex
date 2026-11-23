@@ -29,6 +29,7 @@ const __bridge = (() => {
       screenshot: (options = {}) => rpc('screenshot', [ref.handle, options]),
       cdp: (method, params = {}) => rpc('cdp', [ref.handle, method, params]),
       events: (options = {}) => rpc('events', [ref.handle, options]),
+      diagnostics: (options = {}) => rpc('diagnostics', [ref.handle, options]),
       close: () => rpc('close', [ref.handle]),
       waitFor: async (fn, arg, options = {}) => {
         const end = Date.now() + Math.min(options.timeoutMs ?? 5000, 60000);

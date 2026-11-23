@@ -75,8 +75,19 @@ Pages and concurrency:
     state.page.getByRole('button',{name:'Load'}).click()
   ]);
 - Full Playwright locator chaining, shadow DOM, frameLocator, assertions, genuine
-  input, evaluate/evaluateHandle, request/response bodies, console/dialog events,
+  input, evaluate/evaluateHandle, request/response bodies, dialog events,
   uploads/downloads, clocks, tracing and page-scoped CDP are available.
+- On an authorized loopback task server, use await page.consoleMessages()
+  for retained console text and await page.pageErrors() for uncaught errors.
+  Entries cover the current top-level document. Console messages support
+  text(), type(), location(), timestamp() and page(). Live console/pageerror
+  listeners and console argument handles are unavailable.
+- Read browser diagnostics such as failed loads and security notices with
+  await (await browser.tabs.get(tabId)).diagnostics({since, limit}) on an owned
+  tab. Use next as the next cursor.
+- evaluate/evaluateHandle/evaluateAll run in the page's main world, as in
+  Playwright. Pass true as the trailing isolatedContext argument (4th; 3rd for
+  evaluateAll and Worker) to read the DOM from a private world instead.
 
 Mocking and HTTP:
 - page/context.route accepts strings, RegExps or URL callback predicates. Route
@@ -87,10 +98,10 @@ Mocking and HTTP:
   Callback errors abort the paused request and reset code state. On cancellation,
   paused requests are aborted before detachment; they never fall through as a
   real request merely because the code worker stopped.
-- routeWebSocket supports offline mocks with ws.onMessage/ws.send/ws.onClose.
-  Register BEFORE goto/reload. Reload after resetting a WebSocket mock. Server
-  forwarding through connectToServer is not exposed.
-- waitForURL, toHaveURL, routeWebSocket and frame URL matching accept strings or
+- routeWebSocket, exposeFunction and exposeBinding are unavailable: the browser
+  never exposes host bindings to page scripts, which sites can detect. Mock HTTP
+  with route handlers; read page state with evaluate after navigation.
+- waitForURL, toHaveURL and frame URL matching accept strings or
   RegExps; synchronous URL predicates cannot cross this async boundary. Use async
   waitForEvent/waitForResponse predicates or page.frames().find() as appropriate.
 - HAR imports, arbitrary new contexts, browser launch/connect/close, permission

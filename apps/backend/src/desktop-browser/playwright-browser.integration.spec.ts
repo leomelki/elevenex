@@ -51,6 +51,11 @@ describe('Real Playwright in the task browser', () => {
         );
         return;
       }
+      if (req.url === '/diagnostics') {
+        res.setHeader('Content-Type', 'text/html');
+        res.end(`<button onclick="console.warn('from the task'); setTimeout(() => { throw new TypeError('task exception'); }, 0)">Log</button>`);
+        return;
+      }
       res.setHeader('Content-Type', 'text/html');
       res.end(
         `<!doctype html><title>Playwright task</title><style>body{font:20px sans-serif;padding:20px}button,input{font:inherit;margin:10px}iframe{display:block;width:500px;height:180px;border:0}</style><h1>Waiting</h1><input aria-label="Name"><button onclick="fetch('/api').then(r=>r.json()).then(r=>document.querySelector('h1').textContent=r.label)">Save</button><a href="/download">Download</a><input aria-label="Upload" type="file"><iframe title="Inner" src="${base.replace('localhost', '127.0.0.1')}/frame"></iframe><script>window.trusted=[];for(const t of ['input','mousedown'])addEventListener(t,e=>trusted.push(e.isTrusted));console.log('site-ready')</script>`,
@@ -202,7 +207,8 @@ describe('Real Playwright in the task browser', () => {
       url: string;
     };
     expect(data.trusted.every(Boolean)).toBe(true);
-    expect(data.console).toContain('site-ready');
+    // Console history is delivered through the page's history methods.
+    expect(data.console).toEqual([]);
     expect(data.url).toBe(base + '/');
     const directory = resolve(
       __dirname,
@@ -213,6 +219,40 @@ describe('Real Playwright in the task browser', () => {
       join(directory, 'chromium.png'),
       Buffer.from(result.images[0]!.data, 'base64'),
     );
+  });
+  it('reads task-server diagnostics through Playwright page history methods', async () => {
+    const result = await run(`
+      const page = await context.newPage();
+      await page.goto(${JSON.stringify(base + '/diagnostics')});
+      await page.consoleMessages();
+      await page.getByRole('button', {name: 'Log'}).click();
+      for (let i = 0; i < 30; i++) {
+        const message = (await page.consoleMessages({filter: 'since-navigation'}))
+          .find(entry => entry.text() === 'from the task');
+        const error = (await page.pageErrors()).find(entry => entry.message === 'task exception');
+        if (message && error) {
+          return {
+            type: message.type(),
+            locationMatches: message.location().url.startsWith(${JSON.stringify(base)}),
+            timestamp: message.timestamp() > 0,
+            pageMatches: message.page() === page,
+            errorName: error.name,
+            isError: error instanceof Error,
+          };
+        }
+        await browser.wait(50);
+      }
+      throw new Error('Expected console and page error history');
+    `);
+    expect(result.error).toBeUndefined();
+    expect(result.value).toEqual({
+      type: 'warning',
+      locationMatches: true,
+      timestamp: true,
+      pageMatches: true,
+      errorName: 'TypeError',
+      isError: true,
+    });
   });
   it('keeps routes and closures between calls, handles concurrent waits, and fetches through the task proxy', async () => {
     const result = await run(`
@@ -258,21 +298,21 @@ describe('Real Playwright in the task browser', () => {
     expect(result.error).toBeUndefined();
     expect(result.value).toEqual({ one: { mocked: true }, count: 1 });
   });
-  it('supports offline WebSocket mocks with closure callbacks and ordered listener registration', async () => {
+  it('rejects main-world binding APIs instead of breaking page scripts', async () => {
     const result = await run(`
-      const prefix='mock:';
-      await state.page.routeWebSocket('**/offline-socket',ws=>{
-        ws.onMessage(message=>ws.send(prefix+message));
-      });
-      await state.page.reload();
-      return await state.page.evaluate(()=>new Promise((resolve,reject)=>{
-        const socket=new WebSocket(location.origin.replace('http','ws')+'/offline-socket');
-        socket.onopen=()=>socket.send('hello');socket.onerror=()=>reject(new Error('socket failed'));
-        socket.onmessage=event=>{resolve(event.data);socket.close()};
-      }));
+      const errors=[];
+      for (const call of [
+        ()=>state.page.routeWebSocket('**/offline-socket',ws=>ws.onMessage(message=>ws.send(message))),
+        ()=>state.page.exposeFunction('hostAdd',(a,b)=>a+b),
+        ()=>context.exposeBinding('hostRead',()=>1),
+      ]) { try { await call(); errors.push('allowed'); } catch (error) { errors.push(error.message); } }
+      return { errors, title: await state.page.title() };
     `);
     expect(result.error).toBeUndefined();
-    expect(result.value).toBe('mock:hello');
+    const value = result.value as { errors: string[]; title: string };
+    expect(value.errors).toHaveLength(3);
+    for (const message of value.errors)
+      expect(message).toMatch(/is unavailable: the task browser never exposes host bindings/);
   });
   it('confines artifact-path uploads and PDF streams to their owner', async () => {
     const result = await run(`
