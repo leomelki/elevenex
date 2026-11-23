@@ -22,7 +22,7 @@ import {
   requestId,
 } from "./session-chat-validation";
 import { BackendRequestError, requestBackendJson } from "./transport";
-import { SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
+import { SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_TURN_WORK_BATCH_BYTES, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 
 /** Transport stays on the existing per-window lease, including capability routing and cancellation. */
 export function registerSessionChatIpc(
@@ -106,11 +106,16 @@ export function registerSessionChatIpc(
     if (input.deferToolDetails) query.set('deferToolDetails', '1');
     if (limit !== undefined) query.set('limit', String(limit));
     if (input.timeline) query.set('timeline', '1');
+    // Engines that predate complete timelines ignore this option and return
+    // the first page. Continuation requests still use the legacy contract.
+    const complete = input.timeline && offset === 0;
+    if (complete) query.set('complete', '1');
     return client.execute(
       window, scopeId, `session-chat:${requestId}:${taskId}:${sessionId}:turn-work:${query}`, false,
       async (endpoint, signal) => parseTurnWorkPage(await requestBackendJson(endpoint, {
         path: path(taskId, sessionId) + '/turn-work?' + query,
-        limit: (limit ?? 0) > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES + 16 * 1024 : 512 * 1024,
+        limit: complete ? SESSION_CHAT_FULL_TIMELINE_BYTES
+          : (limit ?? 0) > SESSION_CHAT_TURN_WORK_LIMIT ? SESSION_CHAT_TURN_WORK_BATCH_BYTES + 16 * 1024 : 512 * 1024,
       }, signal), input),
       15000,
     );

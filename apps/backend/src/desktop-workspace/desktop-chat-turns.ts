@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  SESSION_CHAT_FULL_TIMELINE_BYTES,
+  SESSION_CHAT_FULL_TIMELINE_SLOTS,
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
   SESSION_CHAT_TURN_WORK_BATCH_BYTES,
@@ -208,18 +210,21 @@ export class ChatCompletedTurns {
     return { items, nextOffset: next < hidden.length ? next : null, total: hidden.length };
   }
 
-  timeline(turn: readonly AgentTranscriptItem[], revision: string, offset: number) {
+  timeline(turn: readonly AgentTranscriptItem[], revision: string, offset: number, complete = false) {
     const prepared = this.prepare(turn);
     if (!prepared || offset >= prepared.hidden.length || this.revision(prepared.rows) !== revision) return null;
     const { hidden, links } = prepared;
     const timeline: SessionChatTurnTimelineRow[] = [];
     let bytes = 2;
-    const end = Math.min(hidden.length, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
+    const slotLimit = complete ? SESSION_CHAT_FULL_TIMELINE_SLOTS : SESSION_CHAT_TURN_TIMELINE_SLOTS;
+    // Reserve space for the response envelope inside the desktop's transport limit.
+    const byteLimit = complete ? SESSION_CHAT_FULL_TIMELINE_BYTES - 16 * 1024 : SESSION_CHAT_TURN_TIMELINE_BYTES;
+    const end = Math.min(hidden.length, offset + slotLimit);
     for (let position = offset; position < end; position++) {
       const raw = hidden[position];
       const row = savedTimelineRow(raw, links.peer(raw), this.changesCache, this.mediaCache);
       bytes += Buffer.byteLength(JSON.stringify(row)) + Number(timeline.length > 0);
-      if (bytes > SESSION_CHAT_TURN_TIMELINE_BYTES) break;
+      if (bytes > byteLimit) break;
       timeline.push(row);
     }
     if (!timeline.length) return null;

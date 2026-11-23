@@ -16,13 +16,15 @@ The progressive profile opts into completed-turn summaries with
 `summarizeCompleted` and also requests summaries for small recent turns with
 `summarizeRecent`. A summary occupies one paging entry at the prompt and
 advances past the saved turn's last source item in the forward direction.
-Its versioned `sessionChatTurnWork` pages keep hidden activity out of initial
-history reads, including when a single turn spans hundreds of tool records.
-An optional `limit` up to 512 increases the compact activity batch size to at
-most 1 MiB. Main validates the turn, revision, offset and reply bounds under the
-same cancellable window lease. The renderer collects the batches before showing
-the complete timeline. Older clients keep their 40-record activity pages, and
-older engines can keep returning those pages or raw history windows.
+Its versioned `sessionChatTurnWork` read keeps hidden activity out of initial
+history, including when a single turn spans hundreds of tool records. Main
+requests `complete=1` on the first compact timeline read and validates the
+turn, revision, offset and reply bounds under the same cancellable window
+lease. A complete response is bounded to 4 MiB and 32,768 source slots. The
+backend returns HTTP 413 if either limit would require continuation. Older
+engines can return ordinary work pages or compact batches. The renderer
+collects those replies before showing the timeline. Older clients retain the
+existing page formats and limits.
 Completed turns reconcile repeated row identities before computing the visible
 reply, counts and activity offsets. Both history formats use the same saved
 change reconciliation as Review and can carry full line totals with their

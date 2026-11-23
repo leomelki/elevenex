@@ -335,19 +335,20 @@ full-history read, so a cold provider parse can still dominate initial latency.
   references. Viewed images render inside the matching tool disclosure. Other
   inline previews retain their receipt positions. Commentary and
   the visible reply stay in order. The entire timeline appears in one update.
-  Batches beyond 512 KiB or 8,192 source slots are fetched automatically in source
-  order, independent of the chat's scroll direction. Older engines keep their
-  ordinary work pages. Every batch must match the turn revision and advance
-  contiguously before the view publishes the timeline. Repeated provider row IDs
-  retain their first position and latest value.
+  The desktop requests the whole compact timeline in one response, up to 4 MiB
+  and 32,768 source slots. Above either limit the disclosure reports that the
+  activity is too large to open. Older engines may return bounded work pages.
+  Each of those pages must match the turn revision and advance contiguously
+  before the view publishes the timeline. Repeated provider row IDs retain
+  their first position and latest value.
 - The window-local cache retains up to 16 complete snapshots or 1.5 MiB of
   serialized data, keyed by backend scope, task, session and turn revision.
   A 220 ms mouse dwell over the reply, keyboard focus on Worked, a 60 ms dwell
   on Worked itself or a press on it (before the click lands) can warm an
-  activity batch even while another disclosure is loading.
+  activity read even while another disclosure is loading.
   Moving within the same turn preserves the dwell. Opening joins an active read,
-  continues a warmed first batch from its cursor, or uses the complete snapshot
-  immediately. Up to three unopened warm-ups (one batch each) keep running, so
+  continues a warmed legacy page from its cursor, or uses the complete snapshot
+  immediately. Up to three unopened warm-ups keep running, so
   moving between turns lets earlier reads finish into the cache; returning to
   an in-flight turn reuses its read. A fourth uncached dwell cancels the oldest
   warm-up, including a held first batch of a large turn. Closing the

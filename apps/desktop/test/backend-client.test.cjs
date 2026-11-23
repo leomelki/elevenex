@@ -1337,7 +1337,13 @@ test('completed activity and tool details validate opted-in, scoped and bounded 
   const timeline = { ...valid, items: undefined, nextOffset: null, timeline: [{ ...shortCall, input: 'discard' }, null] };
   response = timeline;
   assert.deepEqual((await read(timelineRead)).value.timeline, [shortCall, null]);
-  assert.match(requests.at(-1), /limit=512&timeline=1$/);
+  assert.match(requests.at(-1), /limit=512&timeline=1&complete=1$/);
+  response = { ...timeline, total: 8193, timeline: [shortCall, ...Array(8192).fill(null)] };
+  assert.equal((await read(timelineRead)).value.timeline.length, 8193);
+  response = { ...timeline, offset: 1, timeline: [null] };
+  assert.equal((await read({ ...timelineRead, offset: 1 })).value.timeline.length, 1);
+  assert.match(requests.at(-1), /offset=1&deferToolDetails=1&limit=512&timeline=1$/);
+  response = timeline;
   assert.equal((await read(largeRead)).error.code, 'invalid-response');
   for (const invalid of [
     { ...timeline, timeline: [{ ...shortCall, label: 'x'.repeat(121) }, null] },

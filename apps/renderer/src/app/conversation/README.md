@@ -21,8 +21,9 @@ These standalone OnPush components consume renderer view models and emit typed i
   can begin a scroll, does not hint. One hint spans an escalating dwell; it
   ends when intent leaves or the turn expands. The open intent carries the
   IDs of previously visible expanded tools. The owner supplies pending, ready
-  or error state and publishes the chronological steps together. An open read
-  that is still busy after 120 ms pulses the Worked heading in place (a static
+  or error state and publishes the chronological steps together. Activity
+  rejected for size shows a status message in the disclosure. A read still
+  busy after 120 ms pulses the Worked heading in place (a static
   dim with reduced motion); faster reads never show it. Preserve `answerId` and set
   `answerBeforeStepId` when evidence follows the answer. Worked keeps keyboard
   focus and leaves the reply and file chips available while the activity loads.

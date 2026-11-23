@@ -86,6 +86,7 @@ export class DesktopChatController {
     @Query('deferToolDetails') deferToolDetails?: string,
     @Query('limit') limit?: string,
     @Query('timeline') timeline?: string,
+    @Query('complete') complete?: string,
   ) {
     const abort = new AbortController();
     const close = () => abort.abort();
@@ -98,6 +99,7 @@ export class DesktopChatController {
         deferToolDetails,
         limit === undefined ? undefined : typeof limit === 'string' && /^\d+$/.test(limit) ? Number(limit) : NaN,
         timeline,
+        complete,
       );
       if (!abort.signal.aborted) response.json(result);
     } finally {

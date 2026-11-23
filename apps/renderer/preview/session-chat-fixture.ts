@@ -3,7 +3,7 @@ import { previewChatImage } from './session-chat-media-fixture';
 import type { DestroyRef } from "@angular/core";
 import { sessionCodexFileItems, sessionShellItems, sessionToolItems } from './session-tools-fixture';
 import { sessionTimelineItems, type TimelineScene } from './session-timeline-fixture';
-import { SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
+import { SESSION_CHAT_TURN_WORK_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   SessionChatAgentRead,
@@ -604,7 +604,8 @@ export class SessionChatFixture {
   private readonly turnActivities = new Map<string, readonly SessionChatRecord[]>();
   private readonly turnTimelines = new Map<string, readonly SessionChatTurnTimelineRow[]>();
   private readonly heldActivity = new Set<() => void>();
-  private workBehavior: 'ready' | 'held' | 'failed' = 'ready';
+  private workBehavior: 'ready' | 'held' | 'failed' | 'too-large' = 'ready';
+  private readonly turnWorkBehaviors = new Map<string, typeof this.workBehavior>();
   turnWorkReads = 0;
 
   seedTurnWork(sessionId: number, turnId: string, records: readonly SessionChatRecord[]): void {
@@ -614,14 +615,19 @@ export class SessionChatFixture {
     this.turnTimelines.set(`${sessionId}/${turnId}`, timeline);
   }
 
-  turnWorkBehavior(behavior: 'ready' | 'held' | 'failed'): void {
+  turnWorkBehavior(behavior: typeof this.workBehavior, turnId?: string): void {
+    if (turnId) {
+      this.turnWorkBehaviors.set(turnId, behavior);
+      return;
+    }
     this.workBehavior = behavior;
     if (behavior !== 'held') for (const release of this.heldActivity) release();
   }
 
   async turnWork(input: SessionChatTurnWorkRead): Promise<BackendResult<SessionChatTurnWorkReply>> {
     this.turnWorkReads++;
-    if (this.workBehavior === 'held') await new Promise<void>(resolve => {
+    const behavior = () => this.turnWorkBehaviors.get(input.turnId) ?? this.workBehavior;
+    if (behavior() === 'held') await new Promise<void>(resolve => {
       const release = () => {
         this.heldActivity.delete(release);
         this.waiting.delete(input.requestId);
@@ -630,16 +636,16 @@ export class SessionChatFixture {
       this.heldActivity.add(release);
       this.waiting.set(input.requestId, release);
     });
-    if (this.workBehavior === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
+    if (behavior() === 'failed') return { ok: false, error: { code: 'transport', message: 'Activity read failed.' } };
+    if (behavior() === 'too-large') return { ok: false, error: { code: 'http', status: 413, message: 'Activity is too large.' } };
     const { taskId, sessionId, turnId, revision, offset } = input;
     const key = `${sessionId}/${turnId}`;
     const summary = this.session(sessionId).items.find(item => item.id === turnId)?.completedTurn;
     const timeline = input.timeline ? this.turnTimelines.get(key) : undefined;
     if (timeline && revision === summary?.revision) {
-      const rows = timeline.slice(offset, offset + SESSION_CHAT_TURN_TIMELINE_SLOTS);
-      const end = offset + rows.length;
+      const rows = timeline.slice(offset);
       return { ok: true, value: { taskId, sessionId, turnId, revision, offset,
-        timeline: rows, total: timeline.length, nextOffset: end < timeline.length ? end : null } };
+        timeline: rows, total: timeline.length, nextOffset: null } };
     }
     const work = this.turnActivities.get(key);
     if (!work || revision !== summary?.revision)

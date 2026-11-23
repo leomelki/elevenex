@@ -402,6 +402,37 @@ describe('selected session chat', () => {
     expect(runtime.getRuntimeState).not.toHaveBeenCalled();
   });
 
+  it('returns the entire compact timeline on an opted-in first request', async () => {
+    status = 'archived';
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    const work = Array.from({ length: 48 }, (_, index) => ({
+      ...item(`note-${index}`, 'x'.repeat(16_000)), kind: 'thinking' as const,
+    }));
+    history = [prompt, ...work, item('answer')];
+    const signal = new AbortController().signal;
+    const first = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    const revision = first.items[0].completedTurn!.revision;
+    const legacy = await chat.turnWork(1, 2, prompt.id, revision, 0, signal, '1', 512, '1');
+    expect(legacy?.nextOffset).toBeGreaterThan(0);
+    const complete = await chat.turnWork(1, 2, prompt.id, revision, 0, signal, '1', 512, '1', '1');
+    expect(complete).toMatchObject({ offset: 0, total: 48, nextOffset: null });
+    expect(complete && 'timeline' in complete && complete.timeline.map(row => row?.id)).toEqual(work.map(row => row.id));
+    await expect(chat.turnWork(1, 2, prompt.id, revision, 1, signal, '1', 512, '1', '1')).rejects.toThrow('offset zero');
+  });
+
+  it('rejects an oversized complete timeline without returning a partial reply', async () => {
+    status = 'archived';
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    history = [prompt, ...Array.from({ length: 270 }, (_, index) => ({
+      ...item(`note-${index}`, 'x'.repeat(16_000)), kind: 'thinking' as const,
+    })), item('answer')];
+    const signal = new AbortController().signal;
+    const first = (await chat.read(1, 2, undefined, undefined, signal, undefined, 'progressive', '1', '1', '1'))!;
+    const revision = first.items[0].completedTurn!.revision;
+    await expect(chat.turnWork(1, 2, prompt.id, revision, 0, signal, '1', 512, '1', '1'))
+      .rejects.toMatchObject({ status: 413 });
+  });
+
   it('shares hydration across a slow-open replacement and discards the cancelled response', async () => {
     let release!: (items: AgentTranscriptItem[]) => void;
     runtime.getHistory.mockImplementationOnce(() => new Promise<AgentTranscriptItem[]>(resolve => { release = resolve; }));

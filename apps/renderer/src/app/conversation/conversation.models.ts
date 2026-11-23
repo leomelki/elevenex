@@ -227,7 +227,7 @@ export interface DeferredTurnWork {
   readonly failures: number;
   readonly busy: boolean;
   readonly ready: boolean;
-  readonly error?: 'failed' | 'changed';
+  readonly error?: 'failed' | 'changed' | 'too-large';
 }
 export type TurnWorkAction = 'retry' | 'refresh';
 export interface TurnWorkToggle {

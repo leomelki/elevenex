@@ -1,5 +1,6 @@
 import { parseChangeSummary } from "./session-chat-changes";
 import {
+  SESSION_CHAT_FULL_TIMELINE_SLOTS,
   SESSION_CHAT_PROMPT_LIMIT,
   SESSION_CHAT_TOOL_CATEGORIES,
   SESSION_CHAT_TURN_FILES_LIMIT,
@@ -356,7 +357,9 @@ export function parseTurnWorkPage(value: unknown, input: SessionChatTurnWorkRead
   const total = workCount(raw['total']);
   if (raw['timeline'] !== undefined) {
     if (!input.timeline || raw['items'] !== undefined) throw invalid();
-    const timeline = array(raw['timeline'], SESSION_CHAT_TURN_TIMELINE_SLOTS, value => timelineRow(value, turnId));
+    const limit = offset === 0 && raw['nextOffset'] === null
+      ? SESSION_CHAT_FULL_TIMELINE_SLOTS : SESSION_CHAT_TURN_TIMELINE_SLOTS;
+    const timeline = array(raw['timeline'], limit, value => timelineRow(value, turnId));
     const end = offset + timeline.length;
     const nextOffset = end < total ? end : null;
     const ids = timeline.flatMap(row => row ? [row.id] : []);

@@ -13,7 +13,7 @@ const CACHE_BYTES = 1536 * 1024;
 // Keep the rows mounted until the timeline finishes closing.
 const DISCLOSURE_EXIT_MS = 280;
 // Unopened warm-ups. Moving between turns lets earlier reads finish into the
-// cache; beyond this bound the oldest yields. Each batch is at most 512 KiB.
+// cache; beyond this bound the oldest yields.
 const SPECULATIVE_READS = 3;
 
 @Injectable({ providedIn: 'root' })
@@ -33,7 +33,7 @@ export class SessionChatWorkCache {
   }
 }
 
-type WorkError = 'failed' | 'changed';
+type WorkError = 'failed' | 'changed' | 'too-large';
 interface TurnWorkRows {
   readonly items: readonly SessionChatRecord[];
   /** A compact timeline omits paired receipts, moving the visible reply boundary. */
@@ -255,7 +255,10 @@ export class SessionChatTurnWork {
         requestId: id, deferToolDetails: true, timeline: true, limit: SESSION_CHAT_TURN_WORK_MAX_LIMIT,
       });
       if (!this.current(selection, request)) return;
-      if (!result.ok) return { error: result.error.status === 409 ? 'changed' : 'failed' };
+      if (!result.ok) {
+        if (result.error.status === 413) return { error: 'too-large' };
+        return { error: result.error.status === 409 ? 'changed' : 'failed' };
+      }
       const page = result.value;
       const compact = 'timeline' in page;
       if (timeline !== undefined && timeline !== compact) return { error: 'failed' };

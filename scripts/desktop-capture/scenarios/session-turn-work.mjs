@@ -43,7 +43,8 @@ function seed(viewer, readingHistory) {
     ];
     const evidence = [
       ...beforeReply,
-      null,
+      // Null receipt slots count toward the old 8,192-slot transport boundary.
+      ...Array(8192).fill(null),
       row('receipt-note', 'system', 'The test receipt arrived after the reply.'),
     ];
     const final = row('retry-final', 'assistant',
@@ -72,6 +73,9 @@ function seed(viewer, readingHistory) {
     ]).flat() : [];
     chat.seed(101, { items: [earlier, saved, ...tail], state: { ...initial.value.state, providerLocked: true } });
     chat.seedTurnWork(101, earlier.id, [row('verification-note', 'assistant', 'I checked the saved test cases.')]);
+    // Pointer intent can warm this turn before the error checks. Keep its
+    // response controlled independently of the main turn.
+    chat.turnWorkBehavior('too-large', earlier.id);
     chat.seedTurnTimeline(101, saved.id, evidence);
     chat.seedToolDetails(101, [
       { id: command.id, revision, record: { ...command, input: '{"command":"pnpm test --filter payments"}' } },
@@ -214,12 +218,19 @@ export default async function* (capture) {
 
     const earlier = '[data-chat-anchor="verification:reply"]';
     await scrollTo(capture, earlier + ' button.work');
-    await fixture(viewer => viewer.fixture.chat.turnWorkBehavior('failed'));
+    await capture.click(earlier + ' button.work');
+    await capture.waitFor(selector => document.querySelector(selector + ' ex-turn-work-panel .error')?.textContent.includes('too large'), earlier);
+    assert.equal(await capture.evaluate(selector => !!document.querySelector(selector + ' ex-turn-work-panel button'), earlier), false);
+    await settleMotion(capture);
+    yield { name: theme + '-oversized', inspect: [earlier + ' button.work', earlier + ' ex-turn-work-panel'] };
+    await capture.press('Enter');
+    await settleMotion(capture);
+    await fixture(viewer => viewer.fixture.chat.turnWorkBehavior('failed', 'verification'));
     await capture.click(earlier + ' button.work');
     await capture.waitFor(selector => document.querySelector(selector + ' ex-turn-work-panel .error')?.textContent.includes('Couldn’t load'), earlier);
     await settleMotion(capture);
     yield { name: theme + '-retry', inspect: [earlier + ' button.work', earlier + ' ex-turn-work-panel'] };
-    await fixture(viewer => viewer.fixture.chat.turnWorkBehavior('ready'));
+    await fixture(viewer => viewer.fixture.chat.turnWorkBehavior('ready', 'verification'));
     await capture.click(earlier + ' ex-turn-work-panel button');
     await capture.waitFor(() => document.querySelector('[data-work-step="verification-note"]'));
     assert.equal(await capture.evaluate(selector => document.activeElement === document.querySelector(selector), earlier + ' button.work'), true);

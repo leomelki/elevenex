@@ -16,6 +16,7 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -648,9 +649,9 @@ export class DesktopChatService implements OnModuleDestroy {
   async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
     signal: AbortSignal, deferToolDetails?: string, limit?: number): Promise<SessionChatTurnWorkPage | undefined>;
   async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
-    signal: AbortSignal, deferToolDetails?: string, limit?: number, timeline?: string): Promise<SessionChatTurnWorkReply | undefined>;
+    signal: AbortSignal, deferToolDetails?: string, limit?: number, timeline?: string, complete?: string): Promise<SessionChatTurnWorkReply | undefined>;
   async turnWork(taskId: number, sessionId: number, turnId: string, revision: string, offset: number,
-    signal: AbortSignal, deferToolDetails?: string, limit: number = SESSION_CHAT_TURN_WORK_LIMIT, timeline?: string): Promise<SessionChatTurnWorkReply | undefined> {
+    signal: AbortSignal, deferToolDetails?: string, limit: number = SESSION_CHAT_TURN_WORK_LIMIT, timeline?: string, complete?: string): Promise<SessionChatTurnWorkReply | undefined> {
     if (typeof turnId !== 'string' || !turnId || turnId.length > 1000 ||
         typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision) ||
         !Number.isSafeInteger(offset) || offset < 0)
@@ -658,6 +659,8 @@ export class DesktopChatService implements OnModuleDestroy {
     const deferDetails = toolDetailsRequested(deferToolDetails);
     if (timeline !== undefined && (timeline !== '1' || !deferDetails))
       throw new BadRequestException('Invalid turn timeline format.');
+    if (complete !== undefined && (complete !== '1' || timeline !== '1' || offset !== 0))
+      throw new BadRequestException('A complete turn timeline must start at offset zero.');
     if (!Number.isSafeInteger(limit) || limit < 1 ||
         limit > (deferDetails ? SESSION_CHAT_TURN_WORK_MAX_LIMIT : SESSION_CHAT_TURN_WORK_LIMIT))
       throw new BadRequestException('Invalid turn activity limit.');
@@ -668,9 +671,11 @@ export class DesktopChatService implements OnModuleDestroy {
     if (signal.aborted) return;
     const projector = this.completedTurns(feed);
     const page = turn && (timeline
-      ? projector.timeline(turn, revision, offset)
+      ? projector.timeline(turn, revision, offset, complete === '1')
       : projector.page(turn, revision, offset, deferDetails ? this.toolDetails(feed) : undefined, limit));
     if (!page) throw new ConflictException('This activity has changed. Refresh the conversation to see it.');
+    if (complete && page.nextOffset !== null)
+      throw new PayloadTooLargeException('This activity is too large to open as one timeline.');
     return { taskId, sessionId, turnId, revision, offset, ...page };
   }
 

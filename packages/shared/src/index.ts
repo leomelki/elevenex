@@ -15,6 +15,7 @@ import type { SessionChatStreamEvent, SessionChatWatch } from './session-chat';
 export type * from './session-chat';
 export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEGORIES, SESSION_CHAT_TURN_FILES_LIMIT, SESSION_CHAT_TURN_REPLY_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT, SESSION_CHAT_TURN_WORK_BATCH_BYTES } from './session-chat';
 export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
+export { SESSION_CHAT_FULL_TIMELINE_BYTES, SESSION_CHAT_FULL_TIMELINE_SLOTS } from './session-chat';
 export { SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
 export { SESSION_CHAT_STREAM_FRAME_BYTES } from './session-chat';
 export { SESSION_CHAT_PROMPT_LIMIT } from './session-chat';
