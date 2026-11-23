@@ -117,14 +117,27 @@ export default async function* (capture) {
       window.ng.getComponent(document.querySelector('ex-connected-workspace-demo')).fixture.chat.holdReads(false);
       return { id: row.getAttribute('data-chat-row'), top: row.getBoundingClientRect().top };
     });
-    if (!reduced)
+    if (!reduced) {
+      await capture.evaluate(() => {
+        const viewport = document.querySelector('ex-chat-scroll .viewport');
+        // Observe after Angular's wheel listener, before the browser scrolls.
+        viewport.addEventListener('wheel', () => {
+          viewport.dataset.rangeDuringWheel = String(viewport.classList.contains('reconciling-history'));
+        }, { once: true });
+      });
       await capture.waitFor(() => document.querySelector('.viewport.reconciling-history'));
-    else
+    } else
       await capture.waitFor(() => !window.ng.getComponent(document.querySelector('ex-session-chat')).store.historyLoading());
     await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: -60 });
+    const rangeDuringWheel = await capture.evaluate(() =>
+      document.querySelector('ex-chat-scroll .viewport').dataset.rangeDuringWheel === 'true');
+    if (!reduced)
+      assert.equal(rangeDuringWheel, true, 'An in-range wheel event snapped the scrollbar to its final size');
     await capture.waitFor(() => !document.querySelector('.viewport.reconciling-history'));
     await capture.settle();
     const top = await capture.evaluate(id => document.querySelector(`[data-chat-row="${id}"]`).getBoundingClientRect().top, anchor.id);
     assert.ok(Math.abs(top - anchor.top - 60) <= 1, `The second wheel gesture moved the reply ${top - anchor.top}px instead of 60px`);
+    yield { name: theme + '-continued-wheel', inspect: ['ex-chat-scroll .viewport', 'ex-composer'],
+      metadata: { rangeDuringWheel, rowTravel: top - anchor.top } };
   }
 }

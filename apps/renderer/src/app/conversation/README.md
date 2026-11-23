@@ -192,8 +192,11 @@ The scroll owner records several visible rows so a neighboring row can preserve
 the reader's position if the first folds or leaves the window.
 For a large range change, the viewport carries its previous scroll extent into
 the first paint and reconciles the native scrollbar in small steps. The range
-and scroll origin change together so the anchored text stays still. With reduced
-motion the viewport applies the final extent and anchored position in one paint.
+and scroll origin change together so the anchored text stays still. Wheel input
+within the overlapping scroll ranges can continue while the range settles.
+Input that reaches beyond a temporary edge uses the final range immediately.
+With reduced motion the viewport applies the final extent and anchored position
+in one paint.
 The transcript remains bounded.
 If the reader reverses direction, moves well away from the requested edge, or
 opens visible work during a pending read, `historyCancelled` lets the owner

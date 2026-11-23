@@ -71,6 +71,24 @@ export class ChatHistoryScroll {
     this.frame = requestAnimationFrame(advance);
   }
 
+  prepareWheel(event: WheelEvent): void {
+    if (this.frame === undefined) return;
+    // Keep reconciling during ordinary wheel movement. Settle before a gesture
+    // crosses either range's edge so native scrolling neither exposes the
+    // temporary inset nor stops early at a temporarily clipped boundary.
+    if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) {
+      this.finish();
+      return;
+    }
+    const delta = event.deltaY;
+    const physical = this.viewport.scrollTop + delta;
+    const logical = physical - this.offset;
+    const viewportHeight = this.viewport.clientHeight;
+    if (physical < 0 || physical > this.viewport.scrollHeight - viewportHeight ||
+      logical < 0 || logical > this.height - viewportHeight)
+      this.finish();
+  }
+
   finish(): void {
     if (this.frame === undefined) return;
     const top = this.top;

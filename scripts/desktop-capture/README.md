@@ -208,7 +208,7 @@ themes and narrow reduced-motion layouts against the preview URL.
 `scenarios/session-history-scrollbar.mjs` samples visible reply offsets and
 native scrollbar geometry frame by frame as older and following pages swap
 into a bounded window. It checks a keyboard reversal during a held page and
-wheel input while the range settles. It also checks immediate range updates
+in-range wheel input without a scrollbar snap. It also checks immediate range updates
 with a stable reading anchor in the narrow reduced-motion layout. Run both
 themes against the preview URL.
 

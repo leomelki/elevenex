@@ -95,6 +95,7 @@ export class ChatScrollComponent {
       }
       target = target.parentElement;
     }
+    this.historyScroll?.prepareWheel(event);
     this.beginHistoryScroll(event.deltaY < 0 ? "before" : "following");
   }
   onViewportPointerDown(event: PointerEvent): void {
@@ -115,7 +116,6 @@ export class ChatScrollComponent {
   private beginHistoryScroll(direction: "before" | "following"): void {
     this.nativeScrollOrigin = undefined;
     this.disclosure = undefined;
-    this.historyScroll?.finish();
     this.historyIntent = { direction, source: "reader" };
     if (direction !== this.lastHistoryDirection) this.cancelPendingHistory();
     this.historyBudget = 4;
@@ -214,6 +214,7 @@ export class ChatScrollComponent {
   onViewportKey(event: KeyboardEvent): void {
     if (event.target === event.currentTarget &&
       ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+      this.historyScroll?.finish();
       this.beginHistoryScroll(["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)
         ? "before" : "following");
     }
