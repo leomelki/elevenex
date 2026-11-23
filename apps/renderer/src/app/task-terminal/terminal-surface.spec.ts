@@ -74,6 +74,58 @@ describe('Command navigation', () => {
   });
 });
 
+describe('Terminal accessibility selection', () => {
+  it('ignores a page selection spanning a reopened terminal and accepts selection from its accessible rows', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const resizeObserver = globalThis.ResizeObserver;
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    const surface = new TerminalSurface(() => {}, () => {}, () => ({
+      open: operation => operation(),
+      release: () => {},
+    }));
+    vi.spyOn(surface, 'fit').mockImplementation(() => {});
+    const before = document.createTextNode('Before the panel');
+    const after = document.createTextNode('After the panel');
+    const page = document.createElement('div');
+    const host = document.createElement('div');
+    page.append(before, host, after);
+    document.body.append(page);
+    const selection = document.getSelection()!;
+    const notifySelection = () => document.dispatchEvent(new Event('selectionchange'));
+    try {
+      surface.attach(host, true);
+      await surface.write('terminal output');
+      const firstRow = surface.terminal.element!.querySelector('.xterm-accessibility-tree [role="listitem"]')!;
+      await vi.waitFor(() => expect(firstRow.textContent).toContain('terminal output'));
+      surface.detach();
+
+      selection.setBaseAndExtent(before, 0, after, after.length);
+      surface.attach(host, true);
+      notifySelection();
+      expect(surface.terminal.getSelection()).toBe('');
+      expect(selection.anchorNode).toBe(before);
+      expect(selection.focusNode).toBe(after);
+
+      selection.setBaseAndExtent(firstRow.firstChild!, 0, firstRow.firstChild!, 8);
+      notifySelection();
+      expect(surface.terminal.getSelection()).toBe('terminal');
+
+      selection.setBaseAndExtent(after, after.length, before, 0);
+      notifySelection();
+      expect(surface.terminal.getSelection()).toBe('terminal');
+    } finally {
+      selection.removeAllRanges();
+      surface.dispose();
+      page.remove();
+      vi.restoreAllMocks();
+      vi.stubGlobal('ResizeObserver', resizeObserver);
+    }
+  });
+});
+
 describe('Terminal color query ownership', () => {
   beforeEach(() => vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null));
   afterEach(() => vi.restoreAllMocks());

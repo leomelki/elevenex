@@ -6,6 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { findTerminalMatches } from "./terminal-search";
 import { TerminalCellRenderer } from "./terminal-cell-renderer";
 import { TerminalLocalEcho } from './terminal-local-echo';
+import { enableTerminalAccessibility } from './terminal-accessibility';
 
 /** DOM/ANSI ownership only. No transport, process or Angular output subscriptions. */
 export class TerminalSurface {
@@ -40,7 +41,6 @@ export class TerminalSurface {
       scrollback: 2000,
       cursorBlink: false,
       cursorInactiveStyle: "outline",
-      screenReaderMode: true,
       convertEol: false,
       // Unicode providers are an official, version-pinned xterm addon API.
       allowProposedApi: true,
@@ -117,6 +117,7 @@ export class TerminalSurface {
       const lease = this.retainStyles();
       try {
         lease.open(() => this.terminal.open(container));
+        this.disposers.push(enableTerminalAccessibility(this.terminal, container.ownerDocument));
         this.styleLease = lease;
         const element = this.terminal.element;
         const blur = () => this.localEcho.suspend();

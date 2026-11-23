@@ -178,7 +178,9 @@ renderer's finite RGB/underline declarations to CSSOM. xterm 6.0 otherwise uses
 CSP-blocked style attributes for truecolor and selections. Arbitrary CSS, raw HTML
 and non-span attributes keep the browser's normal CSP path. Leases restore the
 DOM factory after the last surface closes; production CSP is unchanged. Native user selection/copy and paste
-remain available. Find searches retained scrollback with at most 1,000 matches,
+remain available. A document selection spanning the panel affects terminal output
+only when a selection endpoint is in that terminal’s accessibility rows.
+Find searches retained scrollback with at most 1,000 matches,
 joining soft wraps while preserving Unicode cell coordinates. Enter/Shift-Enter
 moves between matches; Escape restores focus. The theme maps
 the specification's ANSI palette to authoritative tokens and local Geist Mono.

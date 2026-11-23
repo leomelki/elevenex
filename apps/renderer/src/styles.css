@@ -26,6 +26,8 @@ button, input, textarea, select, a, [tabindex] { outline-offset: 2px; }
 input, textarea, select { background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
 textarea { resize: vertical; }
 ::selection { background: var(--accent-soft); color: var(--ink); }
+/* xterm paints selection in its renderer. Keep its accessibility mirror invisible. */
+.xterm .xterm-accessibility-tree:not(.debug) *::selection { background: transparent; }
 [hidden] { display: none !important; }
 .cdk-overlay-backdrop { background: color-mix(in oklab, var(--ink) 22%, transparent); }
 .cdk-overlay-transparent-backdrop { background: transparent; }
