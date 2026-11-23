@@ -17,6 +17,13 @@
 .card:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
 .card:active, .card.pressed { transform: scale(.96); transition-duration: var(--dur-instant); }
 .card:disabled { cursor: default; opacity: .45; pointer-events: none; }
+.card::before { content: ""; position: absolute; top: 0; left: 14px; right: 14px; height: 2px; border-radius: 0 0 2px 2px; background: var(--running); opacity: 0; transition: opacity var(--dur-base) var(--ease-out); pointer-events: none; }
+/* Connection is painted inside the card, never expressed by moving it. */
+.card.connected { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--running) 40%, var(--line)), var(--shadow-raised); }
+.card.connected:hover { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--running) 60%, var(--line-strong)), var(--shadow-raised); }
+.card.connected:focus-visible { box-shadow: var(--focus-ring); }
+.card.connected.highlighted { box-shadow: inset 0 0 0 1.5px var(--accent), var(--shadow-raised); }
+.card.connected::before { opacity: 1; }
 .card.idle { background: color-mix(in oklab, var(--surface-raised) 60%, transparent); }
 .top { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 10px; }
 .machine-icon { position: relative; display: grid; place-items: center; flex: none; width: var(--space-8); height: var(--space-8); border-radius: 9px; color: var(--ink); background: color-mix(in oklab, var(--machine-color, var(--ink)) 14%, var(--surface-sunken)); }
@@ -29,6 +36,7 @@
 .presence.settled { animation: settle var(--dur-slow) var(--ease-spring) both; }
 .spacer { flex: 1; }
 .tag { flex: none; padding: 0 7px; border-radius: 9px; background: var(--surface-sunken); color: var(--ink-muted); font-size: var(--text-overline-size); line-height: var(--text-ui-line); font-weight: 600; white-space: nowrap; }
+.live-tag { color: var(--running); background: var(--running-soft); }
 .update-tag { color: var(--review); background: var(--review-soft); }
 .pending-tag { color: var(--accent); background: var(--accent-soft); animation: fade var(--dur-base) var(--ease-out) both; }
 .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
@@ -46,7 +54,7 @@
 @keyframes blur-in { from { opacity: 0; filter: blur(4px); } }
 @keyframes fade { from { opacity: 0; } }
 @keyframes fade-out { to { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .card, .presence { transition: none; } .card:active, .card.pressed { transform: none; } .presence, .progress, .progress-leaving, .swap, .pending-tag { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .card, .card::before, .presence { transition: none; } .card:active, .card.pressed { transform: none; } .presence, .progress, .progress-leaving, .swap, .pending-tag { animation: none !important; } }
 
 .card.error { --tone: var(--attention); --tone-soft: var(--attention-soft); background: color-mix(in oklab, var(--tone-soft) 55%, var(--surface-raised)); box-shadow: inset 0 0 0 1px var(--tone); }
 .card.error.danger { --tone: var(--danger); --tone-soft: var(--danger-soft); }

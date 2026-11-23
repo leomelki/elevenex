@@ -33,10 +33,10 @@ describe('Machine onboarding', () => {
     card.click(); expect(add).toHaveBeenCalledExactlyOnceWith(card);
   });
 
-  it('keeps the same card and group throughout preparation, pending readiness and an open machine', () => {
+  it('keeps the same card and position throughout preparation, pending readiness and an open machine', () => {
     const fixture = TestBed.createComponent(HomeHost); fixture.detectChanges();
     const dev = fixture.nativeElement.querySelector('[data-machine="dev"]');
-    const order = () => Array.from((fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('h2, [data-machine]')).map(node => node.dataset['machine'] ?? node.textContent?.trim());
+    const order = () => Array.from((fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('[data-machine]')).map(node => node.dataset['machine']);
     const initial = order();
     fixture.componentInstance.pending.set('dev');
     fixture.componentInstance.machines.update(machines => machines.map(machine => machine.id === 'dev' ? { ...machine, conn: 'live', busy: { step: 'Starting' } } : machine));
@@ -45,8 +45,32 @@ describe('Machine onboarding', () => {
     fixture.detectChanges(); expect(order()).toEqual(initial);
     launched.set(true); fixture.componentInstance.pending.set(null); fixture.detectChanges(); expect(order()).toEqual(initial);
     launched.set(false); fixture.detectChanges();
-    expect(fixture.nativeElement.querySelectorAll('h2')).toHaveLength(1);
     expect(fixture.nativeElement.querySelector('[data-machine="dev"]')).toBe(dev);
+  });
+
+  it('never moves a card when its machine connects or disconnects, and paints the state inside it', () => {
+    const fixture = TestBed.createComponent(HomeHost);
+    fixture.componentInstance.machines.set([
+      { id: 'dev', name: 'dev-box', kind: 'ssh', conn: 'idle', last: 'Opened 3 days ago' },
+      { id: 'local', name: 'This Mac', kind: 'local', conn: 'live' },
+      { id: 'mini', name: 'Studio Mac', kind: 'peer', conn: 'idle' },
+    ]);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const cards = () => Array.from(root.querySelectorAll<HTMLElement>('[data-machine]'));
+    const before = cards();
+    expect(before.map(card => card.dataset['machine'])).toEqual(['dev', 'local', 'mini']);
+    expect(root.querySelector('h2')).toBeNull();
+    expect(before.map(card => card.classList.contains('connected'))).toEqual([false, true, false]);
+    for (const conn of ['live', 'idle'] as const) {
+      fixture.componentInstance.machines.update(machines => machines.map(machine => machine.id === 'dev' ? { ...machine, conn } : machine));
+      fixture.detectChanges();
+      expect(cards()).toEqual(before);
+      expect(cards()[0]!.classList.contains('connected')).toBe(conn === 'live');
+    }
+    fixture.componentInstance.machines.update(machines => machines.map(machine => machine.id === 'dev' ? { ...machine, conn: 'live' } : machine));
+    fixture.detectChanges();
+    expect(cards()[0]!.textContent).toContain('Connected');
   });
 
   it('renders busy progress and a pending tag, replaces step ink only on step changes, and settles only after preparation', () => {

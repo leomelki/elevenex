@@ -104,15 +104,23 @@ owner retains that diagnostic in a scrollable, selectable text dialog; opening
 details never retries the connection. The modal owns Escape and focus return.
 
 `MachineHome.firstRun` shows one grid and the two dashed `MachineAdd` cards.
-Later visits use Connected / Not connected and footer actions. `addServer` and
+Later visits show the same single grid plus footer actions. `addServer` and
 `pairComputer` return the actual clicked element. Use it as `ModalLayer.from`;
 keep the dialog and its supplied data mounted during its exit. Both first-run
-and ordinary Home share the same machine-card components. A single keyed grid
-preserves card identity across group changes. Busy/pending cards keep their group;
-the launch context holds placement and grid motion through the return animation.
-Cards slide into their new positions when Home is visible. `MachineGridMotion`
-owns its frame snapshots and WAAPI handles, cancels on disposal/reduced motion,
-and never animates a hidden Home. It is internal to this family.
+and ordinary Home share the same machine-card components.
+
+Home never groups or re-sorts by connection state: cards keep the owner's order,
+so connecting, disconnecting or failing changes a card's contents and never its
+position or its neighbours'. A card paints connection inside itself: filled
+presence dot, accent top edge and border, a `Connected` / `N windows` tag and its
+live status line, with a screen-reader-only state label. Not-connected cards are
+dimmed and show what was last known. Owners should supply a stable order (for
+example, This Mac first, then machines in the order they were added). The keyed
+grid still animates only real additions, removals and filter changes, and
+`MachineGridMotion` stays still while Home is hidden behind a launch.
+`MachineGridMotion` owns its frame snapshots and WAAPI handles, cancels on
+disposal/reduced motion, and never animates a hidden Home. It is internal to this
+family.
 
 `MachineLaunchComponent` owns projection lifetimes, the early card snapshot,
 focus handoff and its scoped Home context. `MachineLaunchMotion` owns geometry,

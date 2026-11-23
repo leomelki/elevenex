@@ -1,6 +1,6 @@
 # MachineHome
 
-What a window shows before it has a machine: every machine as a `MachineCard`, in two groups. **Connected** first (This Mac, and servers other windows are using), with live status. Then **Not connected**, with what we knew last; opening one connects to it. Add a server and Pair a computer sit at the foot, Find (⌘O) at the top.
+What a window shows before it has a machine: every machine as a `MachineCard` in one stable grid. The order never depends on connection state, so connecting never moves a card. A connected card (This Mac, and servers other windows are using) is drawn live in place: filled dot, accent top edge, a Connected tag and its live status. A not-connected card is dimmed with what we knew last; opening it connects to it. Add a server and Pair a computer sit at the foot, Find (⌘O) at the top.
 
 New window (⇧⌘N) always opens here. ↵ opens the highlighted machine in this window, ⌘↵ in a new one.
 

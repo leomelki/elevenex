@@ -4,9 +4,7 @@ import { MachineAddComponent } from './machine-add.component';
 import { MachineCardComponent } from './machine-card.component';
 import { MachineGridMotionDirective } from './machine-grid-motion.directive';
 import { MACHINE_LAUNCH_OPEN } from './machine-launch-context';
-import { Machine, MachineOpenEvent, MachineMenuEvent, machineConnected } from './machine.models';
-
-type HomeEntry = { readonly key: string; readonly machine: Machine } | { readonly key: string; readonly label: string };
+import { Machine, MachineOpenEvent, MachineMenuEvent } from './machine.models';
 
 @Component({
   selector: 'ex-machine-home',
@@ -59,26 +57,9 @@ export class MachineHomeComponent implements OnChanges {
     const query = this.query().trim().toLocaleLowerCase();
     return this.retained().map(row => row.machine).filter(machine => !query || `${machine.name} ${machine.address ?? ''}`.toLocaleLowerCase().includes(query));
   });
-  // Placement is local interaction state. Keep an existing group while preparing,
-  // pending or behind the machine view; release it when Home becomes visible.
-  private readonly groups = linkedSignal({
-    source: () => ({ machines: this.retained().map(row => row.machine), pending: this.pending(), held: this.held() }),
-    computation: ({ machines, held }, previous): ReadonlyMap<string, boolean> => new Map(machines.map(machine => {
-      const before = previous?.value.get(machine.id);
-      return [machine.id, before !== undefined && (held || machine.busy || this.isPending(machine.id)) ? before : machineConnected(machine)];
-    })),
-  });
-  protected readonly entries = computed<readonly HomeEntry[]>(() => {
-    const machines = this.filtered();
-    if (this.showFirstRun()) return machines.map(machine => ({ key: `machine:${machine.id}`, machine }));
-    const entries: HomeEntry[] = [];
-    for (const connected of [true, false]) {
-      const group = machines.filter(machine => this.groups().get(machine.id) === connected);
-      if (group.length) entries.push({ key: `group:${connected}`, label: connected ? 'Connected' : 'Not connected' }, ...group.map(machine => ({ key: `machine:${machine.id}`, machine })));
-    }
-    return entries;
-  });
-  protected readonly gridKeys = computed(() => this.entries().map(entry => entry.key), {
+  // Cards keep the owner's order whatever their connection state: connecting must
+  // change a card's contents, never its position or its neighbours'.
+  protected readonly gridKeys = computed(() => this.filtered().map(machine => `machine:${machine.id}`), {
     equal: (previous, next) => previous.length === next.length && previous.every((key, index) => key === next[index]),
   });
 
@@ -165,7 +146,7 @@ export class MachineHomeComponent implements OnChanges {
     }
     if (event.key === 'Escape' && this.findOpen()) { event.preventDefault(); this.query.set(''); this.findOpen.set(false); }
     if (event.key === 'Enter' && event.target === this.findInput()?.nativeElement) {
-      const machines = this.entries().flatMap(entry => 'machine' in entry ? [entry.machine] : []);
+      const machines = this.filtered();
       const machine = machines.find(item => item.id === this.highlighted()) ?? machines[0];
       if (machine) {
         event.preventDefault();

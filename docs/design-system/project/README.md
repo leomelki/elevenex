@@ -210,7 +210,7 @@ One row of quiet controls under the input; everything else is one click deeper. 
 
 One machine per window. A window is always in one of three states, and they never mix:
 
-- **Home**: no machine yet. New window (⇧⌘N) always opens here. Every machine is a card (`MachineHome`): **Connected** ones first with live status, then **Not connected** ones with what we knew last, dated. Home connects to nothing on its own.
+- **Home**: no machine yet. New window (⇧⌘N) always opens here. Every machine is a card (`MachineHome`) in one stable grid: connected ones are drawn live in place with their status, not-connected ones are dimmed with what we knew last, dated. Cards never move when their connection changes. Home connects to nothing on its own.
 - **Getting ready** happens on the machine's card on Home (`MachineCard`'s `busy`): connecting, installing, the engine downloading on first launch. The card says the step, a line along its foot fills, its dot breathes in `running`, and the island says it too. The machine opens only once it's ready, so the launch always opens onto the real app. Nothing from the machine shows before. **When it fails,** the card says so: amber (red only for safety, like a changed host key), one line on what failed, the bar stopped where it did, and Try again in the tag's place; the card is the action, and the island says it too. A download picks up where it stopped.
 - **On a machine**: the app.
 

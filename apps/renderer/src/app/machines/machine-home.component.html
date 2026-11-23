@@ -4,10 +4,8 @@
       @if (!showFirstRun()) { @if (findOpen()) { <label class="search"><ex-icon name="search" [size]="13" /><input #findInput type="search" aria-label="Find a machine" placeholder="Find a machine" [value]="query()" (input)="query.set(findInput.value)" /><ex-kbd>⌘O</ex-kbd></label> } @else { <button type="button" class="search find" [attr.aria-expanded]="findOpen()" (click)="find()"><ex-icon name="search" [size]="13" /><span>Find a machine</span><ex-kbd>⌘O</ex-kbd></button> } }
     </header>
     <div class="grid" [exMachineGridMotion]="gridKeys()" [still]="held()">
-      @for (entry of entries(); track entry.key) {
-        @if ('machine' in entry) {
-          <ex-machine-card [attr.data-grid-key]="entry.key" [machine]="entry.machine" [highlighted]="highlighted() === entry.machine.id" [pressed]="pressed() === entry.machine.id" [pending]="isPending(entry.machine.id)" [menuEnabled]="menuRequested.observed" [leaving]="leaving(entry.machine.id)" [menuOpen]="menuOpen() === entry.machine.id" (menuRequested)="menuRequested.emit($event)" (opened)="opened.emit($event)" (actionRequested)="action($event)" />
-        } @else { <h2>{{ entry.label }}@if (entry.label === 'Not connected') { <span>opening one connects to it</span> }</h2> }
+      @for (machine of filtered(); track machine.id) {
+        <ex-machine-card [attr.data-grid-key]="'machine:' + machine.id" [machine]="machine" [highlighted]="highlighted() === machine.id" [pressed]="pressed() === machine.id" [pending]="isPending(machine.id)" [menuEnabled]="menuRequested.observed" [leaving]="leaving(machine.id)" [menuOpen]="menuOpen() === machine.id" (menuRequested)="menuRequested.emit($event)" (opened)="opened.emit($event)" (actionRequested)="action($event)" />
       }
       @if (showFirstRun()) {
         <ex-machine-add data-grid-key="add:ssh" kind="ssh" (requested)="addServer.emit($event)" />
