@@ -12,7 +12,10 @@ describe('Code-first browser execution', () => {
   let allowed: boolean;
   const send = jest.fn<Promise<unknown>, [string, Record<string, unknown>]>();
   const interrupt = jest.fn();
-  const diagnostics = jest.fn<Promise<unknown>, [number, number]>();
+  const diagnostics = jest.fn<
+    ReturnType<NonNullable<BrowserAgentTarget['diagnostics']>>,
+    [number, number]
+  >();
   const target = (): BrowserAgentTarget => ({
     id: 'tab',
     assert: () => {
@@ -111,14 +114,18 @@ describe('Code-first browser execution', () => {
   });
   it('validates diagnostic cursors and stops serving entries after takeover', async () => {
     diagnostics.mockResolvedValue({
-      items: [{ seq: 5, kind: 'console', text: 'task log' }],
+      items: [{ seq: 5, kind: 'console', level: 'info', text: 'task log' }],
       next: 5,
+      dropped: false,
+      hasMore: false,
     });
     const code = 'return await state.tab.diagnostics({since: 4, limit: 1})';
     await run('state.tab = await browser.tabs.get("tab")');
     expect((await run(code)).value).toEqual({
-      items: [{ seq: 5, kind: 'console', text: 'task log' }],
+      items: [{ seq: 5, kind: 'console', level: 'info', text: 'task log' }],
       next: 5,
+      dropped: false,
+      hasMore: false,
     });
     expect(diagnostics).toHaveBeenCalledWith(4, 1);
     expect(

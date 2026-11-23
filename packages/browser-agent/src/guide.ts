@@ -77,12 +77,14 @@ Pages and concurrency:
 - Full Playwright locator chaining, shadow DOM, frameLocator, assertions, genuine
   input, evaluate/evaluateHandle, request/response bodies, dialog events,
   uploads/downloads, clocks, tracing and page-scoped CDP are available.
-- Read browser diagnostics with
+- On an authorized loopback task server, use await page.consoleMessages()
+  for retained console text and await page.pageErrors() for uncaught errors.
+  Entries cover the current top-level document. Console messages support
+  text(), type(), location(), timestamp() and page(). Live console/pageerror
+  listeners and console argument handles are unavailable.
+- Read browser diagnostics such as failed loads and security notices with
   await (await browser.tabs.get(tabId)).diagnostics({since, limit}) on an owned
-  tab. Use next as the next cursor. Browser messages include failed resource
-  loads, security notices and deprecations. On an authorized loopback task
-  server, the current top-level document also supplies console text and uncaught
-  exceptions. Playwright page event listeners do not receive these entries.
+  tab. Use next as the next cursor.
 - evaluate/evaluateHandle/evaluateAll run in the page's main world, as in
   Playwright. Pass true as the trailing isolatedContext argument (4th; 3rd for
   evaluateAll and Worker) to read the DOM from a private world instead.

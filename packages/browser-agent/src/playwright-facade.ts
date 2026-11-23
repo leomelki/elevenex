@@ -32,6 +32,15 @@ const __pw = (() => {
     if(Array.isArray(value))return value.map(decode);
     if(value.__pw==='undefined')return undefined;
     if(value.__pw==='error'){const error=new Error(value.message);error.name=value.name;error.stack=value.stack;return error;}
+    if(value.__pw==='console-history'){
+      const location=decode(value.location)||{url:'',line:-1,column:-1};
+      return Object.freeze({
+        type:()=>value.level,text:()=>value.text,timestamp:()=>decode(value.timestamp),
+        location:()=>({...location,lineNumber:location.line,columnNumber:location.column}),
+        page:()=>decode(value.page),worker:()=>null,
+        args:()=>{throw new Error('Console history contains text only. Use text() to read the message.');}
+      });
+    }
     if(value.__pw==='regexp')return new RegExp(value.source,value.flags);
     if(value.__pw==='url')return new URL(value.href);
     if(value.__pw==='date')return new Date(value.value);

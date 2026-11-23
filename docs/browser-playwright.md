@@ -66,12 +66,18 @@ await expect(page.getByText('Mock item')).toBeVisible();
 await emitImage(await page.screenshot({ fullPage: true }));
 ```
 
-The driver is `patchright-core`/`patchright` 1.64.3. Browser diagnostics are
-available through `await (await browser.tabs.get(tabId)).diagnostics()`.
-The diagnostics reader supplies browser messages and, on authorized loopback
-task servers under agent control, top-level console text and uncaught
-exceptions. Playwright page `console` and `pageerror` listeners remain
-unavailable. The broker keeps Playwright's main-world `evaluate`, `evaluateHandle` and
+The driver is `patchright-core`/`patchright` 1.64.3. On an authorized loopback
+task server under agent control, use `await page.consoleMessages()` to read
+console text and `await page.pageErrors()` to read uncaught exceptions as
+`Error` objects. Each returns up to 100 entries from the current top-level
+document. Both `filter: 'all'` and `filter: 'since-navigation'` select from
+that retained history. Console messages support `text()`, `type()`,
+`timestamp()`, `location()` and `page()`. Live argument handles and
+`console` / `pageerror` listeners are unavailable. Browser-level messages such
+as failed loads and deprecations are available through
+`await (await browser.tabs.get(tabId)).diagnostics()`.
+
+The broker keeps Playwright's main-world `evaluate`, `evaluateHandle` and
 `evaluateAll`; a trailing `isolatedContext` argument of `true` (fourth; third for
 `evaluateAll` and `Worker`) selects Patchright's private world. Patchright never
 exposes host bindings to the page's main world, so `exposeFunction`,

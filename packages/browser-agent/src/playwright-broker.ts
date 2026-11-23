@@ -655,6 +655,35 @@ export class PlaywrightBroker {
   ): Promise<unknown> {
     assertMethod(entry.type, method);
     this.assertOwner(entry.owner);
+    if (entry.type === 'Page' && (method === 'consoleMessages' || method === 'pageErrors')) {
+      if (!entry.owner) throw new Error('A managed Playwright page is required');
+      const options = await this.decode(encoded[0], entry.owner);
+      const filter = options === undefined ? undefined : object(options)['filter'];
+      if (filter !== undefined && filter !== 'all' && filter !== 'since-navigation')
+        throw new Error('Expected filter "all" or "since-navigation"');
+      const kind = method === 'consoleMessages' ? 'console' : 'pageerror';
+      const rows = await this.transport.diagnosticHistory(entry.value as Page, kind);
+      this.assertOwner(entry.owner);
+      return rows.map(row => {
+        if (kind === 'console') {
+          return {
+            __pw: 'console-history',
+            level: row.level,
+            text: row.text,
+            timestamp: row.timestamp,
+            location: row.location,
+            page: { __pw: 'handle', id: entry.id, type: 'Page' },
+          };
+        }
+        const name = row.errorName ?? 'Error';
+        const headline = row.text.split('\n', 1)[0]!;
+        const message = headline.startsWith(name + ': ') ? headline.slice(name.length + 2) : headline;
+        const error = new Error(message);
+        error.name = name;
+        error.stack = row.text;
+        return error;
+      });
+    }
     const source =
       encoded[0] && typeof encoded[0] === 'object' ? object(encoded[0]) : null;
     let args: unknown[];

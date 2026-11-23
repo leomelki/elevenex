@@ -1,13 +1,7 @@
 import type { CDPSession } from 'patchright-core';
+import type { BrowserDiagnostic } from '@elevenex/browser-agent';
 
 type Session = Pick<CDPSession, 'on' | 'off' | 'send' | 'detach'>;
-type Diagnostic = Readonly<{
-  seq: number;
-  kind: 'browser' | 'console' | 'pageerror';
-  level: string;
-  text: string;
-  source?: string;
-}>;
 type ConsoleCapture = {
   readonly ready: Promise<void>;
   stop(): void;
@@ -19,7 +13,7 @@ const textLimit = 1024;
 
 /** Diagnostics are retained in memory for the current document and agent lease. */
 export class RuntimeBrowserDiagnostics {
-  private readonly rows: Diagnostic[] = [];
+  private readonly rows: BrowserDiagnostic[] = [];
   private sequence = 0;
   private since = Number.POSITIVE_INFINITY;
   private frame?: Frame;
@@ -70,11 +64,14 @@ export class RuntimeBrowserDiagnostics {
     if (frame && this.pendingNavigation === navigation) this.committed(frame);
   }
 
-  async read(since: number, limit: number) {
+  async read(since: number, limit: number, kind?: BrowserDiagnostic['kind']) {
     await this.capture?.ready;
     const first = this.rows[0]?.seq ?? this.sequence + 1;
-    const matching = this.rows.filter((row) => row.seq > since);
-    const items = matching.slice(0, limit);
+    const matching = this.rows.filter(
+      (row) => row.seq > since && (kind === undefined || row.kind === kind),
+    );
+    const items =
+      kind === undefined ? matching.slice(0, limit) : matching.slice(-limit);
     return {
       items,
       next: items.at(-1)?.seq ?? this.sequence,
@@ -101,30 +98,24 @@ export class RuntimeBrowserDiagnostics {
     // Network failures already count through requests and responses.
     if (entry.level === 'error' && entry.source !== 'network')
       this.countError();
-    this.record(
-      entry.timestamp,
-      'browser',
-      entry.level,
-      entry.text,
-      entry.source,
-    );
+    this.record(entry.timestamp, {
+      kind: 'browser',
+      level: entry.level,
+      text: entry.text,
+      source: entry.source,
+    });
   };
 
   private record(
     timestamp: number,
-    kind: Diagnostic['kind'],
-    level: string,
-    text: string,
-    source?: string,
+    entry: Omit<BrowserDiagnostic, 'seq'>,
   ): void {
     if (this.disposed || !Number.isFinite(timestamp) || timestamp <= this.since)
       return;
     this.rows.push({
       seq: ++this.sequence,
-      kind,
-      level,
-      text: text.slice(0, textLimit),
-      source,
+      ...entry,
+      text: entry.text.slice(0, textLimit),
     });
     if (this.rows.length > historyLimit) this.rows.shift();
   }
@@ -200,7 +191,20 @@ export class RuntimeBrowserDiagnostics {
               ).slice(0, textLimit),
             )
             .join(' ');
-          this.record(event.timestamp, 'console', event.type, text);
+          const frame = event.stackTrace?.callFrames[0];
+          this.record(event.timestamp, {
+            kind: 'console',
+            level: event.type,
+            text,
+            timestamp: event.timestamp,
+            ...(frame && {
+              location: {
+                url: frame.url.slice(0, 512),
+                line: frame.lineNumber,
+                column: frame.columnNumber,
+              },
+            }),
+          });
           if (event.type === 'error' || event.type === 'assert')
             this.countError();
         });
@@ -208,12 +212,12 @@ export class RuntimeBrowserDiagnostics {
           'Runtime.exceptionThrown',
           ({ timestamp, exceptionDetails: detail }) => {
             if (!current(detail.executionContextId, timestamp)) return;
-            this.record(
-              timestamp,
-              'pageerror',
-              'error',
-              detail.exception?.description ?? detail.text,
-            );
+            this.record(timestamp, {
+              kind: 'pageerror',
+              level: 'error',
+              text: detail.exception?.description ?? detail.text,
+              errorName: detail.exception?.className?.slice(0, 128),
+            });
             this.countError();
           },
         );

@@ -128,6 +128,10 @@ it('captures only the current task-server document and retires capture on public
     expect.objectContaining({ kind: 'pageerror', text: 'Uncaught error' }),
   ]);
   expect(f.countError).toHaveBeenCalledTimes(1);
+  f.log(3, 'latest task output');
+  expect((await f.tab.read(0, 1, 'console')).items).toEqual([
+    expect.objectContaining({ kind: 'console', text: 'latest task output' }),
+  ]);
   f.tab.navigationStarted();
   expect(f.runtime.protocol.detach).toHaveBeenCalledTimes(1);
   f.commit('https://public.example');

@@ -182,6 +182,8 @@ CDP session that detaches on navigation, human takeover or tab teardown.
 Only the committed task-server origin's top-level execution context supplies
 console and exception entries. Browser Log messages are available for other
 destinations. Entries are never saved to a profile or included in viewer state.
+Playwright's `page.consoleMessages()` and `page.pageErrors()` read the latest
+100 entries of their respective kinds from the same buffer.
 
 ## Site-facing browser identity
 

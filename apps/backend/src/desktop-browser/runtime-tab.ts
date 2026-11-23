@@ -134,9 +134,9 @@ export class RuntimeBrowserTab {
         authorize,
         ...(!human
           ? {
-              diagnostics: async (since: number, limit: number) => {
+              diagnostics: async (...args: Parameters<NonNullable<BrowserAgentTarget['diagnostics']>>) => {
                 assert();
-                const result = await this.diagnostics?.read(since, limit);
+                const result = await this.diagnostics?.read(...args);
                 assert();
                 if (!result)
                   throw new Error('Browser diagnostics are unavailable for this tab');

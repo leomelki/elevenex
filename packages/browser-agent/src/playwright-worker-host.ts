@@ -3,6 +3,7 @@ import type {
   BrowserAgentDownload,
   BrowserAgentHost,
   BrowserAgentTarget,
+  BrowserDiagnosticsPage,
 } from './host.js';
 import { object } from './host.js';
 import type { BrowserHostSnapshot } from './playwright-channel.js';
@@ -117,6 +118,8 @@ export class WorkerBrowserHost implements BrowserAgentHost {
       assert,
       send: (method, params, sessionId) =>
         call('send', [method, params, sessionId]),
+      diagnostics: async (since, limit, kind) =>
+        (await call('diagnostics', [since, limit, kind])) as BrowserDiagnosticsPage,
       subscribe: (listener) => {
         state.events.add(listener);
         return () => state.events.delete(listener);

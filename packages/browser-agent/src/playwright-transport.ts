@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ConnectOverCDPTransport } from 'patchright-core';
+import type { ConnectOverCDPTransport, Page } from 'patchright-core';
 import {
   object,
   type BrowserAgentHost,
@@ -67,6 +67,7 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
   onmessage?: (message: object) => void;
   onclose?: (reason?: string) => void;
   private readonly sources = new Map<string, Source>();
+  private readonly pageSources = new WeakMap<Page, Source>();
   private readonly sessions = new Map<string, Session>();
   private readonly browserSessions = new Set<string>();
   private readonly streams = new Map<string, string>();
@@ -667,7 +668,7 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
       `Browser operation outside the Elevenex task scope: ${method}`,
     );
   }
-  async tabId(page: import('patchright-core').Page): Promise<string> {
+  async tabId(page: Page): Promise<string> {
     const session = await page.context().newCDPSession(page);
     try {
       const info = object(
@@ -676,6 +677,7 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
       const source = this.sources.get(String(info['targetId']));
       if (!source) throw new Error('Page authority expired');
       source.target.assert();
+      this.pageSources.set(page, source);
       return source.target.id;
     } finally {
       await session.detach();
@@ -683,6 +685,17 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
   }
   async acquire(tabId: string): Promise<string> {
     return (await this.attach(tabId)).targetId;
+  }
+  async diagnosticHistory(page: Page, kind: 'console' | 'pageerror') {
+    const source = this.pageSources.get(page);
+    if (!source || this.sources.get(source.targetId) !== source || page.isClosed())
+      throw new Error('Page authority expired');
+    source.target.assert();
+    if (!source.target.diagnostics)
+      throw new Error('Browser diagnostics are unavailable on this host');
+    const result = await source.target.diagnostics(0, 100, kind);
+    source.target.assert();
+    return result.items;
   }
   async present(tabId: string, command: import('@elevenex/shared').BrowserPresentationCommand, documentId?: string, generation?: number): Promise<void> {
     const source = [...this.sources.values()].find(item => item.target.id === tabId);
