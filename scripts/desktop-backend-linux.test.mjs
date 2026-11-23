@@ -24,6 +24,7 @@ const linuxShellFiles = [
   'apps/backend/bin/plannotator-wrapper.sh',
   ...['bashrc', 'integration.fish', 'zshenv', 'zshrc'].map(name => `apps/backend/bundle/shell-integration/scripts/${name}`),
 ];
+const patchrightLegalFiles = ['scripts/third-party/patchright/LICENSE', 'scripts/third-party/patchright/NOTICE'];
 
 async function fixture(t, lineEnding = '\n') {
   const root = await mkdtemp(join(tmpdir(), 'ex-linux-build-'));
@@ -34,7 +35,7 @@ async function fixture(t, lineEnding = '\n') {
     'apps/backend/bin/helper', 'apps/frontend/proxy.conf.json',
     'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs', 'scripts/desktop-backend-linux.mjs', 'scripts/stage-electron-backend.js',
     'scripts/rebuild-electron-backend-natives.js', 'scripts/archive-electron-backend.js',
-    'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile',
+    'scripts/runtime-stage-utils.js', 'scripts/desktop-backend-linux.Dockerfile', ...patchrightLegalFiles,
     // Neither installed dependencies, unrelated sources nor secrets belong in the context.
     'apps/backend/node_modules/native.node', 'apps/desktop/src/unrelated.ts', '.env',
     'apps/backend/node_modules/@openai/codex-sdk/dist/index.js',
@@ -83,6 +84,9 @@ for (const [architecture, lineEnding] of [['arm64', '\r\n'], ['x64', '\n']]) {
       for (const file of linuxShellFiles) {
         assert.equal(await readFile(join(cwd, 'runtime', file), 'utf8'), `${file}\n`);
       }
+      for (const file of patchrightLegalFiles) {
+        assert.equal(await readFile(join(cwd, 'runtime', file), 'utf8'), file);
+      }
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
       assert.equal(backend.dependencies['patchright-core'], '1.0.0');
@@ -130,6 +134,9 @@ test('the shared UI base builds its core runtime without browser dependencies or
     const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
     assert.deepEqual(Object.keys(backend.dependencies), ['better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node']);
     assert.equal(await readFile(join(cwd, 'runtime/scripts/runtime-stage-utils.js'), 'utf8'), 'scripts/runtime-stage-utils.js');
+    for (const file of patchrightLegalFiles) {
+      await assert.rejects(stat(join(cwd, 'runtime', file)), { code: 'ENOENT' });
+    }
     await assert.rejects(stat(join(cwd, 'runtime/vscode-filesystem-provider')), { code: 'ENOENT' });
     await mkdir(join(cwd, 'output'));
     for (const name of ['elevenex-backend-linux-arm64.tar.gz', 'elevenex-backend-linux-arm64.tar.gz.sha256']) {

@@ -65,6 +65,7 @@ export async function buildLinuxDevelopmentRuntime(root, version, architecture, 
       // Runtime assembly uses this utility for both core and browser backends.
       // Playwright does not imply that legacy VS Code assets exist in the checkout.
       'scripts/archive-electron-backend.js', 'scripts/runtime-stage-utils.js',
+      ...(browserRuntime ? ['scripts/third-party/patchright/LICENSE', 'scripts/third-party/patchright/NOTICE'] : []),
       'apps/backend/node_modules/@openai/codex-sdk/package.json', 'apps/backend/node_modules/@openai/codex-sdk/dist',
       'apps/backend/node_modules/@openai/codex-sdk/LICENSE', 'apps/backend/node_modules/@anthropic-ai/claude-agent-sdk/package.json',
     ]) await copy(file, `runtime/${file}`);
