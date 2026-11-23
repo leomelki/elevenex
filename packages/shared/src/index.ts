@@ -9,7 +9,7 @@ import type { TaskTerminalAttachment, TaskTerminalAttach, TaskTerminalStreamWrit
 export type * from './task-terminal';
 import type { WaitingWriting, WaitingWritingSnapshot } from './waiting-writing';
 export * from './waiting-writing';
-import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent } from './session-chat';
+import type { SessionChatAgentRead, SessionChatAgentPage, SessionChatMediaRead, SessionChatMedia, SessionChatChangesRead, SessionChatChangesPage, SessionChatCatalogRead, SessionChatCatalog, SessionChatCommandReply, SessionChatRead, SessionChatPage, SessionChatCommand, SessionChatContentRead, SessionChatContent, SessionChatPromptEditRead, SessionChatPromptEdit } from './session-chat';
 import type { SessionChatTurnWorkReply, SessionChatTurnWorkRead, SessionChatToolDetailsReply, SessionChatToolDetailsRead } from './session-chat';
 import type { SessionChatStreamEvent, SessionChatWatch } from './session-chat';
 export type * from './session-chat';
@@ -17,6 +17,8 @@ export { sessionChatToolCategory, sessionChatToolStatus, SESSION_CHAT_TOOL_CATEG
 export { SESSION_CHAT_TURN_TIMELINE_BYTES, SESSION_CHAT_TURN_TIMELINE_SLOTS, SESSION_CHAT_TOOL_LABEL_LIMIT, SESSION_CHAT_TOOL_META_LIMIT } from './session-chat';
 export { SESSION_CHAT_TURN_TOOL_LABEL_LIMIT, SESSION_CHAT_TURN_TOOL_META_LIMIT } from './session-chat';
 export { SESSION_CHAT_STREAM_FRAME_BYTES } from './session-chat';
+export { SESSION_CHAT_PROMPT_LIMIT } from './session-chat';
+export type { SessionChatPromptEdit, SessionChatPromptEditRead } from './session-chat';
 export { sessionChatToolHeading } from './session-chat-tool-heading';
 import type { SessionChatDraftEdit, SessionChatDraftSnapshot, SessionChatDraftTarget } from './session-chat-draft';
 export type * from './session-chat-draft';
@@ -112,6 +114,7 @@ export interface InvokeContracts {
   'session-chat:cancel': { args: [scopeId: string, requestId: string]; result: void };
   'session-chat:media': { args: [scopeId: string, input: SessionChatMediaRead]; result: BackendResult<SessionChatMedia> };
   'session-chat:content': { args: [scopeId: string, input: SessionChatContentRead]; result: BackendResult<SessionChatContent> };
+  'session-chat:prompt-edit': { args: [scopeId: string, input: SessionChatPromptEditRead]; result: BackendResult<SessionChatPromptEdit> };
   'session-chat:draft-read': { args: [expected: EnvironmentSelection, target: SessionChatDraftTarget]; result: SessionChatDraftSnapshot };
   'session-chat:draft-save': { args: [expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit]; result: void };
   'machines:state': { args: []; result: MachineState };
@@ -283,6 +286,7 @@ export interface ElevenexBridge {
   sessionChatMedia(scopeId: string, input: SessionChatMediaRead): Promise<BackendResult<SessionChatMedia>>;
   sessionChatAgent(scopeId: string, input: SessionChatAgentRead): Promise<BackendResult<SessionChatAgentPage>>;
   sessionChatContent(scopeId: string, input: SessionChatContentRead): Promise<BackendResult<SessionChatContent>>;
+  sessionChatPromptEdit(scopeId: string, input: SessionChatPromptEditRead): Promise<BackendResult<SessionChatPromptEdit>>;
   sessionChatDraftRead(expected: EnvironmentSelection, target: SessionChatDraftTarget): Promise<SessionChatDraftSnapshot>;
   sessionChatDraftSave(expected: EnvironmentSelection, identity: string, edit: SessionChatDraftEdit): Promise<void>;
   readonly platform: DesktopPlatform;

@@ -405,6 +405,7 @@ function projectExchanges(
         })),
       id: group.id,
       prompt: group.prompt,
+      promptEditable: group.promptItem?.editable,
       mentions: group.mentions,
       attachments: group.id === pending?.id ? pending.attachments : group.attachments,
       time: group.time,

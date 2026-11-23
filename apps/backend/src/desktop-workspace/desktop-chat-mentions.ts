@@ -35,8 +35,15 @@ export function chatMentionText(text: string): string {
 
 /** Restore bounded chip identities from saved prompts without exposing context snapshots. */
 export function projectChatMentions(text: string) {
+  const { text: visible, mentions } = splitChatMentions(text);
+  return { text: visible, mentions };
+}
+
+/** The edit path reuses the snapshots sent with the original prompt. */
+export function splitChatMentions(text: string) {
   const mentions: { sessionId: number; title: string }[] = [];
-  if (!text.includes('<elevenex_session_mention>')) return { text, mentions };
+  const blocks: string[] = [];
+  if (!text.includes('<elevenex_session_mention>')) return { text, mentions, blocks };
   const seen = new Set<number>();
   const visible = text.replace(/<elevenex_session_mention>([\s\S]*?)<\/elevenex_session_mention>/g,
     (block: string, body: string) => {
@@ -47,7 +54,8 @@ export function projectChatMentions(text: string) {
       if (!id || !Number.isSafeInteger(sessionId)) return block;
       const title = /^Session: ([^\r\n]*)/m.exec(header)?.[1].trim().slice(0, 1000) || `Session ${sessionId}`;
       if (!seen.has(sessionId) && mentions.length < 8) { seen.add(sessionId); mentions.push({ sessionId, title }); }
+      blocks.push(block);
       return '';
     });
-  return { text: visible.trim(), mentions };
+  return { text: visible.trim(), mentions, blocks };
 }

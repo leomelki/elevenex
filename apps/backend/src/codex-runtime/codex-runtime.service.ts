@@ -1356,11 +1356,14 @@ export class CodexRuntimeService
     messageId: string,
   ): Promise<ClaudeTranscriptItem[]> {
     this.assertNotRewinding(sessionId);
-    if (this.activeRuns.has(sessionId)) {
+    if (this.activeRuns.has(sessionId) || this.unconfirmedStops.has(sessionId) || this.backgroundRefs.has(sessionId)) {
       throw new ConflictException(
         'Cannot edit a message while Codex is actively running.',
       );
     }
+    const current = this.runtimeStates.get(sessionId);
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
 
     this.rewindingSessions.add(sessionId);
     try {
@@ -1382,17 +1385,19 @@ export class CodexRuntimeService
     sessionId: number,
     messageId: string,
   ): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGenerations.get(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     const rewindTarget = await this.historyService.rewindHistory(
       session.codexSessionId,
       messageId,
     );
+    const token = await this.mcpAgentTokens.ensureToken(sessionId);
     const { threadId: rewoundSessionId, history } =
-      await this.forkAtTurn(rewindTarget);
-    await this.sessionsService.updateCodexSessionId(
-      sessionId,
-      rewoundSessionId,
-    );
+      await this.forkAtTurn(rewindTarget, this.elevenexMcpConfig(token));
+    if (generation !== this.sessionGenerations.get(sessionId))
+      throw new ConflictException('The session closed while the message was being edited.');
+    this.sessionsService.replaceEditedConversation(sessionId, 'codex', rewindTarget.threadId,
+      rewoundSessionId, rewindTarget.promptTimestamp);
 
     const state = this.ensureRuntimeState(sessionId);
     state.codexSessionId = rewoundSessionId;
@@ -1408,6 +1413,8 @@ export class CodexRuntimeService
     state.asyncAnswerPrompts.clear();
     state.lastError = null;
     state.contextUsage = null;
+    this.subagentTrackers.delete(sessionId);
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
 

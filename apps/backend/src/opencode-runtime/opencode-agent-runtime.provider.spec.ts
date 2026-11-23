@@ -66,6 +66,8 @@ function fixture(nativeSessionId = '-1') {
       update: jest.fn(async () => ({ data: {} })),
       children: jest.fn(async () => ({ data: [] })),
       deleteMessage: jest.fn(async () => ({ data: true })),
+      fork: jest.fn(async () => ({ data: { id: 'forked' } })),
+      delete: jest.fn(async () => ({ data: true })),
     },
     permission: {
       list: jest.fn(async () => ({ data: [] })),
@@ -100,6 +102,9 @@ function fixture(nativeSessionId = '-1') {
       name: 'Named',
     })),
     updateOpenCodeSessionId: jest.fn(async (_id: number, id: string) => {
+      savedId = id;
+    }),
+    replaceEditedConversation: jest.fn((_id: number, _provider: string, _previous: string, id: string) => {
       savedId = id;
     }),
     markCompletionUnreviewed: jest.fn(async () => {}),
@@ -1018,6 +1023,35 @@ describe('OpenCode runtime lifecycle', () => {
     try {
       await f.provider.rewindConversation(1, 'p');
       expect(rewindHistory).toHaveBeenCalledWith('s', 'm');
+      expect(f.client.session.deleteMessage).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+  it('switches a V1 edit to a validated native prefix without deleting source messages', async () => {
+    const f = fixture();
+    await f.provider.submitPrompt(1, 'hello');
+    await tick();
+    f.messages.push({
+      info: { id: 'm', role: 'user', time: { created: 1 } } as Message,
+      parts: [{ id: 'p', messageID: 'm', sessionID: 's', type: 'text', text: 'hello' }],
+    }, {
+      info: { id: 'a', role: 'assistant', time: { created: 2 } } as Message,
+      parts: [{ id: 'reply', messageID: 'a', sessionID: 's', type: 'text', text: 'hello back' }],
+    });
+    f.turn.resolve({ data: undefined });
+    await tick();
+    await tick();
+    try {
+      await expect(f.provider.rewindConversation(1, 'reply')).rejects.toThrow('Only user messages');
+      expect(f.client.session.fork).not.toHaveBeenCalled();
+      // An incompatible fork implementation cannot replace the source.
+      await expect(f.provider.rewindConversation(1, 'p')).rejects.toThrow('requested conversation prefix');
+      expect(f.client.session.delete).toHaveBeenCalledWith({ sessionID: 'forked' });
+      f.client.session.messages.mockResolvedValueOnce({ data: [] });
+      await expect(f.provider.rewindConversation(1, 'p')).resolves.toEqual([]);
+      expect(f.client.session.fork).toHaveBeenCalledWith({ sessionID: 's', messageID: 'm' });
+      expect((await f.provider.getRuntimeState(1, { initialize: false })).claudeSessionId).toBe('forked');
       expect(f.client.session.deleteMessage).not.toHaveBeenCalled();
     } finally {
       f.provider.onModuleDestroy();

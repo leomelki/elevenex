@@ -111,6 +111,7 @@ export class OpenCodeAgentRuntimeProvider
     },
   };
   private readonly entries = new Map<number, RuntimeEntry>();
+  private readonly rewinding = new Set<number>();
   private readonly starts = new Map<number, Promise<RuntimeEntry>>();
   private readonly states = new Map<number, ClaudeRuntimeStatePayload>();
   private readonly queuedDispatches = new QueuedPromptDispatches();
@@ -926,9 +927,11 @@ export class OpenCodeAgentRuntimeProvider
     titlePrompt?: string,
     images?: AgentImageInput[],
   ): Promise<void> {
+    this.assertNotRewinding(sessionId);
     if (!prompt.trim() && !images?.length)
       throw new BadRequestException('Prompt must not be empty.');
     const state = await this.state(sessionId);
+    this.assertNotRewinding(sessionId);
     if (
       this.entries.get(sessionId)?.interruptRequested &&
       state.runPhase === 'error'
@@ -1597,34 +1600,92 @@ export class OpenCodeAgentRuntimeProvider
     };
   }
   async rewindConversation(sessionId: number, messageId: string) {
+    this.assertNotRewinding(sessionId);
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, messageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
+
+  private assertNotRewinding(sessionId: number): void {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('An OpenCode message edit is already in progress.');
+  }
+
+  private async rewindIdleConversation(sessionId: number, messageId: string) {
     const entry = await this.ensure(sessionId);
-    if (entry.state.canInterrupt)
-      throw new ConflictException('Stop the current turn before rewinding.');
+    const client = entry.client!, state = entry.state;
+    await entry.restoring;
+    if (entry.run || state.canInterrupt || entry.interruptRequested || this.interrupts.has(sessionId) ||
+        state.subagents.some(agent => agent.status === 'started'))
+      throw new ConflictException('Stop the current turn and background work before editing.');
+    if (state.pendingPrompts.length || this.queuedDispatches.current(state).length)
+      throw new ConflictException('Resolve queued messages before editing.');
     const anchor = this.history(entry).find(
       (item) => item.id === messageId || item.sourceMessageId === messageId,
     );
-    if (!anchor?.sourceMessageId || !entry.state.claudeSessionId)
+    const source = state.claudeSessionId;
+    if (!anchor?.sourceMessageId || !source)
       throw new BadRequestException('Rewind anchor was not found.');
-    // Rewind only conversation history; native revert also modifies files owned by Elevenex's Git UI.
     const ordered = entry.transcript.orderedMessages();
-    const messages = ordered.slice(
-      ordered.findIndex((message) => message.id === anchor.sourceMessageId),
-    );
-    if (entry.client!.rewindHistory)
-      await entry.client!.rewindHistory(
-        entry.state.claudeSessionId,
-        anchor.sourceMessageId,
-      );
-    else
-      for (const message of messages)
-        await entry.client!.session.deleteMessage({
-          sessionID: entry.state.claudeSessionId,
-          messageID: message.id,
-        });
-    entry.transcript.removeMessages(messages);
-    entry.state.liveItems = [];
-    entry.state.pendingPrompts = [];
-    const history = this.history(entry);
+    const index = ordered.findIndex(message => message.id === anchor.sourceMessageId);
+    if (index < 0 || ordered[index].role !== 'user' || anchor.kind !== 'user' || anchor.isSynthetic)
+      throw new BadRequestException('Only user messages can be edited.');
+    const assertCurrent = () => {
+      if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted)
+        throw new ConflictException('The OpenCode session closed while editing.');
+    };
+    const [nativeSession, statuses] = await Promise.all([client.session.get({ sessionID: source }), client.session.status()]);
+    const status = statuses.data?.[source]?.type;
+    if (!nativeSession.data || !statuses.data || (status && status !== 'idle'))
+      throw new ConflictException('Wait for OpenCode to finish before editing.');
+    if (nativeSession.data.revert)
+      throw new ConflictException('Finish or clear the staged OpenCode revert before editing.');
+    assertCurrent();
+    let history: ClaudeTranscriptItem[];
+    if (client.rewindHistory) {
+      // V2 can commit a history-only revert without touching the checkout.
+      try {
+        await client.rewindHistory(source, anchor.sourceMessageId);
+      } catch (error) {
+        await this.restore(entry).catch(() => undefined);
+        throw error;
+      }
+      assertCurrent();
+      entry.transcript.removeMessages(ordered.slice(index));
+      history = this.history(entry);
+    } else {
+      // V1's revert changes files, and per-message deletion can stop halfway.
+      // Switch to a validated native fork of the retained prefix instead.
+      const fork = (await client.session.fork({ sessionID: source, messageID: anchor.sourceMessageId })).data;
+      if (!fork?.id || fork.id === source) throw new Error('OpenCode did not create the edited conversation.');
+      try {
+        const copied = (await client.session.messages({ sessionID: fork.id })).data;
+        if (!copied || copied.length !== index)
+          throw new Error('OpenCode did not retain the requested conversation prefix.');
+        history = copied.flatMap(({ info, parts }) => parts.flatMap(part => openCodePartItems(part, info)));
+        const session = await this.sessions.findOne(sessionId);
+        await client.session.update({ sessionID: fork.id, title: session.name ?? undefined, permission: openCodePermissionRules(state.permissionMode) });
+        assertCurrent();
+        this.sessions.replaceEditedConversation(sessionId, 'opencode', source, fork.id,
+          new Date(ordered[index].time.created).toISOString());
+      } catch (error) {
+        await client.session.delete({ sessionID: fork.id }).catch(() => undefined);
+        throw error;
+      }
+      this.stop(sessionId);
+      state.claudeSessionId = fork.id;
+    }
+    state.liveItems = [];
+    state.queuePaused = false;
+    state.runPhase = 'idle';
+    state.sessionState = 'idle';
+    state.lastError = null;
+    state.contextUsage = null;
+    state.subagents = [];
+    this.emit('event', { type: 'conversation_rewound', payload: { sessionId } });
     this.emit('event', {
       type: 'history_snapshot',
       payload: { sessionId, history },

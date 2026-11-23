@@ -89,6 +89,7 @@ describe('ClaudeRuntimeService', () => {
     findOne: jest.Mock;
     updateStatus: jest.Mock;
     updateClaudeSessionId: jest.Mock;
+    replaceEditedConversation: jest.Mock;
     updateClaudeModelSelection: jest.Mock;
     renameFromGeneratedTitle: jest.Mock;
   };
@@ -220,6 +221,7 @@ describe('ClaudeRuntimeService', () => {
       }),
       updateStatus: jest.fn(),
       updateClaudeSessionId: jest.fn(),
+      replaceEditedConversation: jest.fn(),
       updateClaudeModelSelection: jest.fn().mockResolvedValue(undefined),
       renameFromGeneratedTitle: jest.fn(),
     };
@@ -4717,7 +4719,7 @@ describe('ClaudeRuntimeService', () => {
     ).rejects.toThrow('Subagent not found for this session.');
   });
 
-  it('rewinds conversation history from a selected user message and resets live runtime state', async () => {
+  it('rewinds through the native SDK and resets the outgoing runtime state', async () => {
     (service as any).ensureRuntimeState(7, 'claude-session-1').liveItems = [
       {
         id: 'live-1',
@@ -4740,16 +4742,18 @@ describe('ClaudeRuntimeService', () => {
       .spyOn(service as any, 'findTranscriptPath')
       .mockResolvedValue('/tmp/claude-session-1.jsonl');
     jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
-      { type: 'user', uuid: 'user-1' },
-      { type: 'assistant', uuid: 'assistant-1' },
+      { type: 'user', uuid: 'user-1', message: { content: 'first prompt' } },
+      { type: 'assistant', uuid: 'assistant-1', message: { content: 'first answer' } },
       { type: 'file-history-snapshot', messageId: 'user-2' },
-      { type: 'user', uuid: 'user-2' },
-      { type: 'assistant', uuid: 'assistant-2' },
+      { type: 'user', uuid: 'user-2', message: { content: 'second prompt' } },
+      { type: 'assistant', uuid: 'assistant-2', message: { content: 'second answer' } },
       { type: 'last-prompt', lastPrompt: 'second prompt' },
     ]);
-    const persistSpy = jest
-      .spyOn(service as any, 'persistTranscriptRecords')
-      .mockResolvedValue(undefined);
+    jest.spyOn(service as any, 'loadHistoryFromTranscript').mockResolvedValue([]);
+    (forkSession as jest.Mock).mockResolvedValue({ sessionId: 'rewound' });
+    sessionsService.replaceEditedConversation.mockImplementation(() => {
+      sessionsService.findOne.mockResolvedValue({ id: 7, worktreePath: '/tmp/project', claudeSessionId: 'rewound' });
+    });
     (getSessionMessages as jest.Mock).mockResolvedValue([
       {
         type: 'user',
@@ -4771,10 +4775,8 @@ describe('ClaudeRuntimeService', () => {
 
     const history = await service.rewindConversation(7, 'user-2');
 
-    expect(persistSpy).toHaveBeenCalledWith('/tmp/claude-session-1.jsonl', [
-      { type: 'user', uuid: 'user-1' },
-      { type: 'assistant', uuid: 'assistant-1' },
-    ]);
+    expect(forkSession).toHaveBeenCalledWith('claude-session-1', { dir: '/tmp/project', upToMessageId: 'assistant-1', title: undefined });
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'claude', 'claude-session-1', 'rewound', undefined);
     expect(history).toEqual([
       expect.objectContaining({
         content: 'first prompt',
@@ -4790,6 +4792,19 @@ describe('ClaudeRuntimeService', () => {
     expect(runtimeState.pendingPermissionRequest).toBeNull();
     expect(runtimeState.runPhase).toBe('idle');
     expect(runtimeState.sessionState).toBe('idle');
+  });
+
+  it('switches to a fresh native session when editing Claude’s first prompt', async () => {
+    jest.spyOn(service as any, 'findTranscriptPath').mockResolvedValue('/tmp/claude-session-1.jsonl');
+    jest.spyOn(service as any, 'loadTranscriptRecords').mockResolvedValue([
+      { type: 'user', uuid: 'first', message: { content: 'Start here' } },
+    ]);
+    sessionsService.replaceEditedConversation.mockImplementation(() => {
+      sessionsService.findOne.mockResolvedValue({ id: 7, worktreePath: '/tmp/project', claudeSessionId: '-1' });
+    });
+    expect(await service.rewindConversation(7, 'first')).toEqual([]);
+    expect(forkSession).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'claude', 'claude-session-1', '-1', undefined);
   });
 
   it('rejects rewind requests for non-user transcript entries', async () => {

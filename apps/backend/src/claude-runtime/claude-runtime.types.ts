@@ -112,6 +112,8 @@ export interface ClaudeTranscriptItem {
   isError?: boolean;
   isSynthetic?: boolean;
   sourceMessageId?: string;
+  /** The provider can display this prompt but cannot rewind safely at its boundary. */
+  editUnsupported?: true;
   transcriptMessageId?: string;
   timestamp: string;
   authoredAt?: string;
@@ -891,6 +893,7 @@ export type ClaudeRuntimeEvent =
       payload: { sessionId: number; request: ClaudeUserInputRequest };
     }
   | { type: 'error'; payload: { sessionId: number; message: string } }
+  | { type: 'conversation_rewound'; payload: { sessionId: number } }
   | { type: 'complete'; payload: { sessionId: number } };
 
 export type ClaudeRuntimeClientAction =

@@ -211,6 +211,9 @@ function createService(options?: {
     updatePiSessionPath: jest.fn(async (_sessionId: number, path: string) => {
       piSessionPath = path;
     }),
+    replaceEditedConversation: jest.fn((_id: number, _provider: string, _previous: string, path: string, _before: number | string | undefined) => {
+      piSessionPath = path;
+    }),
   };
   const auth = {
     on: jest.fn(),
@@ -880,9 +883,10 @@ describe('PiRuntimeService lifecycle', () => {
       await writeFile(
         sessionPath,
         [
-          JSON.stringify({ type: 'session', version: 3 }),
+          JSON.stringify({ type: 'session', version: 3, id: 'source' }),
           JSON.stringify({
             id: 'first-user',
+            parentId: null,
             type: 'message',
             message: {
               role: 'user',
@@ -891,7 +895,18 @@ describe('PiRuntimeService lifecycle', () => {
             },
           }),
           JSON.stringify({
+            id: 'abandoned',
+            parentId: 'first-user',
+            type: 'message',
+            message: {
+              role: 'user',
+              timestamp: Date.parse('2026-05-22T10:00:30.000Z'),
+              content: [{ type: 'text', text: 'abandoned branch' }],
+            },
+          }),
+          JSON.stringify({
             id: 'first-assistant',
+            parentId: 'first-user',
             type: 'message',
             message: {
               role: 'assistant',
@@ -901,6 +916,7 @@ describe('PiRuntimeService lifecycle', () => {
           }),
           JSON.stringify({
             id: 'edit-user',
+            parentId: 'first-assistant',
             type: 'message',
             message: {
               role: 'user',
@@ -910,6 +926,7 @@ describe('PiRuntimeService lifecycle', () => {
           }),
           JSON.stringify({
             id: 'old-assistant',
+            parentId: 'edit-user',
             type: 'message',
             message: {
               role: 'assistant',
@@ -927,6 +944,7 @@ describe('PiRuntimeService lifecycle', () => {
       });
 
       const beforeRewind = await service.getHistory(1);
+      expect(beforeRewind.map(item => item.content)).toEqual(['first', 'done', 'edit this', 'old answer']);
       const editMessageId = beforeRewind.find(
         (item) => item.content === 'edit this',
       )?.sourceMessageId;
@@ -936,13 +954,14 @@ describe('PiRuntimeService lifecycle', () => {
       const history = await service.rewindConversation(1, editMessageId!);
 
       expect(history.map((item) => item.content)).toEqual(['first', 'done']);
-      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(
-        1,
-        expect.stringContaining('-fork-'),
+      expect(sessions.replaceEditedConversation).toHaveBeenCalledWith(
+        1, 'pi', sessionPath, expect.stringContaining('-fork-'), Date.parse('2026-05-22T10:02:00.000Z'),
       );
-      const rewoundPath = sessions.updatePiSessionPath.mock.calls[0]?.[1];
+      const rewoundPath = sessions.replaceEditedConversation.mock.calls[0]?.[3];
       const raw = await readFile(rewoundPath!, 'utf8');
+      expect(JSON.parse(raw.split('\n')[0])).toMatchObject({ type: 'session', id: expect.not.stringMatching(/^source$/), parentSession: sessionPath });
       expect(raw).toContain('first-assistant');
+      expect(raw).not.toContain('abandoned');
       expect(raw).not.toContain('edit this');
       expect(raw).not.toContain('old answer');
       expect(child.kill).toHaveBeenCalledWith('SIGTERM');
@@ -976,7 +995,7 @@ describe('PiRuntimeService lifecycle', () => {
       await expect(
         service.rewindConversation(1, 'first-user'),
       ).resolves.toEqual([]);
-      expect(sessions.updatePiSessionPath).toHaveBeenCalledWith(1, '-1');
+      expect(sessions.replaceEditedConversation).toHaveBeenCalledWith(1, 'pi', sessionPath, '-1', Date.parse('2026-05-22T10:00:00.000Z'));
       expect((await service.getRuntimeState(1)).claudeSessionId).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -992,7 +1011,7 @@ describe('PiRuntimeService lifecycle', () => {
     await expect(service.rewindConversation(1, 'user-entry')).rejects.toThrow(
       'Cannot edit a message while Pi is actively running.',
     );
-    expect(sessions.updatePiSessionPath).not.toHaveBeenCalled();
+    expect(sessions.replaceEditedConversation).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

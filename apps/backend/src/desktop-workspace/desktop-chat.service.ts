@@ -5,6 +5,8 @@ import { SettingsService } from '../settings/settings.service.js';
 import { chatPresets, executePresetAction } from './desktop-chat-presets.js';
 import { prepareTurnChanges, preparedChangesPage, type PreparedTurnChanges } from './desktop-chat-changes.js';
 import { executeChatAction } from './desktop-chat-actions.js';
+import { assertChatEditIdle, chatEditProvider, savedChatPrompt, validateChatEditId } from './desktop-chat-edit.js';
+import { chatPromptImages } from './desktop-chat-input.js';
 import { ConversationExportService } from '../agent-runtime/conversation-export.service.js';
 import {
   BadRequestException,
@@ -14,6 +16,7 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -39,11 +42,12 @@ import { waitForChatStreamWork } from './desktop-chat-stream.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
 import { ChatToolDetails } from './desktop-chat-tool-details.js';
 import { toolKey } from './desktop-chat-tool-links.js';
-import { SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT } from '@elevenex/shared';
+import { SESSION_CHAT_PROMPT_LIMIT, SESSION_CHAT_TURN_WORK_LIMIT, SESSION_CHAT_TURN_WORK_MAX_LIMIT } from '@elevenex/shared';
 import type {
   SessionChatItem, SessionChatState, SessionChatStreamPage, SessionChatWatch,
   SessionChatToolDetailsReply, SessionChatToolReference, SessionChatToolSource,
   SessionChatTurnWorkPage, SessionChatTurnWorkReply,
+  SessionChatPromptEdit,
 } from '@elevenex/shared';
 
 type ChatReadView = `${'window' | 'progressive' | 'summary' | 'recent-summary'}:${'inline' | 'deferred'}`;
@@ -65,6 +69,7 @@ interface ChatFeed {
   review?: { readonly turnId: string; readonly revision: number; readonly historyRevision: number; readonly expires: number; readonly pending: Promise<PreparedTurnChanges> };
   revision: number;
   historyRevision: number;
+  historyRewrite?: string;
   touched: number;
   attached: boolean;
   observers: number;
@@ -87,6 +92,7 @@ function validToolReference(reference: SessionChatToolReference): boolean {
 export class DesktopChatService implements OnModuleDestroy {
   private readonly logger = new Logger(DesktopChatService.name);
   private readonly configuring = new Set<number>();
+  private readonly writing = new Map<number, { count: number; editing: boolean }>();
   private readonly feeds = new Map<number, ChatFeed>();
   private readonly providerObservers = new Map<AgentRuntimeProvider, { count: number; changed: (event: AgentRuntimeEvent) => void }>();
   private readonly lifetime = new AbortController();
@@ -145,9 +151,14 @@ export class DesktopChatService implements OnModuleDestroy {
     if (!observer) {
       observer = { count: 0, changed: event => {
         const { sessionId } = event.payload;
-        if (this.feeds.get(sessionId)?.provider !== provider) return;
+        const feed = this.feeds.get(sessionId);
+        if (feed?.provider !== provider) return;
+        if (event.type === 'conversation_rewound') {
+          feed.historyRewrite = randomUUID();
+          feed.livePrompt = undefined;
+        }
         // Persisted history is read only when its identity/content can change.
-        this.invalidate(sessionId, event.type === 'history_snapshot' ||
+        this.invalidate(sessionId, event.type === 'conversation_rewound' || event.type === 'history_snapshot' ||
           event.type === 'session_snapshot' ||
           (event.type === 'run_state' && record(event.payload).runPhase !== 'running'));
       } };
@@ -173,6 +184,7 @@ export class DesktopChatService implements OnModuleDestroy {
   private state(
     session: Awaited<ReturnType<SessionsService['findOne']>>,
     raw: Record<string, unknown>,
+    historyRewrite?: string,
   ): SessionChatState {
     const provider = this.registry.getProvider(session.activeAgentProvider);
     const work = chatWork(raw, {
@@ -182,6 +194,7 @@ export class DesktopChatService implements OnModuleDestroy {
       backgroundAgent: typeof provider.backgroundSubagent === 'function',
     });
     return {
+      ...(historyRewrite ? { historyRewrite } : {}),
       unseenCompletionAt: session.hasUnreviewedCompletion ? session.lastCompletionAt : null,
       attachments: true,
       browserElements: provider.info.capabilities.multimodalPrompts === true,
@@ -389,7 +402,7 @@ export class DesktopChatService implements OnModuleDestroy {
           prior ? undefined : this.history(feed, sessionId),
         ]), signal);
         if (current()) {
-          const state = this.state(session, raw);
+          const state = this.state(session, raw, feed.historyRewrite);
           const stateJson = JSON.stringify(state);
           const live = Array.isArray(raw.liveItems) ? raw.liveItems as AgentTranscriptItem[] : [];
           const source = { length: live.length, first: live[0]?.id };
@@ -400,6 +413,7 @@ export class DesktopChatService implements OnModuleDestroy {
           const options = {
             loadingMode, changesCache: feed.changesCache, mediaCache: feed.mediaCache,
             toolDetails, liveTurn, projectedLive,
+            promptEditing: feed.provider.info.capabilities.rewindConversation && !!feed.provider.rewindConversation,
           };
           const liveWindow = prior && chatWindow([], live, { ...options, includeLeadingPrompt: false });
           let checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
@@ -542,7 +556,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const [raw, history] = await Promise.all([runtime, historyPromise]);
     if (signal.aborted) return;
     feed.touched = Date.now();
-    const state = this.state(session, raw);
+    const state = this.state(session, raw, feed.historyRewrite);
     const bounds = feed.latestBounds.get(view);
     if (!paging && after === revision && bounds?.revision === revision) {
       // Runtime state can change independently of item events (for example,
@@ -564,6 +578,7 @@ export class DesktopChatService implements OnModuleDestroy {
       summarizeRecent: summarizeRecent === '1',
       toolDetails,
       liveTurn,
+      promptEditing: feed.provider.info.capabilities.rewindConversation && !!feed.provider.rewindConversation,
       keepTurnId: state.activePromptId ?? (paging || prior?.[0] === feed.id ? feed.livePrompt : undefined),
     });
     if (!window)
@@ -717,6 +732,76 @@ export class DesktopChatService implements OnModuleDestroy {
     }
   }
 
+  private async editableSession(sessionId: number, session: Awaited<ReturnType<SessionsService['findOne']>>) {
+    if (session.status === 'archived' || session.workspaceArchivedAt)
+      throw new BadRequestException('Archived sessions are read-only.');
+    await this.sessions.assertSessionWorkspaceLinked(sessionId);
+    const provider = this.registry.getProvider(session.activeAgentProvider);
+    const rewind = chatEditProvider(provider);
+    return { provider, rewind };
+  }
+
+  private async promptSnapshot(
+    taskId: number, sessionId: number, session: Awaited<ReturnType<SessionsService['findOne']>>,
+    provider: AgentRuntimeProvider, itemId: string,
+  ) {
+    const history = await provider.getHistory(sessionId);
+    return savedChatPrompt(history, itemId, [
+      taskId, sessionId, provider.info.id, session.claudeSessionId, session.codexSessionId, session.piSessionPath, session.opencodeSessionId,
+    ]);
+  }
+
+  async promptEdit(taskId: number, sessionId: number, id: unknown, signal: AbortSignal): Promise<SessionChatPromptEdit | undefined> {
+    const itemId = validateChatEditId(id);
+    const session = await this.target(taskId, sessionId);
+    if (this.writing.get(sessionId)?.editing)
+      throw new ConflictException('Another message is being edited. Please wait.');
+    const { provider } = await this.editableSession(sessionId, session);
+    if (signal.aborted) return;
+    assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
+    if (signal.aborted) return;
+    const { text, revision, laterPrompts, context, images } = await this.promptSnapshot(taskId, sessionId, session, provider, itemId);
+    if (signal.aborted) return;
+    return { taskId, sessionId, itemId, revision, text, laterPrompts, keepsContext: !!(context.length || images.length) };
+  }
+
+  private async editPrompt(
+    taskId: number, sessionId: number, session: Awaited<ReturnType<SessionsService['findOne']>>,
+    action: Record<string, unknown>,
+  ) {
+    const itemId = validateChatEditId(action.itemId);
+    if (typeof action.revision !== 'string' || !/^[a-f0-9]{64}$/.test(action.revision) ||
+        typeof action.text !== 'string' || !action.text.trim() || action.text.length > SESSION_CHAT_PROMPT_LIMIT)
+      throw new BadRequestException('Invalid message edit.');
+    const { provider, rewind } = await this.editableSession(sessionId, session);
+    const saved = await this.promptSnapshot(taskId, sessionId, session, provider, itemId);
+    if (saved.revision !== action.revision)
+      throw new ConflictException('The conversation changed. Reopen this message to edit it.');
+    const text = action.text.trim();
+    if (saved.text === text) throw new BadRequestException('Change the message before sending it again.');
+    const prompt = [text, ...saved.context].join('\n\n');
+    if (prompt.length > 128000)
+      throw new BadRequestException('Message and saved context exceed the input limit.');
+    const images = await chatPromptImages(prompt, sessionId, session.worktreePath, provider, saved.images);
+    assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
+    if (session.status === 'stopped') await this.sessions.reactivateRuntime(sessionId);
+    const feed = this.feeds.get(sessionId);
+    const previousRewrite = feed?.historyRewrite;
+    await rewind(sessionId, saved.sourceId);
+    if (feed && previousRewrite === feed.historyRewrite) {
+      feed.historyRewrite = randomUUID();
+      feed.livePrompt = undefined;
+      this.invalidate(sessionId, true);
+    }
+    try {
+      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false });
+    } catch {
+      // History has already changed. The caller must read before sending again.
+      throw new ServiceUnavailableException('Could not confirm the edited message after updating the conversation.');
+    }
+    return { accepted: true as const };
+  }
+
   async command(taskId: number, sessionId: number, value: unknown) {
     const session = await this.target(taskId, sessionId);
     const action = record(value);
@@ -731,10 +816,18 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new ConflictException(
         'An agent configuration is being applied. Please wait.',
       );
+    const active = this.writing.get(sessionId);
+    const editing = action.type === 'edit-prompt';
+    if (active?.editing || (editing && active))
+      throw new ConflictException('Another conversation action is in progress. Please wait.');
+    const writing = active ?? { count: 0, editing };
+    writing.count++;
+    this.writing.set(sessionId, writing);
     const catalogEdit = ['preset-update', 'preset-reorder', 'preset-delete', 'preset-restore'].includes(String(action.type));
     const preset = catalogEdit || ['preset', 'save-preset', 'preset-default', 'preset-default-restore'].includes(String(action.type));
     if (preset) this.configuring.add(sessionId);
     try {
+      if (editing) return await this.editPrompt(taskId, sessionId, session, action);
       const result = preset
         ? await executePresetAction(
             this.sessions,
@@ -763,6 +856,7 @@ export class DesktopChatService implements OnModuleDestroy {
       if (!preset && action.type !== 'provider') this.invalidate(sessionId);
       return result;
     } finally {
+      if (--writing.count === 0) this.writing.delete(sessionId);
       if (preset) this.configuring.delete(sessionId);
       if (preset || action.type === 'provider') this.release(sessionId);
     }

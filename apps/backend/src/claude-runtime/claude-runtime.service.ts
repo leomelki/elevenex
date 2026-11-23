@@ -108,6 +108,7 @@ import {
 } from '../config/runtime-paths.js';
 import { buildManagedPlannotatorEnv } from '../plannotator/plannotator-env.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import {
   buildMetaAgentPrompt,
   permissionModeForAutonomy,
@@ -610,6 +611,7 @@ export class ClaudeRuntimeService
   >();
   private readonly transcriptPaths = new Map<string, string>();
   private readonly activeRuns = new Map<number, ActiveRunState>();
+  private readonly rewinding = new Set<number>();
   private readonly sessionRuntimes = new Map<number, ClaudeSessionRuntime>();
   private readonly modelChanges = new Map<
     number,
@@ -1340,96 +1342,87 @@ export class ClaudeRuntimeService
       throw new BadRequestException('A messageId is required.');
     }
 
-    if (this.activeRuns.has(sessionId)) {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Claude message edit is already in progress.');
+    const current = this.runtimeStates.get(sessionId);
+    if (this.activeRuns.has(sessionId) || this.initializingRuns.has(sessionId) || this.isBackgroundWorkLive(sessionId)) {
       throw new ConflictException(
         'Cannot edit a message while Claude is actively running.',
       );
     }
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, trimmedMessageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
 
+  private async rewindIdleConversation(sessionId: number, messageId: string): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGenerations.get(sessionId);
     const session = await this.sessionsService.findOne(sessionId);
     if (!session.claudeSessionId || session.claudeSessionId === '-1') {
       throw new NotFoundException('Claude session not found.');
     }
 
-    const transcriptPath = await this.findTranscriptPath(
-      session.transcriptWorktreePath ?? session.worktreePath,
-      session.claudeSessionId,
-    );
+    // A prewarmed query retains the old resume ID. Let its startup finish
+    // before replacing it, and prevent new queries from starting during the edit.
+    await this.prewarmInFlight.get(sessionId);
+    await this.sessionRuntimeCreateInFlight.get(sessionId)?.catch(() => undefined);
+    const dir = session.transcriptWorktreePath ?? session.worktreePath;
+    const transcriptPath = await this.findTranscriptPath(dir, session.claudeSessionId);
 
     if (!transcriptPath) {
       throw new NotFoundException('Claude transcript not found.');
     }
 
-    const records = await this.loadTranscriptRecords(transcriptPath);
+    const all = await this.loadTranscriptRecords(transcriptPath);
+    const records = this.selectActiveTranscriptRecords(all);
     const targetIndex = records.findIndex(
-      (record) =>
-        record.type === 'user' &&
-        typeof record.uuid === 'string' &&
-        record.uuid === trimmedMessageId,
+      (record) => record.uuid === messageId && record.type === 'user' &&
+        !!this.extractUserTextFromTranscriptRecord(record)?.trim(),
     );
 
     if (targetIndex === -1) {
       if (
-        records.some(
-          (record) =>
-            typeof record.uuid === 'string' && record.uuid === trimmedMessageId,
-        )
+        all.some((record) => record.uuid === messageId && record.type !== 'user')
       ) {
         throw new BadRequestException('Only user messages can be edited.');
       }
       throw new NotFoundException('Message not found in Claude transcript.');
     }
 
-    let truncateFrom = targetIndex;
-    const previousRecord = records[targetIndex - 1];
-    if (
-      previousRecord?.type === 'file-history-snapshot' &&
-      previousRecord.messageId === trimmedMessageId
-    ) {
-      truncateFrom -= 1;
-    }
-
-    const retainedRecords = records
-      .slice(0, truncateFrom)
-      .filter((record) => record.type !== 'last-prompt');
-
-    await this.persistTranscriptRecords(transcriptPath, retainedRecords);
+    // The SDK copies through an inclusive UUID. Fork the prefix and keep the
+    // original transcript intact, including its file history.
+    const upToMessageId = this.findPreviousTranscriptMessageId(records, targetIndex);
+    const rewound = upToMessageId ? await forkSession(session.claudeSessionId, { dir, upToMessageId, title: session.name ?? undefined }) : null;
+    if (upToMessageId && (!rewound?.sessionId || rewound.sessionId === session.claudeSessionId))
+      throw new Error('Claude did not create the edited conversation.');
 
     const existingRuntime = this.sessionRuntimes.get(sessionId);
     if (existingRuntime) {
-      await existingRuntime.close().catch(() => undefined);
       this.sessionRuntimes.delete(sessionId);
+      await existingRuntime.close();
     }
-    this.sessionRuntimeCreateInFlight.delete(sessionId);
-
-    // Editing the first message truncates the transcript to nothing, so there is
-    // no conversation left to resume. Resuming with the now-stale claudeSessionId
-    // makes Claude Code return "No conversation found with session ID" and the
-    // edited message is lost. Clear the ID so the next submit starts a fresh
-    // session.
-    const hasRetainedConversation = retainedRecords.some(
-      (record) => record.type === 'user' || record.type === 'assistant',
-    );
-    if (!hasRetainedConversation) {
-      this.logger.log(
-        `Claude rewind emptied transcript, clearing stale session ID session=${sessionId} claudeSessionId=${session.claudeSessionId}`,
-      );
-      await this.sessionsService
-        .updateClaudeSessionId(sessionId, '-1')
-        .catch((e) => {
-          this.logger.warn(
-            `Failed to clear session ID after rewind session=${sessionId}: ${String(e)}`,
-          );
-        });
-    }
+    if (this.sessionGenerations.get(sessionId) !== generation)
+      throw new ConflictException('The session closed while the message was being edited.');
+    const timestamp = records[targetIndex].timestamp;
+    this.sessionsService.replaceEditedConversation(sessionId, 'claude', session.claudeSessionId,
+      rewound?.sessionId ?? '-1', typeof timestamp === 'string' ? timestamp : undefined);
 
     const state = this.ensureSessionState(sessionId, session);
-    if (!hasRetainedConversation) {
-      state.claudeSessionId = null;
-      state.lastHistoryItemCount = 0;
-      state.lastHistorySource = null;
-    }
+    state.claudeSessionId = rewound?.sessionId ?? null;
+    state.lastHistoryItemCount = null;
+    state.lastHistorySource = null;
     this.resetEphemeralRuntimeState(state);
+    state.queuePaused = false;
+    state.contextUsage = null;
+    state.tasks = [];
+    state.taskLifecycle = [];
+    state.subagents = [];
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
     void this.claudeHooksService.updateStatus(sessionId, 'idle', {
@@ -2149,7 +2142,7 @@ export class ClaudeRuntimeService
   async prewarmSession(sessionId: number): Promise<void> {
     if (
       this.invalidatedSessions.has(sessionId) ||
-      this.activeRuns.has(sessionId)
+      this.activeRuns.has(sessionId) || this.rewinding.has(sessionId)
     ) {
       return;
     }
@@ -2526,6 +2519,8 @@ export class ClaudeRuntimeService
     images?: ClaudeImageInput[],
     options: { human?: boolean; queue?: boolean; onAccepted?: () => void } = {},
   ): Promise<void> {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Claude message edit is already in progress.');
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     const startedAtMs = Date.now();
     const runId = randomUUID().slice(0, 8);
@@ -7334,6 +7329,15 @@ export class ClaudeRuntimeService
           : undefined;
 
       if (message.type === 'user') {
+        const imageBlocks = payload.content.map(asRecord).filter((part) => part?.type === 'image');
+        const images = imageBlocks.flatMap((part) => {
+          const source = asRecord(part?.source);
+          const image = savedPromptImage(source?.media_type, source?.data);
+          return image ? [image] : [];
+        });
+        const unsupported = images.length !== imageBlocks.length ||
+          payload.content.some((part: unknown) => asRecord(part)?.type === 'document');
+        let firstText = true;
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -7346,6 +7350,8 @@ export class ClaudeRuntimeService
               id: `${message.uuid}:user:${index}`,
               kind: agentMessage ? 'system' : 'user',
               content: agentMessage ?? normalizedText,
+              ...(firstText && images.length ? { images } : {}),
+              ...(unsupported ? { editUnsupported: true as const } : {}),
               parentToolUseId,
               isSynthetic:
                 this.isSyntheticUserMessage(normalizedText) || undefined,
@@ -7354,6 +7360,7 @@ export class ClaudeRuntimeService
               timestamp,
               authoredAt: timestamp,
             });
+            firstText = false;
           } else if (part.type === 'tool_result') {
             const normalizedResult = normalizeToolResultContent(part.content);
             normalized.push({
@@ -8793,16 +8800,6 @@ export class ClaudeRuntimeService
       }
     }
     return records;
-  }
-
-  private async persistTranscriptRecords(
-    transcriptPath: string,
-    records: ClaudeTranscriptRecord[],
-  ): Promise<void> {
-    const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n') +
-      (records.length ? '\n' : '');
-    await writeFile(transcriptPath, serialized, 'utf8');
   }
 
   private resetEphemeralRuntimeState(state: RuntimeState): void {

@@ -6,6 +6,14 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+The pencil on a saved prompt opens an editor with the original text, the
+impact on later turns, and an indication of any retained context. Escape
+cancels the edit. Control or Command plus Enter resends the revision.
+The current composer draft stays available throughout. Edits require a
+reachable engine and an idle conversation with an empty queue. If delivery
+is uncertain, the adapter refreshes the conversation and keeps the editor
+text available to copy.
+
 Unseen completions use the optional `state.unseenCompletionAt` version. After
 latest content renders at the end of the conversation in a focused, visible,
 active window, the owner sends `mark-seen` through the existing command bridge.

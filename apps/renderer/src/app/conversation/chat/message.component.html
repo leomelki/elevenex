@@ -22,3 +22,9 @@
     <time>{{ time() }}</time>
   }
 </div>
+@if (role() === 'user' && editable()) {
+  <div class="edit" [attr.title]="editDisabledReason() || null">
+    <ex-icon-button icon="pencil" label="Edit message"
+      [disabled]="!!editDisabledReason()" (pressed)="editRequested.emit()" />
+  </div>
+}

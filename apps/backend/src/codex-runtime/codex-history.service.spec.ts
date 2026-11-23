@@ -1433,6 +1433,10 @@ describe('CodexHistoryService', () => {
             payload: { type: 'user_message', message: 'edit this' },
           }),
           JSON.stringify({
+            type: 'event_msg',
+            payload: { type: 'user_message', message: 'steering within the same turn' },
+          }),
+          JSON.stringify({
             type: 'response_item',
             payload: {
               item: {
@@ -1456,6 +1460,8 @@ describe('CodexHistoryService', () => {
         threadId: 'source-thread',
         beforeTurnId: 'turn-2',
       });
+      await expect(service.rewindHistory('source-thread', 'codex-record:6')).rejects.toThrow('Only the first prompt');
+      expect((await service.getHistory('source-thread')).find(item => item.content === 'steering within the same turn')?.editUnsupported).toBe(true);
       const raw = await readFile(join(root, 'thread-source.jsonl'), 'utf8');
       expect(raw).toContain('edit this');
       expect(raw).toContain('old answer');

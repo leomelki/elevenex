@@ -35,12 +35,13 @@ describe('selected session chat', () => {
     live: AgentTranscriptItem[],
     status: string;
   const runtime = Object.assign(new EventEmitter(), {
-    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'], capabilities: { multimodalPrompts: true } },
+    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'], capabilities: { multimodalPrompts: true, rewindConversation: true } },
     getRuntimeState: jest.fn(),
     getHistory: jest.fn(),
     onClientAttached: jest.fn(),
     onClientDetached: jest.fn(),
     submitPrompt: jest.fn(),
+    rewindConversation: jest.fn(),
     interrupt: jest.fn(),
     approvePermission: jest.fn(),
     answerUserInput: jest.fn(),
@@ -55,6 +56,82 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+
+  it('resends one saved prompt at its native anchor, retaining earlier history and attachment context', async () => {
+    const original = { ...item('bubble', 'Original wording'), kind: 'user' as const, sourceMessageId: 'provider-anchor',
+      images: [{ mediaType: 'image/png' as const, data: 'aW1hZ2U=' }] };
+    const mention = '<elevenex_session_mention>\nSession: Triage\nSession ID: 5\n\nSaved context\n</elevenex_session_mention>';
+    const initial = { ...item('first'), kind: 'user' as const, sourceMessageId: 'first-anchor' };
+    history = [initial, item('answer'), { ...original, content: original.content + '\n\n' + mention },
+      item('removed'), { ...item('later'), kind: 'user' }, item('later-answer')];
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+    runtime.rewindConversation.mockImplementationOnce(async () => { history = history.slice(0, 2); return history; });
+    runtime.submitPrompt.mockImplementationOnce(async () => {
+      history.push({ ...original, id: 'revised', content: 'Revised wording' });
+    });
+    const signal = new AbortController().signal;
+    const before = (await chat.read(1, 2, undefined, undefined, signal))!;
+    expect(before.items[2]).toMatchObject({ id: 'bubble', editable: true });
+    expect(before.items[3].editable).toBeUndefined();
+    const preview = (await chat.promptEdit(1, 2, 'bubble', signal))!;
+    expect(preview).toMatchObject({ taskId: 1, sessionId: 2, itemId: 'bubble', text: 'Original wording', laterPrompts: 1, keepsContext: true });
+    expect(JSON.stringify(preview)).not.toContain('Saved context');
+    const action = { type: 'edit-prompt', itemId: 'bubble', text: 'Revised wording', revision: preview.revision };
+    expect(await chat.command(1, 2, action)).toEqual({ accepted: true });
+    expect(runtime.rewindConversation.mock.calls).toEqual([[2, 'provider-anchor']]);
+    expect(runtime.submitPrompt.mock.calls).toEqual([[2, 'Revised wording\n\n' + mention, 'Revised wording',
+      original.images, { human: true, queue: false, waitForCompletion: false }]]);
+    const after = (await chat.read(1, 2, before.cursor, undefined, signal))!;
+    expect(after.reset).toBe(true);
+    expect(after.state.historyRewrite).toBeDefined();
+    expect(after.items.map(item => item.id)).toEqual(['first', 'answer', 'revised']);
+    await expect(chat.command(1, 2, action)).rejects.toThrow('no longer available');
+    expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects stale history, queued or running work, synthetic anchors, and archived sessions before mutation', async () => {
+    const prompt = { ...item('prompt'), kind: 'user' as const, sourceMessageId: 'anchor' };
+    history = [prompt, item('answer'), { ...prompt, id: 'synthetic', isSynthetic: true }];
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle' });
+    const signal = new AbortController().signal;
+    await expect(chat.promptEdit(1, 2, 'synthetic', signal)).rejects.toThrow('no longer available');
+    const edit = (await chat.promptEdit(1, 2, 'prompt', signal))!;
+    const action = { type: 'edit-prompt', itemId: edit.itemId, revision: edit.revision, text: 'Try again' };
+    await expect(chat.command(1, 2, { ...action, text: edit.text })).rejects.toThrow('Change the message');
+    history.push(item('A new reply'));
+    await expect(chat.command(1, 2, action)).rejects.toThrow('conversation changed');
+    history.pop();
+    runtime.getRuntimeState.mockResolvedValueOnce({ runPhase: 'idle', pendingPrompts: [{ id: 'queued' }] });
+    await expect(chat.command(1, 2, action)).rejects.toThrow('Resolve queued messages');
+    runtime.getRuntimeState.mockResolvedValueOnce({ runPhase: 'waiting' });
+    await expect(chat.command(1, 2, action)).rejects.toThrow('current turn');
+    status = 'archived';
+    await expect(chat.command(1, 2, action)).rejects.toThrow('read-only');
+    await expect(chat.promptEdit(3, 2, 'prompt', signal)).rejects.toThrow('does not belong');
+    expect(runtime.rewindConversation).not.toHaveBeenCalled();
+    expect(runtime.submitPrompt).not.toHaveBeenCalled();
+  });
+
+  it('excludes concurrent writes and publishes a reset if the new send cannot be confirmed', async () => {
+    history = [{ ...item('prompt'), kind: 'user', sourceMessageId: 'anchor' }, item('answer')];
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+    const signal = new AbortController().signal;
+    const before = (await chat.read(1, 2, undefined, undefined, signal))!;
+    const edit = (await chat.promptEdit(1, 2, 'prompt', signal))!;
+    let started!: () => void, finish!: () => void;
+    const rewinding = new Promise<void>(resolve => { started = resolve; });
+    const hold = new Promise<void>(resolve => { finish = resolve; });
+    runtime.rewindConversation.mockImplementationOnce(async () => { started(); await hold; history = []; return history; });
+    runtime.submitPrompt.mockRejectedValueOnce(new Error('Transport interrupted'));
+    const command = chat.command(1, 2, { type: 'edit-prompt', itemId: edit.itemId, revision: edit.revision, text: 'Revised' });
+    await rewinding;
+    await expect(chat.command(1, 2, { type: 'send', text: 'Concurrent', queue: false })).rejects.toThrow('action is in progress');
+    const result = expect(command).rejects.toThrow('Could not confirm the edited message');
+    finish();
+    await result;
+    expect(await chat.read(1, 2, before.cursor, undefined, signal)).toMatchObject({ reset: true, items: [] });
+    expect(runtime.submitPrompt).toHaveBeenCalledTimes(1);
+  });
   it('keeps legacy pages unchanged and validates opt-in bounded windows', async () => {
     history = Array.from({ length: 1000 }, (_, i) => ({ ...item(String(i)), content: `Message ${i}` }));
     const signal = new AbortController().signal;

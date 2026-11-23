@@ -13,6 +13,8 @@ import type {
   SessionChatCommand,
   SessionChatContent,
   SessionChatContentRead,
+  SessionChatPromptEdit,
+  SessionChatPromptEditRead,
   SessionChatItem,
   SessionChatPage,
   SessionChatRead,
@@ -179,6 +181,34 @@ const opening = () => [
 ];
 /** Harness-shaped fixtures stay outside the production import graph. */
 export class SessionChatFixture {
+  promptEditingScene(running = false, id = 101): void {
+    const session = this.session(id);
+    session.items = [
+      item('edit-context', 'user', 'Review how the retry handler claims requests.', { editable: true }),
+      item('edit-context-reply', 'assistant', 'The claim is persisted before the first retry.'),
+      item('edit-target', 'user', 'Add coverage for two concurrent retry requests.', {
+        editable: true, mentions: [{ sessionId: 102, title: 'Review the race condition' }],
+      }),
+      item('edit-target-reply', 'assistant', 'The regression now covers two requests arriving at once.'),
+      item('edit-later', 'user', 'Document the retry window.', { editable: true }),
+      item('edit-later-reply', 'assistant', 'I documented the current retry window.'),
+    ];
+    session.state = { ...previewChatState(), providerLocked: true, phase: running ? 'running' : 'idle', canInterrupt: running };
+    this.changed();
+    this.resetVersion = this.version;
+  }
+
+  async promptEdit(input: SessionChatPromptEditRead): Promise<BackendResult<SessionChatPromptEdit>> {
+    const { taskId, sessionId, itemId } = input, { items } = this.session(sessionId);
+    const index = items.findIndex(item => item.id === itemId && item.editable);
+    const item = items[index];
+    if (!item) return { ok: false, error: { code: 'http', status: 409, message: 'This message is no longer available to edit.' } };
+    return { ok: true, value: { taskId, sessionId, itemId, text: item.text,
+      revision: this.version.toString(16).padStart(64, '0'),
+      laterPrompts: items.slice(index + 1).filter(item => item.kind === 'user').length,
+      keepsContext: !!(item.media?.length || item.mentions?.length) } };
+  }
+
   timeline(scene: TimelineScene, id = 101): void {
     const session = this.session(id);
     session.items = [...sessionTimelineItems(scene)];
@@ -761,6 +791,18 @@ export class SessionChatFixture {
       if (session.state.unseenCompletionAt === action.completionAt) {
         session.state = { ...session.state, unseenCompletionAt: null }; this.changed();
       }
+      return { ok: true, value: { accepted: true } };
+    }
+    if (action.type === 'edit-prompt') {
+      const index = session.items.findIndex(item => item.id === action.itemId && item.editable);
+      const original = session.items[index];
+      if (!original || action.revision !== this.version.toString(16).padStart(64, '0'))
+        return { ok: false, error: { code: 'http', status: 409, message: 'The conversation changed. Reopen this message to edit it.' } };
+      const prompt = { ...original, id: 'revised-' + this.version, text: action.text };
+      session.items = [...session.items.slice(0, index), prompt, item('revised-reply', 'assistant', 'I’ll verify the revised retry scenario.')];
+      session.state = { ...session.state, historyRewrite: crypto.randomUUID() };
+      this.changed();
+      this.resetVersion = this.version;
       return { ok: true, value: { accepted: true } };
     }
     let defaultChange: SessionChatCommandReply['defaultChange'];

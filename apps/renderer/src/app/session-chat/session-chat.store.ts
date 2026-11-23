@@ -111,6 +111,7 @@ export class SessionChatStore {
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
   readonly error = signal("");
+  readonly promptEditError = signal('');
   readonly streamError = signal('');
   readonly defaultChange =
     signal<SessionChatCommandReply["defaultChange"]>(undefined);
@@ -161,6 +162,17 @@ export class SessionChatStore {
       this.dispatching() ||
       (!!this.pending() && !this.pending()?.queue),
   );
+  readonly promptEditDisabledReason = computed(() => {
+    const state = this.state();
+    if (this.readOnly()) return 'This conversation is read only.';
+    if (this.offline() || this.streamError()) return 'Reconnect to edit messages.';
+    if (this.loading() || !state) return 'Wait for the conversation to load.';
+    if (this.busy() || this.uncertain() || this.waitingUncertain()) return 'Check the current action before editing.';
+    if (this.running() || state.canInterrupt || state.permission || state.question || state.work?.totalRunning)
+      return 'Wait for the current turn and background work to finish.';
+    if (this.queue().length || this.waitingPending()) return 'Resolve queued messages before editing.';
+    return '';
+  });
   readonly queue = computed<readonly QueuedMessage[]>(() => {
     const pending = this.pendingQueue(),
       queue = (this.state()?.queue ?? []).filter(item => !this.queuedDeliveries().has(item.id)).map((item): QueuedMessage => {
@@ -574,7 +586,9 @@ export class SessionChatStore {
     if (this.starting()) this.compactStart.set(!!this.draft().trim());
     this.starting.set(false);
     this.supportsFollowing = page.next !== undefined;
-    if (this.historical() && !direction && !reset) {
+    const rewritten = page.reset && page.state.historyRewrite &&
+      page.state.historyRewrite !== this.state()?.historyRewrite;
+    if (this.historical() && !direction && !reset && !rewritten) {
       // Keep runtime state current while the user reads another window.
       this.state.set(page.state);
       this.cursor = page.cursor;
@@ -863,12 +877,20 @@ export class SessionChatStore {
     entry.finishSend(restore);
     if (restore && current) writeDraft?.(entry.text());
   }
+  editPrompt(target: ChatSelection, itemId: string, revision: string, text: string): Promise<boolean> {
+    if (target.scopeId !== this.selection?.scopeId || target.taskId !== this.selection.taskId ||
+        target.sessionId !== this.selection.sessionId || this.promptEditDisabledReason())
+      return Promise.resolve(false);
+    return this.perform({ type: 'edit-prompt', itemId, revision, text });
+  }
+
   async perform(action: SessionChatAction): Promise<boolean> {
     const selection = this.selection;
     if (
       !selection ||
       (this.busy() && action.type !== "stop") ||
       this.readOnly() ||
+      (action.type === 'edit-prompt' && !!this.promptEditDisabledReason()) ||
       (this.uncertain() && action.type !== "stop")
     )
       return false;
@@ -896,6 +918,7 @@ export class SessionChatStore {
     );
     this.busy.set(action.type);
     this.error.set("");
+    if (action.type === 'edit-prompt') this.promptEditError.set('');
     const state = this.state();
     const queuedPrompt = action.type === 'steer-queued' ? state?.queue.find(item => item.id === action.id)
       : action.type === 'resume-queue' && state?.phase === 'idle' && !state.canInterrupt ? state.queue[0]
@@ -909,6 +932,8 @@ export class SessionChatStore {
     this.notice.set(
       action.type === "send" || queuedPrompt
         ? "Sending…"
+        : action.type === "edit-prompt"
+          ? "Resending message…"
         : action.type === "provider"
           ? "Changing harness…"
           : "Updating…",
@@ -936,7 +961,7 @@ export class SessionChatStore {
     )
       entry.uncertain.set("");
     if (this.disposed || epoch !== this.epoch) return result.ok;
-    if (!result.ok || !configuration) {
+    if (!result.ok || (!configuration && action.type !== 'edit-prompt')) {
       this.commands.delete(commandId);
       this.busy.set(this.commands.values().next().value ?? "");
     }
@@ -947,7 +972,8 @@ export class SessionChatStore {
         this.queuedDeliveries.set(remaining);
       }
       this.notice.set("");
-      this.error.set(result.error.message);
+      if (action.type === 'edit-prompt') this.promptEditError.set(result.error.message);
+      else this.error.set(result.error.message);
       if (
         result.error.code === "outcome-unknown" ||
         result.error.code === "stale-scope"
@@ -959,10 +985,11 @@ export class SessionChatStore {
         this.stopRead();
         void this.load(true);
       }
+      if (action.type === 'edit-prompt' && result.error.code === 'outcome-unknown') void this.refresh();
       return false;
     }
     this.notice.set(
-      action.type === "send" || action.type === 'steer-queued' || action.type === 'resume-queue'
+      action.type === "send" || action.type === 'edit-prompt' || action.type === 'steer-queued' || action.type === 'resume-queue'
         ? ""
         : action.type === "stop"
           ? "Stop requested"
@@ -972,7 +999,7 @@ export class SessionChatStore {
     );
     this.defaultChange.set(result.value.defaultChange);
     this.presetRemoval.set(result.value.presetRemoval);
-    if (configuration) {
+    if (configuration || action.type === 'edit-prompt') {
       // Retain the settings surface and its focus while loading the new catalog.
       // Keep writes blocked until authoritative provider state replaces it.
       this.stopRead();

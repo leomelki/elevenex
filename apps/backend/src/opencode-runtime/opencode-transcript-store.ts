@@ -116,9 +116,14 @@ export class OpenCodeTranscriptStore {
         partsByMessage.set(part.messageID, parts);
       }
       this.cachedHistory = this.orderedMessages().flatMap((message) => {
-        const items = (partsByMessage.get(message.id) ?? []).flatMap((part) =>
+        const parts = partsByMessage.get(message.id) ?? [];
+        const items = parts.flatMap((part) =>
           openCodePartItems(part, message),
         );
+        const unavailableInput = message.role === 'user' && parts.some(part =>
+          part.type === 'file' && !/^data:image\/(png|jpeg|gif|webp);base64,/.test(part.url));
+        if (unavailableInput)
+          for (const item of items) item.editUnsupported = true;
         if (
           message.role === 'assistant' &&
           message.error &&

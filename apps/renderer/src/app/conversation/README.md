@@ -5,6 +5,11 @@ These standalone OnPush components consume renderer view models and emit typed i
 ## Composition and ownership
 
 - `ChatComponent` composes `ChatScroll`, user messages, turns, Markdown and turn navigation from `readonly ChatExchange[]`. Project a composer with `chatComposer`, and optional decision cards with `chatContent`.
+- Enable `Chat.promptEditing` for conversations that can edit saved prompts.
+  Exchanges opt in with `promptEditable`, and `promptEditRequested` carries
+  the stable prompt ID. `promptEditDisabledReason` keeps the action visible
+  with an explanation while the conversation is busy. On a focused user
+  message, E opens the editor through the same intent as the pencil.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
 - `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work

@@ -63,6 +63,25 @@ time {
 :host:focus-within time {
   opacity: 1;
 }
+.edit {
+  position: absolute;
+  inset-inline-end: 100%;
+  inset-block-start: 0;
+  padding-inline-end: var(--space-1);
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+:host:hover .edit,
+:host:focus-within .edit {
+  opacity: 1;
+}
+.edit:not(:focus-within):not(:hover) {
+  pointer-events: none;
+}
+:host:hover .edit {
+  pointer-events: auto;
+}
 footer button {
   border: 0;
   background: var(--surface-sunken);
@@ -84,8 +103,12 @@ footer button {
 }
 @media (hover: none) {
   footer,
-  time {
+  time,
+  .edit {
     opacity: 1;
+  }
+  :host .edit:not(:focus-within):not(:hover) {
+    pointer-events: auto;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -93,7 +116,8 @@ footer button {
     animation: none;
   }
   footer,
-  time {
+  time,
+  .edit {
     transition: none;
   }
 }

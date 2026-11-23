@@ -19,6 +19,9 @@
           [isNew]="exchange.isNew || false"
           [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
+          [editable]="promptEditing() && !!exchange.promptEditable"
+          [editDisabledReason]="promptEditDisabledReason()"
+          (editRequested)="promptEditRequested.emit(exchange.id)"
           ><ex-element-prose [text]="exchange.prompt" [resolve]="resolve()" [attachments]="exchange.attachments ?? []" />
           @if (exchange.mentions?.length) {
             <div

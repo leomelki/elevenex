@@ -316,6 +316,7 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 | ↵ · ⌘↵ | Confirm or next · do it now (create the task at any step; open a machine in a new window) |
 | ⌥↵ | Steer (in the composer) · save as Planned (in New task) |
 | S · F · C | With a message focused: side chat · fork · copy |
+| E | With an editable user message focused: open its editor |
 | ← → · Esc | In the picture viewer: previous · next · close |
 | ⌘T · ⇧⌘C | In the Browser or Terminal (focused): new tab · point and ask (Browser; again, or Esc, to cancel) |
 | ⇧⌘B | New sub-task from where you are |

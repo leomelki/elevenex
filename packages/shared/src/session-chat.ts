@@ -54,6 +54,8 @@ export type AssistantMessagePhase = "commentary" | "final";
 
 export interface SessionChatRecord {
   readonly id: string;
+  /** A saved user prompt with a provider history boundary. */
+  readonly editable?: true;
   readonly kind:
     | "user"
     | "assistant"
@@ -253,6 +255,8 @@ export interface SessionChatPlanUsage {
   readonly updatedAt: string;
 }
 export interface SessionChatState {
+  /** Changes after the engine replaces saved history in this conversation. */
+  readonly historyRewrite?: string;
   /** Durable transcript prompt ID for the current foreground turn, when known. */
   readonly activePromptId?: string;
   /** Present on engines supporting mark-seen; null means no unseen completion. */
@@ -445,6 +449,20 @@ export interface SessionChatCommandReply {
     readonly after: SessionChatPresetDefault;
   };
 }
+export const SESSION_CHAT_PROMPT_LIMIT = 64000;
+
+export interface SessionChatPromptEditRead extends SessionChatTarget {
+  readonly requestId: string;
+  readonly itemId: string;
+}
+
+export interface SessionChatPromptEdit extends SessionChatTarget {
+  readonly itemId: string;
+  readonly revision: string;
+  readonly text: string;
+  readonly laterPrompts: number;
+  readonly keepsContext: boolean;
+}
 interface SavedPresetFields {
   readonly id: string;
   readonly name: string;
@@ -507,6 +525,7 @@ export type SessionChatAction =
       readonly expectedProvider: string;
     }
   | { readonly type: "send"; readonly text: string; readonly queue: boolean; readonly sessionIds?: readonly number[] }
+  | { readonly type: "edit-prompt"; readonly itemId: string; readonly revision: string; readonly text: string }
   | { readonly type: "stop" }
   /** Ends one `work.running` item; the conversation and its turn continue. */
   | { readonly type: "stop-background"; readonly id: string }

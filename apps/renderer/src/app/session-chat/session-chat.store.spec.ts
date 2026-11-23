@@ -1096,6 +1096,42 @@ describe("session chat ownership", () => {
     expect(store.historical()).toBe(false);
   });
 
+  it('reconciles an edited conversation without consuming the independent composer draft', async () => {
+    const earlier = item('early', 'user', 'Keep the preceding turn');
+    const prompt = item('edit', 'user', 'Original wording', { editable: true });
+    const reply = item('reply', 'assistant', 'Old reply');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [earlier, prompt, reply] }))) });
+    await settle();
+    store.setDraft('A different unsent request');
+    expect(store.exchanges().at(-1)?.promptEditable).toBe(true);
+    const target = { scopeId: 'scope', taskId: 1, sessionId: 2 }, revision = 'a'.repeat(64);
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [earlier, item('revised', 'user', 'Revised wording', { editable: true })],
+      state: { ...state, historyRewrite: 'rewound' },
+    })));
+    await expect(store.editPrompt(target, prompt.id, revision, 'Revised wording')).resolves.toBe(true);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledExactlyOnceWith('scope', {
+      taskId: 1, sessionId: 2, action: { type: 'edit-prompt', itemId: prompt.id, revision, text: 'Revised wording' },
+    });
+    expect(store.exchanges().map(exchange => exchange.prompt)).toEqual(['Keep the preceding turn', 'Revised wording']);
+    expect(store.draft()).toBe('A different unsent request');
+    expect(store.busy()).toBe('');
+  });
+
+  it('blocks edits from stale scopes and reconciles unknown outcomes without replaying the command', async () => {
+    const { store, bridge } = setup(); await settle();
+    const target = { scopeId: 'scope', taskId: 1, sessionId: 2 };
+    await expect(store.editPrompt({ ...target, scopeId: 'old' }, 'prompt', 'a'.repeat(64), 'Updated')).resolves.toBe(false);
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    bridge.sessionChatCommand.mockResolvedValueOnce({ ok: false, error: { code: 'outcome-unknown', message: 'Check the conversation.' } });
+    await expect(store.editPrompt(target, 'prompt', 'a'.repeat(64), 'Updated')).resolves.toBe(false);
+    await settle();
+    expect(store.uncertain()).toBe('Check the conversation.');
+    expect(store.checked()).toBe(true);
+    await expect(store.editPrompt(target, 'prompt', 'a'.repeat(64), 'Updated')).resolves.toBe(false);
+    expect(bridge.sessionChatCommand).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['poll', 'refresh'] as const)('keeps a verified contiguous prefix when a bounded %s cuts through it', async cause => {
     const prompt = item('u', 'user', 'Prompt');
     const older = item('work', 'system', 'Previous work');

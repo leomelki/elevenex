@@ -19,6 +19,8 @@ import type {
   SessionChatChangesPage,
   SessionChatContentRead,
   SessionChatContent,
+  SessionChatPromptEditRead,
+  SessionChatPromptEdit,
   SessionChatMediaRead,
   SessionChatMedia,
   SessionChatStreamEvent,
@@ -101,6 +103,9 @@ export class SessionChatClient {
     return this.invoke(scope, false, () =>
       this.bridge.sessionChatContent(scope, input),
     );
+  }
+  promptEdit(scope: string, input: SessionChatPromptEditRead): Promise<BackendResult<SessionChatPromptEdit>> {
+    return this.invoke(scope, false, () => this.bridge.sessionChatPromptEdit(scope, input));
   }
   cancel(scope: string, requestId: string): void {
     void this.bridge

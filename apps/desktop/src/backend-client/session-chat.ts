@@ -1,4 +1,5 @@
 import { registerChatAgents } from './session-chat-agents';
+import { SESSION_CHAT_PROMPT_LIMIT } from '@elevenex/shared';
 import { registerChatAttachments } from './session-chat-attachments';
 import { registerSessionChatMedia } from './session-chat-media';
 import { parseChangesPage } from "./session-chat-changes";
@@ -326,7 +327,7 @@ export function registerSessionChatIpc(
             ...(change ? { defaultChange: change } : {}),
           };
         },
-        30000,
+        action.type === 'edit-prompt' ? 60000 : 30000,
       );
     },
   );
@@ -343,6 +344,28 @@ export function registerSessionChatIpc(
       );
     },
   );
+  const promptEdit = handleForWindow('session-chat:prompt-edit', trusted, (window, ...args) => {
+    if (args.length !== 2) throw new Error('Invalid edit arguments.');
+    const scopeId = scope(args[0]), raw = chatObject(args[1]);
+    const taskId = chatId(raw['taskId']), sessionId = chatId(raw['sessionId']);
+    const itemId = chatText(raw['itemId']);
+    if (!itemId.trim()) throw new Error('Invalid prompt ID.');
+    const query = new URLSearchParams({ itemId });
+    return client.execute(window, scopeId,
+      `session-chat:${requestId(raw['requestId'])}:${taskId}:${sessionId}:prompt-edit:${query}`, false,
+      async (endpoint, signal) => {
+        const reply = chatObject(await requestBackendJson(endpoint, {
+          path: path(taskId, sessionId) + '/prompt-edit?' + query, limit: 400 * 1024,
+        }, signal));
+        const laterPrompts = reply['laterPrompts'], keepsContext = reply['keepsContext'];
+        if (reply['taskId'] !== taskId || reply['sessionId'] !== sessionId || reply['itemId'] !== itemId ||
+            typeof laterPrompts !== 'number' || !Number.isSafeInteger(laterPrompts) || laterPrompts < 0 ||
+            typeof keepsContext !== 'boolean')
+          throw new Error('Invalid prompt edit reply.');
+        return { taskId, sessionId, itemId, laterPrompts, keepsContext,
+          text: chatText(reply['text'], SESSION_CHAT_PROMPT_LIMIT), revision: defaultRevision(reply['revision']) };
+      }, 15000);
+  });
   const content = handleForWindow(
     "session-chat:content",
     trusted,
@@ -421,6 +444,7 @@ export function registerSessionChatIpc(
     catalog();
     command();
     cancel();
+    promptEdit();
     content();
   };
 }

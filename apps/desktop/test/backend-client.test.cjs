@@ -979,6 +979,20 @@ test('command facts remain optional, bounded and allowlisted across the bridge',
   for (const execution of [null, [], { exitCode: 0.5 }, { exitCode: Infinity }, { exitCode: '0' }, { cwd: 'x'.repeat(4001) }, { interrupted: 'false' }]) assert.throws(() => parse({ execution }));
 });
 
+test('prompt editing accepts bounded text and a saved user anchor only', () => {
+  const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const action = { type: 'edit-prompt', itemId: 'user:1', text: 'A revised prompt', revision: 'a'.repeat(64) };
+  assert.deepEqual(parseChatAction({ ...action, providerPath: '/private/path' }), action);
+  for (const invalid of [{ itemId: '' }, { itemId: 'x'.repeat(1001) }, { text: ' ' },
+    { text: 'x'.repeat(64001) }, { revision: 'stale' }])
+    assert.throws(() => parseChatAction({ ...action, ...invalid }));
+  const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const row = { id: action.itemId, kind: 'user', editable: true, text: 'Original', timestamp: '', toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [row], events: [], state };
+  assert.equal(parseChatPage(page, 1, 2).items[0].editable, true);
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...row, kind: 'assistant' }] }, 1, 2));
+});
+
 test('chat media IPC uses scoped attachment identities, validates bytes and cleans up its handler', async context => {
   const { URLSearchParams } = require('node:url');
   const { readFile } = require('node:fs/promises');

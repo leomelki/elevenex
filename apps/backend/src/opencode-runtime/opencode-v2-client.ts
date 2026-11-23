@@ -702,7 +702,12 @@ export function createOpenCodeV2Client(
     },
     rewindHistory: async (sessionID, messageID) => {
       await native.session.revert.stage({ sessionID, messageID, files: false });
-      await native.session.revert.commit({ sessionID });
+      try {
+        await native.session.revert.commit({ sessionID });
+      } catch (error) {
+        await native.session.revert.clear({ sessionID }).catch(() => undefined);
+        throw error;
+      }
     },
     steerPrompt: async (sessionID, text) => {
       await native.session.prompt({ sessionID, text, delivery: 'steer' });

@@ -20,6 +20,7 @@ import { basename, join } from 'path';
 import { createInterface } from 'readline';
 import { setTimeout as delay } from 'timers/promises';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
+import { savedPromptImageUrl } from '../agent-runtime/prompt-image.js';
 import type { ClaudeTranscriptItem } from '../claude-runtime/claude-runtime.types.js';
 import type { CodexHistorySessionSummary } from './codex-runtime.types.js';
 import type { AgentForkConversationRequest } from '../agent-runtime/agent-runtime.types.js';
@@ -51,6 +52,7 @@ export interface CodexHistoryTurn {
 export interface CodexRewindTarget {
   threadId: string;
   beforeTurnId: string;
+  promptTimestamp?: string;
 }
 
 export interface CodexForkTarget {
@@ -516,14 +518,15 @@ export class CodexHistoryService {
       throw new BadRequestException('Only user messages can be edited.');
     }
 
-    const beforeTurnId = this.findOwningTurnId(records, targetIndex);
+    const beforeTurnId = this.editablePromptBoundaries(records).get(targetIndex);
     if (!beforeTurnId) {
       throw new BadRequestException(
-        'Could not identify the Codex turn for this message.',
+        'Only the first prompt of a Codex turn can be edited.',
       );
     }
 
-    return { threadId: codexSessionId, beforeTurnId };
+    const promptTimestamp = stringValue(records[targetIndex].timestamp);
+    return { threadId: codexSessionId, beforeTurnId, ...(promptTimestamp ? { promptTimestamp } : {}) };
   }
 
   async listSessions(): Promise<CodexHistorySessionSummary[]> {
@@ -594,6 +597,7 @@ export class CodexHistoryService {
 
   private normalizeRecords(records: JsonRecord[]): ClaudeTranscriptItem[] {
     const items: ClaudeTranscriptItem[] = [];
+    const editable = this.editablePromptBoundaries(records);
     const { native, nativeToolIds, wrappers } = codexHistoryTools(records);
     const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
     const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
@@ -636,12 +640,27 @@ export class CodexHistoryService {
             items.push(response);
             continue;
           }
+          const promptPayload = asRecord(record.payload);
+          const completed = asRecord(promptPayload?.item);
+          const input = arrayValue(completed?.content)?.map(asRecord) ?? [];
+          const sources = [
+            ...(arrayValue(promptPayload?.images) ?? []),
+            ...input.filter(part => part?.type === 'image').map(part => part?.url),
+          ];
+          const images = sources.flatMap(source => {
+            const image = savedPromptImageUrl(source);
+            return image ? [image] : [];
+          });
+          const unsupported = images.length !== sources.length || !!arrayValue(promptPayload?.local_images)?.length ||
+            input.some(part => part?.type === 'localImage');
           items.push({
             // Native receipts and saved items must share identity when merged.
             // Keep record anchors for rewind/fork and old-format fallbacks.
             id: textValue(asRecord(asRecord(record.payload)?.item)?.id) ?? `codex-history:${index}:user`,
             kind: 'user',
             content,
+            ...(images.length ? { images } : {}),
+            ...(!editable.has(index) || unsupported ? { editUnsupported: true as const } : {}),
             sourceMessageId: this.recordAnchorId(index),
             transcriptMessageId: this.recordAnchorId(index),
             timestamp,
@@ -992,6 +1011,24 @@ export class CodexHistoryService {
 
   private recordAnchorId(index: number): string {
     return `codex-record:${index}`;
+  }
+
+  private editablePromptBoundaries(records: readonly JsonRecord[]): ReadonlyMap<number, string> {
+    const boundaries = new Map<number, string>();
+    const prompted = new Set<string>();
+    let active: string | undefined;
+    for (const [index, entry] of records.entries()) {
+      const payload = asRecord(entry.payload);
+      const turnId = stringValue(payload?.turn_id ?? payload?.turnId);
+      if (turnId && (entry.type === 'turn_context' || (entry.type === 'event_msg' && payload?.type === 'task_started')))
+        active = turnId;
+      if (!this.isVisibleUserMessage(entry)) continue;
+      const owner = turnId ?? active;
+      if (!owner || prompted.has(owner)) continue;
+      boundaries.set(index, owner);
+      prompted.add(owner);
+    }
+    return boundaries;
   }
 
   private findOwningTurnId(

@@ -19,7 +19,9 @@ import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
-import { basename, dirname, extname, join } from 'path';
+import { dirname, join } from 'path';
+import { piSessionBefore, piSessionBranch } from './pi-session-branch.js';
+import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
@@ -96,6 +98,7 @@ export class PiRuntimeService
   private readonly logger = new Logger(PiRuntimeService.name);
   private readonly mcpStatuses = new Map<number, PiMcpStatus[]>();
   private readonly activeRuns = new Map<number, PiActiveRun>();
+  private readonly rewinding = new Set<number>();
   private readonly initializingRuns = new Set<number>();
   private readonly interruptedInitializations = new Set<number>();
   private readonly runtimeStates = new Map<number, PiRuntimeState>();
@@ -351,10 +354,10 @@ export class PiRuntimeService
       anchorMessageKind === 'user'
         ? draft
         : this.contentToText(asRecord(target.message)?.content);
-    const retainedRecords = records.slice(
-      0,
-      anchorMessageKind === 'user' ? targetIndex : targetIndex + 1,
-    );
+    const retainedRecords = anchorMessageKind === 'user'
+      ? piSessionBefore(records, targetIndex)
+      : [...(records[0]?.type === 'session' && Object.hasOwn(records[targetIndex], 'parentId') ? [records[0]] : []),
+        ...piSessionBranch(records, targetIndex).map(index => records[index])];
 
     if (retainedRecords.length === 0) {
       return {
@@ -364,8 +367,7 @@ export class PiRuntimeService
       };
     }
 
-    const forkPath = this.buildForkSessionPath(sessionPath);
-    await this.writePiSessionRecords(forkPath, retainedRecords);
+    const forkPath = await this.writePiSessionBranch(sessionPath, retainedRecords);
 
     return {
       providerSessionId: forkPath,
@@ -382,6 +384,7 @@ export class PiRuntimeService
     if (!trimmedMessageId) {
       throw new BadRequestException('A messageId is required.');
     }
+    this.assertNotRewinding(sessionId);
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId)
@@ -391,6 +394,25 @@ export class PiRuntimeService
       );
     }
 
+    const current = this.runtimeStates.get(sessionId);
+    if (current && (current.pendingPrompts.length || this.queuedDispatches.current(current).length))
+      throw new ConflictException('Resolve queued messages before editing.');
+    this.rewinding.add(sessionId);
+    try {
+      return await this.rewindIdleConversation(sessionId, trimmedMessageId);
+    } finally {
+      this.rewinding.delete(sessionId);
+    }
+  }
+
+  private assertNotRewinding(sessionId: number): void {
+    if (this.rewinding.has(sessionId))
+      throw new ConflictException('A Pi message edit is already in progress.');
+  }
+
+  private async rewindIdleConversation(sessionId: number, messageId: string): Promise<ClaudeTranscriptItem[]> {
+    const generation = this.sessionGeneration(sessionId);
+    await this.runtimeStarts.get(sessionId)?.catch(() => undefined);
     const session = await this.sessionsService.findOne(sessionId);
     const sessionPath = session.piSessionPath;
     if (!sessionPath || sessionPath === '-1') {
@@ -399,12 +421,12 @@ export class PiRuntimeService
 
     const records = await this.readPiSessionRecords(sessionPath);
     const targetIndex = records.findIndex((entry, index) =>
-      this.isEditAnchorEntry(entry, index, trimmedMessageId),
+      this.isEditAnchorEntry(entry, index, messageId),
     );
     if (targetIndex === -1) {
       if (
         records.some((entry, index) =>
-          this.isMessageAnchorEntry(entry, index, trimmedMessageId),
+          this.isMessageAnchorEntry(entry, index, messageId),
         )
       ) {
         throw new BadRequestException('Only user messages can be edited.');
@@ -412,26 +434,28 @@ export class PiRuntimeService
       throw new NotFoundException('Message not found in Pi session.');
     }
 
-    const retainedRecords = records.slice(0, targetIndex);
+    const retainedRecords = piSessionBefore(records, targetIndex);
     const hasRetainedConversation = retainedRecords.some((entry) => {
       const role = asRecord(entry.message)?.role;
       return role === 'user' || role === 'assistant';
     });
     const rewoundPath = hasRetainedConversation
-      ? this.buildForkSessionPath(sessionPath)
+      ? await this.writePiSessionBranch(sessionPath, retainedRecords)
       : null;
-    if (rewoundPath) {
-      await this.writePiSessionRecords(rewoundPath, retainedRecords);
-    }
 
     // A warm Pi RPC process owns the original session file and retains its
     // full in-memory history. Restart it on the next prompt so the new,
     // truncated file is the only source of conversation state.
-    await this.stopRuntime(sessionId);
-    await this.sessionsService.updatePiSessionPath(
-      sessionId,
-      rewoundPath ?? '-1',
-    );
+    try {
+      await this.stopRuntime(sessionId);
+      this.assertSessionOwner(sessionId, generation);
+      const timestamp = records[targetIndex].timestamp ?? asRecord(records[targetIndex].message)?.timestamp;
+      this.sessionsService.replaceEditedConversation(sessionId, 'pi', sessionPath, rewoundPath ?? '-1',
+        typeof timestamp === 'string' || typeof timestamp === 'number' ? timestamp : undefined);
+    } catch (error) {
+      if (rewoundPath) await fs.unlink(rewoundPath).catch(() => undefined);
+      throw error;
+    }
 
     const state = this.ensureRuntimeState(sessionId);
     state.piSessionPath = rewoundPath;
@@ -445,10 +469,11 @@ export class PiRuntimeService
     state.pendingUserInputRequest = null;
     state.lastError = null;
     state.contextUsage = null;
+    this.emitEvent({ type: 'conversation_rewound', payload: { sessionId } });
     this.emitRunState(sessionId);
     this.emitEvent({ type: 'complete', payload: { sessionId } });
 
-    return rewoundPath ? this.readHistoryFromSessionFile(rewoundPath) : [];
+    return rewoundPath ? this.transcriptItemsFromEntries(retainedRecords) : [];
   }
 
   async setSelectedModel(
@@ -528,7 +553,9 @@ export class PiRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options: { waitForCompletion?: boolean } = {},
   ): Promise<void> {
+    this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const normalizedImages = this.normalizeImages(images);
     if (!trimmedPrompt && normalizedImages.length === 0) return;
@@ -545,18 +572,25 @@ export class PiRuntimeService
 
     this.initializingRuns.add(sessionId);
     const generation = this.sessionGeneration(sessionId);
+    let owned = false;
+    let onAccepted: (() => void) | undefined;
+    const receipt = options.waitForCompletion === false
+      ? new Promise<void>(resolve => { onAccepted = () => { owned = true; resolve(); }; }) : undefined;
     const task = this.runPrompt(
       sessionId,
       trimmedPrompt,
       titlePrompt,
       normalizedImages,
       generation,
+      onAccepted,
     ).finally(() => {
       if (this.promptTasks.get(sessionId) === task)
         this.promptTasks.delete(sessionId);
     });
     this.promptTasks.set(sessionId, task);
-    return task;
+    return receipt ? Promise.race([receipt, task.then(() => {
+      if (!owned) throw new ConflictException('Pi stopped before accepting the message.');
+    })]) : task;
   }
 
   private async runPrompt(
@@ -565,6 +599,7 @@ export class PiRuntimeService
     titlePrompt: string | undefined,
     normalizedImages: Array<Record<string, string>>,
     generation: number,
+    onAccepted?: () => void,
   ): Promise<void> {
     const ownsSession = () => this.ownsSession(sessionId, generation);
     let state: PiRuntimeState | null = null;
@@ -640,6 +675,7 @@ export class PiRuntimeService
 
       let changeCapture: TurnChangeCapture | undefined;
       let completed = false;
+      let accepted = false;
       try {
         changeCapture = await this.turnChanges?.begin(
           sessionId,
@@ -665,6 +701,8 @@ export class PiRuntimeService
           ...(state.fastMode ? { fastMode: true } : {}),
           ...(normalizedImages.length ? { images: normalizedImages } : {}),
         });
+        accepted = true;
+        onAccepted?.();
         await completionPromise;
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
         if (run.interruptRequested) { this.finalizeInterruptedRun(sessionId); return; }
@@ -683,6 +721,7 @@ export class PiRuntimeService
         state.canInterrupt = false;
         this.emitEvent({ type: 'error', payload: { sessionId, message } });
         this.emitRunState(sessionId);
+        if (onAccepted && !accepted) throw error;
       } finally {
         let changesFinished = false;
         try {
@@ -980,6 +1019,7 @@ export class PiRuntimeService
   }
 
   private async ensureRuntime(sessionId: number): Promise<PiSessionRuntime> {
+    this.assertNotRewinding(sessionId);
     const generation = this.sessionGeneration(sessionId);
     this.assertSessionOwner(sessionId, generation);
     const pending = this.runtimeStarts.get(sessionId);
@@ -2064,7 +2104,7 @@ export class PiRuntimeService
     const runtime = this.runtimes.get(sessionId)?.runtime;
     if (!runtime) return this.overlayLiveItems(state, []);
     try {
-      const response = await runtime.send<{ entries?: unknown }>({
+      const response = await runtime.send<{ entries?: unknown; leafId?: string | null }>({
         type: 'get_entries',
       });
       const entries = Array.isArray(response?.entries)
@@ -2072,7 +2112,7 @@ export class PiRuntimeService
         : [];
       return this.overlayLiveItems(
         state,
-        this.transcriptItemsFromEntries(entries),
+        this.transcriptItemsFromEntries(entries, response?.leafId),
       );
     } catch (error) {
       this.logger.warn(
@@ -2107,9 +2147,13 @@ export class PiRuntimeService
 
   private transcriptItemsFromEntries(
     entries: Record<string, unknown>[],
+    leafId?: string | null,
   ): ClaudeTranscriptItem[] {
     const result: ClaudeTranscriptItem[] = [];
-    for (const [index, entry] of entries.entries()) {
+    const leaf = leafId === undefined ? entries.length - 1
+      : leafId === null ? -1 : entries.findIndex(entry => entry.id === leafId);
+    for (const index of piSessionBranch(entries, leaf)) {
+      const entry = entries[index];
       const type = entry.type;
       // Accept both Pi SDK format ("message") and Claude Code CLI format ("user"/"assistant").
       if (type !== 'message' && type !== 'user' && type !== 'assistant')
@@ -2137,14 +2181,17 @@ export class PiRuntimeService
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   }
 
-  private async writePiSessionRecords(
-    path: string,
-    records: Record<string, unknown>[],
-  ): Promise<void> {
+  private async writePiSessionBranch(source: string, records: readonly Record<string, unknown>[]): Promise<string> {
+    const id = randomUUID();
+    const timestamp = new Date().toISOString();
+    const path = join(dirname(source), `${timestamp.replace(/[:.]/g, '-')}-fork-${id}.jsonl`);
+    const entries = records[0]?.type === 'session'
+      ? [{ ...records[0], id, timestamp, parentSession: source }, ...records.slice(1)]
+      : records;
     const serialized =
-      records.map((record) => JSON.stringify(record)).join('\n') +
-      (records.length ? '\n' : '');
-    await fs.writeFile(path, serialized, 'utf8');
+      entries.map((record) => JSON.stringify(record)).join('\n') + '\n';
+    await fs.writeFile(path, serialized, { encoding: 'utf8', flag: 'wx' });
+    return path;
   }
 
   private isForkAnchorEntry(
@@ -2190,12 +2237,6 @@ export class PiRuntimeService
     return `pi-entry:${index}`;
   }
 
-  private buildForkSessionPath(sourcePath: string): string {
-    const ext = extname(sourcePath) || '.jsonl';
-    const base = basename(sourcePath, ext);
-    return join(dirname(sourcePath), `${base}-fork-${randomUUID()}${ext}`);
-  }
-
   private messageToTranscriptItems(
     message: Record<string, unknown>,
     fallbackId: string,
@@ -2210,6 +2251,12 @@ export class PiRuntimeService
     const id = precomputedId ?? this.messageId(message, fallbackId);
     const timestamp = this.timestampFromMessage(message);
     if (message.role === 'user') {
+      const imageBlocks = Array.isArray(message.content)
+        ? message.content.map(asRecord).filter(part => part?.type === 'image') : [];
+      const images = imageBlocks.flatMap(part => {
+        const image = savedPromptImage(part?.mimeType, part?.data);
+        return image ? [image] : [];
+      });
       return [
         {
           id: `${id}:user`,
@@ -2217,6 +2264,8 @@ export class PiRuntimeService
           content: this.stripInjectedWorktreeContext(
             this.contentToText(message.content),
           ),
+          ...(images.length ? { images } : {}),
+          ...(images.length !== imageBlocks.length ? { editUnsupported: true as const } : {}),
           // Persisted Pi entry ids are stable across history reads and are
           // also the anchors used for forks and rewinds. In particular,
           // Claude-compatible entries may store timestamps as strings, which

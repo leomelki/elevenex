@@ -1,10 +1,5 @@
-import { parseBrowserElements } from '@elevenex/shared';
-import {
-  chatMedia,
-  readChatMedia,
-  uploadedAttachment,
-} from './desktop-chat-media.js';
-import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import { SESSION_CHAT_PROMPT_LIMIT } from '@elevenex/shared';
+import { chatPromptImages } from './desktop-chat-input.js';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { AgentRuntimeProviderFeatures } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
@@ -71,54 +66,17 @@ export async function executeChatAction(
       if (typeof action.queue !== 'boolean')
         throw new BadRequestException('Invalid queue option.');
       if (action.sessionIds !== undefined && !exports) throw new BadRequestException('Session mentions are unavailable.');
+      const input = text(action.text, SESSION_CHAT_PROMPT_LIMIT);
       const prompt = exports
-        ? await appendChatMentions(text(action.text, 64000), action.sessionIds, exports)
-        : text(action.text, 64000);
-      const refs = chatMedia({
-        id: 'send',
-        kind: 'user',
-        content: text(action.text, 64000),
-        timestamp: '',
-      }).media.filter(
-        (media) =>
-          media.kind === 'image' && uploadedAttachment(media.source, sessionId),
-      );
-      const elements = parseBrowserElements(text(action.text, 64000)).elements;
-      if (elements.length && !provider.info.capabilities.multimodalPrompts) throw new BadRequestException('This harness cannot receive element images.');
-      if (elements.some(element => refs.findIndex(ref => ref.caption === element.attachment) + 1 !== element.imageIndex)) throw new BadRequestException('Element screenshot attachment is missing.');
-      const images: AgentImageInput[] = [];
-      let imageBytes = 0;
-      for (const ref of refs.slice(0, 8)) {
-        const source = await readChatMedia(
-          ref.source,
-          session.worktreePath,
-          session.activeAgentProvider,
-          sessionId,
-        );
-        const [header, data] = source.split(',');
-        imageBytes += Buffer.byteLength(data, 'base64');
-        if (imageBytes > 8 * 1024 * 1024)
-          throw new BadRequestException(
-            'Image attachments exceed the native input limit.',
-          );
-        const mediaType = header.slice(5, -7);
-        if (
-          mediaType !== 'image/png' &&
-          mediaType !== 'image/jpeg' &&
-          mediaType !== 'image/gif' &&
-          mediaType !== 'image/webp'
-        )
-          throw new BadRequestException('Unsupported image input.');
-        images.push({ mediaType, data });
-      }
+        ? await appendChatMentions(input, action.sessionIds, exports)
+        : input;
+      const images = await chatPromptImages(input, sessionId, session.worktreePath, provider);
       if (session.status === 'stopped') await sessions.reactivateRuntime(sessionId);
       await provider.submitPrompt(
         sessionId,
         prompt,
         undefined,
-        images.length && provider.info.capabilities.multimodalPrompts
-          ? images
-          : undefined,
+        images,
         { human: true, queue: action.queue, waitForCompletion: false },
       );
       break;

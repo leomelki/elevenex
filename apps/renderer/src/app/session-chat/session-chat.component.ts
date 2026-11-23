@@ -54,6 +54,7 @@ import {
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
 import { SessionChatContentComponent } from "./session-chat-content.component";
+import { SessionPromptEditorComponent } from './session-prompt-editor.component';
 import { SessionAgentComponent } from './session-agent.component';
 import { SessionActivityComponent } from "./session-activity.component";
 import { SessionChatPresets } from "./session-chat-presets";
@@ -76,6 +77,7 @@ function equalViewData<T>(left: T, right: T): boolean {
   imports: [
     OpensWhenBackComponent,
     SessionChatContentComponent,
+    SessionPromptEditorComponent,
     SessionActivityComponent,
     SessionAgentComponent,
     ChatComponent,
@@ -218,6 +220,7 @@ export class SessionChatComponent {
     );
   });
   readonly contentId = signal<string | null>(null);
+  readonly editingPrompt = signal<string | null>(null);
   readonly contentSource = signal<ToolContentSource | undefined>(undefined);
   readonly contentPart = signal<'input' | 'text'>('text');
   readonly identity = computed(
@@ -512,6 +515,7 @@ export class SessionChatComponent {
     effect(() => {
       this.identity();
       this.presetFlow.reset();
+      this.editingPrompt.set(null);
       this.copyRevision++;
       clearTimeout(this.copyTimer);
       this.copiedCode.set(null);
@@ -576,6 +580,16 @@ export class SessionChatComponent {
   }
   focusComposer(): void {
     this.composer()?.focusEditor();
+  }
+  openPromptEditor(itemId: string): void {
+    if (!this.selection() || this.archived() || this.store.promptEditDisabledReason()) return;
+    this.editingPrompt.set(itemId);
+  }
+  closePromptEditor(edited: boolean): void {
+    this.editingPrompt.set(null);
+    if (!edited) return;
+    this.chat()?.scroll()?.scrollToEnd('instant');
+    this.focusComposer();
   }
   submit(submission: ComposerSubmission): void {
     if (this.presetEditing()) return;

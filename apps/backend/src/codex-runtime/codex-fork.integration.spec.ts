@@ -161,6 +161,9 @@ integration('Codex fork persistence with the installed app-server', () => {
           updateCodexSessionId: async (id: number, threadId: string) => {
             (id === 7 ? parent : child).codexSessionId = threadId;
           },
+          replaceEditedConversation: (id: number, _provider: string, _previous: string, threadId: string) => {
+            (id === 7 ? parent : child).codexSessionId = threadId;
+          },
         };
         const createRuntime = (client: CodexAppServerClient) => {
           const runtime = new CodexRuntimeService(

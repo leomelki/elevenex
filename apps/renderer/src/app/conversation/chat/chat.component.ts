@@ -54,6 +54,9 @@ export class ChatComponent {
   readonly historyCancelled = output<void>();
   readonly latestRequested = output<void>();
   readonly exchanges = input<readonly ChatExchange[]>([]);
+  readonly promptEditing = input(false);
+  readonly promptEditDisabledReason = input('');
+  readonly promptEditRequested = output<string>();
   readonly actions = input<readonly TurnAction[]>(['side-chat', 'fork', 'copy']);
   readonly reach = input<{ readonly machine: string; readonly since: number }>();
   readonly stoppable = input(true);

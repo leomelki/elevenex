@@ -137,6 +137,23 @@ export class DesktopChatController {
   ) {
     return this.chat.command(resourceId(task), resourceId(session), action);
   }
+  @Get('prompt-edit')
+  async promptEdit(
+    @Param('taskId') task: string,
+    @Param('sessionId') session: string,
+    @Query('itemId') itemId: string,
+    @Res() response: Response,
+  ) {
+    const abort = new AbortController();
+    const close = () => abort.abort();
+    response.once('close', close);
+    try {
+      const result = await this.chat.promptEdit(resourceId(task), resourceId(session), itemId, abort.signal);
+      if (!abort.signal.aborted) response.json(result);
+    } finally {
+      response.off('close', close);
+    }
+  }
   @Get('agent')
   agent(@Param('taskId') task: string, @Param('sessionId') session: string,
     @Query('agentId') agentId: string, @Query('before') before?: string) {

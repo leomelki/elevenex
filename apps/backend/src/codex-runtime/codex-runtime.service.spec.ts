@@ -1827,6 +1827,7 @@ describe('CodexRuntimeService', () => {
       updateCodexSessionId: jest
         .fn<() => Promise<unknown>>()
         .mockResolvedValue({}),
+      replaceEditedConversation: jest.fn(),
       updatePlanMode: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
     };
     const authService = {
@@ -3062,12 +3063,9 @@ describe('CodexRuntimeService', () => {
 
     expect(appServer.request.mock.calls).toEqual([
       ['thread/read', { threadId: 'source-thread', includeTurns: true }],
-      ['thread/fork', { threadId: 'source-thread', beforeTurnId: 'turn-2' }],
+      ['thread/fork', { threadId: 'source-thread', beforeTurnId: 'turn-2', config: expect.any(Object) }],
     ]);
-    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
-      7,
-      'rewound-thread',
-    );
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'codex', 'source-thread', 'rewound-thread', undefined);
   });
 
   it.each(['user', 'assistant'] as const)(
@@ -3119,7 +3117,7 @@ describe('CodexRuntimeService', () => {
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('requested fork history');
 
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(historyService.waitForHistory).not.toHaveBeenCalled();
   });
 
@@ -3255,10 +3253,7 @@ describe('CodexRuntimeService', () => {
       threadId: 'rewound-thread',
       numTurns: 2,
     });
-    expect(sessionsService.updateCodexSessionId).toHaveBeenCalledWith(
-      7,
-      'rewound-thread',
-    );
+    expect(sessionsService.replaceEditedConversation).toHaveBeenCalledWith(7, 'codex', 'source-thread', 'rewound-thread', undefined);
     expect(historyService.waitForHistory).toHaveBeenCalledWith(
       'rewound-thread',
       1,
@@ -3279,7 +3274,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('History not ready');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
   });
 
   it('rejects a missing fork boundary without replacing the original thread', async () => {
@@ -3289,7 +3284,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('selected Codex turn');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(appServer.request).toHaveBeenCalledTimes(1);
   });
 
@@ -3302,7 +3297,7 @@ describe('CodexRuntimeService', () => {
     await expect(
       service.rewindConversation(7, 'codex-record:3'),
     ).rejects.toThrow('requested fork history');
-    expect(sessionsService.updateCodexSessionId).not.toHaveBeenCalled();
+    expect(sessionsService.replaceEditedConversation).not.toHaveBeenCalled();
     expect(historyService.waitForHistory).not.toHaveBeenCalled();
   });
 

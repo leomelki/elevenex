@@ -5,6 +5,7 @@ import { chatItem, chatItemChanges, type ChatChangesCache, type ChatMediaCache }
 import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
 import { ChatToolLinks, type ChatToolPositions } from './desktop-chat-tool-links.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
+import { editableChatPrompt } from './desktop-chat-edit.js';
 
 const SAVED_SUMMARY_LIMIT = 40;
 
@@ -85,6 +86,7 @@ interface ChatWindowOptions {
   readonly toolDetails?: ChatToolDetails;
   readonly keepTurnId?: string;
   readonly liveTurn?: boolean;
+  readonly promptEditing?: boolean;
 }
 
 interface Candidate {
@@ -260,7 +262,7 @@ export function chatWindow(
   let edge = following ? 0 : ordered.length;
   while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
     const position = following ? edge : edge - 1;
-    const { item: raw, summary, liveIndex } = ordered[position];
+    const { item: raw, summary, liveIndex, historyIndex: historyPosition } = ordered[position];
     const peer = links.peer(raw);
     const call = raw.kind === 'tool_result' ? peer : undefined;
     let item: SessionChatItem = summary ?? toolPage?.activity(raw, peer) ?? chatItem(raw, call, changesCache, mediaCache);
@@ -280,13 +282,16 @@ export function chatWindow(
       }
       item = { ...item, changes: capturedChangeSummary(raw, changes) };
     }
+    const liveItem = item;
+    if (options.promptEditing && historyPosition >= 0 && editableChatPrompt(history[historyPosition]))
+      item = { ...item, editable: true };
     const fingerprint = JSON.stringify(item);
     bytes += Buffer.byteLength(fingerprint);
     if (bytes > byteLimit) break;
     fingerprints?.set(item.id, fingerprint);
     if (summary) historyIndex.remember(item.id, ordered[position].historyIndex);
     items.push(item);
-    if (liveIndex >= 0) options.projectedLive?.push(item);
+    if (liveIndex >= 0) options.projectedLive?.push(liveItem);
     edge += following ? 1 : -1;
   }
   if (!following) {
@@ -296,6 +301,7 @@ export function chatWindow(
   const first = ordered[following ? 0 : edge];
   const last = ordered[following ? edge - 1 : ordered.length - 1];
   let prompt: AgentTranscriptItem | undefined;
+  let savedPrompt = false;
   if (items.length) {
     toolPage?.commit();
     historyIndex.remember(first.item.id, first.historyIndex);
@@ -303,13 +309,20 @@ export function chatWindow(
     // Saved rows keep their saved order, including live overlays of their IDs.
     // For a live-only tail, look within live activity before falling back to
     // the last saved prompt. Neither context record becomes a page cursor.
-    if (options.includeLeadingPrompt !== false && first.item.kind !== 'user')
-      prompt = first.historyIndex >= 0 ? historyIndex.promptBefore(history, first.historyIndex)
-        : live[previousPromptIndex(live, first.liveIndex)] ?? historyIndex.promptBefore(history, historyEnd);
+    if (options.includeLeadingPrompt !== false && first.item.kind !== 'user') {
+      if (first.historyIndex < 0) prompt = live[previousPromptIndex(live, first.liveIndex)];
+      if (!prompt) {
+        prompt = historyIndex.promptBefore(history, first.historyIndex >= 0 ? first.historyIndex : historyEnd);
+        savedPrompt = !!prompt;
+      }
+    }
   }
   return {
     items,
-    leadingPrompt: prompt ? chatItem(prompt, undefined, changesCache, mediaCache) : null,
+    leadingPrompt: prompt ? {
+      ...chatItem(prompt, undefined, changesCache, mediaCache),
+      ...(options.promptEditing && savedPrompt && editableChatPrompt(prompt) ? { editable: true as const } : {}),
+    } : null,
     before:
       following || edge > 0 || (saved[0]?.historyIndex ?? historyEnd) > 0 || livePosition > candidateLimit
         ? items[0]?.id ?? null : null,

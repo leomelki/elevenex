@@ -1,5 +1,6 @@
 import { parseChangeSummary } from "./session-chat-changes";
 import {
+  SESSION_CHAT_PROMPT_LIMIT,
   SESSION_CHAT_TOOL_CATEGORIES,
   SESSION_CHAT_TURN_FILES_LIMIT,
   SESSION_CHAT_TURN_REPLY_LIMIT,
@@ -170,9 +171,12 @@ function item(value: unknown): SessionChatRecord {
     (assistantPhase !== 'commentary' && assistantPhase !== 'final'))) throw invalid();
   const mentions = raw['mentions'] === undefined ? undefined : sessionMentions(raw['mentions']);
   if (mentions && kind !== 'user') throw invalid();
+  const editable = raw['editable'];
+  if (editable !== undefined && (editable !== true || kind !== 'user')) throw invalid();
   return {
     id: chatText(raw["id"]),
     kind,
+    ...(editable === true ? { editable } : {}),
     ...(assistantPhase === undefined ? {} : { assistantPhase }),
     text: chatText(raw["text"], 64000),
     timestamp: chatText(raw["timestamp"]),
@@ -560,6 +564,7 @@ export function parseChatState(value: unknown): SessionChatState {
     provider: chatText(raw["provider"]),
     ...(activePromptId === undefined ? {} : { activePromptId }),
     ...(raw["browserElements"] === undefined ? {} : { browserElements: bool(raw["browserElements"]) }),
+    ...(raw['historyRewrite'] === undefined ? {} : { historyRewrite: chatText(raw['historyRewrite'], 64) }),
     ...(raw["unseenCompletionAt"] === undefined ? {} : {
       unseenCompletionAt: raw["unseenCompletionAt"] === null ? null : completionAt(raw["unseenCompletionAt"]),
     }),
@@ -854,7 +859,7 @@ export function parseChatAction(value: unknown): SessionChatAction {
       return { type, provider, expectedProvider };
     }
     case "send": {
-      const text = chatText(raw["text"], 64000);
+      const text = chatText(raw["text"], SESSION_CHAT_PROMPT_LIMIT);
       if (!text.trim()) throw invalid();
       const sessionIds = raw['sessionIds'] === undefined ? undefined : array(raw['sessionIds'], 8, value => {
         if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw invalid();
@@ -862,6 +867,11 @@ export function parseChatAction(value: unknown): SessionChatAction {
       });
       if (sessionIds && new Set(sessionIds).size !== sessionIds.length) throw invalid();
       return { type, text, queue: bool(raw["queue"]), ...(sessionIds ? { sessionIds } : {}) };
+    }
+    case "edit-prompt": {
+      const itemId = chatText(raw["itemId"]), text = chatText(raw["text"], SESSION_CHAT_PROMPT_LIMIT);
+      if (!itemId.trim() || !text.trim()) throw invalid();
+      return { type, itemId, revision: defaultRevision(raw["revision"]), text };
     }
     case "stop":
     case "resume-queue":

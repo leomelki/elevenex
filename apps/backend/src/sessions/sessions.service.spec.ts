@@ -975,6 +975,26 @@ describe('SessionsService', () => {
     });
   });
 
+  it('switches an edited native conversation and keeps only change receipts before its boundary', async () => {
+    const created = await service.create({ repoId, branchName: 'main', worktreePath: '/tmp/wt' });
+    await service.updateCodexSessionId(created.id, 'source');
+    const earlier = '2026-11-01T00:00:00.000Z', boundary = '2026-11-01T00:01:00.000Z';
+    const receipts = [
+      { id: 'retained', finishedAt: earlier },
+      { id: 'removed', finishedAt: '2026-11-01T00:02:00.000Z' },
+    ].map(receipt => ({ ...receipt, sessionId: created.id, provider: 'codex', conversationId: 'source',
+      startedAt: earlier, details: { files: 0, additions: 0, deletions: 0, filesChanged: [] } }));
+    db.insert(schema.turnChanges).values(receipts).run();
+    service.replaceEditedConversation(created.id, 'codex', 'source', 'edited', boundary);
+    expect((await service.findOne(created.id)).codexSessionId).toBe('edited');
+    expect(db.select().from(schema.turnChanges).all()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'retained', conversationId: 'edited' }),
+      expect.objectContaining({ id: 'removed', conversationId: 'source' }),
+    ]));
+    expect(() => service.replaceEditedConversation(created.id, 'codex', 'source', 'stale', boundary)).toThrow('session changed');
+    expect((await service.findOne(created.id)).codexSessionId).toBe('edited');
+  });
+
   it('stores Claude model choices independently of the native session ID', async () => {
     const created = await service.create({
       repoId,

@@ -7,6 +7,9 @@
   [inspectTool]="store.tools.provider()"
   [toolImages]="media.toolImages()"
   [exchanges]="store.exchanges()"
+  [promptEditing]="!archived()"
+  [promptEditDisabledReason]="store.promptEditDisabledReason()"
+  (promptEditRequested)="openPromptEditor($event)"
   [centerComposer]="showWelcome()"
   [actions]="['copy']"
   [historyBefore]="!!store.before()"
@@ -412,6 +415,10 @@
     [part]="contentPart()"
     (copyRequested)="copy($event)"
   />
+}
+
+@if (editingPrompt() && selection(); as selected) {
+  <ex-session-prompt-editor [selection]="selected" [itemId]="editingPrompt()!" (closed)="closePromptEditor($event)" />
 }
 
 @for (

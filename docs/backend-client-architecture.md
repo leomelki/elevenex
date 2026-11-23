@@ -81,6 +81,18 @@ destruction release the watch. After backend identity changes, workspace
 restoration verifies the selection before opening a new watch. Reconnects and
 refreshes issue only reads.
 
+### Editing a sent message
+
+Engines mark editable saved user records with `editable: true`. Main reads
+the bounded edit snapshot through `sessionChatPromptEdit`, checking the scope,
+task, session and item identities.
+The `edit-prompt` command sends revised text with the snapshot revision. The
+engine validates that revision and preserves the original attachments and
+context before asking the selected harness to rewind and submit. A changed
+history boundary returns a conflict. History replacements publish
+`historyRewrite` so readers on older pages can return to the live tail.
+An interrupted write requires a fresh read before another send.
+
 Terminal service URLs use the named `taskTerminalOpenPort` and
 `taskTerminalCopyPort` bridge operations. Both accept only a scoped
 task/terminal/port, freshly verify the owned listener and use the window's

@@ -12,9 +12,10 @@ import { animateMessageSend } from "./message-send-animation";
 import type { MessageSendOrigin, TurnAction } from "../conversation.models";
 import { TurnActsComponent } from "../turns/turn-acts.component";
 import { ReplyMarkComponent } from "../turns/reply-mark.component";
+import { IconButtonComponent } from '../../ui';
 @Component({
   selector: "ex-message",
-  imports: [ReplyMarkComponent, TurnActsComponent],
+  imports: [ReplyMarkComponent, TurnActsComponent, IconButtonComponent],
   templateUrl: "./message.component.html",
   styleUrl: "./message.component.css",
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -24,6 +25,7 @@ import { ReplyMarkComponent } from "../turns/reply-mark.component";
     "[class.fresh]": "isNew()",
     "[attr.data-user-message]": 'role() === "user" ? messageId() : null',
     "[attr.id]": "messageId() || null",
+    "[attr.aria-keyshortcuts]": "editable() && !editDisabledReason() ? 'E' : null",
     tabindex: "0",
     "(keydown)": "onKey($event)",
   },
@@ -62,16 +64,25 @@ export class MessageComponent {
   readonly sideChats = input(0);
   readonly pinned = input(false);
   readonly isNew = input(false);
+  readonly editable = input(false);
+  readonly editDisabledReason = input('');
+  readonly editRequested = output<void>();
   readonly action = output<TurnAction>();
   onKey(event: KeyboardEvent): void {
     if (
       event.target !== event.currentTarget ||
-      this.role() !== "agent" ||
       event.metaKey ||
       event.ctrlKey ||
       event.altKey
     )
       return;
+    if (this.role() === 'user') {
+      if (this.editable() && !this.editDisabledReason() && event.key.toLowerCase() === 'e') {
+        event.preventDefault();
+        this.editRequested.emit();
+      }
+      return;
+    }
     const action: TurnAction | undefined =
       event.key.toLowerCase() === "s"
         ? "side-chat"

@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   forwardRef,
 } from '@nestjs/common';
 import {
@@ -18,6 +19,7 @@ import {
   ne,
   isNull,
   isNotNull,
+  lt,
   or,
   sql,
   type SQL,
@@ -665,6 +667,33 @@ export class SessionsService extends EventEmitter {
     if (!rows.length)
       throw new NotFoundException(`Session with id ${id} not found`);
     return this.withInferredActiveAgentProvider(rows[0]);
+  }
+
+  replaceEditedConversation(
+    id: number, provider: 'claude' | 'codex' | 'pi' | 'opencode',
+    previous: string, next: string, before?: string | number,
+  ): void {
+    const columns = { claude: 'claudeSessionId', codex: 'codexSessionId', pi: 'piSessionPath', opencode: 'opencodeSessionId' } as const;
+    const column = columns[provider];
+    const boundary = before === undefined ? NaN : new Date(before).getTime();
+    // Switch the native identity and its retained change receipts together.
+    // Both updates are indexed by the session and do not touch the checkout.
+    this.db.transaction(tx => {
+      const session = tx.select().from(schema.sessions).where(eq(schema.sessions.id, id)).get();
+      if (!session || session.status === 'archived' ||
+          sessionAgentProvider(session) !== provider || session[column] !== previous)
+        throw new ConflictException('The session changed while the message was being edited.');
+      tx.update(schema.sessions).set({
+        [column]: next, activeAgentProvider: provider, updatedAt: new Date().toISOString(),
+      }).where(eq(schema.sessions.id, id)).run();
+      if (next !== '-1' && Number.isFinite(boundary)) {
+        const changes = schema.turnChanges;
+        tx.update(changes).set({ conversationId: next }).where(and(
+          eq(changes.sessionId, id), eq(changes.provider, provider), eq(changes.conversationId, previous),
+          lt(changes.finishedAt, new Date(boundary).toISOString()),
+        )).run();
+      }
+    });
   }
 
   async updateActiveAgentProvider(id: number, provider: AgentProviderId) {
