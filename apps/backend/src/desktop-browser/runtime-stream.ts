@@ -118,7 +118,13 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
     taskId: number,
     token: string,
   ): void {
-    const task = this.browsers.viewer(taskId, token);
+    let task: ReturnType<RuntimeBrowserService['viewer']>;
+    try {
+      task = this.browsers.viewer(taskId, token);
+    } catch {
+      ws.terminate();
+      return;
+    }
     const routes = this.routes;
     if (!routes) {
       ws.terminate();
@@ -164,6 +170,8 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
       }
     };
     const unsubscribe = task.subscribe(publish);
+    const terminate = () => ws.terminate();
+    task.lifetimeSignal.addEventListener('abort', terminate, { once: true });
     const timer = setInterval(() => {
       if (Date.now() - seen > 30000) ws.terminate();
     }, 3000);
@@ -173,6 +181,7 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
         this.channels.delete(taskId);
       clearInterval(timer);
       unsubscribe();
+      task.lifetimeSignal.removeEventListener('abort', terminate);
       for (const video of videos.values()) video.stream.stop();
       videos.clear();
       for (const controller of pending.values()) controller.abort();

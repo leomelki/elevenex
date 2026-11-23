@@ -486,6 +486,34 @@ module.exports = async function browserSmoke(window, scope, url, backendUrl = ur
     }
   }
   console.log('Browser smoke: pinned task capacity passed');
+
+  // Simulate a finish from another client while the task is in the desktop cache.
+  await read(3);
+  const detachedTab = await call('taskBrowserCommand', scope, 3, { kind: 'open', url: url + '/browser-test?closed-companion' });
+  assert.equal(detachedTab.ok, true);
+  const windowsBeforeDetach = new Set(BrowserWindow.getAllWindows());
+  await call('taskBrowserDetach', scope, 3, detachedTab.value.active, context);
+  const companion = BrowserWindow.getAllWindows().find(item => !windowsBeforeDetach.has(item));
+  assert.ok(companion);
+  try {
+    const detachedContents = await until(() =>
+      webContents.getAllWebContents().find(contents => contents.getType() === 'webview' &&
+        contents.hostWebContents === companion.webContents && contents.getURL().includes('closed-companion')),
+    'Detached cleanup fixture did not load');
+    assert.equal((await call('taskBrowserCommand', scope, 3, { kind: 'open', url: url + '/browser-test?closed-panel' })).ok, true);
+    const panelContents = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().includes('closed-panel')), 'Panel cleanup fixture did not load');
+    await read();
+    assert.equal(detachedContents.isDestroyed(), false);
+    assert.equal(panelContents.isDestroyed(), false);
+    await fetch(backendUrl + '/close-browser-task-three');
+    await until(() => detachedContents.isDestroyed() && panelContents.isDestroyed(), 'Closed task retained native browser guests');
+    assert.equal((await call('taskBrowserRead', scope, 3)).ok, false);
+    assert.equal((await companion.webContents.executeJavaScript('window.elevenex.taskBrowserWindow()')).available, false);
+  } finally {
+    if (!companion.isDestroyed()) companion.close();
+  }
+  console.log('Browser smoke: closing an unselected task destroyed its panel and detached pages');
+
   await read();
   await command({ kind: 'open', url: url + '/browser-test?private-query=not-persisted' });
   const resumed = await until(() => webContents.getAllWebContents().find(contents => contents !== window.webContents && contents.getURL().includes('private-query')), 'Reconnection test tab did not load');

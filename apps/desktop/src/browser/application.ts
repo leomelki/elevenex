@@ -15,10 +15,12 @@ import { BrowserPersistence } from './persistence';
 import { browserId, command, layout, record, taskId, streamInput, windowContext } from './validation';
 import { BrowserAutomation } from './automation';
 import { WebAuthnBroker } from './webauthn-broker';
+import { watchTaskBrowser } from './task-lifetime';
 import type { BrowserHost as BrowserTask, DesktopBrowserHost } from './host';
 const nativeGuests = (host: BrowserTask) => host.engine === 'desktop' ? host : host.guests;
 const localTab = (host: BrowserTask) => host.engine === 'desktop' || host.snapshot().tabs.some(tab => tab.id === host.snapshot().active && tab.execution === 'local');
-interface WindowBrowsers { readonly placements: Map<string, TaskBrowserPlacement>; readonly tasks: Map<string, BrowserTask>; readonly opening: Map<string, Promise<BrowserTask>>; readonly automation: Map<DesktopBrowserHost, BrowserAutomation>; readonly attaching: Set<string>; surfaceSnapshot: string; readonly guests: Map<number, { contents: Electron.WebContents; timer: ReturnType<typeof setTimeout> }>; cleanup(): void; selection: number; requested?: string; selected?: BrowserTask }
+interface BrowserOpening { readonly controller: AbortController; readonly result: Promise<BrowserTask> }
+interface WindowBrowsers { readonly placements: Map<string, TaskBrowserPlacement>; readonly tasks: Map<string, BrowserTask>; readonly opening: Map<string, BrowserOpening>; readonly automation: Map<DesktopBrowserHost, BrowserAutomation>; readonly attaching: Set<string>; surfaceSnapshot: string; readonly guests: Map<number, { contents: Electron.WebContents; timer: ReturnType<typeof setTimeout> }>; cleanup(): void; selection: number; requested?: string; selected?: BrowserTask }
 
 export function registerTaskBrowser(client: BackendClient, remote: RemoteManager, root: string, trusted: TrustedSender, createBrowserWindow: () => BrowserWindow = () => { throw new Error('Browser windows are unavailable'); }) {
   const windows = new Map<number, WindowBrowsers>();
@@ -26,6 +28,38 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
   const persistence = new BrowserPersistence(root);
   const profiles = new BrowserTaskProfiles();
   const authenticator = new WebAuthnBroker();
+  const stopWatching = new WeakMap<BrowserTask, () => void>();
+  const destroyBrowser = (owner: WindowBrowsers, browser: BrowserTask) => {
+    stopWatching.get(browser)?.();
+    stopWatching.delete(browser);
+    if (browser.engine === 'desktop') {
+      owner.automation.get(browser)?.dispose();
+      owner.automation.delete(browser);
+    }
+    browser.destroy();
+    if (owner.selected === browser) owner.selected = undefined;
+  };
+  const retireTask = (owner: WindowBrowsers, key: string) => {
+    owner.opening.get(key)?.controller.abort();
+    owner.opening.delete(key);
+    owner.placements.delete(key);
+    if (owner.requested === key) { owner.selection++; owner.requested = undefined; }
+    const browser = owner.tasks.get(key);
+    if (browser) {
+      owner.tasks.delete(key);
+      destroyBrowser(owner, browser);
+    }
+  };
+  const taskFinished = (windowId: number, scope: string, taskId: number) => {
+    const configuration = client.configurationIdentity(windowId, scope);
+    if (configuration === null) return;
+    for (const [id, owner] of windows) {
+      const current = client.state(id).scope;
+      if (current && client.configurationIdentity(id, current.id) === configuration)
+        retireTask(owner, current.id + ':' + taskId);
+    }
+    detached.maintain();
+  };
   const availablePlacements = (id: number): readonly TaskBrowserPlacement[] => client.state(id).scope?.environment.kind === 'remote' ? ['desktop', 'desktop-proxy', 'machine'] : ['desktop'];
   const surfaces = (id: number) => detached.get(id) ? detached.surfaces(id) : [...(windows.get(id)?.tasks.values() ?? [])].flatMap(task => task.surfaces());
   const publishSurfaces = (id: number) => { const current = surfaces(id); const claims = windows.get(id)?.attaching; if (claims) for (const bootstrap of claims) if (!current.some(surface => surface.bootstrap === bootstrap)) claims.delete(bootstrap); const owner=windows.get(id),signature=JSON.stringify(current);if(owner&&owner.surfaceSnapshot!==signature){owner.surfaceSnapshot=signature;sendToWindow(id, 'task-browser:surfaces-changed', current);} };
@@ -39,7 +73,9 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       const hide = () => { windows.get(id)?.selected?.hide(); };
       const detach = () => {
         const entry = windows.get(id); if (!entry) return;
-        for (const automation of entry.automation.values()) automation.dispose(); entry.automation.clear(); for (const guest of entry.guests.values()) { clearTimeout(guest.timer); if (!guest.contents.isDestroyed()) guest.contents.close({ waitForBeforeUnload: false }); } entry.guests.clear(); for (const task of entry.tasks.values()) task.destroy(); windows.delete(id);
+        for (const key of new Set([...entry.tasks.keys(), ...entry.opening.keys()])) retireTask(entry, key);
+        for (const guest of entry.guests.values()) { clearTimeout(guest.timer); if (!guest.contents.isDestroyed()) guest.contents.close({ waitForBeforeUnload: false }); } entry.guests.clear();
+        windows.delete(id);
         window.removeListener('closed', detach); window.removeListener('minimize', hide); window.removeListener('hide', hide);
         contents.removeListener('did-start-navigation', navigation);
         contents.removeListener('render-process-gone', detach);
@@ -80,18 +116,19 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
   };
   const get = async (id: number, scope: string, task: number, replacement?: TaskBrowserPlacement): Promise<BrowserTask> => {
     const owner = windowOwner(id), key = scope + ':' + task;
-    const selection = ++owner.selection; owner.requested = key;
     const current = client.state(id).scope;
     if (current?.id !== scope) throw new Error('Stale browser scope');
-    for (const [identity, existing] of owner.tasks) if (existing.scopeId !== scope || existing.closed) { existing.destroy(); owner.tasks.delete(identity); owner.placements.delete(identity); }
+    for (const [identity, existing] of owner.tasks) if (existing.scopeId !== scope || existing.closed) retireTask(owner, identity);
+    const selection = ++owner.selection; owner.requested = key;
     let browser = replacement ? undefined : owner.tasks.get(key);
     if (!browser) {
       let pending = owner.opening.get(key);
       if (!pending) {
-        pending = (async () => {
+        const controller = new AbortController();
+        const result = (async () => {
           const original = owner.tasks.get(key);
           const originalTabs = original?.snapshot().tabs.map(tab => [tab.id, tab.generation]);
-          const reply = await client.execute(id, scope, 'task-browser-task:' + task, false, async (endpoint, signal) => {
+          const reply = await client.execute(id, scope, null, false, async (endpoint, signal) => {
             const value = record(await requestBackendJson(endpoint, { path: '/api/desktop-browser/tasks/' + task }, signal));
             if (value['id'] !== task || value['state'] !== 'ready' || typeof value['identity'] !== 'string' || !/^[a-f0-9]{64}$/.test(value['identity'])) throw new Error('Task is not available');
             taskId(value['repoId']);
@@ -99,8 +136,9 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
             if (!Array.isArray(ports) || ports.length > 32 || ports.some(port => typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)) throw new Error('Invalid task servers');
             const parsed: Record<string, unknown> & { ports: readonly number[] } = { ...value, ports: ports.map(Number), applicationPort: Number(new URL(endpoint.url).port) };
             return parsed;
-          });
+          }, undefined, controller.signal);
           if (!reply.ok) throw new Error('Task browser is unavailable. Refresh the workspace.');
+          controller.signal.throwIfAborted();
           if (windows.get(id) !== owner || client.state(id).scope?.id !== scope) throw new Error('Stale browser owner');
           const window = BrowserWindow.getAllWindows().find(item => item.webContents.id === id);
           if (!window) throw new Error('Window closed');
@@ -125,6 +163,7 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
           let evict: [string, BrowserTask] | undefined;
           try {
             await created.restore();
+            controller.signal.throwIfAborted();
             if (windows.get(id) !== owner || client.state(id).scope?.id !== scope || (replacement && selection !== owner.selection)) throw new Error('Browser selection changed');
             if (replacement && (owner.tasks.get(key) !== original || original?.hasDetached() || original?.snapshot().tabs.some(tab => tab.url || tab.loading) || JSON.stringify(original?.snapshot().tabs.map(tab => [tab.id, tab.generation])) !== JSON.stringify(originalTabs))) throw new Error('Browser changed while preparing its new location. Close loaded tabs and try again.');
             if (!owner.tasks.has(key) && owner.tasks.size >= 4) {
@@ -133,18 +172,23 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
             }
           } catch (error) { created.destroy(); throw error; }
           const previous = owner.tasks.get(key);
-          if (previous && previous !== created) {
-            if (previous.engine === 'desktop') { owner.automation.get(previous)?.dispose(); owner.automation.delete(previous); }
-            previous.destroy();
-          }
-          if (evict) { evict[1].destroy(); owner.tasks.delete(evict[0]); owner.placements.delete(evict[0]); }
+          if (previous && previous !== created) destroyBrowser(owner, previous);
+          if (evict) retireTask(owner, evict[0]);
           owner.tasks.set(key, created);
+          stopWatching.set(created, watchTaskBrowser(client, id, scope, task, () => {
+            if (owner.tasks.get(key) !== created) return;
+            retireTask(owner, key);
+            detached.maintain();
+          }));
           if (replacement) owner.placements.set(key, replacement);
           return created;
-        })().finally(() => owner.opening.delete(key));
+        })().finally(() => {
+          if (owner.opening.get(key)?.controller === controller) owner.opening.delete(key);
+        });
+        pending = { controller, result };
         owner.opening.set(key, pending);
       }
-      browser = await pending;
+      browser = await pending.result;
     }
     if (windows.get(id) !== owner || selection !== owner.selection || client.state(id).scope?.id !== scope) throw new Error('Task selection changed');
     for (const other of owner.tasks.values()) if (other !== browser) other.hide();
@@ -156,7 +200,6 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       if (!automation) { automation = new BrowserAutomation(id, client); owner.automation.set(browser, automation); }
       automation.select(browser);
     }
-    for (const [task, automation] of owner.automation) if (task.closed) { automation.dispose(); owner.automation.delete(task); }
     return browser;
   };
   const result = async (operation: () => Promise<TaskBrowserState>): Promise<BackendResult<TaskBrowserState>> => {
@@ -274,6 +317,13 @@ export function registerTaskBrowser(client: BackendClient, remote: RemoteManager
       if (selected?.scopeId === scope && selected.taskId === task) selected.hide();
     }),
   ];
-  const timer = setInterval(() => { for (const owner of windows.values()) for (const task of owner.tasks.values()) { task.maintain(); if (task !== owner.selected && !detached.has(task)) { if (task.engine === 'desktop') owner.automation.get(task)?.deactivate(task); } } detached.maintain(); }, 250);
-  return { permitsPointerLock(id: number) { return surfaces(id).some(surface => surface.presentation === 'stream' && surface.visible && surface.interactive && surface.driver !== 'agent' && surface.pointerLocked); }, permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); authenticator.dispose(); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => Promise.all([persistence.flush(), profiles.flush()]) };
+  const timer = setInterval(() => {
+    for (const owner of windows.values()) for (const [key, task] of owner.tasks) {
+      task.maintain();
+      if (task.closed) retireTask(owner, key);
+      else if (task.engine === 'desktop' && task !== owner.selected && !detached.has(task)) owner.automation.get(task)?.deactivate(task);
+    }
+    detached.maintain();
+  }, 250);
+  return { taskFinished, permitsPointerLock(id: number) { return surfaces(id).some(surface => surface.presentation === 'stream' && surface.visible && surface.interactive && surface.driver !== 'agent' && surface.pointerLocked); }, permitsGuest(id: number, params: Record<string, string>) { return surfaces(id).some(surface => surface.partition === params['partition'] && surface.bootstrap === params['src']); }, dispose() { clearInterval(timer); authenticator.dispose(); detached.dispose(); for (const stop of stops) stop(); for (const owner of [...windows.values()]) owner.cleanup(); windows.clear(); }, flush: () => Promise.all([persistence.flush(), profiles.flush()]) };
 }

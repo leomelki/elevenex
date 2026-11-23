@@ -29,6 +29,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   private stopped = false;
   private preparing: Promise<void> = Promise.resolve();
   private readonly timer = setInterval(() => this.sweep(), 1000);
+  private readonly stopFinishing?: () => void;
   constructor(
     private readonly pool: RuntimeBrowserPool,
     private readonly persistence: RuntimeBrowserPersistence,
@@ -36,6 +37,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     @Optional() private readonly sessionRecords?: SessionsService,
   ) {
     this.timer.unref();
+    this.stopFinishing = taskRecords?.onFinishing(id => this.retire(id));
   }
   reservePort(port: number | undefined): void {
     this.pool.reservePort(port);
@@ -49,7 +51,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     state: ReturnType<RuntimeBrowserTask['state']>;
   }> {
     const task = await this.prepare(taskId, identity);
-    if (this.stopped || this.tasks.get(taskId) !== task)
+    if (this.stopped || this.tasks.get(taskId) !== task || !task.alive)
       throw new Error('Browser task preparation was interrupted');
     const old = this.viewers.get(taskId);
     if (old && old.clientId !== clientId && Date.now() - old.seen < 30000)
@@ -95,6 +97,10 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     identity: string,
   ): Promise<RuntimeBrowserTask> {
     if (this.stopped) throw new Error('Browser runtime stopped');
+    const record = await this.taskRecords?.record(taskId);
+    if (record && (record.archivedAt || record.taskState !== 'ready'))
+      throw new ConflictException('Task is not active');
+    if (this.stopped) throw new Error('Browser runtime stopped');
     let task = this.tasks.get(taskId);
     if (task && this.identities.get(taskId) !== identity) {
       this.viewers.delete(taskId);
@@ -136,6 +142,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
       !bytes ||
       bytes.length !== 36 ||
       !viewer ||
+      !viewer.task.alive ||
       Date.now() - viewer.seen > 30000 ||
       !timingSafeEqual(bytes, Buffer.from(viewer.token))
     )
@@ -171,6 +178,23 @@ export class RuntimeBrowserService implements OnModuleDestroy {
     this.viewers.delete(taskId);
   }
   private checking?: Promise<void>;
+  private retire(id: number, expected?: RuntimeBrowserTask): Promise<void> {
+    if (!this.tasks.has(id) && ![...this.opening.keys()].some(key => key.startsWith(id + ':')))
+      return Promise.resolve();
+    const retirement = this.preparing.then(async () => {
+      const task = this.tasks.get(id);
+      if (!task || (expected && expected !== task)) return;
+      const identity = this.identities.get(id);
+      if (identity) void this.persistence.save(identity, task.saved());
+      this.viewers.delete(id);
+      await task.destroy();
+      this.tasks.delete(id);
+      this.identities.delete(id);
+      this.saved.delete(id);
+    });
+    this.preparing = retirement.catch(() => undefined);
+    return retirement;
+  }
   private async checkTasks(): Promise<void> {
     if (!this.taskRecords || this.stopped) return;
     try {
@@ -180,18 +204,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
         if (record && !record.archivedAt && record.taskState === 'ready') continue;
         // A retained browser must not outlive task finish/archive or keep its
         // workspace connections open. Never evict a live task for viewer idleness.
-        const retirement = this.preparing.then(async () => {
-          if (this.tasks.get(id) !== task || this.stopped) return;
-          const identity = this.identities.get(id);
-          if (identity) await this.persistence.save(identity, task.saved());
-          await task.destroy();
-          this.tasks.delete(id);
-          this.viewers.delete(id);
-          this.identities.delete(id);
-          this.saved.delete(id);
-        });
-        this.preparing = retirement.catch(() => undefined);
-        await retirement;
+        await this.retire(id, task);
       }
     } catch { /* Retry bounded lifecycle reconciliation on the next sweep. */ }
   }
@@ -217,6 +230,7 @@ export class RuntimeBrowserService implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     this.stopped = true;
     clearInterval(this.timer);
+    this.stopFinishing?.();
     await this.preparing;
     await this.checking;
     for (const [id, task] of this.tasks) {

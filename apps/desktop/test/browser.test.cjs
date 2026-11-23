@@ -93,6 +93,66 @@ test('task navigation persistence bounds tabs and strips credential-bearing quer
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('cached browser lifetime retries a failed check, retires a closed task and cancels pending checks', async context => {
+  const { watchTaskBrowser } = require('../dist/browser/task-lifetime');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const checks = [];
+  const client = {
+    execute(window, scope, key, mutation, _operation, _timeout, signal) {
+      assert.deepEqual([window, scope, key, mutation], [1, 'scope', 'task-browser-lifetime:2', false]);
+      const check = { ...Promise.withResolvers(), signal };
+      checks.push(check);
+      return check.promise;
+    },
+  };
+  const retire = context.mock.fn();
+  const stop = watchTaskBrowser(client, 1, 'scope', 2, retire);
+  context.mock.timers.tick(2000);
+  context.mock.timers.tick(2000);
+  assert.equal(checks.length, 1, 'The next check waits for its predecessor');
+  checks[0].resolve({ ok: false, error: { code: 'transport' } });
+  await checks[0].promise;
+  assert.equal(retire.mock.callCount(), 0);
+  context.mock.timers.tick(2000);
+  checks[1].resolve({ ok: false, error: { code: 'http', status: 400 } });
+  await checks[1].promise;
+  assert.equal(retire.mock.callCount(), 1);
+  assert.equal(checks[1].signal.aborted, true);
+  stop();
+  context.mock.timers.tick(2000);
+  assert.equal(checks.length, 2);
+
+  const cancel = watchTaskBrowser(client, 1, 'scope', 2, retire);
+  context.mock.timers.tick(2000);
+  cancel();
+  assert.equal(checks[2].signal.aborted, true);
+  checks[2].resolve({ ok: false, error: { code: 'http', status: 404 } });
+  await checks[2].promise;
+  assert.equal(retire.mock.callCount(), 1, 'A late result cannot retire a replacement');
+});
+
+test('a cached browser expires if its task stays unreachable', async context => {
+  const { watchTaskBrowser } = require('../dist/browser/task-lifetime');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let elapsed = 0;
+  context.mock.getter(globalThis, 'performance', () => ({ now: () => elapsed }));
+  const retire = context.mock.fn();
+  const client = { execute: async () => ({ ok: false, error: { code: 'timeout' } }) };
+  const stop = watchTaskBrowser(client, 1, 'scope', 2, retire);
+  try {
+    elapsed = 29000;
+    context.mock.timers.tick(2000);
+    await Promise.resolve();
+    assert.equal(retire.mock.callCount(), 0);
+    elapsed = 31000;
+    context.mock.timers.tick(2000);
+    await Promise.resolve();
+    assert.equal(retire.mock.callCount(), 1);
+  } finally {
+    stop();
+  }
+});
+
 test('automation expiry and disposal revoke a late action before input and stop polling', async context => {
   const { BrowserAutomation } = require('../dist/browser/automation');
   context.mock.timers.enable({ apis: ['setTimeout'] });

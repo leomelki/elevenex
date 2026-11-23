@@ -438,7 +438,12 @@ renderer uses the same narrow bridge and display acknowledgments. A remote task'
 live tabs, network and agent control survive viewer disconnect/desktop exit while
 the remote daemon stays alive. Agents can start their own runtime tabs without a
 viewer. Backend restarts restore profiles and safe locations, not live documents
-or automation grants. Local native guests retain desktop-process lifetimes.
+or automation grants. Finishing a task closes its machine browser and destroys its
+local tab guests, including hidden tabs and tabs in companion windows. Companions
+show Task unavailable. The desktop checks the state of its cached task browsers
+even when they are unselected. If it cannot verify task availability for about
+30 seconds, it releases the browser. Reopening can restore saved locations and
+the persistent profile.
 See [the design and feature roadmap](../../../../../docs/task-browser-streaming.md).
 
 Hosts advertising `videoStream: 'h264'` use bounded pushed Annex B packets and the

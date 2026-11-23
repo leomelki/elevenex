@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { DesktopBrowserController } from './desktop-browser.controller.js';
 import { DesktopBrowserService } from './desktop-browser.service.js';
 import { TaskBrowserServers } from './task-browser-servers.js';
@@ -24,5 +24,26 @@ describe('Task browser boundaries', () => {
     session.workspaceId = 3; await expect(controller.authorize(request, { taskId: 1, sessionId: 2 })).rejects.toBeInstanceOf(ForbiddenException);
     session.workspaceId = 1; session.status = 'archived'; await expect(controller.authorize(request, { taskId: 1, sessionId: 2 })).rejects.toBeInstanceOf(ForbiddenException);
     await module.close();
+  });
+
+  it('checks task lifetime without reading browser server suggestions', async () => {
+    const task = { id: 1, taskState: 'ready', archivedAt: null };
+    const ports = jest.fn();
+    const module = await Test.createTestingModule({ controllers: [DesktopBrowserController], providers: [
+      { provide: DesktopBrowserService, useValue: {} },
+      { provide: TaskBrowserServers, useValue: { ports } },
+      { provide: TasksService, useValue: { record: async () => task } },
+      { provide: SessionsService, useValue: {} },
+    ] }).compile();
+    try {
+      const controller = module.get(DesktopBrowserController);
+      const request = { headers: {} } as Request;
+      await expect(controller.context(request, '1', '1')).resolves.toEqual({ id: 1, state: 'ready' });
+      task.taskState = 'finishing';
+      await expect(controller.context(request, '1', '1')).rejects.toBeInstanceOf(BadRequestException);
+      expect(ports).not.toHaveBeenCalled();
+    } finally {
+      await module.close();
+    }
   });
 });

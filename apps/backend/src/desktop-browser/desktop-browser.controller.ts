@@ -10,6 +10,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -45,6 +46,7 @@ export class DesktopBrowserController {
   @Get('tasks/:taskId') async context(
     @Req() request: Request,
     @Param('taskId') taskId: string,
+    @Query('lifecycle') lifecycle?: string,
   ) {
     if (request.headers.origin || request.headers['sec-fetch-site'])
       throw new ForbiddenException();
@@ -53,6 +55,7 @@ export class DesktopBrowserController {
     const task = await this.tasks.record(parsed.data);
     if (task.archivedAt || task.taskState !== 'ready')
       throw new BadRequestException('Task is not active');
+    if (lifecycle === '1') return { id: task.id, state: 'ready' };
     return {
       id: task.id,
       repoId: task.repoId,

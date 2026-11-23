@@ -126,6 +126,7 @@ describe('Remote browser public HTTP behavior', () => {
         {
           provide: TasksService,
           useValue: {
+            onFinishing: () => () => undefined,
             record: async () => ({
               id: 1,
               taskState: 'ready',

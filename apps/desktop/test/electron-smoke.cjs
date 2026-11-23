@@ -72,6 +72,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
     let holdBrowserAuthorization = false;
     const browserAuthorizations = new Set();
     let holdBrowserTask = false;
+    let browserTaskThreeClosed = false;
     const browserTaskReads = new Set();
     const browserTask = response => {
       response.writeHead(200, { 'content-type': 'application/json' });
@@ -96,9 +97,15 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         for (const pending of browserTaskReads) browserTask(pending);
         browserTaskReads.clear(); response.end(); return;
       }
-      if (pathname === '/api/desktop-browser/tasks/1' && holdBrowserTask) {
+      if (pathname === '/api/desktop-browser/tasks/1' && !searchParams.has('lifecycle') && holdBrowserTask) {
         browserTaskReads.add(response);
         response.once('close', () => browserTaskReads.delete(response));
+        return;
+      }
+      if (pathname === '/close-browser-task-three') { browserTaskThreeClosed = true; response.end(); return; }
+      if (pathname === '/api/desktop-browser/tasks/3' && browserTaskThreeClosed) {
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ message: 'Task is not active' }));
         return;
       }
       if (pathname === '/hold-browser-authorization') { holdBrowserAuthorization = true; response.end(); return; }

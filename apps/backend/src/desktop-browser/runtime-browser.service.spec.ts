@@ -195,7 +195,10 @@ it('stores tools on a blank tab and accepts its companion layout without launchi
 it('closes retained browser resources when the durable task is archived', async () => {
   jest.useFakeTimers();
   let archived = false;
-  const records = { record: async () => ({ taskState: 'ready', archivedAt: archived ? 'now' : null }) };
+  const records = {
+    record: async () => ({ taskState: 'ready', archivedAt: archived ? 'now' : null }),
+    onFinishing: () => () => undefined,
+  };
   const persistence = { read: async () => null, save: async () => true, flush: async () => undefined };
   const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence, records as unknown as import('../tasks/tasks.service.js').TasksService);
   try {
@@ -206,4 +209,43 @@ it('closes retained browser resources when the durable task is archived', async 
     expect(service.active(1)).toBeNull();
     expect(task.alive).toBe(false);
   } finally { await service.onModuleDestroy(); jest.useRealTimers(); }
+});
+
+it('awaits browser retirement when finish races an in-flight preparation', async () => {
+  let finish: ((id: number) => Promise<void>) | undefined;
+  let taskState = 'ready';
+  const entered = Promise.withResolvers<void>();
+  const restore = Promise.withResolvers<null>();
+  const records = {
+    record: async () => ({ taskState, archivedAt: null }),
+    onFinishing: (listener: typeof finish) => {
+      finish = listener;
+      return () => { finish = undefined; };
+    },
+  };
+  const persistence = {
+    read: () => { entered.resolve(); return restore.promise; },
+    save: async () => true,
+    flush: async () => undefined,
+  };
+  const service = new RuntimeBrowserService({} as RuntimeBrowserPool, persistence as unknown as RuntimeBrowserPersistence, records as unknown as import('../tasks/tasks.service.js').TasksService);
+  try {
+    const preparing = service.prepare(1, 'identity');
+    await entered.promise;
+    taskState = 'finishing';
+    const closing = finish!(1);
+    restore.resolve(null);
+    const browser = await preparing;
+    await closing;
+    expect(browser.alive).toBe(false);
+    expect(service.active(1)).toBeNull();
+    await expect(service.connect(1, 'client', 'identity')).rejects.toThrow('Task is not active');
+
+    taskState = 'ready';
+    expect(await service.prepare(1, 'identity')).not.toBe(browser);
+  } finally {
+    restore.resolve(null);
+    await service.onModuleDestroy();
+  }
+  expect(finish).toBeUndefined();
 });

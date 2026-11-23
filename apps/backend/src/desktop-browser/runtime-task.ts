@@ -239,6 +239,9 @@ export class RuntimeBrowserTask {
   get alive(): boolean {
     return !this.disposed;
   }
+  get lifetimeSignal(): AbortSignal {
+    return this.controller.signal;
+  }
   private expirePresentations(): void {
     for (const [tabId, view] of this.presentations) if (view.visible && Date.now() - view.seen >= 15000) {
       view.visible = false; view.interactive = false;
@@ -379,6 +382,7 @@ export class RuntimeBrowserTask {
     return (this.context ??= (async () => {
       if (this.disposed || !this.alive) throw new Error('Browser task closed');
       const proxy = await this.network.start();
+      this.controller.signal.throwIfAborted();
       const context = await this.pool.acquire(this.profileIdentity, {
         viewport: this.viewport,
         // Playwright maps an explicit empty grant list to Chromium's reject-all
@@ -388,6 +392,10 @@ export class RuntimeBrowserTask {
         proxy: { server: proxy, bypass: '<-loopback>' },
         serviceWorkers: 'allow',
       });
+      if (this.disposed) {
+        await context.close();
+        throw new Error('Browser task closed');
+      }
       this.ownedContext = context;
       await this.webAuthn.start(context);
       context.once('close', () => {
@@ -1032,18 +1040,19 @@ export class RuntimeBrowserTask {
     this.disposed = true;
     this.controller.abort();
     this.listeners.clear();
-    await this.webAuthn.destroy();
     this.presentations.clear();
     this.displayStarting.clear();
     for (const lane of this.inputLanes.values()) lane.destroy();
     this.inputLanes.clear();
-    await Promise.allSettled(
-      [...this.tabs.values()].map((page) => page.destroy()),
-    );
-    this.tabs.clear();
-    await this.context
-      ?.then((context) => context.close())
-      .catch(() => undefined);
+    // Closing the persistent context stops Chromium even when page or
+    // extension cleanup is waiting for a reply from its browser process.
+    const tabs = [...this.tabs.values()].map((page) => page.destroy());
+    const auth = this.webAuthn.destroy();
+    const context = this.ownedContext
+      ? this.ownedContext.close()
+      : this.context?.then((pending) => pending.close());
     this.network.close();
+    await Promise.allSettled([...tabs, auth, context]);
+    this.tabs.clear();
   }
 }

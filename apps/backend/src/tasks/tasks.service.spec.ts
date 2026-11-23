@@ -982,7 +982,21 @@ describe('Task lifecycle with real Git and migrations', () => {
 
   it('reuses a clean environment without transferring archived conversations to its next task', async () => {
     const one = await create('first');
-    const finished = await service.finish(one.id);
+    const cleanupStarted = Promise.withResolvers<number>();
+    const cleaned = Promise.withResolvers<void>();
+    const unsubscribe = service.onFinishing(async taskId => {
+      cleanupStarted.resolve(taskId);
+      await cleaned.promise;
+    });
+    const closing = service.finish(one.id);
+    try {
+      expect(await cleanupStarted.promise).toBe(one.id);
+      expect(await service.record(one.id)).toMatchObject({ taskState: 'finishing', linkStatus: 'linked' });
+    } finally {
+      unsubscribe();
+      cleaned.resolve();
+    }
+    const finished = await closing;
     expect(finished).toMatchObject({
       linkStatus: 'unlinked',
       finalCommit: one.startingCommit,

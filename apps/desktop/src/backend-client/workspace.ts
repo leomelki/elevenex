@@ -301,6 +301,7 @@ type WorkspaceChannel = Extract<keyof InvokeContracts, `workspace:${string}`>;
 export function registerWorkspaceIpc(
   client: BackendClient,
   trusted: TrustedSender,
+  taskFinished?: (windowId: number, scopeId: string, taskId: number) => void,
 ): () => void {
   const stops: (() => void)[] = [];
   function register<C extends WorkspaceChannel>(
@@ -792,13 +793,18 @@ export function registerWorkspaceIpc(
   });
   register('workspace:finish-task', (window, scope, input) => {
     const raw = object(input);
+    const taskId = id(raw['taskId']);
     return write(
       window,
       scope,
-      `${base}/tasks/${id(raw['taskId'])}/finish`,
+      `${base}/tasks/${taskId}/finish`,
       { confirmStop: boolean(raw['confirmStop']) },
       parseWorkspaceTask,
-    );
+    ).then(result => {
+      if (result.ok && result.value.id === taskId && result.value.state === 'finished')
+        taskFinished?.(window, scope, taskId);
+      return result;
+    });
   });
   // Recovery is an optional third argument; keep existing scope + numeric ID calls valid.
   stops.push(handleForWindow('workspace:retry-task', trusted, (window, ...args) => {

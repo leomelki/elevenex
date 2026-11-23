@@ -253,7 +253,8 @@ test('workspace IPC validates resources, page bounds, scopes and request bodies 
   vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipcExports : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
   const client = { execute: (...args) => { calls.push(args); return Promise.resolve({ ok: true, value: {} }); }, cancel: (...args) => calls.push(args) };
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
-  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
+  const finished = [];
+  const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender, (...args) => finished.push(args));
   const scope = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   for (const [, channel, args] of require('./workspace-contract.cjs').calls) {
     const handler = handlers.get(channel); assert.ok(handler, channel);
@@ -269,6 +270,12 @@ test('workspace IPC validates resources, page bounds, scopes and request bodies 
   const count = calls.length;
   for (const [channel, input] of [['workspace:projects', { limit: 101 }], ['workspace:tasks', { projectId: -1 }], ['workspace:sessions', null], ['workspace:create-project', { name: 'x', path: '/x', additionalPaths: Array(20).fill('/x') }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/other', initialize: true }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: 'yes' }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: true, clone: 'https://example.com/x.git' }] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: ['../outside'], includedSecrets: [] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: Array(1001).fill('file'), includedSecrets: [] }], ['workspace:git-action', { taskId: 1, type: 'commit', message: '', selection: { includeUnstaged: true, excluded: [], includedSecrets: [] }, revision: 'invalid' }], ['workspace:git-action', { taskId: 1, type: 'arbitrary-command' }], ['workspace:finish-task', { taskId: 1, confirmStop: 'yes' }]]) assert.throws(() => handlers.get(channel)(event, scope, input));
   assert.equal(calls.length, count, 'invalid input never reaches the selected backend');
+  const finish = handlers.get('workspace:finish-task');
+  client.execute = async () => ({ ok: true, value: { id: 1, state: 'finished' } });
+  await finish(event, scope, { taskId: 1, confirmStop: true });
+  client.execute = async () => ({ ok: true, value: { id: 2, state: 'finished' } });
+  await finish(event, scope, { taskId: 1, confirmStop: true });
+  assert.deepEqual(finished, [[42, scope, 1]]);
   client.execute = async () => ({ ok: false, error: { code: 'http', status: 400, message: 'private backend detail' } });
   const rejectedProject = await handlers.get('workspace:create-project')(event, scope, { name: 'Project', path: '/repo' });
   assert.equal(rejectedProject.ok, false);

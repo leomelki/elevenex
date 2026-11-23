@@ -131,6 +131,14 @@ describe('private persistent browser channel', () => {
     await once(ws, 'close');
     expect(service.active(1)?.state().tabs).toHaveLength(2);
   });
+  it('closes an idle stream as soon as the task browser is destroyed', async () => {
+    const ws = open();
+    await once(ws, 'open');
+    const closed = once(ws, 'close');
+    await service.active(1)!.destroy();
+    await closed;
+    expect(() => service.viewer(1, token)).toThrow('Browser viewer lease expired');
+  });
   it('rejects TCP, browser origins and invalid tokens before upgrade', async () => {
     const address = tcp.address();
     if (!address || typeof address === 'string')

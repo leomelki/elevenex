@@ -44,7 +44,9 @@ Human key/text/IME/clipboard/mouse/scroll input is bounded, ordered and gated by
 current driver and visibility. Disconnect removes display/input authority while preserving live task pages,
 network access and agent ownership. No queued automation resumes. Viewer TTL is
 thirty seconds; tasks with live tabs remain alive independently until explicit task or
-backend shutdown. Live tasks are never silently evicted for capacity. Cookies, localStorage,
+backend shutdown. Task finish closes the persistent Chromium context and stream
+before the checkout can be released. The runtime also reconciles retained browsers
+against durable task state. Live tasks are never silently evicted for capacity. Cookies, localStorage,
 IndexedDB, service workers and cache storage remain in task-incarnation profiles
 under `task-browser-profiles/` in application data, including across backend
 restarts. Profiles never share the user’s ordinary browser directory. Safe metadata contains

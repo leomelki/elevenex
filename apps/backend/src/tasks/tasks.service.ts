@@ -86,6 +86,7 @@ export class TasksService
   implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(TasksService.name);
+  private readonly finishingListeners = new Set<(taskId: number) => Promise<void>>();
   private readonly releasePreviews = new Map<
     number,
     ReturnType<TasksService['checkReleasePreview']>
@@ -131,6 +132,11 @@ export class TasksService
     this.hooks.off('status-changed', this.finishOnIdle);
     this.finishRequests.clear();
     this.idleFinishRequests.clear();
+  }
+
+  onFinishing(listener: (taskId: number) => Promise<void>): () => void {
+    this.finishingListeners.add(listener);
+    return () => this.finishingListeners.delete(listener);
   }
 
   private sessionIsIdle(sessionId: number): boolean {
@@ -1356,6 +1362,10 @@ export class TasksService
       this.idleFinishRequests.delete(id);
       this.navigationEvents?.invalidate();
       try {
+        if (this.finishingListeners.size)
+          await Promise.all(
+            [...this.finishingListeners].map((listener) => listener(id)),
+          );
         const sessions = await this.db
           .select()
           .from(schema.sessions)
