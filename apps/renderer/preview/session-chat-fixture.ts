@@ -555,13 +555,16 @@ export class SessionChatFixture {
     if (this.agentReply === 'error') return { ok: false, error: { code: 'transport', message: 'The agent transcript could not be read. Try again.' } };
     const work = this.session(input.sessionId).state.work;
     const active = work?.running.find(item => item.agentId === input.agentId);
+    const assignment = 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.';
     return { ok: true, value: {
       agentId: input.agentId, label: active?.label ?? 'Review concurrency boundary',
       ...(active?.title ? { title: active.title, ...(active.agentName ? { agentName: active.agentName } : {}), ...(active.role ? { role: active.role } : {}) } : {}),
-      status: active?.status ?? 'completed', prompt: 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.',
+      status: active?.status ?? 'completed', prompt: assignment,
       model: active?.model ?? 'worker-model', context: active?.context ?? { tokens: 28000, limit: 128000, percentage: 22 },
-      items: this.agentReply !== 'ready' ? [] : input.before ? [item('earlier-assignment', 'user', 'Inspect the payment retry handler.')] : [
-        item('agent-assignment', 'user', 'Check the retry claim boundary. Reproduce simultaneous requests and report any unsafe paths.'),
+      items: this.agentReply !== 'ready' ? [] : input.before ? [
+        item('agent-assignment', 'user', assignment),
+        item('earlier-assignment', 'user', 'Inspect the payment retry handler.'),
+      ] : [
         item('agent-thinking', 'thinking', 'Two requests can race between the claim insert and the payment call. The unique index should make the second insert fail and fall back to reading the existing claim.'),
         item('agent-step', 'assistant', 'The claim is created before the payment call. I am checking the unique constraint and delayed retry path.'),
         item('agent-read', 'tool_use', '', { toolId: 'agent-read', toolName: 'Read', toolKind: 'read', input: '{"file_path":"src/payments/retry-claims.ts"}' }),

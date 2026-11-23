@@ -71,6 +71,7 @@ export interface PiRuntimeState {
   }[];
   queuePaused: boolean;
   liveItems: ClaudeTranscriptItem[];
+  messageIds: Map<string, number>;
   // Stable id for the assistant message currently being streamed, shared by
   // every `message_update` event and the terminating `message_end` event so
   // their transcript items reconcile to a single entry instead of the

@@ -134,6 +134,34 @@ describe('incremental transcript projection', () => {
     expect(next!.steps[1]!.status).toBe('done');
   });
 
+  it('updates a call in its original turn when its result follows a steered prompt', () => {
+    const projection = new ChatTranscriptProjection();
+    const call = tool('patch');
+    const items = [item('prompt', 'user'), call, item('steer', 'user'), item('reply', 'assistant', 'Checking')];
+    const running = { ...state, activePromptId: 'steer' };
+    const before = projection.project(items, running, fresh);
+    const receipt = item('receipt', 'tool_result', 'Finished', { toolId: call.id });
+    const after = projection.project([...items, receipt], running, fresh);
+    expect(before[0]?.steps[0]?.status).toBe('unknown');
+    expect(after[0]?.steps).toMatchObject([{ id: 'patch', status: 'done', output: expect.stringContaining('Finished') }]);
+    expect(after[1]).toMatchObject({ answerId: 'reply', answer: 'Checking', steps: [], streaming: true });
+  });
+
+  it('keeps commentary visible when a turn stops before posting its final reply', () => {
+    const prompt = item('prompt', 'user');
+    const progress = item('progress', 'assistant', 'The patch is ready.', { assistantPhase: 'commentary' });
+    const [turn] = chatExchanges([prompt, tool('patch'), progress], { ...state, phase: 'idle' }, fresh);
+    expect(turn).toMatchObject({ answer: progress.text, answerId: progress.id, steps: [{ id: 'patch' }] });
+  });
+
+  it('keeps the visible reply identity when an empty streamed message is reserved', () => {
+    const prompt = item('prompt', 'user');
+    const partial = item('partial', 'assistant');
+    const reply = item('reply', 'assistant', 'The patch is ready.');
+    const [turn] = chatExchanges([prompt, partial, reply], state, fresh);
+    expect(turn).toMatchObject({ answer: reply.text, answerId: reply.id, steps: [] });
+  });
+
   it('keeps the saved reply in order with work before and after it and retains the exiting steps', () => {
     const projection = new ChatTranscriptProjection();
     const revision = 'a'.repeat(64);

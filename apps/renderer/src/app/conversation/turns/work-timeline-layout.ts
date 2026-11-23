@@ -36,6 +36,7 @@ export function workTimelineRows(
   live = false,
   maxVisible = 5,
   expanded = true,
+  settledVisible?: ReadonlySet<string>,
 ): readonly WorkTimelineRow[] {
   const rows: WorkTimelineRow[] = [];
   const limit = Number.isFinite(maxVisible)
@@ -55,7 +56,8 @@ export function workTimelineRows(
       : items.length > limit
         ? items.slice(0, -limit)
         : [];
-    const folded = candidates.filter((step) => !isUnfinishedWork(step));
+    const folded = candidates.filter(step =>
+      !isUnfinishedWork(step) && !(live && expanded && settledVisible?.has(step.id)));
     const facts = sectionSummary(folded);
     const section: WorkSection = {
       id: items[0]!.id,

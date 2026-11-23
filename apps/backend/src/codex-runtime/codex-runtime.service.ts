@@ -1,3 +1,4 @@
+import { mergeTranscriptRows } from '../agent-runtime/transcript-order.js';
 import { codexImageResult, codexImageViewInput, codexImageViewResult } from './codex-image-result.js';
 import { codexUserMessage } from './codex-user-message.js';
 import {
@@ -90,7 +91,6 @@ import {
   executionStatus,
   isAgentActive,
   record,
-  readableText,
   subagentThreadMetadata,
   textValue,
 } from './codex-subagents.js';
@@ -403,7 +403,7 @@ export class CodexRuntimeService
       if (item.toolUseId) callsById.set(item.toolUseId, item);
       if (item.sourceMessageId) callsById.set(item.sourceMessageId, item);
     }
-    let addedCalls = false;
+    const addedCalls: ClaudeTranscriptItem[] = [];
     for (const row of denials) {
       const interaction: ClaudeToolInteractionSummary = {
         kind: 'permission',
@@ -429,7 +429,7 @@ export class CodexRuntimeService
           continue;
         // Some approvals (e.g. extra permissions) have no tool item in the
         // provider's transcript. Keep their human decision in history too.
-        history.push({
+        addedCalls.push({
           id: `${row.toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId: row.toolUseId,
@@ -438,12 +438,20 @@ export class CodexRuntimeService
           interaction,
           timestamp: row.createdAt,
         });
-        addedCalls = true;
       }
     }
-    return addedCalls
-      ? history.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-      : history;
+    if (!addedCalls.length) return history;
+    // Insert receipts for missing calls while retaining the native order of
+    // the rollout, which can record a tool's completion after later prose.
+    addedCalls.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const merged: ClaudeTranscriptItem[] = [];
+    let next = 0;
+    for (const item of history) {
+      while (next < addedCalls.length && addedCalls[next].timestamp < item.timestamp)
+        merged.push(addedCalls[next++]);
+      merged.push(item);
+    }
+    return merged.concat(addedCalls.slice(next));
   }
 
   async getRuntimeState(sessionId: number): Promise<CodexRuntimeStatePayload> {
@@ -775,30 +783,29 @@ export class CodexRuntimeService
               eq(claudeToolInteractions.decision, 'denied'),
             ),
           );
-        const history = this.attachToolDenials(
+        const durable = this.attachToolDenials(
           [...(snapshot?.history ?? [])],
           denials,
           agentId,
         );
         const live = tracker.liveItems.get(agentId);
-        for (const item of live?.values() ?? []) {
-          const existing = history.findIndex(
-            (entry) =>
-              entry.id === item.id ||
-              (entry.kind === item.kind &&
-                entry.toolUseId &&
-                entry.toolUseId === item.toolUseId) ||
-              (entry.kind === item.kind &&
-                (item.kind === 'assistant' || item.kind === 'thinking') &&
-                entry.content === item.content &&
-                Math.abs(
-                  Date.parse(entry.timestamp) - Date.parse(item.timestamp),
-                ) < 60_000),
-          );
-          if (existing >= 0)
-            history[existing] = { ...history[existing], ...item };
-          else history.push(item);
+        const saved = new Map(durable.map(item => [item.id, item]));
+        const toolAliases = new Map<string, ClaudeTranscriptItem | null>();
+        for (const item of durable) {
+          if (!item.toolUseId || live?.has(item.id)) continue;
+          const key = item.kind + ':' + item.toolUseId;
+          toolAliases.set(key, toolAliases.has(key) ? null : item);
         }
+        const overlay = [...(live?.values() ?? [])].map(item => {
+          const key = item.toolUseId ? item.kind + ':' + item.toolUseId : undefined;
+          const persisted = saved.get(item.id) ?? (key ? toolAliases.get(key) : undefined);
+          if (persisted && key) toolAliases.delete(key);
+          // The rollout can contain a final receipt before its notification
+          // reaches the tracker. A partial prefix cannot replace that text.
+          return persisted?.content && persisted.content.startsWith(item.content ?? '')
+            ? { ...item, ...persisted } : { ...persisted, ...item, id: persisted?.id ?? item.id };
+        });
+        const history = [...mergeTranscriptRows(durable, overlay).rows];
         if (!history.some((item) => item.kind === 'user') && agent.prompt)
           history.unshift({
             id: `${agentId}:assignment`,
@@ -1195,27 +1202,16 @@ export class CodexRuntimeService
       const storeItem = (item: ClaudeTranscriptItem) =>
         tracker.storeItem(threadId, item);
       if (['item/started', 'item/completed'].includes(notification.method)) {
-        if (
-          raw.type === 'userMessage' &&
-          !agent.prompt &&
-          Array.isArray(raw.content)
-        ) {
-          const prompt = readableText(
-            raw.content
-              .map((part: unknown) => {
-                const input = record(part);
-                return input.type === 'text'
-                  ? (textValue(input.text) ?? '')
-                  : '';
-              })
-              .join('\n'),
-          );
-          if (prompt)
+        const message = codexUserMessage(raw);
+        if (message) {
+          storeItem({ id: message.id, kind: 'user', content: message.text, timestamp });
+          if (!agent.prompt)
             this.publishSubagents(
               sessionId,
-              [tracker.upsert(threadId, { prompt }, timestamp)],
+              [tracker.upsert(threadId, { prompt: message.text }, timestamp)],
               false,
             );
+          return;
         }
         const translated = this.translateAppServerItem(
           raw,
@@ -1296,19 +1292,6 @@ export class CodexRuntimeService
             ],
             false,
           );
-      } else if (
-        notification.method === 'item/commandExecution/outputDelta' &&
-        typeof params.itemId === 'string' &&
-        typeof params.delta === 'string'
-      ) {
-        const id = `${params.itemId}:tool_result`;
-        storeItem({
-          id,
-          kind: 'tool_result',
-          toolUseId: params.itemId,
-          content: (items.get(id)?.content ?? '') + params.delta,
-          timestamp,
-        });
       }
       return;
     }
@@ -2575,7 +2558,7 @@ export class CodexRuntimeService
       this.handleItemEvent(
         sessionId,
         event.item,
-        event.type === 'item.updated',
+        false,
       );
       return;
     }
@@ -2652,7 +2635,7 @@ export class CodexRuntimeService
       );
       return;
     }
-    if (item.type === 'agent_message' && item.text.trim()) {
+    if (item.type === 'agent_message') {
       this.upsertLiveItem(
         sessionId,
         {
@@ -2669,7 +2652,7 @@ export class CodexRuntimeService
       );
       return;
     }
-    if (item.type === 'reasoning' && item.text.trim()) {
+    if (item.type === 'reasoning') {
       this.upsertLiveItem(
         sessionId,
         {
@@ -2697,15 +2680,8 @@ export class CodexRuntimeService
     const toolItem = this.toToolUseItem(item, timestamp);
     if (toolItem) {
       this.upsertLiveItem(sessionId, toolItem, 'tool_use', terminal);
-      const result = this.toToolResultItem(item, timestamp);
-      if (
-        result &&
-        (terminal ||
-          (item.type === 'command_execution' &&
-            Boolean(item.aggregated_output)))
-      ) {
-        this.pushItem(sessionId, result, 'tool_result');
-      }
+      const result = terminal ? this.toToolResultItem(item, timestamp) : null;
+      if (result) this.pushItem(sessionId, result, 'tool_result');
     }
   }
 
@@ -3255,10 +3231,12 @@ export class CodexRuntimeService
       | 'tool_result' = 'message_start',
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.liveItems = [
-      ...state.liveItems.filter((existing) => existing.id !== item.id),
-      item,
-    ];
+    const position = state.liveItems.findIndex(existing => existing.id === item.id);
+    const previous = state.liveItems[position];
+    if (previous) {
+      item = { ...item, timestamp: previous.timestamp };
+      state.liveItems = state.liveItems.with(position, item);
+    } else state.liveItems = [...state.liveItems, item];
     this.emitEvent({
       type: eventType,
       payload: { sessionId, item },
@@ -3272,14 +3250,15 @@ export class CodexRuntimeService
     terminal: boolean,
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    const existing = state.liveItems.find((live) => live.id === item.id);
+    const position = state.liveItems.findIndex(live => live.id === item.id);
+    const existing = state.liveItems[position];
     if (!existing) {
       this.pushItem(sessionId, item, eventType);
       return;
     }
-    state.liveItems = state.liveItems.map((live) =>
-      live.id === item.id ? { ...live, ...item } : live,
-    );
+    item = { ...existing, ...item, timestamp: existing.timestamp, receivedAt: existing.receivedAt,
+      ...(!item.content && existing.content ? { content: existing.content } : {}) };
+    state.liveItems = state.liveItems.with(position, item);
     if (item.agentMessage) {
       // Routing and payload may arrive together only on the completed item.
       this.emitEvent({ type: 'message_start', payload: { sessionId, item } });
@@ -3287,7 +3266,7 @@ export class CodexRuntimeService
     }
     if (
       eventType === 'tool_use' &&
-      (item.toolKind === 'web_search' ||
+      (item.toolKind === 'web_search' || item.toolKind === 'file_changes' ||
         collaborationTool(item.providerToolName))
     ) {
       // Search queries/actions can arrive only with the completed item.
@@ -3831,6 +3810,7 @@ export class CodexRuntimeService
     const messagePhases = new Map<string, NonNullable<CodexThreadItem['assistantPhase']>>();
     const reasoningText = new Map<string, string>();
     const planText = new Map<string, string>();
+    const completedItems = new Set<string>();
     let contextModel =
       state.selectedModel ?? this.codexDefaultModel ?? 'unknown';
     let lastUsage: Usage = {
@@ -3974,6 +3954,7 @@ export class CodexRuntimeService
         }
         case 'item/started': {
           if (!matchesThread(params)) return;
+          if (completedItems.has(params?.item?.id)) return;
           if (state.latestApiRetry) { state.latestApiRetry = null; this.emitRunState(sessionId); }
           const message = codexUserMessage(params?.item);
           if (message) { push({ type: 'user.message', message }); return; }
@@ -3989,6 +3970,8 @@ export class CodexRuntimeService
         }
         case 'item/completed': {
           if (!matchesThread(params)) return;
+          const id = params?.item?.id;
+          if (typeof id === 'string') completedItems.add(id);
           if (params?.item?.type === 'contextCompaction') {
             state.activityNotifications = [...(state.activityNotifications ?? []).filter(note => note.key !== 'compaction'), {
               key: 'compaction', text: 'Context compacted', priority: 'low' as const, timestamp: new Date().toISOString(),
@@ -4013,7 +3996,7 @@ export class CodexRuntimeService
           if (!matchesThread(params)) return;
           const id = params?.itemId;
           const delta = params?.delta;
-          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          if (typeof id !== 'string' || typeof delta !== 'string' || completedItems.has(id)) return;
           const next = (messageText.get(id) ?? '') + delta;
           messageText.set(id, next);
           push({
@@ -4031,7 +4014,7 @@ export class CodexRuntimeService
           if (!matchesThread(params)) return;
           const id = params?.itemId;
           const delta = params?.delta;
-          if (typeof id !== 'string' || typeof delta !== 'string') return;
+          if (typeof id !== 'string' || typeof delta !== 'string' || completedItems.has(id)) return;
           const next = (planText.get(id) ?? '') + delta;
           planText.set(id, next);
           push({
@@ -4982,6 +4965,8 @@ export class CodexRuntimeService
           id,
           type: 'file_change',
           changes: Array.isArray(raw.changes) ? raw.changes : [],
+          // The v1 SDK type only supports terminal statuses. The notification
+          // kind controls when to emit a receipt.
           status: status === 'in_progress' ? 'completed' : status,
         };
       case 'imageGeneration':

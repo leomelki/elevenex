@@ -199,6 +199,24 @@ describe("message-delimited work sections", () => {
     expect(group(host, "second")).toBeNull();
   });
 
+  it('updates an in-flight patch in place after commentary closed its section', () => {
+    const patch = tool('patch', { kind: 'edit', status: 'running' });
+    const { host, update } = setup(exchange([patch], { answer: 'Checking the edit.' }));
+    const control = head(host, patch.id);
+    expect(visible(host, patch.id)).toBe(true);
+
+    update(exchange([{ ...patch, status: 'done' }], { answer: 'Checking the edit.' }));
+    expect(visible(host, patch.id)).toBe(true);
+    expect(head(host, patch.id)).toBe(control);
+    expect([...host.querySelectorAll('[data-work-step]')].map(row => row.getAttribute('data-work-step')))
+      .toEqual(['patch', 'message']);
+
+    update(exchange([{ ...patch, status: 'done' }, say('message')], { answer: 'Checks passed.', answerId: 'next' }));
+    expect(visible(host, patch.id)).toBe(false);
+    expect(group(host, patch.id)?.getAttribute('aria-label')).toContain('1 edit');
+    expect(head(host, patch.id)).toBe(control);
+  });
+
   it("does not collapse an active section for an empty streaming message", () => {
     const { host } = setup(
       exchange([

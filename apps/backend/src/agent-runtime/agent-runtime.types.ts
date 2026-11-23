@@ -101,6 +101,7 @@ export interface AgentSubagentHistoryPayload {
   subagent?: import('../claude-runtime/claude-runtime.types.js').ClaudeSubagentState;
   transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
   hasEarlier?: boolean;
+  nativeWindow?: true;
   transcriptError?: string;
   history: AgentTranscriptItem[];
   transcriptAvailable: boolean;
@@ -219,7 +220,7 @@ export interface AgentRuntimeProviderFeatures {
   getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options?: { before?: string },
+    options?: { before?: string; through?: string },
   ): Promise<AgentSubagentHistoryPayload>;
   reloadMcpConfiguration(sessionId: number): Promise<void>;
   getMcpSnapshot(

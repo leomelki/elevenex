@@ -37,6 +37,8 @@ import {
   record,
 } from './desktop-chat-projection.js';
 import { ChatHistoryIndex, chatWindow } from './desktop-chat-window.js';
+import { ChatHistoryHandoff } from './desktop-chat-source.js';
+import { mergeTranscriptRows } from '../agent-runtime/transcript-order.js';
 import { DesktopChatReplay } from './desktop-chat-replay.js';
 import { waitForChatStreamWork } from './desktop-chat-stream.js';
 import { ChatCompletedTurns, endOfChatTurn } from './desktop-chat-turns.js';
@@ -51,16 +53,16 @@ import type {
 } from '@elevenex/shared';
 
 type ChatReadView = `${'window' | 'progressive' | 'summary' | 'recent-summary'}:${'inline' | 'deferred'}`;
-type ProjectionFingerprints = Map<string, { readonly json: string; readonly revision: number }>;
 interface ChatFeed {
   readonly id: string;
   readonly provider: AgentRuntimeProvider;
   readonly stop: () => void;
   readonly waiters: Set<() => void>;
   readonly replays: Map<SessionChatWatch['loadingMode'], DesktopChatReplay>;
-  readonly projections: { readonly inline: ProjectionFingerprints; readonly deferred: ProjectionFingerprints };
+  readonly readReplays: Map<ChatReadView, DesktopChatReplay>;
   readonly changesCache: ChatChangesCache;
   readonly mediaCache: ChatMediaCache;
+  readonly handoff: ChatHistoryHandoff;
   readonly latestBounds: Map<ChatReadView, { readonly revision: string; readonly before: string | null }>;
   historyIndex?: { readonly revision: number; readonly index: ChatHistoryIndex };
   completedTurns?: { readonly revision: number; readonly projector: ChatCompletedTurns };
@@ -85,6 +87,22 @@ function toolDetailsRequested(value: unknown): boolean {
 function validToolReference(reference: SessionChatToolReference): boolean {
   return typeof reference.id === 'string' && !!reference.id && reference.id.length <= 1000 &&
     typeof reference.revision === 'string' && /^[a-f0-9]{64}$/.test(reference.revision);
+}
+
+function runtimeChatItems(raw: Record<string, unknown>): readonly AgentTranscriptItem[] {
+  return Array.isArray(raw.liveItems) ? raw.liveItems as AgentTranscriptItem[] : [];
+}
+
+function liveSource(items: readonly AgentTranscriptItem[]) {
+  return { length: items.length, first: items[0]?.id };
+}
+
+function chatRunning(state: SessionChatState): boolean {
+  return state.phase === 'running' || state.phase === 'waiting';
+}
+
+function chatReadCursor(feed: ChatFeed): string {
+  return `${feed.id}:${feed.revision}:${feed.historyRevision}`;
 }
 
 /** Only selected conversations are observed. Idle feeds expire and never hydrate sidebar sessions. */
@@ -156,6 +174,7 @@ export class DesktopChatService implements OnModuleDestroy {
         if (event.type === 'conversation_rewound') {
           feed.historyRewrite = randomUUID();
           feed.livePrompt = undefined;
+          feed.handoff.clear();
         }
         // Persisted history is read only when its identity/content can change.
         this.invalidate(sessionId, event.type === 'conversation_rewound' || event.type === 'history_snapshot' ||
@@ -265,9 +284,10 @@ export class DesktopChatService implements OnModuleDestroy {
       observers: 0,
       waiters: new Set(),
       replays: new Map(),
-      projections: { inline: new Map(), deferred: new Map() },
+      readReplays: new Map(),
       changesCache: new WeakMap(),
       mediaCache: new WeakMap(),
+      handoff: new ChatHistoryHandoff(),
       latestBounds: new Map(),
       stop: () => {
         releaseProvider();
@@ -397,27 +417,35 @@ export class DesktopChatService implements OnModuleDestroy {
         const historyRevision = feed.historyRevision;
         const current = () => !signal.aborted && this.feeds.get(sessionId) === feed && feed.historyRevision === historyRevision;
         const prior = replay.checkpoint(after, historyRevision);
-        const [raw, saved] = await waitForChatStreamWork(Promise.all([
-          this.runtime(feed, sessionId, started),
-          prior ? undefined : this.history(feed, sessionId),
-        ]), signal);
+        // Read the runtime after history. Sampling live first can put a saved
+        // message ahead of an earlier notification and replay it as a new row.
+        let saved = prior ? undefined : await waitForChatStreamWork(this.history(feed, sessionId), signal);
+        let raw = await waitForChatStreamWork(this.runtime(feed, sessionId, started), signal);
         if (current()) {
-          const state = this.state(session, raw, feed.historyRewrite);
-          const stateJson = JSON.stringify(state);
-          const live = Array.isArray(raw.liveItems) ? raw.liveItems as AgentTranscriptItem[] : [];
-          const source = { length: live.length, first: live[0]?.id };
-          const liveTurn = state.phase === 'running' || state.phase === 'waiting';
-          if (state.activePromptId) feed.livePrompt = state.activePromptId;
+          let live = runtimeChatItems(raw);
           const toolDetails = this.toolDetails(feed);
           const projectedLive: SessionChatItem[] = [];
           const options = {
             loadingMode, changesCache: feed.changesCache, mediaCache: feed.mediaCache,
-            toolDetails, liveTurn, projectedLive,
+            toolDetails, projectedLive,
             promptEditing: feed.provider.info.capabilities.rewindConversation && !!feed.provider.rewindConversation,
           };
           const liveWindow = prior && chatWindow([], live, { ...options, includeLeadingPrompt: false });
-          let checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
+          const checkpoint = replay.describe(historyRevision, liveSource(live), projectedLive, prior);
           const events = prior && liveWindow && replay.updates(prior, checkpoint, projectedLive, liveWindow.before !== null);
+          if (!events && !saved) {
+            saved = await waitForChatStreamWork(this.history(feed, sessionId), signal);
+            raw = await waitForChatStreamWork(this.runtime(feed, sessionId, started), signal);
+            live = runtimeChatItems(raw);
+            if (!current()) {
+              await delay(32, undefined, { signal });
+              continue;
+            }
+          }
+          const state = this.state(session, raw, feed.historyRewrite);
+          const stateJson = JSON.stringify(state);
+          if (state.activePromptId) feed.livePrompt = state.activePromptId;
+          feed.handoff.observe(live);
           if (events) {
             if (events.length || previousState !== stateJson) {
               const cursor = replay.remember(checkpoint);
@@ -429,19 +457,15 @@ export class DesktopChatService implements OnModuleDestroy {
               after = cursor;
             }
           } else {
-            const history = saved ?? await waitForChatStreamWork(this.history(feed, sessionId), signal);
-            if (!current()) {
-              await delay(32, undefined, { signal });
-              continue;
-            }
             projectedLive.length = 0;
-            const window = chatWindow(history, live, {
+            const window = chatWindow(saved ?? [], live, {
               ...options, historyIndex: this.historyWindowIndex(feed),
               completedTurns: loadingMode === 'progressive' ? this.completedTurns(feed) : undefined,
-              summarizeRecent: true, keepTurnId: state.activePromptId ?? (after ? feed.livePrompt : undefined),
+              summarizeRecent: true, liveTurn: chatRunning(state),
+              settling: feed.handoff.carry(saved ?? []),
+              keepTurnId: state.activePromptId ?? (after ? feed.livePrompt : undefined),
             })!;
-            checkpoint = replay.describe(historyRevision, source, projectedLive, prior);
-            const cursor = replay.remember(checkpoint);
+            const cursor = replay.remember(replay.describe(historyRevision, liveSource(live), projectedLive, prior, window.items));
             yield { after: after ?? null, page: {
               taskId, sessionId, cursor, reset: true, ...window, events: [], state,
             } };
@@ -489,7 +513,7 @@ export class DesktopChatService implements OnModuleDestroy {
       throw new BadRequestException('Invalid conversation cursor.');
     const paging = !!(before || following);
     const archived = () => session.status === 'archived' || !!session.workspaceArchivedAt;
-    const mode = loadingMode ?? 'progressive';
+    const mode: SessionChatWatch['loadingMode'] = loadingMode ?? 'progressive';
     const deferDetails = toolDetailsRequested(deferToolDetails);
     const evidence = deferDetails ? 'deferred' : 'inline';
     const view: ChatReadView = `${summarizeRecent ? 'recent-summary' : summarizeCompleted ? 'summary' : mode}:${evidence}`;
@@ -523,14 +547,13 @@ export class DesktopChatService implements OnModuleDestroy {
     };
     if (signal.aborted) return;
     if (archived()) return readArchived();
-    const feed = this.feed(
+    const waitingFeed = this.feed(
       sessionId, session.activeAgentProvider, this.sessions.hasStartedAgentRuntime(session),
     );
-    const cursor = () => `${feed.id}:${feed.revision}:${feed.historyRevision}`;
-    if (feed.waiters.size >= 32)
+    if (waitingFeed.waiters.size >= 32)
       throw new BadRequestException('Too many conversation observers.');
-    if (after === cursor() && !paging)
-      await this.waitForChange(sessionId, feed, feed.revision, signal, 8000);
+    if (!paging && after === chatReadCursor(waitingFeed))
+      await this.waitForChange(sessionId, waitingFeed, waitingFeed.revision, signal, 8000);
     if (signal.aborted) return;
     // Long polls can outlive completion or another window viewing the reply.
     // Read the marker before hydrating content so its version cannot get ahead
@@ -538,83 +561,79 @@ export class DesktopChatService implements OnModuleDestroy {
     session = await this.target(taskId, sessionId);
     if (signal.aborted) return;
     if (archived()) return readArchived();
-    // Coalesce bursts without holding input or waiting for a full turn.
-    const revision = cursor();
-    const version = feed.revision;
-    const prior = after?.split(':');
-    const reset =
-      !paging &&
-      (!prior ||
-        prior[0] !== feed.id ||
-        Number(prior[1]) > version ||
-        Number(prior[2]) !== feed.historyRevision);
-    const readsHistory = reset || paging;
-    const historyIndex = readsHistory ? this.historyWindowIndex(feed) : undefined;
-    const toolDetails = deferDetails ? this.toolDetails(feed) : undefined;
-    const historyPromise = readsHistory ? this.history(feed, sessionId) : Promise.resolve([]);
-    const runtime = this.runtime(feed, sessionId, this.sessions.hasStartedAgentRuntime(session));
-    const [raw, history] = await Promise.all([runtime, historyPromise]);
-    if (signal.aborted) return;
-    feed.touched = Date.now();
-    const state = this.state(session, raw, feed.historyRewrite);
-    const bounds = feed.latestBounds.get(view);
-    if (!paging && after === revision && bounds?.revision === revision) {
-      // Runtime state can change independently of item events (for example,
-      // configuration). The matching cursor already accounts for transcript rows.
-      return { taskId, sessionId, cursor: revision, reset: false,
-        items: [], events: [], before: bounds.before, next: null, state };
+    const started = this.sessions.hasStartedAgentRuntime(session);
+    const feed = this.feed(sessionId, session.activeAgentProvider, started);
+    let replay = feed.readReplays.get(view);
+    if (!replay) {
+      replay = new DesktopChatReplay();
+      feed.readReplays.set(view, replay);
     }
-    const live = Array.isArray(raw.liveItems)
-      ? (raw.liveItems as AgentTranscriptItem[])
-      : [];
-    const liveTurn = state.phase === 'running' || state.phase === 'waiting';
-    // Keep the streamed timeline mounted through the saved-history handoff.
-    if (state.activePromptId) feed.livePrompt = state.activePromptId;
-    const fingerprints = paging ? undefined : new Map<string, string>();
-    const window = chatWindow(history, live, {
-      before, following, loadingMode, historyIndex, fingerprints, includeLeadingPrompt: readsHistory,
-      changesCache: feed.changesCache, mediaCache: feed.mediaCache,
-      completedTurns: summarizeCompleted && readsHistory ? this.completedTurns(feed) : undefined,
-      summarizeRecent: summarizeRecent === '1',
-      toolDetails,
-      liveTurn,
-      promptEditing: feed.provider.info.capabilities.rewindConversation && !!feed.provider.rewindConversation,
-      keepTurnId: state.activePromptId ?? (paging || prior?.[0] === feed.id ? feed.livePrompt : undefined),
-    });
-    if (!window)
-      throw new BadRequestException(
-        'History cursor expired. Return to latest messages.',
-      );
-    const { items } = window;
-    const events: { type: 'item'; item: (typeof items)[number] }[] = [];
-    const projections = feed.projections[evidence];
-    if (fingerprints) {
-      const priorVersion = Number(prior?.[1]);
-      for (const item of items) {
-        const json = fingerprints.get(item.id)!;
-        const old = projections.get(item.id);
-        const itemVersion = old?.json === json ? old.revision : version;
-        if (!old || old.revision <= version) projections.set(item.id, { json, revision: itemVersion });
-        if (!reset && itemVersion > priorVersion) events.push({ type: 'item', item });
+    while (!signal.aborted) {
+      // Keep a pre-read cursor so a newer event can wake the next poll even
+      // if it arrives during these asynchronous reads.
+      const revision = chatReadCursor(feed), historyRevision = feed.historyRevision;
+      const current = () => !signal.aborted && feed.historyRevision === historyRevision && this.feeds.get(sessionId) === feed;
+      const prior = paging ? undefined : replay.checkpoint(after, historyRevision);
+      let history = prior ? undefined : await this.history(feed, sessionId);
+      if (!current()) {
+        if (this.feeds.get(sessionId) !== feed) return;
+        continue;
       }
-      if (revision === cursor()) feed.latestBounds.set(view, { revision, before: window.before });
+      let raw = await this.runtime(feed, sessionId, started);
+      if (!current()) {
+        if (this.feeds.get(sessionId) !== feed) return;
+        continue;
+      }
+      const bounds = feed.latestBounds.get(view);
+      if (prior && after === revision && bounds?.revision === revision) {
+        return { taskId, sessionId, cursor: revision, reset: false, items: [], events: [],
+          before: bounds.before, next: null, state: this.state(session, raw, feed.historyRewrite) };
+      }
+      let live = runtimeChatItems(raw);
+      const projectedLive: SessionChatItem[] = [];
+      const options = {
+        loadingMode: mode, projectedLive, changesCache: feed.changesCache, mediaCache: feed.mediaCache,
+        toolDetails: deferDetails ? this.toolDetails(feed) : undefined,
+        promptEditing: feed.provider.info.capabilities.rewindConversation && !!feed.provider.rewindConversation,
+      };
+      if (prior) {
+        const liveWindow = chatWindow([], live, { ...options, includeLeadingPrompt: false })!;
+        const checkpoint = replay.describe(historyRevision, liveSource(live), projectedLive, prior);
+        const events = replay.updates(prior, checkpoint, projectedLive, liveWindow.before !== null, false);
+        if (events) {
+          const state = this.state(session, raw, feed.historyRewrite);
+          if (state.activePromptId) feed.livePrompt = state.activePromptId;
+          feed.handoff.observe(live);
+          replay.remember(checkpoint, revision);
+          if (revision === chatReadCursor(feed)) feed.latestBounds.set(view, { revision, before: liveWindow.before });
+          return { taskId, sessionId, cursor: revision, reset: false, items: [], events, before: liveWindow.before, next: null, state };
+        }
+        history = await this.history(feed, sessionId);
+        raw = await this.runtime(feed, sessionId, started);
+        if (!current()) {
+          if (this.feeds.get(sessionId) !== feed) return;
+          continue;
+        }
+        live = runtimeChatItems(raw);
+        projectedLive.length = 0;
+      }
+      const state = this.state(session, raw, feed.historyRewrite);
+      if (state.activePromptId) feed.livePrompt = state.activePromptId;
+      feed.handoff.observe(live);
+      const window = chatWindow(history ?? [], live, {
+        ...options, before, following, historyIndex: this.historyWindowIndex(feed),
+        completedTurns: summarizeCompleted ? this.completedTurns(feed) : undefined,
+        summarizeRecent: summarizeRecent === '1', liveTurn: chatRunning(state),
+        settling: feed.handoff.carry(history ?? []),
+        keepTurnId: state.activePromptId ?? (paging || after?.startsWith(feed.id + ':') ? feed.livePrompt : undefined),
+      });
+      if (!window) throw new BadRequestException('History cursor expired. Return to latest messages.');
+      if (!paging) {
+        replay.remember(replay.describe(historyRevision, liveSource(live), projectedLive, prior, window.items), revision);
+        if (revision === chatReadCursor(feed)) feed.latestBounds.set(view, { revision, before: window.before });
+      }
+      return { taskId, sessionId, cursor: revision, reset: !paging, ...window, events: [], state };
     }
-    for (const key of projections.keys()) {
-      if (projections.size <= 320) break;
-      projections.delete(key);
-    }
-    return {
-      taskId,
-      sessionId,
-      cursor: revision,
-      reset,
-      items: readsHistory ? items : [],
-      events,
-      leadingPrompt: readsHistory ? window.leadingPrompt : undefined,
-      before: window.before,
-      next: window.next,
-      state,
-    };
   }
 
   private async savedTurn(feed: ChatFeed, sessionId: number, turnId: string, signal: AbortSignal) {
@@ -688,10 +707,12 @@ export class DesktopChatService implements OnModuleDestroy {
         archived ? Promise.resolve(undefined) : this.runtime(feed, sessionId, false),
       ]);
       if (signal.aborted) return;
-      const live = Array.isArray(runtime?.liveItems) ? runtime.liveItems as AgentTranscriptItem[] : [];
+      const live = runtimeChatItems(runtime ?? {});
       // History and activity keep the latest payload at a repeated row ID.
       // Resolve the same payload after its recent evidence has left the cache.
-      const find = (id: string) => live.findLast(value => value.id === id) ?? history.findLast(value => value.id === id);
+      const find = (id: string) =>
+        live.findLast(value => value.id === id) ?? history.findLast(value => value.id === id) ??
+        (!archived ? feed.handoff.item(id) : undefined);
       const raw = find(source.item.id);
       const receipt = source.result ? find(source.result.id) : undefined;
       if (source.result && (raw?.kind !== 'tool_use' || receipt?.kind !== 'tool_result' || receipt.toolUseId !== toolKey(raw)))
@@ -791,6 +812,7 @@ export class DesktopChatService implements OnModuleDestroy {
     if (feed && previousRewrite === feed.historyRewrite) {
       feed.historyRewrite = randomUUID();
       feed.livePrompt = undefined;
+      feed.handoff.clear();
       this.invalidate(sessionId, true);
     }
     try {
@@ -900,12 +922,10 @@ export class DesktopChatService implements OnModuleDestroy {
                 .getRuntimeState(sessionId, { initialize: false })
                 .then(record),
         ]);
-        const live = Array.isArray(record(raw).liveItems)
-          ? (record(raw).liveItems as AgentTranscriptItem[])
-          : [];
-        const merged = new Map(history.map((item) => [item.id, item]));
-        for (const item of live) merged.set(item.id, item);
-        return prepareTurnChanges([...merged.values()], turnId);
+        const live = runtimeChatItems(raw);
+        const settling = session.status !== 'archived' && !session.workspaceArchivedAt ? feed.handoff.carry(history) : [];
+        const { rows } = mergeTranscriptRows(history, settling.length ? [...settling, ...live] : live);
+        return prepareTurnChanges(rows, turnId);
       })();
       feed.review = {
         turnId,
@@ -936,12 +956,13 @@ export class DesktopChatService implements OnModuleDestroy {
         ? Promise.resolve({})
         : provider.getRuntimeState(sessionId).then(record),
     ]);
-    const live = Array.isArray(record(runtime).liveItems)
-      ? (record(runtime).liveItems as AgentTranscriptItem[])
-      : [];
+    const live = runtimeChatItems(runtime);
+    const feed = this.feeds.get(sessionId);
     const item =
       live.findLast((item) => item.id === itemId) ??
-      history.findLast((item) => item.id === itemId);
+      history.findLast((item) => item.id === itemId) ??
+      (feed?.provider === provider && session.status !== 'archived' && !session.workspaceArchivedAt
+        ? feed.handoff.item(itemId) : undefined);
     if (!item)
       throw new BadRequestException(
         'This transcript item is no longer available.',

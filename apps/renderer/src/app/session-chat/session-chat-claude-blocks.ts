@@ -6,7 +6,7 @@ interface ClaudeBlock {
   readonly index: string;
 }
 
-const claudeBlockId = /^(msg_[^:]+):(?:(assistant|thinking):)?(\d+)$/;
+const claudeBlockId = /^(msg_[^:]+):(?:(assistant|thinking):)?(\d+)(?::[^:]+)?$/;
 
 /** Claude live IDs use wire indexes; saved split messages can reset those indexes. */
 export function reconcileClaudeBlocks(items: readonly SessionChatItem[]): {

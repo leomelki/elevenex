@@ -89,6 +89,9 @@ export class WorkTimelineComponent implements OnChanges {
   protected readonly hydrated = signal<ReadonlySet<string>>(new Set());
   private previousIds: ReadonlySet<string> | undefined;
   private previousLast: string | undefined;
+  private previousMessage: string | undefined;
+  private runningTools = new Set<string>();
+  private readonly settledVisible = signal<ReadonlySet<string>>(new Set());
   private previousSections = new Map<string, readonly string[]>();
   private reportedInspection = false;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -112,6 +115,7 @@ export class WorkTimelineComponent implements OnChanges {
       this.live(),
       this.maxVisible(),
       this.expanded(),
+      this.settledVisible(),
     ),
   );
   protected readonly mountedWorkRows = linkedSignal({
@@ -158,6 +162,7 @@ export class WorkTimelineComponent implements OnChanges {
 
   ngOnChanges(): void {
     const steps = this.ordered();
+    this.keepSettledTools(steps);
     const previousLastIndex = steps.findIndex(
       (step) => step.id === this.previousLast,
     );
@@ -227,6 +232,30 @@ export class WorkTimelineComponent implements OnChanges {
     }));
     this.reportInspection();
   }
+  private keepSettledTools(steps: readonly WorkStep[]): void {
+    let latestMessage: string | undefined;
+    for (let index = steps.length - 1; index >= 0; index--) {
+      const step = steps[index]!;
+      if (isProse(step) && step.text?.trim()) {
+        latestMessage = step.id;
+        break;
+      }
+    }
+    const tools = this.live() ? steps.filter(step => !isProse(step) && step.kind !== 'think') : [];
+    const limit = this.maxVisible();
+    const visible = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 5;
+    const previous = this.settledVisible();
+    const next = new Set(tools.slice(-visible).filter(step =>
+      !isUnfinishedWork(step) && (this.runningTools.has(step.id) ||
+        (latestMessage === this.previousMessage && previous.has(step.id))),
+    ).map(step => step.id));
+    // Commentary can close a section while its last call is still running.
+    // Keep that call in place when its receipt arrives, within the live budget.
+    if (next.size !== previous.size || [...next].some(id => !previous.has(id)))
+      this.settledVisible.set(next);
+    this.runningTools = new Set(tools.filter(isUnfinishedWork).map(step => step.id));
+    this.previousMessage = latestMessage;
+  }
   activeToolIds(): readonly string[] {
     const tools = this.openTools();
     return tools.size ? this.rows().filter(row => row.step.deferredTool && tools.has(row.step.id) && this.visible(row))
@@ -245,7 +274,7 @@ export class WorkTimelineComponent implements OnChanges {
     // The outer disclosure owns settled activity, including messages and
     // unfinished receipts. Inner tool and section disclosures stay independent.
     if (!this.live() && !this.expanded())
-      return row.step.id === this.lastMessageId();
+      return row.step.id === (this.answer()?.trim() ? this.replyId() : this.lastMessageId());
     if (!this.expanded() && !isProse(row.step) && !isUnfinishedWork(row.step))
       return false;
     if (

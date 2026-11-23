@@ -21,8 +21,8 @@ describe('completed turn history', () => {
     const commentary = { ...row('commentary', 'assistant'), assistantPhase: 'commentary' } as const;
     const final = { ...row('final', 'assistant'), assistantPhase: 'final' } as const;
     const turns = new ChatCompletedTurns();
-    const partial = turns.summarize([prompt, commentary], 0, 2, new Set(), undefined, true)?.completedTurn;
-    expect(partial).toMatchObject({ reply: [], total: 1 });
+    const partial = turns.summarize([prompt, row('call', 'tool_use'), commentary], 0, 3, new Set(), undefined, true)?.completedTurn;
+    expect(partial).toMatchObject({ reply: [{ id: commentary.id }], total: 1 });
     const finished = turns.summarize([prompt, commentary, final], 0, 3, new Set(), undefined, true)?.completedTurn;
     expect(finished).toMatchObject({ reply: [{ id: final.id, assistantPhase: 'final' }], beforeReply: 1, total: 1 });
   });
@@ -65,6 +65,22 @@ describe('completed turn history', () => {
     ];
     const summary = new ChatCompletedTurns().summarize(history, 0, history.length, new Set(), undefined, true)?.completedTurn;
     expect(summary).toMatchObject({ counts: { run: 1, tool: 3 }, failures: 2, beforeReply: 5, total: 6 });
+  });
+
+  it('keeps all final prose blocks when a text-only tool receipt lands between them', () => {
+    const history: AgentTranscriptItem[] = [
+      row('prompt', 'user'),
+      { ...row('call', 'tool_use'), toolUseId: 'patch', toolKind: 'file_changes' },
+      { ...row('reply-1', 'assistant'), assistantPhase: 'final' },
+      { ...row('receipt', 'tool_result'), toolUseId: 'patch' },
+      { ...row('reply-2', 'assistant'), assistantPhase: 'final' },
+    ];
+    const turns = new ChatCompletedTurns();
+    const compact = turns.summarize(history, 0, history.length, new Set(), undefined, true)!.completedTurn!;
+    expect(compact).toMatchObject({ reply: [{ id: 'reply-1' }, { id: 'reply-2' }], beforeReply: 1, total: 2 });
+    expect(turns.timeline(history, compact.revision, 0)?.timeline).toEqual([
+      expect.objectContaining({ id: 'call', resultId: 'receipt' }), null,
+    ]);
   });
 
   it('returns the visible reply and net changes without sending hidden evidence', () => {
@@ -156,6 +172,32 @@ describe('completed turn history', () => {
     expect(chatWindow(history, live, { ...options, following: incoming.id })?.items[0]?.id).toBe('later-read-0');
     expect(chatWindow(history, live, { ...options, following: 'first-read-0' })?.items.slice(0, 2).map(row => row.id))
       .toEqual([incoming.id, 'later-read-0']);
+    expect(chatWindow(history, live.slice(0, 2), { ...options, following: 'later-read-98' })?.items.map(row => row.id))
+      .toEqual(['later-read-99']);
+  });
+
+  it('walks the same active transcript in both directions even when tools save in completion order', () => {
+    const first = row('previous', 'user');
+    const previousReply = row('previous-answer', 'assistant');
+    const prompt = row('active', 'user');
+    const patch = { ...row('patch', 'tool_use'), toolUseId: 'patch' };
+    const commentary = row('commentary', 'assistant');
+    const nextCall = row('check', 'tool_use');
+    const receipt = { ...row('result', 'tool_result'), toolUseId: patch.id };
+    const saved = [first, previousReply, prompt, commentary, patch, receipt];
+    const live = [prompt, patch, commentary, nextCall, receipt];
+    const options = { liveTurn: true, completedTurns: new ChatCompletedTurns() };
+    const latest = chatWindow(saved, live, options)!;
+    expect(latest.items.map(row => row.id)).toEqual([
+      first.id, previousReply.id, prompt.id, patch.id, commentary.id, nextCall.id, receipt.id,
+    ]);
+    // The saved-only cursor is immediately before the run. Walking forward
+    // from a cursor also present live must never reinsert the active prompt.
+    expect(chatWindow(saved, live, { ...options, following: previousReply.id })?.items.map(row => row.id))
+      .toEqual([prompt.id, patch.id, commentary.id, nextCall.id, receipt.id]);
+    expect(chatWindow(saved, live, { ...options, before: receipt.id })?.items.map(row => row.id))
+      .toEqual([first.id, previousReply.id, prompt.id, patch.id, commentary.id, nextCall.id]);
+    expect(chatWindow(saved, live, { ...options, following: commentary.id })?.leadingPrompt?.id).toBe(prompt.id);
   });
 
   it('fits hundreds of paired tools in one compact timeline and keeps media at the receipt position', () => {

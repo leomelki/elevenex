@@ -11,7 +11,7 @@ These standalone OnPush components consume renderer view models and emit typed i
   with an explanation while the conversation is busy. On a focused user
   message, E opens the editor through the same intent as the pencil.
 - `ChatExchange.mentions` supplies read-only context chips inside the corresponding user message. These reuse the composer mention appearance, retain stable IDs and full labels, and expose no removal controls in history. The owner supplies these for optimistic and restored messages; snapshot contents and transcript paths never belong in this view model.
-- `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary; completed turns hide all activity and earlier messages behind Worked, leaving only the last assistant message visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
+- `TurnComponent` owns the work disclosure and composes one chronological `WorkTimeline`. Running tools, results and commentary retain their mounted identity as the latest reply changes. Each message closes the preceding activity section into an in-place summary. A recent call that was still running updates visibly when its receipt arrives, until newer work fills the visible window or another message arrives. Completed turns hide activity and earlier messages behind Worked, leaving the reply visible. Expanding Worked reveals messages and section summaries without opening their tool disclosures. Inspected or explicitly expanded work stays open. Work and outcomes stay controlled inputs. Each `WorkStep.id`, exchange ID, queue ID and mention ID must remain stable across updates. Append updates instead of rebuilding transcript identities.
 - Supply `ChatExchange.deferredWork` when saved counts are available ahead of the work
   steps. `Chat` forwards `turnWorkToggled`, `turnWorkHint`, `turnWorkHintEnded` and
   `turnWorkRequested` with the turn identity. Intent is tiered: the hint starts
@@ -188,6 +188,8 @@ records available.
 Rows expose stable `data-chat-anchor` identities so the first visible row retains
 its offset after either operation. Within a long turn, `data-chat-row` identifies
 individual timeline rows so prepending work preserves the answer's offset as well.
+The scroll owner records several visible rows so a neighboring row can preserve
+the reader's position if the first folds or leaves the window.
 For a large range change, the viewport carries its previous scroll extent into
 the first paint and reconciles the native scrollbar in small steps. The range
 and scroll origin change together so the anchored text stays still. With reduced
@@ -270,7 +272,10 @@ mapping retains it with `isNew` when acknowledgement beats the first paint;
 paging and selection changes release both. Fresh origins still expire after 800ms.
 
 `ChatScroll` remembers the last painted transcript row, skipping projected
-history/decision wrappers. A fresh send preserves that row on the first frame,
+history/decision wrappers. Set `ChatExchange.revealOnArrival` to false for
+background prompts so they keep the reader's scroll position above the tail.
+The component still follows their arrival when pinned to the end. A fresh local
+send preserves the last painted row on the first frame,
 then scrolls the real viewport over 340ms on `ease-in-out` to open space for the
 message and Working. `ChatSendScroll` owns that scroll clock and temporarily
 disables browser anchoring; resize/early reply growth retarget from the current

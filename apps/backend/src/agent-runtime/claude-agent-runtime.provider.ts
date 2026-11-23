@@ -74,7 +74,7 @@ export class ClaudeAgentRuntimeProvider
   getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options?: { before?: string },
+    options?: { before?: string; through?: string },
   ) {
     return this.runtimeService.getSubagentHistory(sessionId, agentId, options);
   }

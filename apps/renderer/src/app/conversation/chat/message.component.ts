@@ -64,6 +64,7 @@ export class MessageComponent {
   readonly sideChats = input(0);
   readonly pinned = input(false);
   readonly isNew = input(false);
+  readonly revealOnArrival = input(true);
   readonly editable = input(false);
   readonly editDisabledReason = input('');
   readonly editRequested = output<void>();

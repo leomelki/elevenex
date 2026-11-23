@@ -6,6 +6,8 @@ import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-detai
 import { ChatToolLinks, type ChatToolPositions } from './desktop-chat-tool-links.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
 import { editableChatPrompt } from './desktop-chat-edit.js';
+import { mergeTranscriptRows } from '../agent-runtime/transcript-order.js';
+import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js';
 
 const SAVED_SUMMARY_LIMIT = 40;
 
@@ -77,10 +79,11 @@ interface ChatWindowOptions {
   readonly changesCache?: ChatChangesCache;
   readonly mediaCache?: ChatMediaCache;
   readonly historyIndex?: ChatHistoryIndex;
-  readonly fingerprints?: Map<string, string>;
   /** Live records actually included in this bounded projection, in display order. */
   readonly projectedLive?: SessionChatItem[];
+  readonly settling?: readonly AgentTranscriptItem[];
   readonly includeLeadingPrompt?: boolean;
+  readonly linkToolReceipts?: boolean;
   readonly completedTurns?: ChatCompletedTurns;
   readonly summarizeRecent?: boolean;
   readonly toolDetails?: ChatToolDetails;
@@ -93,53 +96,23 @@ interface Candidate {
   readonly item: AgentTranscriptItem;
   readonly historyIndex: number;
   readonly historyEnd: number;
-  readonly liveIndex: number;
   readonly summary?: SessionChatItem;
-}
-
-/** Interleave unsaved live rows with the saved order at shared record IDs.
- * Appending them after saved rows can put older live blocks after recent
- * calls and crowd those calls out of the bounded tail on a stream reset. */
-function orderedCandidates(candidates: ReadonlyMap<string, Candidate>): Candidate[] {
-  const saved: Candidate[] = [], liveOnly: Candidate[] = [];
-  let lastShared = -1;
-  for (const candidate of candidates.values()) {
-    if (candidate.historyIndex < 0) {
-      liveOnly.push(candidate);
-      continue;
-    }
-    if (candidate.liveIndex >= 0) {
-      // If the provider reordered saved receipts, keep their durable order.
-      if (candidate.liveIndex < lastShared) return [...candidates.values()];
-      lastShared = candidate.liveIndex;
-    }
-    saved.push(candidate);
-  }
-  if (lastShared < 0 || !liveOnly.length) return [...saved, ...liveOnly];
-
-  const ordered: Candidate[] = [];
-  let live = 0;
-  for (const candidate of saved) {
-    while (live < liveOnly.length && liveOnly[live].liveIndex < candidate.liveIndex)
-      ordered.push(liveOnly[live++]);
-    ordered.push(candidate);
-  }
-  return ordered.concat(liveOnly.slice(live));
 }
 
 /** A raw window can carry the same outcome as a compact turn once it has
  * the whole saved span. Partial windows and live rows use their available evidence. */
 function savedWindowTurnChanges(
-  ordered: readonly Candidate[], position: number, history: readonly AgentTranscriptItem[], live: boolean,
+  ordered: readonly Candidate[], position: number, history: readonly AgentTranscriptItem[],
+  liveItems: ReadonlyMap<string, AgentTranscriptItem>, live: boolean,
 ) {
   const prompt = ordered[position];
-  if (prompt.historyIndex < 0 || prompt.liveIndex >= 0) return undefined;
+  if (liveItems.has(prompt.item.id)) return undefined;
   const rows = [prompt.item];
   let through = prompt.historyEnd;
   for (let index = position + 1; index < ordered.length; index++) {
     const candidate = ordered[index];
     if (candidate.item.kind === 'user') break;
-    if (candidate.historyIndex < 0 || candidate.liveIndex >= 0) return undefined;
+    if (liveItems.has(candidate.item.id)) return undefined;
     through = Math.max(through, candidate.historyEnd);
     rows.push(candidate.item);
   }
@@ -151,16 +124,15 @@ function savedWindowTurnChanges(
  * are inside this window. Otherwise the ordinary raw rows join the seam. */
 function historyCandidates(
   history: readonly AgentTranscriptItem[], start: number, end: number, forward: boolean,
-  limit: number, index: ChatHistoryIndex, live: readonly AgentTranscriptItem[], options: ChatWindowOptions,
+  limit: number, index: ChatHistoryIndex, liveIds: ReadonlySet<string>, options: ChatWindowOptions,
   projectTool?: ProjectChatTool,
 ): readonly Candidate[] {
   const turns = options.completedTurns;
   const result: Candidate[] = [];
-  const liveIds = new Set(turns ? live.map(item => item.id) : []);
   const step = forward ? 1 : -1;
   let position = forward ? start : end - 1;
   let summaryCount = 0;
-  const lastPrompt = turns && options.liveTurn && end === history.length && !live.some(item => item.kind === 'user')
+  const lastPrompt = turns && options.liveTurn && end === history.length
     ? index.promptIndexBefore(history, history.length) : -1;
   while (position >= start && position < end && result.length < limit && summaryCount < SAVED_SUMMARY_LIMIT) {
     const boundary = turns && (forward ? history[position].kind === 'user'
@@ -173,14 +145,14 @@ function historyCandidates(
           ? turns.summarize(history, first, through, liveIds, projectTool, options.summarizeRecent)
           : undefined;
         if (summary) {
-          result.push({ item: history[first], summary, historyIndex: first, historyEnd: through - 1, liveIndex: -1 });
+          result.push({ item: history[first], summary, historyIndex: first, historyEnd: through - 1 });
           summaryCount++;
           position = forward ? through : first - 1;
           continue;
         }
       }
     }
-    result.push({ item: history[position], historyIndex: position, historyEnd: position, liveIndex: -1 });
+    result.push({ item: history[position], historyIndex: position, historyEnd: position });
     position += step;
   }
   return forward ? result : result.reverse();
@@ -189,39 +161,34 @@ function historyCandidates(
 /** Take bounded candidates before projecting. Keep source offsets so finding a
  * page's prompt never requires scanning back from the end of the transcript. */
 export function chatWindow(
-  history: readonly AgentTranscriptItem[],
+  savedHistory: readonly AgentTranscriptItem[],
   live: readonly AgentTranscriptItem[],
   options: ChatWindowOptions = {},
 ) {
-  const { before, following, loadingMode, changesCache, mediaCache, fingerprints } = options;
-  const historyIndex = options.historyIndex ?? new ChatHistoryIndex();
-  historyIndex.align(history);
+  const { before, following, loadingMode, changesCache, mediaCache } = options;
   const wideWindow = loadingMode === 'window' && !before && !following;
   // Adjacent pages overlap the renderer's retained 320-record window.
   const limit = wideWindow ? 320 : 80;
   const byteLimit = wideWindow ? 2 * 1024 * 1024 : 512 * 1024;
   const candidateLimit = limit * 2;
   const cursor = following ?? before;
+  const liveOnly = !savedHistory.length && options.includeLeadingPrompt === false && !cursor;
+  const liveTail = liveOnly && live.length > candidateLimit ? live.slice(-candidateLimit) : live;
+  const settling = options.settling;
+  const { rows: history, liveItems, savedItems } = mergeTranscriptRows(savedHistory,
+    settling?.length ? [...settling, ...liveTail] : liveTail);
+  const streamingIds = settling?.length ? new Set(liveTail.map(item => item.id)) : liveItems;
+  // Offsets in a merged transcript change independently of the saved revision.
+  const historyIndex = (history === savedHistory && options.historyIndex) || new ChatHistoryIndex();
+  historyIndex.align(history);
   const historyPosition = cursor ? historyIndex.position(history, cursor, following ? 'following' : 'before') : history.length;
-  const livePosition = cursor ? live.findIndex(item => item.id === cursor) : live.length;
-  if (cursor && historyPosition < 0 && livePosition < 0) return null;
-
-  let historyStart = following ? (historyPosition < 0 ? history.length : historyPosition + 1) : 0;
-  let historyEnd = before && historyPosition >= 0 ? historyPosition : history.length;
-  // A page can start on an unsaved row interleaved with saved rows.
-  // Use the next shared row as the saved edge in either direction.
-  if (cursor && historyPosition < 0) {
-    const laterLive = new Set(live.slice(livePosition + 1).map(item => item.id));
-    const edge = history.findIndex(item => laterLive.has(item.id));
-    if (edge >= 0) {
-      if (following) historyStart = edge;
-      else historyEnd = edge;
-    }
-  }
+  if (historyPosition < 0) return null;
+  const historyStart = following ? historyPosition + 1 : 0;
+  const historyEnd = before ? historyPosition : history.length;
   const toolPage = options.toolDetails?.projectPage();
   const saved = historyCandidates(
     history, historyStart, historyEnd, !!following,
-    options.completedTurns ? limit : candidateLimit, historyIndex, live, options, toolPage?.project,
+    options.completedTurns ? limit : candidateLimit, historyIndex, new Set(liveItems.keys()), options, toolPage?.project,
   );
   const candidates = new Map<string, Candidate>();
   for (const candidate of saved) {
@@ -229,45 +196,34 @@ export function chatWindow(
     candidates.set(candidate.item.id, previous && !candidate.summary && !previous.summary
       ? { ...candidate, historyIndex: previous.historyIndex } : candidate);
   }
-  const addLive = (start: number, end: number, overlapOnly: boolean) => {
-    for (let index = start; index < end; index++) {
-      const item = live[index], saved = candidates.get(item.id);
-      if (!overlapOnly || saved)
-        candidates.set(item.id, { item, historyIndex: saved?.historyIndex ?? -1, historyEnd: saved?.historyEnd ?? -1, liveIndex: index });
-    }
-  };
   const moreHistory = !!following && (saved.at(-1)?.historyEnd ?? historyStart - 1) + 1 < history.length;
-  let moreLive = false;
-  if (following) {
-    const start = Math.max(0, livePosition + 1);
-    const end = Math.min(start + candidateLimit, live.length);
-    const overlapEnd = moreHistory
-      ? start + live.slice(start, end).findLastIndex(item => candidates.has(item.id)) + 1
-      : end;
-    addLive(start, overlapEnd, false);
-    moreLive = end < live.length;
-  } else {
-    if (livePosition >= 0) addLive(Math.max(0, livePosition - candidateLimit), livePosition, false);
-    else addLive(0, live.length, true);
-  }
 
-  const ordered = orderedCandidates(candidates);
+  const ordered = [...candidates.values()];
   const links = new ChatToolLinks(ordered.map(({ item }) => item));
-  if (toolPage) {
+  if (toolPage || options.linkToolReceipts) {
+    links.findMissing(settling ?? []);
     links.findMissing(live);
-    historyIndex.fillTools(history, links);
+    const savedIndex = options.historyIndex ?? historyIndex;
+    savedIndex.align(savedHistory);
+    savedIndex.fillTools(savedHistory, links);
   }
+  const editable = (item: AgentTranscriptItem) => {
+    const saved = savedItems.get(item.id) ?? (!liveItems.has(item.id) ? item : undefined);
+    return options.promptEditing && saved && editableChatPrompt(saved);
+  };
   const items: SessionChatItem[] = [];
   let bytes = 0;
   let edge = following ? 0 : ordered.length;
   while ((following ? edge < ordered.length : edge > 0) && items.length < limit) {
     const position = following ? edge : edge - 1;
-    const { item: raw, summary, liveIndex, historyIndex: historyPosition } = ordered[position];
+    const { item: raw, summary } = ordered[position];
     const peer = links.peer(raw);
     const call = raw.kind === 'tool_result' ? peer : undefined;
     let item: SessionChatItem = summary ?? toolPage?.activity(raw, peer) ?? chatItem(raw, call, changesCache, mediaCache);
+    if (options.linkToolReceipts && raw.kind === 'tool_use' && peer)
+      item = { ...item, receipt: { id: peer.id, error: chatItemFailed(peer, commandExecution(peer, raw)) } };
     if (!summary && raw.kind === 'user') {
-      const turnChanges = savedWindowTurnChanges(ordered, position, history, !!options.liveTurn);
+      const turnChanges = savedWindowTurnChanges(ordered, position, history, liveItems, !!options.liveTurn);
       if (turnChanges) item = { ...item, turnChanges };
     }
     if (!summary && raw.turnChanges) {
@@ -283,15 +239,13 @@ export function chatWindow(
       item = { ...item, changes: capturedChangeSummary(raw, changes) };
     }
     const liveItem = item;
-    if (options.promptEditing && historyPosition >= 0 && editableChatPrompt(history[historyPosition]))
+    if (editable(raw))
       item = { ...item, editable: true };
-    const fingerprint = JSON.stringify(item);
-    bytes += Buffer.byteLength(fingerprint);
+    bytes += Buffer.byteLength(JSON.stringify(item));
     if (bytes > byteLimit) break;
-    fingerprints?.set(item.id, fingerprint);
     if (summary) historyIndex.remember(item.id, ordered[position].historyIndex);
     items.push(item);
-    if (liveIndex >= 0) options.projectedLive?.push(liveItem);
+    if (streamingIds.has(raw.id)) options.projectedLive?.push(liveItem);
     edge += following ? 1 : -1;
   }
   if (!following) {
@@ -301,32 +255,23 @@ export function chatWindow(
   const first = ordered[following ? 0 : edge];
   const last = ordered[following ? edge - 1 : ordered.length - 1];
   let prompt: AgentTranscriptItem | undefined;
-  let savedPrompt = false;
   if (items.length) {
     toolPage?.commit();
     historyIndex.remember(first.item.id, first.historyIndex);
     historyIndex.remember(last.summary?.completedTurn?.endId ?? last.item.id, last.historyEnd, 'following');
-    // Saved rows keep their saved order, including live overlays of their IDs.
-    // For a live-only tail, look within live activity before falling back to
-    // the last saved prompt. Neither context record becomes a page cursor.
-    if (options.includeLeadingPrompt !== false && first.item.kind !== 'user') {
-      if (first.historyIndex < 0) prompt = live[previousPromptIndex(live, first.liveIndex)];
-      if (!prompt) {
-        prompt = historyIndex.promptBefore(history, first.historyIndex >= 0 ? first.historyIndex : historyEnd);
-        savedPrompt = !!prompt;
-      }
-    }
+    if (options.includeLeadingPrompt !== false && first.item.kind !== 'user')
+      prompt = historyIndex.promptBefore(history, first.historyIndex);
   }
   return {
     items,
     leadingPrompt: prompt ? {
       ...chatItem(prompt, undefined, changesCache, mediaCache),
-      ...(options.promptEditing && savedPrompt && editableChatPrompt(prompt) ? { editable: true as const } : {}),
+      ...(editable(prompt) ? { editable: true as const } : {}),
     } : null,
     before:
-      following || edge > 0 || (saved[0]?.historyIndex ?? historyEnd) > 0 || livePosition > candidateLimit
+      following || edge > 0 || (saved[0]?.historyIndex ?? historyEnd) > 0 || liveTail !== live
         ? items[0]?.id ?? null : null,
-    next: before || (following && (edge < ordered.length || moreHistory || moreLive))
+    next: before || (following && (edge < ordered.length || moreHistory))
       ? last?.summary?.completedTurn?.endId ?? items.at(-1)?.id ?? null : null,
   };
 }

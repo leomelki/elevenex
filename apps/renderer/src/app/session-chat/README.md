@@ -73,7 +73,9 @@ Older engines omit the capability and retain their original send contract.
   Backend resets reconcile the authoritative suffix, including rewinds while
   a session was cached. An overlapping first row lets both background resets
   and explicit refreshes retain the loaded prefix when the prompt context
-  still matches. Interruptions retain the transcript, scroll position and draft.
+  still matches. Rows repeated in the suffix use its authoritative positions.
+  A page read across a rewrite reopens the new tail. Interruptions retain the
+  transcript, scroll position and draft.
   The reconnect message appears after a short delay. Confirmed non-configuration
   actions reconcile through the open stream.
 - Adjacent history reads pause the watch and resume it when the page arrives.
@@ -82,8 +84,8 @@ Older engines omit the capability and retain their original send contract.
   independently of paging. A visible slice of that turn keeps Working and its
   open work timeline while the retained transcript waits for a return to latest.
   Older engines omit the prompt ID and use the latest visible turn when following live.
-  A forward page that reaches latest establishes a fresh stream snapshot so it
-  cannot reapply text the history page included. Returning to latest keeps the
+  A forward page that reaches latest establishes a fresh live snapshot before
+  incremental reading resumes. Returning to latest keeps the
   historical window and its cursors until the fresh snapshot succeeds.
   Older engines without `chatStream` use bounded long reads and the same history controls.
 - Paging keeps at most 320 contiguous raw records. When hidden work leaves the
@@ -155,17 +157,21 @@ Older engines omit the capability and retain their original send contract.
   Shortened tool inputs/results do not add full-content buttons below the answer;
   tool evidence stays in the work timeline. Plans stay there instead of becoming prose.
 - Codex history restores native command, patch, MCP and web-search receipts with
-  the live stream's tool IDs. Code-mode `exec` envelopes are omitted when native
+  the live stream's tool IDs and orders native prose and calls by their recorded
+  start within the turn. Code-mode `exec` envelopes are omitted when native
   receipts supply the work, retaining separate output and exit/error status for
   each tool. Envelopes without supported native receipts remain inspectable.
-  Codex assistant phases survive streaming and history reload. Commentary stays
-  with the turn's activity after it ends. Compact transcript exports label the
+  Codex assistant phases survive streaming and history reload. Earlier commentary
+  stays with the turn's activity. When a run ends before posting a final reply,
+  its latest commentary remains visible. Compact transcript exports label the
   latest interim text as Progress update until a final reply arrives.
 - Claude tool calls share the same message/tool ID in live events and saved
   history. Split thoughts and text use the API block index when the saved
-  record supplies it. The backend joins unsaved blocks at shared record IDs
-  before applying the page limit, so recent calls and their results keep their
-  place when reopening or resetting a live turn.
+  record supplies it. Legacy split blocks that share an index retain separate
+  identities. Pi uses the native message timestamp and occurrence for prompt
+  and prose identities and the native call ID for all tool events. OpenCode
+  waits for message metadata before publishing its parts and retains active
+  parts and completed tools when a reconnect snapshot lags the socket.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.
@@ -259,11 +265,15 @@ resume cursor is available, changed records and appended text fill the gap.
 Persisted history is read at entry, explicit paging, history invalidation or
 after a gap in the bounded live window. Simultaneous runtime/history reads
 share their work. Providers still own source transcript reading. Their `getHistory`
-interface currently returns full history inside the backend. The selected feed
-caches a bounded set of emitted cursor offsets and the last prompt span for its
-current history revision. Pages project and transport only bounded candidates,
-and idle connections send transport heartbeats without projecting a transcript.
-Legacy reads still wait up to eight seconds with an unchanged cursor.
+interface currently returns full history inside the backend. The backend joins
+saved and live rows at shared IDs before picking either page edge. Both paging
+directions use the same row order and prompt context. The feed carries the last
+observed live window through completion until the durable transcript contains
+its rows. Explicit rewrites clear this handoff. Stream replay and legacy polls
+send append/update events only with a verified overlap. Reorders and gaps return
+a fresh bounded snapshot. Idle connections send transport heartbeats without
+projecting a transcript. Legacy reads still wait up to eight seconds with an
+unchanged cursor.
 
 Progressive loading is enabled by default through
 `SESSION_CHAT_PROGRESSIVE_LOADING`. The first request loads up to
@@ -461,8 +471,9 @@ both themes and locking after the first prompt with preview-only provider data.
 ## Reply boundaries
 
 The latest nonempty assistant reply stays outside collapsed work even when a
-harness appends tool receipts or system records afterward. Earlier commentary and
-trailing work evidence remain inspectable in the timeline.
+harness appends tool receipts or system records afterward. If there is no final
+reply yet, the latest available prose represents the turn. Earlier commentary
+and trailing work evidence remain inspectable in the timeline.
 
 A locally sent prompt owns early runtime output until its durable user receipt
 arrives. Projection inserts that pending boundary before newly arriving items;
@@ -479,7 +490,8 @@ user receipts through the preview adapter in light/dark and narrow layouts.
 The projection supplies `answerBeforeStepId` for work following the latest
 assistant text. The projection also supplies `answerId`, so that message keeps the same
 Markdown instance when it becomes earlier commentary. Tool results remain paired
-with their original calls; late receipts do not move calls past the reply. One
+with their original calls, even across a steered prompt. A late receipt updates
+its call in place. One
 flat timeline retains tool instances, disclosure and focus across message boundaries. `session-work-order.mjs`
 checks this ordering, tool/work disclosures, top hover/focus summaries, keyboard
 operation and narrow reduced-motion layouts in both themes.

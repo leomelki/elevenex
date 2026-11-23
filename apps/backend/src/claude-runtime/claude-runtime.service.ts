@@ -1013,10 +1013,11 @@ export class ClaudeRuntimeService
   async getSubagentHistory(
     sessionId: number,
     agentId: string,
-    options: { before?: string } = {},
+    options: { before?: string; through?: string } = {},
   ): Promise<ClaudeSubagentHistoryPayload> {
     const id = agentId.trim();
-    if (options.before && !/^[\w:.-]{1,256}$/.test(options.before))
+    const boundary = options.through ?? options.before;
+    if (boundary && !/^[\w:.-]{1,256}$/.test(boundary))
       throw new BadRequestException('A valid history cursor is required.');
     if (!/^[\w-]{1,256}$/.test(id))
       throw new BadRequestException('A valid agentId is required.');
@@ -1047,15 +1048,19 @@ export class ClaudeRuntimeService
         : null;
       let messages: HistoryMessage[];
       let hasEarlier = false;
+      let nativeWindow = false;
       if (path) {
         try {
-          const page = await this.childTranscripts.read(path, options.before);
+          const page = await this.childTranscripts.read(path, boundary, !!options.through);
+          nativeWindow = true;
           hasEarlier = page.hasEarlier;
           messages = page.records.map((record) => ({
             type: record.type as SessionMessage['type'],
             uuid: record.uuid!,
             message: record.message,
             timestamp: record.timestamp,
+            apiBlockIndex: typeof record.apiBlockIndex === 'number' &&
+              Number.isSafeInteger(record.apiBlockIndex) && record.apiBlockIndex >= 0 ? record.apiBlockIndex : undefined,
             tool_use_result: record.toolUseResult ?? record.tool_use_result,
           }));
           const first = page.records[0];
@@ -1080,6 +1085,7 @@ export class ClaudeRuntimeService
       const history = this.normalizeHistory(
         messages,
         await this.getInteractionSummaryMap(sessionId),
+        true,
       ).map((item) => ({
         ...item,
         parentToolUseId:
@@ -1087,7 +1093,7 @@ export class ClaudeRuntimeService
             ? undefined
             : item.parentToolUseId,
       }));
-      if (!subagent.prompt)
+      if (!subagent.prompt && !hasEarlier)
         subagent.prompt = history.find((item) => item.kind === 'user')?.content;
       return {
         subagent,
@@ -1101,6 +1107,7 @@ export class ClaudeRuntimeService
                   : ('unavailable' as const),
             }),
         hasEarlier,
+        ...(nativeWindow ? { nativeWindow: true as const } : {}),
         transcriptAvailable: Boolean(history.length),
         ...(history.length
           ? {}
@@ -4131,8 +4138,10 @@ export class ClaudeRuntimeService
             payload: { sessionId, itemId: partialId },
           });
         } else {
+          const id = `${streamMessageId}:assistant:${partIndex}`;
+          const previous = this.findLiveItem(sessionId, id);
           const item: ClaudeTranscriptItem = {
-            id: `${streamMessageId}:assistant:${partIndex}`,
+            id: previous && previous.transcriptMessageId !== message.uuid ? `${id}:${message.uuid}` : id,
             kind: 'assistant',
             agentId: message.agent_id,
             content: part.text,
@@ -4177,8 +4186,10 @@ export class ClaudeRuntimeService
             payload: { sessionId, itemId: partialId },
           });
         } else {
+          const id = `${streamMessageId}:thinking:${partIndex}`;
+          const previous = this.findLiveItem(sessionId, id);
           const item: ClaudeTranscriptItem = {
-            id: `${streamMessageId}:thinking:${partIndex}`,
+            id: previous && previous.transcriptMessageId !== message.uuid ? `${id}:${message.uuid}` : id,
             kind: 'thinking',
             agentId: message.agent_id,
             content: part.thinking,
@@ -6322,7 +6333,10 @@ export class ClaudeRuntimeService
         systemSubtypes: [...run.systemSubtypesBeforeVisible],
       };
     }
-    if (!item.agentId) state.liveItems = [...state.liveItems, item];
+    if (!item.agentId) {
+      const position = state.liveItems.findIndex(existing => existing.id === item.id);
+      state.liveItems = position < 0 ? [...state.liveItems, item] : state.liveItems.with(position, item);
+    }
 
     if (eventType === 'thinking_start') {
       this.emitEvent({ type: 'thinking_start', payload: { sessionId, item } });
@@ -7299,8 +7313,10 @@ export class ClaudeRuntimeService
   private normalizeHistory(
     messages: HistoryMessage[],
     interactionsByToolUseId: Map<string, ClaudeToolInteractionSummary>,
+    childHistory = false,
   ): ClaudeTranscriptItem[] {
     const normalized: ClaudeTranscriptItem[] = [];
+    const legacyBlocks = new Map<string, string>();
 
     for (const message of messages) {
       const rawPayload = message.message as Record<string, any> | null;
@@ -7395,6 +7411,14 @@ export class ClaudeRuntimeService
         // reset to zero; the recorded API index matches the live block ID.
         const apiBlockIndex = payload.content.length === 1 ? message.apiBlockIndex : undefined;
         const streamBlockId = apiBlockIndex === undefined ? undefined : `${apiMessageId}:${apiBlockIndex}`;
+        const blockId = (kind: 'assistant' | 'thinking', index: number) => {
+          if (streamBlockId) return streamBlockId;
+          const id = `${childHistory ? message.uuid : apiMessageId}:${kind}:${index}`;
+          const first = legacyBlocks.get(id);
+          if (first !== undefined && first !== message.uuid) return `${id}:${message.uuid}`;
+          legacyBlocks.set(id, message.uuid);
+          return id;
+        };
         for (const [index, part] of payload.content.entries()) {
           if (
             part.type === 'text' &&
@@ -7402,7 +7426,7 @@ export class ClaudeRuntimeService
             part.text.trim()
           ) {
             normalized.push({
-              id: streamBlockId ?? `${apiMessageId}:assistant:${index}`,
+              id: blockId('assistant', index),
               kind: 'assistant',
               content: part.text,
               parentToolUseId,
@@ -7416,7 +7440,7 @@ export class ClaudeRuntimeService
             typeof part.thinking === 'string'
           ) {
             normalized.push({
-              id: streamBlockId ?? `${apiMessageId}:thinking:${index}`,
+              id: blockId('thinking', index),
               kind: 'thinking',
               content: part.thinking,
               parentToolUseId,

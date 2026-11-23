@@ -12,6 +12,7 @@ import {
 import { randomUUID } from 'crypto';
 import { codexWebSearchInput } from './codex-web-search.js';
 import { codexHistoryTools } from './codex-history-tools.js';
+import { orderCodexHistory } from './codex-history-order.js';
 import { codexAgentMessage, codexAssistantPhase } from './codex-agent-message.js';
 import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
@@ -601,13 +602,12 @@ export class CodexHistoryService {
     const { native, nativeToolIds, wrappers } = codexHistoryTools(records);
     const asyncQuestions = new Map<string, ClaudeTranscriptItem>();
     const answeredQuestions = new Map<string, ClaudeTranscriptItem>();
-    const responseMessageIds = new Set(
+    const responseMessages = new Set(
       records.flatMap((entry) => {
-        const payload = record(entry.payload);
-        return entry.type === 'response_item' &&
-          payload.type === 'message' &&
-          payload.role === 'assistant' &&
-          readableText(this.contentToText(payload.content))
+        if (entry.type !== 'response_item') return [];
+        const payload = this.responsePayloadItem(entry) ?? {};
+        return (payload.type === 'message' && payload.role === 'assistant' && this.contentToText(payload.content).trim()) ||
+          (payload.type === 'reasoning' && (this.contentToText(payload.summary) || this.contentToText(payload.content)))
           ? [payload.id]
           : [];
       }),
@@ -702,16 +702,19 @@ export class CodexHistoryService {
         }
         if (
           payload?.type === 'item_completed' &&
-          completed?.type === 'AgentMessage' &&
-          !responseMessageIds.has(completed.id)
+          (completed?.type === 'AgentMessage' || completed?.type === 'Reasoning') &&
+          !responseMessages.has(completed.id)
         ) {
-          const content = readableText(this.contentToText(completed.content));
+          const thinking = completed.type === 'Reasoning';
+          const content = thinking
+            ? this.contentToText(completed.summary_text) || this.contentToText(completed.raw_content)
+            : this.contentToText(completed.content);
           if (content)
             items.push({
               id:
-                stringValue(completed.id) ?? `codex-history:${index}:assistant`,
-              kind: 'assistant',
-              assistantPhase: codexAssistantPhase(completed.phase),
+                stringValue(completed.id) ?? `codex-history:${index}:${thinking ? 'reasoning' : 'assistant'}`,
+              kind: thinking ? 'thinking' : 'assistant',
+              ...(!thinking ? { assistantPhase: codexAssistantPhase(completed.phase) } : {}),
               content,
               timestamp,
               receivedAt: timestamp,
@@ -796,13 +799,13 @@ export class CodexHistoryService {
       }
     }
     // Replace the delivery acknowledgement with the actual answer receipt.
-    return items.filter(
+    return orderCodexHistory(records, items.filter(
       (item) =>
         item.kind !== 'tool_result' ||
         !item.toolUseId ||
         !answeredQuestions.has(item.toolUseId) ||
         answeredQuestions.get(item.toolUseId) === item,
-    );
+    ));
   }
 
   private normalizeResponseItem(
@@ -824,6 +827,7 @@ export class CodexHistoryService {
             kind: 'system',
             ...message,
             content,
+            transcriptMessageId,
             timestamp,
             receivedAt: timestamp,
           }
@@ -835,7 +839,7 @@ export class CodexHistoryService {
     }
     if (type === 'message' && item.role === 'assistant') {
       const content = this.contentToText(item.content);
-      return content || Array.isArray(item.content)
+      return content.trim()
         ? {
             id,
             kind: 'assistant',

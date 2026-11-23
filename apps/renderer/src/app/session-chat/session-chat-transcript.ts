@@ -120,6 +120,16 @@ function viewedImages(result: SessionChatItem): readonly ToolImage[] | undefined
 function inlineToolPreview(media: NonNullable<SessionChatItem['media']>[number]): boolean {
   return media.inline && media.kind !== 'file';
 }
+
+function transcriptToolLinks(items: readonly SessionChatItem[]) {
+  const calls = new Map<string, SessionChatItem>();
+  const results = new Map<string, SessionChatItem>();
+  for (const item of items) {
+    if (item.kind === 'tool_use') calls.set(item.toolId ?? item.id, item);
+    else if (item.kind === 'tool_result' && item.toolId) results.set(item.toolId, item);
+  }
+  return { calls, results };
+}
 /** Preserve chronology, tool/result identities and commentary; a later success never erases a failure. */
 export function chatExchanges(
   items: readonly SessionChatItem[],
@@ -206,6 +216,9 @@ function projectExchanges(
       groups.at(-1)?.items.push(item);
     }
   }
+  // A steer can introduce a user row before an existing call receives its
+  // result. The call still owns the receipt even across that prompt boundary.
+  const liveLinks = transcriptToolLinks(groups.flatMap(group => group.items));
   const retained = new Map<string, ProjectedTurn>();
   const exchanges = groups.map((group, index): ChatExchange => {
     const completed = group.promptItem?.completedTurn;
@@ -220,7 +233,18 @@ function projectExchanges(
       (state.activePromptId ? group.id === state.activePromptId : current);
     // A history slice can belong to the active turn without receiving live rows.
     const liveUpdates = live && atLiveTail;
-    const source = group.promptItem ? [group.promptItem, ...records] : records;
+    const localLinks = transcriptToolLinks(records);
+    const links = completed ? localLinks : liveLinks;
+    const external: SessionChatItem[] = [];
+    if (!completed) {
+      for (const item of records) {
+        const key = item.toolId ?? item.id;
+        const peer = item.kind === 'tool_use' && !localLinks.results.has(key) ? links.results.get(key)
+          : item.kind === 'tool_result' && !localLinks.calls.has(key) ? links.calls.get(key) : undefined;
+        if (peer) external.push(peer);
+      }
+    }
+    const source = [...(group.promptItem ? [group.promptItem] : []), ...records, ...external];
     const author = state?.providers?.find(provider => provider.id === state.provider)?.label ?? state?.provider ?? 'Agent';
     const signature = JSON.stringify([
       current || live ? state?.phase : 'idle',
@@ -235,42 +259,40 @@ function projectExchanges(
       retained.set(group.id, previous);
       return previous.exchange;
     }
-    const toolIds = new Set(
-      records
-        .filter((item) => item.kind === "tool_use")
-        .map((item) => item.toolId ?? item.id),
-    );
-    const results = new Map(
-      records
-        .filter((item) => item.kind === "tool_result")
-        .map((item) => [item.toolId ?? item.id, item]),
-    );
-    const viewCalls = imageViewCallIds(records);
+    const viewCalls = imageViewCallIds(external.length ? [...records, ...external] : records);
     const isPairedResult = (item: SessionChatItem): boolean =>
-      item.kind === 'tool_result' && !!item.toolId && toolIds.has(item.toolId);
+      item.kind === 'tool_result' && !!item.toolId && links.calls.has(item.toolId);
     const isTextReceipt = (item: SessionChatItem): boolean =>
       isPairedResult(item) && (item.error || !item.media?.some(inlineToolPreview));
+    const isEmptyAssistant = (item: SessionChatItem): boolean =>
+      item.kind === 'assistant' && !item.text.trim() && !item.media?.some(media => media.inline);
     // Keep the latest text visible, with work on either side in source order.
     // Text-only receipts update the original call. Their position cannot
     // interrupt a later thought or split adjacent reply blocks. Media and
     // unpaired results still delimit the surrounding activity.
     let finalEnd = completed ? replyStart + completed.reply.length : 0;
+    let progressEnd = 0;
     let lastActivity: SessionChatItem | undefined;
     let lastTimelineItem: SessionChatItem | undefined;
     for (let index = completed ? -1 : records.length - 1; index >= 0; index--) {
       const item = records[index]!;
-      if (isTextReceipt(item)) continue;
+      if (isTextReceipt(item) || isEmptyAssistant(item)) continue;
       lastTimelineItem ??= item;
       if (item.kind !== "system") lastActivity ??= item;
-      if (item.kind === "assistant" && (live || item.assistantPhase !== "commentary") && messageText(item).trim()) {
-        finalEnd = index + 1;
-        break;
+      if (item.kind === "assistant" && messageText(item).trim()) {
+        if (live || item.assistantPhase !== "commentary") {
+          finalEnd = index + 1;
+          break;
+        }
+        progressEnd ||= index + 1;
       }
     }
+    if (!finalEnd) finalEnd = progressEnd;
     let finalStart = completed ? replyStart : finalEnd;
     const replyPhase = records[finalEnd - 1]?.assistantPhase;
     for (let index = completed ? -1 : finalEnd - 1; index >= 0; index--) {
       const item = records[index]!;
+      if (isEmptyAssistant(item)) continue;
       if (item.kind === 'assistant' && item.assistantPhase === replyPhase) finalStart = index;
       else if (!isTextReceipt(item)) break;
     }
@@ -280,11 +302,13 @@ function projectExchanges(
     const steps: WorkStep[] = records
       .filter((_item, index) => index < finalStart || index >= finalEnd)
       .flatMap((item): WorkStep[] => {
+        if (isEmptyAssistant(item)) return [];
         const pairedResult = isPairedResult(item);
         const viewedResult = isViewedImageResult(item, viewCalls);
         if (pairedResult && viewedResult) return [];
         if (item.kind === "system" && item.changes && !item.text.trim()) return [];
-        const result = item.kind === 'tool_use' ? results.get(item.toolId ?? item.id) : undefined;
+        const result = item.kind === 'tool_use'
+          ? localLinks.results.get(item.toolId ?? item.id) ?? links.results.get(item.toolId ?? item.id) : undefined;
         const running = liveUpdates && ((item.kind === 'tool_use' && !result && !item.receipt) ||
           (item.kind === 'thinking' && item === lastTimelineItem));
         const old = cache?.steps.get(item);
@@ -392,7 +416,7 @@ function projectExchanges(
         ? Math.max(0, (endedAt - group.startedAt) / 1000)
         : undefined;
     const answer = records.slice(finalStart, finalEnd)
-      .filter(item => item.kind === 'assistant').map(messageText).join("\n\n");
+      .filter(item => item.kind === 'assistant' && !isEmptyAssistant(item)).map(messageText).join("\n\n");
     const exchange: ChatExchange = {
       overflow: (completed && activity?.closing ? completed.reply : records)
         // Tool evidence belongs in the work timeline, not below the answer.
@@ -410,6 +434,7 @@ function projectExchanges(
       attachments: group.id === pending?.id ? pending.attachments : group.attachments,
       time: group.time,
       isNew: fresh.has(group.id),
+      revealOnArrival: false,
       streaming:
         liveUpdates &&
         state?.phase === "running" &&

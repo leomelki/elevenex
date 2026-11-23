@@ -976,7 +976,7 @@ describe('selected session chat', () => {
       const initial = (await stream.next()).value as SessionChatStreamPage;
       expect(initial.page.items).toHaveLength(80);
       expect(initial.page.items.slice(-4).map(row => row.id)).toEqual([
-        'msg_54:thinking:0', 'msg_54:0', 'call-54', 'result-54',
+        'msg_54:0', 'msg_54:thinking:0', 'call-54', 'result-54',
       ]);
       expect(initial.page.items.filter(row => row.kind === 'tool_use').length).toBeGreaterThan(20);
 
@@ -1021,6 +1021,65 @@ describe('selected session chat', () => {
     } finally {
       abort.abort();
       await source.return(undefined);
+    }
+  });
+
+  it('keeps an observed patch and its commentary while the stopped runtime waits for durable receipts', async () => {
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    const patch = { ...item('patch', ''), kind: 'tool_use' as const, toolUseId: 'patch', toolKind: 'file_changes' };
+    const progress = { ...item('progress'), assistantPhase: 'commentary' as const };
+    const receipt = { ...item('receipt'), kind: 'tool_result' as const, toolUseId: patch.id };
+    live = [prompt, patch, progress, receipt];
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined, abort.signal);
+    try {
+      const initial = (await stream.next()).value as SessionChatStreamPage;
+      expect(initial.page.items.map(row => row.id)).toEqual(['prompt', 'patch', 'progress', 'receipt']);
+
+      live = [];
+      history = [prompt, progress];
+      runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', liveItems: [] });
+      emit('history_snapshot');
+      const settling = (await stream.next()).value as SessionChatStreamPage;
+      expect(settling.page.items.map(row => row.id)).toEqual(['prompt', 'patch', 'progress', 'receipt']);
+      expect(settling.page.items[1].receipt?.id).toBe(receipt.id);
+      const following = (await chat.read(1, 2, undefined, undefined, abort.signal, patch.id))!;
+      expect(following.items.map(row => row.id)).toEqual(['progress', 'receipt']);
+      expect(following.leadingPrompt?.id).toBe(prompt.id);
+
+      history = [prompt, patch, progress, receipt, { ...item('answer'), assistantPhase: 'final' }];
+      emit('history_snapshot');
+      const completed = (await stream.next()).value as SessionChatStreamPage;
+      expect(completed.page.items.map(row => row.id)).toEqual(['prompt', 'patch', 'progress', 'receipt', 'answer']);
+      expect((await chat.read(1, 2, undefined, undefined, abort.signal, undefined, 'progressive', '1', '1', '1'))!
+        .items[0].completedTurn?.reply[0].id).toBe('answer');
+    } finally {
+      abort.abort();
+      await stream.return(undefined);
+    }
+  });
+
+  it.each(['stream', 'poll'] as const)('does not append new live records after a saved-ahead row on %s', async transport => {
+    const prompt = { ...item('prompt'), kind: 'user' as const };
+    const progress = item('progress');
+    const answer = item('answer');
+    history = [prompt, progress, answer];
+    live = [prompt, progress];
+    const controller = new AbortController();
+    const stream = transport === 'stream' ? await chat.openStream(1, 2, 'progressive', undefined, controller.signal) : null;
+    const next = async (after?: string) => stream
+      ? ((await stream.next()).value as SessionChatStreamPage).page : (await read(after))!;
+    try {
+      const first = await next();
+      expect(first.items.map(row => row.id)).toEqual(['prompt', 'progress', 'answer']);
+      live = [prompt, progress, item('running-patch'), answer];
+      emit();
+      const caughtUp = await next(first.cursor);
+      expect(caughtUp.reset).toBe(true);
+      expect(caughtUp.items.map(row => row.id)).toEqual(['prompt', 'progress', 'running-patch', 'answer']);
+    } finally {
+      controller.abort();
+      await stream?.return(undefined);
     }
   });
 

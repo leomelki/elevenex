@@ -208,6 +208,58 @@ describe('CodexRuntimeService', () => {
     }
   });
 
+  it('updates a native patch and interleaved commentary at their first live positions', async () => {
+    const { service, appServer } = createService();
+    const wire = wireAppServerTurn(appServer);
+    const notify = (method: string, params: Record<string, unknown>) =>
+      wire.notificationHandler({ method, params: { threadId: 'thread-1', turnId: 'turn-1', ...params } });
+    try {
+      const pending = service.submitPrompt(7, 'Apply a patch');
+      await new Promise(setImmediate);
+      const patch = { type: 'fileChange', id: 'patch', changes: [], status: 'inProgress' };
+      const progress = { type: 'agentMessage', id: 'progress', text: '', phase: 'commentary' };
+      notify('item/started', { item: progress });
+      notify('item/started', { item: patch });
+      notify('item/agentMessage/delta', { itemId: progress.id, delta: 'Editing.' });
+      await new Promise(setImmediate);
+      const started = (await service.getRuntimeState(7)).liveItems;
+      expect(started.map(item => item.id)).toEqual(['progress', 'patch:tool_use']);
+
+      const completed = { ...patch, changes: [{ kind: 'add', path: 'notes.txt', diff: 'Notes' }], status: 'completed' };
+      notify('item/completed', { item: completed });
+      notify('item/completed', { item: { type: 'agentMessage', id: 'answer', text: 'Done.' } });
+      notify('item/agentMessage/delta', { itemId: 'answer', delta: 'Done.' });
+      notify('item/completed', { item: completed });
+      notify('item/started', { item: patch });
+      await new Promise(setImmediate);
+      const rows = (await service.getRuntimeState(7)).liveItems;
+      expect(rows.map(item => item.id)).toEqual(['progress', 'patch:tool_use', 'patch:tool_result', 'answer']);
+      expect(rows[1]).toMatchObject({ timestamp: started[1].timestamp, toolInput: { changes: completed.changes } });
+      expect(rows[2]).toMatchObject({ toolUseId: patch.id, isError: false });
+      expect(rows[3].content).toBe('Done.');
+      notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+      await pending;
+    } finally {
+      service.onModuleDestroy();
+    }
+  });
+
+  it('adds a saved permission denial without resorting native activity by its receipt time', async () => {
+    const { service, sessionsService, historyService, interactionRows } = createService();
+    sessionsService.findOne.mockResolvedValue({ ...session, codexSessionId: 'thread' });
+    const timestamp = (second: number) => `2026-11-22T10:00:0${second}.000Z`;
+    const history = [
+      { id: 'prompt', kind: 'user', content: 'Edit the notes', timestamp: timestamp(1) },
+      { id: 'patch', kind: 'tool_use', timestamp: timestamp(6) },
+      { id: 'progress', kind: 'assistant', content: 'Checking the edit.', timestamp: timestamp(3) },
+    ];
+    historyService.getHistory.mockResolvedValue(history);
+    interactionRows.push({ toolUseId: 'permission', toolName: 'Permissions', createdAt: timestamp(2),
+      resolvedAt: timestamp(3), requestSnapshot: JSON.stringify({ codexSessionId: 'thread' }) });
+    expect((await service.getHistory(7)).map(row => row.id)).toEqual(['prompt', 'permission:tool_use', 'patch', 'progress']);
+    expect(history).toHaveLength(3);
+  });
+
   it.each(['completed', 'interrupted', 'failed'])(
     'records an unseen reply only for a successful turn (%s)', async status => {
       const { service, sessionsService, appServer } = createService();
@@ -778,7 +830,7 @@ describe('CodexRuntimeService', () => {
     ]);
   });
   it('keeps child streaming and nested collaboration out of the parent transcript', async () => {
-    const { service, sessionsService } = createService();
+    const { service, sessionsService, historyService } = createService();
     sessionsService.findOne.mockResolvedValue({
       ...session,
       codexSessionId: 'root',
@@ -840,6 +892,16 @@ describe('CodexRuntimeService', () => {
         expect.objectContaining({ kind: 'assistant', content: 'Found a race' }),
       ]),
     );
+    historyService.getSubagentSnapshot.mockResolvedValueOnce({
+      history: [
+        { id: 'earlier', kind: 'assistant', content: 'Found a race', timestamp: new Date().toISOString() },
+        { id: 'reply', kind: 'assistant', content: 'Found a race and verified it.', timestamp: new Date().toISOString() },
+      ],
+    });
+    const saved = (await service.getSubagentHistory(7, 'child')).history.filter(item => item.kind === 'assistant');
+    expect(saved.map(({ id, content }) => [id, content])).toEqual([
+      ['earlier', 'Found a race'], ['reply', 'Found a race and verified it.'],
+    ]);
     runtime.finishRun(7);
     expect(runtime.subagentBackgroundWork(7)).toHaveLength(2);
     notify('turn/completed', {

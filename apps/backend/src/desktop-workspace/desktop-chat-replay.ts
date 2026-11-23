@@ -16,6 +16,7 @@ interface Checkpoint {
   readonly sourceFirst: string | undefined;
   readonly sourceLength: number;
   readonly records: readonly LiveRecord[];
+  readonly saved?: { readonly ids: ReadonlySet<string>; readonly afterLive: boolean };
 }
 
 function digest(value: string): string {
@@ -42,6 +43,7 @@ export class DesktopChatReplay {
     source: { readonly first: string | undefined; readonly length: number },
     items: readonly SessionChatItem[],
     previous?: Checkpoint,
+    snapshot?: readonly SessionChatItem[],
   ): Checkpoint {
     const known = new Map(previous?.records.map(record => [record.id, record]));
     const records = items.map(({ text, ...fields }) => {
@@ -51,7 +53,12 @@ export class DesktopChatReplay {
       return old?.fieldsHash === fieldsHash && old.textHash === textHash ? old
         : { id: fields.id, fieldsHash, textHash, textLength: text.length };
     });
-    return { historyRevision, sourceFirst: source.first, sourceLength: source.length, records };
+    const liveIds = snapshot && new Set(records.map(record => record.id));
+    const saved = snapshot && liveIds ? {
+      ids: new Set(snapshot.filter(item => !liveIds.has(item.id)).map(item => item.id)),
+      afterLive: records.length > 0 && records.at(-1)?.id !== snapshot.at(-1)?.id,
+    } : previous?.saved;
+    return { historyRevision, sourceFirst: source.first, sourceLength: source.length, records, saved };
   }
 
   updates(
@@ -59,6 +66,7 @@ export class DesktopChatReplay {
     next: Checkpoint,
     items: readonly SessionChatItem[],
     clipped: boolean,
+    appendText = true,
   ): readonly SessionChatEvent[] | undefined {
     if (previous.sourceLength > next.sourceLength ||
         (previous.sourceFirst !== undefined && previous.sourceFirst !== next.sourceFirst))
@@ -69,7 +77,7 @@ export class DesktopChatReplay {
       if (!current.length && previous.sourceLength === next.sourceLength) return [];
       // With no overlap, a clipped live page could skip rows between the
       // previous saved tail and these new items.
-      if (clipped || previous.sourceLength > 0) return;
+      if (clipped || previous.sourceLength > 0 || current.some(record => previous.saved?.ids.has(record.id))) return;
       return items.map(item => ({ type: 'item', item }));
     }
 
@@ -80,6 +88,11 @@ export class DesktopChatReplay {
     const start = currentEnd + 1 - overlap;
     const oldStart = old.length - overlap;
     if (oldStart && !clipped) return;
+    const appended = current.slice(currentEnd + 1);
+    const oldIds = new Set(old.slice(0, oldStart).map(record => record.id));
+    if (appended.length && (previous.saved?.afterLive ||
+        appended.some(record => oldIds.has(record.id) || previous.saved?.ids.has(record.id))))
+      return;
     const events: SessionChatEvent[] = [];
     for (let index = start; index < current.length; index++) {
       const record = current[index];
@@ -89,7 +102,7 @@ export class DesktopChatReplay {
       // authoritative window. Appending such rows would change turn ownership.
       if (prior && prior.id !== record.id) return;
       if (prior === record || (prior?.fieldsHash === record.fieldsHash && prior.textHash === record.textHash)) continue;
-      if (prior?.fieldsHash === record.fieldsHash &&
+      if (appendText && prior?.fieldsHash === record.fieldsHash &&
           record.textLength > prior.textLength &&
           digest(item.text.slice(0, prior.textLength)) === prior.textHash) {
         events.push({ type: 'delta', id: record.id, text: item.text.slice(prior.textLength) });
@@ -100,14 +113,16 @@ export class DesktopChatReplay {
     return events;
   }
 
-  remember(checkpoint: Checkpoint): string {
-    const cursor = `${this.id}:${++this.sequence}:${checkpoint.historyRevision}`;
+  remember(checkpoint: Checkpoint, cursor = `${this.id}:${++this.sequence}:${checkpoint.historyRevision}`): string {
+    const size = (value: Checkpoint) => value.records.length + (value.saved?.ids.size ?? 0);
+    const previous = this.checkpoints.get(cursor);
+    if (previous) this.records -= size(previous);
     this.checkpoints.set(cursor, checkpoint);
-    this.records += checkpoint.records.length;
+    this.records += size(checkpoint);
     for (const [id, previous] of this.checkpoints) {
       if (this.checkpoints.size <= CHECKPOINT_LIMIT && this.records <= RECORD_LIMIT) break;
       this.checkpoints.delete(id);
-      this.records -= previous.records.length;
+      this.records -= size(previous);
     }
     return cursor;
   }

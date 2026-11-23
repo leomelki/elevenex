@@ -94,7 +94,7 @@ export class SessionAgentComponent {
   readonly busy = signal(false);
   readonly error = signal("");
   readonly notice = signal("");
-  private readonly newer = signal<readonly (string | undefined)[]>([]);
+  private readonly newer = signal<readonly { readonly cursor?: string; readonly first?: string }[]>([]);
   readonly hasNewer = computed(() => this.newer().length > 0);
   /** Live and saved records retain the same task title and secondary identity. */
   protected readonly heading = computed(
@@ -119,7 +119,8 @@ export class SessionAgentComponent {
     const work = this.work();
     return work ? formatUsage(work) : "";
   });
-  readonly state = computed(() => sessionWorkStatus(this.page()?.status));
+  protected readonly status = computed(() => this.work()?.status ?? this.page()?.status);
+  readonly state = computed(() => sessionWorkStatus(this.status()));
   protected readonly titleId = `session-agent-${crypto.randomUUID()}`;
   protected readonly fileNotice = "Open this file from the task’s Files view.";
   protected readonly pageNotice =
@@ -133,7 +134,7 @@ export class SessionAgentComponent {
     const page = this.page();
     const items = page?.items ?? [];
     const prompt = page?.prompt.trim() ?? "";
-    const live = LIVE.has(page?.status ?? "");
+    const live = LIVE.has(this.status() ?? "");
     const calls = new Set(
       items
         .filter((item) => item.kind === "tool_use")
@@ -148,7 +149,8 @@ export class SessionAgentComponent {
       items
         // The pinned assignment already shows the opening prompt.
         .filter(
-          (item) => !(item.kind === "user" && item.text.trim() === prompt),
+          (item, index) => !(index === 0 && page?.before === null && item.kind === "user" && item.text.trim() === prompt) &&
+            !(item.kind === "assistant" && !item.text.trim()),
         )
         .filter(
           (item) =>
@@ -157,19 +159,20 @@ export class SessionAgentComponent {
         .map((item): AgentRow => {
           if (item.kind === "tool_use") {
             const result = results.get(item.toolId ?? item.id);
+            const finished = !!(result || item.receipt);
             const tool = presentSessionTool(item, result);
             const outcome =
-              result?.error || item.error || tool.shell?.failed || tool.shell?.interrupted
+              result?.error || item.receipt?.error || item.error || tool.shell?.failed || tool.shell?.interrupted
                 ? "failed"
-                : !result && !live
+                : !finished && !live
                   ? "unknown"
                   : undefined;
             return {
               item,
               tool,
               icon: stepIcon({ id: item.id, kind: sessionToolKind(item) }),
-              verb: sessionToolVerb(item, !result && live, outcome),
-              status: outcome ?? (result ? "done" : "running"),
+              verb: sessionToolVerb(item, !finished && live, outcome),
+              status: outcome ?? (finished ? "done" : "running"),
             };
           }
           return {
@@ -188,7 +191,8 @@ export class SessionAgentComponent {
   private readonly client = inject(SessionChatClient);
   private readonly transcript =
     viewChild<ChatScrollComponent>("transcript");
-  private request: { scope: string; id: string } | undefined;
+  private request: { scope: string; id: string; direction?: "before" | "following" } | undefined;
+  private targetKey = "";
   /** Refresh alone resets position; adjacent pages preserve the visible row. */
   private resetScroll = true;
   readonly windowRevision = signal(0);
@@ -246,8 +250,14 @@ export class SessionAgentComponent {
     void this.load(this.selection(), this.agentId(), cursor, false, "before");
   }
   later(): void {
-    if (!this.newer().length || this.busy() || this.unreachable()) return;
-    void this.load(this.selection(), this.agentId(), this.newer().at(-1), false, "following");
+    const next = this.newer().at(-1);
+    if (!next || this.busy() || this.unreachable()) return;
+    void this.load(this.selection(), this.agentId(), next.cursor, false, "following");
+  }
+  cancelHistory(): void {
+    if (!this.request?.direction) return;
+    this.cancel();
+    this.busy.set(false);
   }
   latest(): void { this.refresh(); }
   private async load(
@@ -258,13 +268,26 @@ export class SessionAgentComponent {
     direction?: "before" | "following",
   ): Promise<void> {
     this.cancel();
+    const key = JSON.stringify([target.scopeId, target.taskId, target.sessionId, agentId]);
+    if (key !== this.targetKey) {
+      this.targetKey = key;
+      this.page.set(null);
+      this.pages = [];
+      this.newer.set([]);
+      this.reasoningOpen.set(new Set());
+      this.assignmentTouched = false;
+      this.assignmentOpen.set(false);
+      this.loadedAt.set("");
+      this.notice.set("");
+      this.error.set("");
+    }
     if (!this.open() || unreachable) {
       this.busy.set(false);
       return;
     }
     const generation = this.generation,
       requestId = crypto.randomUUID();
-    this.request = { scope: target.scopeId, id: requestId };
+    this.request = { scope: target.scopeId, id: requestId, direction };
     this.busy.set(true);
     this.error.set("");
     const result = await this.client.agent(target.scopeId, {
@@ -278,7 +301,13 @@ export class SessionAgentComponent {
     this.request = undefined;
     this.busy.set(false);
     if (result.ok) {
-      if (!direction) {
+      if (result.value.availability === 'error' && this.page()?.items.length) {
+        this.error.set(result.value.message || 'Could not refresh this agent’s transcript.');
+        return;
+      }
+      const newer = this.newer().at(-1);
+      const movedTail = direction === "following" && !newer?.cursor && newer?.first !== result.value.items[0]?.id;
+      if (!direction || movedTail) {
         this.pages = [{ cursor: before, page: result.value }];
         this.newer.set([]);
         this.resetScroll = true;
@@ -286,7 +315,7 @@ export class SessionAgentComponent {
         this.pages.unshift({ cursor: before, page: result.value });
         while (this.pages.length > 4) {
           const removed = this.pages.pop()!;
-          this.newer.update(cursors => [...cursors, removed.cursor]);
+          this.newer.update(cursors => [...cursors, { cursor: removed.cursor, first: removed.page.items[0]?.id }]);
         }
       } else {
         this.pages.push({ cursor: before, page: result.value });
@@ -295,7 +324,8 @@ export class SessionAgentComponent {
           this.pages.shift();
       }
       const items = [...new Map(this.pages.flatMap(value => value.page.items).map(item => [item.id, item])).values()];
-      this.page.set({ ...result.value, items, before: this.pages[0]?.page.before ?? null });
+      this.page.set({ ...result.value, items, before: this.pages[0]?.page.before ?? null,
+        prompt: this.pages.find(page => !!page.page.prompt)?.page.prompt ?? "" });
       const retained = new Set(items.map(item => item.id));
       this.reasoningOpen.update(ids => new Set([...ids].filter(id => retained.has(id))));
       if (direction) this.windowRevision.update(value => value + 1);

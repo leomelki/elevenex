@@ -69,27 +69,45 @@ export class ChatCompletedTurns {
 
   private revision(items: readonly AgentTranscriptItem[]): string {
     const hash = createHash('sha256');
+    // The reply span determines the hidden activity offsets.
+    hash.update('desktop-turn-reply-v2');
     for (const item of items) hash.update(this.digest(item));
     return hash.digest('hex');
   }
 
-  private reply(items: readonly AgentTranscriptItem[]) {
+  private reply(items: readonly AgentTranscriptItem[], links: ChatToolLinks) {
     let end = items.length;
+    let progress = 0;
     while (end > 1) {
       const item = items[end - 1];
-      if (item.kind === 'assistant' && item.assistantPhase !== 'commentary') {
+      if (item.kind === 'assistant') {
         const projected = this.project(item);
-        if (projected.text.trim() || (!projected.error && projected.media?.some(media => media.inline))) break;
+        if (projected.text.trim() || (!projected.error && projected.media?.some(media => media.inline))) {
+          if (item.assistantPhase !== 'commentary') break;
+          progress ||= end;
+        }
       }
       end--;
     }
+    // Interrupted or failed runs may have only commentary. Keep the latest
+    // visible prose when there is no final reply to represent the turn.
+    if (end <= 1 && progress) end = progress;
     let start = end;
     const phase = items[end - 1]?.assistantPhase;
-    while (start > 1 && items[start - 1].kind === 'assistant' && items[start - 1].assistantPhase === phase) {
-      start--;
-      if (end - start > SESSION_CHAT_TURN_REPLY_LIMIT) return null;
+    let blocks = 0;
+    for (let index = end - 1; index > 0; index--) {
+      const item = items[index];
+      if (item.kind === 'assistant' && item.assistantPhase === phase) {
+        start = index;
+        if (++blocks > SESSION_CHAT_TURN_REPLY_LIMIT) return null;
+      } else {
+        const call = item.kind === 'tool_result' ? links.peer(item) : undefined;
+        if (!call) break;
+        const result = this.project(item, call);
+        if (!result.error && result.media?.some(media => media.inline && media.kind !== 'file')) break;
+      }
     }
-    const records = items.slice(start, end).map(item => this.project(item));
+    const records = items.slice(start, end).filter(item => item.kind === 'assistant').map(item => this.project(item));
     if (Buffer.byteLength(JSON.stringify(records)) > REPLY_BYTES) return null;
     return { start, end, records };
   }
@@ -98,12 +116,13 @@ export class ChatCompletedTurns {
     // Provider history can contain successive receipts for the same row.
     // The ordinary history window keeps its first position and latest value.
     const rows = [...new Map(items.map(item => [item.id, item])).values()];
-    const reply = this.reply(rows);
+    const links = new ChatToolLinks(rows);
+    const reply = this.reply(rows, links);
     if (!reply) return null;
     const hidden = rows.slice(1).filter((item, index) =>
-      (index + 1 < reply.start || index + 1 >= reply.end) && !captureMarker(item));
+      (item.kind !== 'assistant' || index + 1 < reply.start || index + 1 >= reply.end) && !captureMarker(item));
     if (!hidden.length) return null;
-    return { rows, reply, hidden, links: new ChatToolLinks(hidden) };
+    return { rows, reply, hidden, links };
   }
 
   summarize(
@@ -132,7 +151,7 @@ export class ChatCompletedTurns {
       const item = rows[index];
       const at = Date.parse(item.timestamp);
       if (Number.isFinite(at)) ended = Math.max(ended, at);
-      if (captureMarker(item) || (index >= reply.start && index < reply.end)) continue;
+      if (captureMarker(item) || (item.kind === 'assistant' && index >= reply.start && index < reply.end)) continue;
       if (index < reply.start) beforeReply++;
       const peer = links.peer(item);
       if (item.kind === 'tool_result' && peer) continue;

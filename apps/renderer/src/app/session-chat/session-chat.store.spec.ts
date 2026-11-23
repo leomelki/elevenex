@@ -1161,6 +1161,40 @@ describe("session chat ownership", () => {
     expect(store.exchanges()[0]?.prompt).toBe('Edited prompt');
   });
 
+  it('uses the reset position for a record that also appeared in the loaded prefix', async () => {
+    const prompt = item('prompt', 'user', 'Check the notes');
+    const patch = item('patch', 'tool_use', '', { toolId: 'patch', toolKind: 'file_changes' });
+    const progress = item('progress', 'assistant', 'Checking.');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [prompt, patch, progress] }))) });
+    await settle();
+    const receipt = item('receipt', 'tool_result', 'Updated', { toolId: 'patch' });
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [progress, patch, receipt], before: progress.id, leadingPrompt: { ...prompt, editable: true },
+    })));
+    await store.refresh();
+    expect(store.items().map(item => item.id)).toEqual(['prompt', 'progress', 'patch', 'receipt']);
+    expect(store.exchanges()).toHaveLength(1);
+    expect(store.exchanges()[0]?.steps.map(step => step.id)).toEqual(['patch']);
+  });
+
+  it('discards a page read across a history rewrite and opens the new authoritative tail', async () => {
+    const prompt = item('prompt', 'user', 'Current prompt');
+    const reply = item('reply', 'assistant', 'Current reply');
+    const { store, bridge } = setup({ initial: Promise.resolve(ok(page(2, { items: [prompt, reply], before: prompt.id }))) });
+    await settle();
+    const rewritten = { ...state, historyRewrite: 'edited-transcript' };
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [item('stale', 'user', 'Stale page')], state: rewritten,
+    })));
+    bridge.sessionChatRead.mockResolvedValueOnce(ok(page(2, {
+      items: [reply], before: reply.id, leadingPrompt: null, state: rewritten,
+    })));
+    await store.older();
+    expect(store.items()).toEqual([reply]);
+    expect(store.exchanges().map(exchange => exchange.answer)).toEqual(['Current reply']);
+    expect(store.exchanges().map(exchange => exchange.prompt)).toEqual(['']);
+  });
+
   it('retains a reconciled turn identity when only its compact context remains visible', async () => {
     const { store, bridge } = setup(); await settle();
     await store.submit({ text: 'Hi', intent: 'send', context: [] });

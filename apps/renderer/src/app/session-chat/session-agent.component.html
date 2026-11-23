@@ -90,7 +90,7 @@
       </div>
     }
 
-    @if (page()?.status === "waiting") {
+    @if (status() === "waiting") {
       <p class="banner attention" role="status">
         <ex-icon name="hand" [size]="14" />
         This agent is waiting on a decision. Answer it in the main conversation.
@@ -139,6 +139,7 @@
       [historyError]="error()"
       [historyRevision]="windowRevision()"
       (historyRequested)="$event.direction === 'before' ? earlier() : later()"
+      (historyCancelled)="cancelHistory()"
       (latestRequested)="latest()"
     >
       @if (busy() && !page()) {

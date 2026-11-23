@@ -169,6 +169,8 @@ it("shows the assignment once, pairs tool results with their calls and says wher
           item("t", "tool_use", "", { toolId: "t", toolName: "Read", toolKind: "read", input: '{"file_path":"a.ts"}' }),
           item("r", "tool_result", "contents", { toolId: "t" }),
           item("a", "assistant", "The boundary is safe."),
+          item("follow-up", "user", "Check the retry boundary."),
+          item("split", "tool_use", "", { toolId: "split", toolKind: "bash", receipt: { id: "elsewhere", error: true } }),
         ],
       },
     })),
@@ -185,18 +187,21 @@ it("shows the assignment once, pairs tool results with their calls and says wher
   fixture.detectChanges();
   const dialog = document.querySelector<HTMLElement>(".agent-dialog")!;
   const entries = [...dialog.querySelectorAll<HTMLElement>(".entries > li")];
-  expect(entries.map((entry) => entry.dataset["kind"])).toEqual(["tool_use", "assistant"]);
+  expect(entries.map((entry) => entry.dataset["kind"])).toEqual(["tool_use", "assistant", "user", "tool_use"]);
+  expect(entries[2]!.textContent).toContain("Check the retry boundary.");
+  expect(entries[3]!.querySelector("ex-tool-step section.failed")).not.toBeNull();
   expect(entries[0]!.querySelector("ex-tool-step")?.textContent).toContain("a.ts");
   expect(dialog.querySelector(".assignment")?.textContent).toContain("Check the retry boundary.");
   expect(dialog.textContent).toContain("Answer it in the main conversation.");
   expect(dialog.querySelector("footer button")).toBeNull();
 });
 
-it('keeps agent scrolling contiguous with at most 320 retained items and reloads evicted pages', async () => {
-  const history: SessionChatItem[] = Array.from({ length: 4000 }, (_, i) => ({
+it.each([false, true])('keeps agent scrolling contiguous when the evicted tail grows = %s', async grows => {
+  const row = (i: number): SessionChatItem => ({
     id: String(i), kind: 'assistant', text: `Message ${i}`, timestamp: '',
     toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false,
-  }));
+  });
+  const history = Array.from({ length: 4000 }, (_, i) => row(i));
   const client = {
     agent: vi.fn(async (_scope: string, input: SessionChatAgentRead) => {
       const end = Number(input.before ?? history.length), start = Math.max(0, end - 80);
@@ -216,8 +221,11 @@ it('keeps agent scrolling contiguous with at most 320 retained items and reloads
     expect(items.every((item, i) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
   }
   expect(owner.hasNewer()).toBe(true);
+  if (grows) history.push(...Array.from({ length: 90 }, (_, i) => row(4000 + i)));
   while (owner.hasNewer()) { owner.later(); fixture.detectChanges(); await fixture.whenStable(); }
-  expect(owner.page()!.items.at(-1)?.id).toBe('3999');
+  const items = owner.page()!.items;
+  expect(items.at(-1)?.id).toBe(String(history.length - 1));
+  expect(items.every((item, i) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
   expect(owner.page()!.items.length).toBeLessThanOrEqual(320);
 });
 

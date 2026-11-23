@@ -52,6 +52,33 @@ describe('desktop child transcript', () => {
     expect(first.before).toBeNull();
     expect(tail).not.toHaveProperty('transcriptPath');
   });
+  it('pins a Claude page to its raw record and keeps preceding blocks from the same message', async () => {
+    const value = snapshot();
+    value.nativeWindow = true;
+    value.history = value.history.map((item, index) => ({ ...item, transcriptMessageId: `raw-${Math.floor(index / 4)}` }));
+    const getSubagentHistory = jest.fn(async (_session: number, _agent: string, options?: { through?: string }) => {
+      const end = options?.through ? value.history.findLastIndex(row => row.transcriptMessageId === options.through) + 1 : value.history.length;
+      return { ...value, history: value.history.slice(Math.max(0, end - 110), end) };
+    });
+    const provider = { getSubagentHistory };
+    const tail = await readChatAgent(provider, 1, 'child');
+    value.history.push(...Array.from({ length: 170 }, (_, index) => ({
+      id: `new-${index}`, transcriptMessageId: `new-${index}`, kind: 'assistant' as const, timestamp: '',
+    })));
+    const earlier = await readChatAgent(provider, 1, 'child', tail.before!);
+    expect(earlier.items.at(-1)?.id).toBe('message-89');
+    expect(earlier.items.at(-2)?.id).toBe('message-88');
+    expect(getSubagentHistory).toHaveBeenLastCalledWith(1, 'child', { through: 'raw-22' });
+  });
+  it('keeps a tool’s settled receipt when the result sits beyond the page edge', async () => {
+    const value = snapshot();
+    value.history[10] = { ...value.history[10], kind: 'tool_use', toolUseId: 'call' };
+    value.history[169] = { ...value.history[169], kind: 'tool_result', toolUseId: 'call', isError: true };
+    const provider = { getSubagentHistory: async () => value };
+    const tail = await readChatAgent(provider, 1, 'child');
+    const older = await readChatAgent(provider, 1, 'child', tail.before!);
+    expect(older.items[0]).toMatchObject({ id: 'message-10', receipt: { id: 'message-169', error: true } });
+  });
   it('rejects invalid identities, cursors and provider identity mismatches', async () => {
     const getSubagentHistory = jest.fn(async () => snapshot());
     await expect(

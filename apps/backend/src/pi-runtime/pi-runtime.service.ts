@@ -1501,19 +1501,11 @@ export class PiRuntimeService
   ): void {
     const message = event.message as Record<string, unknown> | undefined;
     if (!message || event.type !== 'message_end') return;
-    if (message.role === 'user') return;
     const state = this.ensureRuntimeState(sessionId);
-    // Reuse the exact id assigned to this message while it was streaming (if
-    // any) so the final snapshot reconciles with the in-progress
-    // text/thinking items instead of appending duplicates. Passed as
-    // `precomputedId` (rather than `fallbackId`) so it is used verbatim
-    // instead of being combined again with the message timestamp.
-    for (const item of this.messageToTranscriptItems(
-      message,
-      randomUUID(),
-      undefined,
-      state.streamingAssistantMessageId ?? undefined,
-    )) {
+    // Reuse the streamed identity when publishing the final message.
+    const id = message.role === 'assistant' && state.streamingAssistantMessageId
+      ? state.streamingAssistantMessageId : this.liveMessageId(state, message);
+    for (const item of this.messageToTranscriptItems(message, id)) {
       const type =
         item.kind === 'tool_result'
           ? 'tool_result'
@@ -1524,7 +1516,7 @@ export class PiRuntimeService
               : 'message_start';
       this.pushItem(sessionId, item, type);
     }
-    state.streamingAssistantMessageId = null;
+    if (message.role === 'assistant') state.streamingAssistantMessageId = null;
   }
 
   private handleMessageUpdate(
@@ -1545,10 +1537,7 @@ export class PiRuntimeService
     // leaving both a stale streamed item and a duplicate final item.
     const sourceMessageId =
       state.streamingAssistantMessageId ??
-      (state.streamingAssistantMessageId = this.messageId(
-        message,
-        randomUUID(),
-      ));
+      (state.streamingAssistantMessageId = this.liveMessageId(state, message));
     const contentIndex = Number(update.contentIndex ?? 0);
     const itemId = `${sourceMessageId}:${update.type}:${contentIndex}`;
 
@@ -1609,7 +1598,7 @@ export class PiRuntimeService
       this.pushItem(
         sessionId,
         {
-          id: `${sourceMessageId}:tool:${toolUseId}`,
+          id: `${toolUseId}:tool_use`,
           kind: 'tool_use',
           toolUseId,
           toolName,
@@ -1886,6 +1875,7 @@ export class PiRuntimeService
       pendingPrompts: [],
       queuePaused: false,
       liveItems: [],
+      messageIds: new Map(),
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
@@ -2040,10 +2030,8 @@ export class PiRuntimeService
       | 'tool_result' = 'message_start',
   ): void {
     const state = this.ensureRuntimeState(sessionId);
-    state.liveItems = [
-      ...state.liveItems.filter((existing) => existing.id !== item.id),
-      item,
-    ];
+    const position = state.liveItems.findIndex(existing => existing.id === item.id);
+    state.liveItems = position < 0 ? [...state.liveItems, item] : state.liveItems.with(position, item);
     this.emitEvent({
       type: eventType,
       payload: { sessionId, item },
@@ -2139,10 +2127,12 @@ export class PiRuntimeService
   ): ClaudeTranscriptItem[] {
     if (!state.liveItems.length) return history;
     const byId = new Map(history.map((item) => [item.id, item]));
-    for (const item of state.liveItems) byId.set(item.id, item);
-    return [...byId.values()].sort((l, r) =>
-      l.timestamp.localeCompare(r.timestamp),
-    );
+    for (const item of state.liveItems) {
+      const saved = byId.get(item.id);
+      byId.set(item.id, saved ? { ...saved, ...item, transcriptMessageId: saved.transcriptMessageId,
+        sourceMessageId: saved.sourceMessageId } : item);
+    }
+    return [...byId.values()];
   }
 
   private transcriptItemsFromEntries(
@@ -2150,6 +2140,7 @@ export class PiRuntimeService
     leafId?: string | null,
   ): ClaudeTranscriptItem[] {
     const result: ClaudeTranscriptItem[] = [];
+    const messageIds = new Map<string, number>();
     const leaf = leafId === undefined ? entries.length - 1
       : leafId === null ? -1 : entries.findIndex(entry => entry.id === leafId);
     for (const index of piSessionBranch(entries, leaf)) {
@@ -2166,9 +2157,10 @@ export class PiRuntimeService
           ? { ...rawMessage, timestamp: entry.timestamp }
           : rawMessage;
       const entryId = this.piEntryAnchorId(entry, index);
-      result.push(...this.messageToTranscriptItems(message, entryId, entryId));
+      const id = uniquePiMessageId(this.messageId(message, entryId), messageIds);
+      result.push(...this.messageToTranscriptItems(message, id, entryId));
     }
-    return result.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return result;
   }
 
   private async readPiSessionRecords(
@@ -2239,16 +2231,9 @@ export class PiRuntimeService
 
   private messageToTranscriptItems(
     message: Record<string, unknown>,
-    fallbackId: string,
+    id: string,
     transcriptMessageId?: string,
-    precomputedId?: string,
   ): ClaudeTranscriptItem[] {
-    // `precomputedId` is used verbatim (e.g. the id already assigned to an
-    // assistant message while it was streaming) instead of being re-derived
-    // via messageId(), which would otherwise combine it with the message
-    // timestamp again and produce a different id than the one used for the
-    // in-progress streamed transcript items.
-    const id = precomputedId ?? this.messageId(message, fallbackId);
     const timestamp = this.timestampFromMessage(message);
     if (message.role === 'user') {
       const imageBlocks = Array.isArray(message.content)
@@ -2325,7 +2310,7 @@ export class PiRuntimeService
             providerToolInput,
           );
           items.push({
-            id: `${id}:tool:${toolUseId}`,
+            id: `${toolUseId}:tool_use`,
             kind: 'tool_use',
             toolUseId,
             toolName,
@@ -2347,7 +2332,7 @@ export class PiRuntimeService
       const toolUseId = String(message.toolCallId ?? id);
       return [
         {
-          id: `${id}:tool_result:${toolUseId}`,
+          id: `${toolUseId}:tool_result`,
           kind: 'tool_result',
           toolUseId,
           toolName:
@@ -2368,14 +2353,22 @@ export class PiRuntimeService
     message?: Record<string, unknown>,
     fallback: string = randomUUID(),
   ): string {
-    const signature = Array.isArray(message?.content)
-      ? (message.content[0] as Record<string, unknown> | undefined)
-          ?.textSignature
-      : undefined;
+    // Pi saves the same native timestamp it uses for events. A text signature
+    // can first appear at message_end, so it cannot key a native stream.
+    if ((message?.role === 'assistant' || message?.role === 'user') &&
+        typeof message.timestamp === 'number' && Number.isFinite(message.timestamp))
+      return `pi:${message.role}:${message.timestamp}`;
+    const signature = asRecord(Array.isArray(message?.content) ? message.content[0] : null)?.textSignature;
     if (typeof signature === 'string' && signature) return signature;
     const timestamp =
       typeof message?.timestamp === 'number' ? message.timestamp : Date.now();
     return `${fallback}-${timestamp}`;
+  }
+
+  private liveMessageId(state: PiRuntimeState, message?: Record<string, unknown>): string {
+    const id = uniquePiMessageId(this.messageId(message), state.messageIds);
+    if (state.messageIds.size > 512) state.messageIds.delete(state.messageIds.keys().next().value!);
+    return id;
   }
 
   private timestampFromMessage(message?: Record<string, unknown>): string {
@@ -2643,4 +2636,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function uniquePiMessageId(base: string, seen: Map<string, number>): string {
+  const occurrence = (seen.get(base) ?? 0) + 1;
+  seen.set(base, occurrence);
+  return occurrence === 1 ? base : `${base}:${occurrence}`;
 }

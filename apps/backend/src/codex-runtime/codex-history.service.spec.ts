@@ -30,6 +30,42 @@ describe('CodexHistoryService', () => {
     }
   });
 
+  it('uses native starts to place a patch before prose that completed first', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-native-chronology-'));
+    try {
+      const base = Date.parse('2026-11-22T16:00:00Z');
+      const record = (type: string, at: number, payload: Record<string, unknown>) =>
+        ({ type, timestamp: new Date(base + at).toISOString(), payload });
+      const completed = (start: number, end: number, item: Record<string, unknown>) =>
+        record('event_msg', end, { type: 'item_completed', turn_id: 'turn', started_at_ms: base + start, item });
+      const commentary = { id: 'progress', phase: 'commentary', content: [{ text: 'Checking the edit.' }] };
+      const patch = { type: 'FileChange', id: 'patch', status: 'completed',
+        changes: { 'readme.txt': { type: 'add', content: 'Notes\n' } } };
+      await writeFile(join(root, 'chronology.jsonl'), [
+        record('session_meta', 0, { id: 'chronology', cwd: '/repo' }),
+        record('event_msg', 1, { type: 'task_started', turn_id: 'turn' }),
+        completed(2, 3, { type: 'UserMessage', id: 'prompt', content: [{ text: 'Update the notes.' }] }),
+        completed(8, 12, { ...commentary, type: 'AgentMessage' }),
+        record('response_item', 13, { item: { ...commentary, type: 'message', role: 'assistant' } }),
+        completed(6, 18, patch),
+        completed(6, 19, patch),
+        completed(20, 21, { type: 'Reasoning', id: 'thinking', summary_text: ['Check the resulting file.'] }),
+        completed(22, 24, { type: 'AgentMessage', id: 'final', phase: 'final_answer', content: [{ text: 'Notes added.' }] }),
+      ].map(entry => JSON.stringify(entry)).join('\n') + '\n');
+
+      const history = await new CodexHistoryService(root).getHistory('chronology');
+      expect(history.map(item => item.id)).toEqual([
+        'prompt', 'patch:tool_use', 'progress', 'patch:tool_result', 'thinking', 'final',
+      ]);
+      expect(history[1]).toMatchObject({ kind: 'tool_use', toolUseId: 'patch' });
+      expect(history[2]).toMatchObject({ content: 'Checking the edit.', assistantPhase: 'commentary' });
+      expect(history[4]).toMatchObject({ kind: 'thinking', content: 'Check the resulting file.' });
+      expect(chatWindow(history, [], { following: 'progress' })?.items[0]?.id).toBe('patch:tool_result');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores native tools inside exec with stable live IDs, readable output and individual failures', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-native-tools-'));
     try {

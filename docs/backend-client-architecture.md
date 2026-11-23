@@ -71,6 +71,14 @@ snapshot with history cursors. Transcript payloads are limited to 4 MiB per
 frame, and backpressure prevents a slow network socket from growing a queue of
 pending projections.
 
+Snapshot and adjacent-page reads sample the runtime after reading history.
+They reconcile the two sources in a single order before selecting page edges.
+Shared IDs retain their live order, and saved entries supply the context before
+and between them. When the runtime retires a turn before every observed row has
+been saved, the feed carries its bounded tail through the handoff. A history
+rewrite clears that tail. Both transports verify that the window supports an
+append or update before emitting one, and snapshot when the ordering changes.
+
 The named watch, acknowledge and unwatch bridge operations allow one live chat
 per window. Main validates the cursor chain, the scoped resource and each
 frame before forwarding it. A single outstanding delivery bounds Electron

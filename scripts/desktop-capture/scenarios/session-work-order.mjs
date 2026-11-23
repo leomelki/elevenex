@@ -57,7 +57,8 @@ export default async function* (capture) {
     await finish();
     const summary = '[data-work-step="test"] .group';
     assert.match(await capture.evaluate(s => document.querySelector(s).getAttribute('aria-label'), summary), /1 command/);
-    assert.equal(await capture.evaluate(() => document.querySelector('ex-turn .work').textContent.includes('command')), false);
+    assert.equal(await capture.evaluate(() => [...document.querySelectorAll('ex-turn .work .fact')]
+      .some(fact => fact.textContent.includes('command') && Number(getComputedStyle(fact).opacity) > 0)), false);
     yield { name: theme + '-section-summary', inspect: ['ex-turn .work', summary] };
     await capture.evaluate(() => document.querySelector('ex-turn .work').focus());
     await finish();

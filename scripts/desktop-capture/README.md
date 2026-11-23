@@ -212,6 +212,12 @@ wheel input while the range settles. It also checks immediate range updates
 with a stable reading anchor in the narrow reduced-motion layout. Run both
 themes against the preview URL.
 
+`scenarios/session-live-transcript.mjs` opens a running conversation, verifies
+that a patch updates in place between two messages, and checks that a background
+prompt preserves the visible reply's position. Reopening the running session
+keeps one copy of every prompt. Run against the preview URL in both themes,
+including the narrow reduced-motion layout.
+
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/connected-workspace.mjs --url http://127.0.0.1:4310 --timeout 240
 ```

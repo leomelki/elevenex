@@ -1324,11 +1324,11 @@ describe('PiRuntimeService lifecycle', () => {
       const history = await service.getHistory(1);
 
       expect(history.map((item) => item.kind)).toEqual(['user', 'thinking']);
-      expect(history[1]?.id).toBe('sig-file:thinking_start:0');
       expect(history[1]?.content).toBe('fresher streamed reasoning');
 
       const state = await service.getRuntimeState(1);
       expect(state.liveItems).toHaveLength(1);
+      expect(history[1]?.id).toBe(state.liveItems[0]?.id);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1362,6 +1362,46 @@ describe('PiRuntimeService lifecycle', () => {
     expect(history.map((item) => item.kind)).toEqual(['thinking']);
     expect(history[0]?.content).toBe('orphaned stream');
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('keeps one prompt and one tool across Pi events and a saved transcript without signatures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-transcript-identities-'));
+    try {
+      const path = join(root, 'session.jsonl');
+      const timestamp = Date.parse('2026-11-22T09:00:00Z');
+      const prompt = { role: 'user', timestamp, content: [{ type: 'text', text: 'Check the notes.' }] };
+      const toolCall = { type: 'toolCall', id: 'tool', name: 'read', arguments: { path: 'notes.txt' } };
+      const partial = { role: 'assistant', timestamp: timestamp + 1, content: [] };
+      const first = { ...partial, content: [{ type: 'text', text: 'Checking.' }, toolCall] };
+      const receipt = { role: 'toolResult', toolCallId: 'tool', toolName: 'read',
+        timestamp: timestamp + 2, content: [{ type: 'text', text: 'Notes' }] };
+      const answer = { ...partial, content: [{ type: 'text', text: 'Ready.', textSignature: 'on-completion-only' }] };
+      await writeFile(path, [prompt, first, receipt, answer].map((message, index) =>
+        JSON.stringify({ id: String(index), type: 'message', message })).join('\n') + '\n');
+      const { service } = createService({ piSessionPath: path });
+      const end = (message: Record<string, unknown>) => emitPiEvent(service, 1, { type: 'message_end', message });
+      const stream = () => emitPiEvent(service, 1, { type: 'message_update',
+        assistantMessageEvent: { type: 'text_start', contentIndex: 0 }, message: partial });
+      end(prompt);
+      stream();
+      emitPiEvent(service, 1, { type: 'message_update',
+        assistantMessageEvent: { type: 'toolcall_end', contentIndex: 1, toolCall }, message: partial });
+      end(first);
+      emitPiEvent(service, 1, { type: 'tool_execution_start', toolCallId: 'tool', toolName: 'read', args: toolCall.arguments });
+      emitPiEvent(service, 1, { type: 'tool_execution_end', toolCallId: 'tool', toolName: 'read', result: { content: receipt.content } });
+      end(receipt);
+      stream();
+      end(answer);
+      const live = (await service.getRuntimeState(1)).liveItems;
+      expect(live.map(row => row.kind)).toEqual(['user', 'assistant', 'tool_use', 'tool_result', 'assistant']);
+      expect(new Set(live.map(row => row.id)).size).toBe(live.length);
+      const history = await service.getHistory(1);
+      expect(history.map(row => row.id)).toEqual(live.map(row => row.id));
+      expect(history.filter(row => row.kind === 'assistant').map(row => row.content)).toEqual(['Checking.', 'Ready.']);
+      expect(history[0].transcriptMessageId).toBe('0');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('does not spawn a runtime or persist a Pi session path when fetching autocomplete for a session with no active run', async () => {

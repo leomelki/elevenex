@@ -517,6 +517,7 @@ export interface ClaudeSubagentHistoryPayload {
   transcriptAvailable: boolean;
   transcriptState?: 'starting' | 'available' | 'unavailable' | 'error';
   hasEarlier?: boolean;
+  nativeWindow?: true;
   transcriptError?: string;
 }
 

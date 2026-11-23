@@ -699,7 +699,7 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
-  it('emits bounded deltas after a single text baseline', async () => {
+  it('emits bounded deltas after metadata publishes a single baseline for an early text part', async () => {
     const f = fixture();
     const emitted: ClaudeRuntimeEvent[] = [];
     f.provider.on('event', (event: ClaudeRuntimeEvent) => emitted.push(event));
@@ -719,6 +719,14 @@ describe('OpenCode runtime lifecycle', () => {
           },
         },
       });
+      f.send({ id: 'early', type: 'message.part.delta',
+        properties: { sessionID: 's', messageID: 'm', partID: 'p', field: 'text', delta: 'Before metadata. ' } });
+      await tick();
+      expect(emitted.filter(event => event.type === 'message_start' || event.type === 'message_delta')).toEqual([]);
+      f.send({ id: 'm', type: 'message.updated', properties: { info: {
+        id: 'm', sessionID: 's', role: 'user', agent: 'build',
+        model: { providerID: 'test', modelID: 'model' }, time: { created: 1 },
+      } } });
       for (let index = 0; index < 50; index++)
         f.send({
           id: `d${index}`,
@@ -734,7 +742,7 @@ describe('OpenCode runtime lifecycle', () => {
       await tick();
       expect(
         emitted.filter((event) => event.type === 'message_start'),
-      ).toHaveLength(1);
+      ).toMatchObject([{ payload: { item: { id: 'p', kind: 'user', content: 'Before metadata. ' } } }]);
       expect(emitted.filter((event) => event.type === 'message_delta')).toEqual(
         Array.from({ length: 50 }, () => ({
           type: 'message_delta',
@@ -742,7 +750,7 @@ describe('OpenCode runtime lifecycle', () => {
         })),
       );
       expect((await f.provider.getRuntimeState(1)).liveItems[0].content).toBe(
-        'token'.repeat(50),
+        'Before metadata. ' + 'token'.repeat(50),
       );
     } finally {
       f.provider.onModuleDestroy();
@@ -840,7 +848,17 @@ describe('OpenCode runtime lifecycle', () => {
         'grandchild',
       ]);
       await f.provider.approvePermission(1, 'nested');
-      await f.provider.getSubagentHistory(1, 'grandchild');
+      const info: Message = { id: 'child-message', sessionID: 'grandchild', role: 'user',
+        agent: 'build', model: { providerID: 'test', modelID: 'model' }, time: { created: 1 } };
+      const part: Part = { id: 'child-part', sessionID: 'grandchild', messageID: info.id, type: 'text', text: 'First' };
+      f.messages.push(
+        { info, parts: [part] },
+        { info, parts: [{ ...part, text: 'Complete' }] },
+        { info: { ...info, sessionID: 'foreign' }, parts: [{ ...part, id: 'foreign-part', text: 'Wrong transcript' }] },
+      );
+      expect((await f.provider.getSubagentHistory(1, 'grandchild')).history).toMatchObject([
+        { id: part.id, kind: 'user', content: 'Complete' },
+      ]);
       expect(f.client.session.messages).toHaveBeenCalledWith({
         sessionID: 'grandchild',
       });

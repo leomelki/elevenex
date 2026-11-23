@@ -428,10 +428,12 @@ export class OpenCodeAgentRuntimeProvider
             : undefined,
         ]);
       if (entry.controller.signal.aborted) return;
+      const streaming = !!entry.run || (recoverRuntime && statuses?.data?.[sessionID]?.type === 'busy');
       entry.transcript.reconcile(
         messages.data ?? [],
         before,
         session.data?.revert?.messageID,
+        streaming ? new Set(entry.state.liveItems.flatMap(item => item.sourceMessageId ?? [])) : undefined,
       );
       entry.historyLoaded = true;
       if (recoverRuntime) this.syncSubagents(entry, statuses?.data);
@@ -651,7 +653,8 @@ export class OpenCodeAgentRuntimeProvider
           }
           break;
         }
-        entry.transcript.putMessage(message);
+        for (const part of entry.transcript.putMessage(message))
+          this.emitPart(entry, part);
         // V1 changes primary agents through user messages, including native plan_exit.
         if (message.role === 'user' && !entry.client!.selection)
           await this.syncNativeAgent(entry, message.agent);
@@ -681,9 +684,11 @@ export class OpenCodeAgentRuntimeProvider
         if (sessionID !== state.claudeSessionId || field !== 'text') break;
         const part = entry.transcript.parts.get(partID);
         if (part?.type === 'text' || part?.type === 'reasoning') {
-          if (!state.liveItems.some((item) => item.id === partID))
-            this.emitPart(entry, part);
-          entry.transcript.appendDelta(partID, delta);
+          const updated = entry.transcript.appendDelta(partID, delta);
+          if (!state.liveItems.some(item => item.id === partID)) {
+            if (updated) this.emitPart(entry, updated);
+            break;
+          }
           state.liveItems = state.liveItems.map((item) =>
             item.id === partID
               ? { ...item, content: (item.content ?? '') + delta }
@@ -1146,7 +1151,8 @@ export class OpenCodeAgentRuntimeProvider
                 );
       if (signal.aborted) return;
       if (result.data) {
-        entry.transcript.putMessage(result.data.info);
+        const buffered = entry.transcript.putMessage(result.data.info);
+        for (const part of buffered) this.emitPart(entry, part);
         for (const part of result.data.parts) {
           entry.transcript.putPart(part);
           this.emitPart(entry, part);
@@ -1541,14 +1547,21 @@ export class OpenCodeAgentRuntimeProvider
       );
     const messages =
       (await entry.client!.session.messages({ sessionID: agentId })).data ?? [];
+    if (this.entries.get(sessionId) !== entry || entry.controller.signal.aborted || !this.owns(entry, agentId))
+      throw new BadRequestException('Agent is no longer available.');
     this.syncSubagents(entry);
     const subagent = entry.state.subagents.find(agent => agent.agentId === agentId);
     if (!subagent) throw new BadRequestException('Agent is no longer available.');
+    const transcript = new OpenCodeTranscriptStore();
+    for (const { info, parts } of messages) {
+      if (info.sessionID !== agentId) continue;
+      transcript.putMessage(info);
+      for (const part of parts)
+        if (part.sessionID === agentId && part.messageID === info.id) transcript.putPart(part);
+    }
     return {
       subagent: { ...subagent },
-      history: messages.flatMap((message) =>
-        message.parts.flatMap((part) => openCodePartItems(part, message.info)),
-      ),
+      history: transcript.history(),
       transcriptAvailable: true,
     };
   }

@@ -17,6 +17,7 @@
           role="user"
           [messageId]="exchange.id"
           [isNew]="exchange.isNew || false"
+          [revealOnArrival]="exchange.revealOnArrival ?? true"
           [sendOrigin]="exchange.sendOrigin"
           [time]="exchange.time || ''"
           [editable]="promptEditing() && !!exchange.promptEditable"

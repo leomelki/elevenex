@@ -245,6 +245,8 @@ export interface ChatExchange {
   /** Whether this reply is currently receiving text, independently of tool work. */
   readonly streaming?: boolean;
   readonly isNew?: boolean;
+  /** An explicit local send can reveal its turn even while reading above it. */
+  readonly revealOnArrival?: boolean;
   readonly sendOrigin?: MessageSendOrigin;
   readonly overflow?: readonly {
     readonly id: string;

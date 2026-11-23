@@ -108,3 +108,10 @@ their own second ownership check. Codex/OpenCode still use their existing intern
 history readers; the desktop bounds the returned window and does not poll it.
 Native pagination inside those provider readers and live inspector cursors remain
 future improvements. No synthetic follow-up prompt or unsupported action is sent.
+
+Child transcript pages use provider record IDs. Claude cursors pin the underlying
+record so a busy transcript can keep growing while its earlier blocks remain
+pageable. Codex combines rollout and observed rows in their recorded order.
+OpenCode projects owned child messages through its transcript store. The
+inspector cancels abandoned page requests, keeps loaded rows through a failed
+refresh, and preserves follow-ups that repeat the opening assignment.

@@ -3847,6 +3847,26 @@ describe('ClaudeRuntimeService', () => {
     expect(chatWindow(history, live)?.items.map(row => row.id)).toEqual(history.map(row => row.id));
   });
 
+  it('keeps distinct legacy Claude messages that reused the same block index', async () => {
+    const block = (uuid: string, text: string) => ({
+      type: 'assistant', uuid, timestamp: '2026-11-22T12:00:00.000Z',
+      message: { id: 'msg_split', content: [{ type: 'text', text }] },
+    });
+    const first = block('first', 'Before the tool.');
+    const last = block('last', 'After the tool.');
+    mockTranscript([
+      first, { ...block('tool', ''), message: { id: 'msg_split',
+        content: [{ type: 'tool_use', id: 'call', name: 'Bash', input: { command: 'pnpm test' } }] } },
+      last, first,
+    ]);
+    const history = await service.getHistory(7);
+    expect(chatWindow(history, [])?.items.map(row => [row.id, row.text])).toEqual([
+      ['msg_split:assistant:0', 'Before the tool.'],
+      ['msg_split:tool_use:call', ''],
+      ['msg_split:assistant:0:last', 'After the tool.'],
+    ]);
+  });
+
   it('drops a prompt that was edited and re-submitted before anything answered it', async () => {
     mockTranscript([
       {
@@ -4229,6 +4249,22 @@ describe('ClaudeRuntimeService', () => {
         }),
       ],
     });
+  });
+
+  it('keeps Claude child blocks keyed by their source records across overlapping native pages', async () => {
+    (service as any).ensureRuntimeState(7, 'claude-session-1').subagents = [
+      { agentId: 'agent-1', agentType: 'reviewer', status: 'started', timestamp: '2026-11-22T10:00:00Z' },
+    ];
+    const block = (uuid: string) => ({
+      type: 'assistant', uuid, timestamp: '2026-11-22T10:00:00Z',
+      message: { id: 'msg_shared', content: [{ type: 'text', text: uuid }] },
+    });
+    (getSubagentMessages as jest.Mock).mockResolvedValueOnce([block('first'), block('later')])
+      .mockResolvedValueOnce([block('later')]);
+    const both = (await service.getSubagentHistory(7, 'agent-1')).history;
+    const later = (await service.getSubagentHistory(7, 'agent-1')).history;
+    expect(both.map(row => row.id)).toEqual(['first:assistant:0', 'later:assistant:0']);
+    expect(later[0]?.id).toBe(both[1]?.id);
   });
 
   it('suppresses known SDK stop errors after an interrupt request', async () => {

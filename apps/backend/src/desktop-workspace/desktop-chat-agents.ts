@@ -8,6 +8,7 @@ import { agentContext, agentStatus } from './desktop-chat-work.js';
 interface AgentCursor {
   before?: string;
   nativeBefore?: string;
+  nativeThrough?: string;
 }
 export async function readChatAgent(
   provider: Pick<AgentRuntimeProvider, 'getSubagentHistory'>,
@@ -27,7 +28,7 @@ export async function readChatAgent(
       if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new Error();
       const entry = record(value);
-      for (const key of ['before', 'nativeBefore'])
+      for (const key of ['before', 'nativeBefore', 'nativeThrough'])
         if (
           entry[key] !== undefined &&
           (typeof entry[key] !== 'string' || entry[key].length > 500)
@@ -38,6 +39,9 @@ export async function readChatAgent(
         ...(typeof entry.nativeBefore === 'string'
           ? { nativeBefore: entry.nativeBefore }
           : {}),
+        ...(typeof entry.nativeThrough === 'string'
+          ? { nativeThrough: entry.nativeThrough }
+          : {}),
       };
     } catch {
       throw new BadRequestException('Invalid agent history cursor.');
@@ -46,19 +50,26 @@ export async function readChatAgent(
   // The provider verifies child ownership; do not accept a renderer-supplied path.
   const result = await provider.getSubagentHistory(sessionId, agentId, {
     before: position.nativeBefore,
+    ...(position.nativeThrough ? { through: position.nativeThrough } : {}),
   });
   const agent = result.subagent;
   if (!agent || agent.agentId !== agentId)
     throw new BadRequestException('Agent identity changed.');
-  const window = chatWindow(result.history, [], { before: position.before, includeLeadingPrompt: false });
+  // A repeated raw record must not come back on another page under the same ID.
+  const history = [...new Map(result.history.map(item => [item.id, item])).values()];
+  const window = chatWindow(history, [], {
+    before: position.before, includeLeadingPrompt: false, linkToolReceipts: true,
+  });
   if (!window)
     throw new BadRequestException(
       'Agent history changed. Refresh to read the latest messages.',
     );
+  const nativeThrough = result.nativeWindow
+    ? history.find(item => item.id === window.before)?.transcriptMessageId : undefined;
   const next: AgentCursor | null = window.before
-    ? { before: window.before, nativeBefore: position.nativeBefore }
-    : result.hasEarlier && result.history[0]?.transcriptMessageId
-      ? { nativeBefore: result.history[0].transcriptMessageId }
+    ? nativeThrough ? { before: window.before, nativeThrough } : { before: window.before, nativeBefore: position.nativeBefore }
+    : result.hasEarlier && history[0]?.transcriptMessageId
+      ? { nativeBefore: history[0].transcriptMessageId }
       : null;
   return {
     agentId,

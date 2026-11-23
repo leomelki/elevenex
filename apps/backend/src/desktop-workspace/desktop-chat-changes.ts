@@ -227,7 +227,7 @@ export interface PreparedTurnChanges {
 }
 
 export function prepareTurnChanges(
-  items: AgentTranscriptItem[],
+  items: readonly AgentTranscriptItem[],
   turnId: string,
 ): PreparedTurnChanges {
   const start = items.findIndex(
