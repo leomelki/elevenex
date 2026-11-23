@@ -8,7 +8,7 @@ const remote = require('./remote-contract.cjs');
 const machines = require('./machine-contract.cjs');
 const workspace = require('./workspace-contract.cjs');
 const chatMethods = ['taskBrowserConfigure', 'taskBrowserDetach', 'taskBrowserReturn', 'taskBrowserWindow', 'taskBrowserWindowAction', 'onTaskBrowserWindowChanged', 'onTaskBrowserRevealTask', 'taskBrowserAttach', 'taskBrowserSurfaces', 'taskBrowserPresentation', 'taskBrowserFrameAck', 'taskBrowserInput', 'onTaskBrowserSurfacesChanged', 'onTaskBrowserFrame', 'sessionChatAgent', 'sessionChatCatalog', 'sessionChatChanges', 'sessionChatRead', 'sessionChatCommand', 'sessionChatCancel', 'sessionChatContent', 'sessionChatMedia', 'sessionChatUpload', 'taskBrowserRead', 'taskBrowserCommand', 'taskBrowserLayout', 'taskBrowserHide', 'taskBrowserDeactivate', 'onTaskBrowserChanged'];
-chatMethods.push('sessionChatTurnWork', 'sessionChatToolDetails');
+chatMethods.push('sessionChatTurnWork', 'sessionChatToolDetails', 'sessionChatPromptEdit');
 chatMethods.push('sessionChatWatch', 'sessionChatUnwatch', 'sessionChatAcknowledge', 'onSessionChatStream');
 
 test('preload exposes only the typed bridge and strips event objects', async () => {
@@ -76,7 +76,10 @@ test('preload exposes only the typed bridge and strips event objects', async () 
   const details = { ...target, item: { id: 'call', revision: 'b'.repeat(64) } };
   await bridge.sessionChatTurnWork('scope', work);
   await bridge.sessionChatToolDetails('scope', details);
-  assert.deepEqual(calls, [['session-chat:turn-work', 'scope', work], ['session-chat:tool-details', 'scope', details]]);
+  const edit = { ...target, itemId: 'prompt' };
+  await bridge.sessionChatPromptEdit('scope', edit);
+  assert.deepEqual(calls, [['session-chat:turn-work', 'scope', work], ['session-chat:tool-details', 'scope', details],
+    ['session-chat:prompt-edit', 'scope', edit]]);
   calls.length = 0;
   const chatWatch = { taskId: 1, sessionId: 2, watchId: 'visible-chat', loadingMode: 'progressive' };
   await bridge.sessionChatWatch('scope', chatWatch);

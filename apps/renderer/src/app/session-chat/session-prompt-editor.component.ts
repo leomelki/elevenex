@@ -5,12 +5,18 @@ import {
 import { SESSION_CHAT_PROMPT_LIMIT, type SessionChatPromptEdit } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { SessionChatClient } from '../backend/session-chat-client.service';
-import { ButtonComponent, IconButtonComponent, IconComponent, ModalLayerComponent } from '../ui';
+import {
+  AutoHeightDirective, ButtonComponent, EaseSwapComponent, IconButtonComponent,
+  IconComponent, ModalLayerComponent, ProgressLineComponent,
+} from '../ui';
 import { SessionChatStore, type ChatSelection } from './session-chat.store';
 
 @Component({
   selector: 'ex-session-prompt-editor',
-  imports: [ButtonComponent, IconButtonComponent, IconComponent, ModalLayerComponent],
+  imports: [
+    AutoHeightDirective, ButtonComponent, EaseSwapComponent, IconButtonComponent,
+    IconComponent, ModalLayerComponent, ProgressLineComponent,
+  ],
   templateUrl: './session-prompt-editor.component.html',
   styleUrl: './session-prompt-editor.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -26,6 +32,7 @@ export class SessionPromptEditorComponent {
   protected readonly draft = signal('');
   protected readonly error = signal('');
   protected readonly checking = signal(false);
+  protected readonly refreshRequired = signal(false);
   protected readonly copied = signal(false);
   protected readonly limit = SESSION_CHAT_PROMPT_LIMIT;
   protected readonly store = inject(SessionChatStore);
@@ -33,8 +40,21 @@ export class SessionPromptEditorComponent {
     const snapshot = this.snapshot(), draft = this.draft().trim();
     return this.open() && !!snapshot && !!draft && draft !== snapshot.text.trim() &&
       this.draft().length <= this.limit && !this.saving() && !this.checking() &&
+      !this.preparing() && !this.refreshRequired() &&
       !this.store.promptEditDisabledReason();
   });
+  protected readonly primaryLabel = computed(() =>
+    this.saving() ? 'Resending…' : this.refreshRequired()
+      ? this.preparing() ? 'Refreshing…' : 'Refresh edit details'
+      : 'Edit & resend');
+  protected readonly primaryDisabled = computed(() => this.refreshRequired()
+    ? this.preparing() || !!this.store.promptEditDisabledReason()
+    : !this.canSave());
+  protected primaryAction(): void {
+    if (this.primaryDisabled()) return;
+    if (this.refreshRequired()) void this.prepare();
+    else void this.save();
+  }
   private readonly client = inject(SessionChatClient);
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly editor = viewChild<ElementRef<HTMLTextAreaElement>>('editor');
@@ -71,8 +91,10 @@ export class SessionPromptEditorComponent {
     this.request = undefined;
     this.preparing.set(false);
     if (result.ok) {
-      this.draft.set(result.value.text);
+      if (!this.snapshot()) this.draft.set(result.value.text);
       this.snapshot.set(result.value);
+      this.refreshRequired.set(false);
+      this.editor()?.nativeElement.focus({ preventScroll: true });
     } else this.error.set(result.error.message);
   }
 
@@ -96,7 +118,10 @@ export class SessionPromptEditorComponent {
       this.close();
     } else {
       this.checking.set(!!this.store.uncertain());
-      this.error.set(this.store.promptEditError() || this.store.promptEditDisabledReason() || 'Could not resend the message.');
+      const failure = this.store.promptEditError();
+      this.refreshRequired.set(failure?.status === 409);
+      this.error.set(failure?.message || this.store.promptEditDisabledReason() || 'Could not resend the message.');
+      this.editor()?.nativeElement.focus({ preventScroll: true });
     }
   }
 

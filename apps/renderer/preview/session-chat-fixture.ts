@@ -797,7 +797,7 @@ export class SessionChatFixture {
       const index = session.items.findIndex(item => item.id === action.itemId && item.editable);
       const original = session.items[index];
       if (!original || action.revision !== this.version.toString(16).padStart(64, '0'))
-        return { ok: false, error: { code: 'http', status: 409, message: 'The conversation changed. Reopen this message to edit it.' } };
+        return { ok: false, error: { code: 'http', status: 409, message: 'The conversation changed. Refresh the edit details before resending.' } };
       const prompt = { ...original, id: 'revised-' + this.version, text: action.text };
       session.items = [...session.items.slice(0, index), prompt, item('revised-reply', 'assistant', 'I’ll verify the revised retry scenario.')];
       session.state = { ...session.state, historyRewrite: crypto.randomUUID() };

@@ -150,8 +150,10 @@ test('backend client IPC validates scope/arity, isolates window ownership and un
   stop(); assert.equal(handlers.size, 0);
 });
 
-test('conversation loading modes are validated, scope-bound and transported by the named read', async () => {
+test('conversation windows and prompt edits use validated and scope-bound reads', async () => {
   const handlers = new Map(), requests = [], paths = [];
+  const edit = { taskId: 1, sessionId: 2, itemId: 'saved:prompt', text: 'Original', revision: 'a'.repeat(64), laterPrompts: 1, keepsContext: true };
+  let editReply = edit;
   const state = { provider: 'codex', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
   const ipc = {}, chat = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), {
@@ -165,6 +167,7 @@ test('conversation loading modes are validated, scope-bound and transported by t
         return { registerChatAgents: () => () => {}, registerChatAttachments: () => () => {}, registerSessionChatMedia: () => () => {} };
       if (name === './transport') return { requestBackendJson: async (_endpoint, request) => {
         paths.push(request.path);
+        if (request.path.includes('/prompt-edit?')) return editReply;
         return { taskId: 1, sessionId: 2, cursor: 'cursor', reset: true, before: null, items: [], events: [], state };
       } };
       return require(name.startsWith('./') ? '../dist/backend-client/' + name.slice(2) : name);
@@ -190,6 +193,18 @@ test('conversation loading modes are validated, scope-bound and transported by t
   }
   await read(event, scope, target);
   assert.ok(!requests.at(-1).includes('loadingMode'));
+  const promptEdit = handlers.get('session-chat:prompt-edit');
+  assert.throws(() => promptEdit({ senderFrame: {}, sender }, scope, { ...target, itemId: edit.itemId }), /Untrusted/);
+  assert.throws(() => promptEdit(event, scope, { ...target, itemId: '' }), /Invalid prompt ID/);
+  const result = await promptEdit(event, scope, { ...target, itemId: edit.itemId });
+  assert.deepEqual({ ...result }, edit);
+  assert.equal(paths.at(-1), '/api/desktop-workspace/tasks/1/sessions/2/chat/prompt-edit?itemId=saved%3Aprompt');
+  assert.ok(requests.at(-1).includes(target.requestId));
+  for (const invalid of [{ sessionId: 3 }, { revision: '' }, { itemId: 'another' }, { keepsContext: 1 },
+    { laterPrompts: -1 }, { text: 'x'.repeat(64001) }]) {
+    editReply = { ...edit, ...invalid };
+    await assert.rejects(promptEdit(event, scope, { ...target, itemId: edit.itemId }));
+  }
   stop(); assert.equal(handlers.size, 0);
 });
 

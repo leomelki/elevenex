@@ -12,7 +12,12 @@ cancels the edit. Control or Command plus Enter resends the revision.
 The current composer draft stays available throughout. Edits require a
 reachable engine and an idle conversation with an empty queue. If delivery
 is uncertain, the adapter refreshes the conversation and keeps the editor
-text available to copy.
+text available to copy. If another turn changed the edit boundary, refreshing
+the edit details updates the affected-message count and keeps the revised text.
+The editor grows with the draft up to a viewport-relative limit, then scrolls
+within the text field. The shared modal and height transitions preserve focus
+as content arrives. The primary action stays mounted through resend and
+conflict recovery, with reduced motion honored throughout.
 
 Unseen completions use the optional `state.unseenCompletionAt` version. After
 latest content renders at the end of the conversation in a focused, visible,

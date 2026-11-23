@@ -1,53 +1,66 @@
 <ex-modal-layer [open]="open()" (closeRequested)="close()" (closed)="closed.emit(edited)">
   <section role="dialog" aria-modal="true" aria-labelledby="session-prompt-edit-title"
-    tabindex="-1" cdkFocusInitial [attr.inert]="open() ? null : ''">
-    <header>
-      <span class="mark"><ex-icon name="pencil" [size]="18" /></span>
-      <h2 id="session-prompt-edit-title">Edit message</h2>
-      <ex-icon-button icon="x" label="Close editor" [disabled]="saving()" (pressed)="close()" />
-    </header>
-    @if (snapshot(); as message) {
-      <textarea #editor aria-label="Message" aria-describedby="session-prompt-edit-impact"
-        [value]="draft()" [maxLength]="limit" [readOnly]="saving()"
-        (input)="draft.set(editor.value); copied.set(false)" (keydown)="onKey($event)"></textarea>
-      @if (message.keepsContext) {
-        <p class="context">Saved context will be sent again.</p>
-      }
-      <p class="impact" id="session-prompt-edit-impact">
-        This replaces the original message and its reply.
-        @if (message.laterPrompts === 1) {
-          It also removes one later message and its replies.
-        } @else if (message.laterPrompts > 1) {
-          It also removes {{ message.laterPrompts }} later messages and their replies.
+    tabindex="-1" cdkFocusInitial [attr.inert]="open() ? null : ''" exAutoHeight>
+    <div class="editor-content">
+      <header>
+        <span class="mark"><ex-icon name="pencil" [size]="18" /></span>
+        <h2 id="session-prompt-edit-title">Edit message</h2>
+        <ex-icon-button icon="x" label="Close editor" [disabled]="saving()" (pressed)="close()" />
+      </header>
+      @if (snapshot(); as message) {
+        <div class="message-field" animate.enter="editor-enter">
+          <textarea #editor aria-label="Message" aria-describedby="session-prompt-edit-impact"
+            [value]="draft()" [maxLength]="limit" [readOnly]="saving()"
+            (input)="draft.set(editor.value); copied.set(false)" (keydown)="onKey($event)"></textarea>
+        </div>
+        <div class="impact" id="session-prompt-edit-impact" animate.enter="editor-enter">
+          <p>
+            This replaces the original message and its reply.
+            @if (message.laterPrompts === 1) {
+              It also removes one later message and its replies.
+            } @else if (message.laterPrompts > 1) {
+              It also removes {{ message.laterPrompts }} later messages and their replies.
+            }
+          </p>
+          @if (message.keepsContext) {
+            <p class="context">Saved context will be sent again.</p>
+          }
+        </div>
+        @if (saving() || preparing()) {
+          <ex-progress-line animate.enter="editor-enter" [label]="saving() ? 'Resending message' : 'Refreshing edit details'" />
+        } @else if (error()) {
+          <p class="error" role="alert" animate.enter="editor-enter">{{ error() }}</p>
+        } @else if (store.promptEditDisabledReason(); as reason) {
+          <p class="context" role="status" animate.enter="editor-enter">{{ reason }}</p>
         }
-      </p>
-      @if (error()) {
-        <p class="error" role="alert">{{ error() }}</p>
-      } @else if (!saving() && store.promptEditDisabledReason(); as reason) {
-        <p class="context" role="status">{{ reason }}</p>
-      }
-      <footer>
-        @if (error()) {
-          <button exButton variant="ghost" class="copy" (click)="copyDraft()">{{ copied() ? 'Copied' : 'Copy draft' }}</button>
-        }
-        <button exButton variant="secondary" [disabled]="saving()" (click)="close()">
-          {{ checking() ? 'Check conversation' : 'Cancel' }}
-        </button>
-        @if (!checking()) {
-          <button exButton variant="primary" [disabled]="!canSave()" aria-keyshortcuts="Control+Enter Meta+Enter" (click)="save()">
-            {{ saving() ? 'Resending…' : 'Edit & resend' }}
-            @if (!saving()) { <ex-icon name="arrow-up" [size]="14" /> }
+        <footer>
+          @if (error() || refreshRequired()) {
+            <button exButton variant="ghost" class="copy" (click)="copyDraft()">
+              <ex-ease-swap [value]="copied() ? 'Copied' : 'Copy draft'" />
+            </button>
+          }
+          <button exButton variant="secondary" [disabled]="saving()" (click)="close()">
+            {{ checking() ? 'Check conversation' : 'Cancel' }}
           </button>
-        }
-      </footer>
-    } @else if (preparing()) {
-      <p class="loading" role="status">Loading the original message…</p>
-    } @else {
-      <p class="error" role="alert">{{ error() }}</p>
-      <footer>
-        <button exButton variant="secondary" (click)="close()">Close</button>
-        <button exButton variant="primary" [disabled]="!!store.promptEditDisabledReason()" (click)="prepare()">Try again</button>
-      </footer>
-    }
+          @if (!checking()) {
+            <button exButton variant="primary" [disabled]="primaryDisabled()" [attr.aria-label]="primaryLabel()"
+              [attr.aria-keyshortcuts]="refreshRequired() ? null : 'Control+Enter Meta+Enter'" (click)="primaryAction()">
+              <ex-ease-swap [value]="primaryLabel()" />
+            </button>
+          }
+        </footer>
+      } @else if (preparing()) {
+        <div class="loading" role="status">
+          <p>Loading the original message…</p>
+          <ex-progress-line label="Loading the original message" />
+        </div>
+      } @else {
+        <p class="error" role="alert">{{ error() }}</p>
+        <footer>
+          <button exButton variant="secondary" (click)="close()">Close</button>
+          <button exButton variant="primary" [disabled]="!!store.promptEditDisabledReason()" (click)="prepare()">Try again</button>
+        </footer>
+      }
+    </div>
   </section>
 </ex-modal-layer>

@@ -111,7 +111,7 @@ export class SessionChatStore {
   /** UI lifetime survives a verified same-machine scope rebind. */
   readonly viewRevision = signal(0);
   readonly error = signal("");
-  readonly promptEditError = signal('');
+  readonly promptEditError = signal<{ readonly message: string; readonly status?: number } | null>(null);
   readonly streamError = signal('');
   readonly defaultChange =
     signal<SessionChatCommandReply["defaultChange"]>(undefined);
@@ -918,7 +918,7 @@ export class SessionChatStore {
     );
     this.busy.set(action.type);
     this.error.set("");
-    if (action.type === 'edit-prompt') this.promptEditError.set('');
+    if (action.type === 'edit-prompt') this.promptEditError.set(null);
     const state = this.state();
     const queuedPrompt = action.type === 'steer-queued' ? state?.queue.find(item => item.id === action.id)
       : action.type === 'resume-queue' && state?.phase === 'idle' && !state.canInterrupt ? state.queue[0]
@@ -972,7 +972,7 @@ export class SessionChatStore {
         this.queuedDeliveries.set(remaining);
       }
       this.notice.set("");
-      if (action.type === 'edit-prompt') this.promptEditError.set(result.error.message);
+      if (action.type === 'edit-prompt') this.promptEditError.set(result.error);
       else this.error.set(result.error.message);
       if (
         result.error.code === "outcome-unknown" ||

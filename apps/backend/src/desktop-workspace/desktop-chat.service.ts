@@ -776,7 +776,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const { provider, rewind } = await this.editableSession(sessionId, session);
     const saved = await this.promptSnapshot(taskId, sessionId, session, provider, itemId);
     if (saved.revision !== action.revision)
-      throw new ConflictException('The conversation changed. Reopen this message to edit it.');
+      throw new ConflictException('The conversation changed. Refresh the edit details before resending.');
     const text = action.text.trim();
     if (saved.text === text) throw new BadRequestException('Change the message before sending it again.');
     const prompt = [text, ...saved.context].join('\n\n');
@@ -785,9 +785,9 @@ export class DesktopChatService implements OnModuleDestroy {
     const images = await chatPromptImages(prompt, sessionId, session.worktreePath, provider, saved.images);
     assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
     if (session.status === 'stopped') await this.sessions.reactivateRuntime(sessionId);
-    const feed = this.feeds.get(sessionId);
-    const previousRewrite = feed?.historyRewrite;
+    const previousRewrite = this.feeds.get(sessionId)?.historyRewrite;
     await rewind(sessionId, saved.sourceId);
+    const feed = this.feeds.get(sessionId);
     if (feed && previousRewrite === feed.historyRewrite) {
       feed.historyRewrite = randomUUID();
       feed.livePrompt = undefined;
