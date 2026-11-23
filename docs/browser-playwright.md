@@ -13,7 +13,7 @@ artifacts and human interaction. It does not implement another selector engine.
    Actual Playwright objects and privileged Node functions never enter the code
    realm. A private string-only utility callable supplies URL/binary conversion
    and bounded numeric timers; it returns no host objects.
-2. A separate resource-limited worker hosts the typed broker and delegates public operations to the pinned Playwright library.
+2. A separate resource-limited worker hosts the typed broker and delegates public operations to the pinned Patchright build of Playwright.
    It validates member names and file arguments, associates every derived handle
    and callback with its page authority, bounds output and disposes resources.
    Agent functions used by evaluate run only in the page. Agent event/route
@@ -65,6 +65,21 @@ await page.getByRole('button', { name: 'Open' }).click();
 await expect(page.getByText('Mock item')).toBeVisible();
 await emitImage(await page.screenshot({ fullPage: true }));
 ```
+
+The driver is `patchright-core`/`patchright` 1.64.3: Playwright's API with
+Chromium patches that never enable the CDP Runtime or Console domains, because
+sites can time console serialization while a client listens. Consequently page
+`console` and `pageerror` events are never delivered, to the Playwright API or
+the `browser.tabs` events, and `Runtime.consoleAPICalled`/`exceptionThrown` are
+absent. The broker keeps Playwright's main-world `evaluate`, `evaluateHandle` and
+`evaluateAll`; a trailing `isolatedContext` argument of `true` (fourth; third for
+`evaluateAll` and `Worker`) selects Patchright's private world. Patchright never
+exposes host bindings to the page's main world, so `exposeFunction`,
+`exposeBinding` and `routeWebSocket` (whose mock makes page sockets throw) are
+rejected with an explanatory error. While a page has an `addInitScript`
+registration, Patchright intercepts its HTML documents, injects inline scripts and
+rewrites their CSP; for some policies that broadens `script-src`. The runtime
+registers none; agent code should prefer `evaluate` after navigation.
 
 Existing `browser.tabs` helpers remain available for code written for the first
 API. Metadata and guide discovery never launch a browser. Ordinary operations

@@ -123,8 +123,8 @@ export class PlaywrightWorkerClient {
         workerData: {
           artifacts: this.directory,
           modules: {
-            'playwright-core': require.resolve('playwright-core'),
-            '@playwright/test': require.resolve('@playwright/test'),
+            'patchright-core': require.resolve('patchright-core'),
+            'patchright/test': require.resolve('patchright/test'),
           },
         },
         resourceLimits: {

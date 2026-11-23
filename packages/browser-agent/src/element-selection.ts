@@ -1,6 +1,6 @@
 import type { BrowserHumanElement } from '@elevenex/shared';
 import { object, type BrowserAgentTarget } from './host.js';
-import type { FrameLocator, Locator, Page } from 'playwright-core';
+import type { FrameLocator, Locator, Page } from 'patchright-core';
 
 /** Hit testing can report the embedding target for an OOPIF. Also verify the
  * selected frame's document-owned DOM identity; navigation/replacement removes
@@ -25,6 +25,8 @@ export async function selectedBrowserElement(
         },
         undefined,
         { timeout: 1000 },
+        // Direct CDP picks record the marker in the main world.
+        false,
       ))
     )
       throw new Error('stale');

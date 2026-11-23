@@ -47,10 +47,10 @@ async function fixture(t, lineEnding = '\n') {
   }
   await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@8.15.4' }));
   await writeFile(join(root, 'apps/backend/package.json'), JSON.stringify({ name: 'elevenex-backend', dependencies: Object.fromEntries(
-    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
+    ['patchright-core', 'patchright', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => [name, '1.0.0']),
   ) }));
   const lockfile = `lockfileVersion: '6.0'\nimporters:\n  apps/backend:\n    dependencies:\n${
-    ['playwright-core', '@playwright/test', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
+    ['patchright-core', 'patchright', 'ffmpeg-static', 'better-sqlite3', 'node-pty', '@vscode/ripgrep', 'onnxruntime-node', 'unused-agent-cli'].map(name => `      '${name}':\n        specifier: 1.0.0\n        version: 1.2.3\n`).join('')
   }  apps/other:\n    dependencies: {}\npackages:\n  /unchanged@1.2.3:\n    resolution: {integrity: sha512-original}\n`;
   await writeFile(join(root, 'pnpm-lock.yaml'), lockfile.replaceAll('\n', lineEnding));
   for (const file of linuxShellFiles) {
@@ -85,8 +85,8 @@ for (const [architecture, lineEnding] of [['arm64', '\r\n'], ['x64', '\n']]) {
       }
       const backend = JSON.parse(await readFile(join(cwd, 'manifests/apps/backend/package.json'), 'utf8'));
       assert.equal(backend.dependencies['better-sqlite3'], '1.0.0');
-      assert.equal(backend.dependencies['playwright-core'], '1.0.0');
-      assert.equal(backend.dependencies['@playwright/test'], '1.0.0');
+      assert.equal(backend.dependencies['patchright-core'], '1.0.0');
+      assert.equal(backend.dependencies['patchright'], '1.0.0');
       assert.equal(backend.dependencies['ffmpeg-static'], '1.0.0');
       assert.equal(backend.dependencies['unused-agent-cli'], undefined);
       assert.equal(await readFile(join(cwd, 'runtime/scripts/runtime-stage-utils.js'), 'utf8'), 'scripts/runtime-stage-utils.js');
@@ -123,7 +123,7 @@ test('the shared UI base builds its core runtime without browser dependencies or
   const root = await fixture(t);
   const manifestPath = join(root, 'apps/backend/package.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  delete manifest.dependencies['playwright-core'];
+  delete manifest.dependencies['patchright-core'];
   delete manifest.dependencies['ffmpeg-static'];
   await writeFile(manifestPath, JSON.stringify(manifest));
   await buildLinuxDevelopmentRuntime(root, version, 'arm64', async (_command, _args, cwd) => {

@@ -1,6 +1,6 @@
 import { object, type BrowserAgentTarget } from "./host.js";
 import type { BrowserRect, BrowserElementSnapshot } from "@elevenex/shared";
-import type { Page, Locator } from "playwright-core";
+import type { Page, Locator } from "patchright-core";
 import { randomUUID } from "node:crypto";
 
 /** Limit raster work before requesting pixels. CSS scale avoids DPR-sized images. */

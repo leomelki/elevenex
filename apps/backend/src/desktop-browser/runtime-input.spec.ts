@@ -1,4 +1,4 @@
-import type { CDPSession, Page } from 'playwright-core';
+import type { CDPSession, Page } from 'patchright-core';
 import { RuntimeBrowserInput } from './runtime-input.js';
 
 function deferred() {

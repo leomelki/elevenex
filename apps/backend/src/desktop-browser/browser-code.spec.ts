@@ -71,9 +71,14 @@ describe('Code-first browser execution', () => {
       await Promise.all([a.type('first'),b.type('second')]);
     `);
     expect(result.error).toBeUndefined();
+    // The tab starts once; it never enables Runtime, whose console
+    // serialization sites can time.
+    expect(
+      send.mock.calls.filter(([method]) => method === 'DOM.enable'),
+    ).toHaveLength(1);
     expect(
       send.mock.calls.filter(([method]) => method === 'Runtime.enable'),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(completed).toEqual(['first', 'second']);
   });
 

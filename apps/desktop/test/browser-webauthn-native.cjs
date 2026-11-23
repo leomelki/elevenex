@@ -24,7 +24,7 @@ async function native() {
   const { app, BrowserWindow } = require('electron');
   app.setPath('userData', process.argv[2]);
   await app.whenReady();
-  const { chromium } = require('../../backend/node_modules/playwright-core');
+  const { chromium } = require('../../backend/node_modules/patchright-core');
   const { prepareWebAuthnExtension } = require('../../backend/dist/desktop-browser/runtime-webauthn-extension');
   const { RuntimeWebAuthn } = require('../../backend/dist/desktop-browser/runtime-webauthn');
   const { WebAuthnBroker } = require('../dist/browser/webauthn-broker');

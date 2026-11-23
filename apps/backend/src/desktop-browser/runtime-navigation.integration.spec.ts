@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'patchright-core';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { RuntimeBrowserPool } from './runtime-browser-pool.js';
 import { RuntimeBrowserTask } from './runtime-task.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
+import { RuntimePageWorld } from './runtime-page-world.js';
 
 jest.setTimeout(90000);
 describe('remote browser document and in-page navigation', () => {
@@ -167,7 +168,7 @@ describe('remote browser document and in-page navigation', () => {
       history.pushState(null, '', '?panel=one');
       history.replaceState(null, '', '?panel=two');
       location.hash = 'details';
-    });
+    }, undefined, undefined, false);
     await page.waitForURL(url + '/?panel=two#details');
     await waitForState(() => tab.url === url + '/?panel=two#details');
     expect(tab.snapshot()).toMatchObject({
@@ -197,9 +198,17 @@ describe('remote browser document and in-page navigation', () => {
     const held = new Promise<string>((resolve) => {
       finish = resolve;
     });
+    // Cursor hit testing runs in the private page world; title sampling shares
+    // that boundary and must continue normally.
+    const evaluatePageWorld = RuntimePageWorld.prototype.evaluate;
+    let cursorReads = 0;
     const evaluate = jest
-      .spyOn(page, 'evaluate')
-      .mockImplementationOnce(() => held);
+      .spyOn(RuntimePageWorld.prototype, 'evaluate')
+      .mockImplementation(function (this: RuntimePageWorld, expression: string) {
+        if (expression.includes('elementFromPoint') && cursorReads++ === 0)
+          return held;
+        return evaluatePageWorld.call(this, expression);
+      });
     const first = task.input(tabId, generation, {
       kind: 'batch',
       events: [pointer('down', 100, 60), pointer('up', 100, 60)],
@@ -220,7 +229,7 @@ describe('remote browser document and in-page navigation', () => {
       });
       expect(await Promise.race([finished, timedOut])).toBe(true);
       expect(await page.locator('#field').inputValue()).toBe('responsive');
-      await waitForState(() => evaluate.mock.calls.length > 0);
+      await waitForState(() => cursorReads > 0);
       // This cursor result belongs to a retired document and must be ignored.
       await task.command({
         kind: 'navigate',
@@ -244,7 +253,7 @@ describe('remote browser document and in-page navigation', () => {
     const generation = tab.generation,
       displayEpoch = tab.displayEpoch;
     try {
-      await page.evaluate(() => history.pushState(null, '', '?panel=agent'));
+      await page.evaluate(() => history.pushState(null, '', '?panel=agent'), undefined, undefined, false);
       await page.waitForURL(url + '/?panel=agent');
       await waitForState(() => tab.url === url + '/?panel=agent');
       expect(tab.generation).toBeGreaterThan(generation);

@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { chromium, type BrowserContext } from 'playwright-core';
+import { chromium, type BrowserContext } from 'patchright-core';
 import { getElevenexDataRoot } from '../config/app-data-paths.js';
 import { browserLaunchOptions } from '../desktop-browser/runtime-launch.js';
 import {

@@ -7,10 +7,10 @@ const { tmpdir } = require('node:os');
 const { dirname, join } = require('node:path');
 const { promisify } = require('node:util');
 const { pruneStagedNodeModules } = require('../../../scripts/archive-electron-backend');
+const { restoreDriverLicenses } = require('../../../scripts/runtime-stage-utils');
 
 const run = promisify(execFile);
 const agentRequire = createRequire(require.resolve('../../../packages/browser-agent/package.json'));
-const testRequire = createRequire(agentRequire.resolve('@playwright/test'));
 const backendRequire = createRequire(require.resolve('../../backend/package.json'));
 
 test('browser runtime packages remain usable after final pruning and archive extraction', async t => {
@@ -18,9 +18,11 @@ test('browser runtime packages remain usable after final pruning and archive ext
   t.after(() => rm(root, { recursive: true, force: true }));
   const modules = join(root, 'stage/backend/node_modules');
   await mkdir(modules, { recursive: true });
-  for (const name of ['playwright-core', 'ffmpeg-static', '@playwright/test', 'playwright']) {
-    await cp(dirname((name === '@playwright/test' ? agentRequire : name === 'playwright' ? testRequire : backendRequire).resolve(`${name}/package.json`)), join(modules, name), { recursive: true, dereference: true });
+  for (const name of ['patchright-core', 'ffmpeg-static', 'patchright']) {
+    await cp(dirname((name === 'patchright' ? agentRequire : backendRequire).resolve(`${name}/package.json`)), join(modules, name), { recursive: true, dereference: true });
   }
+  // Staging restores the license files the driver's npm packages omit.
+  restoreDriverLicenses(modules);
   // Installation-only dependencies must still be removed from the runtime.
   await mkdir(join(modules, 'https-proxy-agent'));
   pruneStagedNodeModules(modules);
@@ -35,11 +37,11 @@ test('browser runtime packages remain usable after final pruning and archive ext
   // Remove the source tree so resolution cannot accidentally use staged files.
   await rm(join(root, 'stage'), { recursive: true });
   const extractedModules = join(extracted, 'backend/node_modules');
-  const playwrightRoot = join(extractedModules, 'playwright-core');
+  const driverRoot = join(extractedModules, 'patchright-core');
   const { stdout } = await run(process.execPath, ['-e', `
     const assert = require('node:assert/strict');
     const { chromium } = require(process.argv[1]);
-    const { expect } = require(require('node:path').join(process.argv[1], '..', '@playwright/test'));
+    const { expect } = require(require('node:path').join(process.argv[1], '..', 'patchright', 'test.js'));
     expect(3).toBe(3);
     assert.equal(typeof chromium.launch, 'function');
     assert.equal(typeof chromium.executablePath(), 'string');
@@ -48,8 +50,8 @@ test('browser runtime packages remain usable after final pruning and archive ext
     const worker = new Worker(PLAYWRIGHT_WORKER_SOURCE, {
       eval: true, env: {}, execArgv: [],
       workerData: { artifacts: process.argv[3], modules: {
-        'playwright-core': process.argv[1],
-        '@playwright/test': require('node:path').join(process.argv[1], '..', '@playwright/test'),
+        'patchright-core': process.argv[1],
+        'patchright/test': require('node:path').join(process.argv[1], '..', 'patchright', 'test.js'),
       } },
     });
     worker.once('error', error => { console.error(error); process.exit(1); });
@@ -61,14 +63,17 @@ test('browser runtime packages remain usable after final pruning and archive ext
     });
     worker.postMessage({ type: 'snapshot', value: { rows: [], documents: [] } });
     worker.postMessage({ type: 'call', id: 1, op: 'prepare' });
-  `, playwrightRoot, agentRequire.resolve('./dist/playwright-worker-source.js'), join(root, 'worker-artifacts')], { timeout: 10000 });
+  `, driverRoot, agentRequire.resolve('./dist/playwright-worker-source.js'), join(root, 'worker-artifacts')], { timeout: 10000 });
   assert.equal(stdout, '');
-  const cli = await run(process.execPath, [join(playwrightRoot, 'cli.js'), 'install', '--dry-run', 'chromium', '--no-shell'], { timeout: 10000 });
+  const cli = await run(process.execPath, [join(driverRoot, 'cli.js'), 'install', '--dry-run', 'chromium', '--no-shell'], { timeout: 10000 });
   assert.match(cli.stdout, /chromium/i);
   for (const name of ['LICENSE', 'NOTICE', 'ThirdPartyNotices.txt', 'browsers.json']) {
-    assert.ok((await stat(join(playwrightRoot, name))).isFile());
+    assert.ok((await stat(join(driverRoot, name))).isFile());
   }
-  assert.ok((await stat(join(playwrightRoot, 'bin'))).isDirectory());
+  for (const name of ['LICENSE', 'NOTICE', 'test.js']) {
+    assert.ok((await stat(join(extractedModules, 'patchright', name))).isFile());
+  }
+  assert.ok((await stat(join(driverRoot, 'bin'))).isDirectory());
   const ffmpegRoot = join(extractedModules, 'ffmpeg-static');
   const ffmpeg = join(ffmpegRoot, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
   const env = { ...process.env };

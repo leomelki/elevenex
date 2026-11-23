@@ -1,4 +1,4 @@
-import type { BrowserContext } from 'playwright-core';
+import type { BrowserContext } from 'patchright-core';
 import { createHash } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { RuntimeBrowserStream } from './runtime-stream.js';
@@ -82,7 +82,7 @@ it('starts agent tabs without a viewer and retains the live document, network an
     if (!ownedContext) throw new Error('Browser context was not acquired');
     const context = await ownedContext;
     const page = context.pages().find(page => page.url() === url)!;
-    const marker = await page.evaluate<string>('window.retained');
+    const marker = await page.evaluate<string>('window.retained', undefined, undefined, false);
     const view = await runtime.connect(
       1,
       'viewer',
@@ -147,7 +147,7 @@ it('starts agent tabs without a viewer and retains the live document, network an
     runtime.disconnect(1, view.token);
     viewer.terminate();
     expect(task.page(opened.tabs[0].id).generation).toBe(before);
-    expect(await page.evaluate<string>('window.retained')).toBe(marker);
+    expect(await page.evaluate<string>('window.retained', undefined, undefined, false)).toBe(marker);
     const listed = (await mailbox.request(
       1,
       2,
@@ -181,7 +181,7 @@ it('starts agent tabs without a viewer and retains the live document, network an
     });
     expect(clicks).toBe(1);
     expect(acquired).toHaveBeenCalledTimes(1);
-    expect(await page.evaluate<string>('window.retained')).toBe(marker);
+    expect(await page.evaluate<string>('window.retained', undefined, undefined, false)).toBe(marker);
   } finally {
     viewer?.terminate();
     await gateway?.onModuleDestroy();

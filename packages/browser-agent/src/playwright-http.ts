@@ -4,7 +4,7 @@ import {
   type APIRequestContext,
   type Cookie,
   type APIResponse,
-} from 'playwright-core';
+} from 'patchright-core';
 import type { BrowserAgentHost } from './host.js';
 import { object } from './host.js';
 

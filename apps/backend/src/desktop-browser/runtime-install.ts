@@ -9,7 +9,7 @@ export async function installRuntimeBrowser(
   signal: AbortSignal,
 ): Promise<void> {
   const cli = join(
-    dirname(createRequire(__filename).resolve('playwright-core/package.json')),
+    dirname(createRequire(__filename).resolve('patchright-core/package.json')),
     'cli.js',
   );
   await access(cli);

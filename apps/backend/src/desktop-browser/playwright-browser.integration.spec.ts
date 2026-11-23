@@ -202,7 +202,8 @@ describe('Real Playwright in the task browser', () => {
       url: string;
     };
     expect(data.trusted.every(Boolean)).toBe(true);
-    expect(data.console).toContain('site-ready');
+    // The driver never enables the console protocol that sites can time.
+    expect(data.console).toEqual([]);
     expect(data.url).toBe(base + '/');
     const directory = resolve(
       __dirname,
@@ -258,21 +259,21 @@ describe('Real Playwright in the task browser', () => {
     expect(result.error).toBeUndefined();
     expect(result.value).toEqual({ one: { mocked: true }, count: 1 });
   });
-  it('supports offline WebSocket mocks with closure callbacks and ordered listener registration', async () => {
+  it('rejects main-world binding APIs instead of breaking page scripts', async () => {
     const result = await run(`
-      const prefix='mock:';
-      await state.page.routeWebSocket('**/offline-socket',ws=>{
-        ws.onMessage(message=>ws.send(prefix+message));
-      });
-      await state.page.reload();
-      return await state.page.evaluate(()=>new Promise((resolve,reject)=>{
-        const socket=new WebSocket(location.origin.replace('http','ws')+'/offline-socket');
-        socket.onopen=()=>socket.send('hello');socket.onerror=()=>reject(new Error('socket failed'));
-        socket.onmessage=event=>{resolve(event.data);socket.close()};
-      }));
+      const errors=[];
+      for (const call of [
+        ()=>state.page.routeWebSocket('**/offline-socket',ws=>ws.onMessage(message=>ws.send(message))),
+        ()=>state.page.exposeFunction('hostAdd',(a,b)=>a+b),
+        ()=>context.exposeBinding('hostRead',()=>1),
+      ]) { try { await call(); errors.push('allowed'); } catch (error) { errors.push(error.message); } }
+      return { errors, title: await state.page.title() };
     `);
     expect(result.error).toBeUndefined();
-    expect(result.value).toBe('mock:hello');
+    const value = result.value as { errors: string[]; title: string };
+    expect(value.errors).toHaveLength(3);
+    for (const message of value.errors)
+      expect(message).toMatch(/is unavailable: the task browser never exposes host bindings/);
   });
   it('confines artifact-path uploads and PDF streams to their owner', async () => {
     const result = await run(`

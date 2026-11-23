@@ -10,8 +10,8 @@ import {
   type BrowserContext,
   type Page,
   type APIRequestContext,
-} from 'playwright-core';
-import { expect } from '@playwright/test';
+} from 'patchright-core';
+import { expect } from 'patchright/test';
 import { randomUUID } from 'node:crypto';
 import type { BrowserCodeImage } from '@elevenex/shared';
 import { object, delay, type BrowserAgentHost } from './host.js';
@@ -34,6 +34,16 @@ import type { PlaywrightCallback } from './playwright-channel.js';
 
 /** Delegates to real Playwright objects. The code realm sees only opaque
  * descriptors; function closures are invoked back in that realm over JSON. */
+/** Position of Patchright's trailing `isolatedContext` evaluation argument. */
+function isolatedContextArgument(type: string, method: string): number | undefined {
+  if (method === 'evaluateAll' && type === 'Locator') return 2;
+  if (method !== 'evaluate' && method !== 'evaluateHandle') return undefined;
+  if (type === 'Worker') return 2;
+  return ['Page', 'Frame', 'Locator', 'JSHandle', 'ElementHandle'].includes(type)
+    ? 3
+    : undefined;
+}
+
 export class PlaywrightBroker {
   private readonly transport: PlaywrightTransport;
   private readonly artifacts: BrowserArtifacts;
@@ -456,13 +466,13 @@ export class PlaywrightBroker {
         page = Reflect.apply(method, value, []) as Page | undefined;
     } else if (type === 'Request' || type === 'Response') {
       try {
-        page = (value as import('playwright-core').Request).frame().page();
+        page = (value as import('patchright-core').Request).frame().page();
       } catch {
         /* A worker request may have no frame. */
       }
     } else if (type === 'Route') {
       try {
-        page = (value as import('playwright-core').Route)
+        page = (value as import('patchright-core').Route)
           .request()
           .frame()
           .page();
@@ -471,7 +481,7 @@ export class PlaywrightBroker {
       }
     } else if (type === 'ElementHandle')
       page = (
-        await (value as import('playwright-core').ElementHandle).ownerFrame()
+        await (value as import('patchright-core').ElementHandle).ownerFrame()
       )?.page();
     return page ? this.owner(page, 'Page') : undefined;
   }
@@ -695,6 +705,13 @@ export class PlaywrightBroker {
       args = await Promise.all(
         encoded.map((item) => this.decode(item, entry.owner)),
       );
+    const isolated = isolatedContextArgument(entry.type, method);
+    // Patchright evaluates in a private world unless told otherwise. Agent code
+    // keeps Playwright's main-world semantics; an explicit argument still wins.
+    if (isolated !== undefined && args.length <= isolated) {
+      while (args.length < isolated) args.push(undefined);
+      args.push(false);
+    }
     await this.fileOptions(entry.type, method, args);
     if (entry.type === 'Tracing' && method === 'start') {
       const options = object(args[0] ?? {});
@@ -740,7 +757,7 @@ export class PlaywrightBroker {
         Promise.resolve(Reflect.apply(handler, undefined, values)).catch(
           async (error: unknown) => {
             if (method === 'routeWebSocket')
-              await (values[0] as import('playwright-core').WebSocketRoute)
+              await (values[0] as import('patchright-core').WebSocketRoute)
                 .close()
                 .catch(() => undefined);
             this.failed?.(
@@ -801,7 +818,7 @@ export class PlaywrightBroker {
     if (entry.type === 'APIRequestContext')
       return this.http.invoke(method, args);
     if (entry.type === 'Route' && method === 'fetch') {
-      const route = entry.value as import('playwright-core').Route;
+      const route = entry.value as import('patchright-core').Route;
       const headers = Object.fromEntries(
         Object.entries(
           object(
@@ -918,11 +935,11 @@ export class PlaywrightBroker {
       else if (op === 'browser-cursor-hide') command = { kind: 'hide-cursor' };
       else {
         const rawTarget = object(input['target']);
-        let target: { locator: import('playwright-core').Locator } | { point: unknown };
+        let target: { locator: import('patchright-core').Locator } | { point: unknown };
         if (rawTarget['__pw']) {
           const locator = await this.resolve(rawTarget);
           if (locator.type !== 'Locator' || locator.owner !== entry.owner) throw new Error('Cursor locator must belong to this page');
-          target = { locator: locator.value as import('playwright-core').Locator };
+          target = { locator: locator.value as import('patchright-core').Locator };
         } else target = { point: rawTarget };
         command = await browserCursorCommand(entry.value as Page, target, await this.decode(input['options']));
       }

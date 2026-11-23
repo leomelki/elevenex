@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'patchright-core';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -93,9 +93,9 @@ describe('remote browser interaction and display ownership', () => {
       expect(tab.snapshot().hovered).toEqual({ tag: 'button', x: 300, y: 100, width: 200, height: 100 });
       await task.input(tabId, tab.generation, { kind: 'pointer', type: 'up', x: 350, y: 150, button: 'left', buttons: 0, clicks: 1, modifiers: 0 });
       expect(await page.locator('#hover').getAttribute('data-clicks')).toBeNull();
-      await page.evaluate(() => document.body.style.height = '2000px');
+      await page.evaluate(() => document.body.style.height = '2000px', undefined, undefined, false);
       await task.input(tabId, tab.generation, { kind: 'wheel', x: 350, y: 150, deltaX: 0, deltaY: 80, modifiers: 0 });
-      await waitFor(() => page.evaluate(() => scrollY > 0));
+      await waitFor(() => page.evaluate(() => scrollY > 0, undefined, undefined, false));
       await waitFor(() => tab.snapshot().hovered?.tag === 'body');
       expect(tab.picking).toBe(true);
       await task.input(tabId, tab.generation, { kind: 'pointer-exit' });
@@ -104,7 +104,7 @@ describe('remote browser interaction and display ownership', () => {
       expect(tab.snapshot().hovered).toBeUndefined();
     } finally {
       await task.command({ kind: 'pick', enabled: false });
-      await page.evaluate(() => { document.body.style.height = ''; scrollTo(0, 0); });
+      await page.evaluate(() => { document.body.style.height = ''; scrollTo(0, 0); }, undefined, undefined, false);
     }
   });
 
@@ -135,7 +135,7 @@ describe('remote browser interaction and display ownership', () => {
       document.body.style.height = '2000px';
       document.querySelector<HTMLElement>('#hover')!.style.position = 'fixed';
       scrollTo(0, 80);
-    });
+    }, undefined, undefined, false);
     let sequence = 0;
     const stream = (async () => {
       while (!controller.signal.aborted) {
@@ -148,8 +148,8 @@ describe('remote browser interaction and display ownership', () => {
         await task.command({ kind: 'pick', enabled: true, visual: 1 });
         await task.input(tabId, tab.generation, { kind: 'pointer', type: 'down', x: 350, y: 150, button: 'left', buttons: 1, clicks: 1, modifiers: 0 });
         expect(task.state().picked?.snapshot?.jpeg).toBeTruthy();
-        expect(await page.evaluate(() => Reflect.get(window, 'pickerResizes'))).toEqual([]);
-        expect(await page.evaluate(() => devicePixelRatio)).toBe(pixelRatio);
+        expect(await page.evaluate(() => Reflect.get(window, 'pickerResizes'), undefined, undefined, false)).toEqual([]);
+        expect(await page.evaluate(() => devicePixelRatio, undefined, undefined, false)).toBe(pixelRatio);
         const snapshot = task.state().picked!.snapshot!;
         const pixel = await page.evaluate(async ({ jpeg, x, y }) => {
           const bytes = Uint8Array.from(atob(jpeg), char => char.charCodeAt(0));
@@ -159,14 +159,14 @@ describe('remote browser interaction and display ownership', () => {
             const ctx = canvas.getContext('2d')!; ctx.drawImage(bitmap, 0, 0);
             return [...ctx.getImageData(x, y, 1, 1).data];
           } finally { bitmap.close(); }
-        }, { jpeg: snapshot.jpeg!, x: Math.round((snapshot.reference.target.x - snapshot.reference.crop.x + 10) * snapshot.reference.image.scale), y: Math.round((snapshot.reference.target.y - snapshot.reference.crop.y + 10) * snapshot.reference.image.scale) });
+        }, { jpeg: snapshot.jpeg!, x: Math.round((snapshot.reference.target.x - snapshot.reference.crop.x + 10) * snapshot.reference.image.scale), y: Math.round((snapshot.reference.target.y - snapshot.reference.crop.y + 10) * snapshot.reference.image.scale) }, undefined, false);
         expect(pixel[0]).toBeLessThan(80); expect(pixel[1]).toBeLessThan(100); expect(pixel[2]).toBeGreaterThan(150);
         await task.command({ kind: 'pick', enabled: false });
       }
     } finally {
       controller.abort(); await stream;
       await task.command({ kind: 'pick', enabled: false });
-      await page.evaluate(() => { document.body.style.height = ''; document.querySelector<HTMLElement>('#hover')!.style.position = ''; scrollTo(0, 0); });
+      await page.evaluate(() => { document.body.style.height = ''; document.querySelector<HTMLElement>('#hover')!.style.position = ''; scrollTo(0, 0); }, undefined, undefined, false);
       await task.layout(800, 600, true, true, 1);
     }
   });
@@ -191,10 +191,10 @@ describe('remote browser interaction and display ownership', () => {
   });
 
   it('reloads fragment locations and produces frames for the current document epoch', async () => {
-    await page.evaluate(() => history.replaceState(null, '', '#anchor'));
-    const identity = await page.evaluate('window.documentIdentity');
+    await page.evaluate(() => history.replaceState(null, '', '#anchor'), undefined, undefined, false);
+    const identity = await page.evaluate('window.documentIdentity', undefined, undefined, false);
     await task.command({ kind: 'reload', tabId });
-    expect(await page.evaluate('window.documentIdentity')).not.toBe(identity);
+    expect(await page.evaluate('window.documentIdentity', undefined, undefined, false)).not.toBe(identity);
     const tab = task.page(tabId),
       signal = new AbortController().signal;
     const first = await tab.nextFrame(0, signal, 5000, true);
@@ -212,7 +212,7 @@ describe('remote browser interaction and display ownership', () => {
       Object.defineProperty(document.querySelector('#hover'), '__reactFiber$test', { configurable: true, enumerable: true, value: {
         _debugStack: Object.assign(new Error(), { stack: 'Error\n at Checkout (' + location.origin + '/source.js:1:1)' }),
       } });
-    });
+    }, undefined, undefined, false);
     const tab = task.page(tabId);
     try {
       expect((await tab.inspect(350, 150))?.source).toBeUndefined();
@@ -223,7 +223,7 @@ describe('remote browser interaction and display ownership', () => {
     } finally {
       await task.command({ kind: 'pick', enabled: false });
       await task.layout(800, 600, true, true);
-      await page.evaluate(() => Reflect.deleteProperty(document.querySelector('#hover')!, '__reactFiber$test'));
+      await page.evaluate(() => Reflect.deleteProperty(document.querySelector('#hover')!, '__reactFiber$test'), undefined, undefined, false);
     }
   });
 
@@ -233,7 +233,7 @@ describe('remote browser interaction and display ownership', () => {
       if (framework === 'angular') element.setAttribute('data-ng-source-location', 'src/checkout.component.html@o:120,l:87,c:2');
       if (framework === 'svelte') Object.defineProperty(element, '__svelte_meta', { configurable: true, value: { loc: { file: 'src/Checkout.svelte', line: 88, column: 2 } } });
       if (framework === 'vue') Object.defineProperty(element, '__vueParentComponent', { configurable: true, value: { type: { __file: 'src/Checkout.vue' } } });
-    }, framework);
+    }, framework, undefined, false);
     const tab = task.page(tabId);
     try {
       const structural = await tab.inspect(350, 150);
@@ -251,7 +251,7 @@ describe('remote browser interaction and display ownership', () => {
         const element = document.querySelector('#hover')!;
         element.removeAttribute('data-ng-source-location');
         Reflect.deleteProperty(element, '__svelte_meta'); Reflect.deleteProperty(element, '__vueParentComponent');
-      });
+      }, undefined, undefined, false);
     }
   });
 
@@ -375,9 +375,10 @@ describe('remote browser interaction and display ownership', () => {
             canvas.width = bitmap.width; canvas.height = bitmap.height;
             const context = canvas.getContext('2d')!;
             context.drawImage(bitmap, 0, 0);
-            return [...context.getImageData(350, 150, 1, 1).data];
+            // Sample the button away from its label; glyph placement follows default fonts.
+            return [...context.getImageData(310, 110, 1, 1).data];
           } finally { bitmap.close(); }
-        }, { jpeg: [...frame.jpeg] });
+        }, { jpeg: [...frame.jpeg] }, undefined, false);
         if (green ? pixel[1] > 150 && pixel[2] < 100 : pixel[2] > 150 && pixel[1] < 100) return;
       }
       throw new Error('The streamed hover image did not update');
@@ -405,7 +406,7 @@ describe('remote browser interaction and display ownership', () => {
   it('adopts a background popup without replacing the selected user tab', async () => {
     const other = await task.create('you', null, '');
     const opening = context.waitForEvent('page');
-    await page.evaluate(() => { window.open('/popup'); });
+    await page.evaluate(() => { window.open('/popup'); }, undefined, undefined, false);
     const popup = await opening;
     for (let i = 0; i < 200 && ![...task.tabs.values()].some(tab => tab.owns(popup)); i++) await new Promise(resolve => setTimeout(resolve, 25));
     expect([...task.tabs.values()].some(tab => tab.owns(popup))).toBe(true);
@@ -414,12 +415,12 @@ describe('remote browser interaction and display ownership', () => {
     expect(other.driver).toBe('you');
     await popup.close();
     const orphanOpening = context.waitForEvent('page');
-    await page.evaluate(() => { window.open('/popup', '_blank', 'noopener'); });
+    await page.evaluate(() => { window.open('/popup', '_blank', 'noopener'); }, undefined, undefined, false);
     const orphan = await orphanOpening;
     for (let i = 0; i < 200 && !orphan.isClosed() && ![...task.tabs.values()].some(tab => tab.owns(orphan)); i++) await new Promise(resolve => setTimeout(resolve, 25));
     if (!orphan.isClosed()) {
       await orphan.waitForURL(location => location.pathname === '/popup', { waitUntil: 'domcontentloaded' });
-      expect(await orphan.evaluate(() => window.opener === null)).toBe(true);
+      expect(await orphan.evaluate(() => window.opener === null, undefined, undefined, false)).toBe(true);
       await orphan.close();
     }
     expect(other.driver).toBe('you');

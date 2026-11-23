@@ -36,10 +36,10 @@ export interface BrowserAgentHost {
   readonly playwright?: true;
   watch?(listener: () => void): () => void;
   profile?: {
-    cookies(): Promise<import('playwright-core').Cookie[]>;
+    cookies(): Promise<import('patchright-core').Cookie[]>;
     addCookies(
       cookies: Parameters<
-        import('playwright-core').BrowserContext['addCookies']
+        import('patchright-core').BrowserContext['addCookies']
       >[0],
     ): Promise<void>;
     clearCookies(): Promise<void>;

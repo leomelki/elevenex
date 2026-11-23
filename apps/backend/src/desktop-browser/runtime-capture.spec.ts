@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { CDPSession } from 'playwright-core';
+import type { CDPSession } from 'patchright-core';
 import { RuntimeBrowserCapture } from './runtime-capture.js';
 
 function fixture() {

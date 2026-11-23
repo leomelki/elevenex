@@ -1,4 +1,4 @@
-const { lstatSync, readdirSync, rmSync } = require("fs");
+const { copyFileSync, existsSync, lstatSync, readdirSync, rmSync } = require("fs");
 const { join } = require("path");
 
 // Shared backend packaging helpers, independent of optional product assets.
@@ -30,4 +30,24 @@ function removeGitArtifacts(root) {
   }
 }
 
-module.exports = { getDirectorySize, formatSize, removeGitArtifacts };
+// Patchright's npm packages omit the Apache-2.0 LICENSE and the NOTICE that
+// Playwright's license requires redistributions to retain. Restore both from
+// the repository copies wherever the browser driver is staged.
+const DRIVER_LICENSE_ROOT = join(__dirname, "third-party", "patchright");
+function restoreDriverLicenses(nodeModulesRoot) {
+  for (const name of ["patchright", "patchright-core"]) {
+    const packageRoot = join(nodeModulesRoot, name);
+    if (!existsSync(join(packageRoot, "package.json"))) continue;
+    for (const file of ["LICENSE", "NOTICE"]) {
+      if (!existsSync(join(packageRoot, file)))
+        copyFileSync(join(DRIVER_LICENSE_ROOT, file), join(packageRoot, file));
+    }
+  }
+}
+
+module.exports = {
+  getDirectorySize,
+  formatSize,
+  removeGitArtifacts,
+  restoreDriverLicenses,
+};

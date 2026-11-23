@@ -1,18 +1,16 @@
-import type { Page } from 'playwright-core';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
 
 function fixture() {
   const evaluate = jest
-    .fn<Promise<string>, [unknown, { x: number; y: number }]>()
+    .fn<Promise<string>, [string]>()
     .mockResolvedValue('pointer');
   const publish = jest.fn();
-  // Only the page evaluation boundary belongs to the cursor reader.
-  const cursor = new RuntimeBrowserCursor(
-    { evaluate } as unknown as Page,
-    publish,
-  );
+  // Only the private page-world evaluation boundary belongs to the cursor reader.
+  const cursor = new RuntimeBrowserCursor(evaluate, publish);
   return { cursor, evaluate, publish };
 }
+const point = (expression: string) =>
+  /\)\((-?[\d.]+),(-?[\d.]+)\)$/.exec(expression)?.slice(1).map(Number);
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
@@ -31,14 +29,14 @@ it('coalesces motion and keeps a single optional page read in flight', async () 
     f.cursor.update(2, 2, () => true);
     await jest.advanceTimersByTimeAsync(32);
     expect(f.evaluate).toHaveBeenCalledTimes(1);
-    expect(f.evaluate.mock.calls[0][1]).toEqual({ x: 2, y: 2 });
+    expect(point(f.evaluate.mock.calls[0][0])).toEqual([2, 2]);
     for (let x = 3; x <= 100; x++) f.cursor.update(x, 10, () => true);
     await jest.advanceTimersByTimeAsync(500);
     expect(f.evaluate).toHaveBeenCalledTimes(1);
     finish('crosshair');
     await jest.advanceTimersByTimeAsync(32);
     expect(f.evaluate).toHaveBeenCalledTimes(2);
-    expect(f.evaluate.mock.calls[1][1]).toEqual({ x: 100, y: 10 });
+    expect(point(f.evaluate.mock.calls[1][0])).toEqual([100, 10]);
     expect(f.publish.mock.calls).toEqual([['pointer']]);
   } finally {
     f.cursor.destroy();

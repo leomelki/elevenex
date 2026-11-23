@@ -1,5 +1,5 @@
 import type { TaskBrowserTab } from '@elevenex/shared';
-import { chromium, type BrowserContext } from 'playwright-core';
+import { chromium, type BrowserContext } from 'patchright-core';
 import { RuntimeBrowserPersistence } from './runtime-persistence.js';
 import { createServer, request as httpRequest, type Server, type ServerResponse } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -344,10 +344,15 @@ describe('Remote browser public HTTP behavior', () => {
     for (let n = 0; n < 100 && !events.includes('private-test-世界-batch'); n++)
       await new Promise((resolve) => setTimeout(resolve, 20));
     expect(events).toContain('private-test-世界-batch');
+    // Titles are sampled from the private page world shortly after input.
+    for (let n = 0; n < 100; n++) {
+      if ((await request('state').then((r) => r.json())).tabs[0].title === 'Updated runtime title') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     expect((await request('state').then((r) => r.json())).tabs[0].title).toBe('Updated runtime title');
     const context: BrowserContext = await launches.mock.results.at(-1)!.value;
     const page = context.pages().find(page => page.url().startsWith(pageUrl));
-    await page!.evaluate(() => history.pushState(null, '', '#title-route'));
+    await page!.evaluate(() => history.pushState(null, '', '#title-route'), undefined, undefined, false);
     for (let n = 0; n < 100; n++) {
       const tab = (await request('state').then((r) => r.json())).tabs[0];
       if (tab.url.endsWith('#title-route') && tab.title === 'Updated runtime title') break;
@@ -716,7 +721,7 @@ describe('Remote browser public HTTP behavior', () => {
         const start = performance.now();
         await fetch('/network-probe', { cache: 'no-store' }).then(response => response.text());
         return performance.now() - start;
-      });
+      }, undefined, undefined, false);
       expect(elapsed).toBeGreaterThanOrEqual(100);
       await request('command', { kind: 'network', tabId: id, slow: false });
       await request('command', { kind: 'close', tabId: other.active });

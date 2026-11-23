@@ -10,8 +10,8 @@ export const PLAYWRIGHT_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
   Object.fromEntries(
     Object.entries({
       Browser: 'version isConnected contexts',
-      BrowserContext: `${events} pages newPage browser cookies addCookies clearCookies storageState setStorageState addInitScript exposeBinding exposeFunction route unroute unrouteAll routeFromHAR routeWebSocket setExtraHTTPHeaders setGeolocation setOffline setDefaultTimeout setDefaultNavigationTimeout newCDPSession`,
-      Page: `${common} ${locate} ${events} mainFrame frames frame context url isClosed close reload goBack goForward bringToFront screenshot pdf waitForTimeout waitForResponse waitForRequest route unroute unrouteAll routeWebSocket routeFromHAR exposeFunction exposeBinding addInitScript setViewportSize viewportSize emulateMedia setExtraHTTPHeaders setDefaultTimeout setDefaultNavigationTimeout opener workers video`,
+      BrowserContext: `${events} pages newPage browser cookies addCookies clearCookies storageState setStorageState addInitScript route unroute unrouteAll routeFromHAR setExtraHTTPHeaders setGeolocation setOffline setDefaultTimeout setDefaultNavigationTimeout newCDPSession`,
+      Page: `${common} ${locate} ${events} mainFrame frames frame context url isClosed close reload goBack goForward bringToFront screenshot pdf waitForTimeout waitForResponse waitForRequest route unroute unrouteAll routeFromHAR addInitScript setViewportSize viewportSize emulateMedia setExtraHTTPHeaders setDefaultTimeout setDefaultNavigationTimeout opener workers video`,
       Frame: `${common} ${locate} page url name isDetached parentFrame childFrames frameElement`,
       Locator: `${locate} all allInnerTexts allTextContents and or filter nth first last describe description count boundingBox screenshot scrollIntoViewIfNeeded waitFor elementHandle elementHandles page contentFrame evaluate evaluateAll evaluateHandle ariaSnapshot getAttribute innerHTML innerText textContent inputValue isChecked isDisabled isEditable isEnabled isHidden isVisible check uncheck setChecked click dblclick dispatchEvent dragTo fill focus blur hover press pressSequentially selectOption selectText setInputFiles tap type highlight`,
       FrameLocator: `${locate} owner first last nth`,
@@ -68,7 +68,16 @@ export const PLAYWRIGHT_PROPERTIES: Readonly<
   },
   Assertion: { not: 'Assertion', resolves: 'Assertion', rejects: 'Assertion' },
 };
+/** The Patchright driver never exposes host bindings to a page's main world,
+ * which sites can detect: page scripts cannot call exposed functions, and a
+ * WebSocket mock makes the page's own sockets throw. Fail clearly instead. */
+const MAIN_WORLD_BINDINGS = new Set(['exposeBinding', 'exposeFunction', 'routeWebSocket']);
+
 export function assertMethod(type: string, member: string): void {
+  if ((type === 'Page' || type === 'BrowserContext') && MAIN_WORLD_BINDINGS.has(member))
+    throw new Error(
+      `${type}.${member} is unavailable: the task browser never exposes host bindings to page scripts. Use route handlers, or evaluate after navigation.`,
+    );
   if (!PLAYWRIGHT_METHODS[type]?.has(member))
     throw new Error(
       `Unsupported or privileged ${type}.${member}. Only documented public task-scoped APIs are exposed.`,

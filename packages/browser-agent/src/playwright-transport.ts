@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ConnectOverCDPTransport } from 'playwright-core';
+import type { ConnectOverCDPTransport } from 'patchright-core';
 import {
   object,
   type BrowserAgentHost,
@@ -667,7 +667,7 @@ export class PlaywrightTransport implements ConnectOverCDPTransport {
       `Browser operation outside the Elevenex task scope: ${method}`,
     );
   }
-  async tabId(page: import('playwright-core').Page): Promise<string> {
+  async tabId(page: import('patchright-core').Page): Promise<string> {
     const session = await page.context().newCDPSession(page);
     try {
       const info = object(

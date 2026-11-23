@@ -79,13 +79,12 @@ describe('Browser code in sandboxed Chromium', () => {
         ['mousedown', true],
       ]),
     );
+    // Console events would require the Runtime domain, which sites can time.
     expect(
       value.events.items.some(
-        (event) =>
-          event.method === 'Runtime.consoleAPICalled' &&
-          JSON.stringify(event.params).includes('loaded'),
+        (event) => event.method === 'Runtime.consoleAPICalled',
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       value.events.items.some(
         (event) => event.method === 'Network.responseReceived',

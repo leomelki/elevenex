@@ -10,7 +10,7 @@ const result = await build({
   platform: 'node',
   format: 'cjs',
   target: 'node22',
-  external: ['playwright-core', '@playwright/test'],
+  external: ['patchright-core', 'patchright/test'],
   write: false,
   legalComments: 'none',
 });

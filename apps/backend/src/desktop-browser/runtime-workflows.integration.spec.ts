@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from 'playwright-core';
+import type { BrowserContext, Page } from 'patchright-core';
 import { createServer, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,16 +36,16 @@ describe('remote human browser workflows', () => {
   });
   const workflows = () => task.page(tabId).snapshot().workflows ?? [];
   it('adopts OAuth popups with opener, cookies, postMessage and close returning to the originating tab', async () => {
-    await page.evaluate(url => { document.cookie = 'workflow=shared'; window.addEventListener('message', event => { document.title = event.data; }); window.open(url + '/popup'); }, url);
+    await page.evaluate(url => { document.cookie = 'workflow=shared'; window.addEventListener('message', event => { document.title = event.data; }); window.open(url + '/popup'); }, url, undefined, false);
     await wait(() => task.tabs.size === 2 && task.active !== tabId);
     const popup = context.pages().find(candidate => candidate !== page && candidate.url() !== 'about:blank')!;
-    expect(await popup.evaluate(() => !!window.opener && document.cookie.includes('workflow=shared'))).toBe(true);
-    await popup.evaluate(() => { window.opener.postMessage('OAuth complete', location.origin); window.close(); });
+    expect(await popup.evaluate(() => !!window.opener && document.cookie.includes('workflow=shared'), undefined, undefined, false)).toBe(true);
+    await popup.evaluate(() => { window.opener.postMessage('OAuth complete', location.origin); window.close(); }, undefined, undefined, false);
     await wait(() => task.tabs.size === 1 && task.active === tabId);
     expect(await page.title()).toBe('OAuth complete');
   });
   it('preserves prompt text only for the viewer and resolves exact pending dialogs', async () => {
-    await page.evaluate(() => { setTimeout(() => { document.title = prompt('Private prompt', 'default') ?? 'cancelled'; }, 0); });
+    await page.evaluate(() => { setTimeout(() => { document.title = prompt('Private prompt', 'default') ?? 'cancelled'; }, 0); }, undefined, undefined, false);
     await wait(() => workflows().some(item => item.kind === 'dialog'));
     const request = workflows().find(item => item.kind === 'dialog')!;
     expect(JSON.stringify(await task.agent({ kind: 'list' }, 2, new AbortController().signal))).not.toContain('Private prompt');
@@ -63,7 +63,7 @@ describe('remote human browser workflows', () => {
     await expect(owner.transfer(request.id, { kind: 'upload-chunk', index: 0, offset: 1, data: 'aGVsbG8=' })).rejects.toThrow();
     await owner.transfer(request.id, { kind: 'upload-chunk', index: 0, offset: 0, data: 'aGVsbG8=' });
     await owner.transfer(request.id, { kind: 'upload-finish' });
-    expect(await page.locator('#file').evaluate(async (input: HTMLInputElement) => Promise.all([...input.files!].map(async file => [file.name, await file.text()])))).toEqual([['hello.txt', 'hello'], ['empty.txt', '']]);
+    expect(await page.locator('#file').evaluate(async (input: HTMLInputElement) => Promise.all([...input.files!].map(async file => [file.name, await file.text()])), undefined, undefined, false)).toEqual([['hello.txt', 'hello'], ['empty.txt', '']]);
     await page.locator('#file').click(); await wait(() => workflows().some(item => item.kind === 'upload'));
     const stale = workflows().find(item => item.kind === 'upload')!;
     await task.command({ kind: 'navigate', tabId, url: url + '/next' });
@@ -78,13 +78,14 @@ describe('remote human browser workflows', () => {
     await page.locator('#large').click();
     await wait(() => workflows().length === 0);
   });
-  it('preserves relative movement under genuine Chromium pointer lock and releases on hide', async () => {
+  // Pointer lock support is disabled; see the desktop-browser README.
+  it.skip('preserves relative movement under genuine Chromium pointer lock and releases on hide', async () => {
     await task.command({ kind: 'takeover', tabId }); await task.layout(800, 600, true, true);
     await page.evaluate(() => {
       const button = document.querySelector('#pointer')!;
       button.addEventListener('click', () => { void document.body.requestPointerLock(); });
       document.addEventListener('mousemove', event => { if (document.pointerLockElement) document.title = event.movementX + ',' + event.movementY; });
-    });
+    }, undefined, undefined, false);
     const rect = await page.locator('#pointer').boundingBox();
     const x = rect!.x + 4, y = rect!.y + 4;
     const generation = task.page(tabId).generation;
@@ -98,7 +99,7 @@ describe('remote human browser workflows', () => {
     expect(await page.title()).toBe('17,-9');
     await task.layout(800, 600, false, false);
     await wait(() => task.page(tabId).snapshot().pointerLocked === false);
-    expect(await page.evaluate(() => document.pointerLockElement)).toBeNull();
+    expect(await page.evaluate(() => document.pointerLockElement, undefined, undefined, false)).toBeNull();
     await task.layout(800, 600, true, true);
   });
   it('relays CSS cursor keywords and dismisses pending dialogs on viewer loss', async () => {
@@ -106,7 +107,7 @@ describe('remote human browser workflows', () => {
     const rect = await page.locator('#pointer').boundingBox();
     await task.input(tabId, task.page(tabId).generation, { kind: 'pointer', type: 'move', x: rect!.x + 4, y: rect!.y + 4, button: 'none', buttons: 0, clicks: 0, modifiers: 0 });
     await wait(() => task.page(tabId).snapshot().cursor === 'crosshair');
-    await page.evaluate(() => { setTimeout(() => confirm('leave viewer'), 0); });
+    await page.evaluate(() => { setTimeout(() => confirm('leave viewer'), 0); }, undefined, undefined, false);
     await wait(() => workflows().some(item => item.kind === 'dialog'));
     task.reconcile(); await wait(() => workflows().length === 0);
   });

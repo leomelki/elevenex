@@ -1,4 +1,4 @@
-import type { CDPSession, Page } from 'playwright-core';
+import type { CDPSession, Page } from 'patchright-core';
 import type { TaskBrowserStreamEvent } from '@elevenex/shared';
 import { RuntimeInputLane } from './runtime-input-lane.js';
 import { RuntimeBrowserClipboard } from './runtime-clipboard.js';

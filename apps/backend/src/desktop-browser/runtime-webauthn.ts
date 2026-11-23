@@ -5,7 +5,7 @@ import type {
   Page,
   Frame,
   Request,
-} from 'playwright-core';
+} from 'patchright-core';
 import { z } from 'zod';
 import type {
   BrowserWebAuthnOptions,

@@ -1,4 +1,4 @@
-import type { CDPSession } from 'playwright-core';
+import type { CDPSession } from 'patchright-core';
 
 export interface RuntimeFrame {
   readonly sequence: number;

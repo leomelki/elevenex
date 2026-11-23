@@ -3,7 +3,7 @@ import { BrowserAgentPresentation } from '@elevenex/browser-agent';
 import { RuntimeBrowserWorkflows, RuntimeWorkflowBudget } from './runtime-workflows.js';
 import { PROTOCOL_EVENTS, NestedSessions, ProtocolLease, AgentInputState, type BrowserAgentTarget, type BrowserAgentDownload } from '@elevenex/browser-agent';
 import type { TaskBrowserCursor } from '@elevenex/shared';
-import type { BrowserContext, CDPSession, Page, Request } from 'playwright-core';
+import type { BrowserContext, CDPSession, Page, Request } from 'patchright-core';
 import { randomUUID } from 'node:crypto';
 import type {
   BrowserElement,
@@ -13,6 +13,7 @@ import type {
 import { RuntimeBrowserNetwork, runtimeUrl } from './runtime-network.js';
 import { RuntimeBrowserInput } from './runtime-input.js';
 import { RuntimeBrowserCursor } from './runtime-cursor.js';
+import { RuntimePageWorld } from './runtime-page-world.js';
 import { RuntimePointerLock } from './runtime-pointer-lock.js';
 import { detectBrowserSources } from '@elevenex/browser-inspection';
 
@@ -230,6 +231,7 @@ export class RuntimeBrowserTab {
   private stopNavigation?: () => void;
   private input?: RuntimeBrowserInput;
   private cursorReader?: RuntimeBrowserCursor;
+  private pageWorld?: RuntimePageWorld;
   private disposed = false;
   private crashed = false;
   private layoutRevision = 0;
@@ -356,52 +358,29 @@ export class RuntimeBrowserTab {
       void this.capture.start(); this.changed();
     });
     this.cdp = await this.context.newCDPSession(page);
+    // Headless Chromium target metadata does not report document.title changes.
+    // The private world reports only bounded human-facing title data.
+    const pageWorld = new RuntimePageWorld(this.cdp, (url, title) => {
+      if (this.disposed || this.page !== page || this.pageWorld !== pageWorld || url !== page.url()) return;
+      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
+      this.changed();
+    });
+    this.pageWorld = pageWorld;
+    await pageWorld.start();
     this.input = new RuntimeBrowserInput(page, this.cdp, this.pointerLock);
-    this.cursorReader = new RuntimeBrowserCursor(page, cursor => {
+    this.cursorReader = new RuntimeBrowserCursor(expression => pageWorld.evaluate(expression), cursor => {
       if (cursor === this.cursor) return;
       this.cursor = cursor;
       this.changed();
     });
     this.capture.attach(this.cdp);
-    await this.pointerLock.attach(page, this.cdp);
+    // Pointer lock support is disabled: its observer depends on the CDP Runtime
+    // domain, whose console serialization sites can measure. The lease, input
+    // lane and capability stay in place for when a Runtime-free observer exists.
     // Companion views must not steal document focus from one another on layout heartbeats.
     await this.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // Headless Chromium target metadata does not report document.title changes.
-    // This page-owned binding accepts only bounded human-facing title data.
-    const bindingName = '__elevenexPageTitle';
-    await page.exposeBinding(bindingName, ({ frame }, url: unknown, title: unknown) => {
-      if (this.disposed || this.page !== page || frame !== page.mainFrame() || url !== page.url() || typeof title !== 'string' || title.length > 200) return;
-      this.pageTitle = { url: page.url(), text: title.replace(/\s+/gu, ' ').trim() };
-      this.changed();
-    });
-    await page.addInitScript((name: string) => {
-      if (window !== window.top) return;
-      document.addEventListener('DOMContentLoaded', () => {
-        let previous: string | undefined;
-        const publish = () => {
-          const title = document.title.replace(/\s+/gu, ' ').trim().slice(0, 200);
-          if (title === previous) return;
-          previous = title;
-          const send: unknown = Reflect.get(globalThis, name);
-          if (typeof send === 'function') {
-            const result: unknown = Reflect.apply(send, globalThis, [location.href, title]);
-            void Promise.resolve(result).catch(() => undefined);
-          }
-        };
-        // The observers and binding die with their owning document/page.
-        const head = new MutationObserver(publish);
-        const observeHead = () => {
-          head.disconnect();
-          head.observe(document.head ?? document.documentElement, { childList: true, subtree: true, characterData: true });
-          publish();
-        };
-        new MutationObserver(observeHead).observe(document.documentElement, { childList: true });
-        observeHead();
-      }, { once: true });
-    }, bindingName);
-    page.on('console', (message) => {
-      if (message.type() === 'error') this.countError();
-    });
+    // Patchright never enables the Console domain, so the error count covers
+    // failed requests and HTTP errors rather than console messages.
     page.on('request', request => {
       if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
       this.documentRequest = request;
@@ -779,6 +758,14 @@ export class RuntimeBrowserTab {
     }
     const result = await this.input!.dispatch(input, current);
     this.capture.changed();
+    if (!(input.kind === 'wheel' || input.kind === 'pointer-exit' || (input.kind === 'pointer' && input.type === 'move')))
+      this.pageWorld?.titleMayChange();
+    // Ordinary Chrome releases pointer lock on Escape. While pointer lock support
+    // is disabled, nothing else returns a natively locked page to the viewer.
+    if (input.kind === 'key' && input.type === 'down' && input.key === 'Escape')
+      void this.pageWorld
+        ?.evaluate('document.pointerLockElement && document.exitPointerLock()')
+        .catch(() => undefined);
     if (input.kind === 'pointer' || input.kind === 'pointer-exit') {
       const x = input.kind === 'pointer' ? input.x : -1, y = input.kind === 'pointer' ? input.y : -1;
       this.cursorReader?.update(x, y, () =>
@@ -948,6 +935,8 @@ export class RuntimeBrowserTab {
     this.pickerHover.destroy();
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
+    this.pageWorld?.destroy();
+    this.pageWorld = undefined;
     this.stopNavigation?.(); this.stopNavigation = undefined;
     const workflowCleanup = this.workflows.destroy();
     this.takeover();
@@ -968,6 +957,8 @@ export class RuntimeBrowserTab {
     this.engineRevision++;
     this.cursorReader?.destroy();
     this.cursorReader = undefined;
+    this.pageWorld?.destroy();
+    this.pageWorld = undefined;
     const workflowCleanup = this.workflows.clear();
     this.invalidateDisplay();
     this.stopNavigation?.(); this.stopNavigation = undefined;

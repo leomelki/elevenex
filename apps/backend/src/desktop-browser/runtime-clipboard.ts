@@ -1,4 +1,4 @@
-import type { Frame, Page } from 'playwright-core';
+import type { Frame, Page } from 'patchright-core';
 
 /** Page-owned, read-only selection access. A timeout cannot cancel Chromium's
  * evaluator, so retain single-flight ownership until it actually settles.

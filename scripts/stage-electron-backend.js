@@ -1,4 +1,9 @@
-const { formatSize, getDirectorySize, removeGitArtifacts } = require("./runtime-stage-utils");
+const {
+  formatSize,
+  getDirectorySize,
+  removeGitArtifacts,
+  restoreDriverLicenses,
+} = require("./runtime-stage-utils");
 const {
   chmodSync,
   cpSync,
@@ -24,8 +29,8 @@ const stageBaseRoot =
 const stageBackendRoot = path.join(stageBaseRoot, "backend");
 const backendPackageJson = require(path.join(backendRoot, "package.json"));
 const NATIVE_RUNTIME_DEPENDENCIES = [
-  "playwright-core",
-  "@playwright/test",
+  "patchright-core",
+  "patchright",
   "ffmpeg-static",
   "better-sqlite3",
   "node-pty",
@@ -340,6 +345,7 @@ async function main() {
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {
     stageNativePackageTree(packageName, stagedNativePackages);
   }
+  restoreDriverLicenses(path.join(stageBackendRoot, "node_modules"));
   // The backend dynamically imports the small JavaScript SDK for lightweight
   // Codex generation. Stage only its JS files; never traverse its dependency
   // on @openai/codex, which is where the native CLI payload is published.

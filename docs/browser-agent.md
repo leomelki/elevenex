@@ -120,7 +120,8 @@ repeating anything. An ordinary script error also does not undo earlier effects.
 
 `packages/shared` owns private serializable code transport contracts.
 `packages/browser-agent` owns worker execution, the public code facade, method
-policy, bounded observations and RPC. It depends on pinned Playwright, its
+policy, bounded observations and RPC. It depends on pinned Patchright (Playwright's
+API, see [the driver contract](browser-playwright.md#api-and-compatibility)), its
 assertions and shared contracts; it has no Electron dependency. Backend and desktop adapters own real pages, network permissions,
 debugger attachments, browser profiles and cleanup. MCP adapters only resolve
 authenticated task/session identity and translate results.

@@ -1,4 +1,4 @@
-import type { Locator, Page } from 'playwright-core';
+import type { Locator, Page } from 'patchright-core';
 import type { BrowserAgentHighlight, BrowserPresentationCommand } from '@elevenex/shared';
 import { object } from './host.js';
 import { browserPresentationCommand } from './presentation.js';

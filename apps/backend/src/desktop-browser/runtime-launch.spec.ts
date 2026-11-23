@@ -1,9 +1,17 @@
-import { chromium, type BrowserContext } from 'playwright-core';
+import { chromium, type BrowserContext } from 'patchright-core';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { launchRuntimeBrowser } from './runtime-launch.js';
+import {
+  browserLaunchOptions,
+  launchRuntimeBrowser,
+} from './runtime-launch.js';
 import { browserStartError } from './runtime-start-error.js';
+import {
+  chromeUserAgent,
+  RuntimeUserAgents,
+  userAgentArgs,
+} from './runtime-user-agent.js';
 
 describe('Browser host startup and recovery', () => {
   let root: string, configured: string, managed: string;
@@ -11,13 +19,23 @@ describe('Browser host startup and recovery', () => {
   const executable = jest.spyOn(chromium, 'executablePath');
   const userId = process.getuid ? jest.spyOn(process, 'getuid') : undefined;
   const install = jest.fn<Promise<void>, []>();
-  // The launcher only returns this opaque context; page initialization belongs to the pool.
-  const context = {} as BrowserContext;
+  let version: string | undefined;
+  let userAgents: RuntimeUserAgents;
+  const close = jest.fn<Promise<void>, []>();
+  // The launcher reads only the started version; page setup belongs to the pool.
+  const context = {
+    browser: () => (version ? { version: () => version } : null),
+    close,
+  } as unknown as BrowserContext;
   const options = {
     headless: true,
     chromiumSandbox: true,
     proxy: { server: 'http://private-proxy:1234' },
   };
+  const identified = (major = 149) => ({
+    ...options,
+    args: userAgentArgs(major),
+  });
   const run = (signal = new AbortController().signal) =>
     launchRuntimeBrowser(
       join(root, 'app'),
@@ -25,6 +43,7 @@ describe('Browser host startup and recovery', () => {
       options,
       install,
       signal,
+      userAgents,
     );
   const provision = async (path: string) => {
     await mkdir(dirname(path), { recursive: true });
@@ -46,6 +65,9 @@ describe('Browser host startup and recovery', () => {
       .mockReset()
       .mockRejectedValue(new Error('Chrome distribution is not found'));
     install.mockReset().mockResolvedValue();
+    close.mockReset().mockResolvedValue();
+    version = '149.0.7827.55';
+    userAgents = new RuntimeUserAgents(() => Promise.resolve(149));
   });
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
@@ -63,9 +85,10 @@ describe('Browser host startup and recovery', () => {
     expect(install).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledTimes(1);
     expect(launch).toHaveBeenCalledWith(join(root, 'profile'), {
-      ...options,
+      ...identified(),
       executablePath: managed,
     });
+    expect(close).not.toHaveBeenCalled();
   });
   it('uses the configured Playwright cache on an offline host without installing', async () => {
     await provision(configured);
@@ -73,7 +96,7 @@ describe('Browser host startup and recovery', () => {
     expect(await run()).toBe(context);
     expect(install).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledWith(join(root, 'profile'), {
-      ...options,
+      ...identified(),
       executablePath: configured,
     });
   });
@@ -81,10 +104,35 @@ describe('Browser host startup and recovery', () => {
     launch.mockResolvedValue(context);
     expect(await run()).toBe(context);
     expect(launch).toHaveBeenCalledWith(join(root, 'profile'), {
-      ...options,
+      ...identified(),
       channel: 'chrome',
     });
     expect(install).not.toHaveBeenCalled();
+  });
+  it('relaunches an installed Chrome once with its own version and remembers it', async () => {
+    version = '151.0.7900.12';
+    launch.mockResolvedValue(context);
+    expect(await run()).toBe(context);
+    expect(launch.mock.calls.map((call) => call[1])).toEqual([
+      { ...identified(149), channel: 'chrome' },
+      { ...identified(151), channel: 'chrome' },
+    ]);
+    expect(close).toHaveBeenCalledTimes(1);
+    launch.mockClear();
+    expect(await run()).toBe(context);
+    expect(launch.mock.calls.map((call) => call[1])).toEqual([
+      { ...identified(151), channel: 'chrome' },
+    ]);
+  });
+  it('identifies the browser from the started version when no pinned build is known', async () => {
+    userAgents = new RuntimeUserAgents(() => Promise.resolve(undefined));
+    await provision(managed);
+    launch.mockResolvedValue(context);
+    expect(await run()).toBe(context);
+    expect(launch.mock.calls.map((call) => call[1])).toEqual([
+      { ...options, args: [], executablePath: managed },
+      { ...identified(149), executablePath: managed },
+    ]);
   });
   it.each([
     [
@@ -128,7 +176,7 @@ describe('Browser host startup and recovery', () => {
     await expect(run()).rejects.toMatchObject({ reason: 'dependencies' });
     expect(install).toHaveBeenCalledTimes(1);
     expect(launch).toHaveBeenLastCalledWith(join(root, 'profile'), {
-      ...options,
+      ...identified(),
       executablePath: managed,
     });
   });
@@ -156,6 +204,40 @@ describe('Browser host startup and recovery', () => {
     await expect(run(controller.signal)).rejects.toThrow();
     expect(launch).toHaveBeenCalledTimes(1);
   });
+  it('presents an ordinary Chrome identity without changing the sandbox', () => {
+    const launchOptions = browserLaunchOptions('/extension');
+    expect(launchOptions).toMatchObject({
+      headless: true,
+      chromiumSandbox: true,
+    });
+    expect(launchOptions.args).toContain(
+      '--disable-blink-features=AutomationControlled',
+    );
+    expect(launchOptions.ignoreDefaultArgs).toContain('--hide-scrollbars');
+    expect(launchOptions.args).not.toContain('--no-sandbox');
+    const features = launchOptions.args?.filter((arg) =>
+      arg.startsWith('--disable-features='),
+    );
+    expect(features).toHaveLength(1);
+    expect(features?.[0]).not.toMatch(
+      /ThirdPartyStoragePartitioning|HttpsUpgrades|MediaRouter\b/,
+    );
+    // Navigation waits never see a load event after a back-forward cache restore.
+    expect(launchOptions.args).toContain('--disable-back-forward-cache');
+  });
+  it.each([
+    ['darwin', 'Macintosh; Intel Mac OS X 10_15_7'],
+    ['linux', 'X11; Linux x86_64'],
+    ['win32', 'Windows NT 10.0; Win64; x64'],
+  ] as const)(
+    'uses Chrome reduced User-Agent tokens on %s',
+    (platform, token) => {
+      expect(chromeUserAgent(149, platform)).toBe(
+        `Mozilla/5.0 (${token}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36`,
+      );
+      expect(chromeUserAgent(149, 'freebsd')).toBeUndefined();
+    },
+  );
   it('withholds unclassified private native output', () => {
     expect(
       browserStartError(new Error('secret-page-output')).message,
