@@ -1,7 +1,8 @@
 import { type Session, type WebContents, type OnBeforeRequestListenerDetails } from 'electron';
 import { isAppUrl } from '../security';
 import type { CodeProtocol } from './protocol';
-import { isMarkdownPreviewOrigin, isMarkdownPreviewResource, markdownPreviewAsset } from './markdown-preview';
+import { isCodeWebviewOrigin, isMarkdownPreviewResource, codeWebviewAsset, HTML_PREVIEW_EXTENSION } from './webview';
+import { isHtmlPreviewOrigin } from './html-preview';
 
 /** One handler per shell session. Origins, not Electron partitions, isolate tasks.
  * Every request also checks its owning window and initiator; knowing another
@@ -10,6 +11,11 @@ export class CodeFrameRouter {
   private readonly hosts = new Set<CodeProtocol>();
   constructor(private readonly session: Session, private readonly devUrl?: string) {
     session.protocol.handle('https', request => {
+      const url = new URL(request.url);
+      if (isHtmlPreviewOrigin(url)) {
+        const host = this.findHtmlPreview(url);
+        return host ? host.htmlPreview.handle(request, url) : new Response(null, { status: 403 });
+      }
       const host = this.find(request.url);
       return host ? host.handle(request) : new Response(null, { status: 403 });
     });
@@ -31,10 +37,20 @@ export class CodeFrameRouter {
     const navigate = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
       if (event.isMainFrame) return;
       const frame = event.frame;
+      const destination = new URL(event.url);
+      if (isHtmlPreviewOrigin(destination)) {
+        const previewHost = this.findHtmlPreview(destination);
+        if (!previewHost || previewHost.windowId !== contents.id ||
+            !previewHost.htmlPreview.allowsDocument(destination) ||
+            !this.isHtmlPreviewParent(frame?.parent, previewHost.authority)) event.preventDefault();
+        return;
+      }
+      const previous = URL.parse(frame?.url ?? '');
+      if (previous && isHtmlPreviewOrigin(previous)) { event.preventDefault(); return; }
       const host = this.find(event.url);
       if (host && frame?.parent && host.windowId === contents.id) {
         const url = new URL(event.url);
-        const preview = markdownPreviewAsset(url, host.authority);
+        const preview = codeWebviewAsset(url, host.authority);
         const parent = frame.parent;
         if (preview) {
           const allowed = preview === 'index.html'
@@ -57,12 +73,21 @@ export class CodeFrameRouter {
     const url = new URL(details.url);
     const initiator = details.initiatorOrigin;
     const source = URL.parse(initiator ?? details.frame?.url ?? '');
+    if (isHtmlPreviewOrigin(url)) {
+      const host = this.findHtmlPreview(url);
+      if (!host || host.windowId !== details.webContentsId || details.method !== 'GET' ||
+          !host.htmlPreview.current(url) || details.resourceType === 'mainFrame') return false;
+      if (details.resourceType !== 'subFrame') return source?.origin === url.origin;
+      return host.htmlPreview.allowsDocument(url) && !!source &&
+        (source.origin === url.origin || isCodeWebviewOrigin(source, host.authority));
+    }
+    if (source && isHtmlPreviewOrigin(source)) return false;
     // The upstream preview setting can allow insecure resources. Keep HTTP
     // blocked for previews too, including localhost, without affecting the shell.
-    if (url.protocol === 'http:') return !source || ![...this.hosts].some(host => isMarkdownPreviewOrigin(source, host.authority));
+    if (url.protocol === 'http:') return !source || ![...this.hosts].some(host => isCodeWebviewOrigin(source, host.authority));
     const host = this.find(details.url);
     if (!host || details.resourceType === 'mainFrame') return false;
-    const preview = markdownPreviewAsset(url, host.authority);
+    const preview = codeWebviewAsset(url, host.authority);
     // Chromium omits the window for service worker registration and updates.
     // Only the pinned script on the initiating preview origin can use this path.
     if (preview === 'service-worker.js') return details.method === 'GET' && details.resourceType === 'script'
@@ -72,7 +97,7 @@ export class CodeFrameRouter {
       case 'index.html': return details.resourceType === 'subFrame' && initiator === `https://${host.authority}`;
       case 'fake.html': return details.resourceType === 'subFrame' && initiator === url.origin;
     }
-    if (source && isMarkdownPreviewOrigin(source, host.authority)) return details.method === 'GET'
+    if (source && isCodeWebviewOrigin(source, host.authority)) return details.method === 'GET'
       && details.resourceType !== 'subFrame' && isMarkdownPreviewResource(url, host.authority);
     if (initiator && host.allows(initiator)) return true;
     // Browser-created extension worker requests may omit initiator. Never infer
@@ -89,10 +114,20 @@ export class CodeFrameRouter {
   }
   private isPreviewParent(value: string, child: URL, authority: string): boolean {
     const parent = URL.parse(value);
-    return !!parent && parent.origin === child.origin && markdownPreviewAsset(parent, authority) === 'index.html';
+    return !!parent && parent.origin === child.origin && codeWebviewAsset(parent, authority) === 'index.html';
+  }
+  private isHtmlPreviewParent(frame: Electron.WebFrameMain | null | undefined, authority: string): boolean {
+    const url = URL.parse(frame?.url ?? '');
+    const outer = URL.parse(frame?.parent?.url ?? '');
+    return !!url && !!outer && this.isPreviewParent(outer.href, url, authority) &&
+      codeWebviewAsset(url, authority) === 'fake.html' && outer.searchParams.get('extensionId') === HTML_PREVIEW_EXTENSION;
+  }
+  private findHtmlPreview(url: URL): CodeProtocol | undefined {
+    for (const host of this.hosts) if (host.htmlPreview.owns(url)) return host;
+    return undefined;
   }
   private find(value: string): CodeProtocol | undefined {
     const url = URL.parse(value);
-    return url ? [...this.hosts].find(host => host.allows(value) || markdownPreviewAsset(url, host.authority)) : undefined;
+    return url ? [...this.hosts].find(host => host.allows(value) || codeWebviewAsset(url, host.authority)) : undefined;
   }
 }

@@ -254,6 +254,16 @@ absolute paths and outside links.
 The workbench owns explorer, tabs, Quick Open, search, editing, language basics
 and backups. Its built-in Markdown preview commands work in the side panel and
 separate Code window, including images resolved relative to a task file.
+
+Choose **Preview HTML** in an HTML editor’s title bar, the Explorer context
+menu, or the Command Palette. It opens the saved `.html` or `.htm` file in a
+reusable editor tab at the current width. **Open HTML Source** returns to the
+source tab. The preview updates when the source is saved and **Refresh HTML
+Preview** reloads it and its assets. Relative links to other HTML files and
+workspace CSS, images, fonts and media use the same checkout on local and SSH
+machines. This is a static preview. For apps that need JavaScript, APIs or a
+build step, use the Task Browser with the app’s development server.
+
 Chrome uses the upstream textarea/CPU editor paths for predictable
 embedded input/rendering. The app supplies its local fonts and token-derived
 light/dark colors through supported configuration. No existing content animates
@@ -311,6 +321,13 @@ extension's preview frame under its owning workbench and serves only the pinned
 bootstrap, worker and bundled Markdown rendering assets to that preview.
 The upstream worker resolves local resources through the existing task file
 provider. Preview origins have no direct task API access or external network access.
+
+HTML uses an app-owned webview wrapper around a separate, sandboxed document
+origin. Its short-lived preview URL is scoped to the visible owning workbench,
+backend scope and checkout generation. The protocol serves only allowlisted
+static file types via the existing confined read operation. It blocks scripts,
+forms, nested frames and external requests. The lease is replaced on refresh
+and revoked on close or workspace reset. Neither preview needs a listener port.
 
 Filename and text-search registration use upstream's proposed provider APIs,
 explicitly enabled only for the bundled extension. Their installed definitions

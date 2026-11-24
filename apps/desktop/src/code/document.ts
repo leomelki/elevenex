@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { markdownPreviewEndpoint } from './markdown-preview';
+import { codeWebviewEndpoint, HTML_PREVIEW_VIEW } from './webview';
 import type { WorkspaceDescriptor } from './validation';
 // v2 escapes immutable extension responses emitted by the original iframe host.
 // These app-owned assets are now no-store; pinned upstream assets stay cached.
 export const CODE_EXTENSION_PATH = '/extension-v2';
+const htmlResource = 'resourceScheme == elevenex-task && resourceExtname =~ /\\.html?$/i';
+const htmlPreviewActive = `activeWebviewPanelId == ${HTML_PREVIEW_VIEW}`;
 export const EXTENSION = {
   name: 'task-workspace', publisher: 'elevenex', version: '1.4.0', displayName: 'Elevenex task workspace',
   engines: { vscode: '^1.144.0' }, browser: './extension.js', activationEvents: ['onFileSystem:elevenex-task', '*'],
@@ -14,13 +16,27 @@ export const EXTENSION = {
     views: { explorer: [{ id: 'elevenex.linkedFiles', name: 'Linked folders', when: 'elevenex.hasLinkedFolder' }] },
     menus: {
       'explorer/context': [
+        { command: 'elevenex.code.preview-html', when: `${htmlResource} && !explorerResourceIsFolder`, group: 'navigation@20' },
         { command: 'elevenex.code.upload', when: 'resourceScheme == elevenex-task && !explorerResourceIsFolder', group: '5b_importexport@20' },
         { command: 'elevenex.code.download', when: 'resourceScheme == elevenex-task && (explorerResourceIsFolder || explorerResourceIsRoot) && !hasWebFileSystemAccess', group: '5b_importexport@10' },
         { command: 'elevenex.code.upload-folder', when: 'resourceScheme == elevenex-task', group: '5b_importexport@30' },
       ],
+      'editor/title': [
+        { command: 'elevenex.code.preview-html', when: htmlResource, group: 'navigation@1' },
+        { command: 'elevenex.code.preview-html-source', when: htmlPreviewActive, group: 'navigation@1' },
+        { command: 'elevenex.code.refresh-html-preview', when: htmlPreviewActive, group: 'navigation@2' },
+      ],
+      commandPalette: [
+        { command: 'elevenex.code.preview-html', when: htmlResource },
+        { command: 'elevenex.code.preview-html-source', when: htmlPreviewActive },
+        { command: 'elevenex.code.refresh-html-preview', when: htmlPreviewActive },
+      ],
       'editor/title/context': [{ command: 'elevenex.code.download', when: 'resourceScheme == elevenex-task', group: '2_files@10' }],
       'view/title': [{ command: 'elevenex.code.find-file', when: 'view == workbench.explorer.fileView && elevenex.compact', group: 'navigation@0' }, { command: 'elevenex.code.upload', when: 'view == workbench.explorer.fileView', group: 'navigation@10' }, { command: 'elevenex.code.upload-folder', when: 'view == workbench.explorer.fileView', group: '1_transfer@2' }, { command: 'elevenex.code.download', when: 'view == workbench.explorer.fileView', group: '1_transfer@3' }] },
     commands: [
+      { command: 'elevenex.code.preview-html', title: 'Preview HTML', icon: '$(open-preview)' },
+      { command: 'elevenex.code.preview-html-source', title: 'Open HTML Source', icon: '$(code)' },
+      { command: 'elevenex.code.refresh-html-preview', title: 'Refresh HTML Preview', icon: '$(refresh)' },
       { command: 'elevenex.code.upload', enablement: '!elevenex.transferRunning', title: 'Upload Files…', category: 'Task', icon: '$(cloud-upload)' },
       { command: 'elevenex.code.upload-folder', enablement: '!elevenex.transferRunning', title: 'Upload Folder…', category: 'Task', icon: '$(new-folder)' },
       { command: 'elevenex.code.download', enablement: '!elevenex.transferRunning', title: 'Download…', category: 'Task', icon: '$(cloud-download)' },
@@ -60,7 +76,7 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
   // window.customTitleBarVisibility is a desktop-only setting.
   const options = {
     workspace: { folderUri: { scheme: 'elevenex-task', authority: workspace.storageIdentity, path: '/' } },
-    webviewEndpoint: markdownPreviewEndpoint(authority),
+    webviewEndpoint: codeWebviewEndpoint(authority),
     additionalBuiltinExtensions: [{ scheme: 'https', authority, path: CODE_EXTENSION_PATH }],
     enabledExtensionProposedApi: ['elevenex.task-workspace'],
     productConfiguration: { nameShort: 'Code OSS', nameLong: 'Code OSS', applicationName: 'elevenex-code', quality: 'stable', commit: 'elevenex-code-oss-1.144.0', enableTelemetry: false, webEndpointUrlTemplate: `https://{{uuid}}.${authority}`, extensionEnabledApiProposals: { 'elevenex.task-workspace': ['fileSearchProvider', 'textSearchProvider'] } },
