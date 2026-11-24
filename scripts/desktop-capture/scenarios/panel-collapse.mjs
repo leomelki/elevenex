@@ -14,7 +14,8 @@ export default async function* (capture) {
     return {
       panel: rect('.panel'),
       content: rect('.panel-inner'),
-      chat: rect('.workspace > main'),
+      // The chat recedes with a visual scale during takeover; its layout must not reflow.
+      chat: (({ offsetLeft: x, offsetWidth: width }) => ({ x, width }))(shell.querySelector('.workspace > main')),
       rail: rect('.rail'),
       sidebar: rect('.sidebar'),
       inert: shell.querySelector('.panel').hasAttribute('inert'),
