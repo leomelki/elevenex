@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type {
   AgentPromptOptions,
   AgentRuntimeProvider,
+  AgentRuntimeStatePayload,
 } from '../../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-registry.service.js';
 import { SessionCompletionNoticesService } from '../../agent-runtime/session-completion-notices.service.js';
@@ -131,8 +132,12 @@ describe('cross-harness delegation through MCP', () => {
       ),
     });
     const parentRuntime = Object.assign(new EventEmitter(), {
-      info: { id: parentProvider, displayName: parentProvider },
-      getRuntimeState: jest.fn(async (): Promise<{ sessionState: string; runPhase: string; planMode?: boolean }> =>
+      info: {
+        id: parentProvider,
+        displayName: parentProvider,
+        capabilities: { nonInterruptingSteering: parentProvider === 'claude' },
+      },
+      getRuntimeState: jest.fn(async (): Promise<Omit<AgentRuntimeStatePayload, 'sessionId'>> =>
         ({ sessionState: 'idle', runPhase: 'idle' })),
       submitPrompt: jest.fn(async (
         _id: number,
@@ -169,10 +174,15 @@ describe('cross-harness delegation through MCP', () => {
       delegates,
     );
     const tokens = new McpAgentTokenService(db);
+    const buildMention = jest.fn(async (sessionId: number) => ({
+      sessionId, title: 'Prior review', provider: 'claude', branch: 'main', status: 'active',
+      transcriptExportPath: '/tmp/prior-review.md', contextMarkdown: 'Prior finding.',
+    }));
     const services = {
       sessions,
       tasks,
       agentRuntime,
+      conversationExport: { buildMention },
       sessionEvents: new SessionEventSubscriptions(),
     } as unknown as McpToolServices;
     const factory = new McpServerFactory(
@@ -225,6 +235,7 @@ describe('cross-harness delegation through MCP', () => {
       parentRuntime,
       workspace,
       delegates,
+      buildMention,
       connect,
       startNotices() {
         notices?.onModuleDestroy();
@@ -240,6 +251,28 @@ describe('cross-harness delegation through MCP', () => {
       },
     };
   }
+
+  it('launches with prior session context and reuses the first delivery on retry', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      const args = {
+        provider: 'codex', requestId: 'handoff', prompt: 'Verify the prior finding.',
+        mentionSessionIds: [f.root.id, f.root.id],
+      };
+      expect(await call('create_session', args)).toMatchObject({
+        data: { accepted: true, completion: 'notify' },
+      });
+      expect(await call('create_session', { ...args, mentionSessionIds: [f.root.id] })).toMatchObject({
+        data: { promptStatus: 'accepted' },
+      });
+      expect(f.buildMention.mock.calls).toEqual([[f.root.id]]);
+      expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(1);
+      expect(f.runtime.submitPrompt.mock.calls[0][1]).toContain('Prior finding.');
+    } finally {
+      await f.close();
+    }
+  });
 
   it('claims one named cross-harness turn across concurrent retries and exposes the child in the desktop group', async () => {
     const f = await fixture();
@@ -333,7 +366,7 @@ describe('cross-harness delegation through MCP', () => {
       expect(
         await child('create_session', {
           name: 'Standalone',
-          placement: 'task',
+          mode: 'standalone',
         }),
       ).toMatchObject({
         data: { parentSessionId: null, delegatedBySessionId: null },
@@ -380,9 +413,12 @@ describe('cross-harness delegation through MCP', () => {
     const f = await fixture();
     try {
       await f.sessions.updateStatus(f.root.id, 'active');
+      f.parentRuntime.getRuntimeState.mockResolvedValue({
+        sessionState: 'running', runPhase: 'running',
+      });
       f.startNotices();
       const call = await f.connect(f.root.id);
-      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries', completion: 'notify' });
+      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries', mode: 'async' });
       const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
       const history = await f.runtime.getHistory();
       let releaseHistory = () => {};
@@ -415,11 +451,15 @@ describe('cross-harness delegation through MCP', () => {
     }
   });
 
-  it('wakes an idle parent once for ready siblings after their background work settles', async () => {
+  it('wakes an idle parent once for ready siblings after earlier work settles', async () => {
     const f = await fixture();
     try {
       await f.sessions.updateStatus(f.root.id, 'active');
-      f.parentRuntime.getRuntimeState.mockResolvedValue({ sessionState: 'running', runPhase: 'running' });
+      f.parentRuntime.getRuntimeState.mockResolvedValue({
+        sessionState: 'running',
+        runPhase: 'running',
+        pendingPrompts: [{ prompt: 'Earlier user input' }],
+      });
       const call = await f.connect(f.root.id);
       f.startNotices();
       for (const requestId of ['tests', 'review'])
@@ -460,6 +500,81 @@ describe('cross-harness delegation through MCP', () => {
     }
   });
 
+  it.each(['steered', 'queued', 'unconfirmed'] as const)(
+    'delivers a child result to a running parent once when steering is %s',
+    async (disposition) => {
+      const f = await fixture();
+      try {
+        await f.sessions.updateStatus(f.root.id, 'active');
+        f.parentRuntime.getRuntimeState.mockResolvedValue({
+          sessionState: 'running',
+          runPhase: 'running',
+        });
+        f.parentRuntime.submitPrompt.mockImplementationOnce(
+          async (_id, _prompt, _title, _images, options) => {
+            if (disposition === 'unconfirmed') throw new Error('Transport disconnected');
+            options?.onAccepted?.(disposition);
+          },
+        );
+        const call = await f.connect(f.root.id);
+        f.startNotices();
+        const args = {
+          requestId: 'live-result',
+          provider: 'codex',
+          prompt: 'Review',
+        };
+        const launched = await call('create_session', args);
+        expect(launched).toMatchObject({
+          data: { accepted: true, completion: 'notify' },
+          nextStep: expect.stringContaining('end your turn when none remains'),
+        });
+        expect(launched.data).not.toHaveProperty('result');
+        const { items: [child] } = await f.workspace.listSessions(f.task.id, {
+          parentSessionId: String(f.root.id),
+        });
+        const sessionId = child.id;
+        expect(await call('create_session', args)).toMatchObject({
+          data: { sessionId, accepted: true, completion: 'notify' },
+        });
+        expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(1);
+        const fullReply = '**Reviewed.**\n' + 'x'.repeat(8_000);
+        const history = await f.runtime.getHistory();
+        f.runtime.getHistory.mockResolvedValueOnce([history[0], { ...history[1], content: fullReply }]);
+        await f.sessions.markCompletionUnreviewed(sessionId);
+
+        const status = () => f.sessions.delegationHandoffs.outbox.status(sessionId, f.root.id);
+        await eventually(() => expect(status()).toMatchObject({
+          state: disposition === 'unconfirmed' ? 'unconfirmed' : 'accepted',
+          outcome: 'completed',
+        }));
+        expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+        expect(f.parentRuntime.submitPrompt).toHaveBeenCalledWith(
+          f.root.id,
+          expect.stringContaining('Child reply excerpt:\n**Reviewed.**'),
+          undefined,
+          undefined,
+          expect.objectContaining({ queue: false, preferSteering: true }),
+        );
+        const notice = f.parentRuntime.submitPrompt.mock.calls[0][1];
+        expect(notice).toContain(`Child reply excerpt:\n${fullReply.slice(0, 8_000)}\n[Reply truncated]`);
+        expect(notice).not.toContain(fullReply);
+        expect(f.db.select().from(schema.sessionReplyReturns).all()).toEqual(
+          disposition === 'unconfirmed' ? [] : [
+            expect.objectContaining({ sessionId, recipientId: f.root.id, itemId: 'final' }),
+          ],
+        );
+
+        const idle = { sessionState: 'idle', runPhase: 'idle' };
+        f.parentRuntime.getRuntimeState.mockResolvedValue(idle);
+        f.parentRuntime.emit('event', { type: 'run_state', payload: { sessionId: f.root.id, ...idle } });
+        await delay(150);
+        expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
   it('returns a blocking launch result and wakes the parent after a timed-out launch', async () => {
     const f = await fixture();
     try {
@@ -467,6 +582,14 @@ describe('cross-harness delegation through MCP', () => {
       const call = await f.connect(f.root.id);
       f.startNotices();
       const base = { provider: 'codex', prompt: 'Review', mode: 'wait' };
+      f.runtime.submitPrompt.mockImplementationOnce(async (childId, _prompt, _title, _images, options) => {
+        expect(f.sessions.delegationHandoffs.waiting(f.root.id, childId)).toBe(true);
+        await f.sessions.markCompletionUnreviewed(childId);
+        await eventually(() => expect(f.sessions.delegationHandoffs.outbox.status(childId, f.root.id))
+          .toMatchObject({ state: 'ready' }));
+        expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+        options?.onAccepted?.('running');
+      });
       expect(await call('create_session', { ...base, requestId: 'quick', timeoutMs: 500 }))
         .toMatchObject({ data: { result: { event: 'completed', reply: { text: '**Reviewed.**' } } } });
       expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
@@ -522,7 +645,7 @@ describe('cross-harness delegation through MCP', () => {
       const call = await f.connect(f.root.id);
       f.startNotices();
       const result = await call('create_session', {
-        requestId: 'decision', provider: 'codex', prompt: 'Review', role: 'review', completion: 'notify',
+        requestId: 'decision', provider: 'codex', prompt: 'Review', role: 'review', mode: 'async',
       });
       expect(result).toMatchObject({ data: { accepted: true } });
       expect(f.runtime.submitPrompt.mock.calls[0][1]).toContain('Act as the review subagent');
@@ -605,7 +728,7 @@ describe('cross-harness delegation through MCP', () => {
       await f.sessions.updateStatus(f.root.id, 'active');
       const call = await f.connect(f.root.id);
       for (const requestId of ['recover', 'ambiguous'])
-        await call('create_session', { requestId, provider: 'codex', prompt: requestId, completion: 'notify' });
+        await call('create_session', { requestId, provider: 'codex', prompt: requestId, mode: 'async' });
       const { items: [recover, ambiguous] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
       await f.sessions.markCompletionUnreviewed(recover.id);
       await f.sessions.markCompletionUnreviewed(ambiguous.id);
@@ -636,13 +759,13 @@ describe('cross-harness delegation through MCP', () => {
       await f.sessions.updateStatus(f.root.id, 'active');
       f.startNotices();
       const call = await f.connect(f.root.id);
-      expect(await call('create_session', { requestId: 'outside', placement: 'task', provider: 'codex', prompt: 'Review', completion: 'notify' }))
+      expect(await call('create_session', { requestId: 'outside', folderId: 1, provider: 'codex', prompt: 'Review', mode: 'async' }))
         .toMatchObject({ error: { code: 'invalid_session_completion' } });
-      await call('create_session', { requestId: 'cancel', provider: 'codex', prompt: 'Review', completion: 'notify' });
+      await call('create_session', { requestId: 'cancel', provider: 'codex', prompt: 'Review', mode: 'async' });
       const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
       await call('interrupt_session', { sessionId: child.id });
       f.runtime.submitPrompt.mockRejectedValueOnce(new Error('Harness unavailable'));
-      expect(await call('create_session', { requestId: 'failure', provider: 'codex', prompt: 'Review', completion: 'notify' }))
+      expect(await call('create_session', { requestId: 'failure', provider: 'codex', prompt: 'Review', mode: 'async' }))
         .toMatchObject({ error: { code: 'session_launch_failed' } });
       await eventually(() => expect(f.db.select().from(schema.sessionCompletionNotices).all()).toMatchObject([
         { state: 'consumed' }, { state: 'accepted', outcome: 'failed' },

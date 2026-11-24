@@ -18,6 +18,8 @@ export interface AgentRuntimeProviderCapabilities {
   multimodalPrompts: boolean;
   terminalFallback: boolean;
   rewindConversation: boolean;
+  /** Automatic text input can join a live turn without interrupting its work. */
+  nonInterruptingSteering?: boolean;
 }
 
 export interface AgentRuntimeProviderInfo {

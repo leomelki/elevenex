@@ -142,8 +142,9 @@ function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeR
   }
   const payload = envelope(row);
   const data = record(payload.data), error = record(payload.error);
-  const event = line(data.event, 80);
-  const reply = record(data.reply);
+  const observed = op.type === 'launch' ? record(data.result) : data;
+  const event = line(observed.event, 80);
+  const reply = record(observed.reply);
   const replyId = line(reply.id, 1000);
   const replyText = typeof reply.text === 'string' ? reply.text.trim() : '';
   const changes = record(reply.changes);
@@ -155,6 +156,7 @@ function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeR
   });
   const session = reference(data, id(record(error.details).sessionId) ?? (op.sessions?.length === 1 ? op.sessions[0] : undefined));
   const deliveryStatus = data.promptStatus ?? data.status;
+  const outcomeStatus = (op.type === 'launch' ? status(observed.status) : undefined) ?? status(deliveryStatus);
   const returnedTurns = data.returnedTurns ?? data.newTurns;
   const matches = Array.isArray(data.matches) ? data.matches.length : undefined;
   const catalog = Array.isArray(data.harnesses) ? data.harnesses.length : Array.isArray(data.models) ? data.models.length : undefined;
@@ -166,12 +168,12 @@ function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeR
   return {
     session, event, messageId: typeof data.messageId === 'string' && /^[a-f0-9-]{36}$/.test(data.messageId) ? data.messageId : undefined,
     status: row.isError || Object.keys(error).length ? 'error' : op.type === 'stop' && data.interrupted === true ? 'stopped'
-      : status(deliveryStatus) ?? (op.type === 'launch' && session ? 'pending' : undefined),
+      : outcomeStatus ?? (op.type === 'launch' && session ? 'pending' : undefined),
     ...(deliveryStatus === 'acceptance_pending' ? { delivery: 'unconfirmed' as const } :
       deliveryStatus === 'queued' || data.queued === true ? { delivery: 'queued' as const } :
       data.accepted === true ? { delivery: 'accepted' as const } : {}),
     detail: detail ?? (replyText && !includeReply ? line(replyText, 360) : undefined),
-    ...(op.type === 'wait' && includeReply && session && replyId && replyText ? {
+    ...((op.type === 'wait' || op.type === 'launch') && includeReply && session && replyId && replyText ? {
       reply: {
         id: replyId, text: replyText.slice(0, 8000), truncated: reply.truncated === true || replyText.length > 8000,
         ...(files.length ? { changes: { files: [...new Map(files.map(file => [file.path, file])).values()],

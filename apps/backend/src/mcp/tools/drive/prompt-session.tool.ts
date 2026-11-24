@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { serializeSessionMention } from '../../../agent-runtime/session-mention.js';
+import { attachSessionMentions, sessionMentionIds } from './session-prompt-context.js';
 import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { untilSessionDeadline } from '../session-deadline.js';
@@ -37,7 +37,7 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    'Send a follow-up to another session by ID. Starts an idle session, steers a live turn when supported, or queues. Use mode to explicitly queue, require live steering, or restart; queue:true also queues. Authenticated sends carry the sender session ID. Returns the delivery disposition or acceptance_pending after 5s. Use await_session_event for the result; do not resend an unconfirmed prompt.',
+    'Send a follow-up to another session by ID. Starts an idle session, steers a live turn when supported, or queues. Use mode to explicitly queue, require live steering, or restart. Authenticated sends carry the sender session ID. Returns the delivery disposition or acceptance_pending after 5s. Use await_session_event for the result; do not resend an unconfirmed prompt.',
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
@@ -54,30 +54,13 @@ export const promptSessionTool = defineTool({
       .describe(
         'The instruction to send to the agent. Required, non-empty. Keep each prompt scoped to one coherent concern (one feature/fix/investigation) rather than bundling unrelated work — split unrelated concerns across separate prompts or sessions to avoid long, tangled sessions.',
       ),
-    queue: z
-      .boolean()
-      .optional()
-      .describe(
-        'Queue a separate turn if busy. Omit to prefer live steering where supported.',
-      ),
     mode: z.enum(['auto', 'queue', 'steer', 'restart']).optional().describe(
       'Auto starts an idle session, prefers steering or queues. Queue waits for a separate turn. Steer requires a live turn. Restart interrupts the current turn before sending and requires an empty queue.',
     ),
-    mentionSessionIds: z
-      .array(z.number().int().positive())
-      .max(10)
-      .optional()
-      .describe(
-        'Optional previous session IDs to attach as chat-style context mentions (max 10; duplicates ignored). May include your current coding session, archived sessions, or sessions from other tasks; cannot include the target or orchestration missions. For a fresh session needing prior outcomes rather than detailed working context, mention only relevant sessions and state the next goal in prompt. Snapshots omit intermediate steps but can still be long; continue the existing session for tightly coupled work.',
-      ),
+    mentionSessionIds: sessionMentionIds,
   },
   handler: async (args, ctx) => {
-    if (args.mode !== undefined && args.queue !== undefined)
-      throw new ToolError({
-        code: 'conflicting_delivery_modes',
-        message: 'Pass mode or queue.',
-      });
-    const mode = args.mode ?? (args.queue ? 'queue' : 'auto');
+    const mode = args.mode ?? 'auto';
     const { sessions } = ctx.services;
     await sessions.assertSessionWorkspaceLinked(args.sessionId);
     let { session, provider } = await resolveSessionProvider(
@@ -87,41 +70,7 @@ export const promptSessionTool = defineTool({
     requirePromptableProvider(provider);
 
     const mentionSessionIds = [...new Set(args.mentionSessionIds ?? [])];
-    // Validate all references before exporting history or starting the target.
-    for (const sessionId of mentionSessionIds) {
-      ctx.signal.throwIfAborted();
-      if (sessionId === args.sessionId) {
-        throw new ToolError({
-          code: 'invalid_session_mention',
-          message: 'A session cannot mention itself in its own prompt.',
-          remediation:
-            'Mention previous sessions, or omit mentionSessionIds to continue this session.',
-        });
-      }
-      await resolveSessionProvider(ctx, sessionId);
-    }
-    const mentions: string[] = [];
-    for (const sessionId of mentionSessionIds) {
-      ctx.signal.throwIfAborted();
-      try {
-        const mention =
-          await ctx.services.conversationExport.buildMention(sessionId);
-        ctx.signal.throwIfAborted();
-        mentions.push(serializeSessionMention(mention));
-      } catch (error) {
-        ctx.signal.throwIfAborted();
-        throw new ToolError({
-          code: 'session_mention_failed',
-          message: `Could not build context for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
-          remediation:
-            'Read the source with read_session or ask_session and pass its relevant findings in prompt, or retry the mention when its history is available.',
-          retryable: true,
-        });
-      }
-    }
-    const prompt = mentions.length
-      ? [args.prompt, ...mentions].join('\n\n')
-      : args.prompt;
+    const prompt = await attachSessionMentions(args.prompt, mentionSessionIds, ctx, args.sessionId);
     ctx.signal.throwIfAborted();
 
     if (mentionSessionIds.length) {
@@ -168,7 +117,7 @@ export const promptSessionTool = defineTool({
       message,
       {
         signal: ctx.signal,
-        queue: args.mode === undefined ? args.queue : mode === 'queue' || mode === 'restart',
+        queue: mode === 'queue' || mode === 'restart',
         preferSteering: mode === 'auto' || mode === 'steer',
         requireSteering: mode === 'steer',
         titlePrompt: args.prompt,

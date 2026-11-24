@@ -127,7 +127,7 @@ export const sessionStatusTool = defineTool({
           : pausedQueue
             ? describePausedQueue(session.id, pendingPromptCount)
             : queuedWork
-              ? `Not actually idle: a background task or queued prompt will resume this session. await_session_event or poll_session_status to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
+              ? `Not actually idle: a background task or queued prompt will resume this session. Use await_session_event to wait for real completion — do not treat this as done. ${describeQueuedWork(backgroundWork, pendingPromptCount)}`
               : 'If items advanced, read_session for the delta; else await_session_event to block on a change.',
     };
   },

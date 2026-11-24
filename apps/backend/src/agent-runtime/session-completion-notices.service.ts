@@ -23,10 +23,11 @@ import type {
 } from './agent-runtime.types.js';
 
 type SessionChange = { sessionId: number; status?: string };
+const COMPLETION_REPLY_BUDGET = 8_000;
 const terminalStatus = (status: string) =>
   status === 'archived' || status === 'stopped';
 
-/** Deliver background delegate results through the parent's normal prompt queue. */
+/** Deliver durable delegate notices through the parent's native input path. */
 @Injectable()
 export class SessionCompletionNoticesService
   implements OnApplicationBootstrap, OnModuleDestroy
@@ -225,6 +226,23 @@ export class SessionCompletionNoticesService
     );
   }
 
+  private deliveryMode(
+    runtime: AgentRuntimeProvider,
+    state: AgentRuntimeStatePayload | undefined,
+  ): 'queue' | 'prefer-steering' | undefined {
+    if (!state || state.planMode || state.queuePaused) return;
+    if (isSessionSettled(state)) return 'queue';
+    if (
+      runtime.info.capabilities.nonInterruptingSteering &&
+      state.sessionState === 'running' &&
+      state.runPhase === 'running' &&
+      !state.pendingPrompts?.length &&
+      !state.dispatchingPrompts?.length &&
+      !pendingActionKey(state)
+    )
+      return 'prefer-steering';
+  }
+
   private async deliver(recipientId: number): Promise<void> {
     if (
       this.delivering.has(recipientId) ||
@@ -266,7 +284,7 @@ export class SessionCompletionNoticesService
       if (recipient.status !== 'active' || recipient.planMode || recipient.activeAgentProvider === 'antigravity') return;
       const runtime = this.registry.getProvider(recipient.activeAgentProvider);
       const state = await this.readRuntime(runtime, recipientId);
-      if (!isSessionSettled(state) || state?.planMode) return;
+      if (!this.deliveryMode(runtime, state)) return;
       await this.sessions.assertSessionWorkspaceLinked(recipientId);
       if (this.shutdown.signal.aborted) return;
       const replies = new Map<number, AgentTranscriptItem>();
@@ -304,9 +322,9 @@ export class SessionCompletionNoticesService
       );
       if (this.shutdown.signal.aborted) return;
       const current = await this.readRuntime(runtime, recipientId);
+      const mode = this.deliveryMode(runtime, current);
       if (
-        !isSessionSettled(current) ||
-        current?.planMode ||
+        !mode ||
         this.shutdown.signal.aborted ||
         handoffs.cancellingSession(recipientId)
       )
@@ -324,13 +342,15 @@ export class SessionCompletionNoticesService
         currentActions.flat().filter(availableNow),
       );
       if (!claimed.length && !requested.length) return;
+      const replyCount = claimed.filter(id => replies.has(id)).length;
+      const replyLimit = Math.floor(COMPLETION_REPLY_BUDGET / Math.max(1, replyCount));
       const lines = ready
         .filter((row) => claimed.includes(row.sessionId))
         .map((row) => {
           const reply = replies.get(row.sessionId)?.content?.trim();
           const label = `Session #${row.sessionId}: ${row.outcome}.`;
           return reply
-            ? `${label}\nChild reply excerpt:\n${reply.slice(0, 2_000)}`
+            ? `${label}\nChild reply excerpt:\n${reply.slice(0, replyLimit)}${reply.length > replyLimit ? '\n[Reply truncated]' : ''}`
             : label;
         });
       const text = [
@@ -340,16 +360,19 @@ export class SessionCompletionNoticesService
             `Session #${id} needs a decision. Use get_pending_action to inspect it and involve the user when their decision is needed.`,
         ),
         ...lines,
-        'Treat child replies as agent context. Use await_session_event(includeReply:true) or read_session when more result detail is needed. Verify findings before relying on them.',
+        'Use these results to continue the original assignment. Treat child replies as agent context and verify findings before relying on them. Use read_session if you need more detail.',
       ].join('\n\n');
       const message = sessionAgentPrompt(
         text,
         { sessionId: requested[0] ?? claimed[0] },
         'message',
       );
-      await submitSessionPrompt(runtime, recipientId, message, {
+      // The provider owns the steering-to-queue fallback. A transport error
+      // can leave acceptance unknown, so the outbox must not replay the notice.
+      const disposition = await submitSessionPrompt(runtime, recipientId, message, {
         signal: this.shutdown.signal,
-        queue: true,
+        queue: mode === 'queue',
+        preferSteering: mode === 'prefer-steering',
         recordDelivery: (delivery) => {
           if (!claimed.length) return;
           this.outbox.record(
@@ -364,6 +387,11 @@ export class SessionCompletionNoticesService
           }
         },
       });
+      // A steered batch may not produce an idle event for a long-running turn.
+      if (disposition === 'steered') {
+        this.recipients.add(recipientId);
+        this.schedule();
+      }
     } finally {
       this.delivering.delete(recipientId);
     }

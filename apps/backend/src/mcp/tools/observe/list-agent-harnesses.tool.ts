@@ -6,7 +6,7 @@ export const listAgentHarnessesTool = defineTool({
   title: 'List agent harnesses and models',
   costClass: 'cached',
   description:
-    'List this backend’s harness IDs and native subagent support. Pass provider to page its model IDs and reasoning efforts for create_session. This does not create a session or start a turn.',
+    'List available harnesses and native subagent support. Pass provider to look up model IDs and reasoning efforts for create_session.',
   annotations: { readOnlyHint: true },
   inputShape: {
     provider: z.string().trim().min(1).max(64).optional(),
@@ -25,7 +25,7 @@ export const listAgentHarnessesTool = defineTool({
           })),
         },
         nextStep:
-          'Use native subagents within your harness. Pass a different provider here for its models, then use create_session for cross-harness delegation.',
+          'Use native subagents when they support the requested settings. Pass a provider here for its models, then use create_session for cross-harness work.',
       };
     const [catalog] = await agentRuntime.listModelCatalogs(
       false,

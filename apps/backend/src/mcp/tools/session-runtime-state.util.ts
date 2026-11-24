@@ -3,7 +3,7 @@ import type { AgentRunLifecycle } from '../../agent-runtime/agent-runtime.types.
 /**
  * Shared "is this session really done" check for the observe/drive tools that
  * wait on session completion (`session_status`, `prompt_session`,
- * `poll_session_status`, `await_session_event`).
+ * `await_session_event`).
  *
  * `sessionState`/`runPhase` go idle as soon as the *visible* turn ends, while
  * background work or queued prompts can remain unfinished. Background work

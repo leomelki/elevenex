@@ -76,4 +76,25 @@ describe('projecting delegation into chat', () => {
       result: { agents: [{ agentId: 'worker', status: 'completed', detail: 'Checked the tracker.' }] },
     });
   });
+
+  it('projects a blocking delegation result on its launch receipt', () => {
+    const call = row('launch', 'tool_use', {
+      toolKind: 'mcp', providerToolName: 'mcp__elevenex__create_session',
+      toolInput: { name: 'Review', mode: 'wait', provider: 'codex' },
+    });
+    const answer = row('result', 'tool_result', {
+      providerToolResult: { data: {
+        sessionId: 8, provider: 'codex', accepted: true, promptStatus: 'running',
+        result: { event: 'completed', status: 'completed', reply: { id: 'final', text: 'Reviewed.' } },
+      } },
+    });
+    expect(chatAgentEntry(call, answer)?.result).toMatchObject({
+      status: 'completed', detail: 'Reviewed.',
+    });
+    expect(chatAgentEntry(call, answer)?.result?.reply).toBeUndefined();
+    expect(chatAgentEntry(answer, call)).toMatchObject({
+      operation: { type: 'launch', title: 'Review' },
+      result: { session: { sessionId: 8 }, status: 'completed', event: 'completed', reply: { id: 'final', text: 'Reviewed.' } },
+    });
+  });
 });

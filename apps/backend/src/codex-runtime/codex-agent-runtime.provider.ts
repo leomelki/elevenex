@@ -41,6 +41,7 @@ export class CodexAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: false,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 

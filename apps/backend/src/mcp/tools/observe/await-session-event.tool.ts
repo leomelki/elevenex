@@ -23,7 +23,7 @@ export const awaitSessionEventTool = defineTool({
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    'Wait for one session or the first relevant event across up to 16 sessions. Include includeReply:true to get the matched session’s latest final reply along with completion. Completed includes queued and background work. A paused queue or change of harness also wakes the waiter. Use this instead of polling individual children.',
+    'Wait for the first result or blocking decision across up to 16 other sessions. Returns the final reply by default. Use session_status for a snapshot. Completion includes queued and background work.',
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
@@ -59,7 +59,7 @@ export const awaitSessionEventTool = defineTool({
       .boolean()
       .optional()
       .describe(
-        'On completion, include up to 8000 characters of the latest final reply and its transcript item ID.',
+        'Defaults to true. Set false for status only. Replies include up to 8000 characters and the transcript item ID.',
       ),
   },
   handler: async (args, ctx) => {
@@ -72,6 +72,11 @@ export const awaitSessionEventTool = defineTool({
       args.sessionId === undefined
         ? [...new Set(args.sessionIds)]
         : [args.sessionId];
+    if (ctx.agentSessionId !== null && ids.includes(ctx.agentSessionId))
+      throw new ToolError({
+        code: 'cannot_wait_for_current_session',
+        message: 'Wait on other sessions. This tool call keeps the current session active.',
+      });
     const targets = await Promise.all(
       ids.map(async (id) => {
         const { session, provider } = await resolveSessionProvider(ctx, id);
@@ -109,7 +114,7 @@ export const awaitSessionEventTool = defineTool({
       const turnEnded =
         state?.sessionState === 'idle' && state.runPhase === 'idle';
       const outcome =
-        event === 'completed' && args.includeReply
+        event === 'completed' && args.includeReply !== false
           ? await untilSessionDeadline(
               target.runtime
                 .getHistory(target.id, { changeDetails: 'summary' })

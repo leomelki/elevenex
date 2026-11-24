@@ -132,7 +132,7 @@ export function sessionPromptNextStep(
 ): string {
   switch (status) {
     case 'not_started':
-      return 'The session exists. Repeat create_session with the same requestId and inputs to start it.';
+      return 'The session exists. Repeat the launch call with the same requestId and inputs to start it.';
     case 'acceptance_pending':
       return 'Prompt dispatch is still unconfirmed. Do not resend it. Use await_session_event or read_session.';
     case 'paused':
@@ -143,6 +143,6 @@ export function sessionPromptNextStep(
     case 'completed':
       return 'Use read_session to inspect the transcript.';
     default:
-      return `Prompt accepted${queued ? ' and queued' : ''}. Continue independent work, then call await_session_event with includeReply:true to collect the result.`;
+      return `Prompt accepted${queued ? ' and queued' : ''}. Use await_session_event when your next step needs the reply.`;
   }
 }

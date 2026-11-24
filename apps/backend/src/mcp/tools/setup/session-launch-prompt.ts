@@ -1,5 +1,6 @@
 import { ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { DELEGATED_ASSIGNMENT_CONTEXT } from '../../../sessions/session-agent-message.js';
+import { attachSessionMentions } from '../drive/session-prompt-context.js';
 import {
   assertCanDelegatePrompt,
   assertSessionNotCancelling,
@@ -21,6 +22,7 @@ export async function launchSessionPrompt(
   prompt: string,
   ctx: ToolContext,
   role?: string,
+  mentionSessionIds: readonly number[] = [],
 ): Promise<LaunchStatus> {
   const { sessions, agentRuntime } = ctx.services;
   assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
@@ -33,6 +35,7 @@ export async function launchSessionPrompt(
 
   if (ctx.agentSessionId !== null)
     assertCanDelegatePrompt(await sessions.findOne(ctx.agentSessionId));
+  const promptWithContext = await attachSessionMentions(prompt, mentionSessionIds, ctx, session.id);
   const runtime = agentRuntime.getProvider(session.activeAgentProvider);
   await sessions.assertSessionWorkspaceLinked(session.id);
   ctx.signal.throwIfAborted();
@@ -52,12 +55,13 @@ export async function launchSessionPrompt(
     await startSessionForPrompt(sessions, session);
     ctx.signal.throwIfAborted();
     const assignment = role && role !== 'general'
-      ? `Act as the ${role} subagent for this assignment.\n\n${prompt}`
-      : prompt;
-    const brief = session.delegatedBySessionId === ctx.agentSessionId && ctx.agentSessionId !== null
+      ? `Act as the ${role} subagent for this assignment.\n\n${promptWithContext}`
+      : promptWithContext;
+    const delegated = ctx.agentSessionId !== null && session.delegatedBySessionId === ctx.agentSessionId;
+    const brief = delegated
       ? `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n${assignment}`
       : assignment;
-    const message = await sessionMessage(brief, ctx, true);
+    const message = await sessionMessage(brief, ctx, delegated);
     ctx.signal.throwIfAborted();
     assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
     dispatched = true;

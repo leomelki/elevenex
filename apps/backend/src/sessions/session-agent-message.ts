@@ -1,8 +1,9 @@
 import type { SessionAgentReference, SessionAgentSender } from '@elevenex/shared';
 import { sessionAgentProvider, type SessionProviderColumns } from './session-provider.js';
 
-export const DELEGATED_ASSIGNMENT_CONTEXT = "Work within the brief's scope and file ownership. Follow repository instructions and coordinate writes to the shared checkout. Complete the assignment directly unless the brief calls for further delegation. Report your result, changed files, checks run and blockers in your final reply.";
-const assignmentHeader = `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n`;
+const legacyAssignmentContext = "Work within the brief's scope and file ownership. Follow repository instructions and coordinate writes to the shared checkout. Complete the assignment directly unless the brief calls for further delegation. Report your result, changed files, checks run and blockers in your final reply.";
+export const DELEGATED_ASSIGNMENT_CONTEXT = 'Complete the assignment directly unless it calls for further delegation. Your final reply is the result returned to the parent. Follow the requested reply format and report changed files, checks and blockers when relevant.';
+const assignmentHeaders = [DELEGATED_ASSIGNMENT_CONTEXT, legacyAssignmentContext].map(context => `${context}\n\n`);
 
 type SessionIdentity = SessionProviderColumns & {
   id: number;
@@ -68,8 +69,9 @@ export function splitSessionAgentPrompt(text: string): { text: string; sender?: 
   }
   const purpose = match[1] === 'delegation' ? 'assignment' : 'message';
   const brief = text.slice(match[0].length);
+  const assignmentHeader = purpose === 'assignment' ? assignmentHeaders.find(header => brief.startsWith(header)) : undefined;
   return {
-    text: purpose === 'assignment' && brief.startsWith(assignmentHeader) ? brief.slice(assignmentHeader.length) : brief,
+    text: assignmentHeader ? brief.slice(assignmentHeader.length) : brief,
     sender: { session, purpose, ...(messageId ? { messageId } : {}) },
   };
 }

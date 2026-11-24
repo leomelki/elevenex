@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { sessionAgentProvider } from '../../../sessions/session-provider.js';
 import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import { sessionMentionIds } from '../drive/session-prompt-context.js';
 import {
   assertCanDelegatePrompt,
   assertSessionNotCancelling,
@@ -24,7 +25,7 @@ export const createSessionTool = defineTool({
   mutates: true,
   currentSessionScope: 'task',
   description:
-    'Launch a cross-harness subagent or create an empty conversation. Prefer native subagents in your own harness. A prompt and stable requestId start work without copying parent history. Same-task delegates share your checkout. Use mode:"async" for background work that should wake you, mode:"wait" to wait briefly on this child, or await_session_event to collect across children.',
+    'Create a task conversation or launch a subagent. A first prompt in your own task starts a background child that reports back automatically. Use mode:"wait" for a result needed now, or mode:"standalone" for an independent conversation. Prefer native subagents when they meet the request.',
   inputShape: {
     taskId: z
       .number()
@@ -74,6 +75,7 @@ export const createSessionTool = defineTool({
     role: z.enum(['research', 'review', 'design', 'test', 'general']).optional().describe(
       'Optional role to include in the initial brief.',
     ),
+    mentionSessionIds: sessionMentionIds,
     requestId: z
       .string()
       .trim()
@@ -83,24 +85,12 @@ export const createSessionTool = defineTool({
       .describe(
         'Required with prompt. Reuse the same caller/task requestId and inputs after a timeout to recover the original session and delivery state.',
       ),
-    mode: z.enum(['async', 'wait']).optional().describe(
-      'Same-task delegation only. Async wakes the parent when work settles. Wait briefly returns the child’s result or decision, with a later wake if still outstanding.',
+    mode: z.enum(['standalone', 'async', 'wait']).optional().describe(
+      'Standalone creates at task level. Async (default for a first prompt in your own task) wakes the parent. Wait blocks for a child result or decision. Async and wait require a prompt in your own task.',
     ),
     timeoutMs: z.number().int().min(1).max(45_000).optional().describe(
       'Mode wait only, up to 45000 ms. A timeout leaves the child running and enables a later wake.',
     ),
-    completion: z
-      .enum(['wait', 'notify'])
-      .optional()
-      .describe(
-        'Wait (default) leaves collection to await_session_event. Notify queues a completion notice for the caller if it has not collected the result. Requires a first prompt and same-task nested placement.',
-      ),
-    placement: z
-      .enum(['auto', 'task'])
-      .optional()
-      .describe(
-        'Auto nests under an authenticated same-task coding session. Task creates at task level. An explicit folder also requests task-level placement.',
-      ),
     folderId: z
       .number()
       .int()
@@ -120,20 +110,28 @@ export const createSessionTool = defineTool({
         remediation:
           'Choose a requestId for this launch and reuse it with the same inputs if the response is lost.',
       });
-    const delegatingSessionId =
-      args.placement !== 'task' && args.folderId === undefined
-        ? (ctx.agentSessionId ?? undefined)
-        : undefined;
-    if ((args.mode && args.completion) || (args.timeoutMs !== undefined && args.mode !== 'wait'))
+    const mentions = [...new Set(args.mentionSessionIds ?? [])];
+    if (mentions.length && !args.prompt)
+      throw new ToolError({
+        code: 'session_mention_requires_prompt',
+        message: 'Pass a first prompt to attach previous session context.',
+      });
+    if (args.timeoutMs !== undefined && args.mode !== 'wait')
       throw new ToolError({
         code: 'invalid_session_delegation_mode',
-        message: 'Pass mode or completion. timeoutMs is only available with mode:"wait".',
+        message: 'timeoutMs is only available with mode:"wait".',
       });
-    const notifyOnCompletion = args.mode !== undefined || args.completion === 'notify';
-    if (notifyOnCompletion && (!args.prompt || delegatingSessionId === undefined))
+    const caller = ctx.agentSessionId !== null && (args.prompt || (args.mode !== 'standalone' && args.folderId === undefined))
+      ? await sessions.findOne(ctx.agentSessionId) : null;
+    const delegatingSessionId =
+      caller?.surface === 'session' && !caller.isTemporary && caller.workspaceId === args.taskId &&
+      args.mode !== 'standalone' && args.folderId === undefined
+        ? caller.id : undefined;
+    const notifyOnCompletion = !!args.prompt && delegatingSessionId !== undefined;
+    if ((args.mode === 'async' || args.mode === 'wait') && !notifyOnCompletion)
       throw new ToolError({
         code: 'invalid_session_completion',
-        message: 'Completion notices require a first prompt and a same-task coding delegate.',
+        message: 'Modes async and wait require a first prompt in the caller’s task without a folder. Use standalone for an independent conversation.',
       });
     const launch = args.requestId
       ? {
@@ -142,24 +140,23 @@ export const createSessionTool = defineTool({
             args.name,
             args.provider,
             args.folderId,
-            args.placement ?? 'auto',
+            args.mode === 'standalone' ? 'task' : 'auto',
             args.model,
             args.reasoningEffort,
             args.prompt,
             ...(notifyOnCompletion ? ['notify'] : []),
             ...(args.role && args.role !== 'general' ? [{ role: args.role }] : []),
+            ...(mentions.length ? [mentions] : []),
           ]),
           hasPrompt: !!args.prompt,
           ...(notifyOnCompletion && { notifyOnCompletion }),
         }
       : undefined;
     const prior = launch && sessions.getSessionLaunch(launch);
-    const caller = ctx.agentSessionId !== null && args.prompt && (!prior || notifyOnCompletion)
-      ? await sessions.findOne(ctx.agentSessionId) : null;
     const canWakeParent = !caller || sessionAgentProvider(caller) !== 'antigravity';
     const create = async () => {
       const task = await tasks.record(args.taskId);
-      if (caller) assertCanDelegatePrompt(caller);
+      if (caller && args.prompt) assertCanDelegatePrompt(caller);
       const provider =
         args.provider ??
         (args.model || args.reasoningEffort
@@ -192,29 +189,35 @@ export const createSessionTool = defineTool({
     const session = prior
       ? await sessions.findOne(prior.sessionId)
       : await taskOperation(create);
-    const promptStatus =
-      launch && args.prompt
-        ? await launchSessionPrompt(session, args.prompt, ctx, args.role)
-        : undefined;
-    const accepted =
-      promptStatus === 'accepted' ||
-      promptStatus === 'running' ||
-      promptStatus === 'queued';
-    const observed = args.mode === 'wait' && accepted
-      ? await awaitSessionEventTool.handler({
-          sessionId: session.id, includeReply: true, timeoutMs: args.timeoutMs ?? 45_000,
-        }, ctx)
+    // Reserve delivery before submission. A fast child can settle while the
+    // harness is still returning the first prompt's acceptance to this call.
+    const releaseWait = args.mode === 'wait' && delegatingSessionId !== undefined
+      ? sessions.delegationHandoffs?.observe(delegatingSessionId, [session.id])
       : undefined;
+    const { promptStatus, accepted, observed } = await (async () => {
+      try {
+        const promptStatus = launch && args.prompt
+          ? await launchSessionPrompt(session, args.prompt, ctx, args.role, mentions)
+          : undefined;
+        const accepted = promptStatus === 'accepted' || promptStatus === 'running' || promptStatus === 'queued';
+        const observed = args.mode === 'wait' && accepted
+          ? await awaitSessionEventTool.handler({
+              sessionId: session.id, includeReply: true, timeoutMs: args.timeoutMs ?? 45_000,
+            }, ctx)
+          : undefined;
+        return { promptStatus, accepted, observed };
+      } finally {
+        releaseWait?.();
+      }
+    })();
     const outcome = observed?.data;
     const timedOut = !!outcome && typeof outcome === 'object' &&
       'event' in outcome && outcome.event === 'timeout';
     let nextStep = observed?.nextStep;
     if (notifyOnCompletion && !canWakeParent && (timedOut || (!observed && accepted)))
-      nextStep = 'Use await_session_event(includeReply:true) to collect this delegate. Antigravity requires a desktop chat send to start a new turn.';
-    else if (timedOut)
-      nextStep = 'Continue independent work. The delegate will wake this session once the result is ready.';
-    else if (!nextStep && notifyOnCompletion && accepted)
-      nextStep = 'Continue independent work. This session will wake if the result is still outstanding. Use await_session_event(includeReply:true) if you need it now.';
+      nextStep = 'Use await_session_event to collect this delegate. Antigravity requires a desktop chat send to start a new turn.';
+    else if (timedOut || (!nextStep && notifyOnCompletion && accepted))
+      nextStep = 'This session wakes when the delegate finishes or needs a decision. Continue independent work and end your turn when none remains. If your next step depends on the result now, use await_session_event.';
     else if (!nextStep && promptStatus)
       nextStep = sessionPromptNextStep(promptStatus, session.id, undefined, promptStatus === 'queued');
 

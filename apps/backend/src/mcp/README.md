@@ -176,6 +176,17 @@ close again.
 
 ## Cross-harness delegation
 
+| Goal | Tool |
+| --- | --- |
+| Reuse the latest conversation in a ready task | `open_task_session` |
+| Create another conversation or launch a delegate | `create_session` |
+| Follow up, steer, or queue a prompt in an existing conversation | `prompt_session` |
+| Inspect current activity | `session_status` |
+| Block for a result or decision | `await_session_event` |
+| Read work already recorded | `read_session`, `grep_session`, `read_session_range` |
+| Stop one turn and pause its queue | `interrupt_session` |
+| Drop a delegated assignment and its descendants | `cancel_session_delegation` |
+
 Coding sessions use native subagents for work in their own harness when available.
 Use `list_agent_harnesses` for the other harness IDs and native subagent support.
 Passing `provider` pages that harness’s models and reasoning efforts before a
@@ -190,8 +201,7 @@ harness before they appear in the discovery catalog.
   "name": "Review concurrent sends",
   "prompt": "Review the prompt queue for lost sends. Report findings with file references. Leave the shared files untouched.",
   "requestId": "review-concurrent-sends",
-  "role": "review",
-  "mode": "async"
+  "role": "review"
 }
 ```
 
@@ -200,11 +210,14 @@ coding session’s task and places the child in the parent’s sidebar group.
 Delegation from a nested session adds a sibling in the same two-level group and
 records the actual delegator. `get_current_session` identifies both the sidebar
 parent and the delegator. Sidebar moves preserve the delegator identity.
-`placement:"task"` or an explicit folder places a session at task level.
-Mission and external calls supply a task ID and create at task level.
+Use `create_session` with `mode:"standalone"` or an explicit folder for a
+standalone conversation. Mission and external calls supply a task ID and
+create at task level with `create_session`.
 
-Give each child a self-contained brief and clear file ownership. Sessions in
-a task share its checkout. Separate tasks provide checkout isolation. Coding
+Give each child a self-contained brief and clear file ownership. Use
+`mentionSessionIds` on the first prompt or a follow-up to attach relevant
+prior conversation snapshots. Sessions in a task share its checkout. Separate
+tasks provide checkout isolation. Coding
 sessions in plan mode can compose a brief and begin delegation after approval
 to leave plan mode. Each child uses its harness’s own runtime permission policy.
 
@@ -218,26 +231,28 @@ sending more work. A blank `create_session` still supports a later `prompt_sessi
 Start independent work before waiting. `await_session_event` accepts one
 `sessionId` or up to 16 `sessionIds`. It returns the first completion, pending
 decision, failure or paused queue. Work still held by a harness’s background
-jobs or prompt queue keeps the session active. With `includeReply:true`, a
-completion includes the latest final reply when available, capped at 8,000
-characters, with its transcript item ID. Remove handled IDs before waiting
+jobs or prompt queue keeps the session active. A completion includes the latest
+final reply by default when available, capped at 8,000 characters, with its
+transcript item ID. Remove handled IDs before waiting
 again. Use `read_session` or `read_session_range` for detailed evidence.
 
-Use `mode:"async"` on a same-task delegate when work may outlast the parent
-turn. When the child asks for a blocking decision or finishes, Elevenex can
-resume an idle parent with the child session ID, outcome, and a short result
-excerpt when available. Ready siblings can share one notice. A parent already
-waiting on the child receives the event through the wait. The notice asks the
-parent to inspect pending decisions through `get_pending_action` and involve
-the user when authorization is required.
+A first prompt in your own task defaults to `mode:"async"`. Continue independent
+work and end the turn when none remains. When the child asks for a blocking decision or
+finishes, Elevenex delivers the child session ID, outcome, and an excerpt when
+available. Reply excerpts share an 8,000-character budget per notice. Codex
+and Claude can receive the notice during a running turn through native
+steering. Earlier prompts and a paused queue take precedence. When the current
+turn cannot accept the notice, it is queued for a later turn or held until the
+parent is idle. Ready siblings can share one notice. A parent already waiting on
+the child receives the event through the wait. The notice asks the parent to
+inspect pending decisions through `get_pending_action` and involve the user
+when authorization is required.
 
 Use `mode:"wait"` to launch and wait for one child in the same call. The wait
 lasts up to 45 seconds. When it times out, the child continues and retains its
-parent wakeup. `completion:"notify"` remains an alias for asynchronous notice
-delivery. Omitting both fields preserves explicit collection with
-`await_session_event`. An optional `role` adds a responsibility to the initial
-brief. For an independent re-check, launch a fresh delegate with the current
-brief, prior findings, and changes.
+parent wakeup. An optional `role` adds a responsibility to the initial brief.
+For an independent re-check, launch a fresh delegate with the current brief,
+prior findings, and changes.
 
 The backend recovers outstanding notices from its database. If the harness
 may have accepted a notice before a crash, Elevenex leaves it unconfirmed
@@ -255,7 +270,7 @@ for an active turn on Codex, Claude, Pi, and OpenCode v1 or v2 when the harness
 can accept it. Claude schedules priority input for its next native boundary,
 and Pi delivers steering before its next model call.
 Busy harnesses without live steering queue the follow-up. An existing queue
-takes precedence over automatic steering. `mode:"queue"` or `queue:true` requests
+takes precedence over automatic steering. `mode:"queue"` requests
 a separate turn. `mode:"steer"` requires a live turn that can accept steering.
 `mode:"restart"` explicitly interrupts active work before submitting and requires
 an empty prompt queue. The send reports `running`, `steered`

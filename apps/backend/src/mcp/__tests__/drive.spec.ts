@@ -42,7 +42,7 @@ function makeCtx(services: unknown): ToolContext {
 /**
  * A baseline runtime provider double with every method drive tools may call.
  * It's a real EventEmitter (like the production ClaudeRuntimeService) so tools
- * that subscribe to `.on('event', ...)` (e.g. poll_session_status) can be
+ * that subscribe to `.on('event', ...)` can be
  * exercised elsewhere; drive tools here mostly just call it directly.
  */
 function makeRuntime(overrides: Record<string, unknown> = {}) {
@@ -222,7 +222,7 @@ describe('Drive tool group', () => {
       expect(services.sessions.start).not.toHaveBeenCalled();
     });
 
-    it.each([undefined, true])('reports this follow-up delivery with queue=%s', async queue => {
+    it.each(['auto', 'queue'] as const)('reports this follow-up delivery with mode=%s', async mode => {
       const runtime = makeRuntime();
       runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
         options?.onAccepted?.(options.preferSteering ? 'steered' : 'queued');
@@ -232,12 +232,12 @@ describe('Drive tool group', () => {
         runtime,
       });
       const result = await promptSessionTool.handler(
-        { sessionId: 7, prompt: 'Focus on the failing test', queue },
+        { sessionId: 7, prompt: 'Focus on the failing test', mode },
         makeCtx(services),
       );
       expect(result.data).toMatchObject({
         accepted: true,
-        disposition: queue ? 'queued' : 'steered',
+        disposition: mode === 'queue' ? 'queued' : 'steered',
       });
     });
 

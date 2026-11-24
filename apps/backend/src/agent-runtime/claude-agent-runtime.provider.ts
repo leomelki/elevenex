@@ -36,6 +36,7 @@ export class ClaudeAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: true,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 
