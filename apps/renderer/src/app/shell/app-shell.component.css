@@ -82,6 +82,25 @@
   opacity: 0;
   transition: width var(--dur-slow) var(--ease-in-out);
 }
+/* The panel's clip-path would clip its own shadow, so a twin layer tracks its
+   width and casts the takeover's shadow onto the receded chat. It paints last
+   because the receded chat is its own layer; an outer shadow never covers the
+   panel inside it. */
+.workspace::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-cover);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width var(--dur-slow) var(--ease-in-out),
+    opacity var(--dur-slow) var(--ease-in-out);
+}
 .panel-inner {
   display: flex;
   flex-direction: column;
@@ -90,7 +109,8 @@
   /* Follow wider review's animated width, but keep content stable while closing. */
   width: max(100%, var(--side-panel-width));
 }
-:host(.panel-open) .panel {
+:host(.panel-open) .panel,
+:host(.panel-open) .workspace::after {
   width: var(--side-panel-width);
 }
 :host(.panel-retained) .panel {
@@ -104,8 +124,12 @@
   scale: 0.95;
   pointer-events: none;
 }
-:host(.wide-review) .panel {
+:host(.wide-review) .panel,
+:host(.wide-review) .workspace::after {
   width: calc(100% - var(--chat-peek) - var(--space-2));
+}
+:host(.wide-review) .workspace::after {
+  opacity: 1;
 }
 /* Like a card behind a sheet: the chat leans forward under the pointer and
    settles back the instant it is pressed. */
@@ -213,6 +237,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .panel,
+  .workspace::after,
   .main,
   :host(.wide-review) .workspace:has(> .peek:hover) .main,
   .peek,
