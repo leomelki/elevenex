@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import {
+  ANTIGRAVITY_CATALOG_SIGN_IN,
+  ANTIGRAVITY_INSTALL,
+} from '../antigravity-runtime/antigravity-acp.js';
 import type { SettingsService } from '../settings/settings.service.js';
 
 /** Read capabilities without allocating or switching a session runtime. Provider probes own their caches. */
@@ -39,11 +43,20 @@ export async function chatCatalog(
     models.find((model) => model.id === defaults.model) ??
     models.find((model) => model.id === catalog.providerDefaultModelId) ??
     models[0];
-  const reasoning = model?.reasoningEfforts.includes(
-    defaults.reasoningEffort ?? '',
-  )
-    ? defaults.reasoningEffort
-    : (model?.reasoningEfforts[0] ?? null);
+  const reasoning =
+    [defaults.reasoningEffort, catalog.providerDefaultReasoningEffort].find(
+      (level) => level && model?.reasoningEfforts.includes(level),
+    ) ??
+    model?.reasoningEfforts[0] ??
+    null;
+  const unavailable = catalog.unavailableReason;
+  // Only forward known setup messages. CLI failures can contain private data.
+  const setupMessage =
+    providerId === 'antigravity' &&
+    (unavailable === ANTIGRAVITY_INSTALL ||
+      unavailable === ANTIGRAVITY_CATALOG_SIGN_IN)
+      ? unavailable
+      : null;
   return {
     provider: providerId,
     label: catalog.displayName.slice(0, 200),
@@ -54,8 +67,9 @@ export async function chatCatalog(
     reasoningAvailable,
     fastAvailable,
     error:
-      !models.length && catalog.unavailableReason
-        ? 'Could not load this harness’s models. Check its connection and try again.'
+      !models.length && unavailable
+        ? (setupMessage ??
+          'Could not load this harness’s models. Check its connection and try again.')
         : null,
   };
 }

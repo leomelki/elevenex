@@ -72,7 +72,7 @@ import {
 })
 export class TasksDemoComponent {
   protected readonly busySelected = signal<string | null>(null);
-  protected readonly busyTask = signal<TaskOutline>({ id: 'busy', title: 'A busy task', sessions: Array.from({length:19},(_,index)=>({ id:`busy-${index}`,title:`Investigate retry behavior ${index + 1}`,status:index === 0 ? 'attention' : index === 3 ? 'failed' : index === 18 ? 'review' : 'running' })) });
+  protected readonly busyTask = signal<TaskOutline>({ id: 'busy', title: 'A busy task', sessions: Array.from({length:19},(_,index)=>({ id:`busy-${index}`,title:`Investigate retry behavior ${index + 1}`,status:index === 0 ? 'attention' : index === 3 ? 'failed' : index === 18 ? 'review' : index >= 16 ? 'running' : 'done' })) });
   protected archiveBusy(session: TaskSession): void {
     this.busyTask.update(task=>({...task,sessions:task.sessions.filter(row=>row.id!==session.id)}));
     if (this.busySelected() === session.id) this.busySelected.set(this.busyTask().sessions.find(row=>row.status!=='done')?.id ?? null);

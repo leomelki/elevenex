@@ -51,6 +51,20 @@ cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.
 The provider still supplies the complete source snapshot for history reads.
 
+### Sidebar priority sessions
+
+Engines advertising `sessionPriority` accept `state=priority` on the existing
+task session read. This returns bounded descending-ID cursor pages in
+chronological display order, with a `parentSessions` list for referenced roots
+outside the page. The engine selects candidates from live activity IDs and an
+index of unseen completions, then applies the same activity projection used by
+ordinary navigation, including delegation and child archive confirmation fields
+on both priority rows and their parent context. The cursor advances over candidates even when one no longer
+qualifies. Main validates statuses, scope, context and cursor progress. The
+workspace reconciles priority data alongside each visible task's history, and
+existing session events invalidate both reads. Legacy history and archive
+requests keep their existing pagination and shapes.
+
 ### Selected chat stream
 
 Engines advertising `chatStream: true` in `workspaceRevision` serve
@@ -689,6 +703,12 @@ Turn capture lives in the backend, with one advisory filesystem observer per
 canonical checkout. A read-only Git inventory and file preimages establish the
 starting state. A second inventory and targeted content reads compare net worktree
 versions, including new untracked files and changes committed during the turn.
+When the checkout's recent HEAD reflog identifies a rebase within the capture
+window, turn and shell comparisons omit the revision switch and commit replay.
+Dirty paths and commits made before or after the rebase remain candidates for
+review. Edits after the rebase use the rebased content as their preimage on
+paths without earlier edits. If the reflog cannot establish the rebase
+boundaries, capture uses the ordinary endpoint comparison.
 The implementation leaves the real index, branches, refs and Git objects alone.
 The workspace Git Changes panel continues to read the checkout directly, including
 edits from outside the active session. Observed writes coalesce cache

@@ -6,14 +6,16 @@ import { WorkspaceTaskOutbox, type WaitingTask } from './workspace-task-outbox';
 import { SessionChatDrafts, SessionDraft } from '../session-chat/session-chat-drafts';
 import { SessionChatOutbox } from '../session-chat/session-chat-outbox';
 import { DOCUMENT } from '@angular/common';
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import type { BackendResult, EnvironmentContext, EnvironmentSelection, WorkspacePage, WorkspaceViewState, WorkspaceCreateProject, WorkspaceBranch, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRepository, WorkspaceRevision, WorkspaceSession, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import type { Machine } from '../machines';
 import type { ConversationMention } from '../conversation';
 import type { SessionAgentReference } from '@elevenex/shared';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
-import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSession, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
+import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSession, type TaskSessionDisclosure, type TaskSessionHistoryRequest, type TaskRepository, type TaskStage } from '../tasks';
 import { workspaceAgentRow, workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
+import { mergeNavigationSessions, readPrioritySessions, type WorkspacePrioritySessions } from './workspace-priority-sessions';
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
@@ -36,14 +38,19 @@ export class WorkspaceStore {
   private readonly projectRecords = signal<readonly WorkspaceProject[]>([]);
   private readonly taskRecords = signal<readonly WorkspaceTask[]>([]);
   private readonly sessionRecords = signal<ReadonlyMap<number, readonly WorkspaceSession[]>>(new Map());
+  private readonly priorityRecords = signal<ReadonlyMap<number, WorkspacePrioritySessions>>(new Map());
   private readonly navigationSessions = computed(() => {
-    const records = new Map(this.sessionRecords());
-    for (const [taskId, roots] of records) {
-      const children = roots.flatMap(root => this.hierarchy.windows().get(root.id)?.sessions ?? []);
-      records.set(taskId, [...roots, ...children.filter(child => !roots.some(root => root.id === child.id))]);
-    }
-    return records;
+    const records = this.sessionRecords();
+    const priority = this.closed() ? null : this.priorityRecords();
+    const children = this.hierarchy.windows();
+    return new Map([...records].map(([taskId, sessions]) => [taskId,
+      mergeNavigationSessions(sessions, priority?.get(taskId), parentId => children.get(parentId)?.sessions ?? []),
+    ]));
   });
+  // Only explicitly expanded tasks extend the normal 20-row refresh.
+  private readonly sessionHistoryDepth = new Map<number, number>();
+  private navigationRefresh?: Promise<void>;
+  private readonly loadingOlderSessions = signal<number | null>(null);
   private readonly sessionCursors = signal<ReadonlyMap<number, string | null>>(new Map());
   private readonly detail = signal<WorkspaceProjectDetail | null>(null);
   private readonly chosen = signal<WorkspaceSelection | null>(null);
@@ -59,9 +66,11 @@ export class WorkspaceStore {
   private resumeLoaded = false;
   readonly taskRequestsAvailable = signal(false);
   readonly commitPanelAvailable = signal(false);
+  readonly projectImagesAvailable = signal(false);
   private readonly chatStreamScope = signal<string | null>(null);
   readonly chatStreamAvailable = computed(() => !!this.chosen() && this.chosen()?.scopeId === this.chatStreamScope());
   readonly hierarchy = new WorkspaceSessionHierarchy();
+  private readonly sessionPriorityAvailable = signal(false);
   readonly sessionNestingAvailable = signal(false);
   private readonly sessionNestingOrderAvailable = signal(false);
   readonly sessionArchiveAvailable = signal(false);
@@ -176,7 +185,7 @@ export class WorkspaceStore {
       earlier: !!this.archives.pages().get(task.id)?.cursor,
     } } : {}),
     moreSessions: !!this.sessionCursors().get(task.id),
-    sessionsDirection: 'earlier',
+    loadingOlderSessions: this.loadingOlderSessions() === task.id,
     canAddSession: task.state === 'ready',
     project: this.projects().find(project => project.id === String(task.projectId)) ?? (task.projectName ? projectFace({ name: task.projectName }) : undefined),
     // Unknown cardinality from older runtimes keeps their existing repository hint.
@@ -387,7 +396,15 @@ export class WorkspaceStore {
     this.restoring.set(false); this.resumeContext = null; this.revision++;
   }
 
-  private async refreshVisible(): Promise<void> {
+  private refreshVisible(): Promise<void> {
+    const reading = this.readVisibleNavigation();
+    this.navigationRefresh = reading;
+    return reading.finally(() => {
+      if (this.navigationRefresh === reading) this.navigationRefresh = undefined;
+    });
+  }
+
+  private async readVisibleNavigation(): Promise<void> {
     if (this.restoring()) { await this.refresh(); return; }
     const scope = this.scopeId(), revision = this.revision, listRevision = this.listRevision;
     if (!scope) return;
@@ -458,6 +475,8 @@ export class WorkspaceStore {
     const archive = restored?.archive;
     if (archive) this.archives.acceptRestoredWindow(scope, archive.taskId, archive.page, archive.cursor);
     const sessions = new Map<number, readonly WorkspaceSession[]>();
+    const priority = new Map<number, WorkspacePrioritySessions>();
+    const current = () => revision === this.listRevision && this.valid(scope);
     const cursors = new Map<number, string | null>();
     // Four workers bound both transport concurrency and first-paint memory.
     let index = 0;
@@ -466,17 +485,40 @@ export class WorkspaceStore {
         const task = result.items[index++];
         if (!task) continue;
         const page = restored?.sessions?.taskId === task.id ? restored.sessions.page
-          : await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, limit: 20, order: 'latest', ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}) }), () => revision === this.listRevision, background);
-        if (page && revision === this.listRevision && this.scopeId() === scope) {
+          : await this.readSessionHistory(scope, task.id, current, background);
+        if (!current()) return;
+        if (!page && this.sessionPriorityAvailable() && !this.closed()) {
+          const retained = this.priorityRecords().get(task.id);
+          if (retained) {
+            priority.set(task.id, retained);
+            sessions.set(task.id, this.sessionRecords().get(task.id) ?? []);
+            cursors.set(task.id, this.sessionCursors().get(task.id) ?? null);
+          }
+        }
+        if (page) {
+          if (this.sessionPriorityAvailable() && !this.closed() && task.state === 'ready') {
+            const snapshot = await readPrioritySessions(
+              cursor => this.read(scope, () => this.bridge.workspaceSessions(scope, {
+                taskId: task.id, state: 'priority', limit: 100, ...(cursor ? { cursor } : {}),
+              }), current, background),
+              current,
+            );
+            if (!current()) return;
+            const retained = snapshot ?? this.priorityRecords().get(task.id);
+            if (retained) priority.set(task.id, retained);
+          }
           let rows = page.items;
           const pinned = this.selectedSession();
           // An older selected conversation can be pinned outside the latest
           // window. Revalidate that one ID, rather than retaining its old status
           // or scanning every intervening page.
-          if (background && pinned?.taskId === task.id && pinned.status !== 'archived' && !rows.some(row => row.id === pinned.id)) {
-            const focused = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, ...(pinned.id > 1 ? { cursor: String(pinned.id - 1) } : {}), limit: 1 }), () => revision === this.listRevision, true);
+          if ((background || this.sessionPriorityAvailable()) && pinned?.taskId === task.id && pinned.status !== 'archived' &&
+            !rows.some(row => row.id === pinned.id) && !priority.get(task.id)?.items.some(row => row.id === pinned.id)) {
+            const focused = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+              taskId: task.id, ...(pinned.id > 1 ? { cursor: String(pinned.id - 1) } : {}), limit: 1,
+            }), current, background);
             const updated = focused?.items.find(row => row.id === pinned.id);
-            if (updated) rows = [...rows.slice(0, 19), updated].sort((a, b) => a.id - b.id);
+            if (updated) rows = [...rows, updated].sort((a, b) => a.id - b.id);
           }
           const selectedId = restored?.selection?.taskId === task.id ? restored.selection.sessionId : pinned?.taskId === task.id ? pinned.id : undefined;
           const selectedChild = rows.find(row => row.id === selectedId);
@@ -485,18 +527,27 @@ export class WorkspaceStore {
             const parentId = selectedChild.parentSessionId;
             const context = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, ...(parentId > 1 ? { cursor: String(parentId - 1) } : {}), limit: 1, state: 'normal' }), () => revision === this.listRevision, background);
             const parent = context?.items.find(row => row.id === parentId);
-            if (parent) rows = [...rows.filter(row => row.id !== selectedChild.id).slice(0, 18), parent, selectedChild].sort((a, b) => a.id - b.id);
+            if (parent) rows = [...rows, parent].sort((a, b) => a.id - b.id);
           }
           if (revision !== this.listRevision || this.scopeId() !== scope) return;
           sessions.set(task.id, rows); cursors.set(task.id, page.nextCursor);
           // Live indicators must not wait for other tasks or archived history.
           // Preserve a pinned selection outside the latest page until final reconciliation.
-          if (background) this.sessionRecords.update(current => {
-            const next = new Map(current), selected = this.selectedSession();
-            next.set(task.id, selected && selected.taskId === task.id && !rows.some(item => item.id === selected.id)
-              ? [...rows.slice(0, 19), selected] : rows);
-            return next;
-          });
+          if (background) {
+            const selected = this.selectedSession();
+            this.priorityRecords.update(records => {
+              const next = new Map(records);
+              const snapshot = priority.get(task.id);
+              if (snapshot) next.set(task.id, snapshot);
+              else next.delete(task.id);
+              return next;
+            });
+            this.sessionRecords.update(records => new Map(records).set(task.id,
+              selected && selected.taskId === task.id && !rows.some(item => item.id === selected.id) &&
+                !priority.get(task.id)?.items.some(item => item.id === selected.id)
+                ? [...rows, selected] : rows,
+            ));
+          }
         }
         if (revision === this.listRevision && this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && archive?.taskId !== task.id) {
           const archived = this.archives.refresh(scope, task.id);
@@ -510,12 +561,18 @@ export class WorkspaceStore {
     if (revision !== this.listRevision || this.scopeId() !== scope) return;
     this.archives.retain(this.closed() ? [] : result.items.map(task => task.id));
     const previous = this.selectedSession(), selection = this.chosen();
-    if (previous && previous.status !== 'archived' && selection && sessions.has(selection.taskId) && !sessions.get(selection.taskId)?.some(session => session.id === previous.id)) {
+    if (previous && previous.status !== 'archived' && selection && sessions.has(selection.taskId) && !sessions.get(selection.taskId)?.some(session => session.id === previous.id) && !priority.get(selection.taskId)?.items.some(session => session.id === previous.id)) {
       const roots = sessions.get(selection.taskId) ?? [];
       const parent = previous.parentSessionId ? this.navigationSessions().get(selection.taskId)?.find(row => row.id === previous.parentSessionId) : undefined;
-      if (!parent || !roots.some(row => row.id === parent.id)) sessions.set(selection.taskId, [...roots.slice(0, parent ? 18 : 19), ...(parent ? [parent] : []), previous].sort((a,b) => a.id - b.id));
+      // A retained selection supplements the history page. Evicting a history
+      // row would hide it on both sides of the backend cursor.
+      if (!parent || !roots.some(row => row.id === parent.id))
+        sessions.set(selection.taskId, [...roots, ...(parent ? [parent] : []), previous].sort((a, b) => a.id - b.id));
     }
-    this.hierarchy.retain([...sessions.values()].flat());
+    this.priorityRecords.set(priority);
+    this.hierarchy.retain([...sessions.values()].flat().concat(
+      [...priority.values()].flatMap(({ items, parents }) => [...items, ...parents]),
+    ));
     for (const [parentId, window] of this.hierarchy.windows()) {
       void this.loadSessionChildren({ taskId: String(window.taskId), sessionId: String(parentId) });
     }
@@ -684,8 +741,21 @@ export class WorkspaceStore {
         const removed = (row: WorkspaceSession) => row.id === sessionId || (includeChildren && row.parentSessionId === sessionId);
         const remaining = sessions.filter(row => !removed(row)).map(row => row.parentSessionId === sessionId ? { ...row, parentSessionId: null } : row);
         this.hierarchy.removeSession(sessionId);
+        const updateParent = (row: WorkspaceSession) => row.id === session.parentSessionId
+          ? { ...row, childCount: Math.max(0, (row.childCount ?? 0) - 1) }
+          : row;
+        this.priorityRecords.update(records => {
+          const snapshot = records.get(taskId);
+          if (!snapshot) return records;
+          return new Map(records).set(taskId, {
+            items: snapshot.items.filter(row => !removed(row)).map(row =>
+              row.parentSessionId === sessionId ? { ...row, parentSessionId: null } : updateParent(row),
+            ),
+            parents: snapshot.parents.filter(row => !removed(row)).map(updateParent),
+          });
+        });
         this.sessionRecords.update(records => {
-          const roots = (records.get(taskId) ?? []).filter(row => !removed(row)).map(row => row.id === session.parentSessionId ? { ...row, childCount: Math.max(0, (row.childCount ?? 0) - 1) } : row);
+          const roots = (records.get(taskId) ?? []).filter(row => !removed(row)).map(updateParent);
           const rootIds = new Set(roots.map(row => row.id));
           const promoted = remaining.filter(row => sessions.find(previous => previous.id === row.id)?.parentSessionId === sessionId && !rootIds.has(row.id));
           return new Map(records).set(taskId, [...roots, ...promoted].sort((a,b) => a.id - b.id));
@@ -763,18 +833,95 @@ export class WorkspaceStore {
     if (this.valid(scope)) this.busy.set(false);
   }
 
-  async nextSessions(id: string): Promise<void> {
-    const scope = this.scopeId(), taskId = Number(id), cursor = this.sessionCursors().get(taskId), revision = this.listRevision;
-    if (!scope || !cursor || this.busy() || !this.taskRecords().some(task => task.id === taskId)) return;
-    this.busy.set(true);
-    const page = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId, cursor, limit: 20, order: 'latest', ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}) }));
-    if (page && revision === this.listRevision) {
-      this.hierarchy.retain([...this.sessionRecords().values()].flat().filter(row => row.taskId !== taskId).concat(page.items));
-      this.sessionRecords.update(records => new Map(records).set(taskId, page.items));
-      this.sessionCursors.update(cursors => new Map(cursors).set(taskId, page.nextCursor));
-      if (this.chosen()?.taskId === taskId) this.chosen.set(null);
+  setSessionDisclosure(taskId: string, disclosure: TaskSessionDisclosure | null): void {
+    this.sessionDisclosures.update(records => {
+      const next = new Map(records);
+      next.delete(taskId);
+      if (disclosure) next.set(taskId, disclosure);
+      while (next.size > 200) {
+        const oldest = next.keys().next().value;
+        if (oldest !== undefined) next.delete(oldest);
+      }
+      return next;
+    });
+  }
+
+  /** Keep the expanded history depth across navigation revisions. The first
+   * page stays small, and all deeper reads still use bounded keyset pages. */
+  private async readSessionHistory(
+    scope: string, taskId: number, current: () => boolean, background: boolean,
+  ): Promise<WorkspacePage<WorkspaceSession> | null> {
+    const root = this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {};
+    let page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+      taskId, limit: 20, order: 'latest', ...root,
+    }), current, background);
+    if (!page) return null;
+    let remaining = (this.sessionHistoryDepth.get(taskId) ?? 20) - 20;
+    const pages = [page.items];
+    while (remaining > 0 && page.nextCursor) {
+      const cursor: string = page.nextCursor;
+      const limit = Math.min(100, remaining);
+      page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+        taskId, cursor, limit, order: 'latest', ...root,
+      }), current, background);
+      if (!page) return null;
+      pages.push(page.items);
+      remaining -= limit;
     }
-    if (this.scopeId() === scope) this.busy.set(false);
+    return { items: pages.reverse().flat(), nextCursor: page.nextCursor };
+  }
+
+  async loadOlderSessions(request: TaskSessionHistoryRequest): Promise<void> {
+    const { taskId: id, cap } = request;
+    const scope = this.scopeId(), taskId = Number(id);
+    if (!scope || !this.sessionCursors().get(taskId) || this.busy() || this.loading() ||
+      !this.taskRecords().some(task => task.id === taskId)) return;
+    const project = this.activeProject(), closed = this.closed(), taskCursor = this.currentTaskCursor;
+    const disclosure = this.sessionDisclosures().get(id);
+    const limit = Math.min(100, request.limit);
+    this.busy.set(true);
+    this.loadingOlderSessions.set(taskId);
+    try {
+      // An already-running refresh can replace the cursor. Finish it before
+      // paging so its older snapshot cannot overwrite a successful append.
+      if (this.navigationRefresh) await this.navigationRefresh.catch(() => undefined);
+      const cursor = this.sessionCursors().get(taskId), revision = this.listRevision;
+      if (!cursor || !this.valid(scope) || this.loading() || this.activeProject() !== project ||
+        this.closed() !== closed || this.currentTaskCursor !== taskCursor ||
+        !this.taskRecords().some(task => task.id === taskId)) return;
+      const current = () => revision === this.listRevision && this.valid(scope);
+      const page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+        taskId, cursor, limit, order: 'latest',
+        ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}),
+      }), current);
+      if (!page || !current()) return;
+      const visibleIds = new Set(this.navigationSessions().get(taskId)?.map(row => row.id));
+      const existing = this.sessionRecords().get(taskId) ?? [];
+      const existingIds = new Set(existing.map(row => row.id));
+      this.sessionRecords.update(records => new Map(records).set(taskId,
+        [...page.items.filter(row => !existingIds.has(row.id)), ...existing].sort((a, b) => a.id - b.id),
+      ));
+      this.sessionCursors.update(cursors => new Map(cursors).set(taskId, page.nextCursor));
+      const depth = (this.sessionHistoryDepth.get(taskId) ?? 20) + limit;
+      this.sessionHistoryDepth.delete(taskId);
+      this.sessionHistoryDepth.set(taskId, depth);
+      if (this.sessionHistoryDepth.size > 200) {
+        const oldest = this.sessionHistoryDepth.keys().next().value;
+        if (oldest !== undefined) this.sessionHistoryDepth.delete(oldest);
+      }
+      if (cap === null || this.sessionDisclosures().get(id) !== disclosure) return;
+      const ids = page.items.filter(row => !visibleIds.has(row.id) &&
+        !isWorkspacePriorityStatus(workspaceSessionStatus(row))).map(row => String(row.id));
+      if (ids.length) this.setSessionDisclosure(id, {
+        taskId: id, cap, hiddenIds: disclosure?.cap === cap ? disclosure.hiddenIds : [],
+        batches: [...(disclosure?.cap === cap ? disclosure.batches ?? [] : []), ids],
+      });
+    } finally {
+      if (this.scopeId() === scope) {
+        this.loadingOlderSessions.set(null);
+        this.busy.set(false);
+      }
+    }
   }
   reconcileTaskBranch(scope: string, taskId: number, branch: string): void { if (this.valid(scope)) this.taskRecords.update(tasks => tasks.map(task => task.id === taskId ? { ...task, branchName: branch } : task)); }
   openNewProject(from: HTMLElement | null = null): void {
@@ -990,6 +1137,7 @@ export class WorkspaceStore {
         hue: draft.hue,
         ...(draft.emoji ? { emoji: draft.emoji } : {}),
         ...(draft.icon ? { icon: draft.icon } : {}),
+        ...(draft.image && this.projectImagesAvailable() ? { image: draft.image } : {}),
       },
     };
     const project = await this.mutate(scope, () => this.bridge.workspaceCreateProject(scope, request));
@@ -1059,7 +1207,15 @@ export class WorkspaceStore {
     if (!scope || !project || this.busy()) return;
     this.busy.set(true);
     const appearance = patch.appearance;
-    const result = await this.mutate(scope, () => this.bridge.workspaceUpdateProject(scope, { projectId: project.id, ...(patch.name ? { name: patch.name } : {}), ...(patch.agentInstructions !== undefined ? { agentInstructions: patch.agentInstructions } : {}), ...(appearance ? { appearance: { look: appearance.look, hue: appearance.hue ?? undefined, emoji: appearance.emoji, icon: appearance.icon } } : {}) }));
+    const result = await this.mutate(scope, () => this.bridge.workspaceUpdateProject(scope, {
+      projectId: project.id,
+      ...(patch.name ? { name: patch.name } : {}),
+      ...(patch.agentInstructions !== undefined ? { agentInstructions: patch.agentInstructions } : {}),
+      ...(appearance ? { appearance: {
+        look: appearance.look, hue: appearance.hue ?? undefined, emoji: appearance.emoji, icon: appearance.icon,
+        ...(this.projectImagesAvailable() && appearance.image !== undefined ? { image: appearance.image } : {}),
+      } } : {}),
+    }));
     if (result) { this.detail.set(result); this.projectRecords.update(projects => projects.map(item => item.id === result.project.id ? result.project : item)); }
     if (this.scopeId() === scope) this.busy.set(false);
   }
@@ -1197,6 +1353,8 @@ export class WorkspaceStore {
     this.chatStreamScope.set(capability?.chatStream ? scope : null);
     this.taskRequestsAvailable.set(capability?.taskRequests === true);
     this.commitPanelAvailable.set(capability?.commitPanel === true);
+    this.projectImagesAvailable.set(capability?.projectImages === true);
+    this.sessionPriorityAvailable.set(capability?.sessionPriority === true);
     this.sessionNestingAvailable.set(capability?.sessionNesting === true);
     this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true);
     this.sessionArchiveAvailable.set(capability?.sessionArchive === true);
@@ -1207,6 +1365,9 @@ export class WorkspaceStore {
   private reset(scope: string | null): void {
     this.chatStreamScope.set(null);
     this.sessionArchiveChildrenAvailable.set(false);
+    this.projectImagesAvailable.set(false);
+    this.priorityRecords.set(new Map()); this.sessionPriorityAvailable.set(false);
+    this.sessionHistoryDepth.clear(); this.loadingOlderSessions.set(null); this.navigationRefresh = undefined;
     this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;

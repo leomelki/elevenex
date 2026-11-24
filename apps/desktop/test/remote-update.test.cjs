@@ -178,7 +178,14 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
     children.push(child); let diagnostics = '';
     child.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-16384); });
     const exited = new Promise(resolve => { child.once('error', resolve); child.once('close', resolve); });
-    const stop = async () => { child.stdin.end(); if (child.exitCode === null && child.signalCode === null) process.kill(-child.pid, 'SIGTERM'); await exited; };
+    const stop = async () => {
+      // Let the bridge send its lease-release request after stdin closes.
+      child.stdin.end();
+      const deadline = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) process.kill(-child.pid, 'SIGTERM');
+      }, 1000);
+      try { await exited; } finally { clearTimeout(deadline); }
+    };
     const aborted = () => { void stop(); };
     signal.addEventListener('abort', aborted, { once: true });
     void exited.then(() => signal.removeEventListener('abort', aborted));
@@ -287,7 +294,12 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
   assert.equal((await info(second)).pid, after.pid);
   assert.throws(() => process.kill(before.pid, 0), { code: 'ESRCH' }, 'forced shutdown must finish before replacement startup');
   const retired = await original.forward(0, 0); assert.equal(retired.reachable, false); await retired.close();
-  assert.equal((await original.health(AbortSignal.timeout(3000))).ready, false);
+  try {
+    assert.equal((await original.health(AbortSignal.timeout(3000))).ready, false);
+  } catch (error) {
+    // A ping can race the retired daemon's listener closing.
+    assert.match(error.message, /^Bridge closed$/);
+  }
   await assert.rejects(connect(releaseFor(version), { interactive: false }), error => error.failure?.code === 'compatibility' && /Choose Retry/.test(error.message));
   assert.equal((await info(first)).pid, after.pid, 'an older desktop recovery must not replace the new backend');
 

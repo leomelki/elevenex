@@ -39,39 +39,41 @@ describe('session groups', () => {
     expect(moved).toHaveBeenCalledWith({ sessionId: '2', parentSessionId: null });
   });
 
-  it('caps the mixed child list at two and reveals all running and finished delegates together', () => {
+  it('keeps priority delegates visible and caps ordinary child history until expanded', () => {
     const running: TaskSession = { ...child, kind: 'delegated', status: 'running' };
     const children: readonly TaskSession[] = [
       running,
       { ...running, id: '3' },
       { ...running, id: '4' },
       { ...running, id: '5', status: 'done' },
+      { ...running, id: '6', status: 'done' },
     ];
     const fixture = setup(children);
     const host: HTMLElement = fixture.nativeElement;
     const visible = () => [...host.querySelectorAll<HTMLElement>('.children [data-session-id]')]
       .filter(row => !row.closest('[inert]')).map(row => row.dataset['sessionId']);
     const disclosure = host.querySelector<HTMLButtonElement>('.disclosure')!;
+    expect(visible()).toEqual(['2', '3', '4']);
     disclosure.click();
     fixture.detectChanges();
-    expect(visible()).toEqual(['4', '5']);
+    expect(visible()).toEqual(['2', '3', '4', '6']);
 
     const more = host.querySelector<HTMLButtonElement>('.child-cap')!;
-    expect(more.textContent).toContain('Show 2 more');
+    expect(more.textContent).toContain('Show 1 more');
     more.click();
     fixture.detectChanges();
-    expect(visible()).toEqual(['2', '3', '4', '5']);
+    expect(visible()).toEqual(['2', '3', '4', '5', '6']);
     const firstRow = host.querySelector('[data-session-id="2"]');
     fixture.componentRef.setInput('sessions', [root, { ...running, status: 'done' }, ...children.slice(1)]);
     fixture.detectChanges();
-    expect(visible()).toEqual(['2', '3', '4', '5']);
+    expect(visible()).toEqual(['2', '3', '4', '5', '6']);
     expect(host.querySelector('[data-session-id="2"]')).toBe(firstRow);
 
     fixture.componentRef.setInput('selected', '2');
     fixture.detectChanges();
     more.click();
     fixture.detectChanges();
-    expect(visible()).toEqual(['2', '5']);
+    expect(visible()).toEqual(['2', '3', '4', '6']);
     expect(more.getAttribute('aria-expanded')).toBe('false');
   });
 });

@@ -31,7 +31,9 @@ export class AgentPlanMeterComponent {
   );
   protected readonly description = computed(() =>
     this.limit().left <= 0
-      ? `Plan limit reached${this.limit().reset ? ", resets " + this.limit().reset : ""}`
-      : `${usagePercent(this.limit().left)} of the ${this.limit().label.toLowerCase()} left`,
+      ? `${this.plan().scope === "model" ? this.limit().label + " quota used up" : "Plan limit reached"}${this.limit().reset ? ", resets " + this.limit().reset : ""}`
+      : this.plan().scope === "model"
+        ? `${usagePercent(this.limit().left)} of the ${this.limit().label} quota left`
+        : `${usagePercent(this.limit().left)} of the ${this.limit().label.toLowerCase()} left`,
   );
 }

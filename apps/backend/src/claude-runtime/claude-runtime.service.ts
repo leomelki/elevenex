@@ -216,6 +216,7 @@ type HistoryMessage = {
   parent_tool_use_id?: string | null;
   tool_use_result?: unknown;
   apiBlockIndex?: number;
+  isSynthetic?: boolean;
 };
 
 interface ActivePermissionRequest {
@@ -4396,6 +4397,12 @@ export class ClaudeRuntimeService
   }
 
   private handleUserMessage(sessionId: number, message: SDKUserMessage): void {
+    if (
+      message.isSynthetic === true &&
+      isImageSourceNote(message.message.content)
+    ) {
+      return;
+    }
     const content = Array.isArray(message.message.content)
       ? message.message.content
       : typeof message.message.content === 'string'
@@ -7358,7 +7365,8 @@ export class ClaudeRuntimeService
       }
       if (
         message.type === 'user' &&
-        this.isModelChangeOutput(rawPayload.content)
+        (this.isModelChangeOutput(rawPayload.content) ||
+          (message.isSynthetic === true && isImageSourceNote(rawPayload.content)))
       )
         continue;
       const payload =
@@ -7535,6 +7543,7 @@ export class ClaudeRuntimeService
             ? record.timestamp
             : new Date().toISOString(),
         message: record.message,
+        isSynthetic: record.isMeta === true,
         tool_use_result: record.toolUseResult ?? record.tool_use_result,
         apiBlockIndex: typeof record.apiBlockIndex === 'number' &&
           Number.isSafeInteger(record.apiBlockIndex) && record.apiBlockIndex >= 0
@@ -9040,6 +9049,22 @@ function isSupportedTranscriptImageType(
     value === 'image/jpeg' ||
     value === 'image/gif' ||
     value === 'image/webp'
+  );
+}
+
+// Claude writes image paths and resize details in a separate user-role
+// companion message (isMeta on disk, isSynthetic on the SDK stream).
+function isImageSourceNote(content: unknown): boolean {
+  const matches = (text: unknown) =>
+    typeof text === 'string' && /^\[Image: source: [^\r\n]+\]$/.test(text.trim());
+  if (typeof content === 'string') return matches(content);
+  return (
+    Array.isArray(content) &&
+    content.length > 0 &&
+    content.every((part) => {
+      const block = asRecord(part);
+      return block?.type === 'text' && matches(block.text);
+    })
   );
 }
 

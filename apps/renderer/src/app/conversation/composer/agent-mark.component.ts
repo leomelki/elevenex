@@ -8,7 +8,7 @@ import { agentLogo } from "./agent-logos";
 
 /**
  * Bundled harness identity, sized by `--agent-mark-size`. Plain marks inherit
- * colour; tinted marks use the theme's identity palette, never status colours.
+ * colour. Tinted marks use a themed tile and may use a full-colour brand asset.
  */
 @Component({
   selector: "ex-agent-mark",
@@ -28,6 +28,9 @@ export class AgentMarkComponent {
   readonly harness = input<string>();
   readonly appearance = input<"plain" | "tinted">("plain");
   protected readonly logo = computed(() => agentLogo(this.harness()));
+  protected readonly tintedImage = computed(() =>
+    this.appearance() === "tinted" ? this.logo()?.tintedImage : undefined,
+  );
   protected readonly gradient = computed(() =>
     this.appearance() === "tinted" && this.harness() === "codex",
   );

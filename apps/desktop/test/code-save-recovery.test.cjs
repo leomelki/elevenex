@@ -36,9 +36,12 @@ async function mount(persisted, disk, options = {}) {
   const vscode = {
     __esModule: true, Uri, Disposable, EventEmitter: Emitter, FileSystemError: FileError, Range,
     ConfigurationTarget: { Global: 1 }, StatusBarAlignment: { Left: 1 }, FileType: { File: 1 }, FileChangeType: { Changed: 1, Created: 2, Deleted: 3 },
-    window: { tabGroups: {activeTabGroup:{tabs:[]},all:[],onDidChangeTabs:()=>new Disposable(()=>{})}, onDidChangeActiveTextEditor:()=>new Disposable(()=>{}), createStatusBarItem: () => ({ show() {}, dispose() {} }), showWarningMessage: async () => choices.shift(), showTextDocument: async (uri, options) => { opened.push({ uri, options }); }, activeTextEditor: null },
-    workspace: { getConfiguration: () => ({ update: async (key, value) => { themes.push({ key, value }); } }), workspaceFolders: [{ uri: root }], textDocuments: documents, fs: { stat: uri => provider.stat(uri) }, registerFileSystemProvider: (_scheme, value) => { provider = value; return new Disposable(() => {}); }, registerTextDocumentContentProvider: () => new Disposable(() => {}), registerFileSearchProvider: () => new Disposable(() => {}), registerTextSearchProvider: () => new Disposable(() => {}), onDidOpenTextDocument: () => new Disposable(() => {}), onDidChangeTextDocument: () => new Disposable(() => {}) },
-    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return new Disposable(() => {}); }, executeCommand: async (...args) => { comparisons.push(args); } },
+    window: { tabGroups: {activeTabGroup:{tabs:[]},all:[],onDidChangeTabs:()=>new Disposable(()=>{})}, onDidChangeActiveTextEditor:()=>new Disposable(()=>{}), createTreeView: () => new Disposable(() => {}), createStatusBarItem: () => ({ show() {}, dispose() {} }), showWarningMessage: async () => choices.shift(), showTextDocument: async (uri, options) => { opened.push({ uri, options }); }, activeTextEditor: null },
+    workspace: { getConfiguration: () => ({ update: async (key, value) => { themes.push({ key, value }); } }), workspaceFolders: [{ uri: root }], textDocuments: documents, fs: { stat: uri => provider.stat(uri) }, registerFileSystemProvider: (scheme, value) => { if (scheme === 'elevenex-task') provider = value; return new Disposable(() => {}); }, registerTextDocumentContentProvider: () => new Disposable(() => {}), registerFileSearchProvider: () => new Disposable(() => {}), registerTextSearchProvider: () => new Disposable(() => {}), onDidOpenTextDocument: () => new Disposable(() => {}), onDidChangeTextDocument: () => new Disposable(() => {}), onDidSaveTextDocument: () => new Disposable(() => {}) },
+    commands: { registerCommand: (name, fn) => { commands.set(name, fn); return new Disposable(() => {}); }, executeCommand: async (command, ...args) => {
+      if (command === 'vscode.open') opened.push({ uri: args[0], options: args[1] });
+      if (command === 'vscode.diff' || command === 'workbench.action.quickOpen') comparisons.push([command, ...args]);
+    } },
   };
   const code = await readFile(require.resolve('../dist/code/web/extension.js'), 'utf8');
   const module = { exports: {} };

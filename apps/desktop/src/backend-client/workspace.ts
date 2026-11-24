@@ -1,4 +1,4 @@
-import { WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from '@elevenex/shared';
+import { isWorkspacePriorityStatus, isWorkspaceProjectImage, WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT, WORKSPACE_PROJECT_IMAGE_LIMIT } from '@elevenex/shared';
 import { parseAgentReference, parseAgentSelection, parseChildSummary } from './session-agent-values';
 import type {
   BackendResult,
@@ -55,7 +55,10 @@ function stage(value: unknown): WorkspaceStage {
 function appearance(value: unknown): WorkspaceAppearance {
   const raw = object(value),
     look = raw['look'],
-    hue = raw['hue'];
+    hue = raw['hue'],
+    image = raw['image'];
+  if (image !== undefined && image !== null && !isWorkspaceProjectImage(image))
+    throw invalidResponse();
   if (
     look !== undefined &&
     look !== 'letters' &&
@@ -78,19 +81,21 @@ function appearance(value: unknown): WorkspaceAppearance {
     ...(hue === undefined ? {} : { hue }),
     ...(raw['emoji'] === undefined ? {} : { emoji: text(raw['emoji'], 64) }),
     ...(raw['icon'] === undefined ? {} : { icon: text(raw['icon'], 64) }),
+    ...(image === undefined ? {} : { image }),
   };
 }
 function parseRevision(value: unknown): WorkspaceRevision {
   const response = object(value);
   if (response['version'] !== 1) throw invalidResponse();
   const revision = count(response['revision']);
-  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel']) {
+  for (const capability of ['revisionWait', 'chatStream', 'sessionPriority', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel', 'projectImages']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
     revision, version: 1,
     ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
     ...(response['chatStream'] === true ? { chatStream: true } : {}),
+    ...(response['sessionPriority'] === true ? { sessionPriority: true } : {}),
     ...(response['sessionNesting'] === true ? { sessionNesting: true } : {}),
     ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true } : {}),
     ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),
@@ -98,6 +103,7 @@ function parseRevision(value: unknown): WorkspaceRevision {
     ...(response['sessionArchiveChildren'] === true ? { sessionArchiveChildren: true } : {}),
     ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
     ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
+    ...(response['projectImages'] === true ? { projectImages: true } : {}),
   };
 }
 
@@ -351,6 +357,7 @@ export function registerWorkspaceIpc(
     scope: string,
     path: string,
     parse: (value: unknown) => T,
+    limit = 768 * 1024,
   ): Promise<BackendResult<T>> {
     return client.execute(
       windowId,
@@ -361,7 +368,7 @@ export function registerWorkspaceIpc(
         parse(
           await requestBackendJson(
             endpoint,
-            { path, limit: 768 * 1024 },
+            { path, limit },
             signal,
           ),
         ),
@@ -546,14 +553,16 @@ export function registerWorkspaceIpc(
       },
     ),
   );
-  register('workspace:projects', (window, scope, input) =>
-    read(
+  register('workspace:projects', (window, scope, input) => {
+    const page = query(input);
+    return read(
       window,
       scope,
-      `${base}/projects?${queryString(query(input))}`,
+      `${base}/projects?${queryString({ ...page, images: true })}`,
       (value) => parseWorkspacePage(value, project),
-    ),
-  );
+      768 * 1024 + page.limit * WORKSPACE_PROJECT_IMAGE_LIMIT,
+    );
+  });
   register('workspace:project-name-availability', (window, scope, input) =>
     read(window, scope, `${base}/projects/name-availability?${new URLSearchParams({ name: required(input, 100) })}`, value => ({ available: boolean(object(value)['available']) })),
   );
@@ -606,18 +615,40 @@ export function registerWorkspaceIpc(
     const raw = object(input),
       taskId = id(raw['taskId']);
     if (raw['order'] !== undefined && raw['order'] !== 'latest') throw invalidResponse();
-    if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived') throw invalidResponse();
+    const priority = raw['state'] === 'priority';
+    if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived' && !priority) throw invalidResponse();
+    if (priority && (raw['parentSessionId'] !== undefined || raw['childOrder'] !== undefined)) throw invalidResponse();
     if (raw['childOrder'] !== undefined && (raw['childOrder'] !== 'nested' || typeof raw['parentSessionId'] !== 'number')) throw invalidResponse();
     const nested = raw['childOrder'] === 'nested';
+    const pageQuery = query(raw, nested);
+    const before = priority && pageQuery.cursor ? id(Number(pageQuery.cursor)) : Infinity;
     return read(
       window,
       scope,
-      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw, nested), ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
+      `${base}/tasks/${taskId}/sessions?${queryString({ ...pageQuery, ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
       (value) => {
         const result = parseWorkspacePage(value, session, nested);
         if (result.items.some((session) => session.taskId !== taskId || (typeof raw['parentSessionId'] === 'number' && session.parentSessionId !== raw['parentSessionId']) || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
           throw invalidResponse();
-        return result;
+        if (!priority) return result;
+        const { parentSessions } = object(value);
+        if (!Array.isArray(parentSessions) || parentSessions.length > result.items.length || result.items.length > pageQuery.limit)
+          throw invalidResponse();
+        const next = result.nextCursor === null ? 0 : id(Number(result.nextCursor));
+        if (next >= before || result.items.some(item => item.id >= before || item.id < next))
+          throw invalidResponse();
+        const ids = new Set(result.items.map(item => item.id));
+        const referencedParents = new Set(result.items.map(item => item.parentSessionId));
+        if (ids.size !== result.items.length || result.items.some(item =>
+          !isWorkspacePriorityStatus(item.turnStatus ?? item.status) || item.status === 'archived'))
+          throw invalidResponse();
+        const parents = parentSessions.map(session);
+        for (const parent of parents) {
+          if (parent.taskId !== taskId || parent.status === 'archived' || ids.has(parent.id) || !referencedParents.has(parent.id))
+            throw invalidResponse();
+          ids.add(parent.id);
+        }
+        return { ...result, parentSessions: parents };
       },
     );
   });

@@ -90,6 +90,12 @@ export class AgentPickerDemoComponent {
       ],
     },
     {
+      id: "antigravity",
+      label: "Antigravity",
+      mark: "An",
+      models: [{ id: "gemini", label: "Gemini", thinking: ["low", "medium", "high"] }],
+    },
+    {
       id: "opencode",
       label: "OpenCode",
       mark: "Oc",

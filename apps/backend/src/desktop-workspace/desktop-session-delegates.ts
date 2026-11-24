@@ -178,12 +178,15 @@ export class DesktopSessionDelegates {
   }> {
     if (!parents.length) return new Map();
     const filter = and(eq(sessions.workspaceId, taskId), usable, inArray(sessions.parentSessionId, parents));
-    const done = sql<number>`sum(case when ${sessions.lastCompletionAt} is not null or ${sessions.hasUnreviewedCompletion} = 1
+    // Unseen completions have their own priority rows and sidebar count.
+    const done = sql<number>`sum(case when not (${sessions.hasUnreviewedCompletion} = 1 and ${sessions.lastCompletionAt} is not null)
+      and (${sessions.lastCompletionAt} is not null or ${sessions.hasUnreviewedCompletion} = 1
       or ${sessions.status} in ('active','stopped')
       or (coalesce(trim(${sessions.claudeSessionId}), '') not in ('','-1'))
       or (coalesce(trim(${sessions.codexSessionId}), '') not in ('','-1'))
       or (coalesce(trim(${sessions.piSessionPath}), '') not in ('','-1'))
       or (coalesce(trim(${sessions.opencodeSessionId}), '') not in ('','-1'))
+      or (coalesce(trim(${sessions.antigravitySessionId}), '') not in ('','-1')))
       then 1 else 0 end)`;
     const counts = new Map(this.db.select({ id: sessions.parentSessionId, done }).from(sessions)
       .where(filter).groupBy(sessions.parentSessionId).all()
@@ -199,7 +202,7 @@ export class DesktopSessionDelegates {
       counter[status]++;
       if (counter.active.length <= WORKSPACE_ARCHIVE_AGENT_LIMIT && this.liveAgent(child, status))
         counter.active.push(child.id);
-      if (inactiveSessionStatus(child) !== 'queued') counter.done--;
+      if (inactiveSessionStatus(child) === 'done') counter.done--;
     }
     const order = ['attention', 'failed', 'running', 'done'] as const;
     return new Map(parents.flatMap(id => {

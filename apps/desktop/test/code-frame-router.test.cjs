@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { CodeFrameRouter } = require('../dist/code/frame-router');
-const { markdownPreviewEndpoint } = require('../dist/code/markdown-preview');
+const { codeWebviewEndpoint } = require('../dist/code/webview');
 
 function setup() {
   let request, filter, permission, check;
@@ -14,7 +14,7 @@ function setup() {
   };
   const router = new CodeFrameRouter(session);
   const a = 'https://a.code.elevenex.invalid', b = 'https://b.code.elevenex.invalid';
-  const host = origin => ({ windowId: 1, authority: new URL(origin).host, active: true, allows: url => url === origin || url.startsWith(origin + '/'), handle: async () => new globalThis.Response('private') });
+  const host = origin => ({ windowId: 1, authority: new URL(origin).host, active: true, htmlPreview: { owns: () => false }, allows: url => url === origin || url.startsWith(origin + '/'), handle: async () => new globalThis.Response('private') });
   const first = host(a), second = host(b); router.add(first); router.add(second);
   const contents = Object.assign(new EventEmitter(), {id:1,mainFrame:{},getURL:()=> 'app://elevenex/'});
   return {router,a,b,first,contents,request: (...args) => request(...args),filter: d => { let result; filter(d,v=>{result=v;}); return result; },permission: (...args) => permission(...args),check:(...args)=>check(...args)};
@@ -29,6 +29,32 @@ test('iframe requests require both window ownership and the correct task initiat
   assert.equal(filter({...root,initiatorOrigin:b}).cancel,true);
   assert.equal((await request(new globalThis.Request('https://unknown.invalid'))).status,403);
   router.remove(first); assert.equal(filter(api).cancel,true); router.dispose();
+});
+
+test('HTML previews can only fetch from their own visible workspace lease', () => {
+  const { router, a, b, first, filter } = setup();
+  const origin = `https://elevenex-preview-${'a'.repeat(32)}.invalid`;
+  const webview = new URL(codeWebviewEndpoint(first.authority).replace('{{uuid}}', 'a'.repeat(52))).origin;
+  const otherWebview = webview.replace(first.authority, new URL(b).hostname);
+  first.htmlPreview = {
+    owns: url => url.origin === origin,
+    current: () => first.active,
+    allowsDocument: url => url.pathname.endsWith('.html'),
+  };
+  try {
+    const doc = { url: origin + '/index.html', method: 'GET', webContentsId: 1, resourceType: 'subFrame', initiatorOrigin: webview };
+    assert.equal(filter(doc).cancel, false);
+    for (const change of [{ initiatorOrigin: otherWebview }, { initiatorOrigin: a }, { webContentsId: 2 }, { resourceType: 'mainFrame' }, { method: 'POST' }])
+      assert.equal(filter({ ...doc, ...change }).cancel, true);
+    const asset = { ...doc, url: origin + '/style.css', resourceType: 'stylesheet', initiatorOrigin: origin };
+    assert.equal(filter(asset).cancel, false);
+    assert.equal(filter({ ...asset, url: a + '/api/read' }).cancel, true);
+    assert.equal(filter({ ...asset, url: 'http://127.0.0.1/' }).cancel, true);
+    assert.equal(filter({ ...asset, url: 'https://example.invalid/' }).cancel, true);
+    first.active = false;
+    assert.equal(filter(doc).cancel, true);
+    assert.equal(filter(asset).cancel, true);
+  } finally { router.dispose(); }
 });
 test('frame navigation, permissions and handler cleanup stay confined to owned editors', () => {
   const {router,a,b,contents,permission,check}=setup();
@@ -48,7 +74,7 @@ test('frame navigation, permissions and handler cleanup stay confined to owned e
 test('Markdown navigation and worker requests stay on the owning task’s preview origin', () => {
   const {router,a,b,contents,filter}=setup();
   const stop = router.attach(contents);
-  const base = markdownPreviewEndpoint(new URL(a).hostname).replace('{{uuid}}', 'a'.repeat(52));
+  const base = codeWebviewEndpoint(new URL(a).hostname).replace('{{uuid}}', 'a'.repeat(52));
   const origin = new URL(base).origin;
   const indexUrl = new URL('index.html', base);
   indexUrl.searchParams.set('extensionId', 'vscode.markdown-language-features');

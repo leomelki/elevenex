@@ -1,5 +1,7 @@
 import { McpManagementService } from '../mcp/config/mcp-management.service.js';
 import { McpConfigFileService } from '../mcp/config/mcp-config-file.service.js';
+import { AntigravityRuntimeModule } from '../antigravity-runtime/antigravity-runtime.module.js';
+import { AntigravityRuntimeProvider } from '../antigravity-runtime/antigravity-runtime.provider.js';
 import { OpenCodeRuntimeModule } from '../opencode-runtime/opencode-runtime.module.js';
 import { OpenCodeAgentRuntimeProvider } from '../opencode-runtime/opencode-agent-runtime.provider.js';
 import { Module, forwardRef } from '@nestjs/common';
@@ -33,6 +35,7 @@ import {
     forwardRef(() => CodexRuntimeModule),
     forwardRef(() => PiRuntimeModule),
     forwardRef(() => OpenCodeRuntimeModule),
+    forwardRef(() => AntigravityRuntimeModule),
   ],
   controllers: [AgentRuntimeController, ClaudeRuntimeController],
   providers: [
@@ -44,12 +47,14 @@ import {
         codexProvider: CodexAgentRuntimeProvider,
         piProvider: PiAgentRuntimeProvider,
         openCodeProvider: OpenCodeAgentRuntimeProvider,
-      ) => [claudeProvider, codexProvider, piProvider, openCodeProvider],
+        antigravityProvider: AntigravityRuntimeProvider,
+      ) => [claudeProvider, codexProvider, piProvider, openCodeProvider, antigravityProvider],
       inject: [
         ClaudeAgentRuntimeProvider,
         CodexAgentRuntimeProvider,
         PiAgentRuntimeProvider,
         OpenCodeAgentRuntimeProvider,
+        AntigravityRuntimeProvider,
       ],
     },
     AgentRuntimeRegistryService,

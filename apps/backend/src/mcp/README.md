@@ -21,7 +21,8 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   `app.init()` so mission startup and workspace configuration see the actual address.
   `McpAgentEndpointService` owns the listener and publishes its address as application
   process configuration in `ELEVENEX_MCP_URL`; the shared `elevenexMcpUrl()` resolver
-  supplies Claude, Codex (including forks), OpenCode, Pi, and mission workspace config.
+  supplies Antigravity, Claude, Codex (including forks), OpenCode, Pi, and mission
+  workspace config.
   An explicit nonblank `ELEVENEX_MCP_URL` takes precedence in either transport mode.
   Socket mode fails explicitly if a runtime requests the URL before endpoint startup.
   The extra listener accepts only `/api/mcp`, validates Host/Origin, and requires a
@@ -32,7 +33,8 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   ports. Existing provider processes retain their loaded tools/configuration; after
   deploying backend changes, reconnect idle runtimes to adopt the new endpoint.
 - **Identity**: every coding session and mission lazily receives a stable `mcpAgentToken`.
-  Claude, Codex, and OpenCode receive the authenticated HTTP server through runtime configuration;
+  Antigravity, Claude, Codex, and OpenCode receive the authenticated HTTP server
+  through runtime configuration.
   Pi receives `ELEVENEX_AGENT_TOKEN` and `ELEVENEX_MCP_URL` through its extension environment.
   Credentials are never written to the coding repository or included in the model prompt.
   Tokens resolve to the calling session, independently of UI focus, and cached identities are
@@ -242,7 +244,10 @@ may have accepted a notice before a crash, Elevenex leaves it unconfirmed
 and avoids starting a second turn. The delegating session can see
 `completionNotice` in `session_status` and inspect the child directly.
 Plan mode and pending task finish requests prevent automatic continuation.
-An explicit stop of the parent clears its outstanding notices.
+An explicit stop of the parent clears its outstanding notices. Antigravity
+parents can launch and wait for delegates. If work outlasts the wait or is
+launched asynchronously, collect it with `await_session_event`. Starting a new
+Antigravity turn requires a desktop chat send.
 
 Use `prompt_session` for a focused follow-up. Authenticated sends carry the
 sender’s session ID. The tool starts an idle session and prefers live input

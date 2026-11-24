@@ -263,7 +263,7 @@ export class SessionCompletionNoticesService
         this.outbox.discardForRecipient(recipientId);
         return;
       }
-      if (recipient.status !== 'active' || recipient.planMode) return;
+      if (recipient.status !== 'active' || recipient.planMode || recipient.activeAgentProvider === 'antigravity') return;
       const runtime = this.registry.getProvider(recipient.activeAgentProvider);
       const state = await this.readRuntime(runtime, recipientId);
       if (!isSessionSettled(state) || state?.planMode) return;

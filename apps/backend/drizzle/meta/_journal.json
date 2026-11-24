@@ -428,6 +428,20 @@
       "when": 1795529891524,
       "tag": "0060_temporary_agent_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1795535000000,
+      "tag": "0061_sidebar_session_priority",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1795539899320,
+      "tag": "0062_antigravity",
+      "breakpoints": true
     }
   ]
 }

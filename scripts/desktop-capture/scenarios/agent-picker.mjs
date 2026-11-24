@@ -83,7 +83,7 @@ export default async function* (capture) {
       };
     });
     assert.equal(rail.width, 340);
-    assert.deepEqual(rail.logos, [['Claude Code', true], ['Codex', true], ['Pi', true], ['OpenCode', true], ['Local runner', false]]);
+    assert.deepEqual(rail.logos, [['Claude Code', true], ['Codex', true], ['Pi', true], ['Antigravity', true], ['OpenCode', true], ['Local runner', false]]);
     assert.deepEqual(rail.thumb, [0, 0]);
     assert.equal(rail.plan, '12% left'); assert.equal(rail.tone, 'attention'); assert.equal(rail.context, 'attention');
     const unlockedList = await listHeight();
@@ -102,6 +102,12 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Pi');
     assert.equal(await listHeight(), unlockedList, 'Switching harness must not resize the list');
     yield { name: theme + '-pi', selector: '.agent-settings', inspect: ['.agent-settings', '.rail', '.models'] };
+
+    await capture.press('ArrowDown');
+    await capture.waitFor(() => document.querySelector('ex-agent-picker > button ex-agent-mark[data-harness="antigravity"] path'));
+    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Antigravity');
+    await finish();
+    yield { name: theme + '-antigravity', selector: '.agent-settings', inspect: ['.agent-settings', '.rail', 'ex-agent-picker > button'] };
 
     // A long list gets a filter; typing from the list starts it, Escape clears it first.
     await capture.press('End');

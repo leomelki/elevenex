@@ -272,7 +272,7 @@ Motion explains change and never makes you wait. Timings and curves are tokens (
 - **The reminder slides, it doesn't pop.** `ChatScroll`'s pinned message slides down 8px and fades in, leaves on `ease-in`, and its text blurs in when the exchange changes; on first paint it's simply there.
 - **A control that changes its label stays the same element and eases its width.** Git's one button (Commit 7 → Committing… → Push 2 → gone) is never swapped for another: its icon and label crossfade in place (`EaseSwap`) while its width eases on `ease-in-out` (sizes never spring). It only grows in or closes when there's a step to show or none: the empty pill grows out from the right and its label fades in once there's room (closing is the reverse), so text is never cut by a hard edge; right-aligned controls give way into the space beside them, so nothing else in the row moves.
 - **Opening context never moves what you're reading.** In `DiffReview`, lines opened above a hunk grow upward while the scroll follows, so the hunk stays put; lines opened below grow under where you were. Switching Changes ↔ Full files keeps the change you were reading at the same height. Marking a long file Viewed from inside it moves to its start under the stuck header before folding, so nothing jumps. Lines that load late arrive the same way: in view the skeleton eases to the real height, and above the view the scroll absorbs the change.
-- **The review takes over the chat, it doesn't cover the window.** Wider review eases the Changes panel over the chat's place while the chat fades at its own width (no reflow); the rail and sidebar stay still. In and out are one motion: the review's file column and gutters open and close with the panel, never after it.
+- **The review takes over the chat, it doesn't cover the window.** Wider review eases the Changes panel over the chat's place while the chat recedes at its own width (no reflow): it steps back to 0.95 towards its left edge and fades to 70%, like the card behind a sheet, and its edge stays in view beside the panel, which casts `shadow-cover` onto it so the panel reads as on top. Pressing that edge brings the chat back: under the pointer the chat leans forward (0.96, a little more color) and its grabber bends into a chevron towards where the panel will go; a press settles it instantly. The rail and sidebar stay still. In and out are one motion: the review's file column and gutters open and close with the panel, never after it.
 - **Modal surfaces recede the window.** A sheet or a confirm sits over the whole window, title bar included, and the window steps back: 98.5% scale, a 3px blur, a little less color, on the launch curve; it comes forward quicker on the way out (`ModalLayer`, `Sheet`, `useRecede`). Menus and popovers don't (they're anchored and light), and the machine launch and the lightbox keep their own motion.
 - **Leaving is quicker than arriving.** Exits run on `ease-in` at about two thirds of the entry (`Presence` keeps an element mounted while it leaves, without taking input).
 - **Optimistic first.** A created task, a sent message, an approval appear at once; skeletons only after 150ms, and replaced in place.
@@ -326,6 +326,7 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 ### Shadows
 
 - `shadow-glass` for regions, `shadow-raised` for items on a surface, `shadow-pop` for anything floating. Dark mode leans on the 1px top highlight in each.
+- `shadow-cover` for a surface that slides sideways over another, like the review taking over the chat: a short, soft fall-off leftward from the covering edge onto what stays in view, kept tight so the uncovered strip stays flat. In dark mode a 1px highlight marks the covering edge, like the top highlight.
 
 ## Iconography
 
@@ -333,7 +334,16 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 - Fixed meanings: `terminal`, `code`, `changes`, `actions`, `globe` (browser) for side views; `fork` and `side-chat` for branching a conversation; `branch`, `commit` and `push` for git; `close-task` (a ticked square) for closing a task, `archive` only for lists of closed things; `workspace` for workspaces; `expand` / `shrink` for Wider review; `expand-up`, `expand-down` and `unfold` for opening context around a hunk; `wrap` for line wrapping; `folder` in file lists.
 - The bundled set is original and small. For icons it lacks, use Lucide at the same 1.5 stroke; flag any mismatch rather than mixing styles.
 - No emoji (except a project face someone picked) and no filled icons; PRs and tickets show the `pr` / `merged` / `ticket` icons.
-- Agent harnesses are the one other place for outside marks: wherever you choose or recognise a harness (the agent chip and menu, preset cards and reply gutter), Claude Code, Codex, OpenCode and Pi show their real logos (`AgentMark`), bundled with the app, in `currentColor` for compact picker/preset controls. Reply gutters use soft 28px tinted tiles: Claude in terracotta on peach; Codex in an app-inspired periwinkle gradient on a blue tint; OpenCode and Pi in `ink` on a neutral tint. These identity colours live in the theme-aware `harness-*` tokens, separately from status colours; they do not indicate selection or activity. Optical sizing balances the thin Claude rays against the denser marks. Unknown harnesses keep a two-letter monogram (on `accent-soft` in compact controls, neutral with `ink-muted` in replies). The live turn retains its teal breathing ring; reduced motion stops it.
+- `AgentMark` bundles the Antigravity, Claude Code, Codex, OpenCode and Pi logos
+  for harness chips, menus, presets and reply gutters. Compact picker and preset
+  controls use `currentColor`. Reply gutters use soft 28px tinted tiles. Claude uses
+  terracotta on peach and Codex uses an app-inspired periwinkle gradient on a blue
+  tint. Antigravity uses Google's full-color mark on a neutral tint. OpenCode and
+  Pi use `ink` on a neutral tint. The theme-aware `harness-*` tokens define tile
+  and identity colors independently of status and selection. Optical sizing
+  balances the thin Claude rays against denser marks. Unknown harnesses use
+  two-letter monograms on `accent-soft` in compact controls and neutral with
+  `ink-muted` in replies. Reduced motion stops the live turn's teal breathing ring.
 - Projects are the one place for outside imagery: each may carry its own logo (`ProjectMark`), shown as given, never recolored. Without one, the face is two letters, an emoji or an icon from the set, on the project's color. The sample logos in these previews are placeholders.
 - The Elevenex logo is traced in the root `elevenex-logo.svg`. `pnpm desktop:icons`
   generates the pale-on-charcoal application tile and monochrome system-tray

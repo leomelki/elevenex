@@ -5,7 +5,7 @@ import { WorkspaceStore } from './workspace.store';
 @Component({
   selector: 'ex-workspace-onboarding',
   imports: [NewProjectComponent],
-  template: `<ex-new-project [machine]="store.machine()?.name ?? 'this machine'" [listFolders]="store.folderProvider()" [checkName]="store.projectNameProvider()" [active]="!!store.scopeId() && !launching()" [busy]="store.busy()" [disabled]="!store.scopeId()" [error]="store.error()" [recoveryRequired]="store.mutationUncertain()" [recovering]="store.loading()" (recoveryRequested)="store.refresh()" [launching]="launching()" [autoFocus]="true" (create)="create($event)" />`,
+  template: `<ex-new-project [allowImage]="store.projectImagesAvailable()" [machine]="store.machine()?.name ?? 'this machine'" [listFolders]="store.folderProvider()" [checkName]="store.projectNameProvider()" [active]="!!store.scopeId() && !launching()" [busy]="store.busy()" [disabled]="!store.scopeId()" [error]="store.error()" [recoveryRequired]="store.mutationUncertain()" [recovering]="store.loading()" (recoveryRequested)="store.refresh()" [launching]="launching()" [autoFocus]="true" (create)="create($event)" />`,
   styles: `:host { display: block; width: min(540px, 100%); }`,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

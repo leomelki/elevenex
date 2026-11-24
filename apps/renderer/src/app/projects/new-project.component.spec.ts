@@ -227,7 +227,7 @@ describe('New project supplied-data flow', () => {
     fixture.detectChanges();
     const controls = Array.from(fixture.nativeElement.querySelectorAll('button'));
     expect(controls.length).toBeGreaterThan(6);
-    expect(controls.every(control => control instanceof HTMLButtonElement && control.disabled)).toBe(true);
+    expect(controls.every(control => control instanceof HTMLButtonElement && (control.disabled || control.getAttribute('aria-disabled') === 'true'))).toBe(true);
     const hue: HTMLButtonElement | null = fixture.nativeElement.querySelector('button[aria-label="pine"]');
     hue?.click();
     expect(changed).not.toHaveBeenCalled();

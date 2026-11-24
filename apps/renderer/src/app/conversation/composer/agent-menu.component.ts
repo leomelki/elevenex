@@ -22,6 +22,7 @@ import type {
   AgentConfig,
   AgentHarness,
   AgentModel,
+  AgentPlanLimit,
 } from "../conversation.models";
 import { withHarness, withModel } from "./agent-config";
 import { AgentMarkComponent } from "./agent-mark.component";
@@ -186,6 +187,11 @@ export class AgentMenuComponent {
     const harness = this.harnesses().find((item) => item.id === id);
     if (harness && id !== this.value().harness)
       this.changed.emit(withHarness(this.value(), harness));
+  }
+  protected quotaText(limit: AgentPlanLimit): string {
+    return limit.left <= 0
+      ? `Used up${limit.resetShort ? " · " + limit.resetShort : ""}`
+      : `${usagePercent(limit.left)} left`;
   }
   protected modelChange(model: AgentModel): void {
     if (this.disabled() || this.choicesBusy() || model.id === this.value().model)

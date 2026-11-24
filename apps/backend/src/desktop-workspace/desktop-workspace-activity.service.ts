@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from '../agent-runtime/agent-runtime.types.js';
@@ -191,6 +192,15 @@ export class DesktopWorkspaceActivityService
   }
   transientIds(): readonly number[] {
     return [...new Set([...this.hookActive, ...[...this.runtime.values()].map(entry => entry.sessionId)])];
+  }
+
+  /** Candidate IDs only. The persisted row and provider determine the final status. */
+  priorityCandidateIds(): readonly number[] {
+    const ids = new Set(this.hookActive);
+    for (const entry of this.runtime.values()) {
+      if (isWorkspacePriorityStatus(entry.turn)) ids.add(entry.sessionId);
+    }
+    return [...ids];
   }
 
   turnStatus(session: WorkspaceSessionActivity): string {

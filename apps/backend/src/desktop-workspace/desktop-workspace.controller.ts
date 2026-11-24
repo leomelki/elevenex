@@ -61,10 +61,12 @@ export class DesktopWorkspaceController {
       version: 1,
       revisionWait: true,
       chatStream: true,
+      sessionPriority: true,
       sessionNesting: true,
       sessionNestingOrder: true,
       taskRequests: true,
       commitPanel: true,
+      projectImages: true,
       sessionArchive: true,
       sessionArchiveChildren: true,
       sessionArchiveHistory: true,
@@ -101,7 +103,7 @@ export class DesktopWorkspaceController {
     await this.changed(this.projectDeletion.delete(resourceId(id)));
     return { accepted: true };
   }
-  @Get('projects') listProjects(@Query() query: PageQuery) {
+  @Get('projects') listProjects(@Query() query: PageQuery & { images?: string }) {
     return this.workspace.listProjects(query);
   }
   @Get('projects/name-availability') projectNameAvailability(

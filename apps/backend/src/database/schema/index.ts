@@ -21,6 +21,7 @@ export * from './claude-tool-interactions.schema.js';
 export * from './worktree-context.schema.js';
 export * from './app-settings.schema.js';
 export * from './turn-changes.schema.js';
+export * from './antigravity-turns.schema.js';
 export * from './desktop-workspace.schema.js';
 
 export * from './session-reply-returns.schema.js';

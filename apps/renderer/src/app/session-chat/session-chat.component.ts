@@ -44,6 +44,7 @@ import {
   type AgentConfig,
   type AgentHarness,
   type AgentModel,
+  type AgentPlanLimit,
   type PermissionChoice,
   type ConversationMention,
   type ToolContentRequest,
@@ -67,7 +68,7 @@ import { SessionAgentComponent } from './session-agent.component';
 import { SessionActivityComponent } from "./session-activity.component";
 import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import { sessionPlanUsage } from "./session-chat-usage";
+import { sessionModelLimits, sessionModelPlan, sessionPlanUsage } from "./session-chat-usage";
 import { presentSessionTool } from './session-chat-tools';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { SessionAgentTurnProjection } from './session-agent-turns';
@@ -85,6 +86,10 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
 // Activity/token updates must not invalidate unchanged composer configuration.
 function equalViewData<T>(left: T, right: T): boolean {
   return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+function limitFor(limits: readonly AgentPlanLimit[], model: string): { limit?: AgentPlanLimit } {
+  const limit = limits.find((item) => item.id === model);
+  return limit ? { limit } : {};
 }
 
 @Component({
@@ -288,14 +293,24 @@ export class SessionChatComponent {
     : this.store.offline() ? 'Reconnect to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
+  private readonly modelLimits = computed(
+    () => sessionModelLimits(this.store.state()?.modelQuota, this.usageTime()),
+    { equal: equalViewData },
+  );
   readonly models = computed<readonly AgentModel[]>(() => {
     const state = this.store.state();
-    const models = state?.models.length ? state.models : this.modelCatalog.value()?.models ?? [];
+    const limits = this.modelLimits();
+    const catalog = this.modelCatalog.value();
+    const catalogModels = state && catalog?.provider === state.provider ? catalog.models : [];
+    const models = state?.provider === 'antigravity' && !state.providerLocked && catalogModels.length
+      ? catalogModels
+      : state?.models.length ? state.models : catalogModels;
     return models.map((model) => ({
       id: model.id,
       label: model.label,
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
+      ...limitFor(limits, model.id),
     }));
   }, { equal: equalViewData });
   readonly providers = computed(() => this.store.state()?.providers ?? [], { equal: equalViewData });
@@ -386,6 +401,10 @@ export class SessionChatComponent {
   readonly agent = computed<AgentConfig | undefined>(() => {
     const state = this.store.state();
     if (!state) return undefined;
+    const catalog = this.modelCatalog.value();
+    const discovered = state.provider === 'antigravity' && !state.providerLocked && catalog?.provider === state.provider
+      ? catalog : null;
+    const model = state.model ?? discovered?.model ?? '';
     return {
       preset: this.presetFlow.selectedPreset()?.preset,
       presetEdited: this.showWelcome() && !!this.presetFlow.drift(),
@@ -394,17 +413,18 @@ export class SessionChatComponent {
       mark:
         this.harnesses().find((harness) => harness.id === state.provider)
           ?.mark ?? "Ag",
-      model: state.model ?? "",
-      // The closed control uses the first page's display data. A secondary
-      // model catalog may enrich the menu without resizing the toolbar.
-      modelLabel: state.models.find(model => model.id === state.model)?.label ?? state.model ?? '',
-      thinking: state.reasoning ?? undefined,
+      model,
+      modelLabel: state.models.find(option => option.id === model)?.label ??
+        discovered?.models.find(option => option.id === model)?.label ?? model,
+      thinking: state.reasoning ?? (model === discovered?.model ? discovered?.reasoning ?? undefined : undefined),
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
       tokens: state.context
         ? `${this.tokenNumber.format(state.context.tokens).toLowerCase()} of ${this.tokenNumber.format(state.context.limit).toLowerCase()}`
         : undefined,
-      plan: sessionPlanUsage(state.planUsage, this.usageTime()),
+      plan:
+        sessionPlanUsage(state.planUsage, this.usageTime()) ??
+        sessionModelPlan(state.modelQuota, this.modelLimits().find((limit) => limit.id === model), this.providerLabel()),
     };
   }, { equal: equalViewData });
   readonly editedPreset = computed<AgentConfig | undefined>(() => {
@@ -467,16 +487,22 @@ export class SessionChatComponent {
       });
     }
   }
-  readonly permissions = computed<readonly PermissionChoice[]>(() =>
-    (this.store.state()?.permissionModes ?? []).map((id) => ({
+  readonly permissions = computed<readonly PermissionChoice[]>(() => {
+    const state = this.store.state();
+    return (state?.permissionModes ?? []).map((id) => ({
       id,
       detail:
         (
           {
             default: "Ask before the agent takes protected actions",
             acceptEdits: "Apply edits; ask before commands",
-            bypassPermissions: "Allow actions without permission prompts",
-            auto: "Use the harness’s automatic permission policy",
+            "accept-edits": "Approve workspace edits automatically",
+            bypassPermissions: state?.provider === "antigravity"
+              ? "Automatically approve Antigravity tool requests"
+              : "Allow actions without permission prompts",
+            auto: state?.provider === "antigravity"
+              ? "Approve edits and run routine commands automatically"
+              : "Use the harness’s automatic permission policy",
             plan: "Read and propose before making changes",
             dontAsk: "Deny actions that need permission",
           } as Readonly<Record<string, string>>
@@ -486,15 +512,15 @@ export class SessionChatComponent {
           {
             default: "Ask first",
             acceptEdits: "Auto-edit",
-            bypassPermissions: "Full auto",
+            "accept-edits": "Accept edits",
+            bypassPermissions: state?.provider === "antigravity" ? "Full access" : "Full auto",
             auto: "Auto",
             plan: "Plan",
             dontAsk: "Do not ask",
           } as Readonly<Record<string, string>>
         )[id] ?? id,
-    })),
-    { equal: equalViewData },
-  );
+    }));
+  }, { equal: equalViewData });
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
       id: q.id,
@@ -627,7 +653,8 @@ export class SessionChatComponent {
         untracked(() => { void this.store.markSeen(); });
     });
     effect((cleanup) => {
-      if (!this.store.state()?.planUsage) return;
+      const state = this.store.state();
+      if (!state?.planUsage && !state?.modelQuota?.models.length) return;
       this.usageTime.set(Date.now());
       const timer = setInterval(() => this.usageTime.set(Date.now()), 30_000);
       cleanup(() => clearInterval(timer));

@@ -61,6 +61,16 @@ describe("SessionStart preset selection", () => {
     expect(selections).toEqual(["Preset 6"]);
   });
 
+  it("shows the Antigravity logo on a saved preset", () => {
+    fixture.componentRef.setInput("presets", [
+      { preset: "Gemini review", harness: "antigravity", harnessLabel: "Antigravity", mark: "An", model: "gemini" },
+    ]);
+    fixture.detectChanges();
+    const card: HTMLElement = fixture.nativeElement.querySelector("ex-preset-card");
+    expect(card.textContent).toContain("Antigravity");
+    expect(card.querySelector('ex-agent-mark[data-harness="antigravity"] svg[fill="currentColor"] path')).not.toBeNull();
+  });
+
   it("applies later owner selections after a local preset choice", () => {
     fixture.componentRef.setInput("value", "Preset 2");
     fixture.detectChanges();

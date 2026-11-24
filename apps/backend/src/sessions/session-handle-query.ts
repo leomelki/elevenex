@@ -84,6 +84,7 @@ export async function querySessionHandles(
           codexSessionId: schema.sessions.codexSessionId,
           piSessionPath: schema.sessions.piSessionPath,
           opencodeSessionId: schema.sessions.opencodeSessionId,
+          antigravitySessionId: schema.sessions.antigravitySessionId,
         })
         .from(schema.sessions)
         .innerJoin(schema.repos, eq(schema.sessions.repoId, schema.repos.id))

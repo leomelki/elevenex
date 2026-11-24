@@ -21,6 +21,16 @@ import {
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
 
+function requirePromptableProvider(provider: string): void {
+  if (provider === 'antigravity') {
+    throw new ToolError({
+      code: 'interactive_provider',
+      message: 'Antigravity accepts messages sent directly from desktop chat.',
+      remediation: 'Open the Antigravity session in the desktop app to send a message.',
+    });
+  }
+}
+
 export const promptSessionTool = defineTool({
   name: 'prompt_session',
   title: 'Prompt session',
@@ -74,6 +84,7 @@ export const promptSessionTool = defineTool({
       ctx,
       args.sessionId,
     );
+    requirePromptableProvider(provider);
 
     const mentionSessionIds = [...new Set(args.mentionSessionIds ?? [])];
     // Validate all references before exporting history or starting the target.
@@ -121,6 +132,7 @@ export const promptSessionTool = defineTool({
         ctx,
         args.sessionId,
       ));
+      requirePromptableProvider(provider);
       ctx.signal.throwIfAborted();
     }
 

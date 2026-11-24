@@ -11,6 +11,8 @@ import { TasksService } from '../tasks/tasks.service.js';
 import { TaskGitService } from '../tasks/task-git.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
+import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
 import { inactiveSessionStatus, type WorkspaceSessionActivity } from './desktop-session-status.js';
 import { DesktopWorkspaceService } from './desktop-workspace.service.js';
@@ -22,6 +24,56 @@ describe('DesktopWorkspaceService', () => {
   let repoId: number;
   let taskId: number;
   const retryTask = jest.fn();
+  const candidateIds = jest.fn<readonly number[], []>();
+  const liveStatuses = new Map<number, string>();
+  it('pages active sessions and unseen completions across root and child history', async () => {
+    const create = (values: Partial<typeof schema.sessions.$inferInsert> = {}) =>
+      database.db.insert(schema.sessions).values({
+        repoId, workspaceId: taskId, branchName: 'main', worktreePath: '/repo/task', ...values,
+      }).returning().get();
+    const parent = create();
+    const running = create({ parentSessionId: parent.id, delegatedBySessionId: parent.id });
+    const waiting = create();
+    const unread = create({ status: 'active', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const incomplete = create({ hasUnreviewedCompletion: true });
+    const archived = create({ status: 'archived', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const temporary = create({ isTemporary: true });
+    const foreign = create({ workspaceId: null });
+    for (let index = 0; index < 30; index++) create();
+    liveStatuses.set(running.id, 'running');
+    liveStatuses.set(waiting.id, 'attention');
+    liveStatuses.set(archived.id, 'running');
+    liveStatuses.set(temporary.id, 'running');
+    liveStatuses.set(foreign.id, 'running');
+    candidateIds.mockReturnValue([...liveStatuses.keys(), incomplete.id]);
+    const query = { state: 'priority', limit: '2' };
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row => row.id)).toEqual([unread.id]);
+    expect(latest.nextCursor).toBe(String(unread.id));
+    const earlier = await service.listSessions(taskId, { ...query, cursor: latest.nextCursor! });
+    expect(earlier.items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    expect(earlier.parentSessions?.map(row => row.id)).toEqual([parent.id]);
+    expect(earlier.items[0].delegatedBy).toMatchObject({ sessionId: parent.id });
+    expect(earlier.parentSessions?.[0]).toMatchObject({
+      childSummary: { status: 'running', count: 1 },
+      activeChildAgents: [running.id],
+      childStopRequired: true,
+    });
+    expect(earlier.nextCursor).toBeNull();
+    expect((await service.listSessions(taskId, { limit: '20', order: 'latest' })).items.every(row => row.id > unread.id)).toBe(true);
+    database.db.update(schema.sessions).set({ hasUnreviewedCompletion: false }).where(eq(schema.sessions.id, unread.id)).run();
+    expect((await service.listSessions(taskId, { ...query, limit: '100' })).items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    await expect(service.listSessions(taskId, { ...query, parentSessionId: 'root' })).rejects.toThrow(BadRequestException);
+
+    liveStatuses.delete(running.id);
+    database.db.update(schema.sessions).set({
+      hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:01:00Z',
+    }).where(eq(schema.sessions.id, running.id)).run();
+    const completedChild = await service.listSessions(taskId, { ...query, limit: '100' });
+    expect(completedChild.items.find(row => row.id === running.id)?.status).toBe('review');
+    expect(completedChild.parentSessions?.[0].childSummary).toBeUndefined();
+  });
+
   const activityStatus = jest.fn<string | undefined, []>();
   const detachedCommands = jest.fn<number, []>();
   const archiveSession = jest.fn();
@@ -57,6 +109,8 @@ describe('DesktopWorkspaceService', () => {
     expect(retryTask).not.toHaveBeenCalled();
   });
   beforeEach(async () => {
+    candidateIds.mockReset().mockReturnValue([]);
+    liveStatuses.clear();
     activityStatus.mockReset();
     detachedCommands.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();
@@ -94,11 +148,17 @@ describe('DesktopWorkspaceService', () => {
     const module = await Test.createTestingModule({
       providers: [
         DesktopWorkspaceService,
+        DesktopSessionDelegates,
+        { provide: AgentRuntimeRegistryService, useValue: {} },
         TaskGitService,
         { provide: DesktopWorkspaceActivityService, useValue: {
           status: activityStatus,
+          priorityCandidateIds: candidateIds,
+          transientIds: candidateIds,
+          turnStatus: (row: WorkspaceSessionActivity) => liveStatuses.get(row.id) ?? inactiveSessionStatus(row),
+          delegation: { get: () => undefined },
           view: (row: WorkspaceSessionActivity) => ({
-            status: activityStatus() ?? inactiveSessionStatus(row),
+            status: liveStatuses.get(row.id) ?? activityStatus() ?? inactiveSessionStatus(row),
             ...(detachedCommands() ? { turnStatus: 'review', commandCount: detachedCommands() } : {}),
           }),
         } },
@@ -140,6 +200,7 @@ describe('DesktopWorkspaceService', () => {
         {
           provide: SessionsService,
           useValue: {
+            delegationHandoffs: { waiting: () => false },
             archiveAllByProject: jest.fn().mockResolvedValue(undefined),
             archiveAndStop: archiveSession,
             archiveTaskSessionGroup: archiveGroup,
@@ -397,6 +458,27 @@ describe('DesktopWorkspaceService', () => {
     await expect(
       service.updateProject(projectId, { appearance: { hue: 'pink' } }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('creates, replaces and removes project images while preserving unmodified fields and legacy pages', async () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMOQgG2k4AQ88ZEmP/UvHXPvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0FBhVS3x1b1tkAAAAASUVORK5CYII=';
+    const created = await service.createProject({ name: 'Branded', path: '/one', appearance: { look: 'letters', image } });
+    const id = created.project.id;
+    expect(created.project.appearance).toEqual({ look: 'letters', image });
+    const lookup = async (images?: string) =>
+      (await service.listProjects({ images })).items.find(project => project.id === id)?.appearance;
+    expect(await lookup()).toEqual({ look: 'letters' });
+    expect(await lookup('true')).toEqual({ look: 'letters', image });
+
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo' } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image });
+    const replacement = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMLShDhk4BQ88ZEmP/UvHmvvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0Fo4lEhTMAsccAAAAASUVORK5CYII=';
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: replacement } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image: replacement });
+    await expect(service.updateProject(id, { appearance: { image: 'file:///tmp/icon.png' } })).rejects.toBeInstanceOf(BadRequestException);
+    expect(await lookup('true')).toMatchObject({ image: replacement });
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: null } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo' });
   });
 
   it('keeps archived conversation history navigable for closed tasks', async () => {

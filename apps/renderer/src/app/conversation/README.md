@@ -29,11 +29,12 @@ These standalone OnPush components consume renderer view models and emit typed i
   focus and leaves the reply and file chips available while the activity loads.
   `filesTotal` and `filesDiff` preserve complete work facts with a bounded file
   preview. Loaded and deferred turns share the same heading and fact priority.
-- `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
+- `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. The internal `ReplyMark` (`turns/reply-mark.component.ts`) renders a 28px tinted tile with `role="img"` named by `author`. Claude uses peach, Codex uses a periwinkle tile with a gradient glyph, and Antigravity uses the full-color logo on a neutral tile. OpenCode, Pi and monograms also use neutral tiles. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
   An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
   Focusing a link, code control or other content in the latest reply leaves Worked as it is. If a new reply turns that focused block into commentary, the timeline keeps it visible until focus leaves.
 - `ComposerComponent` owns the draft (`[(draft)]` is optional), mention query, local overlay state and file-drop feedback. It emits `ComposerSubmission` with `send`, `queue` or `steer`. Queue mutations, context additions/removals, recording and all agent settings are controlled by the owner. File attachment outputs contain user-selected browser `File` objects, which the integration must resolve through the permitted platform boundary.
+- Set `Composer.steeringEnabled=false` when the active harness queues all follow-ups. Alt Enter then emits a queue intent, and the send button shows the queue shortcut. Set each queued row’s `steerable` to false for the same harness.
 - Composer input content stays aligned to the top of its `AutoHeight` wrapper so text follows the animated edge during multiline growth, shrinkage and interrupted edits. The textarea owns native scrolling once its height cap is reached.
 - `QueuedMessage.renderId` optionally preserves an optimistic queue row through its saved receipt. Keep that key stable while the row remains present; `id` remains the durable identity emitted by queue actions. Replacing the mounted key would retain the outgoing row during its exit and briefly inflate the composer's measured height.
 - Set `QueuedMessage.steerable` and `removable` to false while a queue entry awaits its saved ID. A dispatched row leaves through the existing queue animation and releases keyboard focus to the composer in the connected view.
@@ -145,9 +146,11 @@ range subscriptions are released with the rail. The `/conversation` preview has
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
 End following also reconciles viewport-only height changes, including composer
-growth, without marking existing messages unread. The connected session owner
-mounts history and configured controls together after its first page. A cached
-latest window renders and positions immediately while refreshing. A different
+growth, without marking existing messages unread. A late scroll event from the
+previous bottom position or a transient restoration of that offset preserves
+following while layout settles. The connected session owner mounts history and
+configured controls together after its first page. A cached settled window
+renders and positions immediately while refreshing. A different
 session gets fresh scroll/disclosure ownership; same-session refresh and verified
 same-machine recovery retain the mounted view and reading position. Local session
 creation keeps its immediate editable welcome through the durable receipt.
@@ -455,8 +458,9 @@ The [AgentPicker specification](../../../../../docs/design-system/project/compon
 defines the chip and its menu (harness rail, models, thinking track, fast pill);
 the [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
 defines the chip's meters and hover card. The `/agent-picker` preview supplies
-Claude Code, Codex, Pi, OpenCode (a long, filterable list) and a harness without
-a logo, plus optional context/plan data and busy, locked and disabled states.
+Claude Code, Codex, Pi, Antigravity, OpenCode (a long, filterable list) and a
+harness without a logo, plus optional context/plan data and busy, locked and
+disabled states.
 Its `harnesses` signal supports catalog refresh scenarios. Once shown, model
 search stays mounted for that harness until the menu closes or the harness
 changes, including after the catalog shrinks or the query is cleared. Space
@@ -503,12 +507,13 @@ thinking level beside it. The accessible name still includes the harness.
   emitted once committed, and a rejected change returns the thumb to the actual
   level when the update settles. An absent thinking value shows “Default”
   rather than claiming the first level.
-- Internal `AgentMark` renders the bundled harness logo (`agent-logos.ts`:
-  Claude Code, Codex, OpenCode, Pi; MIT/published marks, attribution in the
-  file), sized by `--agent-mark-size`, or the `mark` monogram for any other
-  harness. Logos match exact harness IDs only. The default `plain` appearance
+- Internal `AgentMark` renders the bundled Antigravity, Claude Code, Codex,
+  OpenCode and Pi logos at `--agent-mark-size`. See `agent-logos.ts` for asset
+  attribution. Exact harness IDs select a logo. Other harnesses use the `mark`
+  monogram. The default `plain` appearance
   inherits `currentColor` for compact picker/preset controls. `appearance="tinted"`
   provides the reply tile, theme-aware `harness-*` colours and optical logo sizing.
+  Antigravity uses Google’s full-color SVG on the neutral reply tile.
   Codex uses a locally scoped SVG gradient with a unique ID per instance; it is
   app-inspired, not an official coloured asset. No animation belongs to this mark.
 - `agent-config.ts` holds the shared config transitions (`withHarness`,
@@ -524,7 +529,12 @@ thinking level beside it. The accessible name still includes the harness.
   actual provider IDs, labels, remaining fractions, optional `weekly`, `reset`
   and compact `resetShort` text. A weekly-only snapshot never invents a 5-hour
   allowance. Optional `exhausted` also reflects a provider-declared limit.
-  Missing plan data is omitted. No account catalog, provider or transport reads
+  `scope: "model"` marks a per-model allowance (Antigravity): the windows
+  describe the selected model, so the notice names that model and suggests
+  another instead of reporting a plan-wide limit. `AgentModel.limit` carries a
+  model's reported allowance; the menu shows it beside that row (“Used up ·
+  14:30”, “15% left”) and never disables the choice, since a reset can arrive
+  before the next report. Missing plan data is omitted. No account catalog, provider or transport reads
   originate in these components.
 - Internal `PopoverPresence` retains the two portaled surfaces and their
   readonly data snapshots through their token-based exit and owns reduced-motion subscriptions/fallback timers. It

@@ -15,6 +15,7 @@ interface SavedSetting { readonly key: string; readonly value?: unknown }
  * Explorer on expansion, retaining its tree state and bounded file provider. */
 export class CompactLayout implements vscode.Disposable {
   private compact?: boolean;
+  private requested?: boolean;
   private browsing = false;
   private moved = false;
   private linkedViewMoved = false;
@@ -40,7 +41,10 @@ export class CompactLayout implements vscode.Disposable {
     ];
   }
   dispose(): void { this.stopped = true; for (const subscription of this.subscriptions) subscription.dispose(); }
-  set(compact: boolean): Promise<void> { return this.run(() => this.setMode(compact)); }
+  /** The shell's latest layout, which may still be applying. Editors share one
+   * group in the narrow side panel. */
+  get isCompact(): boolean { return (this.requested ?? this.compact) === true; }
+  set(compact: boolean): Promise<void> { this.requested = compact; return this.run(() => this.setMode(compact)); }
   browse(view = FILE_VIEW): Promise<void> { return this.run(async () => {
     if (!this.compact) {
       await this.command(view === FILE_VIEW ? 'workbench.view.explorer' : view + '.focus');

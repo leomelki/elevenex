@@ -175,10 +175,15 @@ export class SessionChatStore {
     return '';
   });
   readonly queue = computed<readonly QueuedMessage[]>(() => {
+    const state = this.state();
     const pending = this.pendingQueue(),
-      queue = (this.state()?.queue ?? []).filter(item => !this.queuedDeliveries().has(item.id)).map((item): QueuedMessage => {
+      queue = (state?.queue ?? []).filter(item => !this.queuedDeliveries().has(item.id)).map((item): QueuedMessage => {
         const renderId = this.queueRenderIds().get(item.id);
-        return renderId ? { ...item, renderId } : item;
+        return {
+          ...item,
+          ...(renderId ? { renderId } : {}),
+          ...(state?.canSteer === false ? { steerable: false } : {}),
+        };
       });
     return pending ? [...queue, { id: pending.id, text: pending.text, steerable: false, removable: false }] : queue;
   });
@@ -388,7 +393,12 @@ export class SessionChatStore {
     this.pendingQueue.set(null);
     if (!recovery) this.queuedDeliveries.set(new Map());
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
-    const cached = this.drafts.snapshot(selection.sessionId);
+    const snapshot = this.drafts.snapshot(selection.sessionId);
+    // A running turn can change its visible tools while another session is
+    // selected. Open on a fresh bounded page so that work paints only once.
+    const cachedLive = snapshot && (snapshot.state.phase === 'running' ||
+      snapshot.state.phase === 'waiting' || !!snapshot.state.dispatchingPrompts?.length);
+    const cached = !readOnly && !this.offline() && cachedLive ? undefined : snapshot;
     if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.trailingContext.set([]); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
     if (!recovery) this.next.set(null);
@@ -866,6 +876,7 @@ export class SessionChatStore {
       } else this.error.set('Up to 20 actions can wait in this window. Remove one before adding another.');
       return;
     }
+    const state = this.state();
     const pending = {
       sendOrigin: submission.intent === "send" && !files.length && !mentions.length ? submission.sendOrigin : undefined,
       attachments: files,
@@ -874,7 +885,7 @@ export class SessionChatStore {
       id: "local-" + crypto.randomUUID(),
       confirmed: false,
       text,
-      queue: submission.intent === "queue",
+      queue: submission.intent === "queue" || (state?.canSteer === false && state.queuePaused),
       timestamp: new Date().toISOString(),
       knownIds: new Set(this.visibleItems().map(item => item.id)),
       knownQueueIds: new Set(this.state()?.queue.map((item) => item.id) ?? []),

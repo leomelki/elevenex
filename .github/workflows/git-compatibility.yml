@@ -45,7 +45,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
-      # This focused suite needs no native addons or frontend postinstall assets.
+      # This focused suite needs no native addons.
       - name: Install backend test dependencies
         run: pnpm --filter elevenex-backend... install --frozen-lockfile --ignore-scripts
       - name: Build and type-check backend

@@ -3,31 +3,24 @@ run-name: "${{ inputs.pull_request && format('PR #{0} preview', inputs.pull_requ
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feat/new-ui]
     paths:
       - 'apps/backend/**'
-      - 'apps/electron/**'
       - 'apps/desktop/**'
       - 'apps/renderer/**'
-      - 'packages/shared/**'
-      - 'apps/frontend/**'
       - 'apps/frontend/proxy.conf.json'
-      - 'scripts/stage-remote-runtime.js'
-      - 'scripts/stage-electron-backend.js'
-      - 'scripts/bundle-electron-backend.js'
-      - 'scripts/rebuild-electron-backend-natives.js'
-      - 'scripts/archive-electron-backend.js'
-      - 'scripts/stage-version.js'
-      - 'scripts/desktop-backend-*.mjs'
-      - 'scripts/collect-source-maps.js'
+      - 'apps/electron/remote-server-utils.cjs'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'docs/design-system/project/tokens.css'
+      - 'elevenex-logo.svg'
+      - 'tsconfig.desktop.json'
       - 'package.json'
-      - '.github/scripts/**'
       - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/scripts/**'
       - '.github/workflows/release-assets.yml'
-      - '.github/workflows/reusable-build-runtime.yml'
-      - '.github/workflows/reusable-build-macos-desktop.yml'
-      - '.github/workflows/reusable-build-linux-desktop.yml'
-      - '.github/workflows/reusable-build-windows-desktop.yml'
+      - '.github/workflows/reusable-build-*.yml'
   workflow_dispatch:
     inputs:
       pull_request:
@@ -47,13 +40,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-assets-${{ inputs.pull_request || github.ref }}-${{ inputs.head_sha || github.sha }}
+  group: release-assets-${{ inputs.pull_request || github.sha }}-${{ inputs.head_sha }}
   cancel-in-progress: false
 
 jobs:
   prepare:
     name: Resolve release commit
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -69,9 +62,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.22.3
       - name: Test release orchestration and runtime selection
-        run: node --test .github/scripts/*.test.cjs apps/electron/test/runtime-release.test.cjs apps/electron/test/app-updater-channel.test.cjs apps/electron/test/app-updater.test.cjs apps/electron/test/package-files.test.cjs
+        run: node --test .github/scripts/*.test.cjs
       - id: plan
         uses: actions/github-script@v7
         env:
@@ -88,53 +81,47 @@ jobs:
     uses: ./.github/workflows/reusable-build-runtime.yml
     with:
       source-sha: ${{ needs.prepare.outputs.sha }}
-      release-tag: ${{ needs.prepare.outputs.tag }}
 
-  build-macos-dmg:
+  build-desktop:
     needs: prepare
-    name: Build macOS desktop asset
-    uses: ./.github/workflows/reusable-build-macos-desktop.yml
+    name: Build desktop installers
+    uses: ./.github/workflows/reusable-build-desktop.yml
     with:
       source-sha: ${{ needs.prepare.outputs.sha }}
       release-tag: ${{ needs.prepare.outputs.tag }}
-    secrets: inherit
-
-  build-linux-desktop:
-    needs: prepare
-    name: Build Linux desktop assets
-    uses: ./.github/workflows/reusable-build-linux-desktop.yml
-    with:
-      source-sha: ${{ needs.prepare.outputs.sha }}
-      release-tag: ${{ needs.prepare.outputs.tag }}
-
-  build-windows-desktop:
-    needs: prepare
-    name: Build Windows desktop asset
-    uses: ./.github/workflows/reusable-build-windows-desktop.yml
-    with:
-      source-sha: ${{ needs.prepare.outputs.sha }}
-      release-tag: ${{ needs.prepare.outputs.tag }}
-    secrets: inherit
+    secrets:
+      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_ID_EMAIL: ${{ secrets.APPLE_ID_EMAIL }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
 
   release:
     name: Publish release assets
     needs:
       - prepare
       - build-runtime
-      - build-macos-dmg
-      - build-linux-desktop
-      - build-windows-desktop
+      - build-desktop
     permissions:
       contents: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: publish-runtime-${{ needs.prepare.outputs.tag }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: elevenex-*
           merge-multiple: true
 
       - name: List artifacts
@@ -147,6 +134,15 @@ jobs:
           RELEASE_PR: ${{ needs.prepare.outputs.pr }}
         run: node .github/scripts/write-release-manifest.cjs artifacts
 
+      - name: Write release notes
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_PR: ${{ needs.prepare.outputs.pr }}
+        # Written outside artifacts/ so it is not uploaded as a release asset.
+        run: node .github/scripts/write-release-notes.cjs artifacts "$RUNNER_TEMP/release-notes.md"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
@@ -156,12 +152,7 @@ jobs:
           prerelease: true
           files: artifacts/*
           fail_on_unmatched_files: true
-          body: |
-            Auto-built release assets for commit `${{ needs.prepare.outputs.sha }}`.
-            Includes remote runtime tarballs downloaded during SSH setup,
-            local desktop runtime tarballs downloaded by packaged desktop apps,
-            isolated Node backend tarballs for the new desktop,
-            plus macOS, Linux, and Windows desktop artifacts.
+          body_path: ${{ runner.temp }}/release-notes.md
 
       - name: Link release in workflow summary
         env:

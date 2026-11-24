@@ -1,8 +1,8 @@
 <div class="branch" [attr.data-session-root]="!session().parentId ? session().id : null" [class.drop-active]="dropActive()" [class.docked]="dropActive() && drag?.docked()"
   [class.unavailable]="unavailable()" [class.drag-source]="moving()" [class.outdent-preview]="outdentPreview()">
   <div class="branch-row">
-    @if (childCount()) {
-      <button class="disclosure" type="button" [attr.aria-label]="(expanded() ? 'Collapse children of ' : 'Expand children of ') + session().title"
+    @if (canExpand()) {
+      <button class="disclosure" type="button" [attr.aria-label]="disclosureLabel()"
         [attr.aria-expanded]="expanded()" (click)="toggle()" [exTooltip]="rollupLabel()">
         <ex-icon name="chevron-down" [size]="12" [class.closed]="!expanded()" />
       </button>
@@ -36,10 +36,10 @@
       </ng-template>
     }
   </div>
-  <ex-fold [open]="expanded() && (!!session().childCount || !!children().length)">
+  <ex-fold [open]="(expanded() && !!childCount()) || !!priorityChildren().length">
     <div class="children" [class.selected-family]="containsSelection() || selected() === session().id">
       @for (row of presence.rows(); track row.key) {
-        <ex-fold [open]="row.present && !row.entering" (transitionend)="presence.settled(row.key, $event)">
+        <ex-fold [open]="row.present && !row.entering && (expanded() || isPriority(row.value.status))" (transitionend)="presence.settled(row.key, $event)">
           <ex-session-branch [session]="row.value" [sessions]="sessions()" [selected]="selected()"
             [allowArchive]="allowArchive()" [allowNesting]="allowNesting()"
             [class.child-arrived]="row.entering && row.value.kind === 'delegated'"
@@ -47,16 +47,18 @@
             (deleteRequested)="deleteRequested.emit($event)" (moveRequested)="moveRequested.emit($event)" />
         </ex-fold>
       }
-      @if (hiddenChildCount(); as count) {
+      @if (expanded() && hiddenChildCount(); as count) {
         <button type="button" class="child-cap" [attr.aria-expanded]="showAllChildren()" (click)="showAllChildren.set(!showAllChildren())">
           <ex-icon [name]="showAllChildren() ? 'chevron-down' : 'chevron-right'" [size]="12" />
           {{ showAllChildren() ? 'Show fewer' : 'Show ' + count + ' more' }}
         </button>
       }
-      @if (session().childrenLoading) { <p role="status">Loading children…</p> }
-      @if (session().childrenError; as error) { <p role="alert">{{ error }} <button type="button" (click)="childrenRequested.emit({sessionId:session().id})">Retry</button></p> }
-      @if (session().earlierChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id})">Latest child sessions</button> }
-      @if (session().moreChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id,earlier:true})">Earlier child sessions</button> }
+      <ex-fold [open]="expanded()">
+        @if (session().childrenLoading) { <p role="status">Loading children…</p> }
+        @if (session().childrenError; as error) { <p role="alert">{{ error }} <button type="button" (click)="childrenRequested.emit({sessionId:session().id})">Retry</button></p> }
+        @if (session().earlierChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id})">Latest child sessions</button> }
+        @if (session().moreChildren) { <button class="earlier" type="button" [disabled]="session().childrenLoading" (click)="childrenRequested.emit({sessionId:session().id,earlier:true})">Earlier child sessions</button> }
+      </ex-fold>
     </div>
   </ex-fold>
 </div>

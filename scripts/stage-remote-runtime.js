@@ -372,20 +372,12 @@ function prepareNodeGypShim() {
             Number.parseInt(left.slice("node-gyp@".length), 10),
         )[0]
     : null;
-  if (!nodeGypPackage) {
-    throw new Error(
-      "Could not locate node-gyp required to build remote native modules",
-    );
-  }
-
-  const entrypoint = path.join(
-    pnpmRoot,
-    nodeGypPackage,
-    "node_modules",
-    "node-gyp",
-    "bin",
-    "node-gyp.js",
-  );
+  // A backend-only CI install may not include electron-builder's node-gyp.
+  // The official Node distribution includes a compatible copy with npm.
+  const entrypoint = nodeGypPackage
+    ? path.join(pnpmRoot, nodeGypPackage, "node_modules", "node-gyp", "bin", "node-gyp.js")
+    : path.resolve(path.dirname(process.execPath), process.platform === "win32" ? "." : "../lib",
+      "node_modules", "npm", "node_modules", "node-gyp", "bin", "node-gyp.js");
   if (!existsSync(entrypoint)) {
     throw new Error(`node-gyp entrypoint is missing: ${entrypoint}`);
   }
@@ -410,7 +402,7 @@ function prepareNodeGypShim() {
   return shimRoot;
 }
 
-function installRuntimeDependencies(targetRoot, target) {
+function installRuntimeDependencies(targetRoot, target, nodeVersion) {
   writeFileSync(
     path.join(targetRoot, "package.json"),
     `${JSON.stringify(buildRuntimePackageJson(target), null, 2)}\n`,
@@ -422,6 +414,8 @@ function installRuntimeDependencies(targetRoot, target) {
     PATH: `${nodeGypShimRoot}${path.delimiter}${process.env.PATH || ""}`,
     npm_config_platform: target.platform,
     npm_config_arch: target.arch,
+    // prebuild-install and node-gyp must use the bundled Node ABI.
+    npm_config_target: nodeVersion.slice(1),
     npm_config_target_platform: target.platform,
     npm_config_target_arch: target.arch,
     npm_config_build_from_source: "false",
@@ -431,7 +425,8 @@ function installRuntimeDependencies(targetRoot, target) {
 
   runCommand(
     "pnpm",
-    ["install", "--prod", "--ignore-workspace", "--no-lockfile"],
+    // pnpm keys cached native build output by the host Node, not npm_config_target.
+    ["install", "--prod", "--ignore-workspace", "--no-lockfile", "--config.side-effects-cache=false"],
     {
       cwd: targetRoot,
       env,
@@ -812,7 +807,7 @@ async function stageTarget(target, commitSha, nodeVersion) {
   );
 
   await stageBundledNodeRuntime(targetRoot, target, nodeVersion);
-  installRuntimeDependencies(targetRoot, target);
+  installRuntimeDependencies(targetRoot, target, nodeVersion);
   pruneOnnxRuntimeBinaries(targetRoot, target);
   removeEmbeddedAgentExecutables(targetRoot);
   validateRemoteNativeRuntime(targetRoot, target);

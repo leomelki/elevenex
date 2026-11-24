@@ -6,7 +6,7 @@ import { TaskListComponent } from './task-list.component';
 import { TaskGroupComponent } from './task-group.component';
 import { sessionWindow } from './session-window';
 
-const sessions: readonly TaskSession[] = Array.from({ length: 19 }, (_, index) => ({ id: String(index), title: `Session ${index}`, status: 'running' }));
+const sessions: readonly TaskSession[] = Array.from({ length: 19 }, (_, index) => ({ id: String(index), title: `Session ${index}`, status: 'done' }));
 
 beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
@@ -33,7 +33,7 @@ describe('working session window', () => {
     expect(fixture.nativeElement.querySelector('.earlier-fewer').getAttribute('aria-expanded')).toBe('true');
     fixture.nativeElement.querySelector('.earlier-fewer').click(); fixture.detectChanges();
     expect(visible()).toHaveLength(5);
-    expect(sessions.every(session => session.status === 'running')).toBe(true);
+    expect(sessions.every(session => session.status === 'done')).toBe(true);
   });
   it('keeps revealed survivors visible after refreshed task objects, additions and removals', () => {
     const fixture = TestBed.createComponent(TaskGroupComponent);
@@ -83,8 +83,8 @@ describe('working session window', () => {
   it('pins attention, failed, fresh and selected sessions, while filters and zero cap show every match', () => {
     const input: readonly TaskSession[] = sessions.map((session, index) => ({ ...session, ...(index === 0 ? {status: 'attention' as const} : index === 1 ? {status: 'failed' as const} : index === 2 ? {fresh: true} : {}) }));
     const window = sessionWindow(input, 5, '3', false);
-    expect(window.hidden.size).toBe(10);
-    for (const id of ['0', '1', '2', '3', '14', '18']) expect(window.hidden.has(id)).toBe(false);
+    expect(window.hidden.size).toBe(14);
+    expect(window.shown.map(session => session.id)).toEqual(['0', '1', '2', '3', '18']);
     expect(sessionWindow(input, 0, null, false).hidden.size).toBe(0);
     expect(sessionWindow(input, 5, null, true).hidden.size).toBe(0);
     expect(sessionWindow(input, 5, '3', false, {taskId:'task', cap:5, hiddenIds:['4','5','6','7','8']}).hidden.has('8')).toBe(true);
@@ -115,10 +115,81 @@ describe('working session window', () => {
     ]);
     expect([...result.hidden]).toEqual(['0','1','2']);
   });
-  it('uncaps a session as soon as it needs attention', () => {
-    expect(sessionWindow(sessions, 5, null, false).hidden.has('0')).toBe(true);
-    expect(sessionWindow([{...sessions[0]!, status: 'attention'}, ...sessions.slice(1)], 5, null, false).hidden.has('0')).toBe(false);
+  it('uses recent slots for older running, action and review sessions in chronological order', () => {
+    const statuses: readonly TaskSession['status'][] = ['running', 'attention', 'review'];
+    const active = sessions.map((row, index) => ({ ...row, status: statuses[index] ?? row.status }));
+    expect(sessionWindow(active, 5, null, false).shown.map(row => row.id)).toEqual(['0', '1', '2', '17', '18']);
+    const seen = active.map(row => row.id === '2' ? { ...row, status: 'done' as const } : row);
+    expect(sessionWindow(seen, 5, null, false).shown.map(row => row.id)).toEqual(['0', '1', '16', '17', '18']);
   });
+
+  it('reveals ordinary rows around an already-visible priority row without moving its DOM identity', () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const rows = sessions.map(row => row.id === '11' ? { ...row, status: 'running' as const } : row);
+    fixture.componentRef.setInput('task', { id: 'task', title: 'Busy task', sessions: rows });
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const visible = () => Array.from(host.querySelectorAll<HTMLElement>('.row[data-session-id]'))
+      .filter(row => !row.closest('[inert]')).map(row => row.dataset['sessionId']);
+    const running = host.querySelector('[data-session-id="11"]');
+    expect(visible()).toEqual(['11', '15', '16', '17', '18']);
+    host.querySelector<HTMLButtonElement>('.earlier-more')!.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(rows.slice(9).map(row => row.id));
+    expect(host.querySelector('[data-session-id="11"]')).toBe(running);
+    host.querySelector<HTMLButtonElement>('.earlier-fewer')!.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(['11', '15', '16', '17', '18']);
+    expect(host.querySelector('[data-session-id="11"]')).toBe(running);
+  });
+
+  it('uses Older to request the next batch after local reveals and keeps Show fewer available', () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const request = vi.fn();
+    fixture.componentInstance.moreSessionsRequested.subscribe(request);
+    fixture.componentRef.setInput('task', { id: 'task', title: 'Busy task', sessions: sessions.slice(0, 6), moreSessions: true });
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const older = () => host.querySelector<HTMLButtonElement>('.earlier-more')!;
+    older().click(); fixture.detectChanges();
+    expect(request).not.toHaveBeenCalled();
+    expect(older().textContent?.trim()).toContain('Older');
+    expect(host.querySelector('.earlier-fewer')?.textContent).toContain('Show fewer');
+    older().click();
+    expect(request).toHaveBeenCalledExactlyOnceWith({ taskId: 'task', limit: 5, cap: 5 });
+  });
+
+  it('shows all priority rows when they overflow, with the selected ordinary row still reachable', () => {
+    const active = sessions.map((row, index) => index < 7 ? { ...row, status: 'running' as const } : row);
+    const window = sessionWindow(active, 5, '18', false);
+    expect(window.shown.map(row => row.id)).toEqual(['0', '1', '2', '3', '4', '5', '6', '18']);
+    expect(window.hidden.size).toBe(11);
+  });
+
+  it('shows nested priority rows with their parent while ordinary children remain folded', () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const parent = { ...sessions[0], childCount: 2 };
+    fixture.componentRef.setInput('task', {
+      id: 'task', title: 'Busy task', sessions: [
+        parent, ...sessions.slice(1),
+        { id: 'old-reply', parentId: parent.id, title: 'New reply', status: 'review' },
+        { id: 'quiet', parentId: parent.id, title: 'Ordinary child', status: 'done' },
+      ],
+    });
+    fixture.detectChanges();
+    const visible = () => Array.from<HTMLElement>(fixture.nativeElement.querySelectorAll('.row[data-session-id]'))
+      .filter(row => !row.closest('[inert]')).map(row => row.dataset['sessionId']);
+    expect(visible()).toContain('old-reply');
+    expect(visible()).not.toContain('quiet');
+    fixture.nativeElement.querySelector('button[aria-label="Show all children of Session 0"]').click();
+    fixture.detectChanges();
+    expect(visible()).toContain('quiet');
+    fixture.nativeElement.querySelector('button[aria-label="Show only priority children of Session 0"]').click();
+    fixture.detectChanges();
+    expect(visible()).toContain('old-reply');
+    expect(visible()).not.toContain('quiet');
+  });
+
 });
 
 describe('session row archive intent', () => {

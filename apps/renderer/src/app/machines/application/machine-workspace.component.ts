@@ -48,7 +48,15 @@ export class MachineWorkspaceComponent {
   readonly browserWindowContext = computed<TaskBrowserWindowContext | null>(() => {
     const task = this.store.selectedTask(); if (!task) return null;
     const project = this.store.projects().find(project => project.id === String(task.projectId));
-    return { taskName: task.name, projectName: task.projectName ?? project?.name ?? '', branchName: task.branchName, stage: this.store.selectedTaskStage(), hue: project?.hue ?? 'steel', machineName: this.machine().name };
+    return {
+      taskName: task.name,
+      projectName: task.projectName ?? project?.name ?? '',
+      ...(project?.logo ? { projectImage: project.logo } : {}),
+      branchName: task.branchName,
+      stage: this.store.selectedTaskStage(),
+      hue: project?.hue ?? 'steel',
+      machineName: this.machine().name,
+    };
   });
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;

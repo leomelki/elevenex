@@ -6,7 +6,7 @@ const { join } = require('node:path');
 const { BackendClient } = require('../dist/backend-client/client');
 const { CodeProtocol } = require('../dist/code/protocol');
 const { codePolicy, workbenchDocument } = require('../dist/code/document');
-const { markdownPreviewEndpoint } = require('../dist/code/markdown-preview');
+const { codeWebviewEndpoint } = require('../dist/code/webview');
 const validate = require('../dist/code/validation');
 const vm = require('node:vm');
 const { waitForCodeLayout } = require('../dist/code/layout-settlement');
@@ -131,7 +131,7 @@ test('Code HTTPS is confined to its task origin, rejects foreign origins, confin
     assert.equal((await request('/assets/out/escape/not-a-runtime-file')).status, 404);
     assert.equal((await request('/assets/%2e%2e%2fsecret')).status, 403);
 
-    const preview = new URL(markdownPreviewEndpoint(host.authority).replace('{{uuid}}', 'a'.repeat(52)));
+    const preview = new URL(codeWebviewEndpoint(host.authority).replace('{{uuid}}', 'a'.repeat(52)));
     const previewDir = join(root, preview.pathname.slice('/assets/'.length));
     await mkdir(previewDir, { recursive: true });
     await writeFile(join(previewDir, 'service-worker.js'), '/* upstream preview worker */');

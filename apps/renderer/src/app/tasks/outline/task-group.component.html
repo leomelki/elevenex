@@ -61,7 +61,8 @@
   </header>
   <ex-fold [open]="!collapsed()"
     ><div class="tree" [exFlip]="motionOrder()" [exFlipReorderOnly]="true">
-      <ex-working-sessions [taskId]="task().id" [sessions]="working()" [selected]="selected()" [filtered]="!!filter()"
+      <ex-working-sessions [taskId]="task().id" [sessions]="working()" [selected]="selected()" [filtered]="!!filter()" [moreAvailable]="!!task().moreSessions" [loadingOlder]="!!task().loadingOlderSessions"
+        (moreRequested)="moreSessionsRequested.emit($event)"
         [allowNesting]="allowNesting() && !archiveDisabled()" (moveRequested)="moveSessionRequested.emit({taskId:task().id,sessionId:$event.sessionId,parentSessionId:$event.parentSessionId})" (childrenRequested)="sessionChildrenRequested.emit({taskId:task().id,sessionId:$event.sessionId,earlier:$event.earlier})" [cap]="cap()" [capStep]="capStep()" [allowArchive]="allowArchive()" [(disclosure)]="sessionDisclosure"
         (activated)="selectSession.emit($event)" (archiveRequested)="archiveRequested.emit($event)" (deleteRequested)="deleteRequested.emit($event)" />
       @for (entry of presence.rows(); track entry.key) {
@@ -147,9 +148,6 @@
       @if (!filter() && task().archive; as archive) {
         <ex-archived-sessions [archive]="archive" [selected]="selected()" [disabled]="archiveDisabled()"
           (requested)="archivedSessionsRequested.emit($event)" (selectSession)="selectSession.emit($event)" (restoreRequested)="restoreRequested.emit($event)" />
-      }
-      @if (task().moreSessions) {
-        <button class="outline-action" type="button" (click)="moreSessionsRequested.emit(task().id)">{{ task().sessionsDirection === 'earlier' ? 'Earlier sessions' : 'Next sessions' }}</button>
       }
     </div></ex-fold
   >

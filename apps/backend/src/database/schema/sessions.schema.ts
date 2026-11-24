@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { integer, text, sqliteTable, index, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
@@ -82,6 +83,17 @@ export const sessions = sqliteTable(
     codexSessionId: text('codex_session_id').default('-1'),
     piSessionPath: text('pi_session_path').default('-1'),
     opencodeSessionId: text('opencode_session_id').default('-1'),
+    antigravitySessionId: text('antigravity_session_id'),
+    antigravitySelection: text('antigravity_selection', { mode: 'json' })
+      .$type<{
+        model?: string | null;
+        reasoningEffort?: string | null;
+        mode?: string | null;
+        plan?: boolean;
+        /** A rewind creates a fresh native session on the next explicit send. */
+        resetPending?: true;
+        legacyNativeId?: string;
+      }>(),
     hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
       mode: 'boolean',
     })
@@ -112,6 +124,8 @@ export const sessions = sqliteTable(
       table.lastStateChangeAt,
       table.id,
     ),
+    index('sessions_workspace_unseen_idx').on(table.workspaceId, table.id)
+      .where(sql`has_unreviewed_completion = 1 and last_completion_at is not null`),
     index('sessions_workspace_activity_idx').on(
       table.workspaceId,
       table.surface,

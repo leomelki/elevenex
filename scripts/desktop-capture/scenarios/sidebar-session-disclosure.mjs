@@ -17,7 +17,7 @@ export default async function* (capture) {
     await capture.component('ex-connected-workspace-demo', component => component.fixture.busyTask());
     await owner(async component => { component.store.sessionDisclosures.set(new Map()); await component.store.selectProject('2'); await component.store.selectProject('1'); }); await finish();
     await capture.click('[data-task-id="11"] .earlier-more'); await finish();
-    const revealed = await visible(); assert.equal(revealed.length,12);
+    const revealed = await visible(); assert.equal(revealed.length,10);
     // Neither direction may reset disclosures, even with no selected task retained.
     await owner(component => component.store.selectProject('all')); await finish();
     assert.deepEqual(await visible(),revealed);
@@ -47,6 +47,7 @@ export default async function* (capture) {
     assert.equal((await visible()).length,20);
     assert.equal(await capture.evaluate(() => !!document.querySelector('[data-task-id="11"] .earlier-more')),false);
     yield {name:`${theme}-fully-expanded-create-retained`,inspect};
+    await capture.evaluate(() => document.querySelector('[data-task-id="11"] [data-session-id="200"]').scrollIntoView({ block: 'nearest' }));
     await capture.hover('[data-task-id="11"] [data-session-id="200"] .select'); await finish();
     await capture.click('[data-task-id="11"] [data-session-id="200"] .archive'); await finish();
     assert.equal((await visible()).length,19);
@@ -55,10 +56,11 @@ export default async function* (capture) {
     await owner(component => component.store.filter.set(null)); await finish();
     assert.equal((await visible()).length,19);
     yield {name:`${theme}-fully-expanded-archive-retained`,inspect};
+    await capture.evaluate(() => document.querySelector('[data-task-id="11"] .earlier-fewer').scrollIntoView({ block: 'nearest' }));
     await capture.click('[data-task-id="11"] .earlier-fewer'); await finish();
-    assert.equal((await visible()).length,6);
+    assert.equal((await visible()).length,5);
     await owner(component => component.store.selectProject('all')); await finish();
-    assert.equal((await visible()).length,6);
+    assert.equal((await visible()).length,5);
     yield {name:`${theme}-explicit-show-fewer-retained`,inspect};
   }
 }

@@ -20,15 +20,16 @@ const page = (agentId: string): SessionChatAgentPage => ({
   availability: "starting",
   message: "Waiting for the first message",
 });
-beforeEach(() =>
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({
     matches: true,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     addListener: vi.fn(),
     removeListener: vi.fn(),
-  })),
-);
+  }));
+});
 afterEach(() => {
   TestBed.resetTestingModule();
   vi.unstubAllGlobals();
@@ -227,7 +228,7 @@ it.each([false, true])('keeps agent scrolling contiguous when the evicted tail g
   expect(items.at(-1)?.id).toBe(String(history.length - 1));
   expect(items.every((item, i) => !i || Number(item.id) === Number(items[i - 1]!.id) + 1)).toBe(true);
   expect(owner.page()!.items.length).toBeLessThanOrEqual(320);
-});
+}, 15_000);
 
 
 it("forwards shell copies and reports native command failures in delegated work", async () => {

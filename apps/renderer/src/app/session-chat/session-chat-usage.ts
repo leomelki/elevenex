@@ -1,5 +1,5 @@
-import type { SessionChatPlanUsage } from "@elevenex/shared";
-import type { AgentPlanUsage } from "../conversation";
+import type { SessionChatModelQuota, SessionChatPlanUsage } from "@elevenex/shared";
+import type { AgentPlanLimit, AgentPlanUsage } from "../conversation";
 
 /** Reset timestamps are provider facts. Passing a reset never implies replenished quota. */
 export function sessionPlanUsage(
@@ -22,6 +22,55 @@ export function sessionPlanUsage(
     })),
   };
 }
+
+/**
+ * Per-model limits; each limit ID is its model ID. An exhaustion-only report ends at its
+ * reported reset: the provider stated when the model becomes usable, and no
+ * fraction exists to go stale. Reported fractions keep the "reset due" state.
+ */
+export function sessionModelLimits(
+  quota: SessionChatModelQuota | null | undefined,
+  now: number,
+): readonly AgentPlanLimit[] {
+  const limits: AgentPlanLimit[] = [];
+  for (const model of quota?.models ?? []) {
+    const reset = model.resetsAt === null ? null : model.resetsAt * 1000;
+    if (model.remainingPercentage === null && reset !== null && reset <= now) continue;
+    if (model.remainingPercentage === null && !model.exhausted) continue;
+    limits.push({
+      id: model.id,
+      label: model.label,
+      left: model.exhausted ? 0 : (model.remainingPercentage ?? 100) / 100,
+      ...(reset === null ? {} : resetTime(reset, now)),
+    });
+  }
+  return limits;
+}
+
+/** The selected model's allowance, presented through the shared plan surfaces. */
+export function sessionModelPlan(
+  quota: SessionChatModelQuota | null | undefined,
+  limit: AgentPlanLimit | undefined,
+  providerLabel: string,
+): AgentPlanUsage | undefined {
+  if (!quota || !limit) return undefined;
+  return {
+    name: providerLabel,
+    tier: quota.tier ? quotaTier(quota.tier, providerLabel) : undefined,
+    exhausted: limit.left <= 0,
+    scope: "model",
+    windows: [limit],
+  };
+}
+
+/** "Antigravity Starter Quota" reads as "Starter Quota" under an "Antigravity" heading. */
+function quotaTier(tier: string, providerLabel: string): string {
+  const prefix = `${providerLabel} `;
+  return tier.toLowerCase().startsWith(prefix.toLowerCase()) && tier.length > prefix.length
+    ? tier.slice(prefix.length)
+    : tier;
+}
+
 function resetTime(timestamp: number, now: number) {
   if (timestamp <= now)
     return { reset: "now · awaiting usage update", resetShort: "Reset due" };

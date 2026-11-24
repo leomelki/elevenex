@@ -6,10 +6,8 @@
   "license": "CC-BY-NC-4.0",
   "scripts": {
     "ng": "ng",
-    "build-info": "node ../../scripts/generate-build-info.js",
+    "build-info": "node ../../scripts/generate-build-info.js frontend",
     "start": "pnpm build-info && ng serve --host 0.0.0.0",
-    "build": "pnpm build-info && ng build",
-    "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
   "packageManager": "pnpm@8.15.4",

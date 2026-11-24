@@ -27,6 +27,45 @@ The app uses the backend's `desktop-workspace` routes. A versioned capability
 probe identifies engines that lack workspace support. The backend applies the
 metadata migration automatically.
 
+## Antigravity
+
+Install the [official Antigravity CLI](https://antigravity.google/docs/getting-started#download-and-install)
+on the machine that runs the Elevenex engine. For an SSH machine, install it
+under the same remote account that runs the engine. Confirm that `agy --version`
+works, then sign in with `agy acp --login` from a terminal on that machine.
+Choose **Antigravity** in the harness picker of a new session and send a message.
+
+Elevenex uses [Google’s interactive ACP workflow](https://antigravity.google/docs/ide/extensions/acp/).
+Antigravity owns authentication, tool execution and its native helpers. Elevenex
+relays messages you submit in desktop chat, renders decisions, and restores
+the conversation after reconnecting. Follow-ups wait in the queue and can
+steer an open prompt on agy 1.5 or later. Activity shows background commands,
+scheduled wakeups and read-only subagent batches when native records are
+available. Tool completions and replies from background work are saved in chat.
+The model picker discovers available models and their advertised thinking levels before
+the first message. Use the composer’s **Plan / Code** switch to set native
+planning mode. In Code, choose **Ask first**, **Accept edits**, **Auto**, or
+**Full access**. Auto appears when the installed CLI advertises it for the
+account and terminal sandbox on the machine running the engine. Full access
+approves tool requests once as they arrive. Antigravity’s own restrictions
+and questions still apply. Elevenex saves both choices per conversation and
+applies them before the next turn.
+See [Antigravity execution modes](https://antigravity.google/docs/cli/modes).
+
+Elevenex names new Antigravity sessions in the background from their first
+message and keeps any name you choose. If a dedicated title request is
+unavailable, the sidebar uses Antigravity's reported title or a short excerpt
+of your first message.
+
+Antigravity sessions get the same Elevenex MCP tools and session identity as
+other harnesses. The installed `agy` must advertise HTTP MCP support in ACP
+worker mode (`--process-per-session`) to connect these tools.
+
+Google’s
+[interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
+distinguishes this workflow from third-party agent delegation. Antigravity turns
+in Elevenex require a desktop chat submission, including when using an API key.
+
 ## Run
 
 Use Node **22.22.3+**, **24.15.0+**, or **26+**. Node 24.12 is too old for this
@@ -165,7 +204,7 @@ ignore both settings and continue to install the bundled release revision.
 select macOS DMG/ZIP, Windows NSIS or Linux AppImage/DEB. Artifacts go to
 `apps/desktop/release/`. Build and test each platform on its own OS; macOS
 packaging needs macOS, and cross-platform installers can need additional host
-tools. Signing/notarization is separate from this local skeleton.
+tools. The release workflow supplies the signing credentials on the native runners.
 
 We use **electron-builder** because its configuration covers all three
 requested installer formats and the repository already uses it.
@@ -273,36 +312,35 @@ scripts with `ELEVENEX_EMBED_LOCAL_NODE=1` and an isolated staging directory und
 Use an official portable Node distribution (as provided by CI's setup-node),
 with dependencies installed for that same Node ABI. A Homebrew Node executable
 may depend on libraries outside its directory and fail the relocation smoke test.
-The runtime CI builds these additional assets alongside remote runtimes; release
-manifest validation checks their checksums before publishing. Current CI targets
-are macOS arm64, Linux x64/arm64 and Windows x64. Other accepted targets need their
-own host build job before an app can be distributed for them.
+Release CI builds these archives alongside the SSH runtime assets and verifies
+their checksums before publication.
 
-### Branch preview releases
+### CI and releases
 
-The **Build new desktop previews** workflow (`.github/workflows/new-ui-assets.yml`)
-runs for every push to `feat/new-ui`, including documentation-only changes.
-Each run builds the pushed head commit; pushing several commits at once produces
-one preview for that head. Later pushes do not cancel earlier builds.
+**Desktop CI** runs on pull requests and can be dispatched manually. It builds
+the installers using the locked Node and pnpm toolchain on each native runner.
+Linux x64 runs the desktop and renderer lint and test suites. Each packaging
+job launches the packaged executable, waits for Machine Home to render over
+`app://`, and exercises the preload bridge. CI installer artifacts use no
+release signing credentials and are available from the workflow run.
 
-Downloads are published as a GitHub prerelease at `runtime-<full-commit-sha>`:
+**Build and release assets** runs for changes to build inputs on `main`,
+`master`, and `feat/new-ui`. Use **Run workflow** to build a selected branch
+on demand. Collaborators with write access can request a signed preview of a
+same-repository PR using the `release-preview` label. Preview dispatch rejects
+a PR head that changed after the label request.
 
-- `elevenex-new-desktop-macos-arm64.dmg`: the new `apps/desktop` app, signed and
-  notarized for Apple Silicon using the existing repository Apple secrets.
-- `elevenex-backend-{macos-arm64,linux-x64,linux-arm64,windows-x64}.tar.gz`:
-  standalone backends with bundled Node, using the archive format expected by
-  the desktop installer. The app is stamped with this exact backend revision.
-- Matching remote runtimes for SSH setup, SHA-256 checksums, and
-  `manifest-new-desktop.json`. Publication requires every expected asset and
-  checksum to validate.
+| Target | Installer |
+| --- | --- |
+| macOS ARM64 (Apple Silicon) | DMG, signed and notarized |
+| Linux x64 and ARM64 | AppImage and DEB for each architecture |
+| Windows x64 | NSIS installer, signed when Windows certificate secrets are configured |
 
-The workflow also supports **Run workflow** with `feat/new-ui` selected for an
-on-demand rebuild. GitHub requires a manually dispatched workflow to exist on
-the default branch before offering that trigger; branch pushes work immediately.
-Existing `apps/electron` release builds remain in **Build and release assets**.
-New desktop DMGs and manifests have separate names so they cannot replace the
-legacy updater's assets at the same commit tag. These previews do not become
-the repository's latest release.
+Each prerelease uses `runtime-<sha>` or `runtime-pr-<number>-<sha>` and includes
+the `elevenex-new-desktop-*` installers, matching standalone Node backends, SSH
+runtime assets, their SHA-256 checksums, and `manifest-new-desktop.json`. Every
+installer is stamped with the exact tag and SHA of its matching backend.
+Publication requires the full installer and runtime set.
 
 An installation streams into a private staging directory, enforces download and
 expanded-size limits, verifies the release's SHA-256 checksum, and extracts only

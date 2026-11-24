@@ -90,6 +90,12 @@ export interface TaskSessionDisclosure {
   /** Reveals, newest batch first. IDs keep selection/status updates in place. */
   readonly batches?: readonly (readonly string[])[];
 }
+export interface TaskSessionHistoryRequest {
+  readonly taskId: string;
+  readonly limit: number;
+  /** A capped, unfiltered outline reveals newly loaded rows as a batch. */
+  readonly cap: number | null;
+}
 export interface SessionMoveIntent { readonly sessionId: string; readonly parentSessionId: string | null }
 export interface TaskSession {
   /** Supplied by the owner only when the engine permits deleting an unstarted session. */
@@ -146,9 +152,9 @@ export interface TaskOutline {
   readonly sessions: readonly TaskSession[];
   /** Optional, independently paginated archived history supplied by the owner. */
   readonly archive?: TaskSessionArchive;
-  /** The owner can advance a bounded session page without growing this outline. */
+  /** The owner can append another history batch through Older. */
   readonly moreSessions?: boolean;
-  readonly sessionsDirection?: 'earlier' | 'next';
+  readonly loadingOlderSessions?: boolean;
   readonly canAddSession?: boolean;
   readonly stage?: TaskStage;
   readonly project?: ProjectMark;

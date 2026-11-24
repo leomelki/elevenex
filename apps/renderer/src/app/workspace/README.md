@@ -111,8 +111,17 @@ permission to close it independently. Older engines omit the temporary flag.
 
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.
   Each task initially loads at most 20 sessions, with four concurrent reads.
-  Advancing a page replaces its window. Controls return to the first page;
-  a selected older session is retained during refresh without exceeding 20.
+  Older reveals loaded rows first, then appends another bounded history batch
+  without changing the selection. The workspace remembers how much history the
+  user loaded for each task and revalidates that amount on refresh. Show fewer
+  restores the cap. A selected older session and its parent can supplement the
+  history window during refresh. Engines advertising
+  `sessionPriority` supply running, needs-action, failed and unseen-reply
+  sessions on separate metadata pages of up to 100, with root context for nested
+  rows. The workspace merges and deduplicates those pages independently of the
+  history cursor for each task in the current task window. A failed continuation
+  keeps the previous priority snapshot. Older engines prioritize sessions within
+  their loaded history and child windows.
 - The initial `workspaceRevision` probe verifies protocol version 1 before
   dispatching a workspace snapshot. Unsupported older runtimes receive an update
   message. `WorkspaceNavigationObserver` owns a five-second revision probe; only
@@ -242,6 +251,13 @@ instructions and repository addition. Unimplemented PR/ticket linking and
 workspace-pool management remain disabled. Dialog content stays mounted through
 its modal exit; each new draft has a new identity. Timers, listeners, queued
 branch queries and selection epochs belong to their scoped owner.
+
+Project creation and settings offer a file picker on engines advertising
+`projectImages`. The renderer prepares a bounded raster thumbnail locally and
+uses the existing scope-bound project mutations to save it with project metadata.
+Project list requests explicitly opt into thumbnails to preserve the legacy page
+size. An appearance update with no image field preserves the stored image and
+an explicit null removes it, revealing the saved fallback face.
 
 Focused tests cover bounded/focused reconciliation, stale scopes, task setup and
 navigation cleanup, uncertain writes, server branch search, revision probing,

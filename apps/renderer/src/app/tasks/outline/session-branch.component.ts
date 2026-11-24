@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, effect, inject, input, linkedSignal, output, untracked } from '@angular/core';
 import { CdkMenuTrigger } from '@angular/cdk/menu';
 import { DropdownItemComponent, DropdownMenuComponent, EaseSwapComponent, FoldComponent, IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective } from '../../ui';
@@ -32,6 +33,16 @@ export class SessionBranchComponent {
   protected readonly drag = inject(SessionNestingDragDirective, { optional: true });
   protected readonly children = computed(() => this.session().parentId ? noChildren :
     this.sessions().filter(row => row.parentId === this.session().id));
+  protected readonly isPriority = isWorkspacePriorityStatus;
+  protected readonly priorityChildren = computed(() => this.children().filter(child => this.isPriority(child.status)));
+  protected readonly canExpand = computed(() => this.childCount() > this.priorityChildren().length ||
+    this.session().moreChildren || this.session().earlierChildren);
+  protected readonly disclosureLabel = computed(() => {
+    const prefix = this.priorityChildren().length
+      ? (this.expanded() ? 'Show only priority children of ' : 'Show all children of ')
+      : (this.expanded() ? 'Collapse children of ' : 'Expand children of ');
+    return prefix + this.session().title;
+  });
   protected readonly containsSelection = computed(() => this.children().some(row => row.id === this.selected()));
   protected readonly expanded = linkedSignal<{ id: string; selected: boolean }, boolean>({ source: () => ({ id: this.session().id, selected: this.containsSelection() || this.drag?.droppedParent() === this.session().id }), computation: (value, previous) => value.selected || (previous?.source.id === value.id && previous.value) || false });
   protected readonly targets = computed(() => this.sessions().filter(row => !row.parentId && !row.local && row.id !== this.session().id).slice(0, 20));
@@ -62,15 +73,16 @@ export class SessionBranchComponent {
       expanded && ((droppedParent === id && previous?.source.droppedParent !== id) ||
         (previous?.source.id === id && previous.value)),
   });
-  protected readonly hiddenChildCount = computed(() => Math.max(0, this.children().length - compactChildLimit));
-  private readonly visibleChildren = computed(() => {
-    const children = this.children();
-    if (this.showAllChildren() || !this.hiddenChildCount()) return children;
-    const compact = children.slice(-compactChildLimit);
-    const selected = children.find(row => row.id === this.selected());
-    if (selected && !compact.includes(selected)) compact[0] = selected;
-    return compact;
+  private readonly compactChildren = computed(() => {
+    const children = this.children(), selected = this.selected();
+    const required = new Set(this.priorityChildren());
+    const selectedChild = children.find(child => child.id === selected);
+    if (selectedChild) required.add(selectedChild);
+    const recent = new Set(children.filter(child => !required.has(child)).slice(-Math.max(1, compactChildLimit - required.size)));
+    return children.filter(child => required.has(child) || recent.has(child));
   });
+  protected readonly hiddenChildCount = computed(() => this.children().length - this.compactChildren().length);
+  private readonly visibleChildren = computed(() => this.showAllChildren() ? this.children() : this.compactChildren());
   protected readonly presence = new ListPresence(this.visibleChildren, row => row.renderId ?? row.id,
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement, inject(DestroyRef));
 

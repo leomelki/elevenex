@@ -45,7 +45,10 @@ if (devUrl) {
 
 // Keep the new skeleton's state separate from the existing Elevenex app.
 app.setName('Elevenex Desktop');
-app.setPath('userData', join(app.getPath('appData'), 'Elevenex Desktop'));
+// Electron resolves an explicit profile before the main script runs.
+if (!app.commandLine.getSwitchValue('user-data-dir')) {
+  app.setPath('userData', join(app.getPath('appData'), 'Elevenex Desktop'));
+}
 const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
 // Plain Node cannot read Electron's ASAR format. Only the tiny supervisor and

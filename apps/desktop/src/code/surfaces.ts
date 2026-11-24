@@ -1,5 +1,5 @@
 import { codeTransferDialogs } from './transfer-dialogs';
-import { BrowserWindow, nativeTheme, dialog, type WebContents } from 'electron';
+import { BrowserWindow, nativeTheme, dialog, shell, type WebContents } from 'electron';
 import { createHash } from 'node:crypto';
 import type { BackendResult, CodeAction, CodeBounds, CodePresentation, CodeOpenFile, CodeSurfaceState, CodeTarget, CodeWindowContext, EnvironmentSelection } from '@elevenex/shared';
 import type { BackendClient } from '../backend-client/client';
@@ -313,7 +313,13 @@ export class CodeSurfaces {
       if (!surface || surface.state.filesOpen === filesOpen && surface.state.hasEditors === hasEditors) return;
       surface.state = { ...surface.state, filesOpen, hasEditors };
       if (this.active.get(surface.owner) === key) this.changed(surface.owner, surface.target, surface.state);
-    }, codeTransferDialogs(() => host.windowId));
+    }, codeTransferDialogs(() => host.windowId), url => {
+      // A confirmed link from a visible preview, never a background request.
+      const window = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed() && candidate.webContents.id === host.windowId);
+      if (!window?.isFocused()) return false;
+      void shell.openExternal(url).catch(() => undefined);
+      return true;
+    });
     this.router?.add(host);
     const frame = new CodeFrame(windowId, `https://${host.authority}/`);
     const surface: Surface = { key, environment, configurationIdentity: this.client.configurationIdentity(windowId, target.scopeId) ?? '', frame, host, state: { ...state, frameUrl: frame.url }, owner: windowId, target, used: Date.now() };

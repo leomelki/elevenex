@@ -7,6 +7,7 @@ export interface ProjectAppearance {
   readonly look?: ProjectLook;
   readonly emoji?: string;
   readonly icon?: string;
+  readonly image?: string | null;
   /** Omit to derive the hue from the project name until the user picks one. */
   readonly hue?: ProjectHue | null;
 }

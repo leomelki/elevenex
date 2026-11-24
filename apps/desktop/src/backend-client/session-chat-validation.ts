@@ -16,6 +16,7 @@ import {
 } from "@elevenex/shared";
 import type {
   SessionChatAgentPage,
+  SessionChatModelQuota,
   SessionChatAgentContext,
   SessionChatWorkStatus,
   SessionChatAction,
@@ -558,6 +559,42 @@ function planUsage(
     updatedAt,
   };
 }
+function modelQuota(
+  value: unknown,
+  provider: unknown,
+): SessionChatModelQuota | null {
+  if (value === null) return null;
+  const raw = chatObject(value);
+  const source = chatText(raw["provider"], 100);
+  if (source !== provider) throw invalid();
+  const updatedAt = chatText(raw["updatedAt"], 100);
+  if (!Number.isFinite(Date.parse(updatedAt))) throw invalid();
+  const models = array(raw["models"], 32, (value) => {
+    const model = chatObject(value);
+    const id = chatText(model["id"]),
+      label = chatText(model["label"]);
+    if (!id || !label) throw invalid();
+    return {
+      id,
+      label,
+      remainingPercentage:
+        model["remainingPercentage"] === null
+          ? null
+          : number(model["remainingPercentage"], 100),
+      exhausted: bool(model["exhausted"]),
+      resetsAt:
+        model["resetsAt"] === null ? null : number(model["resetsAt"], 8.64e12),
+    };
+  });
+  if (new Set(models.map((model) => model.id)).size !== models.length)
+    throw invalid();
+  return {
+    provider: source,
+    tier: nullable(raw["tier"], 100),
+    models,
+    updatedAt,
+  };
+}
 export function parseChatState(value: unknown, sessionId?: number, taskId?: number): SessionChatState {
   const raw = chatObject(value),
     phase = raw["phase"];
@@ -626,6 +663,9 @@ export function parseChatState(value: unknown, sessionId?: number, taskId?: numb
     ...(raw["work"] === undefined ? {} : { work: work(raw["work"], sessionId, taskId) }),
     ...(raw["delegation"] === undefined ? {} : { delegation: parseAgentContext(raw["delegation"], sessionId, taskId) }),
     ...(raw["nativeAgentInspection"] === undefined ? {} : { nativeAgentInspection: bool(raw["nativeAgentInspection"]) }),
+    ...(raw["modelQuota"] === undefined
+      ? {}
+      : { modelQuota: modelQuota(raw["modelQuota"], raw["provider"]) }),
     ...(raw["providers"] === undefined
       ? {}
       : {
@@ -686,6 +726,7 @@ export function parseChatState(value: unknown, sessionId?: number, taskId?: numb
         ...(q['sender'] === undefined ? {} : { sender: parseAgentSender(q['sender']) }) };
     }),
     queuePaused: bool(raw["queuePaused"]),
+    ...(raw["canSteer"] === undefined ? {} : { canSteer: bool(raw["canSteer"]) }),
     ...(raw["dispatchingPrompts"] === undefined ? {} : {
       dispatchingPrompts: array(raw["dispatchingPrompts"], 8, value => {
         const prompt = chatObject(value);

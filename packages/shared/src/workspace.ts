@@ -89,13 +89,20 @@ export interface WorkspaceTaskQuery extends WorkspacePageQuery {
   readonly projectId: number | null;
   readonly state?: 'active' | 'finished';
 }
+/** Priority pages can supply the root context for their nested sessions. */
+export interface WorkspaceSessionPage extends WorkspacePage<WorkspaceSession> {
+  readonly parentSessions?: readonly WorkspaceSession[];
+}
+export function isWorkspacePriorityStatus(status: string): boolean {
+  return status === 'running' || status === 'attention' || status === 'review' || status === 'failed';
+}
 export interface WorkspaceSessionQuery extends WorkspacePageQuery {
   /** Omit for legacy flat pages; null selects roots, an ID selects children. */
   readonly parentSessionId?: number | null;
   /** Opt-in append order for child pages. Requires sessionNestingOrder. */
   readonly childOrder?: 'nested';
   /** Explicit lifecycle window; omission preserves older callers, including closed-task history. */
-  readonly state?: 'normal' | 'archived';
+  readonly state?: 'normal' | 'archived' | 'priority';
   /** Newest bounded page, still returned in chronological display order. Omission preserves oldest-first callers. */
   readonly order?: 'latest';
   readonly taskId: number;
@@ -145,6 +152,8 @@ export interface WorkspaceAppearance {
   readonly hue?: 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
   readonly emoji?: string;
   readonly icon?: string;
+  /** Normalized PNG data URL. Omit to preserve the image on update, or pass null to remove it. */
+  readonly image?: string | null;
 }
 export const WORKSPACE_BRANCH_NAME_LIMIT = 240;
 export const WORKSPACE_BRANCH_REF_LIMIT = WORKSPACE_BRANCH_NAME_LIMIT + 'refs/remotes/'.length;
@@ -246,6 +255,7 @@ export interface WorkspaceRevision {
   readonly version: 1;
   readonly revisionWait?: true;
   readonly chatStream?: true;
+  readonly sessionPriority?: true;
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;
@@ -253,6 +263,7 @@ export interface WorkspaceRevision {
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;
   readonly commitPanel?: true;
+  readonly projectImages?: true;
 }
 export interface WorkspaceRevisionWait {
   readonly after: number;

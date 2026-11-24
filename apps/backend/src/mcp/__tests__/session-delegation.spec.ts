@@ -43,7 +43,7 @@ async function eventually(assertion: () => void) {
 }
 
 describe('cross-harness delegation through MCP', () => {
-  async function fixture() {
+  async function fixture(parentProvider = 'claude') {
     const { db, sqlite } = createTestDb();
     const project = db
       .insert(schema.projects)
@@ -74,7 +74,7 @@ describe('cross-harness delegation through MCP', () => {
         branchName: 'main',
         worktreePath: task.path,
         name: 'Coordinator',
-        activeAgentProvider: 'claude',
+        activeAgentProvider: parentProvider,
       })
       .returning()
       .get();
@@ -131,7 +131,7 @@ describe('cross-harness delegation through MCP', () => {
       ),
     });
     const parentRuntime = Object.assign(new EventEmitter(), {
-      info: { id: 'claude', displayName: 'Claude' },
+      info: { id: parentProvider, displayName: parentProvider },
       getRuntimeState: jest.fn(async (): Promise<{ sessionState: string; runPhase: string; planMode?: boolean }> =>
         ({ sessionState: 'idle', runPhase: 'idle' })),
       submitPrompt: jest.fn(async (
@@ -485,6 +485,31 @@ describe('cross-harness delegation through MCP', () => {
       await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
       expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${slow.id}: completed.`);
       expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).not.toContain(`Session #${quick.id}: completed.`);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('lets an Antigravity parent collect delegated work without scheduling an interactive turn', async () => {
+    const f = await fixture('antigravity');
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      f.startNotices();
+      const result = await call('create_session', {
+        requestId: 'interactive-parent', provider: 'codex', prompt: 'Review', mode: 'async',
+      });
+      expect(result).toMatchObject({
+        data: { accepted: true, completion: 'wait' },
+        nextStep: expect.stringContaining('await_session_event'),
+      });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id)).toBeUndefined();
+      expect(await call('await_session_event', { sessionId: child.id, includeReply: true })).toMatchObject({
+        data: { event: 'completed', reply: { text: '**Reviewed.**' } },
+      });
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
     } finally {
       await f.close();
     }

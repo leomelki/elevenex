@@ -156,6 +156,43 @@ describe("ChatScroll return to bottom", () => {
     expect(fixture.componentInstance.atEnd()).toBe(false);
   });
 
+  it.each(['transcript', 'composer'])('keeps following when a delayed bottom scroll event overlaps %s growth', async (source) => {
+    const { fixture, viewport, dimensions, moveTo } = await setup();
+    let top = 800;
+    Object.defineProperty(viewport, 'scrollTop', {
+      get: () => top,
+      set: (value: number) => { top = Math.min(value, dimensions.height - dimensions.viewport); },
+    });
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+
+    if (source === 'transcript') dimensions.height += 150;
+    else dimensions.viewport -= 150;
+    // The native event belongs to the previous layout's bottom write.
+    moveTo(800);
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(950);
+    expect(fixture.componentInstance.atEnd()).toBe(true);
+    expect(fixture.componentInstance.unread()).toBe(false);
+
+    // A transitioning row can briefly restore the offset from just before
+    // the latest automatic bottom write.
+    dimensions.height -= 40;
+    moveTo(800);
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(910);
+    expect(fixture.componentInstance.atEnd()).toBe(true);
+
+    dimensions.height += 120;
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -80 }));
+    moveTo(870);
+    for (const callback of resizeCallbacks) callback();
+    await new Promise(requestAnimationFrame);
+    expect(viewport.scrollTop).toBe(870);
+    expect(fixture.componentInstance.atEnd()).toBe(false);
+  });
+
   it('keeps the tail visible on viewport-only resize without marking a reader’s messages unread', async () => {
     const { fixture, viewport, dimensions, moveTo } = await setup();
     for (const callback of resizeCallbacks) callback();

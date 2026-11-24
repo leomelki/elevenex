@@ -7,7 +7,8 @@
   width: var(--agent-mark-size);
   height: var(--agent-mark-size);
 }
-svg {
+svg,
+img {
   display: block;
   width: calc(86% * var(--agent-logo-scale));
   height: calc(86% * var(--agent-logo-scale));

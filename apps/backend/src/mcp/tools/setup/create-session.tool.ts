@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { sessionAgentProvider } from '../../../sessions/session-provider.js';
 import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
@@ -153,10 +154,12 @@ export const createSessionTool = defineTool({
         }
       : undefined;
     const prior = launch && sessions.getSessionLaunch(launch);
+    const caller = ctx.agentSessionId !== null && args.prompt && (!prior || notifyOnCompletion)
+      ? await sessions.findOne(ctx.agentSessionId) : null;
+    const canWakeParent = !caller || sessionAgentProvider(caller) !== 'antigravity';
     const create = async () => {
       const task = await tasks.record(args.taskId);
-      if (args.prompt && ctx.agentSessionId !== null)
-        assertCanDelegatePrompt(await sessions.findOne(ctx.agentSessionId));
+      if (caller) assertCanDelegatePrompt(caller);
       const provider =
         args.provider ??
         (args.model || args.reasoningEffort
@@ -182,7 +185,7 @@ export const createSessionTool = defineTool({
         activeAgentProvider: provider,
         ...(delegatingSessionId !== undefined && { delegatingSessionId }),
         ...(agentSelection && { agentSelection }),
-        ...(launch && { launch }),
+        ...(launch && { launch: canWakeParent ? launch : { ...launch, notifyOnCompletion: false } }),
         signal: ctx.signal,
       });
     };
@@ -206,7 +209,9 @@ export const createSessionTool = defineTool({
     const timedOut = !!outcome && typeof outcome === 'object' &&
       'event' in outcome && outcome.event === 'timeout';
     let nextStep = observed?.nextStep;
-    if (timedOut)
+    if (notifyOnCompletion && !canWakeParent && (timedOut || (!observed && accepted)))
+      nextStep = 'Use await_session_event(includeReply:true) to collect this delegate. Antigravity requires a desktop chat send to start a new turn.';
+    else if (timedOut)
       nextStep = 'Continue independent work. The delegate will wake this session once the result is ready.';
     else if (!nextStep && notifyOnCompletion && accepted)
       nextStep = 'Continue independent work. This session will wake if the result is still outstanding. Use await_session_event(includeReply:true) if you need it now.';
@@ -225,7 +230,7 @@ export const createSessionTool = defineTool({
         status: session.status,
         parentSessionId: session.parentSessionId ?? null,
         delegatedBySessionId: session.delegatedBySessionId ?? null,
-        ...(notifyOnCompletion && { completion: 'notify' }),
+        ...(notifyOnCompletion && { completion: canWakeParent ? 'notify' : 'wait' }),
         ...(observed && { result: observed.data }),
         ...(session.agentSelection?.provider ===
           session.activeAgentProvider && {

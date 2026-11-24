@@ -64,6 +64,8 @@ export class ChatScrollComponent {
   readonly latestRequested = output<void>();
   private readingAnchors: readonly ReadingAnchor[] = [];
   private followingEnd = true;
+  private lastFollowingTop = 0;
+  private previousFollowTop: number | undefined;
   private paintedScroll = { top: 0, height: 0 };
   private historyScroll?: ChatHistoryScroll;
   private paintedRevision = 0;
@@ -363,10 +365,17 @@ export class ChatScrollComponent {
     });
   }
   onScroll(): void {
-    const top = this.historyScroll?.top ?? this.viewport().nativeElement.scrollTop;
+    const viewport = this.viewport().nativeElement;
+    const top = this.historyScroll?.top ?? viewport.scrollTop;
     if (this.nativeScrollOrigin !== undefined && top !== this.nativeScrollOrigin)
       this.beginHistoryScroll(top < this.nativeScrollOrigin ? "before" : "following");
-    if (!this.sendScroll) this.updatePosition();
+    // Layout can move the end after the last bottom write or restore its
+    // starting offset. Keep following at either position while reconciling.
+    const layoutPending = this.followingEnd && !this.historyAfter() && !this.disclosure &&
+      (top === this.previousFollowTop || (top === this.lastFollowingTop &&
+        ((this.historyScroll?.height ?? viewport.scrollHeight) !== this.lastScrollHeight ||
+          viewport.clientHeight !== this.lastViewportHeight)));
+    if (!this.sendScroll && !layoutPending) this.updatePosition();
     this.cancelDistantHistory();
     this.rememberPosition();
     this.rememberReadingAnchor();
@@ -378,6 +387,8 @@ export class ChatScrollComponent {
     const top = this.historyScroll?.top ?? viewport.scrollTop;
     const gap = height - top - viewport.clientHeight;
     this.followingEnd = !this.historyAfter() && gap <= 1;
+    if (this.followingEnd) this.lastFollowingTop = top;
+    else this.previousFollowTop = undefined;
     this.atEnd.set(!this.historyAfter() && gap < 40);
     if (this.atEnd()) this.unread.set(false);
   }
@@ -435,12 +446,14 @@ export class ChatScrollComponent {
 
   private revealAnchor(target: HTMLElement): void {
     const viewport = this.viewport().nativeElement;
-    const top =
+    const top = Math.max(0,
       target.getBoundingClientRect().top -
       viewport.getBoundingClientRect().top +
-      viewport.scrollTop;
+      viewport.scrollTop - 24);
+    if (top < viewport.scrollHeight - viewport.clientHeight - 1)
+      this.followingEnd = false;
     viewport.scrollTo({
-      top: Math.max(0, top - 24),
+      top,
       behavior: this.reducedMotion() ? "instant" : "smooth",
     });
     if (!this.reducedMotion()) {
@@ -585,10 +598,14 @@ export class ChatScrollComponent {
     const top = this.historyScroll?.top ?? viewport.scrollTop;
     const contentChanged = height !== this.lastScrollHeight;
     const resized = viewport.clientHeight !== this.lastViewportHeight;
+    const restored = top === this.previousFollowTop;
+    this.previousFollowTop = undefined;
     if (this.sendScroll) this.sendScroll.reconcile();
-    else if (!revealing && (resized || contentChanged) && this.followingEnd) {
+    else if (!revealing && (resized || contentChanged || restored) && this.followingEnd) {
       this.historyScroll?.finish();
+      const from = viewport.scrollTop;
       viewport.scrollTop = viewport.scrollHeight;
+      if (viewport.scrollTop !== from) this.previousFollowTop = from;
     } else if (height > this.lastScrollHeight && !revealing) this.unread.set(true);
     this.lastScrollHeight = height;
     this.lastViewportHeight = viewport.clientHeight;

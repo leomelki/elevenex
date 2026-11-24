@@ -199,6 +199,18 @@ describe('Drive tool group', () => {
       expect(res.deepLink).toBe('/sessions/7');
     });
 
+    it('rejects Antigravity before restarting or dispatching its interactive turn', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'antigravity' },
+      });
+      await expect(promptSessionTool.handler(
+        { sessionId: 7, prompt: 'go', mode: 'restart' }, makeCtx(services),
+      )).rejects.toMatchObject({ code: 'interactive_provider' });
+      expect(runtime.interrupt).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+      expect(services.sessions.start).not.toHaveBeenCalled();
+    });
+
     it('does not re-start an already active session', async () => {
       const { services } = makeServices({
         session: { id: 7, status: 'active', activeAgentProvider: 'claude' },

@@ -87,6 +87,7 @@ export class AppShellComponent {
       const open = this.panelOpen();
       const wide = this.takingOver();
       const panel = this.root.querySelector<HTMLElement>(".panel");
+      const peek = this.root.querySelector<HTMLElement>(".peek");
       const active = document.activeElement;
       // A restored wide panel can already be open on its first render.
       if (wide && this.wasWide !== true)
@@ -98,7 +99,7 @@ export class AppShellComponent {
       if (
         ((!open && this.wasOpen) || (!wide && this.wasWide)) &&
         (active === document.body ||
-          (active instanceof Node && panel?.contains(active)))
+          (active instanceof Node && (panel?.contains(active) || peek?.contains(active))))
       ) {
         if (
           this.returnFocus?.isConnected &&
@@ -112,7 +113,8 @@ export class AppShellComponent {
   }
 
   protected rememberFocus(event: FocusEvent): void {
-    if (event.target instanceof HTMLElement && !event.target.closest(".panel"))
+    // The chat peek belongs to the takeover; leaving it restores focus to the chat.
+    if (event.target instanceof HTMLElement && !event.target.closest(".panel, .peek"))
       this.returnFocus = event.target;
   }
   protected leaveReview(): void {

@@ -96,6 +96,7 @@ export const readSessionTool = defineTool({
       session.codexSessionId,
       session.piSessionPath,
       session.opencodeSessionId,
+      session.antigravitySessionId,
       model.turns[0]?.user?.id,
       args.precision,
       args.includeChanges,
