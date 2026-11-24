@@ -326,7 +326,7 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 ### Shadows
 
 - `shadow-glass` for regions, `shadow-raised` for items on a surface, `shadow-pop` for anything floating. Dark mode leans on the 1px top highlight in each.
-- `shadow-cover` for a surface that slides sideways over another, like the review taking over the chat: it falls leftward from the covering edge onto what stays in view.
+- `shadow-cover` for a surface that slides sideways over another, like the review taking over the chat: a short, soft fall-off leftward from the covering edge onto what stays in view, kept tight so the uncovered strip stays flat. In dark mode a 1px highlight marks the covering edge, like the top highlight.
 
 ## Iconography
 

@@ -84,8 +84,8 @@
 }
 /* The panel's clip-path would clip its own shadow, so a twin layer tracks its
    width and casts the takeover's shadow onto the receded chat. It paints last
-   because the receded chat is its own layer; an outer shadow never covers the
-   panel inside it. */
+   because the receded chat is its own layer: outer shadows stay outside the
+   panel, and dark mode's inset highlight lands on the panel's edge. */
 .workspace::after {
   content: "";
   position: absolute;

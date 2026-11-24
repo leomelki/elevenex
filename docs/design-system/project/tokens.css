@@ -52,7 +52,7 @@
   --shadow-glass: inset 0 1px 0 #ffffffcc, 0 1px 2px #0e16210d, 0 8px 24px -12px #0e16211f;
   --shadow-raised: 0 1px 2px #0e162114, 0 2px 6px #0e16210d;
   --shadow-pop: 0 12px 32px -8px #0e162133, 0 2px 6px #0e162114;
-  --shadow-cover: -1px 0 2px #0e162114, -12px 0 32px -12px #0e162140;
+  --shadow-cover: -1px 0 2px #0e16210f, -6px 0 20px -6px #0e162124;
   --focus-ring: 0 0 0 2px #f7f9fb, 0 0 0 4px #08716a;
 }
 [data-theme="dark"] {
@@ -107,7 +107,7 @@
   --shadow-glass: inset 0 1px 0 #ffffff0f, 0 1px 2px #00000066, 0 8px 24px -12px #00000099;
   --shadow-raised: inset 0 1px 0 #ffffff0d, 0 1px 3px #00000080;
   --shadow-pop: inset 0 1px 0 #ffffff14, 0 16px 40px -8px #000000cc;
-  --shadow-cover: -1px 0 2px #00000080, -14px 0 36px -10px #000000d9;
+  --shadow-cover: inset 1px 0 0 #ffffff0f, -1px 0 2px #00000099, -6px 0 20px -6px #000000a6;
   --focus-ring: 0 0 0 2px #10151b, 0 0 0 4px #3fd2c3;
 }
 @media (prefers-color-scheme: dark) {
@@ -163,7 +163,7 @@
     --shadow-glass: inset 0 1px 0 #ffffff0f, 0 1px 2px #00000066, 0 8px 24px -12px #00000099;
     --shadow-raised: inset 0 1px 0 #ffffff0d, 0 1px 3px #00000080;
     --shadow-pop: inset 0 1px 0 #ffffff14, 0 16px 40px -8px #000000cc;
-    --shadow-cover: -1px 0 2px #00000080, -14px 0 36px -10px #000000d9;
+    --shadow-cover: inset 1px 0 0 #ffffff0f, -1px 0 2px #00000099, -6px 0 20px -6px #000000a6;
     --focus-ring: 0 0 0 2px #10151b, 0 0 0 4px #3fd2c3;
   }
 }
