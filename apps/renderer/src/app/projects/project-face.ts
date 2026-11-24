@@ -17,6 +17,7 @@ export function projectFace(face: ProjectAppearance): ProjectMark {
   return {
     name: face.name || 'New project',
     hue: face.hue || projectHue(face.name),
+    ...(face.image ? { logo: face.image } : {}),
     ...(face.look === 'emoji' ? { emoji: face.emoji } : face.look === 'icon' ? { icon: face.icon } : { initials: projectInitials(face.name) }),
   };
 }

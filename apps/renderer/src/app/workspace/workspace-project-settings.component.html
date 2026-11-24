@@ -6,7 +6,9 @@
       <ex-set-group title="Project">
         <ex-set-row label="Name"><ex-set-value label="Project name" [value]="store.draftProject()?.name ?? ''" [disabled]="store.busy()" (changed)="store.updateProject({name:$event})" /></ex-set-row>
       </ex-set-group>
-      <ex-project-appearance [appearance]="appearance()" [disabled]="store.busy()" (appearanceChange)="store.updateProject({appearance:$event})" />
+      <ex-set-group title="Project icon" role="group" aria-label="Project icon">
+        <ex-project-appearance [appearance]="appearance()" [active]="store.dialogOpen()" [allowImage]="store.projectImagesAvailable()" [disabled]="store.busy() || store.mutationUncertain()" (appearanceChange)="store.updateProject({appearance:$event})" />
+      </ex-set-group>
       <ex-set-group title="Agent instructions" note="Shared with sessions in this project.">
         <ex-set-row label="Instructions"><ex-set-value label="Project agent instructions" [value]="store.draftProject()?.agentInstructions ?? ''" [disabled]="store.busy()" [field]="true" [well]="true" (changed)="store.updateProject({agentInstructions:$event})" /></ex-set-row>
       </ex-set-group>

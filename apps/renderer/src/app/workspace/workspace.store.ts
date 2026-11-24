@@ -52,6 +52,7 @@ export class WorkspaceStore {
   private resumeLoaded = false;
   readonly taskRequestsAvailable = signal(false);
   readonly commitPanelAvailable = signal(false);
+  readonly projectImagesAvailable = signal(false);
   private readonly chatStreamScope = signal<string | null>(null);
   readonly chatStreamAvailable = computed(() => !!this.chosen() && this.chosen()?.scopeId === this.chatStreamScope());
   readonly hierarchy = new WorkspaceSessionHierarchy();
@@ -908,6 +909,7 @@ export class WorkspaceStore {
         hue: draft.hue,
         ...(draft.emoji ? { emoji: draft.emoji } : {}),
         ...(draft.icon ? { icon: draft.icon } : {}),
+        ...(draft.image && this.projectImagesAvailable() ? { image: draft.image } : {}),
       },
     };
     const project = await this.mutate(scope, () => this.bridge.workspaceCreateProject(scope, request));
@@ -977,7 +979,15 @@ export class WorkspaceStore {
     if (!scope || !project || this.busy()) return;
     this.busy.set(true);
     const appearance = patch.appearance;
-    const result = await this.mutate(scope, () => this.bridge.workspaceUpdateProject(scope, { projectId: project.id, ...(patch.name ? { name: patch.name } : {}), ...(patch.agentInstructions !== undefined ? { agentInstructions: patch.agentInstructions } : {}), ...(appearance ? { appearance: { look: appearance.look, hue: appearance.hue ?? undefined, emoji: appearance.emoji, icon: appearance.icon } } : {}) }));
+    const result = await this.mutate(scope, () => this.bridge.workspaceUpdateProject(scope, {
+      projectId: project.id,
+      ...(patch.name ? { name: patch.name } : {}),
+      ...(patch.agentInstructions !== undefined ? { agentInstructions: patch.agentInstructions } : {}),
+      ...(appearance ? { appearance: {
+        look: appearance.look, hue: appearance.hue ?? undefined, emoji: appearance.emoji, icon: appearance.icon,
+        ...(this.projectImagesAvailable() && appearance.image !== undefined ? { image: appearance.image } : {}),
+      } } : {}),
+    }));
     if (result) { this.detail.set(result); this.projectRecords.update(projects => projects.map(item => item.id === result.project.id ? result.project : item)); }
     if (this.scopeId() === scope) this.busy.set(false);
   }
@@ -1104,6 +1114,7 @@ export class WorkspaceStore {
     this.chatStreamScope.set(capability?.chatStream ? scope : null);
     this.taskRequestsAvailable.set(capability?.taskRequests === true);
     this.commitPanelAvailable.set(capability?.commitPanel === true);
+    this.projectImagesAvailable.set(capability?.projectImages === true);
     this.sessionNestingAvailable.set(capability?.sessionNesting === true);
     this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true);
     this.sessionArchiveAvailable.set(capability?.sessionArchive === true);
@@ -1112,6 +1123,7 @@ export class WorkspaceStore {
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
     this.chatStreamScope.set(null);
+    this.projectImagesAvailable.set(false);
     this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;

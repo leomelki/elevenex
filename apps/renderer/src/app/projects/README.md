@@ -89,6 +89,15 @@ owner work. `showFace` controls its 52px face; `faceHook` adds an optional
 `data-np` anchor. Letters derive from the name, the hue derives from its hash until
 chosen, and the supplied emoji/icon choices match the reference. The look selector
 and hue radios support arrow keys and a single tab stop for each group.
+The image picker accepts SVG files up to 512 KB and PNG, JPEG and WebP files
+up to 10 MB. The renderer decodes SVGs as isolated images and converts uploads
+to 80px square PNGs, preserving their aspect ratio, colors, and transparency.
+The preview and project marks center the image inside the chosen tile color.
+Users can change that color while an image is active. Removing an image emits
+`image: null` and reveals the selected fallback face. Set `allowImage`
+from the runtime capability in connected views, and set `active` to false when
+retaining the editor during dismissal. The wizard waits for `imagePending` before
+submitting its draft.
 
 `ProjectMenuComponent` takes `project`, `repoCount`, `machine`, `closed` and
 `disabled`. Put it inside an owning `[cdkMenuTriggerFor]` template so CDK owns its

@@ -384,6 +384,27 @@ describe('DesktopWorkspaceService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('creates, replaces and removes project images while preserving unmodified fields and legacy pages', async () => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMOQgG2k4AQ88ZEmP/UvHXPvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0FBhVS3x1b1tkAAAAASUVORK5CYII=';
+    const created = await service.createProject({ name: 'Branded', path: '/one', appearance: { look: 'letters', image } });
+    const id = created.project.id;
+    expect(created.project.appearance).toEqual({ look: 'letters', image });
+    const lookup = async (images?: string) =>
+      (await service.listProjects({ images })).items.find(project => project.id === id)?.appearance;
+    expect(await lookup()).toEqual({ look: 'letters' });
+    expect(await lookup('true')).toEqual({ look: 'letters', image });
+
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo' } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image });
+    const replacement = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAm0lEQVR4nO3QMQ0AIADAMLShDhk4BQ88ZEmP/UvHmvvovfF7oB5AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMB1AgADTAQQIMN0Fo4lEhTMAsccAAAAASUVORK5CYII=';
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: replacement } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo', image: replacement });
+    await expect(service.updateProject(id, { appearance: { image: 'file:///tmp/icon.png' } })).rejects.toBeInstanceOf(BadRequestException);
+    expect(await lookup('true')).toMatchObject({ image: replacement });
+    await service.updateProject(id, { appearance: { look: 'icon', icon: 'repo', image: null } });
+    expect(await lookup('true')).toEqual({ look: 'icon', icon: 'repo' });
+  });
+
   it('keeps archived conversation history navigable for closed tasks', async () => {
     await database.db.insert(schema.sessions).values({
       repoId,

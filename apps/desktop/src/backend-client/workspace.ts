@@ -1,4 +1,4 @@
-import { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from '@elevenex/shared';
+import { isWorkspaceProjectImage, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT, WORKSPACE_PROJECT_IMAGE_LIMIT } from '@elevenex/shared';
 import type {
   BackendResult,
   InvokeContracts,
@@ -54,7 +54,10 @@ function stage(value: unknown): WorkspaceStage {
 function appearance(value: unknown): WorkspaceAppearance {
   const raw = object(value),
     look = raw['look'],
-    hue = raw['hue'];
+    hue = raw['hue'],
+    image = raw['image'];
+  if (image !== undefined && image !== null && !isWorkspaceProjectImage(image))
+    throw invalidResponse();
   if (
     look !== undefined &&
     look !== 'letters' &&
@@ -77,13 +80,14 @@ function appearance(value: unknown): WorkspaceAppearance {
     ...(hue === undefined ? {} : { hue }),
     ...(raw['emoji'] === undefined ? {} : { emoji: text(raw['emoji'], 64) }),
     ...(raw['icon'] === undefined ? {} : { icon: text(raw['icon'], 64) }),
+    ...(image === undefined ? {} : { image }),
   };
 }
 function parseRevision(value: unknown): WorkspaceRevision {
   const response = object(value);
   if (response['version'] !== 1) throw invalidResponse();
   const revision = count(response['revision']);
-  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel']) {
+  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel', 'projectImages']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
@@ -96,6 +100,7 @@ function parseRevision(value: unknown): WorkspaceRevision {
     ...(response['sessionArchive'] === true ? { sessionArchive: true } : {}),
     ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
     ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
+    ...(response['projectImages'] === true ? { projectImages: true } : {}),
   };
 }
 
@@ -330,6 +335,7 @@ export function registerWorkspaceIpc(
     scope: string,
     path: string,
     parse: (value: unknown) => T,
+    limit = 768 * 1024,
   ): Promise<BackendResult<T>> {
     return client.execute(
       windowId,
@@ -340,7 +346,7 @@ export function registerWorkspaceIpc(
         parse(
           await requestBackendJson(
             endpoint,
-            { path, limit: 768 * 1024 },
+            { path, limit },
             signal,
           ),
         ),
@@ -525,14 +531,16 @@ export function registerWorkspaceIpc(
       },
     ),
   );
-  register('workspace:projects', (window, scope, input) =>
-    read(
+  register('workspace:projects', (window, scope, input) => {
+    const page = query(input);
+    return read(
       window,
       scope,
-      `${base}/projects?${queryString(query(input))}`,
+      `${base}/projects?${queryString({ ...page, images: true })}`,
       (value) => parseWorkspacePage(value, project),
-    ),
-  );
+      768 * 1024 + page.limit * WORKSPACE_PROJECT_IMAGE_LIMIT,
+    );
+  });
   register('workspace:project-name-availability', (window, scope, input) =>
     read(window, scope, `${base}/projects/name-availability?${new URLSearchParams({ name: required(input, 100) })}`, value => ({ available: boolean(object(value)['available']) })),
   );

@@ -15,8 +15,8 @@
                   @case ('look') {
                     <span class="summary-face" data-np="face">
                       @if (blankFace()) { <span class="blank"><ex-icon name="folder" [size]="7" /></span> }
-                      @else { <ex-project-mark [name]="face().name" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="18" [decorative]="true" /> }
-                      {{ appearance().look === 'emoji' ? 'Emoji' : appearance().look === 'icon' ? 'Icon' : 'Letters' }}
+                      @else { <ex-project-mark [name]="face().name" [logo]="face().logo" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="18" [decorative]="true" /> }
+                      {{ face().logo ? 'Image' : appearance().look === 'emoji' ? 'Emoji' : appearance().look === 'icon' ? 'Icon' : 'Letters' }}
                     </span>
                   }
                 }
@@ -47,7 +47,7 @@
                   @else if (namePending()) { <ex-status-glyph status="running" [size]="12" aria-hidden="true" /><span>Checking availability…</span> }
                 </div>
               }
-              @case ('look') { <ex-project-appearance [appearance]="appearance()" [disabled]="blocked()" faceHook="face" (appearanceChange)="setAppearance($event)" /> }
+              @case ('look') { <ex-project-appearance [appearance]="appearance()" [active]="active() && step() === 'look'" [allowImage]="allowImage()" [disabled]="blocked()" faceHook="face" (appearanceChange)="setAppearance($event)" /> }
             }
           </div></ex-fold>
         </div>

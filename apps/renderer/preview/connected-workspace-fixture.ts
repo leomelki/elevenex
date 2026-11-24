@@ -173,7 +173,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, projectImages: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));

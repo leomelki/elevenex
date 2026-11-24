@@ -23,7 +23,7 @@ settles immediately under reduced motion.
 
 | Component | Main inputs | Intent outputs |
 | --- | --- | --- |
-| `ProjectMark` | `name`, `logo`, `initials`, `emoji`, `icon`, `hue`, `size`, `decorative` | None; precedence is logo, emoji, icon, letters; broken logos use the supplied face |
+| `ProjectMark` | `name`, `logo`, `initials`, `emoji`, `icon`, `hue`, `size`, `decorative` | Centers the logo on the project hue. Falls back to the supplied emoji, icon, or initials. |
 | `ProjectRail` | `projects`, `all`, `activeId` | `selectProject(id)`, `addProject(tile)`, `reorderProjects(ids)` |
 | `StatusSummary` | `counts`, `active` | `selectStatus(status or null)`; a second click clears the filter |
 | `StageGlyph` | `stage`, `size` | None |

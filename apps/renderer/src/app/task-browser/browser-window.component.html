@@ -1,7 +1,7 @@
 <header class="titlebar">
   @if (info(); as info) {
     <button type="button" class="task-context" [disabled]="!info.available || returning()" [attr.aria-label]="'Open task ' + info.context.projectName + ' / ' + info.context.taskName" [exTooltip]="info.context.branchName ? info.context.taskName + ' · ' + info.context.branchName : info.context.taskName" (click)="action('reveal')">
-      <ex-project-mark [name]="info.context.projectName" [hue]="info.context.hue" [size]="20" [decorative]="true" />
+      <ex-project-mark [name]="info.context.projectName" [logo]="info.context.projectImage" [hue]="info.context.hue" [size]="20" [decorative]="true" />
       <span class="project">{{ info.context.projectName }}</span><span class="slash" aria-hidden="true">/</span>
       <span class="task">{{ info.context.taskName }}</span>
       <ex-stage-glyph [stage]="info.context.stage" [size]="12" />

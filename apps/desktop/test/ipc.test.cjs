@@ -268,6 +268,10 @@ test('workspace IPC validates resources, page bounds, scopes and request bodies 
   for (const recovery of ['arbitrary', { confirmExternal: true }, null]) assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, recovery));
   assert.throws(() => handlers.get('workspace:retry-task')(event, scope, 1, 'snapshot', 'extra'));
   const count = calls.length;
+  const updateProject = handlers.get('workspace:update-project');
+  for (const image of ['https://example.com/icon.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQ' + 'A'.repeat(40_000)]) {
+    assert.throws(() => updateProject(event, scope, { projectId: 1, appearance: { image } }));
+  }
   for (const [channel, input] of [['workspace:projects', { limit: 101 }], ['workspace:tasks', { projectId: -1 }], ['workspace:sessions', null], ['workspace:create-project', { name: 'x', path: '/x', additionalPaths: Array(20).fill('/x') }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/other', initialize: true }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: 'yes' }] }], ['workspace:create-project', { name: 'x', path: '/x', repositorySetup: [{ path: '/x', initialize: true, clone: 'https://example.com/x.git' }] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: ['../outside'], includedSecrets: [] }], ['workspace:commit-preview', { taskId: 1, includeUnstaged: true, excluded: Array(1001).fill('file'), includedSecrets: [] }], ['workspace:git-action', { taskId: 1, type: 'commit', message: '', selection: { includeUnstaged: true, excluded: [], includedSecrets: [] }, revision: 'invalid' }], ['workspace:git-action', { taskId: 1, type: 'arbitrary-command' }], ['workspace:finish-task', { taskId: 1, confirmStop: 'yes' }]]) assert.throws(() => handlers.get(channel)(event, scope, input));
   assert.equal(calls.length, count, 'invalid input never reaches the selected backend');
   const finish = handlers.get('workspace:finish-task');

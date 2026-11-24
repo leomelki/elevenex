@@ -8,7 +8,7 @@
           <div class="shell">
             <ex-project-rail [projects]="railProjects()" [all]="false" [activeId]="activeProject()" (selectProject)="activeProject.set($event)" (addProject)="openModal($event)" />
             <aside class="sidebar">
-              <div class="side-head"><span class="grow name-wrap">@if (selectedProject()) { <ex-project-mark [name]="selectedFace().name" [initials]="selectedFace().initials" [emoji]="selectedFace().emoji" [icon]="selectedFace().icon" [hue]="selectedFace().hue || 'steel'" [size]="20" [decorative]="true" /> }<span class="side-name">{{ selectedProject()?.name || '' }}</span></span><button type="button" class="menu-button" aria-label="Project" [cdkMenuTriggerFor]="projectMenu"><ex-icon name="more" [size]="14" /></button><button exButton size="sm" variant="primary" [disabled]="!selectedProject()">New task</button></div>
+              <div class="side-head"><span class="grow name-wrap">@if (selectedProject()) { <ex-project-mark [name]="selectedFace().name" [logo]="selectedFace().logo" [initials]="selectedFace().initials" [emoji]="selectedFace().emoji" [icon]="selectedFace().icon" [hue]="selectedFace().hue || 'steel'" [size]="20" [decorative]="true" /> }<span class="side-name">{{ selectedProject()?.name || '' }}</span></span><button type="button" class="menu-button" aria-label="Project" [cdkMenuTriggerFor]="projectMenu"><ex-icon name="more" [size]="14" /></button><button exButton size="sm" variant="primary" [disabled]="!selectedProject()">New task</button></div>
               @if (selectedProject()) { <div class="empty rise"><b>In progress</b><p>No tasks yet.</p></div> }
               @else { <div class="ghost"><i></i><i></i><i></i></div> }
             </aside>
