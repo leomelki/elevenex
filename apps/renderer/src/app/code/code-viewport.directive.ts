@@ -140,7 +140,9 @@ export class CodeViewportDirective {
       // Listen on the document because transition events do not travel down to
       // projected content. Unrelated widths, opacity and nested effects cannot
       // hold the editor's viewport. No shell-private selectors are needed.
-      if (!('propertyName' in event) || event.propertyName !== 'width' || !(ancestor instanceof HTMLElement) || ancestor === this.frame || !ancestor.contains(viewport)) return;
+      // A pseudo-element's transition (such as a shadow layer) is reported on
+      // its originating element but never resizes that element's content.
+      if (!('propertyName' in event) || event.propertyName !== 'width' || ('pseudoElement' in event && event.pseudoElement) || !(ancestor instanceof HTMLElement) || ancestor === this.frame || !ancestor.contains(viewport)) return;
       if (!this.active()) return;
       if (event.type === 'transitionrun') {
         // Use the last settled measurement: reading layout here would flush
