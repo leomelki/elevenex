@@ -134,6 +134,14 @@ export class ConversationDemoComponent {
       model: "Sonnet",
       thinking: "Medium",
     },
+    {
+      preset: "Gemini review",
+      mark: "An",
+      harness: "antigravity",
+      harnessLabel: "Antigravity",
+      model: "Gemini",
+      thinking: "High",
+    },
   ];
   readonly harnesses: readonly AgentHarness[] = [
     {

@@ -29,7 +29,7 @@ These standalone OnPush components consume renderer view models and emit typed i
   focus and leaves the reply and file chips available while the activity loads.
   `filesTotal` and `filesDiff` preserve complete work facts with a bounded file
   preview. Loaded and deferred turns share the same heading and fact priority.
-- `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. Both render through the internal `ReplyMark` (`turns/reply-mark.component.ts`): a 28px tinted tile (peach for Claude, periwinkle with a gradient glyph for Codex, neutral for OpenCode/Pi and monograms), exposed as `role="img"` named by `author`. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
+- `ChatExchange.harness`, `Turn.harness` and agent `Message.harness` accept an exact harness ID for the shared bundled `AgentMark` logo. Keep `author` as the accessible name/tooltip and `mark` as the monogram fallback for missing or unknown harnesses. The internal `ReplyMark` (`turns/reply-mark.component.ts`) renders a 28px tinted tile with `role="img"` named by `author`. Claude uses peach, Codex uses a periwinkle tile with a gradient glyph, and Antigravity uses the full-color logo on a neutral tile. OpenCode, Pi and monograms also use neutral tiles. Supply the harness display name as `author`. The turn owns the tile's entry and live ring animations.
 - `WorkTimeline` groups tool activity between messages using flat, keyed rows, so grouping never reparents a tool. Each completed section has its own expandable activity summary. The active section retains the latest five steps and summarizes older work as soon as one completed step falls outside that window. Summaries use category icons with short counts and an explicit failure marker. Failed calls fold into the section; running/unknown tools, commentary and inspected work stay visible while the turn is live or Worked is expanded. It never infers that an unrelated later success fixed an earlier failure; set `recovered` explicitly.
   An open section stays open when an older page extends it. `Chat` sets `Turn.keepWorkOnCompletion` for the turn being read away from the end, so finishing that turn leaves its activity open until the reader closes Worked.
   Focusing a link, code control or other content in the latest reply leaves Worked as it is. If a new reply turns that focused block into commentary, the timeline keeps it visible until focus leaves.
@@ -442,8 +442,9 @@ The [AgentPicker specification](../../../../../docs/design-system/project/compon
 defines the chip and its menu (harness rail, models, thinking track, fast pill);
 the [usage specification](../../../../../docs/design-system/project/components/PlanMeter/README.md)
 defines the chip's meters and hover card. The `/agent-picker` preview supplies
-Claude Code, Codex, Pi, OpenCode (a long, filterable list) and a harness without
-a logo, plus optional context/plan data and busy, locked and disabled states.
+Claude Code, Codex, Pi, Antigravity, OpenCode (a long, filterable list) and a
+harness without a logo, plus optional context/plan data and busy, locked and
+disabled states.
 Its `harnesses` signal supports catalog refresh scenarios. Once shown, model
 search stays mounted for that harness until the menu closes or the harness
 changes, including after the catalog shrinks or the query is cleared. Space
@@ -490,12 +491,13 @@ thinking level beside it. The accessible name still includes the harness.
   emitted once committed, and a rejected change returns the thumb to the actual
   level when the update settles. An absent thinking value shows “Default”
   rather than claiming the first level.
-- Internal `AgentMark` renders the bundled harness logo (`agent-logos.ts`:
-  Claude Code, Codex, OpenCode, Pi; MIT/published marks, attribution in the
-  file), sized by `--agent-mark-size`, or the `mark` monogram for any other
-  harness. Logos match exact harness IDs only. The default `plain` appearance
+- Internal `AgentMark` renders the bundled Antigravity, Claude Code, Codex,
+  OpenCode and Pi logos at `--agent-mark-size`. See `agent-logos.ts` for asset
+  attribution. Exact harness IDs select a logo. Other harnesses use the `mark`
+  monogram. The default `plain` appearance
   inherits `currentColor` for compact picker/preset controls. `appearance="tinted"`
   provides the reply tile, theme-aware `harness-*` colours and optical logo sizing.
+  Antigravity uses Google’s full-color SVG on the neutral reply tile.
   Codex uses a locally scoped SVG gradient with a unique ID per instance; it is
   app-inspired, not an official coloured asset. No animation belongs to this mark.
 - `agent-config.ts` holds the shared config transitions (`withHarness`,

@@ -133,6 +133,24 @@ function key(target: HTMLElement, key: string): KeyboardEvent {
 }
 
 describe("AgentPicker controlled settings and focus", () => {
+  it("uses the monochrome Antigravity logo in the chip and harness rail", async () => {
+    const { fixture, trigger, open } = await setup();
+    const antigravity = {
+      id: "antigravity", label: "Antigravity", mark: "An",
+      models: [{ id: "gemini", label: "Gemini", thinking: [] }],
+    };
+    fixture.componentRef.setInput("harnesses", [...harnesses, antigravity]);
+    fixture.componentRef.setInput("value", { harness: antigravity.id, model: "gemini", mark: "An" });
+    fixture.componentRef.setInput("locked", false);
+    await settle(fixture);
+    expect(trigger.getAttribute("aria-label")).toContain("Antigravity");
+    expect(trigger.querySelector('ex-agent-mark[data-harness="antigravity"] svg[fill="currentColor"] path')).not.toBeNull();
+    await open();
+    const rail = button('.agent-settings [role="radio"][aria-label="Antigravity"]');
+    expect(rail.getAttribute("aria-checked")).toBe("true");
+    expect(rail.querySelector('ex-agent-mark[data-harness="antigravity"] svg[fill="currentColor"] path')).not.toBeNull();
+  });
+
   it('retains an owner-supplied display label while a secondary catalog arrives', async () => {
     const { fixture, trigger, open } = await setup();
     fixture.componentRef.setInput('value', { ...agent, preset: undefined, modelLabel: 'Configured model' });

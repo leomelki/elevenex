@@ -27,6 +27,22 @@ function setup() {
   const settle = async () => { for (let i = 0; i < 15; i++) { await Promise.resolve(); fixture.detectChanges(); } await fixture.whenStable(); };
   return { fixture, form: fixture.componentInstance, requests, provider, settle };
 }
+it('shows the Antigravity logo in the preset identity and harness rail', async () => {
+  const fixture = TestBed.createComponent(PresetCreatorComponent);
+  const model = { id: 'gemini', label: 'Gemini', thinking: [] };
+  fixture.componentRef.setInput('initial', { harness: 'antigravity', mark: 'An', model: model.id });
+  fixture.componentRef.setInput('harnessLocked', false);
+  fixture.componentRef.setInput('harnesses', [
+    { id: 'antigravity', label: 'Antigravity', mark: 'An', models: [model] },
+    claude.harness,
+  ]);
+  fixture.detectChanges();
+  await fixture.whenStable();
+  const logo = 'ex-agent-mark[data-harness="antigravity"] svg path';
+  expect(document.querySelector(`.preset-creator .identity ${logo}`)).not.toBeNull();
+  expect(document.querySelector(`.preset-creator [role="radio"][aria-label="Antigravity"] ${logo}`)).not.toBeNull();
+});
+
 it('keeps a draft per harness, restores edits, and never submits on harness selection', async () => {
   const { fixture, form, requests, provider, settle } = setup(); await settle();
   const submitted = vi.fn(); form.submitted.subscribe(submitted);
