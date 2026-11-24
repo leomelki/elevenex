@@ -27,9 +27,10 @@ export default async function* (capture) {
     const input = await app(c => c.fixture.input);
     assert.ok(input.some(event => event.kind === 'text' && event.text === 'a'));
     assert.ok(input.some(event => event.kind === 'down' && event.x >= 0 && event.x < 640 && event.y >= 0 && event.y < 400));
+    if (theme === 'light') yield { name: 'light-controlling', selector: 'ex-task-apps' };
     await capture.press('Escape', 8);
-    await capture.waitFor(() => document.activeElement?.textContent?.includes('Focus app'));
-    yield { name: theme + '-live', selector: 'ex-task-apps', inspect: ['ex-app-stream canvas', 'ex-app-stream footer'] };
+    await capture.waitFor(() => document.activeElement?.matches('ex-app-stream .viewport'));
+    yield { name: theme + '-live', selector: 'ex-task-apps', inspect: ['ex-app-stream canvas', 'ex-task-apps ex-view-tabs', 'ex-app-stream .hint'] };
   }
   await capture.reducedMotion(true);
   const old = await app(c => c.fixture.watchId);
@@ -45,9 +46,10 @@ export default async function* (capture) {
   assert.equal(await capture.evaluate(() => document.querySelector('ex-app-stream canvas').hidden), true);
   await app((c, bytes) => c.fixture.deliver(Uint8Array.from(bytes), 1), [...stdout]);
   await capture.waitFor(() => document.querySelector('ex-app-stream canvas:not([hidden])'));
-  await capture.click('ex-task-apps [aria-expanded=false]');
+  await capture.click('ex-task-apps button[aria-label=Logs]');
   await capture.waitFor(() => document.querySelector('ex-task-apps pre')?.textContent.includes('Listening for changes.'));
-  await capture.click('ex-task-apps .log-actions button:last-child');
+  yield { name: 'live-with-logs', selector: 'ex-task-apps' };
+  await capture.click('ex-task-apps button[aria-label="Stop app"]');
   await capture.waitFor(() => document.querySelector('ex-task-apps h2')?.textContent === 'App exited');
   yield { name: 'exited-with-logs', selector: 'ex-task-apps' };
   await app(c => c.fixture.propose());
@@ -55,5 +57,5 @@ export default async function* (capture) {
   await capture.waitFor(() => document.querySelector('.approval pre')?.textContent?.includes('"desktop:dev"'));
   yield { name: 'launch-request', selector: 'ex-task-apps' };
   await capture.click('.approval button[data-variant=primary]');
-  await capture.waitFor(() => document.querySelector('ex-task-apps h2')?.textContent.includes('Starting Elevenex Desktop'));
+  await capture.waitFor(() => document.querySelector('ex-task-apps h2')?.textContent === 'Starting…');
 }

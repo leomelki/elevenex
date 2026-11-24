@@ -1,13 +1,13 @@
 <header class="panel-head">
-  <ex-panel-tabs [tabs]="tabs" [active]="panel()" (selectTab)="panel.set($event)" />
+  <ex-panel-tabs [tabs]="tabs()" [active]="current().id" (selectTab)="panel.set($event)" />
   <div class="panel-actions" [class.code-tools]="panel() === 'code'">
     @if (panel() === 'code') { <ng-container [ngTemplateOutlet]="codeActions()" /> }
     <ex-icon-button [icon]="wide() ? 'shrink' : 'expand'" [label]="wide() ? 'Return to chat' : 'Expand side panel'" (pressed)="wideChange.emit(!wide())" />
     <ex-icon-button icon="x" label="Close side panel" (pressed)="closed.emit()" />
   </div>
 </header>
-@for (tab of tabs; track tab.id) {
-  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent()) || (tab.id === 'terminal' && !!terminalContent()) || (tab.id === 'browser' && !!browserContent()) || (tab.id === 'apps' && !!appsContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="panel() !== tab.id" [attr.inert]="panel() !== tab.id ? '' : null" tabindex="0">
+@for (tab of panels; track tab.id) {
+  <section class="panel-body" [class.has-content]="(tab.id === 'changes' && !!changesContent()) || (tab.id === 'code' && !!codeContent()) || (tab.id === 'terminal' && !!terminalContent()) || (tab.id === 'browser' && !!browserContent()) || (tab.id === 'apps' && !!appsContent())" role="tabpanel" [id]="tab.panelId" [attr.aria-label]="tab.label" [hidden]="current().id !== tab.id" [attr.inert]="current().id !== tab.id ? '' : null" tabindex="0">
     @if (tab.id === 'terminal' && terminalContent()) {
       <ng-content select="[workspaceTerminal]" />
     } @else if (tab.id === 'changes' && changesContent()) {
@@ -18,9 +18,9 @@
       <ng-content select="[workspaceBrowser]" />
     } @else if (tab.id === 'apps' && appsContent()) {
       <ng-content select="[workspaceApps]" />
-    } @else if (panel() === tab.id && unreachable()) {
+    } @else if (current().id === tab.id && unreachable()) {
       <ex-opens-when-back [machine]="unreachable()!" [what]="current().label" [compact]="true" (tryRequested)="reconnectRequested.emit()" />
-    } @else if (panel() === tab.id) {
+    } @else if (current().id === tab.id) {
       <ex-icon [name]="current().icon" [size]="24" />
       <h2>{{ current().label }}</h2>
       <p>This view is coming next.</p>

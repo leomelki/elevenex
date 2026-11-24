@@ -30,7 +30,25 @@ describe('Task apps panel ownership', () => {
     view.detectChanges();
     await view.whenStable();
     expect(view.nativeElement.textContent).toContain('This run is unavailable');
-    expect(view.nativeElement.textContent).not.toContain('Stop app');
+    expect(view.nativeElement.querySelector('button[aria-label="Stop app"]')).toBeNull();
+  });
+  it('keeps run actions in one toolbar and folds logs in under the app on request', async () => {
+    const taskAppOutput = vi.fn(async () => ({ ok: true as const, value: 'ready on :5173' }));
+    const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [run(3, 'native')] }));
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppsRead, taskAppOutput } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent);
+    fixture.componentRef.setInput('scopeId', 'machine');
+    fixture.componentRef.setInput('taskId', 3);
+    fixture.detectChanges(); await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('[role=tab][aria-selected=true]')?.textContent?.trim()).toBe('Preview native'); });
+    const logs = element.querySelector<HTMLButtonElement>('.tools button[aria-label=Logs]')!;
+    expect(element.querySelector('.tools button[aria-label="Stop app"]')).not.toBeNull();
+    expect(logs.getAttribute('aria-pressed')).toBe('false');
+    logs.click();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.logs pre')?.textContent).toBe('ready on :5173'); });
+    expect(logs.getAttribute('aria-pressed')).toBe('true');
+    expect(taskAppOutput).toHaveBeenCalledWith('machine', 3, 'native');
   });
   it('shows the exact pending executable and argument boundaries and launches only after an explicit click', async () => {
     const proposal: TaskAppRun = { ...run(2, 'request'), status: 'requested', pendingLaunch: { executable: 'pnpm', args: ['run', 'dev app', 'x\u202ey'] } };
@@ -50,5 +68,25 @@ describe('Task apps panel ownership', () => {
     element.querySelector<HTMLButtonElement>('button[data-variant=primary]')!.click();
     await fixture.whenStable();
     expect(taskAppApprove).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
+  });
+  it('shows each run as a tab without create or close controls and switches runs by tab', async () => {
+    const runs: readonly TaskAppRun[] = [run(4, 'web'), { ...run(4, 'api'), status: 'exited' }];
+    const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: runs }));
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppsRead } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent);
+    fixture.componentRef.setInput('scopeId', 'machine');
+    fixture.componentRef.setInput('taskId', 4);
+    fixture.detectChanges(); await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    const tabs = () => [...element.querySelectorAll<HTMLButtonElement>('[role=tab]')];
+    await vi.waitFor(() => { fixture.detectChanges(); expect(tabs().map(tab => tab.textContent?.trim())).toEqual(['Preview web', 'Preview api']); });
+    expect(tabs()[0]!.getAttribute('aria-selected')).toBe('true');
+    expect(element.querySelector('ex-view-tabs .new, ex-view-tabs .close')).toBeNull();
+    expect(element.querySelector('ex-view-tabs [aria-label=Running]')).not.toBeNull();
+    tabs()[1]!.click();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.run()?.runId).toBe('api');
+    expect(element.querySelector('.tools button[aria-label="Stop app"]')).toBeNull();
+    expect(element.querySelector('.state h2')?.textContent).toBe('App exited');
   });
 });

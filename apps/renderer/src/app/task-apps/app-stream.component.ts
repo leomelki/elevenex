@@ -2,12 +2,12 @@ import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRe
 import { APP_INPUT_GUIDANCE, APP_VIDEO_MAX_AXIS, APP_VIDEO_MAX_BYTES, APP_VIDEO_MAX_PIXELS, type TaskAppFrame } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { H264Decoder } from '../media/h264-decoder';
-import { ButtonComponent } from '../ui';
+import { ButtonComponent, KbdComponent } from '../ui';
 import { AppInputQueue, appPoint } from './app-input';
 
 /** One mounted surface owns one viewer lease. The enclosing run view keys it by task and run. */
 @Component({
-  selector: 'ex-app-stream', imports: [ButtonComponent],
+  selector: 'ex-app-stream', imports: [ButtonComponent, KbdComponent],
   templateUrl: './app-stream.component.html', styleUrl: './app-stream.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -20,7 +20,7 @@ export class AppStreamComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly canvas = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly keyboard = viewChild.required<ElementRef<HTMLTextAreaElement>>('keyboard');
-  private readonly focusButton = viewChild<unknown, ElementRef<HTMLButtonElement>>('focusButton', { read: ElementRef });
+  private readonly viewport = viewChild.required<ElementRef<HTMLElement>>('viewport');
   readonly state = signal<'connecting' | 'live' | 'interrupted'>('connecting');
   readonly error = signal('');
   readonly controlling = signal(false);
@@ -159,7 +159,14 @@ export class AppStreamComponent {
     const controlled = this.controlling();
     this.controlling.set(false);
     if (controlled && this.watchId) void this.bridge.taskAppReleaseInput?.(this.scopeId(), this.watchId).catch(() => {});
-    if (restore) this.focusButton()?.nativeElement.focus({ preventScroll: true });
+    if (restore) this.viewport().nativeElement.focus({ preventScroll: true });
+  }
+
+  /** The focusable surface is the keyboard path to control; it never captures input on Tab. */
+  viewportKey(event: KeyboardEvent): void {
+    if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    this.focus();
   }
 
   pointer(event: PointerEvent, kind: 'move' | 'down' | 'up'): void {

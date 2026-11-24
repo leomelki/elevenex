@@ -1,5 +1,5 @@
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
-import type { BackendResult, ElevenexBridge } from '@elevenex/shared';
+import type { BackendResult, ElevenexBridge, TaskAppRun } from '@elevenex/shared';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -65,6 +65,61 @@ describe('Connected workspace composition', () => {
     expect(component.store.selected()?.sessionId).toBe(101);
     expect(component.store.projects()).toHaveLength(2);
     expect(root.hasAttribute('inert')).toBe(true);
+  });
+
+  it('shows the Apps tab for pending and running task apps and removes it after the last app stops', async () => {
+    const { fixture, component, platform, root } = setup();
+    const readRevision = platform.workspaceRevision.bind(platform);
+    vi.spyOn(platform, 'workspaceRevision').mockImplementation(async () => {
+      const result = await readRevision();
+      return result.ok ? { ok: true, value: { ...result.value, taskApps: true } } : result;
+    });
+    let runs: readonly TaskAppRun[] = [];
+    const proposal: TaskAppRun = {
+      taskId: 11, runId: 'demo', name: 'Dev app', status: 'requested', mode: 'native', startedAt: 1,
+      pendingLaunch: { executable: 'pnpm', args: ['dev'] },
+    };
+    const operations = {
+      taskAppsRead: vi.fn(async (_scope: string, task: number) => ({ ok: true, value: task === 11 ? runs : [] })),
+      taskAppApprove: async () => { runs = [{ ...proposal, status: 'running' }]; return { ok: true, value: undefined }; },
+      taskAppStop: async () => { runs = [{ ...proposal, status: 'exited' }]; return { ok: true, value: undefined }; },
+    };
+    Object.assign(platform, operations);
+    await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' });
+    await settle(fixture);
+    expect(operations.taskAppsRead).not.toHaveBeenCalled();
+    component.togglePanel();
+    await settle(fixture);
+    const appsTab = () => root.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Apps"]');
+    expect(appsTab()).toBeNull();
+
+    const selected = component.store.selected()!;
+    runs = [proposal];
+    component.store.openApp({ ...selected, runId: proposal.runId });
+    await settle(fixture);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    root.querySelector<HTMLButtonElement>('[aria-label="App launch request"] button[data-variant=primary]')!.click();
+    await settle(fixture);
+    expect(root.querySelector('ex-task-apps .app-status')?.textContent).toContain('Running');
+
+    const stop = root.querySelector<HTMLButtonElement>('ex-task-apps button[aria-label="Stop app"]')!;
+    stop.focus();
+    stop.click();
+    await settle(fixture);
+    expect(appsTab()).toBeNull();
+    expect(component.panel()).toBe('changes');
+    expect(component.panelOpen()).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[role="tab"][aria-label="Changes"]'));
+
+    runs = [{ ...proposal, status: 'running' }];
+    component.store.openApp({ ...selected, runId: proposal.runId });
+    await settle(fixture);
+    expect(appsTab()).not.toBeNull();
+    component.store.selectSession({ taskId: '12', sessionId: '103' });
+    await settle(fixture);
+    expect(appsTab()).toBeNull();
+    expect(component.panel()).toBe('changes');
   });
 
   for (const dispose of [false, true]) it(`prepares navigation while inert and ${dispose ? 'cancels its paint notification on destruction' : 'acknowledges the paint boundary'}`, async () => {

@@ -1,21 +1,22 @@
-<div class="viewport" [class.actual]="actual()" [class.controlling]="controlling()">
-  <canvas #canvas width="1" height="1" [hidden]="state() !== 'live'" [attr.aria-label]="name() + ' display'"
+<div #viewport class="viewport" tabindex="0" role="group" [class.actual]="actual()" [class.controlling]="controlling()"
+  [attr.aria-label]="name() + ' display. Click or press Enter to control the app; Shift Escape releases it.'" (keydown)="viewportKey($event)">
+  <canvas #canvas width="1" height="1" aria-hidden="true" [hidden]="state() !== 'live'"
     (pointerdown)="pointer($event, 'down')" (pointermove)="pointer($event, 'move')" (pointerup)="pointer($event, 'up')"
     (lostpointercapture)="pointerLost()" (pointercancel)="pointerLost()" (wheel)="wheel($event)" (contextmenu)="$event.preventDefault()"></canvas>
   @if (state() !== 'live') {
     <div class="message" role="status">
-      {{ state() === 'connecting' ? 'Connecting to the app display…' : error() }}
-      @if (state() === 'interrupted') { <button exButton size="sm" (click)="start()">Retry stream</button> }
+      {{ state() === 'connecting' ? 'Connecting…' : error() }}
+      @if (state() === 'interrupted') { <button exButton size="sm" variant="secondary" (click)="start()">Reconnect</button> }
     </div>
   }
 </div>
+<span class="frame" aria-hidden="true"></span>
+@if (state() === 'live') {
+  <!-- Hints sit over the surface and never take the pointer, so the app keeps its full size. -->
+  @if (error()) { <span class="hint error" role="status">{{ error() }}</span> }
+  @else if (controlling()) { <span class="hint" aria-hidden="true"><ex-kbd>⇧ Esc</ex-kbd> to release</span> }
+  @else { <span class="hint idle" aria-hidden="true"><ex-kbd>↵</ex-kbd> to control</span> }
+}
 <textarea #keyboard class="keyboard" aria-label="Type in the remote app. Shift Escape releases the keyboard." tabindex="-1" autocapitalize="off" autocomplete="off" spellcheck="false"
   (focus)="controlling.set(state() === 'live')" (blur)="release()" (keydown)="key($event, true)" (keyup)="key($event, false)"
   (beforeinput)="beforeInput($event)" (compositionstart)="compositionStart()" (compositionend)="compositionEnd($event)"></textarea>
-@if (state() === 'live') {
-  <footer>
-    <button #focusButton exButton size="sm" variant="ghost" (mousedown)="$event.preventDefault()" (click)="controlling() ? release(true) : focus()">{{ controlling() ? 'Release keyboard' : 'Focus app' }}</button>
-    @if (error()) { <span role="status">{{ error() }}</span> }
-    @else if (controlling()) { <span>Shift + Esc</span> }
-  </footer>
-}

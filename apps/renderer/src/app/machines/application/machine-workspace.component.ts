@@ -59,6 +59,12 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  protected readonly taskApps = viewChild(TaskAppsComponent);
+  protected onAppsIdle(): void {
+    if (this.panel() !== 'apps') return;
+    this.store.selectPanel('changes');
+    this.store.appLink.set(null);
+  }
   readonly codeFile = signal<CodeFileIntent | null>(null);
   readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   readonly reviewTarget = signal<ChatReviewTarget | null>(null);

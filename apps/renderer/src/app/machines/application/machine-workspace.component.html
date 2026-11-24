@@ -44,7 +44,7 @@
         </section>
       }
     </div>
-    <ex-workspace-panels [codeActions]="workspaceCode.actions() ?? null" [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" (panelChange)="store.selectPanel($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
+    <ex-workspace-panels [codeActions]="workspaceCode.actions() ?? null" [unreachable]="store.offline() ? machine().name : undefined" (reconnectRequested)="reconnectRequested.emit()" shellPanel [panel]="panel()" [appsVisible]="taskApps()?.hasActiveApp() ?? false" (panelChange)="store.selectPanel($event)" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" (closed)="closePanel()">
       <ex-code-panel workspaceCode #workspaceCode [target]="codeTarget()" [file]="codeFile()" [taskName]="store.selectedTask()?.name ?? ''" [branch]="store.selectedTask()?.branchName ?? ''" [active]="panelOpen() && panel() === 'code' && active()" [retained]="shell.panelPresent() && panel() === 'code' && active()" [connected]="!store.offline()" [wide]="shell.panelWide()" (wideChange)="wideReview.set($event)" />
       <ex-task-terminal workspaceTerminal #workspaceTerminal [machineId]="machine().id" [selection]="terminalSelection()" [available]="!store.offline()" [visible]="active() && panelOpen() && panel() === 'terminal'" [askAvailable]="!!store.selected() && store.selectedSession()?.status !== 'archived'" [browserState]="terminalBrowserState()" (question)="askTerminal($event)" (browserRequested)="openTerminalPort($event)" (browserCopyRequested)="openTerminalPort($event, true)" (lastClosed)="closePanel()" />
       <div workspaceChanges #workspaceChanges class="review-content">
@@ -57,8 +57,8 @@
         }
       </div>
       <div workspaceApps #workspaceApps class="review-content">
-        @if (panelOpen() && active() && panel() === 'apps') {
-          <ex-task-apps [available]="store.taskAppsAvailable()" [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [machine]="machine().name" [link]="store.appLink()" />
+        @if (panelOpen() && active()) {
+          <ex-task-apps [available]="store.taskAppsAvailable()" [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [machine]="machine().name" [link]="store.appLink()" [viewerVisible]="panel() === 'apps'" (idle)="onAppsIdle()" />
         }
       </div>
       <ex-task-browser [windowContext]="browserWindowContext()" workspaceBrowser #workspaceBrowser [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [sessionId]="store.selected()?.sessionId ?? null" [active]="active() && panelOpen() && panel() === 'browser' && !store.offline()" (attentionRequested)="browserAttention()" (contextRequested)="browserContext($event)" />

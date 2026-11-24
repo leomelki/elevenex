@@ -4,6 +4,8 @@ export interface ViewTab {
   readonly tip?: string;
   readonly icon?: string;
   readonly status?: 'idle' | 'running' | 'serving' | 'failed';
+  /** Accessible name for the steady `serving` dot; defaults to “Server running”. */
+  readonly statusLabel?: string;
   readonly unread?: boolean;
   readonly agent?: boolean;
   readonly agentDriving?: boolean;

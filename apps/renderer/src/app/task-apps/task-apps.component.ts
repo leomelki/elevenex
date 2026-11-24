@@ -1,17 +1,25 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
 import type { TaskAppRun } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
-import { ButtonComponent, DropdownComponent, IconButtonComponent, IconComponent, SegmentedComponent } from '../ui';
+import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../ui';
+import { ViewTabsComponent, type ViewTab } from '../views';
 import { AppStreamComponent } from './app-stream.component';
 
 interface RunLink { readonly scopeId: string; readonly taskId: number; readonly runId: string }
 const labels: Record<TaskAppRun['status'], string> = {
   requested: 'Awaiting launch', starting: 'Starting', running: 'Running', stopping: 'Stopping', exited: 'Exited', failed: 'Failed',
 };
+/** Steady dot while running, spinner while changing state; finished runs stay quiet. */
+const tabStatus: Record<TaskAppRun['status'], ViewTab['status']> = {
+  requested: 'idle', starting: 'running', running: 'serving', stopping: 'running', exited: 'idle', failed: 'failed',
+};
+function isActive(run: TaskAppRun): boolean {
+  return run.status !== 'exited' && run.status !== 'failed';
+}
 
 @Component({
   selector: 'ex-task-apps',
-  imports: [AppStreamComponent, ButtonComponent, DropdownComponent, IconButtonComponent, IconComponent, SegmentedComponent],
+  imports: [AppStreamComponent, ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective, ViewTabsComponent],
   templateUrl: './task-apps.component.html', styleUrl: './task-apps.component.css', changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskAppsComponent {
@@ -19,17 +27,27 @@ export class TaskAppsComponent {
   readonly taskId = input<number | null>(null);
   readonly machine = input('');
   readonly available = input(true);
+  readonly viewerVisible = input(true);
   readonly link = input<RunLink | null>(null);
   readonly standalone = input(false);
+  readonly idle = output<void>();
   readonly labels = labels;
-  readonly scales = [
-    { id: 'fit', label: 'Fit', title: 'Fit the app to the panel' },
-    { id: 'actual', label: '100%', title: 'Show the app at actual size' },
-  ];
   readonly runs = signal<readonly TaskAppRun[]>([]);
+  private readonly readTarget = signal<{ readonly scopeId: string; readonly taskId: number } | null>(null);
+  readonly hasActiveApp = computed(() => {
+    const read = this.readTarget();
+    return this.available() && !!read && read.scopeId === this.scopeId() && read.taskId === this.taskId() && this.runs().some(isActive);
+  });
   readonly selected = signal('');
   readonly run = computed(() => this.runs().find(item => item.runId === this.selected()));
-  readonly options = computed(() => this.runs().map(item => ({ id: item.runId, label: item.name, detail: labels[item.status] })));
+  readonly tabs = computed<readonly ViewTab[]>(() => {
+    // A separate window belongs to one run, so it shows only that run's tab.
+    const runs = this.standalone() ? this.runs().filter(item => item.runId === this.selected()) : this.runs();
+    return runs.map(item => ({
+      id: item.runId, title: item.name, tip: `${item.name} · ${labels[item.status]}`,
+      icon: item.status === 'requested' ? 'hand' : 'window', status: tabStatus[item.status], statusLabel: labels[item.status],
+    }));
+  });
   readonly requestedCommand = computed(() => {
     const proposal = this.run()?.pendingLaunch;
     if (!proposal) return '';
@@ -63,6 +81,7 @@ export class TaskAppsComponent {
         this.readOnce = false;
         clearTimeout(this.timer);
         this.reading = this.pendingRead = false;
+        this.readTarget.set(null);
         this.runs.set([]);
         this.select('');
         this.readError.set('');
@@ -93,6 +112,7 @@ export class TaskAppsComponent {
     if (!this.bridge.taskAppsRead) { this.readError.set('Update Elevenex to view apps on this machine.'); return; }
     if (this.reading) { this.pendingRead = true; return; }
     const generation = this.generation;
+    const link = this.link();
     this.reading = true;
     clearTimeout(this.timer);
     if (!this.readOnce && !this.readError()) this.loading.set(true);
@@ -103,11 +123,15 @@ export class TaskAppsComponent {
       this.readOnce = true;
       this.readError.set('');
       this.runs.set(reply.value);
+      this.readTarget.set({ scopeId: scope, taskId: task });
       if (!this.requestedRun && !reply.value.some(run => run.runId === this.selected())) {
-        const run = reply.value.find(run => run.status === 'running' || run.status === 'starting') ?? reply.value[0];
+        const run = reply.value.find(run => run.status === 'running' || run.status === 'starting') ??
+          reply.value.find(isActive) ?? reply.value[0];
         this.select(run?.runId ?? '');
       }
-      if (this.logsOpen() && this.run()) await this.readLogs();
+      // An older read must not dismiss a launch link that asked for a fresh read.
+      if (!this.hasActiveApp() && !this.pendingRead && this.link() === link) this.idle.emit();
+      if (this.viewerVisible() && this.logsOpen() && this.run()) await this.readLogs();
     } catch { if (generation === this.generation) this.readError.set('Could not read apps on this machine.'); }
     finally {
       if (generation === this.generation) {

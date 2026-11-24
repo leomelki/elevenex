@@ -1,21 +1,33 @@
-:host { display: flex; position: relative; flex: 1; flex-direction: column; width: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--ink); font-size: var(--text-body-size); }
-header, .log-actions { display: flex; flex: none; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
-header { border-bottom: 1px solid var(--line); }
-.run-title { flex: 1; min-width: 0; }
-.run-title strong { display: block; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; font-weight: var(--text-title-weight); }
-.meta { display: flex; align-items: center; overflow: hidden; gap: var(--space-1); color: var(--ink-muted); font-size: var(--text-caption-size); }
-.meta i { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--ink-muted); }
-.meta .running { background: var(--running); }
-.meta .failed { background: var(--danger); }
-.empty { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); text-align: center; padding: var(--space-4); color: var(--ink-muted); }
+:host { display: flex; position: relative; flex: 1; flex-direction: column; width: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--ink); font-size: var(--text-body-size); background: var(--surface); }
 h2, p { margin: 0; }
-h2 { color: var(--ink); font-size: var(--text-title-size); font-weight: var(--text-title-weight); }
-.empty p { font-size: var(--text-caption-size); max-width: 42ch; overflow-wrap: anywhere; }
-.logs { flex: none; display: flex; flex-direction: column; max-height: 40%; border-top: 1px solid var(--line); }
-.log-actions { justify-content: space-between; }
-pre { overflow: auto; padding: var(--space-3); margin: 0; background: var(--surface-sunken); color: var(--ink); font-family: var(--font-mono); font-size: var(--text-caption-size); }
-.error { padding: var(--space-2) var(--space-3); color: var(--danger); }
-.approval { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-4); }
-.approval p { color: var(--ink-muted); }
-.approval pre { max-width: 100%; min-height: 2em; border: 1px solid var(--line); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
-.approval > div { display: flex; gap: var(--space-2); }
+
+/* Actions share the tab row and center on the tabs' height. */
+.tools { display: flex; flex: none; align-items: center; gap: 2px; height: var(--control-height); }
+/* Matches the small icon buttons beside it; a ratio reads better than another arrows icon. */
+.scale { display: inline-grid; place-items: center; min-width: var(--space-6); height: var(--space-6); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); color: var(--ink-muted); background: transparent; font: var(--text-mono-meta-weight) var(--text-overline-size)/1 var(--font-mono); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+.scale:hover { color: var(--ink); background: var(--surface); }
+.scale[aria-pressed='true'] { color: var(--accent); background: var(--accent-soft); }
+.scale:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.divider { width: 1px; height: var(--space-4); margin: 0 var(--space-1); background: var(--line); }
+
+
+.error { display: flex; flex: none; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--danger); background: color-mix(in oklab, var(--danger) 8%, transparent); font-size: var(--text-caption-size); overflow-wrap: anywhere; }
+.error ex-icon { flex: none; }
+
+.state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 0; overflow: auto; padding: var(--space-6) var(--space-4); color: var(--ink-muted); text-align: center; }
+.state-mark { display: grid; place-items: center; width: var(--space-8); height: var(--space-8); margin-bottom: var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); }
+.state-mark[data-status='failed'] { color: var(--danger); background: color-mix(in oklab, var(--danger) 10%, transparent); }
+.state h2 { color: var(--ink); font-size: var(--text-ui-size); font-weight: var(--text-title-weight); }
+.state p { max-width: 36ch; font-size: var(--text-caption-size); overflow-wrap: anywhere; }
+.state button { margin-top: var(--space-1); }
+
+.approval { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-height: 0; overflow: auto; padding: var(--space-4); }
+.approval h2 { font-size: var(--text-ui-size); font-weight: var(--text-title-weight); overflow-wrap: anywhere; }
+.approval p { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.approval pre { margin-top: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-1); }
+
+pre { margin: 0; padding: var(--space-2) var(--space-3); overflow: auto; color: var(--ink); background: var(--surface-sunken); font: var(--text-mono-meta-weight) var(--text-caption-size)/1.55 var(--font-mono); }
+pre:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.logs { flex: none; }
+.logs pre { max-height: min(16rem, 40vh); border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
