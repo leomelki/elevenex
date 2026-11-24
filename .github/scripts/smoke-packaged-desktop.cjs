@@ -66,27 +66,32 @@ async function checkWindow(profile, signal) {
   const socket = new WebSocket(page.webSocketDebuggerUrl);
   try {
     await once(socket, 'open', { signal });
-    socket.send(JSON.stringify({
-      id: 1, method: 'Runtime.evaluate', params: {
-        expression: `(async () => {
-          while (!document.querySelector('ex-machine-home h1')) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          return {
-            platform: window.elevenex.platform,
-            version: await window.elevenex.appVersion(),
-            backendVersion: (await window.elevenex.backendStatus()).version,
-            requireType: typeof window.require,
-          };
-        })()`,
-        awaitPromise: true, returnByValue: true,
-      },
-    }));
-    const [message] = await once(socket, 'message', { signal });
-    const reply = JSON.parse(message.data);
-    assert.equal(reply.id, 1);
-    assert.ok(!reply.error && !reply.result.exceptionDetails, JSON.stringify(reply));
-    const bridge = reply.result.result.value;
+    let bridge;
+    for (let id = 1; !bridge; id++) {
+      const response = once(socket, 'message', { signal });
+      socket.send(JSON.stringify({
+        id, method: 'Runtime.evaluate', params: {
+          expression: `(async () => document.querySelector('ex-machine-home h1') ? {
+              platform: window.elevenex.platform,
+              version: await window.elevenex.appVersion(),
+              backendVersion: (await window.elevenex.backendStatus()).version,
+              requireType: typeof window.require,
+            } : null)()`,
+          awaitPromise: true, returnByValue: true,
+        },
+      }));
+      const [message] = await response;
+      const reply = JSON.parse(message.data);
+      assert.equal(reply.id, id);
+      // Target discovery can find app:// before Electron commits the document.
+      const navigating = reply.error?.code === -32000 &&
+        /Execution context was destroyed|Cannot find (?:default )?execution context/i.test(reply.error.message);
+      if (!navigating) {
+        assert.ok(!reply.error && !reply.result.exceptionDetails, JSON.stringify(reply));
+        bridge = reply.result.result.value;
+      }
+      if (!bridge) await delay(100, undefined, { signal });
+    }
     assert.equal(bridge.platform, process.platform);
     assert.match(bridge.version, /^\d+\.\d+\.\d+/);
     assert.equal(bridge.requireType, 'undefined');
