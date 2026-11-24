@@ -463,8 +463,9 @@ function main() {
   validateRuntimeLoad();
   logStageSizeSummary();
 
-  execFileSync('tar', ['-czf', archivePath, '-C', stageBaseRoot, 'backend'], {
-    cwd: repoRoot,
+  // GNU tar treats a drive-letter prefix in the archive name as a remote host.
+  execFileSync('tar', ['-czf', path.basename(archivePath), 'backend'], {
+    cwd: path.resolve(repoRoot, stageBaseRoot),
     stdio: 'inherit',
   });
 
