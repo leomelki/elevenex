@@ -36,6 +36,7 @@ app.whenReady().then(async () => {
   await execute('git', ['-C', repository, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   const large = process.argv.includes('--large');
   const links = process.argv.includes('--chat-links');
+  const htmlPreview = process.argv.includes('--html-preview');
   const linkedFolder = join(root, 'linked-notes'), linkedFile = join(linkedFolder, 'outside.md');
   if (links) {
     await mkdir(join(repository, 'src'));
@@ -47,6 +48,19 @@ app.whenReady().then(async () => {
   await writeFile(join(repository, 'hello.ts'), 'export const message = "hello workbench";\n');
   await writeFile(join(repository, 'README.md'), '# Task Markdown preview\n\n**Formatted text**\n\n![Task diagram](./diagram.svg)\n');
   await writeFile(join(repository, 'diagram.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="teal"/></svg>');
+  if (htmlPreview) {
+    await mkdir(join(repository, 'site'));
+    await writeFile(join(repository, 'site', 'Preview page.HTML'), `<!doctype html>
+<link rel="stylesheet" href="./preview.css">
+<h1 style="font-size: 36px">Task HTML preview</h1>
+<img src="../diagram.svg" alt="Task diagram">
+<a href="./next.htm">Next page</a>
+<a id="external" href="https://example.invalid/">External</a>
+<div style="height: 3000px"></div>
+<script>document.querySelector('h1').textContent = 'Script ran'</script>`);
+    await writeFile(join(repository, 'site', 'preview.css'), 'h1 { color: rgb(16, 80, 120); }');
+    await writeFile(join(repository, 'site', 'next.htm'), '<h1>Second page</h1>');
+  }
   await execute('git', ['-C', repository, 'add', '.']);
   await execute('git', ['-C', repository, '-c', 'user.name=Code test', '-c', 'user.email=code@example.invalid', 'commit', '-m', 'fixture']);
   await execute('git', ['-C', repository, 'worktree', 'add', '-b', 'code-smoke', worktree]);
@@ -125,6 +139,115 @@ app.whenReady().then(async () => {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     console.log(message); clearTimeout(deadline); app.exit(0);
   };
+  if (htmlPreview) {
+    await wait(() => codeState?.phase === 'ready', 'Task editor did not connect');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='432px'");
+    await code.present(window.webContents.id, target, { visible: true, compact: true });
+    assert.equal((await code.openFile(window.webContents.id, target, { path: 'site/Preview page.HTML' })).ok, true);
+    window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const button = (label, focus = false) => frame.executeJavaScript(`(() => {
+      const element = [...document.querySelectorAll('.editor-actions [aria-label]')].find(element => element.getAttribute('aria-label').startsWith(${JSON.stringify(label)}));
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      if (${focus}) element.focus();
+      return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    })()`);
+    const click = async label => {
+      const point = await wait(() => button(label), `Missing editor action ${label}`);
+      const offset = await window.webContents.executeJavaScript('document.querySelector("iframe").getBoundingClientRect().toJSON()');
+      const position = { x: point.x + offset.x, y: point.y + offset.y };
+      await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...position });
+      for (const type of ['mousePressed', 'mouseReleased']) await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...position });
+    };
+    // The webview document that owns the page frames, and its visible page.
+    const outer = () => frame.framesInSubtree.find(child => child.url.includes('/fake.html') &&
+      child.parent?.url.includes('extensionId=elevenex.task-workspace'));
+    const view = expression => outer()?.executeJavaScript(expression);
+    const currentOrigin = async () => {
+      const source = await view("document.querySelector('#stage iframe:not(.incoming)')?.src ?? ''").catch(() => '');
+      return source ? new URL(source).origin : undefined;
+    };
+    const inspectPage = async expression => {
+      const origin = await currentOrigin();
+      if (!origin) return;
+      const { targetInfos } = await window.webContents.debugger.sendCommand('Target.getTargets');
+      const preview = targetInfos.find(info => info.type === 'iframe' && info.url.startsWith(origin + '/'));
+      if (!preview) return;
+      const { sessionId } = await window.webContents.debugger.sendCommand('Target.attachToTarget', { targetId: preview.targetId, flatten: true });
+      try {
+        const { result } = await window.webContents.debugger.sendCommand('Runtime.evaluate', { expression, returnByValue: true }, sessionId);
+        return result.value;
+      } finally {
+        await window.webContents.debugger.sendCommand('Target.detachFromTarget', { sessionId }).catch(() => undefined);
+      }
+    };
+    const tab = label => frame.executeJavaScript(`!!document.querySelector('.tab[aria-label^=${JSON.stringify(label)}]')`);
+    const previewLabel = () => frame.executeJavaScript(`(() => {
+      const action = document.querySelector('.editor-actions [role="button"][aria-label^="Open Preview"]');
+      if (!action || getComputedStyle(action, '::before').content === 'none') return;
+      return getComputedStyle(action, '::after').content;
+    })()`);
+    await wait(async () => (await previewLabel())?.startsWith('"Preview"'), 'HTML title action did not show its icon and label');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width = '240px'");
+    await wait(async () => (await previewLabel()) === 'none', 'Narrow editor did not keep an accessible icon-only preview action');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width = '432px'");
+    await wait(async () => (await previewLabel())?.startsWith('"Preview"'), 'Preview label did not return after widening the editor');
+    await click('Open Preview');
+    await wait(currentOrigin, 'HTML preview did not load from a single click');
+    await wait(() => inspectPage(`document.querySelector('h1')?.textContent === 'Task HTML preview' &&
+      getComputedStyle(document.querySelector('h1')).color === 'rgb(16, 80, 120)' &&
+      getComputedStyle(document.querySelector('h1')).fontSize === '36px' &&
+      document.querySelector('img')?.naturalWidth === 40`), 'HTML, relative stylesheet or local image did not render');
+    assert.equal(await inspectPage('typeof window.elevenex'), 'undefined');
+    await wait(async () => /Scripts don’t run/.test(await view("document.getElementById('notice').hidden ? '' : document.getElementById('notice-text').textContent")), 'Blocked page script was not explained');
+    assert.equal(await inspectPage("document.querySelector('h1').textContent"), 'Task HTML preview', 'Page scripts must stay blocked');
+
+    // External links ask before leaving, and never navigate the preview.
+    const previousOrigin = await currentOrigin();
+    await inspectPage("document.querySelector('#external').click()");
+    const confirmation = "(() => { const widget = document.querySelector('.quick-input-widget'); return !!widget && widget.style.display !== 'none' && widget.textContent.includes('https://example.invalid/'); })()";
+    await wait(() => frame.executeJavaScript(confirmation), 'External link was not confirmed');
+    for (const type of ['keyDown', 'keyUp']) await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await wait(async () => !(await frame.executeJavaScript(confirmation)), 'Link confirmation did not close');
+    assert.ok(!frame.framesInSubtree.some(child => child.url.startsWith('https://example.invalid')), 'Preview must remain in the task');
+    assert.equal(await currentOrigin(), previousOrigin);
+
+    // Editing the source keeps the reader's place.
+    await inspectPage('scrollTo(0, 900)');
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await wait(() => button('Show Source', true), 'Missing return-to-source control');
+    for (const type of ['keyDown', 'keyUp']) await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    await wait(() => button('Open Preview'), 'Show Source did not return to the source tab');
+    const command = name => frame.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(name)}))`);
+    await command('workbench.action.focusActiveEditorGroup');
+    await command('editor.action.selectAll');
+    const updated = '<!doctype html><h1>Updated after saving</h1><a href="./next.htm">Next page</a><div style="height: 3000px"></div>';
+    await window.webContents.debugger.sendCommand('Input.insertText', { text: updated });
+    await command('workbench.action.files.save');
+    await wait(async () => (await readFile(join(worktree, 'site', 'Preview page.HTML'), 'utf8')).includes(updated), 'HTML source did not save');
+    // Return to the retained preview tab directly. Opening the preview command
+    // again only reveals it.
+    await command('workbench.action.nextEditorInGroup');
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Updated after saving'"), 'Retained HTML preview did not refresh on save');
+    const restored = await inspectPage('scrollY');
+    assert.ok(Math.abs(restored - 900) <= 2, `Refresh did not keep the scroll position (${restored})`);
+
+    // Following a link retargets the tab, Refresh and Show Source.
+    await inspectPage("document.querySelector('a').click()");
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Second page'"), 'Relative HTML link did not navigate');
+    await wait(() => tab('Preview · next.htm'), 'Preview title did not follow navigation');
+    await click('Refresh Preview');
+    await wait(async () => (await view("document.querySelectorAll('#stage iframe').length")) === 1 &&
+      inspectPage("document.querySelector('h1')?.textContent === 'Second page'"), 'Refresh did not stay on the current page');
+
+    // An agent's disk edit refreshes the visible preview without a save.
+    await writeFile(join(worktree, 'site', 'next.htm'), '<h1>Edited on disk</h1>');
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Edited on disk'"), 'Disk edit did not refresh the preview', 20_000);
+    assert.equal(await frame.executeJavaScript("document.querySelectorAll('.tab[aria-label^=\"Preview ·\"]').length"), 1);
+    window.webContents.debugger.detach();
+    return finish('HTML_PREVIEW_SMOKE_OK');
+  }
   if (links) {
     await wait(() => codeState?.phase === 'ready', 'Task editor did not connect');
     await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='432px'");

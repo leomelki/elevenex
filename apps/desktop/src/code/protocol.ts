@@ -8,11 +8,12 @@ import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
 import { codePolicy, CODE_EXTENSION_PATH, EXTENSION, workbenchDocument } from './document';
-import { isMarkdownPreviewOrigin, isMarkdownPreviewResource, markdownPreviewAsset, markdownPreviewPolicy } from './markdown-preview';
+import { isCodeWebviewOrigin, isMarkdownPreviewResource, codeWebviewAsset, codeWebviewPolicy } from './webview';
 import { codeTransferCall } from './transfer-client';
 import { CodeLinks } from './links';
 import { CodeTransfers } from './transfers';
 import type { TransferDialogs } from './transfer-contracts';
+import { externalLinkUrl, HtmlPreview } from './html-preview';
 
 const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 /** A private session-local HTTPS handler, not an Internet or loopback listener. */
@@ -24,6 +25,7 @@ export class CodeProtocol {
   private readonly readyWaiters = new Set<(ready: boolean) => void>();
   private transportRevision = 0;
   readonly links: CodeLinks;
+  readonly htmlPreview: HtmlPreview;
   private transfers?: CodeTransfers;
   private transferId?: string;
   dirty = 0;
@@ -40,7 +42,12 @@ export class CodeProtocol {
     originIdentity = workspace.storageIdentity,
     private readonly presented: (filesOpen: boolean, hasEditors: boolean) => void = () => undefined,
     private readonly transferDialogs?: TransferDialogs,
-  ) { this.links = new CodeLinks(this.client, this.lifetime.signal); this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`; }
+    private readonly openExternal: (url: string) => boolean = () => false,
+  ) {
+    this.links = new CodeLinks(this.client, this.lifetime.signal);
+    this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`;
+    this.htmlPreview = new HtmlPreview(client, this.authority, shellOrigin);
+  }
   allows(value: string): boolean {
     try {
       const url = new URL(value);
@@ -48,7 +55,7 @@ export class CodeProtocol {
     } catch { return false; }
   }
   bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId || target.taskId !== this.target.taskId; if (changed) this.reset(); this.target = target; return changed; }
-  reset(): void { this.transfers?.dispose(); this.links.clear(); this.transportRevision++; this.ready = false; }
+  reset(): void { this.transfers?.dispose(); this.links.clear(); this.htmlPreview.reset(); this.transportRevision++; this.ready = false; }
   whenReady(): Promise<boolean> {
     if (this.ready) return Promise.resolve(true);
     if (this.closed || this.readyWaiters.size >= 32) return Promise.resolve(false);
@@ -58,17 +65,17 @@ export class CodeProtocol {
       this.readyWaiters.add(done);
     });
   }
-  dispose(): void { this.closed = true; this.transfers?.dispose(); this.links.clear(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
+  dispose(): void { this.closed = true; this.transfers?.dispose(); this.links.clear(); this.htmlPreview.reset(); this.lifetime.abort(); for (const done of this.readyWaiters) done(false); }
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const preview = markdownPreviewAsset(url, this.authority);
+    const preview = codeWebviewAsset(url, this.authority);
     if (this.closed || !preview && !this.allows(request.url)) return new Response(null, { status: 403 });
     // Keep the former path as a compatible alias for retained old documents.
     const pathname = url.pathname.startsWith(CODE_EXTENSION_PATH + '/') ? '/extension/' + url.pathname.slice(CODE_EXTENSION_PATH.length + 1) : url.pathname;
     const origin = request.headers.get('origin');
     const markdownResource = isMarkdownPreviewResource(url, this.authority);
     const source = origin && URL.parse(origin);
-    const allowPreviewResource = markdownResource && request.method === 'GET' && !!source && isMarkdownPreviewOrigin(source, this.authority);
+    const allowPreviewResource = markdownResource && request.method === 'GET' && !!source && isCodeWebviewOrigin(source, this.authority);
     if (origin && (preview ? origin !== url.origin : !allowPreviewResource && !this.allows(origin))) return new Response(null, { status: 403 });
     const headers: Record<string, string> = { 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'same-site', 'Cache-Control': 'no-store' };
     if (preview) {
@@ -102,7 +109,7 @@ export class CodeProtocol {
       const extensionWorker = url.hostname !== this.authority;
       headers['Content-Type'] = MIME[extname(actual)] ?? 'application/octet-stream';
       if (preview) {
-        headers['Content-Security-Policy'] = markdownPreviewPolicy(this.authority, this.shellOrigin);
+        headers['Content-Security-Policy'] = codeWebviewPolicy(this.authority, this.shellOrigin);
       } else if (extname(actual) === '.html') {
         if (!extensionWorker || !actual.endsWith('webWorkerExtensionHostIframe.html')) return new Response(null, { status: 403 });
         const html = await readFile(actual, 'utf8');
@@ -126,6 +133,26 @@ export class CodeProtocol {
     finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     let input: Record<string, unknown>;
     try { input = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return new Response(null, { status: 400 }); }
+    if (operation === 'html-preview' || operation === 'html-preview-close' || operation === 'html-preview-open-external') {
+      const { windowId, target: { scopeId, taskId }, workspace: { identity: generation }, transportRevision } = this;
+      if (input['generation'] !== generation || input['transportRevision'] !== transportRevision)
+        return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
+      if (operation === 'html-preview-close') {
+        this.htmlPreview.close(input['origin']);
+        return Response.json({ accepted: true }, { headers });
+      }
+      if (operation === 'html-preview-open-external') {
+        // The workbench confirms each link first. Main still validates the URL
+        // and requires the visible, focused editor window.
+        const url = externalLinkUrl(input['url']);
+        return Response.json({ accepted: !!url && this.active && this.ready && this.openExternal(url) }, { headers });
+      }
+      const current = () => !this.closed && this.active && this.ready && this.windowId === windowId &&
+        this.workspace.identity === generation && this.transportRevision === transportRevision &&
+        this.client.state(windowId).scope?.id === scopeId;
+      if (!current()) return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
+      return this.htmlPreview.open(input['path'], { windowId, scopeId, taskId, generation, current }, request, headers);
+    }
     if (operation === 'link-stat' || operation === 'link-read' || operation === 'link-directory') {
       const { windowId, target: { scopeId, taskId }, workspace: { identity: generation }, transportRevision } = this;
       const current = () => !this.closed && this.active && this.ready && this.windowId === windowId &&

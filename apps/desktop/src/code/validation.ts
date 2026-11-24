@@ -56,12 +56,17 @@ const bool = (value: unknown): boolean => { if (typeof value !== 'boolean') thro
 const revision = (value: unknown) => { const text = string(value, 64); if (!/^[a-f0-9]{64}$/.test(text)) throw invalidResponse(); return text; };
 export const CODE_OPERATIONS = ['stat', 'read', 'directory', 'write', 'mkdir', 'rename', 'delete', 'filenames', 'search', 'search-page', 'search-cancel', 'changes'] as const;
 export type CodeOperation = typeof CODE_OPERATIONS[number];
+export function fileReadReply(value: unknown): { content: string; revision: string } {
+  const raw = object(value), content = string(raw['content'], 12 * 1024 * 1024);
+  if (content.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(content)) throw invalidResponse();
+  return { content, revision: revision(raw['revision']) };
+}
 /** Forward only each named operation's bounded serializable public projection. */
 export function reply(operation: CodeOperation, value: unknown): unknown {
   const raw = object(value);
   switch (operation) {
     case 'stat': { const type = number(raw['type'], 2); if (type !== 1 && type !== 2) throw invalidResponse(); const permissions = raw['permissions']; if (permissions !== undefined && permissions !== 1) throw invalidResponse(); return { type, size: number(raw['size']), ctime: number(raw['ctime']), mtime: number(raw['mtime']), ...(permissions === 1 ? { permissions: 1 } : {}) }; }
-    case 'read': { const content = string(raw['content'], 12 * 1024 * 1024); if (content.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(content)) throw invalidResponse(); return { content, revision: revision(raw['revision']) }; }
+    case 'read': return fileReadReply(value);
     case 'write': return { revision: revision(raw['revision']) };
     case 'directory': return { entries: list(raw['entries'], 200).map(v => { const e = object(v), name = string(e['name'], 4096); if (!name || name.includes('/') || name === '..' || name === '.') throw invalidResponse(); const type = number(e['type'], 2); if (type !== 1 && type !== 2) throw invalidResponse(); return { name, type }; }), next: raw['next'] === null ? null : string(raw['next']) };
     case 'filenames': return { paths: list(raw['paths'], 200).map(v => string(v)), limited: bool(raw['limited']) };
