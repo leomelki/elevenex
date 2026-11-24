@@ -194,6 +194,7 @@ export class DesktopWorkspaceService {
       name: row.name,
       branchName: row.taskBranch ?? row.createdFromRef ?? '',
       state: row.archivedAt ? 'finished' : row.taskState,
+      ...(row.taskTemporary && !row.archivedAt ? { temporary: true as const } : {}),
       stage,
       archivedAt: row.archivedAt,
       updatedAt: row.updatedAt,

@@ -1095,6 +1095,17 @@ export class WorkspaceStore {
     if (result) this.detail.set(result);
     if (this.scopeId() === scope) this.busy.set(false);
   }
+  async keepTaskOpen(): Promise<void> {
+    const task = this.selectedTask(), scope = this.scopeId();
+    if (!task?.temporary || !scope || this.busy() || this.offline()) return;
+    this.busy.set(true);
+    try {
+      const result = await this.mutate(scope, () => this.bridge.workspaceKeepTaskOpen(scope, task.id));
+      if (result) this.taskRecords.update(tasks => tasks.map(item => item.id === task.id ? result : item));
+    } finally {
+      if (this.scopeId() === scope) this.busy.set(false);
+    }
+  }
   async closeTask(confirmStop = false): Promise<void> {
     const task = this.selectedTask(), scope = this.scopeId(), selection = this.chosen();
     if (!task || !scope || this.busy()) return;

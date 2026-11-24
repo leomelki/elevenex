@@ -40,11 +40,12 @@ function setup(history = false) {
     workspaceRestoreSession: vi.fn(async (): Promise<BackendResult<WorkspaceSession>> => ok({...session, status:'stopped'})),
     workspaceCreateSession: vi.fn(async (): Promise<BackendResult<WorkspaceSession>> => ok({ ...session, id: 6 })),
     workspaceSetStage: vi.fn(async () => ok(task)),
+    workspaceKeepTaskOpen: vi.fn<ElevenexBridge['workspaceKeepTaskOpen']>(async () => ok(task)),
     workspaceFinishTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok({ ...task, state: 'finished', archivedAt: 'now' })),
     workspaceReopenTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok(task)),
     workspaceDeleteProject: vi.fn(async (): Promise<BackendResult<{readonly accepted: true}>> => ok({ accepted: true })),
     workspaceRevision: vi.fn(async () => ok({ revision: 1, version: 1 as const, sessionArchive: true as const, ...(history ? { sessionArchiveHistory: true as const } : {}) })),
-  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceDeleteSession' | 'workspaceArchiveSession' | 'workspaceMoveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
+  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceDeleteSession' | 'workspaceArchiveSession' | 'workspaceMoveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceKeepTaskOpen' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
   TestBed.configureTestingModule({ providers: [WorkspaceStore, SessionChatDrafts, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
   const store = TestBed.inject(WorkspaceStore);
   store.connect({ id: 'local', name: 'This Mac', kind: 'local', conn: 'live' }, true);
@@ -847,6 +848,20 @@ describe('WorkspaceStore', () => {
     expect(store.counts()).toMatchObject({ running: 0, done: 1, attention: 1 });
     expect(bridge.workspaceTasks).toHaveBeenCalledTimes(1); expect(bridge.workspaceSessions).toHaveBeenCalledTimes(1);
   });
+});
+
+it('keeps a temporary task open without changing the selected session', async () => {
+  const { store, bridge, start } = setup();
+  bridge.workspaceTasks.mockResolvedValue(ok(page([{ ...task, temporary: true }])));
+  await start();
+  await store.selectSession({ taskId: '3', sessionId: '5' });
+  expect(store.selectedTask()?.temporary).toBe(true);
+  await store.keepTaskOpen();
+  expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledExactlyOnceWith('scope', 3);
+  expect(store.selectedTask()?.temporary).toBeUndefined();
+  expect(store.selectedSession()?.id).toBe(5);
+  await store.keepTaskOpen();
+  expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledTimes(1);
 });
 
 it('retains a scope-bound task Undo after close, and never reuses it in another backend', async () => {

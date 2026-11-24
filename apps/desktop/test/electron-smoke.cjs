@@ -61,6 +61,7 @@ app.setPath('appData', backendRoot);
 const revision = 'a'.repeat(40);
 let backendUrl;
 const deletedUnusedSessions = [];
+let taskKeptOpen = false;
 const terminalRows = new Map();
 const terminalOwners = [];
 let terminalCleanupCount = 0;
@@ -89,6 +90,16 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         request.resume(); deletedUnusedSessions.push(2);
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ accepted: true })); return;
+      }
+      if (pathname === '/api/desktop-workspace/tasks/1/keep-open') {
+        assert.equal(request.method, 'POST');
+        taskKeptOpen = true;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          id: 1, projectId: 1, repoId: 1, name: 'Review', branchName: 'review',
+          stage: 'active', state: 'ready', archivedAt: null, updatedAt: new Date().toISOString(),
+        }));
+        return;
       }
       if (pathname === '/hold-browser-task') { holdBrowserTask = true; response.end(); return; }
       if (pathname === '/browser-task-pending') { response.end(String(browserTaskReads.size)); return; }
@@ -371,6 +382,10 @@ void (async () => {
   const deletedUnused = await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:2})`);
   assert.deepEqual(deletedUnused, {ok:true,value:{accepted:true}});
   assert.deepEqual(deletedUnusedSessions, [2]);
+  const kept = await window.webContents.executeJavaScript(`window.elevenex.workspaceKeepTaskOpen('${firstScope.scope.id}', 1)`);
+  assert.equal(kept.ok, true);
+  assert.equal(kept.value.temporary, undefined);
+  assert.equal(taskKeptOpen, true);
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.workspaceDeleteSession('${firstScope.scope.id}', {taskId:1,sessionId:0}).then(()=>false,()=>true)`), true);
   console.log('Unstarted session deletion passed through the sandboxed preload and scoped HTTP adapter');
   await require('./browser-picker-native.cjs')();

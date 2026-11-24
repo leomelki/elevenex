@@ -164,6 +164,14 @@ guarantees so individual tools can't regress them:
   `AgentHumanChannelService`; `AgentChannelGateway` (`/agent-channel` WS) streams these to the panel
   and accepts the human's decision to unblock the waiting tool call.
 
+An authenticated session can pass `temporary:true` to `create_task` for
+disposable work it initiates. The creating session can finish that task with
+`finish_task` after it collects the result. The engine requires a clean managed
+checkout, an idle task, and no Git operation in progress. **Keep open** revokes
+that permission. Explicit user-requested closes follow the normal rules. Closing
+preserves the branch and transcripts. Reopened tasks require user consent to
+close again.
+
 ## Cross-harness delegation
 
 Coding sessions use native subagents for work in their own harness when available.

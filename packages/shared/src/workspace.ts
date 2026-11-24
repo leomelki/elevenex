@@ -27,6 +27,8 @@ export interface WorkspaceProjectDetail {
   readonly repositories: WorkspacePage<WorkspaceRepository>;
 }
 export interface WorkspaceTask {
+  /** The creating agent may close this task after collecting its result. */
+  readonly temporary?: true;
   /** Optional for older runtimes; counts repositories in this task's project. */
   readonly projectRepositoryCount?: number;
   readonly projectName?: string;

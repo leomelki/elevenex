@@ -407,7 +407,9 @@ describe('coding session identity and default scopes', () => {
     expect(
       (await bag.call('finish_task', { taskId: 17 })).isError,
     ).toBeUndefined();
-    expect(bag.services.tasks.finish).toHaveBeenCalledWith(17, false);
+    expect(bag.services.tasks.finish).toHaveBeenCalledWith(17, false, undefined, {
+      agent: { sessionId: 42, userRequested: false },
+    });
   });
 
   it('allows an explicit user-requested self-finish while preserving destructive capability checks', async () => {

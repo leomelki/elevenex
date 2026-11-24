@@ -44,6 +44,9 @@ export const workspaces = sqliteTable(
     }>(),
     taskDraft: text('task_draft').notNull().default(''),
     taskRequestId: text('task_request_id').unique(),
+    // Keep the creator after Keep open so an old agent can no longer close it autonomously.
+    taskCreatedBySessionId: integer('task_created_by_session_id'),
+    taskTemporary: integer('task_temporary', { mode: 'boolean' }).notNull().default(false),
     linkStatus: text('link_status').notNull().default('linked'),
     desiredBranch: text('desired_branch'),
     unlinkedAt: text('unlinked_at'),

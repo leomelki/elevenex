@@ -148,7 +148,9 @@ export function parseWorkspaceTask(value: unknown): WorkspaceTask {
     state !== 'finished'
   )
     throw invalidResponse();
+  if (raw['temporary'] !== undefined && raw['temporary'] !== true) throw invalidResponse();
   return {
+    ...(raw['temporary'] === true ? { temporary: true as const } : {}),
     ...(raw['projectName'] === undefined
       ? {}
       : { projectName: text(raw['projectName'], 100) }),
@@ -811,6 +813,14 @@ export function registerWorkspaceIpc(
       parseWorkspaceTask,
       'PATCH',
     );
+  });
+  register('workspace:keep-task-open', (window, scope, input) => {
+    const taskId = id(input);
+    return write(window, scope, `${base}/tasks/${taskId}/keep-open`, undefined, value => {
+      const task = parseWorkspaceTask(value);
+      if (task.id !== taskId || task.temporary || task.state === 'finishing' || task.state === 'finished') throw invalidResponse();
+      return task;
+    });
   });
   register('workspace:finish-task', (window, scope, input) => {
     const raw = object(input);

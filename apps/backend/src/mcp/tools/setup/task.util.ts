@@ -18,6 +18,10 @@ export function taskHandle(
     name: task.name,
     state: task.taskState,
     finishedAt: task.archivedAt,
+    ...(task.taskCreatedBySessionId ? {
+      createdBySessionId: task.taskCreatedBySessionId,
+      temporary: task.taskTemporary,
+    } : {}),
     finishScheduled: !!task.taskFinishRequest,
     finishRequestedBySessionId: task.taskFinishRequest?.sessionId ?? null,
     branch: task.taskBranch,

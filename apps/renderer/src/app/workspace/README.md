@@ -102,6 +102,11 @@ inference for old rows that retain a default Claude choice after using another
 harness. Recovery uses bounded metadata pages, without reading transcript files,
 starting runtimes or scanning all sessions at startup.
 
+The selected task header shows **Temporary task** and **Keep open** when the
+engine marks an agent-created task as temporary. Keep open persists the user's
+decision under the selected backend scope and revokes the creating session's
+permission to close it independently. Older engines omit the temporary flag.
+
 ## Bounds and invalidation
 
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.

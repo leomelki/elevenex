@@ -162,6 +162,7 @@ export interface InvokeContracts {
   'workspace:restore-session': { args: [scopeId: string, input: WorkspaceRestoreSession]; result: BackendResult<WorkspaceSession> };
   'workspace:create-session': { args: [scopeId: string, input: WorkspaceCreateSession]; result: BackendResult<WorkspaceSession> };
   'workspace:rename-task': { args: [scopeId: string, input: WorkspaceRenameTask]; result: BackendResult<WorkspaceTask> };
+  'workspace:keep-task-open': { args: [scopeId: string, taskId: number]; result: BackendResult<WorkspaceTask> };
   'workspace:finish-task': { args: [scopeId: string, input: WorkspaceFinishTask]; result: BackendResult<WorkspaceTask> };
   'workspace:retry-task': { args: [scopeId: string, taskId: number, recovery?: WorkspaceTaskRecovery]; result: BackendResult<WorkspaceTask> };
   'workspace:reopen-task': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceTask> };
@@ -337,6 +338,7 @@ export interface ElevenexBridge {
   workspaceRestoreSession(scopeId: string, input: WorkspaceRestoreSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceCreateSession(scopeId: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRenameTask(scopeId: string, input: WorkspaceRenameTask): Promise<BackendResult<WorkspaceTask>>;
+  workspaceKeepTaskOpen(scopeId: string, taskId: number): Promise<BackendResult<WorkspaceTask>>;
   workspaceFinishTask(scopeId: string, input: WorkspaceFinishTask): Promise<BackendResult<WorkspaceTask>>;
   workspaceRetryTask(scopeId: string, taskId: number, recovery?: WorkspaceTaskRecovery): Promise<BackendResult<WorkspaceTask>>;
   workspaceReopenTask(scopeId: string, input: number): Promise<BackendResult<WorkspaceTask>>;

@@ -93,6 +93,7 @@ continues to work without these optional inputs. `canLink` and
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
 `TaskHeader.closed` hides stage/close controls for archived history.
+Project task-specific buttons with `[taskActions]` alongside **Close task**.
 The optional `[gitStatus]` projection sits beside Git actions inside the reserved
 metadata row. Owners can show bounded loading, retry or Sync controls there;
 asynchronous status must not add rows below the header and displace a conversation.

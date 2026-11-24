@@ -339,6 +339,16 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   workspaceSetStage = async (_scope: string, input: WorkspaceSetStage) => {
     this.taskRows = this.taskRows.map(task => task.id === input.taskId ? { ...task, stage: input.stage } : task); return success(this.taskRows.find(task => task.id === input.taskId)!);
   };
+  temporaryTaskScene(): void {
+    this.revisionWaitEnabled = true;
+    this.taskRows = this.taskRows.map(task => task.id === 11 ? { ...task, temporary: true } : task);
+    this.navigationRevision++;
+  }
+  workspaceKeepTaskOpen = async (scope: string, taskId: number) => {
+    this.taskRows = this.taskRows.map(task => task.id === taskId ? { ...task, temporary: undefined } : task);
+    this.navigationRevision++;
+    return this.workspaceTask(scope, taskId);
+  };
   workspaceFinishTask = async (_scope: string, input: WorkspaceFinishTask) => {
     this.taskRows = this.taskRows.map(task => task.id === input.taskId ? { ...task, state: 'finished' as const, archivedAt: stamp } : task); return success(this.taskRows.find(task => task.id === input.taskId)!);
   };

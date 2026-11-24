@@ -190,6 +190,11 @@ export class DesktopWorkspaceController {
     await this.tasks.finish(resourceId(id), body.confirmStop);
     return this.workspace.task(resourceId(id));
   }
+  @Post('tasks/:id/keep-open') async keepTaskOpen(@Param('id') id: string) {
+    const taskId = resourceId(id);
+    await this.tasks.keepOpen(taskId);
+    return this.workspace.task(taskId);
+  }
   @Post('tasks/:id/retry') retryTask(
     @Param('id') id: string,
     @Body() input: unknown,
