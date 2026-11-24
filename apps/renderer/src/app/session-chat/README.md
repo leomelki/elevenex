@@ -168,8 +168,10 @@ Older engines omit the capability and retain their original send contract.
 - Claude tool calls share the same message/tool ID in live events and saved
   history. Split thoughts and text use the API block index when the saved
   record supplies it. Legacy split blocks that share an index retain separate
-  identities. Pi uses the native message timestamp and occurrence for prompt
-  and prose identities and the native call ID for all tool events. OpenCode
+  identities. The Claude provider omits its synthetic image-source notes from
+  live and saved chat. Saved attachments come from the original prompt.
+  Pi uses the native message timestamp and occurrence for prompt and prose
+  identities and the native call ID for all tool events. OpenCode
   waits for message metadata before publishing its parts and retains active
   parts and completed tools when a reconnect snapshot lags the socket.
 - `SessionChatContent` reads original long messages, tool input and output in
