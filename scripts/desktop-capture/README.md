@@ -174,6 +174,12 @@ covers both themes, narrow layouts
 and reduced motion against `pnpm desktop:preview` with
 `--url http://127.0.0.1:4310`.
 
+`scenarios/review-peek.mjs` checks that wider review and compact takeovers leave
+the receded chat's edge in view, that hovering and pressing it bring the chat
+back, keyboard focus on the peek, both themes, a compact layout and reduced
+motion. It scrubs the entry and return frames. Run it with
+`--url http://127.0.0.1:4310`.
+
 `scenarios/composer-queue-motion.mjs` checks optimistic queue receipt handoffs
 through the connected workspace preview. It samples each real animation frame
 for excess rows, changing DOM identity and height overshoot, with repeated text,

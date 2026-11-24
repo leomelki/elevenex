@@ -16,6 +16,16 @@
     >
       <ng-content select="[shellMain]" />
     </main>
+    <!-- The receded chat stays in view beside a takeover; pressing it brings the chat back. -->
+    <button
+      type="button"
+      class="peek"
+      aria-label="Return to chat"
+      [attr.inert]="takingOver() ? null : ''"
+      (click)="leaveReview()"
+    >
+      <span class="grabber" aria-hidden="true"></span>
+    </button>
     <aside
       class="panel surface"
       [attr.aria-label]="panelLabel()"

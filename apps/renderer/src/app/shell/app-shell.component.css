@@ -1,5 +1,7 @@
 :host {
   --side-panel-width: var(--panel-width);
+  /* The edge of the receded chat that stays in view beside a takeover. */
+  --chat-peek: calc(var(--space-8) + var(--space-2));
   height: 100dvh;
   min-height: 0;
   display: flex;
@@ -60,7 +62,12 @@
   overflow: hidden;
   margin-right: 0;
   view-transition-name: main-content;
-  transition: margin-right var(--dur-slow) var(--ease-in-out), opacity var(--dur-slow) var(--ease-in-out);
+  /* Recede towards the visible edge so the peek keeps its place. */
+  transform-origin: 0 50%;
+  transition:
+    margin-right var(--dur-slow) var(--ease-in-out),
+    opacity var(--dur-slow) var(--ease-in-out),
+    scale var(--dur-slow) var(--ease-in-out);
 }
 .panel {
   position: absolute;
@@ -93,11 +100,108 @@
   margin-right: calc(var(--side-panel-width) + var(--space-2));
 }
 :host(.wide-review) .main {
-  opacity: 0;
+  opacity: 0.7;
+  scale: 0.95;
   pointer-events: none;
 }
 :host(.wide-review) .panel {
-  width: 100%;
+  width: calc(100% - var(--chat-peek) - var(--space-2));
+}
+/* Like a card behind a sheet: the chat leans forward under the pointer and
+   settles back the instant it is pressed. */
+:host(.wide-review) .workspace:has(> .peek:hover) .main {
+  opacity: 0.86;
+  scale: 0.96;
+  transition-duration: var(--dur-base);
+  transition-timing-function: var(--ease-out);
+}
+:host(.wide-review) .workspace:has(> .peek:active) .main {
+  scale: 0.948;
+  transition-duration: var(--dur-instant);
+}
+.peek {
+  position: absolute;
+  /* Match the receded card (scale 0.95 about its left edge) so focus hugs it. */
+  top: 2.5%;
+  bottom: 2.5%;
+  left: 0;
+  width: var(--chat-peek);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--ink-muted);
+  pointer-events: none;
+  visibility: hidden;
+  /* Keep the grabber's exit visible; the closed peek is already inert. */
+  transition: visibility 0s var(--dur-slow);
+}
+:host(.wide-review) .peek {
+  pointer-events: auto;
+  cursor: pointer;
+  visibility: visible;
+  transition-delay: 0s;
+}
+.peek:focus-visible {
+  outline-offset: -2px;
+}
+/* A grabber that bends into a chevron towards where the panel will go. */
+.grabber {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 40px;
+  margin: -20px 0 0 -2.5px;
+  opacity: 0;
+  translate: var(--space-2) 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-in),
+    translate var(--dur-fast) var(--ease-in);
+}
+.grabber::before,
+.grabber::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 5px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  transition: rotate var(--dur-base) var(--ease-spring), translate var(--dur-base) var(--ease-spring);
+}
+.grabber::before {
+  top: 0;
+  transform-origin: 50% calc(100% - 2.5px);
+}
+.grabber::after {
+  bottom: 0;
+  transform-origin: 50% 2.5px;
+}
+:host(.wide-review) .grabber {
+  opacity: 0.55;
+  translate: 0 0;
+  transition:
+    opacity var(--dur-slow) var(--ease-out) var(--dur-fast),
+    translate var(--dur-slow) var(--ease-out) var(--dur-fast),
+    scale var(--dur-base) var(--ease-spring);
+}
+:host(.wide-review) .peek:is(:hover, :focus-visible) .grabber {
+  opacity: 1;
+  transition-delay: 0s;
+}
+/* The bent arms point right; shift them so the chevron stays optically centred. */
+:host(.wide-review) .peek:is(:hover, :focus-visible) .grabber::before {
+  rotate: -26deg;
+  translate: 4px 0;
+}
+:host(.wide-review) .peek:is(:hover, :focus-visible) .grabber::after {
+  rotate: 26deg;
+  translate: 4px 0;
+}
+:host(.wide-review) .peek:active .grabber {
+  scale: 0.88;
+  transition: scale var(--dur-instant) var(--ease-out);
 }
 @media (max-width: 1000px) {
   :host {
@@ -109,7 +213,12 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .panel,
-  .main {
+  .main,
+  :host(.wide-review) .workspace:has(> .peek:hover) .main,
+  .peek,
+  .grabber,
+  .grabber::before,
+  .grabber::after {
     transition: none;
   }
 }
