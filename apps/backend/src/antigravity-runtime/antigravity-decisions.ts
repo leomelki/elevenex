@@ -20,6 +20,7 @@ type Decision =
     }
   | {
       kind: 'question';
+      choices?: Map<string, string>;
       view: ClaudeUserInputRequest;
       resolve(value: unknown): void;
     };
@@ -63,6 +64,8 @@ export class AntigravityDecisions {
     if (permission) {
       const tool = acpObject(params.toolCall);
       const nativeId = acpText(tool.toolCallId, 256);
+      if (nativeId.startsWith('interaction_'))
+        return this.receiveChoice(requestId, tool, params.options);
       const options = new Map<string, string>();
       for (const value of acpList(params.options, 16)) {
         const option = acpObject(value);
@@ -78,8 +81,7 @@ export class AntigravityDecisions {
         return permissionOutcome(options.get('reject_once'));
       // An interaction can use the permission RPC for a choice. Only
       // approve ordinary tool requests, and never remember the approval.
-      if (fullAccess && !nativeId.startsWith('interaction_'))
-        return permissionOutcome(options.get('allow_once'));
+      if (fullAccess) return permissionOutcome(options.get('allow_once'));
       const view = acpPermission(
         requestId,
         toolId(nativeId),
@@ -117,6 +119,60 @@ export class AntigravityDecisions {
     });
   }
 
+  private receiveChoice(
+    requestId: string,
+    tool: Record<string, unknown>,
+    values: unknown,
+  ) {
+    if (!Array.isArray(values) || values.length === 0 || values.length > 30)
+      return PERMISSION_CANCELLED;
+    const choices = new Map<string, string>();
+    const ids = new Set<string>();
+    for (const value of values.map(acpObject)) {
+      const id = value.optionId;
+      const name = acpText(value.name, 900).trim();
+      if (
+        typeof id !== 'string' ||
+        !id.trim() ||
+        id.length > 900 ||
+        ids.has(id)
+      )
+        return PERMISSION_CANCELLED;
+      ids.add(id);
+      const base = name || id;
+      let label = base;
+      while (choices.has(label)) label += ' ·';
+      choices.set(label, id);
+    }
+    const message = acpText(tool.title, 4000) || 'Choose an option.';
+    return new Promise((resolve) => {
+      this.pending.push({
+        kind: 'question',
+        choices,
+        resolve,
+        view: {
+          requestId,
+          serverName: 'Antigravity',
+          message,
+          mode: 'form',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              choice: {
+                type: 'string',
+                title: message,
+                enum: [...choices.keys()],
+              },
+            },
+            required: ['choice'],
+          },
+          createdAt: new Date().toISOString(),
+        },
+      });
+      this.changed();
+    });
+  }
+
   permission(
     requestId: string,
     kind: 'allow_once' | 'allow_always' | 'reject_once',
@@ -146,6 +202,19 @@ export class AntigravityDecisions {
       throw new ConflictException(
         'This Antigravity question is no longer pending.',
       );
+    if (request.choices) {
+      const answer = content?.choice;
+      const id =
+        typeof answer === 'string' ? request.choices.get(answer) : undefined;
+      if (action === 'accept' && !id)
+        throw new BadRequestException(
+          'Choose one of the offered Antigravity answers.',
+        );
+      this.pending.shift();
+      request.resolve(permissionOutcome(action === 'accept' ? id : undefined));
+      this.changed();
+      return;
+    }
     this.pending.shift();
     request.resolve({
       action,
@@ -157,7 +226,7 @@ export class AntigravityDecisions {
   cancel(): void {
     for (const request of this.pending.splice(0))
       request.resolve(
-        request.kind === 'permission'
+        request.kind === 'permission' || request.choices
           ? PERMISSION_CANCELLED
           : QUESTION_CANCELLED,
       );

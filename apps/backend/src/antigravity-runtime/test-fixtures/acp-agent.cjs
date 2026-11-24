@@ -2,7 +2,7 @@ const readline = require('node:readline');
 const { deepStrictEqual, match } = require('node:assert/strict');
 
 const input = readline.createInterface({ input: process.stdin });
-const sessionId = 'native-session';
+const sessionId = process.env.ACP_FIXTURE_NATIVE_ID || 'native-session';
 const send = value => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\n');
 const result = (id, value) => send({ id, result: value });
 const update = value => send({ method: 'session/update', params: { sessionId, update: value } });
@@ -14,6 +14,9 @@ const permission = {
   locations: [{ path: 'README.md' }],
 };
 let promptId;
+let deferredWake;
+let steeringId;
+let fileReadCapability;
 let conversation = 'new';
 let model = 'default-model';
 let mode = 'default';
@@ -58,8 +61,9 @@ input.on('line', line => {
   const { id, method, params } = message;
   switch (method) {
     case 'initialize':
-      result(id, { protocolVersion: 1, agentCapabilities: {
-        promptCapabilities: { image: true }, sessionCapabilities: { resume: {}, close: {} },
+      fileReadCapability = params.clientCapabilities.fs;
+      result(id, { protocolVersion: 1, agentInfo: { version: '1.5.15' }, agentCapabilities: {
+        promptCapabilities: { image: true, audio: true, embeddedContext: true }, sessionCapabilities: { resume: {}, close: {} },
         ...(httpMcp ? { mcpCapabilities: { http: true } } : {}),
       } });
       break;
@@ -75,6 +79,10 @@ input.on('line', line => {
         _meta: { antigravity: { tier: { name: 'Antigravity Starter Quota', id: 'starter' } } },
       });
       update({ sessionUpdate: 'usage_update', used: 0, size: 1048576 });
+      update({ sessionUpdate: 'available_commands_update', availableCommands: [
+        { name: 'compact', description: 'Compact conversation' },
+        { name: 'goal', description: 'Keep working toward an objective', input: { hint: 'Objective' } },
+      ] });
       break;
     case 'session/close':
       if (params.sessionId !== sessionId) throw new Error('Wrong session to close');
@@ -99,8 +107,23 @@ input.on('line', line => {
       result(id, {});
       break;
     case 'session/prompt': {
+      let prompt = params.prompt[0].text;
+      if (prompt.startsWith('Conversation context retained before an edited message.')) {
+        deepStrictEqual(JSON.parse(prompt.split('\n').at(-1)), [
+          { role: 'user', content: 'keep this' },
+          { role: 'assistant', content: 'new, default-model: keep this' },
+        ]);
+        prompt = params.prompt[1].text;
+        deepStrictEqual(prompt, 'revised prompt');
+      }
+      if (prompt === 'steer now' && steeringId) {
+        result(steeringId, { stopReason: 'cancelled' });
+        text('Steered without cancellation.');
+        result(id, { stopReason: 'end_turn' });
+        steeringId = undefined;
+        break;
+      }
       promptId = id;
-      const prompt = params.prompt[0].text;
       if (titleHelper) {
         const { firstMessage } = JSON.parse(prompt.split('\n').at(-1));
         if (firstMessage === 'tool attempt') {
@@ -114,6 +137,59 @@ input.on('line', line => {
           text('"Generated Antigravity Title"}\n```');
         }
         result(id, { stopReason: 'end_turn' });
+      } else if (prompt === 'start steer') {
+        steeringId = id;
+        text('Ready to steer.');
+      } else if (prompt === 'background wake' || prompt === 'background stop' || prompt === 'daemon wake') {
+        update({ sessionUpdate: 'tool_call', toolCallId: 'command-1', kind: 'execute',
+          status: 'in_progress', title: 'Run run_command', rawInput: { CommandLine: 'printf ready', IsDaemon: prompt === 'daemon wake' } });
+        result(id, { stopReason: 'end_turn' });
+        if (prompt !== 'background stop') deferredWake = setTimeout(() => {
+          update({ sessionUpdate: 'tool_call_update', toolCallId: 'command-1', status: 'completed',
+            rawOutput: { combinedOutput: 'ready', exitCode: 0 } });
+          send({ id: 'wake-permission', method: 'session/request_permission', params: {
+            sessionId, toolCall: permission,
+            options: [{ kind: 'allow_once', optionId: 'allow' }],
+          } });
+        }, 350);
+      } else if (prompt === 'detached reply') {
+        result(id, { stopReason: 'end_turn' });
+        deferredWake = setTimeout(() => {
+          text('Late native reply');
+          update({ sessionUpdate: 'usage_update', used: 15000, size: 1048576 });
+        }, 350);
+      } else if (prompt === 'subagent') {
+        update({ sessionUpdate: 'tool_call', toolCallId: 'native-child-launch', kind: 'other',
+          title: 'Run invoke_subagent', status: 'in_progress', rawInput: { Role: 'Reviewer', Prompt: 'Review layout' } });
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 'native-child-launch', status: 'completed' });
+        result(id, { stopReason: 'end_turn' });
+      } else if (prompt === 'update plan') {
+        update({ sessionUpdate: 'plan', entries: [{ content: 'Inspect project', status: 'pending' }] });
+        update({ sessionUpdate: 'plan', entries: [{ content: 'Inspect project', status: 'completed' }] });
+        result(id, { stopReason: 'end_turn' });
+      } else if (prompt.startsWith('read attachments\n')) {
+        deepStrictEqual(params.prompt.slice(1).map(block => block.type), ['resource', 'resource_link', 'audio']);
+        deepStrictEqual(params.prompt[1].resource.text, 'Owned text');
+        deepStrictEqual(params.prompt[2].mimeType, 'application/pdf');
+        deepStrictEqual(params.prompt[3].data, Buffer.from('Audio fixture').toString('base64'));
+        text('Native attachments matched.');
+        result(id, { stopReason: 'end_turn' });
+      } else if (prompt === 'read client file') {
+        deepStrictEqual(fileReadCapability, { readTextFile: true, writeTextFile: false });
+        send({ id: 'read-line', method: 'fs/read_text_file',
+          params: { sessionId, path: 'README.md', line: 1, limit: 1 } });
+        send({ id: 'read-other-session', method: 'fs/read_text_file',
+          params: { sessionId: 'another-session', path: 'README.md' } });
+        send({ id: 'read-outside', method: 'fs/read_text_file',
+          params: { sessionId, path: '../../package.json' } });
+      } else if (prompt === 'native choice') {
+        send({ id: 'native-choice', method: 'session/request_permission', params: {
+          sessionId, toolCall: { toolCallId: 'interaction_123', title: 'Choose a layout?' },
+          options: [
+            { kind: 'allow_once', optionId: 'grid_id', name: 'Grid' },
+            { kind: 'allow_once', optionId: 'list_id', name: 'List' },
+          ],
+        } });
       } else if (prompt === 'review' || prompt === 'stop') {
         text('Ready ');
         text('to review.');
@@ -137,10 +213,27 @@ input.on('line', line => {
       break;
     }
     case 'session/cancel':
+      clearTimeout(deferredWake);
       // Finish after receiving the cancellation response to the permission.
       break;
     default:
-      if (id === 'permission' && message.result.outcome.outcome === 'cancelled') {
+      if (id === 'read-line' || id === 'read-other-session' || id === 'read-outside') {
+        if (id === 'read-line') deepStrictEqual(message.result, { content: '# Antigravity runtime' });
+        else deepStrictEqual(message.error.code, -32603);
+        fileReadCapability.answered = (fileReadCapability.answered ?? 0) + 1;
+        if (fileReadCapability.answered === 3) {
+          text('Scoped file read completed.');
+          result(promptId, { stopReason: 'end_turn' });
+        }
+      } else if (id === 'wake-permission') {
+        deepStrictEqual(message.result.outcome, { outcome: 'selected', optionId: 'allow' });
+        text('Background wake handled.');
+        update({ sessionUpdate: 'usage_update', used: 12000, size: 1048576 });
+      } else if (id === 'native-choice') {
+        deepStrictEqual(message.result.outcome, { outcome: 'selected', optionId: 'list_id' });
+        text('Selected List.');
+        result(promptId, { stopReason: 'end_turn' });
+      } else if (id === 'permission' && message.result.outcome.outcome === 'cancelled') {
         result(promptId, { stopReason: 'cancelled' });
       } else if (id === 'permission') {
         update({ sessionUpdate: 'tool_call_update', toolCallId: 'test-tool', status: 'completed',

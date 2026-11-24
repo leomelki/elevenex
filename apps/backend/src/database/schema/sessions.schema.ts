@@ -77,6 +77,9 @@ export const sessions = sqliteTable(
         reasoningEffort?: string | null;
         mode?: string | null;
         plan?: boolean;
+        /** A rewind creates a fresh native session on the next explicit send. */
+        resetPending?: true;
+        legacyNativeId?: string;
       }>(),
     hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
       mode: 'boolean',

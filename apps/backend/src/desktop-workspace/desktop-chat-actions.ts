@@ -126,7 +126,8 @@ export async function executeChatAction(
       await provider.cancelPendingPrompt(sessionId, text(action.id));
       break;
     case 'steer-queued':
-      await provider.steerPendingPrompt(sessionId, text(action.id));
+      if (provider.info.id === 'antigravity') await provider.steerPendingPrompt(sessionId, text(action.id), 'desktop-chat');
+      else await provider.steerPendingPrompt(sessionId, text(action.id));
       break;
     case 'resume-queue':
       if (provider.info.id === 'antigravity') await provider.resumePendingPrompts(sessionId, 'desktop-chat');

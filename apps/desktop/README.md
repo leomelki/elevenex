@@ -38,8 +38,11 @@ Choose **Antigravity** in the harness picker of a new session and send a message
 Elevenex uses [Google’s interactive ACP workflow](https://antigravity.google/docs/ide/extensions/acp/).
 Antigravity owns authentication, tool execution and its native helpers. Elevenex
 relays messages you submit in desktop chat, renders decisions, and restores
-the conversation after reconnecting. Follow-ups wait in the queue. The model
-picker discovers available models and their advertised thinking levels before
+the conversation after reconnecting. Follow-ups wait in the queue and can
+steer an open prompt on agy 1.5 or later. Activity shows background commands,
+scheduled wakeups and read-only subagent batches when native records are
+available. Tool completions and replies from background work are saved in chat.
+The model picker discovers available models and their advertised thinking levels before
 the first message. Use the composer’s **Plan / Code** switch to set native
 planning mode. In Code, choose **Ask first**, **Accept edits**, **Auto**, or
 **Full access**. Auto appears when the installed CLI advertises it for the

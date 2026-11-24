@@ -22,8 +22,11 @@ catalog and caller identity as the other coding harnesses. The catalog probe
 uses a temporary session with an empty MCP server list.
 
 `AntigravityTurn` projects ACP updates to stable transcript items.
-`AntigravityDecisions` presents native permission options and form requests in
-order, and cancels them on stop or disposal. Tool actions stay inside the CLI.
+`AntigravityDecisions` presents native permission options, fixed-choice questions
+and form requests in order. Stop and disposal cancel pending decisions. The
+conversation client serves ACP text reads within the active task workspace and
+its own uploaded attachments through the confined Code reader. The CLI owns
+writes and command execution. Catalog and title helpers have no file capability.
 The session row retains the native ID and session model and mode preferences. SQLite
 stores the user receipt at dispatch and finalizes that turn’s transcript in the
 same row at settlement. Desktop history reads do not spawn the CLI.
@@ -84,6 +87,40 @@ nullable `remainingPercentage` accepts them when a supported source exists.
 The engine does not read the CLI's credentials or call Google's internal quota
 endpoints.
 
-Follow-ups are queued per conversation. Native steering, rewind,
-and separate native subagent transcripts are outside this provider’s desktop
-capabilities.
+## Work that outlives a prompt
+
+Finite commands, scheduled wakeups and native subagent batches can keep the
+activity view live after `session/prompt` returns. A daemon remains visible
+while the composer accepts follow-ups. Stop sends `session/cancel` to the native
+session and pauses queued follow-ups. A quiet command expires after 30 minutes
+without progress. A scheduled wake with a reported duration has that duration
+plus the same grace period.
+
+Antigravity can start a reply without an open prompt, including one that starts
+by asking for permission. The provider accepts these replies on the live ACP
+connection, uses `usage_update` to settle them, and saves them in conversation
+history. A late command receipt is attached to the original tool record.
+Reconnect never resubmits an interrupted command or prompt.
+
+The Activity panel can open a read-only view of a subagent batch. The provider
+matches launches to child records in the current CLI profile and reads a bounded
+tail of each matched transcript. Missing or ambiguous records have unavailable
+status. A child's reply to its parent can be a request for guidance, so it does
+not establish that the child succeeded. Stop targets the whole native session.
+
+On agy 1.5 or later, a queued follow-up can steer an open prompt. ACP supplies the
+slash commands through the runtime autocomplete endpoint. The conversation
+forwards native commands such as `/compact` and `/goal` when the installed CLI
+advertises them. Images and eligible audio, PDF and UTF-8 text uploads use the
+CLI's advertised ACP prompt capabilities. Uploads also retain their file link
+for runtimes or file types that require a path.
+
+Edit from here keeps earlier messages and starts a fresh native session for
+the revised message. Elevenex quotes a bounded recent slice of the retained
+history, preserving review links and read-only subagent history for earlier
+turns. Prompts saved before editing support and native slash commands remain
+read-only.
+
+Elevenex uses the installed CLI and its existing sign-in profile. Managed CLI
+installation and accounts, and Antigravity-specific skill suggestions are
+currently unavailable.

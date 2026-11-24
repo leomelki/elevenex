@@ -1,6 +1,6 @@
 import childProcess from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -162,6 +162,350 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect(await provider.getHistory(sessionId)).toEqual([]);
     await provider.getRuntimeState(sessionId);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('retains background activity and accepts a permission-first wake before draining the queue', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(
+      sessionId,
+      'background wake',
+      undefined,
+      undefined,
+      request,
+    );
+    const working = await waitFor(
+      runtime,
+      (state) => state.backgroundWork.length > 0,
+    );
+    expect(working.backgroundWork[0]).toMatchObject({
+      id: 'task:command-1',
+      detail: 'printf ready',
+    });
+    expect(working.canInterrupt).toBe(true);
+    await runtime.submitPrompt(sessionId, 'queued', undefined, undefined, {
+      ...request,
+      queue: true,
+    });
+    const waiting = await waitFor(
+      runtime,
+      (state) => !!state.pendingPermissionRequest,
+    );
+    expect(waiting.pendingPrompts).toHaveLength(1);
+    await runtime.approvePermission(
+      sessionId,
+      waiting.pendingPermissionRequest!.requestId,
+    );
+    await waitFor(
+      runtime,
+      (state) => state.runPhase === 'idle' && !state.pendingPrompts.length,
+    );
+    expect(await runtime.getHistory(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool_result',
+          providerToolResult: { output: 'ready', exitCode: 0 },
+        }),
+        expect.objectContaining({
+          kind: 'assistant',
+          content: 'Background wake handled.',
+        }),
+        expect.objectContaining({
+          kind: 'assistant',
+          content: 'new, default-model: queued',
+        }),
+      ]),
+    );
+  });
+
+  it('persists a native reply arriving after an idle transition without inserting a user message', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(
+      sessionId,
+      'detached reply',
+      undefined,
+      undefined,
+      { origin: 'desktop-chat' },
+    );
+    expect((await runtime.getRuntimeState(sessionId)).runPhase).toBe('idle');
+    const deadline = Date.now() + 4_000;
+    let items = await runtime.getHistory(sessionId);
+    while (
+      !items.some(({ content }) => content === 'Late native reply') &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      items = await runtime.getHistory(sessionId);
+    }
+    expect(items.map(({ content }) => content)).toEqual([
+      'detached reply',
+      'Late native reply',
+    ]);
+  });
+
+  it('keeps a daemon visible while idle and saves its completion against the original command', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(sessionId, 'daemon wake', undefined, undefined, { origin: 'desktop-chat' });
+    expect(await runtime.getRuntimeState(sessionId)).toMatchObject({
+      runPhase: 'idle',
+      backgroundWork: [{ id: 'task:command-1' }],
+    });
+    const waiting = await waitFor(runtime, (state) => !!state.pendingPermissionRequest);
+    await runtime.approvePermission(sessionId, waiting.pendingPermissionRequest!.requestId);
+    await waitFor(runtime, (state) => state.runPhase === 'idle');
+    const history = await runtime.getHistory(sessionId);
+    const command = history.find(({ kind }) => kind === 'tool_use');
+    expect(history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'tool_result', toolUseId: command?.id, providerToolResult: { output: 'ready', exitCode: 0 } }),
+      expect.objectContaining({ kind: 'assistant', content: 'Background wake handled.' }),
+    ]));
+  });
+
+  it('stops a command after the prompt responds and leaves queued work paused', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(
+      sessionId,
+      'background stop',
+      undefined,
+      undefined,
+      request,
+    );
+    await waitFor(runtime, (state) => state.backgroundWork.length > 0);
+    await runtime.submitPrompt(sessionId, 'queued', undefined, undefined, {
+      ...request,
+      queue: true,
+    });
+    await runtime.interrupt(sessionId);
+    const state = await runtime.getRuntimeState(sessionId);
+    expect(state).toMatchObject({
+      canInterrupt: false,
+      backgroundWork: [],
+      queuePaused: true,
+    });
+    expect(state.pendingPrompts).toHaveLength(1);
+  });
+
+  it('sends a queued message as a native steer and advertises the CLI commands', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(
+      sessionId,
+      'start steer',
+      undefined,
+      undefined,
+      request,
+    );
+    await waitFor(runtime, (state) => state.canSteer && state.liveItems.some(({ content }) => content === 'Ready to steer.'));
+    expect(await runtime.getAutocompleteItems(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ trigger: '/compact' }),
+        expect.objectContaining({ trigger: '/goal', detail: 'Objective' }),
+      ]),
+    );
+    await runtime.submitPrompt(sessionId, 'steer now', undefined, undefined, {
+      ...request,
+      queue: true,
+    });
+    const state = await runtime.getRuntimeState(sessionId);
+    await expect(runtime.steerPendingPrompt(sessionId, state.pendingPrompts[0].id)).rejects.toThrow('directly');
+    await runtime.steerPendingPrompt(sessionId, state.pendingPrompts[0].id, 'desktop-chat');
+    await waitFor(runtime, (state) => state.runPhase === 'idle');
+    expect(await runtime.getHistory(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'user', content: 'steer now' }),
+        expect.objectContaining({
+          kind: 'assistant',
+          content: 'Steered without cancellation.',
+        }),
+      ]),
+    );
+  });
+
+  it('requires an offered native choice even with Full access', async () => {
+    const runtime = makeProvider();
+    await runtime.setPermissionMode(
+      sessionId,
+      'bypassPermissions',
+      'desktop-chat',
+    );
+    await runtime.submitPrompt(
+      sessionId,
+      'native choice',
+      undefined,
+      undefined,
+      request,
+    );
+    const state = await waitFor(
+      runtime,
+      (state) => !!state.pendingUserInputRequest,
+    );
+    const { requestId, requestedSchema } = state.pendingUserInputRequest!;
+    expect(requestedSchema).toMatchObject({
+      properties: { choice: { enum: ['Grid', 'List'] } },
+    });
+    await expect(
+      runtime.answerUserInput(sessionId, requestId, 'accept', {
+        choice: 'Unknown',
+      }),
+    ).rejects.toThrow('offered');
+    await runtime.answerUserInput(sessionId, requestId, 'accept', {
+      choice: 'List',
+    });
+    await waitFor(runtime, (state) => state.runPhase === 'idle');
+    expect(await runtime.getHistory(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: 'Selected List.' }),
+      ]),
+    );
+  });
+
+  it('serves bounded ACP text reads only to the active native session and workspace', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(sessionId, 'read client file', undefined, undefined, {
+      origin: 'desktop-chat',
+    });
+    expect(await runtime.getHistory(sessionId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'Scoped file read completed.' }),
+    ]));
+  });
+
+  it('replaces the edited suffix in a fresh native session and carries the kept context', async () => {
+    const runtime = makeProvider();
+    const send = (text: string) => runtime.submitPrompt(sessionId, text, undefined, undefined, {
+      origin: 'desktop-chat',
+    });
+    await send('keep this');
+    await send('remove this');
+    const anchor = (await runtime.getHistory(sessionId)).find(({ content }) => content === 'remove this')?.sourceMessageId;
+    expect(anchor).toMatch(/^\d+:/);
+    await expect(runtime.rewindConversation(sessionId, anchor!)).rejects.toThrow('directly');
+    await runtime.rewindConversation(sessionId, anchor!, 'desktop-chat');
+    expect((await runtime.getHistory(sessionId)).map(({ content }) => content)).toEqual([
+      'keep this', 'new, default-model: keep this',
+    ]);
+    const env = await paths.buildAugmentedEnvAsync(process.env);
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({ ...env, ACP_FIXTURE_NATIVE_ID: 'native-replacement' });
+    await send('revised prompt');
+    expect((await runtime.getRuntimeState(sessionId)).claudeSessionId).toBe('native-replacement');
+    expect((await runtime.getHistory(sessionId)).map(({ content }) => content)).toEqual([
+      'keep this', 'new, default-model: keep this', 'revised prompt', 'new, default-model: revised prompt',
+    ]);
+  });
+
+  it('projects repeated native plan updates onto one checklist', async () => {
+    const runtime = makeProvider();
+    await runtime.submitPrompt(sessionId, 'update plan', undefined, undefined, { origin: 'desktop-chat' });
+    const items = await runtime.getHistory(sessionId);
+    expect(items.filter(({ kind }) => kind === 'tool_use')).toEqual([
+      expect.objectContaining({
+        toolKind: 'todo_write',
+        toolInput: { todos: [{ content: 'Inspect project', status: 'completed' }] },
+      }),
+    ]);
+  });
+
+  it('embeds only previews supported by the native CLI and owned by the session', async () => {
+    const root = join(profileHome, 'app-data');
+    process.env.ELEVENEX_DATA_ROOT = root;
+    const upload = async (owner: number, name: string, contents: string) => {
+      const dir = join(root, 'chat-attachments', String(owner), '11111111-1111-4111-8111-111111111111');
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, name);
+      await writeFile(path, contents);
+      return `[${name}](<${path}>)`;
+    };
+    const links = await Promise.all([
+      upload(sessionId, 'notes.txt', 'Owned text'),
+      upload(sessionId, 'document.pdf', '%PDF-1.7'),
+      upload(sessionId, 'audio.wav', 'Audio fixture'),
+      upload(sessionId + 1, 'other.txt', 'Other session'),
+      upload(sessionId, 'video.mp4', 'Video fallback'),
+    ]);
+    const runtime = makeProvider();
+    await runtime.submitPrompt(sessionId, ['read attachments', ...links].join('\n'), undefined, undefined, {
+      origin: 'desktop-chat',
+    });
+    expect(await runtime.getHistory(sessionId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'Native attachments matched.' }),
+    ]));
+  });
+
+  it('only shows child records owned by the launching conversation and rejects redirects', async () => {
+    const brain = join(profileHome, '.gemini', 'antigravity-cli', 'brain');
+    const parent = join(brain, 'native-session', '.system_generated');
+    const child = join(brain, 'child-1', '.system_generated');
+    await mkdir(join(parent, 'subagents'), { recursive: true });
+    await mkdir(join(child, 'messages'), { recursive: true });
+    await mkdir(join(child, 'logs'), { recursive: true });
+    await writeFile(
+      join(parent, 'subagents', 'child-1.json'),
+      JSON.stringify({ conversationId: 'child-1' }),
+    );
+    await writeFile(
+      join(child, 'messages', 'launch.json'),
+      JSON.stringify({
+        sender: 'native-session',
+        sourceMetadata: {
+          tool: {
+            conversationId: 'native-session',
+            toolCall: {
+              name: 'invoke_subagent',
+              id: 'native-child-launch',
+              argumentsJson: JSON.stringify({
+                Role: 'Reviewer',
+                Prompt: 'Review layout',
+              }),
+            },
+          },
+        },
+      }),
+    );
+    const transcript = join(child, 'logs', 'transcript.jsonl');
+    await writeFile(
+      transcript,
+      JSON.stringify({
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        content: 'Reviewed.',
+      }) + '\n',
+    );
+    const runtime = makeProvider();
+    await runtime.submitPrompt(
+      sessionId,
+      'subagent',
+      undefined,
+      undefined,
+      request,
+    );
+    const state = await waitFor(runtime, (state) =>
+      state.backgroundWork.some(({ kind }) => kind === 'subagent'),
+    );
+    const { agentId } = state.subagents[0];
+    expect(
+      (await runtime.getSubagentHistory(sessionId, agentId)).history.map(
+        ({ content }) => content,
+      ),
+    ).toEqual(['Reviewer\n\nReview layout', 'Reviewed.']);
+    await expect(
+      runtime.getSubagentHistory(
+        sessionId,
+        agentId.replace(/-[a-f0-9]{24}$/, '-' + '0'.repeat(24)),
+      ),
+    ).rejects.toThrow('Unknown');
+    const secret = join(profileHome, 'other.jsonl');
+    await writeFile(
+      secret,
+      JSON.stringify({
+        step_index: 1,
+        type: 'PLANNER_RESPONSE',
+        content: 'Private',
+      }),
+    );
+    await rm(transcript);
+    await symlink(secret, transcript);
+    expect(
+      (await runtime.getSubagentHistory(sessionId, agentId)).history.map(
+        ({ content }) => content,
+      ),
+    ).toEqual(['Reviewer\n\nReview layout']);
   });
 
   async function waitForTitle() {

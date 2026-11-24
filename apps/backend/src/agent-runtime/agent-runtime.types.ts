@@ -182,7 +182,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
-  steerPendingPrompt(sessionId: number, id: string): Promise<void>;
+  steerPendingPrompt(sessionId: number, id: string, origin?: InteractivePromptOrigin): Promise<void>;
   resumePendingPrompts(sessionId: number, origin?: InteractivePromptOrigin): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
@@ -267,6 +267,7 @@ export interface AgentRuntimeProviderFeatures {
   rewindConversation(
     sessionId: number,
     messageId: string,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentTranscriptItem[]>;
   approvePermission(
     sessionId: number,

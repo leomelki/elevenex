@@ -6,7 +6,7 @@ import {
   Logger,
   type OnModuleDestroy,
 } from '@nestjs/common';
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type {
@@ -14,6 +14,7 @@ import type {
   AgentImageInput,
   AgentProviderModelCatalogPayload,
   AgentRuntimeProvider,
+  AgentSubagentHistoryPayload,
   AgentTranscriptItem,
   InteractivePromptOrigin,
 } from '../agent-runtime/agent-runtime.types.js';
@@ -49,11 +50,31 @@ import {
   sessionOptions,
 } from './antigravity-acp.js';
 import { AntigravityBackground } from './antigravity-background.js';
+import { readAntigravityTextFile } from './antigravity-client-files.js';
 import { AntigravityCatalog } from './antigravity-catalog.js';
+import {
+  antigravityBatch,
+  antigravityBatchState,
+  antigravityBrain,
+  readAntigravityBatchHistory,
+  readAntigravityChildren,
+  AntigravitySubagents,
+} from './antigravity-children.js';
 import {
   AntigravityDecisions,
   type AntigravityAnswer,
 } from './antigravity-decisions.js';
+import {
+  antigravityPrompt,
+  type AntigravityPromptCapabilities,
+} from './antigravity-prompt.js';
+import {
+  antigravityHistoryContext,
+  antigravityTurnScope,
+  antigravityUserPrompt,
+  scopedAntigravityItems,
+  visibleAntigravityItems,
+} from './antigravity-history.js';
 import {
   AntigravityQuota,
   acpContextUsage,
@@ -80,14 +101,21 @@ interface Entry {
   transport?: AcpStdio;
   options: ReturnType<typeof sessionOptions>;
   defaults: { model?: string; thought?: string; mode?: string };
-  imagePrompts: boolean;
+  promptCapabilities: AntigravityPromptCapabilities;
+  preparingSteer: boolean;
   workingDirectory?: string;
   acceptsSteering: boolean;
+  acceptsWake: boolean;
+  disconnectedWhileSettling?: Error;
   promptOpen: boolean;
+  promptTicket: number;
   steerRequest?: Promise<Record<string, unknown>>;
   background: AntigravityBackground;
   settleAbort?: AbortController;
   commands: AgentAutocompleteItem[];
+  clientReads: number;
+  brain?: string;
+  children: AntigravitySubagents;
   decisions: AntigravityDecisions;
   pendingPrompts: (ClaudePendingPrompt & { visiblePrompt?: string })[];
   liveItems: AgentTranscriptItem[];
@@ -165,7 +193,7 @@ export class AntigravityRuntimeProvider
     if (!nativeId) return [];
     const activeTurn = this.entries.get(sessionId)?.storedTurnId;
     const rows = this.db
-      .select({ items: antigravityTurns.items })
+      .select({ id: antigravityTurns.id, items: antigravityTurns.items })
       .from(antigravityTurns)
       .where(
         and(
@@ -177,13 +205,107 @@ export class AntigravityRuntimeProvider
       )
       .orderBy(antigravityTurns.id)
       .all();
-    return this.changes.attachHistory(
-      sessionId,
-      this.info.id,
-      nativeId,
-      rows.flatMap((row) => row.items),
-      options?.changeDetails,
+    const groups = new Map<string | null | undefined, AgentTranscriptItem[]>();
+    for (const row of rows) {
+      const scope = antigravityTurnScope(
+        row.items,
+        session.antigravitySelection?.legacyNativeId ?? nativeId,
+      );
+      const items = groups.get(scope) ?? [];
+      for (const item of visibleAntigravityItems(row.id, row.items))
+        items.push(item);
+      groups.set(scope, items);
+    }
+    const history: AgentTranscriptItem[] = [];
+    for (const [scope, items] of groups) {
+      const group = await this.changes.attachHistory(
+        sessionId,
+        this.info.id,
+        scope,
+        items,
+        options?.changeDetails,
+      );
+      for (const item of group) history.push(item);
+    }
+    return history;
+  }
+
+  async rewindConversation(
+    sessionId: number,
+    messageId: string,
+    origin?: InteractivePromptOrigin,
+  ) {
+    this.assertInteractiveOrigin(origin);
+    const session = await this.sessionService.findOne(sessionId);
+    this.assertInteractiveSession(session);
+    await this.sessionService.assertSessionWorkspaceLinked(sessionId);
+    const match = /^(\d+):([0-9a-f-]{36})$/.exec(messageId);
+    const rowId = Number(match?.[1]);
+    const nativeId = session.antigravitySessionId;
+    if (!match || !Number.isSafeInteger(rowId) || !nativeId)
+      throw new BadRequestException(
+        'This Antigravity prompt cannot be edited.',
+      );
+    const entry = this.entries.get(sessionId);
+    if (entry?.run || entry?.background.active || entry?.pendingPrompts.length)
+      throw new ConflictException(
+        'Wait for Antigravity to finish before editing.',
+      );
+    const expected = and(
+      eq(antigravityTurns.sessionId, sessionId),
+      eq(antigravityTurns.id, rowId),
     );
+    const row = this.db
+      .select({ items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(expected)
+      .get();
+    const index =
+      row?.items.findIndex(
+        (item) =>
+          item.id === match[2] && item.kind === 'user' && !item.editUnsupported,
+      ) ?? -1;
+    if (!row || index < 0)
+      throw new ConflictException(
+        'The Antigravity prompt changed. Refresh the conversation.',
+      );
+    const selection = this.currentSelection(session);
+    this.db.transaction((tx) => {
+      const changed = tx
+        .update(sessions)
+        .set({
+          antigravitySelection: {
+            ...selection,
+            resetPending: true,
+            legacyNativeId: selection.legacyNativeId ?? nativeId,
+          },
+        })
+        .where(
+          and(
+            this.activeSession(sessionId),
+            eq(sessions.antigravitySessionId, nativeId),
+          ),
+        )
+        .run();
+      if (!changed.changes)
+        throw new ConflictException('The Antigravity conversation changed.');
+      tx.delete(antigravityTurns)
+        .where(
+          and(
+            eq(antigravityTurns.sessionId, sessionId),
+            gt(antigravityTurns.id, rowId),
+          ),
+        )
+        .run();
+      const kept = row.items.slice(0, index);
+      if (visibleAntigravityItems(rowId, kept).length)
+        tx.update(antigravityTurns).set({ items: kept }).where(expected).run();
+      else tx.delete(antigravityTurns).where(expected).run();
+    });
+    if (entry) this.dispose(entry);
+    this.contexts.delete(sessionId);
+    this.emit('event', { type: 'history_snapshot', payload: { sessionId } });
+    return this.getHistory(sessionId);
   }
 
   private selection(session: Session): Selection {
@@ -257,9 +379,10 @@ export class AntigravityRuntimeProvider
       ) ?? []),
       FULL_ACCESS,
     ];
-    const preferredMode = selection.mode === null
-      ? entry?.defaults.mode ?? mode?.current
-      : selection.mode ?? mode?.current;
+    const preferredMode =
+      selection.mode === null
+        ? (entry?.defaults.mode ?? mode?.current)
+        : (selection.mode ?? mode?.current);
     const phase = this.phase(entry);
     const decision = entry?.decisions.current;
     return {
@@ -275,6 +398,10 @@ export class AntigravityRuntimeProvider
       canInterrupt: !!entry && (!!entry.run || entry.background.active),
       canSteer: !!entry && this.canSteer(entry),
       backgroundWork: this.backgroundItems(entry),
+      tasks: entry?.background.finished ?? [],
+      subagents: entry
+        ? entry.children.records.map(({ agent }) => agent)
+        : this.savedBatches(sessionId).map(({ agent }) => agent),
       selectedModel: selection.model ?? options.model?.current ?? null,
       reasoningEffort:
         selection.reasoningEffort ?? options.thought?.current ?? null,
@@ -285,7 +412,8 @@ export class AntigravityRuntimeProvider
       permissionModes,
       planMode: selection.plan === true,
       planAvailable:
-        selection.plan === true || mode?.values.some(({ id }) => id === 'plan') === true,
+        selection.plan === true ||
+        mode?.values.some(({ id }) => id === 'plan') === true,
       availableModels: this.modelList(options),
       pendingPermissionRequest:
         decision?.kind === 'permission' ? decision.view : null,
@@ -299,7 +427,10 @@ export class AntigravityRuntimeProvider
           queuedAt,
         })) ?? [],
       dispatchingPrompts: entry ? this.dispatches.current(entry) : [],
-      liveItems: entry?.liveItems.slice() ?? [],
+      liveItems:
+        entry?.storedTurnId !== undefined
+          ? visibleAntigravityItems(entry.storedTurnId, entry.liveItems)
+          : [],
       queuePaused: entry?.queuePaused ?? false,
       lastError: entry?.error ?? null,
       contextUsage: this.contexts.get(sessionId) ?? null,
@@ -317,7 +448,119 @@ export class AntigravityRuntimeProvider
   }
 
   private backgroundItems(entry?: Entry) {
-    return entry?.promptOpen ? [] : (entry?.background.items ?? []);
+    return (
+      entry?.background.items.filter(
+        ({ kind }) => kind === 'subagent' || !entry.promptOpen,
+      ) ?? []
+    );
+  }
+
+  private savedBatches(sessionId: number) {
+    return this.db
+      .select({ id: antigravityTurns.id, items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(eq(antigravityTurns.sessionId, sessionId))
+      .orderBy(desc(antigravityTurns.id))
+      .limit(8)
+      .all()
+      .flatMap((row) =>
+        row.items.flatMap((item) => {
+          const batch = antigravityBatch(row.id, item);
+          return batch
+            ? [{ ...batch, agent: antigravityBatchState(batch, [], [], false) }]
+            : [];
+        }),
+      )
+      .slice(0, 48);
+  }
+
+  async getSubagentHistory(
+    sessionId: number,
+    id: string,
+  ): Promise<AgentSubagentHistoryPayload> {
+    const rowId = /^agy-(\d+)-[0-9a-f]{24}$/.exec(id)?.[1];
+    const session = await this.sessionService.findOne(sessionId);
+    const nativeId = session.antigravitySessionId;
+    if (
+      !rowId ||
+      !Number.isSafeInteger(Number(rowId)) ||
+      !nativeId ||
+      session.activeAgentProvider !== this.info.id
+    )
+      throw new BadRequestException(
+        'Antigravity subagent history is unavailable.',
+      );
+    const entry = this.entries.get(sessionId);
+    const selected = entry?.children.records.find(
+      ({ agent }) => agent.agentId === id,
+    );
+    const row = this.db
+      .select({ items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(
+        and(
+          eq(antigravityTurns.sessionId, sessionId),
+          eq(antigravityTurns.id, Number(rowId)),
+        ),
+      )
+      .get();
+    const recorded =
+      row?.items.flatMap((item) => {
+        const batch = antigravityBatch(Number(rowId), item);
+        return batch ? [batch] : [];
+      }) ?? [];
+    const batch =
+      selected ?? recorded.find(({ agent }) => agent.agentId === id);
+    if (!batch)
+      throw new BadRequestException('Unknown Antigravity subagent batch.');
+    const root =
+      entry?.brain ??
+      antigravityBrain(
+        await buildAugmentedEnvAsync(process.env, session.worktreePath),
+      );
+    const parent =
+      row && !(entry?.storedTurnId === Number(rowId))
+        ? antigravityTurnScope(
+            row.items,
+            session.antigravitySelection?.legacyNativeId ?? nativeId,
+          )
+        : nativeId;
+    const children = parent ? await readAntigravityChildren(root, parent) : [];
+    // Retain the scoped parent/row as the authority. Never use a renderer-supplied path.
+    const siblings = selected && entry ? entry.children.records : recorded;
+    const history = await readAntigravityBatchHistory(
+      root,
+      batch,
+      children,
+      siblings,
+    );
+    const subagent = antigravityBatchState(
+      batch,
+      children,
+      siblings,
+      selected?.agent.status === 'started',
+    );
+    return {
+      subagent,
+      history,
+      transcriptAvailable: history.length > 0,
+      transcriptState: history.length
+        ? 'available'
+        : subagent.status === 'started'
+          ? 'starting'
+          : 'unavailable',
+      transcriptError: history.length
+        ? undefined
+        : 'Antigravity has not recorded readable children for this batch.',
+    };
+  }
+
+  private recordBatch(entry: Entry, update: Record<string, unknown>) {
+    const item = entry.turn?.toolItem(acpText(update.toolCallId, 256));
+    if (!item || entry.storedTurnId === undefined) return;
+    const batch = antigravityBatch(entry.storedTurnId, item);
+    if (!batch) return;
+    entry.children.record(batch, update.status === 'failed');
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {
@@ -334,7 +577,9 @@ export class AntigravityRuntimeProvider
     origin?: InteractivePromptOrigin,
   ) {
     if (mode === FULL_ACCESS && origin !== 'desktop-chat')
-      throw new BadRequestException('Choose Full access in the desktop conversation.');
+      throw new BadRequestException(
+        'Choose Full access in the desktop conversation.',
+      );
     if (mode === 'plan') return this.setPlanMode(sessionId, true);
     return this.setSelection(sessionId, { mode });
   }
@@ -497,11 +742,35 @@ export class AntigravityRuntimeProvider
       selection: this.currentSelection(session),
       options: {},
       defaults: {},
-      imagePrompts: false,
+      promptCapabilities: {
+        image: false,
+        audio: false,
+        embeddedContext: false,
+      },
+      preparingSteer: false,
       acceptsSteering: false,
+      acceptsWake: false,
       promptOpen: false,
+      promptTicket: 0,
       background: new AntigravityBackground(),
       commands: [],
+      clientReads: 0,
+      children: new AntigravitySubagents(
+        this.savedBatches(session.id),
+        (running) => {
+          entry.background.setAgents(
+            running.map(({ agent }) => ({
+              id: `subagent:${agent.agentId}`,
+              kind: 'subagent',
+              label: agent.displayName ?? agent.agentType,
+              startedAt: agent.timestamp,
+              updatedAt: agent.timestamp,
+            })),
+          );
+          if (!entry.run && !entry.background.active) this.retire(entry);
+          this.emitState(entry.id);
+        },
+      ),
       decisions: new AntigravityDecisions(() => {
         entry.background.decisionChanged();
         this.emitState(session.id);
@@ -530,16 +799,26 @@ export class AntigravityRuntimeProvider
     ]);
     this.assertOpen(entry);
     if (!binary) throw new BadRequestException(ANTIGRAVITY_INSTALL);
+    const cliEnv = antigravityEnvironment(env);
+    entry.brain = antigravityBrain(cliEnv);
     const transport = new AcpStdio(
       binary,
       cwd,
-      antigravityEnvironment(env),
+      cliEnv,
       {
-        notification: (method, params) => this.notification(entry, method, params),
-        request: (method, params) => this.decision(entry, method, params),
-        closed: () => {
+        notification: (method, params) =>
+          this.notification(entry, method, params),
+        request: (method, params) =>
+          method === 'fs/read_text_file'
+            ? this.readClientFile(entry, params)
+            : this.decision(entry, method, params),
+        closed: (error) => {
           if (entry.transport !== transport) return;
           entry.workingDirectory = undefined;
+          entry.acceptsWake = false;
+          if (entry.settleAbort && !entry.stopping && !entry.closed)
+            entry.disconnectedWhileSettling = error;
+          entry.children.stop();
           entry.background.clear();
           entry.settleAbort?.abort();
           entry.decisions.cancel();
@@ -550,18 +829,29 @@ export class AntigravityRuntimeProvider
       ['--process-per-session'],
     );
     entry.transport = transport;
-    const capabilities = await initializeAntigravity(transport, (version) => {
-      const match = /^v?(\d+)\.(\d+)\.\d+(?:[-+][\w.-]+)?$/.exec(version);
-      entry.acceptsSteering = !!match &&
-        (Number(match[1]) > 1 || (Number(match[1]) === 1 && Number(match[2]) >= 5));
-    });
+    const capabilities = await initializeAntigravity(
+      transport,
+      (version) => {
+        const match = /^v?(\d+)\.(\d+)\.\d+(?:[-+][\w.-]+)?$/.exec(version);
+        entry.acceptsSteering =
+          !!match &&
+          (Number(match[1]) > 1 ||
+            (Number(match[1]) === 1 && Number(match[2]) >= 5));
+      },
+      true,
+    );
     this.assertOpen(entry);
-    entry.imagePrompts =
-      acpObject(capabilities.promptCapabilities).image === true;
-    const isNewSession = !entry.nativeId;
+    const promptCapabilities = acpObject(capabilities.promptCapabilities);
+    entry.promptCapabilities = {
+      image: promptCapabilities.image === true,
+      audio: promptCapabilities.audio === true,
+      embeddedContext: promptCapabilities.embeddedContext === true,
+    };
+    const isNewSession =
+      !entry.nativeId || entry.selection.resetPending === true;
     const resume = acpObject(capabilities.sessionCapabilities).resume;
     if (
-      entry.nativeId &&
+      !isNewSession &&
       (resume === undefined || resume === null) &&
       capabilities.loadSession !== true
     )
@@ -586,7 +876,8 @@ export class AntigravityRuntimeProvider
           ]
         : [],
     };
-    const opened = entry.nativeId
+    const previousNativeId = entry.nativeId;
+    const opened = !isNewSession
       ? await transport.request(
           resume !== undefined && resume !== null
             ? 'session/resume'
@@ -595,7 +886,7 @@ export class AntigravityRuntimeProvider
         )
       : await transport.request('session/new', sessionParams);
     this.assertOpen(entry);
-    if (!entry.nativeId) {
+    if (isNewSession) {
       const nativeId = opened.sessionId;
       if (
         typeof nativeId !== 'string' ||
@@ -603,16 +894,19 @@ export class AntigravityRuntimeProvider
         nativeId.length > 1000
       )
         throw new Error('Antigravity did not return a valid session ID.');
+      const selection = { ...entry.selection, resetPending: undefined };
       const updated = this.db
         .update(sessions)
         .set({
           antigravitySessionId: nativeId,
-          antigravitySelection: entry.selection,
+          antigravitySelection: selection,
         })
         .where(
           and(
             this.activeSession(entry.id),
-            isNull(sessions.antigravitySessionId),
+            previousNativeId
+              ? eq(sessions.antigravitySessionId, previousNativeId)
+              : isNull(sessions.antigravitySessionId),
           ),
         )
         .run();
@@ -621,6 +915,7 @@ export class AntigravityRuntimeProvider
           'The session changed while starting Antigravity.',
         );
       entry.nativeId = nativeId;
+      entry.selection = selection;
       this.emit('event', {
         type: 'session_created',
         payload: { sessionId: entry.id, claudeSessionId: nativeId },
@@ -634,6 +929,7 @@ export class AntigravityRuntimeProvider
       mode: entry.options.mode?.current,
     };
     if (isNewSession) this.catalog.observe(entry.options);
+    entry.children.connect(entry.brain, entry.nativeId);
     entry.workingDirectory = cwd;
     return transport;
   }
@@ -683,8 +979,10 @@ export class AntigravityRuntimeProvider
     const { mode, plan } = entry.selection;
     const native = entry.options.mode;
     // Return to Code on warm and cold resumes of a native Plan session.
-    const codeMode = mode === FULL_ACCESS || (mode == null && native?.current === 'plan')
-      ? 'default' : mode;
+    const codeMode =
+      mode === FULL_ACCESS || (mode == null && native?.current === 'plan')
+        ? 'default'
+        : mode;
     const requestedMode = plan ? 'plan' : codeMode;
     if (native || requestedMode !== 'default')
       await this.configure(entry, transport, 'mode', requestedMode);
@@ -706,10 +1004,13 @@ export class AntigravityRuntimeProvider
       resolveReceipt = resolve;
       rejectReceipt = reject;
     });
-    const completed = this.ownRun(entry, this.run(entry, session, prompt, visiblePrompt, images, {
-      resolve: resolveReceipt,
-      reject: rejectReceipt,
-    }));
+    const completed = this.ownRun(
+      entry,
+      this.run(entry, session, prompt, visiblePrompt, images, {
+        resolve: resolveReceipt,
+        reject: rejectReceipt,
+      }),
+    );
     return { receipt, completed };
   }
 
@@ -763,10 +1064,16 @@ export class AntigravityRuntimeProvider
         entry.selection.reasoningEffort,
       );
       await this.configureMode(entry, transport);
-      if (images?.length && !entry.imagePrompts)
+      if (images?.length && !entry.promptCapabilities.image)
         throw new BadRequestException(
           'This Antigravity runtime does not accept images.',
         );
+      const blocks = await antigravityPrompt(
+        entry.id,
+        prompt,
+        images ?? [],
+        entry.promptCapabilities,
+      );
       this.assertOpen(entry);
       capture = await this.changes.begin(
         entry.id,
@@ -781,9 +1088,11 @@ export class AntigravityRuntimeProvider
       const user: AgentTranscriptItem = {
         id,
         kind: 'user',
-        content: visiblePrompt ?? prompt,
+        content: antigravityUserPrompt(prompt, visiblePrompt),
         timestamp: new Date().toISOString(),
-        editUnsupported: true,
+        ...(prompt.trimStart().startsWith('/')
+          ? { editUnsupported: true as const }
+          : {}),
       };
       const expectedName = session.name;
       const needsTitle =
@@ -796,23 +1105,11 @@ export class AntigravityRuntimeProvider
           .where(eq(antigravityTurns.sessionId, entry.id))
           .limit(1)
           .get();
+      const context = this.replayContext(entry);
+      if (context) blocks.unshift({ type: 'text', text: context });
       this.openTurn(entry, new AntigravityTurn(id, user));
-      entry.promptOpen = true;
-      const response = transport.request(
-        'session/prompt',
-        {
-          sessionId: entry.nativeId,
-          prompt: [
-            { type: 'text', text: prompt },
-            ...(images ?? []).map((image) => ({
-              type: 'image',
-              mimeType: image.mediaType,
-              data: image.data,
-            })),
-          ],
-        },
-        0,
-      );
+      entry.acceptsWake = true;
+      const response = this.sendNativePrompt(entry, transport, blocks);
       if (needsTitle)
         titleJob = this.startTitleJob(
           entry,
@@ -859,21 +1156,69 @@ export class AntigravityRuntimeProvider
       }
     }
     if (failure) throw failure;
-    if (successful && !entry.closed && !entry.stopping) {
-      void this.sessionService
-        .markCompletionUnreviewed(entry.id, 'completed')
-        .catch(() =>
-          this.logger.warn(
-            `Could not mark Antigravity session ${entry.id} complete.`,
-          ),
-        );
-    }
+    if (successful) this.markCompletion(entry);
+  }
+
+  private markCompletion(entry: Entry) {
+    if (entry.closed || entry.stopping) return;
+    void this.sessionService
+      .markCompletionUnreviewed(entry.id, 'completed')
+      .catch(() =>
+        this.logger.warn(
+          `Could not mark Antigravity session ${entry.id} complete.`,
+        ),
+      );
+  }
+
+  private replayContext(entry: Entry) {
+    const legacy = entry.selection.legacyNativeId;
+    if (!legacy) return '';
+    const latest = this.db
+      .select({ items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(eq(antigravityTurns.sessionId, entry.id))
+      .orderBy(desc(antigravityTurns.id))
+      .limit(1)
+      .get();
+    if (
+      !latest ||
+      antigravityTurnScope(latest.items, legacy) === entry.nativeId
+    )
+      return '';
+    const retained = this.db
+      .select({ items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(eq(antigravityTurns.sessionId, entry.id))
+      .orderBy(desc(antigravityTurns.id))
+      .limit(8)
+      .all();
+    return antigravityHistoryContext(retained.map(({ items }) => items));
+  }
+
+  private sendNativePrompt(
+    entry: Entry,
+    transport: AcpStdio,
+    blocks: Awaited<ReturnType<typeof antigravityPrompt>>,
+  ) {
+    const ticket = ++entry.promptTicket;
+    entry.promptOpen = true;
+    return transport.request(
+      'session/prompt',
+      { sessionId: entry.nativeId, prompt: blocks },
+      0,
+      () => {
+        if (entry.promptTicket === ticket) entry.promptOpen = false;
+      },
+    );
   }
 
   private openTurn(entry: Entry, turn: AntigravityTurn) {
     const stored = this.db
       .insert(antigravityTurns)
-      .values({ sessionId: entry.id, items: turn.items })
+      .values({
+        sessionId: entry.id,
+        items: scopedAntigravityItems(entry.nativeId, turn.items),
+      })
       .returning({ id: antigravityTurns.id })
       .get();
     entry.storedTurnId = stored.id;
@@ -882,7 +1227,11 @@ export class AntigravityRuntimeProvider
   }
 
   private async settleBackground(entry: Entry, detached = false) {
-    if (!entry.transport || entry.transport.closed || entry.closed || entry.stopping) return;
+    if (!entry.transport || entry.closed || entry.stopping) return;
+    if (entry.transport.closed)
+      throw new Error(
+        'Antigravity disconnected before background work settled.',
+      );
     const controller = new AbortController();
     entry.settleAbort = controller;
     this.emitState(entry.id);
@@ -892,12 +1241,20 @@ export class AntigravityRuntimeProvider
         () => !!entry.decisions.current,
         detached,
       );
+      if (entry.disconnectedWhileSettling)
+        throw entry.disconnectedWhileSettling;
+      if (!entry.background.items.some(({ kind }) => kind === 'subagent'))
+        entry.children.stop();
     } finally {
       entry.settleAbort = undefined;
+      entry.disconnectedWhileSettling = undefined;
     }
   }
 
-  private async persistTurn(entry: Entry, capture: TurnChangeCapture | undefined) {
+  private async persistTurn(
+    entry: Entry,
+    capture: TurnChangeCapture | undefined,
+  ) {
     try {
       await this.changes.finish(capture, entry.nativeId);
     } finally {
@@ -908,22 +1265,37 @@ export class AntigravityRuntimeProvider
       entry.liveItems = [];
       if (id !== undefined) {
         if (items.length) {
-          this.db.update(antigravityTurns).set({ items })
-            .where(eq(antigravityTurns.id, id)).run();
+          this.db
+            .update(antigravityTurns)
+            .set({ items: scopedAntigravityItems(entry.nativeId, items) })
+            .where(eq(antigravityTurns.id, id))
+            .run();
         } else {
-          this.db.delete(antigravityTurns).where(eq(antigravityTurns.id, id)).run();
+          this.db
+            .delete(antigravityTurns)
+            .where(eq(antigravityTurns.id, id))
+            .run();
         }
-        if (!entry.closed) this.emit('event', {
-          type: 'history_snapshot',
-          payload: { sessionId: entry.id },
-        });
+        if (!entry.closed)
+          this.emit('event', {
+            type: 'history_snapshot',
+            payload: { sessionId: entry.id },
+          });
       }
     }
   }
 
   private beginDetachedReply(entry: Entry) {
     const cwd = entry.workingDirectory;
-    if (!cwd || entry.run || entry.closed || entry.stopping || entry.transport?.closed) return;
+    if (
+      !cwd ||
+      !entry.acceptsWake ||
+      entry.run ||
+      entry.closed ||
+      entry.stopping ||
+      entry.transport?.closed
+    )
+      return;
     clearTimeout(entry.idleTimer);
     this.openTurn(entry, new AntigravityTurn(randomUUID()));
     this.ownRun(entry, this.detachedReply(entry, cwd));
@@ -934,18 +1306,31 @@ export class AntigravityRuntimeProvider
     // Register the listener before awaiting Git, since the entire reply can arrive
     // in the same stdout read as its opening update.
     const settled = this.settleBackground(entry, true);
+    void settled.catch(() => undefined);
     let capture: TurnChangeCapture | undefined;
+    let hasReply = false;
     try {
-      capture = await this.changes.begin(entry.id, this.info.id, cwd, entry.nativeId);
+      capture = await this.changes.begin(
+        entry.id,
+        this.info.id,
+        cwd,
+        entry.nativeId,
+      );
       await settled;
+      hasReply = entry.liveItems.some(({ kind }) => kind === 'assistant');
     } catch (error) {
       entry.settleAbort?.abort();
       if (!entry.closed && !entry.stopping) this.fail(entry, error);
     } finally {
       try {
         await this.persistTurn(entry, capture);
+        if (hasReply) this.markCompletion(entry);
       } catch {
-        if (!entry.closed) this.fail(entry, new Error('Could not save the Antigravity conversation.'));
+        if (!entry.closed)
+          this.fail(
+            entry,
+            new Error('Could not save the Antigravity conversation.'),
+          );
       }
     }
   }
@@ -991,7 +1376,8 @@ export class AntigravityRuntimeProvider
     if (job.state !== 'waiting-for-fallback' || job.controller.signal.aborted)
       return;
     const title = job.nativeTitle ?? (job.turnSettled ? job.fallbackTitle : '');
-    if (isUsefulTitle(title)) job.pending = this.saveTitle(sessionId, job, title);
+    if (isUsefulTitle(title))
+      job.pending = this.saveTitle(sessionId, job, title);
   }
 
   private async saveTitle(sessionId: number, job: TitleJob, title: string) {
@@ -1002,7 +1388,9 @@ export class AntigravityRuntimeProvider
         signal: job.controller.signal,
       })
       .catch(() => {
-        this.logger.warn(`Could not save Antigravity session ${sessionId} title.`);
+        this.logger.warn(
+          `Could not save Antigravity session ${sessionId} title.`,
+        );
       });
   }
 
@@ -1015,13 +1403,15 @@ export class AntigravityRuntimeProvider
     // before the session/new reply records the native ID.
     if (
       method !== 'session/update' ||
-      (entry.nativeId !== null && params.sessionId !== entry.nativeId) ||
+      (entry.nativeId !== null &&
+        !entry.selection.resetPending &&
+        params.sessionId !== entry.nativeId) ||
       entry.closed
     )
       return;
     const update = acpObject(params.update);
     if (update.sessionUpdate === 'usage_update') {
-      if (entry.background.settling) entry.background.replyEnded();
+      if (!entry.promptOpen) entry.background.replyEnded();
       const usage = acpContextUsage(update);
       if (!usage) return;
       this.contexts.delete(entry.id);
@@ -1031,18 +1421,25 @@ export class AntigravityRuntimeProvider
         this.contexts.delete(oldest);
       }
     } else if (update.sessionUpdate === 'available_commands_update') {
-      entry.commands = acpList(update.availableCommands, 128).flatMap((value) => {
-        const command = acpObject(value);
-        const name = acpText(command.name, 80);
-        if (!/^[\w-]+$/.test(name)) return [];
-        const trigger = `/${name}`;
-        return [{
-          id: `antigravity:${name}`, kind: 'command', trigger,
-          label: trigger, insertText: trigger,
-          description: acpText(command.description, 1000),
-          detail: acpText(acpObject(command.input).hint, 400),
-        }];
-      });
+      entry.commands = acpList(update.availableCommands, 128).flatMap(
+        (value) => {
+          const command = acpObject(value);
+          const name = acpText(command.name, 80);
+          if (!/^[\w-]+$/.test(name)) return [];
+          const trigger = `/${name}`;
+          return [
+            {
+              id: `antigravity:${name}`,
+              kind: 'command',
+              trigger,
+              label: trigger,
+              insertText: trigger,
+              description: acpText(command.description, 1000),
+              detail: acpText(acpObject(command.input).hint, 400),
+            },
+          ];
+        },
+      );
       return;
     } else if (entry.nativeId === null) {
       return;
@@ -1069,17 +1466,47 @@ export class AntigravityRuntimeProvider
       if (!mode?.values.some(({ id }) => id === current)) return;
       entry.options = { ...entry.options, mode: { ...mode, current } };
     } else {
-      if (!entry.workingDirectory) return;
+      if (!entry.workingDirectory || !entry.acceptsWake) return;
       const type = update.sessionUpdate;
-      const startsReply = type === 'agent_message_chunk' ||
-        type === 'agent_thought_chunk' || type === 'tool_call';
+      const startsReply =
+        type === 'agent_message_chunk' ||
+        type === 'agent_thought_chunk' ||
+        type === 'tool_call' ||
+        type === 'plan';
       if (startsReply && !entry.promptOpen && !entry.stopping) {
         if (!entry.run) this.beginDetachedReply(entry);
-        else if (entry.background.settling) entry.background.replyStarted();
+        else if (entry.turn) entry.background.replyStarted();
       }
-      const workChanged = entry.background.observe(update);
-      if (workChanged && !entry.run && !entry.background.active) this.retire(entry);
-      if (!entry.turn?.update(update) && !workChanged) return;
+      const nativeToolId = acpText(update.toolCallId, 256);
+      const owner = entry.background.owner(nativeToolId);
+      const turnChanged =
+        (!owner || owner.rowId === entry.storedTurnId) &&
+        entry.turn?.update(update);
+      const tool = entry.turn?.toolItem(nativeToolId);
+      const workChanged = entry.background.observe(
+        {
+          ...update,
+          kind:
+            update.kind ?? (tool?.toolKind === 'bash' ? 'execute' : undefined),
+          title: update.title ?? tool?.toolName,
+          rawInput: update.rawInput ?? tool?.toolInput,
+        },
+        entry.turn && entry.storedTurnId !== undefined
+          ? { rowId: entry.storedTurnId, turnId: entry.turn.id }
+          : undefined,
+        entry.promptOpen && (!owner || owner.rowId === entry.storedTurnId),
+      );
+      if (owner && owner.rowId !== entry.storedTurnId && workChanged) {
+        if (update.status === 'completed' || update.status === 'failed')
+          this.recordLateCommandResult(entry, owner, update);
+        if (!entry.run && !entry.background.active) this.retire(entry);
+        return;
+      }
+      if (workChanged && !entry.run && !entry.background.active)
+        this.retire(entry);
+      if (turnChanged && (type === 'tool_call' || type === 'tool_call_update'))
+        this.recordBatch(entry, update);
+      if (!turnChanged && !workChanged) return;
     }
     // Keep token bursts from waking every desktop stream once per token.
     entry.updateTimer ??= setTimeout(() => {
@@ -1088,17 +1515,100 @@ export class AntigravityRuntimeProvider
     }, 32).unref();
   }
 
+  private recordLateCommandResult(
+    entry: Entry,
+    owner: { rowId: number; turnId: string },
+    update: Record<string, unknown>,
+  ) {
+    const id = acpText(update.toolCallId, 256);
+    const condition = and(
+      eq(antigravityTurns.id, owner.rowId),
+      eq(antigravityTurns.sessionId, entry.id),
+    );
+    const row = this.db
+      .select({ items: antigravityTurns.items })
+      .from(antigravityTurns)
+      .where(condition)
+      .get();
+    if (!row) return;
+    const turn = new AntigravityTurn(owner.turnId);
+    const call = row.items.find(
+      (item) => item.kind === 'tool_use' && item.id === turn.toolId(id),
+    );
+    if (!call) return;
+    turn.update({
+      sessionUpdate: 'tool_call',
+      toolCallId: id,
+      kind: 'execute',
+      title: call.toolName,
+    });
+    turn.update(update);
+    const result = turn.items.find(({ kind }) => kind === 'tool_result');
+    if (!result) return;
+    // A daemon's terminal receipt still belongs to its original command card.
+    const saved = row.items.findIndex(({ id }) => id === result.id);
+    const index =
+      saved < 0 ? row.items.findIndex(({ id }) => id === call.id) + 1 : saved;
+    row.items.splice(index, saved < 0 ? 0 : 1, result);
+    this.db
+      .update(antigravityTurns)
+      .set({ items: row.items })
+      .where(condition)
+      .run();
+    this.emit('event', {
+      type: 'history_snapshot',
+      payload: { sessionId: entry.id },
+    });
+  }
+
+  private async readClientFile(entry: Entry, params: Record<string, unknown>) {
+    const { transport, turn, workingDirectory } = entry;
+    if (
+      !turn ||
+      !workingDirectory ||
+      !entry.nativeId ||
+      params.sessionId !== entry.nativeId ||
+      entry.closed ||
+      entry.stopping ||
+      entry.clientReads >= 4
+    )
+      throw new Error('Antigravity file read is unavailable.');
+    entry.clientReads++;
+    try {
+      const file = await readAntigravityTextFile(
+        workingDirectory,
+        entry.id,
+        params,
+      );
+      if (
+        entry.closed ||
+        entry.stopping ||
+        entry.turn !== turn ||
+        transport?.closed
+      )
+        throw new Error('The Antigravity file request expired.');
+      return file;
+    } finally {
+      entry.clientReads--;
+    }
+  }
+
   private decision(
     entry: Entry,
     method: string,
     params: Record<string, unknown>,
   ) {
-    if (!entry.closed && !entry.stopping && entry.nativeId &&
-        params.sessionId === entry.nativeId &&
-        (method === 'session/request_permission' || method === 'elicitation/create' ||
-          method === 'session/elicitation')) {
+    if (
+      !entry.closed &&
+      !entry.stopping &&
+      entry.nativeId &&
+      params.sessionId === entry.nativeId &&
+      (method === 'session/request_permission' ||
+        method === 'elicitation/create' ||
+        method === 'session/elicitation')
+    ) {
       if (!entry.run) this.beginDetachedReply(entry);
-      else if (entry.background.settling) entry.background.replyStarted();
+      else if (!entry.promptOpen && entry.turn) entry.background.replyStarted();
     }
     const turn =
       entry.run &&
@@ -1107,11 +1617,22 @@ export class AntigravityRuntimeProvider
       params.sessionId === entry.nativeId
         ? entry.turn
         : undefined;
+    if (turn && method === 'session/request_permission') {
+      const call = acpObject(params.toolCall);
+      if (
+        typeof call.title === 'string' &&
+        / (?:start|invoke)_subagent\??$/.test(call.title)
+      ) {
+        const update = { ...call, sessionUpdate: 'tool_call' };
+        if (turn.update(update)) this.recordBatch(entry, update);
+      }
+    }
     return entry.decisions.receive(
       method,
       params,
       turn && ((nativeId) => turn.toolId(nativeId)),
-      entry.selection.plan !== true && entry.selection.mode === FULL_ACCESS &&
+      entry.selection.plan !== true &&
+        entry.selection.mode === FULL_ACCESS &&
         entry.options.mode?.current !== 'plan',
     );
   }
@@ -1157,8 +1678,10 @@ export class AntigravityRuntimeProvider
 
   async interrupt(sessionId: number): Promise<void> {
     const entry = this.entries.get(sessionId);
-    if (!entry || (!entry.run && !entry.background.active) || entry.stopping) return;
+    if (!entry || (!entry.run && !entry.background.active) || entry.stopping)
+      return;
     entry.stopping = true;
+    entry.acceptsWake = false;
     entry.queuePaused = entry.pendingPrompts.length > 0;
     if (entry.transport && !entry.transport.closed) {
       entry.transport.notify('session/cancel', { sessionId: entry.nativeId });
@@ -1172,7 +1695,8 @@ export class AntigravityRuntimeProvider
       entry.transport?.close();
     }
     entry.decisions.cancel();
-    entry.background.clear();
+    entry.children.stop();
+    entry.background.clear('stopped');
     entry.settleAbort?.abort();
     this.emitState(sessionId);
     if (entry.run) await entry.run.catch(() => undefined);
@@ -1205,37 +1729,74 @@ export class AntigravityRuntimeProvider
   }
 
   private canSteer(entry: Entry) {
-    return entry.acceptsSteering && entry.promptOpen && !entry.stopping &&
-      !entry.steerRequest && !entry.decisions.current;
+    return (
+      entry.acceptsSteering &&
+      entry.promptOpen &&
+      !entry.stopping &&
+      !entry.steerRequest &&
+      !entry.preparingSteer &&
+      !entry.decisions.current
+    );
   }
 
-  async steerPendingPrompt(sessionId: number, id: string) {
+  async steerPendingPrompt(
+    sessionId: number,
+    id: string,
+    origin?: InteractivePromptOrigin,
+  ) {
+    this.assertInteractiveOrigin(origin);
     const entry = this.entries.get(sessionId);
-    const index = entry?.pendingPrompts.findIndex((item) => item.id === id) ?? -1;
-    if (!entry || !this.canSteer(entry) || !entry.turn || !entry.transport || index < 0)
-      throw new ConflictException('This Antigravity message cannot be sent into the active turn.');
+    const index =
+      entry?.pendingPrompts.findIndex((item) => item.id === id) ?? -1;
+    if (
+      !entry ||
+      !this.canSteer(entry) ||
+      !entry.turn ||
+      !entry.transport ||
+      index < 0
+    )
+      throw new ConflictException(
+        'This Antigravity message cannot be sent into the active turn.',
+      );
     const prompt = entry.pendingPrompts[index];
-    if (prompt.images?.length && !entry.imagePrompts)
-      throw new BadRequestException('This Antigravity runtime does not accept images.');
-    entry.pendingPrompts.splice(index, 1);
-    entry.turn.appendPrompt({
+    if (prompt.images?.length && !entry.promptCapabilities.image)
+      throw new BadRequestException(
+        'This Antigravity runtime does not accept images.',
+      );
+    const { turn, transport } = entry;
+    entry.preparingSteer = true;
+    const blocks = await antigravityPrompt(
+      entry.id,
+      prompt.prompt,
+      prompt.images ?? [],
+      entry.promptCapabilities,
+    ).finally(() => {
+      entry.preparingSteer = false;
+    });
+    const currentIndex = entry.pendingPrompts.indexOf(prompt);
+    if (
+      currentIndex < 0 ||
+      entry.turn !== turn ||
+      entry.transport !== transport ||
+      transport.closed ||
+      !this.canSteer(entry)
+    )
+      throw new ConflictException(
+        'The active Antigravity turn changed while preparing the message.',
+      );
+    entry.pendingPrompts.splice(currentIndex, 1);
+    turn.appendPrompt({
       id: randomUUID(),
       kind: 'user',
-      content: prompt.visiblePrompt ?? prompt.prompt,
+      content: antigravityUserPrompt(prompt.prompt, prompt.visiblePrompt),
       timestamp: new Date().toISOString(),
-      editUnsupported: true,
+      ...(prompt.prompt.trimStart().startsWith('/')
+        ? { editUnsupported: true as const }
+        : {}),
     });
     // A second prompt steers native agy 1.5+, without canceling its in-flight work.
     // Once sent, its outcome can be unknown and the message must never return to the queue.
-    entry.steerRequest = entry.transport.request('session/prompt', {
-      sessionId: entry.nativeId,
-      prompt: [
-        { type: 'text', text: prompt.prompt },
-        ...(prompt.images ?? []).map((image) => ({
-          type: 'image', mimeType: image.mediaType, data: image.data,
-        })),
-      ],
-    }, 0);
+    entry.steerRequest = this.sendNativePrompt(entry, transport, blocks);
     void entry.steerRequest.catch(() => undefined);
     this.emitState(sessionId);
   }
@@ -1313,6 +1874,7 @@ export class AntigravityRuntimeProvider
   private dispose(entry: Entry) {
     entry.closed = true;
     entry.titleJob?.controller.abort();
+    entry.children.stop();
     entry.settleAbort?.abort();
     clearTimeout(entry.idleTimer);
     clearTimeout(entry.stopTimer);

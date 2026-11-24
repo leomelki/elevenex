@@ -13,12 +13,12 @@ export const ANTIGRAVITY_PROVIDER: AgentRuntimeProviderInfo = {
   displayName: 'Antigravity',
   capabilities: {
     mcp: true,
-    subagents: false,
+    subagents: true,
     permissions: true,
     userInput: true,
     multimodalPrompts: true,
     terminalFallback: false,
-    rewindConversation: false,
+    rewindConversation: true,
   },
 };
 
@@ -32,11 +32,17 @@ export const ANTIGRAVITY_CATALOG_SIGN_IN =
 export async function initializeAntigravity(
   transport: AcpStdio,
   onVersion?: (version: string) => void,
+  readTextFiles = false,
 ) {
   const initialized = await transport.request('initialize', {
     protocolVersion: 1,
     clientInfo: { name: 'elevenex', title: 'Elevenex', version: '1' },
-    clientCapabilities: { elicitation: { form: {} } },
+    clientCapabilities: {
+      elicitation: { form: {} },
+      ...(readTextFiles
+        ? { fs: { readTextFile: true, writeTextFile: false } }
+        : {}),
+    },
   });
   if (initialized.protocolVersion !== 1)
     throw new Error(
@@ -162,18 +168,39 @@ const toolKinds = new Map<string, AgentToolKind>([
   ['search', 'grep'],
   ['execute', 'bash'],
   ['fetch', 'web_fetch'],
+  ['plan', 'todo_write'],
 ]);
 
 export function acpTool(update: Record<string, unknown>) {
   const name = acpText(update.title) || 'Tool';
   const input = acpObject(update.rawInput);
+  const command = acpText(
+    input.CommandLine ??
+      input.commandLine ??
+      input.command_line ??
+      input.command,
+    6000,
+  );
+  const cwd = acpText(
+    input.Cwd ?? input.WorkingDirectory ?? input.working_dir ?? input.cwd,
+    1000,
+  );
   const path = acpText(acpObject(acpList(update.locations, 1)[0]).path, 4000);
+  const subagent =
+    /^(?:Run(?:ning)?) (?:start|invoke)_subagent\??$/.test(name) &&
+    (update.kind === undefined || update.kind === 'other');
   return {
     toolName: name,
     toolDisplayName: name,
-    toolKind: toolKinds.get(acpText(update.kind)) ?? 'unknown',
+    toolKind: subagent
+      ? acpObject(update._meta).is_mcp_tool_call === true
+        ? ('mcp' as const)
+        : ('task_agent' as const)
+      : (toolKinds.get(acpText(update.kind)) ?? (command ? 'bash' : 'unknown')),
     toolInput: {
       ...input,
+      ...(command ? { command } : {}),
+      ...(cwd ? { cwd } : {}),
       ...(path && !input.file_path ? { file_path: path } : {}),
     },
   };
@@ -232,8 +259,9 @@ export class AntigravityTurn {
     this.items.push(prompt);
   }
 
-  hasTool(native: string): boolean {
-    return this.tools.has(native);
+  toolItem(native: string): AgentTranscriptItem | undefined {
+    const tool = this.tools.get(native);
+    return tool ? this.items[tool.index] : undefined;
   }
 
   toolId(native: string): string {
@@ -242,6 +270,22 @@ export class AntigravityTurn {
 
   update(update: Record<string, unknown>): boolean {
     const type = update.sessionUpdate;
+    if (type === 'plan') {
+      const todos = acpList(update.entries, 24).flatMap((entry) => {
+        const item = acpObject(entry);
+        const content = acpText(item.content, 240);
+        return content ? [{ content, status: acpText(item.status, 24) }] : [];
+      });
+      if (!todos.length) return false;
+      return this.update({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'elevenex:plan',
+        kind: 'plan',
+        title: 'Plan',
+        rawInput: { todos },
+        status: 'completed',
+      });
+    }
     const kind =
       type === 'agent_message_chunk'
         ? 'assistant'
@@ -286,8 +330,22 @@ export class AntigravityTurn {
     if (!tool && this.items.length >= ITEMS_LIMIT) return false;
     const toolId = this.toolId(nativeId);
     const timestamp = new Date().toISOString();
-    const { title, kind: toolKind, status, locations, rawInput } = update;
+    const {
+      title,
+      kind: toolKind,
+      status,
+      locations,
+      rawInput,
+      _meta,
+    } = update;
     const boundedUpdate = {
+      ...(_meta
+        ? {
+            _meta: {
+              is_mcp_tool_call: acpObject(_meta).is_mcp_tool_call === true,
+            },
+          }
+        : {}),
       ...(typeof title === 'string' ? { title: acpText(title) } : {}),
       ...(typeof toolKind === 'string' ? { kind: acpText(toolKind) } : {}),
       ...(typeof status === 'string' ? { status: acpText(status) } : {}),
@@ -330,6 +388,26 @@ export class AntigravityTurn {
         .slice(0, TOOL_DATA_LIMIT);
       const previous =
         tool.result === undefined ? undefined : this.items[tool.result];
+      const rawOutput = acpObject(update.rawOutput);
+      const commandOutput = acpText(
+        rawOutput.combinedOutput ??
+          rawOutput.combined_output ??
+          rawOutput.output,
+        TOOL_DATA_LIMIT,
+      );
+      const nativeExitCode = rawOutput.exitCode ?? rawOutput.exit_code;
+      const exitCode =
+        typeof nativeExitCode === 'number' &&
+        Number.isSafeInteger(nativeExitCode)
+          ? nativeExitCode
+          : undefined;
+      const providerToolResult =
+        details.toolKind === 'bash' && (commandOutput || exitCode !== undefined)
+          ? {
+              output: commandOutput,
+              ...(exitCode !== undefined ? { exitCode } : {}),
+            }
+          : boundedToolData(update.rawOutput);
       const result: AgentTranscriptItem = {
         toolName: details.toolName,
         toolKind: details.toolKind,
@@ -338,12 +416,17 @@ export class AntigravityTurn {
         toolUseId: toolId,
         kind: 'tool_result',
         timestamp: previous?.timestamp ?? timestamp,
-        content: output || previous?.content,
+        content:
+          details.toolKind === 'bash' && providerToolResult !== undefined
+            ? undefined
+            : output || previous?.content,
         providerToolResult:
           update.rawOutput === undefined
             ? previous?.providerToolResult
-            : boundedToolData(update.rawOutput),
-        isError: tool.update.status === 'failed',
+            : providerToolResult,
+        isError:
+          tool.update.status === 'failed' ||
+          (exitCode !== undefined && exitCode !== 0),
       };
       if (tool.result === undefined) {
         tool.result = this.items.length;

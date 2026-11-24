@@ -57,6 +57,7 @@ export class AcpStdio {
       resolve(value: RpcObject): void;
       reject(error: Error): void;
       timer?: NodeJS.Timeout;
+      onReply?(): void;
     }
   >();
   private sequence = 0;
@@ -99,6 +100,7 @@ export class AcpStdio {
     method: string,
     params: RpcObject,
     timeoutMs = 20_000,
+    onReply?: () => void,
   ): Promise<RpcObject> {
     if (this.closed)
       return Promise.reject(new Error('Antigravity connection closed.'));
@@ -113,7 +115,7 @@ export class AcpStdio {
             timeoutMs,
           ).unref()
         : undefined;
-      this.pending.set(id, { method, resolve, reject, timer });
+      this.pending.set(id, { method, resolve, reject, timer, onReply });
       this.send({ id, method, params });
     });
   }
@@ -216,6 +218,8 @@ export class AcpStdio {
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
+    // A matching wake notification can follow in this same stdout chunk.
+    pending.onReply?.();
     const error = acpObject(message.error);
     if (typeof error.code === 'number')
       pending.reject(

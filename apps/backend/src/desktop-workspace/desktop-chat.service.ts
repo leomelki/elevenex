@@ -782,6 +782,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const history = await provider.getHistory(sessionId);
     return savedChatPrompt(history, itemId, [
       taskId, sessionId, provider.info.id, session.claudeSessionId, session.codexSessionId, session.piSessionPath, session.opencodeSessionId,
+      ...(provider.info.id === 'antigravity' ? [session.antigravitySessionId] : []),
     ]);
   }
 
@@ -820,7 +821,9 @@ export class DesktopChatService implements OnModuleDestroy {
     assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
     if (session.status === 'stopped') await this.sessions.reactivateRuntime(sessionId);
     const previousRewrite = this.feeds.get(sessionId)?.historyRewrite;
-    await rewind(sessionId, saved.sourceId);
+    const interactive = provider.info.id === 'antigravity' ? 'desktop-chat' : undefined;
+    if (interactive) await rewind(sessionId, saved.sourceId, interactive);
+    else await rewind(sessionId, saved.sourceId);
     const feed = this.feeds.get(sessionId);
     if (feed && previousRewrite === feed.historyRewrite) {
       feed.historyRewrite = randomUUID();
@@ -829,7 +832,7 @@ export class DesktopChatService implements OnModuleDestroy {
       this.invalidate(sessionId, true);
     }
     try {
-      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false });
+      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false, ...(interactive ? { origin: interactive } : {}) });
     } catch {
       // History has already changed. The caller must read before sending again.
       throw new ServiceUnavailableException('Could not confirm the edited message after updating the conversation.');

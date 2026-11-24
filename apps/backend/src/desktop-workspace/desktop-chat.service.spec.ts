@@ -60,7 +60,14 @@ describe('selected session chat', () => {
   const rememberAgentConfig = jest.fn();
   const listModelCatalogs = jest.fn();
 
-  it('resends one saved prompt at its native anchor, retaining earlier history and attachment context', async () => {
+  it.each(['codex', 'antigravity'])('resends a saved %s prompt at its native anchor with its attachment context', async (provider) => {
+    runtime.info.id = provider;
+    session.mockImplementation(async () => ({
+      workspaceId: 1, worktreePath: '/workspace', surface: 'session', status,
+      activeAgentProvider: provider, workspaceArchivedAt: null,
+    }));
+    advertised.mockReturnValue([runtime.info]);
+    const origin = provider === 'antigravity' ? 'desktop-chat' : undefined;
     const original = { ...item('bubble', 'Original wording'), kind: 'user' as const, sourceMessageId: 'provider-anchor',
       images: [{ mediaType: 'image/png' as const, data: 'aW1hZ2U=' }] };
     const mention = '<elevenex_session_mention>\nSession: Triage\nSession ID: 5\n\nSaved context\n</elevenex_session_mention>';
@@ -81,9 +88,9 @@ describe('selected session chat', () => {
     expect(JSON.stringify(preview)).not.toContain('Saved context');
     const action = { type: 'edit-prompt', itemId: 'bubble', text: 'Revised wording', revision: preview.revision };
     expect(await chat.command(1, 2, action)).toEqual({ accepted: true });
-    expect(runtime.rewindConversation.mock.calls).toEqual([[2, 'provider-anchor']]);
+    expect(runtime.rewindConversation.mock.calls).toEqual([[2, 'provider-anchor', ...(origin ? [origin] : [])]]);
     expect(runtime.submitPrompt.mock.calls).toEqual([[2, 'Revised wording\n\n' + mention, 'Revised wording',
-      original.images, { human: true, queue: false, waitForCompletion: false }]]);
+      original.images, { human: true, queue: false, waitForCompletion: false, ...(origin ? { origin } : {}) }]]);
     const after = (await chat.read(1, 2, before.cursor, undefined, signal))!;
     expect(after.reset).toBe(true);
     expect(after.state.historyRewrite).toBeDefined();
