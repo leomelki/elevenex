@@ -29,7 +29,10 @@ export const ANTIGRAVITY_INSTALL =
 export const ANTIGRAVITY_CATALOG_SIGN_IN =
   'Sign in with agy acp --login on this machine, then refresh models.';
 
-export async function initializeAntigravity(transport: AcpStdio) {
+export async function initializeAntigravity(
+  transport: AcpStdio,
+  onVersion?: (version: string) => void,
+) {
   const initialized = await transport.request('initialize', {
     protocolVersion: 1,
     clientInfo: { name: 'elevenex', title: 'Elevenex', version: '1' },
@@ -39,6 +42,7 @@ export async function initializeAntigravity(transport: AcpStdio) {
     throw new Error(
       'This Antigravity CLI uses an unsupported ACP protocol version.',
     );
+  onVersion?.(acpText(acpObject(initialized.agentInfo).version, 100));
   return acpObject(initialized.agentCapabilities);
 }
 
@@ -219,9 +223,17 @@ export class AntigravityTurn {
 
   constructor(
     readonly id: string,
-    prompt: AgentTranscriptItem,
+    prompt?: AgentTranscriptItem,
   ) {
-    this.items = [prompt];
+    this.items = prompt ? [prompt] : [];
+  }
+
+  appendPrompt(prompt: AgentTranscriptItem): void {
+    this.items.push(prompt);
+  }
+
+  hasTool(native: string): boolean {
+    return this.tools.has(native);
   }
 
   toolId(native: string): string {

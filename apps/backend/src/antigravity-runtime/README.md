@@ -48,13 +48,15 @@ concurrent reads, closes the session, and caches the advertised defaults for
 settings and new conversations. Each task conversation still receives its
 own options when it connects.
 
-The same catalog probe discovers execution modes. The composer offers the
-CLI's advertised choices, including Auto on eligible installations. A selection
-is saved in the session's existing JSON preferences and applied via ACP before
-each prompt as needed, including after resuming a native session. If the CLI
-no longer offers or declines to activate the selected mode, the turn stops
-before sending the prompt. Antigravity evaluates tool permissions in the
-selected mode and Elevenex relays the permission requests the CLI sends.
+The same catalog probe discovers native Plan, Accept edits and Auto. The
+Plan/Code switch preserves the selected Code permission policy. Elevenex
+stores both choices in the existing session JSON and applies the native mode
+before prompts, including after resume. If a requested native mode is no
+longer available or the CLI declines to activate it, the prompt stays unsent.
+Full access is an explicit desktop choice for the conversation. It selects
+the CLI's default mode and answers tool permission requests with the offered
+one-time allowance during a Code turn. Plan, elicitation and native questions
+retain their approval flow.
 
 ## Usage and quota
 

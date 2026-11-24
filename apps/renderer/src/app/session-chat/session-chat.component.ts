@@ -451,7 +451,9 @@ export class SessionChatComponent {
             default: "Ask before the agent takes protected actions",
             acceptEdits: "Apply edits; ask before commands",
             "accept-edits": "Approve workspace edits automatically",
-            bypassPermissions: "Allow actions without permission prompts",
+            bypassPermissions: state?.provider === "antigravity"
+              ? "Automatically approve Antigravity tool requests"
+              : "Allow actions without permission prompts",
             auto: state?.provider === "antigravity"
               ? "Approve edits and run routine commands automatically"
               : "Use the harness’s automatic permission policy",
@@ -465,7 +467,7 @@ export class SessionChatComponent {
             default: "Ask first",
             acceptEdits: "Auto-edit",
             "accept-edits": "Accept edits",
-            bypassPermissions: "Full auto",
+            bypassPermissions: state?.provider === "antigravity" ? "Full access" : "Full auto",
             auto: "Auto",
             plan: "Plan",
             dontAsk: "Do not ask",

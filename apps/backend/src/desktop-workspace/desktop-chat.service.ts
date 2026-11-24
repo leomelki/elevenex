@@ -227,7 +227,7 @@ export class DesktopChatService implements OnModuleDestroy {
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
       controls: {
-        plan: typeof provider.setPlanMode === 'function',
+        plan: typeof provider.setPlanMode === 'function' && raw.planAvailable !== false,
         reasoning: typeof provider.setReasoningEffort === 'function',
         fast: typeof provider.setFastMode === 'function',
       },

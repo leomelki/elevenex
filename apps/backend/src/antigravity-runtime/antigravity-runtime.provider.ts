@@ -10,6 +10,7 @@ import { and, eq, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type {
+  AgentAutocompleteItem,
   AgentImageInput,
   AgentProviderModelCatalogPayload,
   AgentRuntimeProvider,
@@ -41,11 +42,13 @@ import {
   ANTIGRAVITY_PROVIDER,
   ANTIGRAVITY_SIGN_IN,
   AntigravityTurn,
+  acpList,
   acpText,
   antigravityEnvironment,
   initializeAntigravity,
   sessionOptions,
 } from './antigravity-acp.js';
+import { AntigravityBackground } from './antigravity-background.js';
 import { AntigravityCatalog } from './antigravity-catalog.js';
 import {
   AntigravityDecisions,
@@ -78,6 +81,13 @@ interface Entry {
   options: ReturnType<typeof sessionOptions>;
   defaults: { model?: string; thought?: string; mode?: string };
   imagePrompts: boolean;
+  workingDirectory?: string;
+  acceptsSteering: boolean;
+  promptOpen: boolean;
+  steerRequest?: Promise<Record<string, unknown>>;
+  background: AntigravityBackground;
+  settleAbort?: AbortController;
+  commands: AgentAutocompleteItem[];
   decisions: AntigravityDecisions;
   pendingPrompts: (ClaudePendingPrompt & { visiblePrompt?: string })[];
   liveItems: AgentTranscriptItem[];
@@ -99,6 +109,7 @@ const CANCEL_TIMEOUT = 5_000;
 const QUEUE_LIMIT = 8;
 /** Context outlives idle CLI processes; bound it for long-running backends. */
 const CONTEXT_LIMIT = 256;
+const FULL_ACCESS = 'bypassPermissions';
 const ANTIGRAVITY_QUOTA =
   'This model has used its Antigravity quota. Choose another model, or send again after it resets.';
 
@@ -176,10 +187,18 @@ export class AntigravityRuntimeProvider
   }
 
   private selection(session: Session): Selection {
-    if (session.antigravitySelection) return session.antigravitySelection;
+    if (session.antigravitySelection)
+      return this.normalizeSelection(session.antigravitySelection);
     if (session.antigravitySessionId) return {};
     const defaults = this.settings.getAgentProviderDefaults(this.info.id);
     return { model: defaults.model, reasoningEffort: defaults.reasoningEffort };
+  }
+
+  private normalizeSelection(selection: Selection): Selection {
+    // Previously Plan occupied the permissions picker.
+    return selection.mode === 'plan'
+      ? { ...selection, mode: undefined, plan: true }
+      : selection;
   }
 
   private currentSelection(session: Session): Selection {
@@ -190,7 +209,9 @@ export class AntigravityRuntimeProvider
       .from(sessions)
       .where(this.activeSession(session.id))
       .get();
-    return current?.selection ?? this.selection(session);
+    return current?.selection
+      ? this.normalizeSelection(current.selection)
+      : this.selection(session);
   }
 
   private modelList(options: Entry['options']) {
@@ -229,7 +250,13 @@ export class AntigravityRuntimeProvider
       ? entry.options
       : (this.catalog.current()?.options ?? {});
     const mode = this.modeOption(entry);
-    const permissionModes = mode?.values.map(({ id }) => id) ?? [];
+    const permissionModes = [
+      'default',
+      ...(mode?.values.flatMap(({ id }) =>
+        id === 'plan' || id === 'default' ? [] : [id],
+      ) ?? []),
+      FULL_ACCESS,
+    ];
     const preferredMode = selection.mode === null
       ? entry?.defaults.mode ?? mode?.current
       : selection.mode ?? mode?.current;
@@ -245,16 +272,20 @@ export class AntigravityRuntimeProvider
           : phase === 'running'
             ? 'running'
             : 'idle',
-      canInterrupt: !!entry?.run,
-      canSteer: false,
+      canInterrupt: !!entry && (!!entry.run || entry.background.active),
+      canSteer: !!entry && this.canSteer(entry),
+      backgroundWork: this.backgroundItems(entry),
       selectedModel: selection.model ?? options.model?.current ?? null,
       reasoningEffort:
         selection.reasoningEffort ?? options.thought?.current ?? null,
       permissionMode:
         permissionModes.find((id) => id === preferredMode) ??
         permissionModes.find((id) => id === mode?.current) ??
-        null,
+        'default',
       permissionModes,
+      planMode: selection.plan === true,
+      planAvailable:
+        selection.plan === true || mode?.values.some(({ id }) => id === 'plan') === true,
       availableModels: this.modelList(options),
       pendingPermissionRequest:
         decision?.kind === 'permission' ? decision.view : null,
@@ -281,8 +312,12 @@ export class AntigravityRuntimeProvider
     return { ...(await this.getRuntimeState(sessionId)), history };
   }
 
-  getAutocompleteItems() {
-    return Promise.resolve([]);
+  getAutocompleteItems(sessionId: number) {
+    return Promise.resolve(this.entries.get(sessionId)?.commands ?? []);
+  }
+
+  private backgroundItems(entry?: Entry) {
+    return entry?.promptOpen ? [] : (entry?.background.items ?? []);
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {
@@ -293,8 +328,19 @@ export class AntigravityRuntimeProvider
     return this.setSelection(sessionId, { reasoningEffort });
   }
 
-  async setPermissionMode(sessionId: number, mode: string | null) {
+  async setPermissionMode(
+    sessionId: number,
+    mode: string | null,
+    origin?: InteractivePromptOrigin,
+  ) {
+    if (mode === FULL_ACCESS && origin !== 'desktop-chat')
+      throw new BadRequestException('Choose Full access in the desktop conversation.');
+    if (mode === 'plan') return this.setPlanMode(sessionId, true);
     return this.setSelection(sessionId, { mode });
+  }
+
+  async setPlanMode(sessionId: number, plan: boolean) {
+    return this.setSelection(sessionId, { plan });
   }
 
   private modeOption(entry?: Entry) {
@@ -312,9 +358,13 @@ export class AntigravityRuntimeProvider
         'Wait for Antigravity to finish before changing its configuration.',
       );
     const options = entry?.options ?? this.catalog.current()?.options;
+    const mode = this.modeOption(entry);
+    const nativeMode = patch.plan === true ? 'plan' : patch.mode;
     if (
-      patch.mode != null &&
-      !this.modeOption(entry)?.values.some(({ id }) => id === patch.mode)
+      nativeMode != null &&
+      nativeMode !== FULL_ACCESS &&
+      nativeMode !== 'default' &&
+      !mode?.values.some(({ id }) => id === nativeMode)
     )
       throw new BadRequestException('This Antigravity mode is unavailable.');
     if (
@@ -334,6 +384,13 @@ export class AntigravityRuntimeProvider
         'This Antigravity thinking level is unavailable.',
       );
     const selection = { ...this.currentSelection(session), ...patch };
+    if (
+      patch.plan &&
+      selection.mode == null &&
+      mode?.current !== 'plan' &&
+      mode?.values.some(({ id }) => id === mode.current)
+    )
+      selection.mode = mode.current;
     const updated = this.db
       .update(sessions)
       .set({ antigravitySelection: selection })
@@ -441,7 +498,14 @@ export class AntigravityRuntimeProvider
       options: {},
       defaults: {},
       imagePrompts: false,
-      decisions: new AntigravityDecisions(() => this.emitState(session.id)),
+      acceptsSteering: false,
+      promptOpen: false,
+      background: new AntigravityBackground(),
+      commands: [],
+      decisions: new AntigravityDecisions(() => {
+        entry.background.decisionChanged();
+        this.emitState(session.id);
+      }),
       pendingPrompts: [],
       liveItems: [],
       queuePaused: false,
@@ -473,12 +537,24 @@ export class AntigravityRuntimeProvider
       {
         notification: (method, params) => this.notification(entry, method, params),
         request: (method, params) => this.decision(entry, method, params),
+        closed: () => {
+          if (entry.transport !== transport) return;
+          entry.workingDirectory = undefined;
+          entry.background.clear();
+          entry.settleAbort?.abort();
+          entry.decisions.cancel();
+          if (!entry.closed) this.emitState(entry.id);
+        },
       },
       // agy only supports editor-provided HTTP MCP servers in worker mode.
       ['--process-per-session'],
     );
     entry.transport = transport;
-    const capabilities = await initializeAntigravity(transport);
+    const capabilities = await initializeAntigravity(transport, (version) => {
+      const match = /^v?(\d+)\.(\d+)\.\d+(?:[-+][\w.-]+)?$/.exec(version);
+      entry.acceptsSteering = !!match &&
+        (Number(match[1]) > 1 || (Number(match[1]) === 1 && Number(match[2]) >= 5));
+    });
     this.assertOpen(entry);
     entry.imagePrompts =
       acpObject(capabilities.promptCapabilities).image === true;
@@ -558,6 +634,7 @@ export class AntigravityRuntimeProvider
       mode: entry.options.mode?.current,
     };
     if (isNewSession) this.catalog.observe(entry.options);
+    entry.workingDirectory = cwd;
     return transport;
   }
 
@@ -602,6 +679,17 @@ export class AntigravityRuntimeProvider
     };
   }
 
+  private async configureMode(entry: Entry, transport: AcpStdio) {
+    const { mode, plan } = entry.selection;
+    const native = entry.options.mode;
+    // Return to Code on warm and cold resumes of a native Plan session.
+    const codeMode = mode === FULL_ACCESS || (mode == null && native?.current === 'plan')
+      ? 'default' : mode;
+    const requestedMode = plan ? 'plan' : codeMode;
+    if (native || requestedMode !== 'default')
+      await this.configure(entry, transport, 'mode', requestedMode);
+  }
+
   private startRun(
     entry: Entry,
     session: Session,
@@ -618,10 +706,15 @@ export class AntigravityRuntimeProvider
       resolveReceipt = resolve;
       rejectReceipt = reject;
     });
-    entry.run = this.run(entry, session, prompt, visiblePrompt, images, {
+    const completed = this.ownRun(entry, this.run(entry, session, prompt, visiblePrompt, images, {
       resolve: resolveReceipt,
       reject: rejectReceipt,
-    }).finally(() => {
+    }));
+    return { receipt, completed };
+  }
+
+  private ownRun(entry: Entry, run: Promise<void>) {
+    entry.run = run.finally(() => {
       clearTimeout(entry.stopTimer);
       clearTimeout(entry.updateTimer);
       entry.updateTimer = undefined;
@@ -629,6 +722,8 @@ export class AntigravityRuntimeProvider
       this.dispatches.clear(entry);
       entry.run = undefined;
       entry.turn = undefined;
+      entry.promptOpen = false;
+      entry.steerRequest = undefined;
       entry.stopping = false;
       if (entry.closed) return;
       this.emitState(entry.id);
@@ -640,7 +735,7 @@ export class AntigravityRuntimeProvider
     // runtime errors and never cause the desktop to resend a submitted turn.
     void entry.run.catch(() => undefined);
     this.emitState(entry.id);
-    return { receipt, completed: entry.run };
+    return entry.run;
   }
 
   private async run(
@@ -667,7 +762,7 @@ export class AntigravityRuntimeProvider
         'thought',
         entry.selection.reasoningEffort,
       );
-      await this.configure(entry, transport, 'mode', entry.selection.mode);
+      await this.configureMode(entry, transport);
       if (images?.length && !entry.imagePrompts)
         throw new BadRequestException(
           'This Antigravity runtime does not accept images.',
@@ -701,14 +796,8 @@ export class AntigravityRuntimeProvider
           .where(eq(antigravityTurns.sessionId, entry.id))
           .limit(1)
           .get();
-      const stored = this.db
-        .insert(antigravityTurns)
-        .values({ sessionId: entry.id, items: [user] })
-        .returning({ id: antigravityTurns.id })
-        .get();
-      entry.storedTurnId = stored.id;
-      entry.turn = new AntigravityTurn(id, user);
-      entry.liveItems = entry.turn.items;
+      this.openTurn(entry, new AntigravityTurn(id, user));
+      entry.promptOpen = true;
       const response = transport.request(
         'session/prompt',
         {
@@ -733,7 +822,16 @@ export class AntigravityRuntimeProvider
         );
       receipt.resolve();
       this.emitState(entry.id);
-      const result = await response;
+      let result: Record<string, unknown>;
+      try {
+        result = await response;
+      } catch (error) {
+        if (!entry.steerRequest) throw error;
+        result = await entry.steerRequest;
+      }
+      if (entry.steerRequest) result = await entry.steerRequest;
+      entry.promptOpen = false;
+      if (!entry.stopping) await this.settleBackground(entry);
       if (!acpText(result.stopReason))
         throw new Error('Antigravity did not confirm completion.');
       successful = !entry.stopping && result.stopReason !== 'cancelled';
@@ -752,27 +850,12 @@ export class AntigravityRuntimeProvider
         this.applyTitleFallback(entry.id, titleJob);
       }
       try {
-        await this.changes.finish(capture, entry.nativeId);
-        if (entry.storedTurnId !== undefined) {
-          this.db
-            .update(antigravityTurns)
-            .set({ items: entry.liveItems })
-            .where(eq(antigravityTurns.id, entry.storedTurnId))
-            .run();
-        }
+        await this.persistTurn(entry, capture);
       } catch {
         failure = this.fail(
           entry,
           new Error('Could not save the Antigravity conversation.'),
         );
-      } finally {
-        entry.storedTurnId = undefined;
-        entry.liveItems = [];
-        if (!entry.closed)
-          this.emit('event', {
-            type: 'history_snapshot',
-            payload: { sessionId: entry.id },
-          });
       }
     }
     if (failure) throw failure;
@@ -784,6 +867,86 @@ export class AntigravityRuntimeProvider
             `Could not mark Antigravity session ${entry.id} complete.`,
           ),
         );
+    }
+  }
+
+  private openTurn(entry: Entry, turn: AntigravityTurn) {
+    const stored = this.db
+      .insert(antigravityTurns)
+      .values({ sessionId: entry.id, items: turn.items })
+      .returning({ id: antigravityTurns.id })
+      .get();
+    entry.storedTurnId = stored.id;
+    entry.turn = turn;
+    entry.liveItems = turn.items;
+  }
+
+  private async settleBackground(entry: Entry, detached = false) {
+    if (!entry.transport || entry.transport.closed || entry.closed || entry.stopping) return;
+    const controller = new AbortController();
+    entry.settleAbort = controller;
+    this.emitState(entry.id);
+    try {
+      await entry.background.settle(
+        controller.signal,
+        () => !!entry.decisions.current,
+        detached,
+      );
+    } finally {
+      entry.settleAbort = undefined;
+    }
+  }
+
+  private async persistTurn(entry: Entry, capture: TurnChangeCapture | undefined) {
+    try {
+      await this.changes.finish(capture, entry.nativeId);
+    } finally {
+      const id = entry.storedTurnId;
+      entry.storedTurnId = undefined;
+      entry.turn = undefined;
+      const items = entry.liveItems;
+      entry.liveItems = [];
+      if (id !== undefined) {
+        if (items.length) {
+          this.db.update(antigravityTurns).set({ items })
+            .where(eq(antigravityTurns.id, id)).run();
+        } else {
+          this.db.delete(antigravityTurns).where(eq(antigravityTurns.id, id)).run();
+        }
+        if (!entry.closed) this.emit('event', {
+          type: 'history_snapshot',
+          payload: { sessionId: entry.id },
+        });
+      }
+    }
+  }
+
+  private beginDetachedReply(entry: Entry) {
+    const cwd = entry.workingDirectory;
+    if (!cwd || entry.run || entry.closed || entry.stopping || entry.transport?.closed) return;
+    clearTimeout(entry.idleTimer);
+    this.openTurn(entry, new AntigravityTurn(randomUUID()));
+    this.ownRun(entry, this.detachedReply(entry, cwd));
+  }
+
+  private async detachedReply(entry: Entry, cwd: string) {
+    entry.error = null;
+    // Register the listener before awaiting Git, since the entire reply can arrive
+    // in the same stdout read as its opening update.
+    const settled = this.settleBackground(entry, true);
+    let capture: TurnChangeCapture | undefined;
+    try {
+      capture = await this.changes.begin(entry.id, this.info.id, cwd, entry.nativeId);
+      await settled;
+    } catch (error) {
+      entry.settleAbort?.abort();
+      if (!entry.closed && !entry.stopping) this.fail(entry, error);
+    } finally {
+      try {
+        await this.persistTurn(entry, capture);
+      } catch {
+        if (!entry.closed) this.fail(entry, new Error('Could not save the Antigravity conversation.'));
+      }
     }
   }
 
@@ -858,6 +1021,7 @@ export class AntigravityRuntimeProvider
       return;
     const update = acpObject(params.update);
     if (update.sessionUpdate === 'usage_update') {
+      if (entry.background.settling) entry.background.replyEnded();
       const usage = acpContextUsage(update);
       if (!usage) return;
       this.contexts.delete(entry.id);
@@ -866,6 +1030,20 @@ export class AntigravityRuntimeProvider
         if (this.contexts.size <= CONTEXT_LIMIT) break;
         this.contexts.delete(oldest);
       }
+    } else if (update.sessionUpdate === 'available_commands_update') {
+      entry.commands = acpList(update.availableCommands, 128).flatMap((value) => {
+        const command = acpObject(value);
+        const name = acpText(command.name, 80);
+        if (!/^[\w-]+$/.test(name)) return [];
+        const trigger = `/${name}`;
+        return [{
+          id: `antigravity:${name}`, kind: 'command', trigger,
+          label: trigger, insertText: trigger,
+          description: acpText(command.description, 1000),
+          detail: acpText(acpObject(command.input).hint, 400),
+        }];
+      });
+      return;
     } else if (entry.nativeId === null) {
       return;
     } else if (update.sessionUpdate === 'session_info_update') {
@@ -890,7 +1068,19 @@ export class AntigravityRuntimeProvider
       const current = acpText(update.currentModeId);
       if (!mode?.values.some(({ id }) => id === current)) return;
       entry.options = { ...entry.options, mode: { ...mode, current } };
-    } else if (!entry.turn?.update(update)) return;
+    } else {
+      if (!entry.workingDirectory) return;
+      const type = update.sessionUpdate;
+      const startsReply = type === 'agent_message_chunk' ||
+        type === 'agent_thought_chunk' || type === 'tool_call';
+      if (startsReply && !entry.promptOpen && !entry.stopping) {
+        if (!entry.run) this.beginDetachedReply(entry);
+        else if (entry.background.settling) entry.background.replyStarted();
+      }
+      const workChanged = entry.background.observe(update);
+      if (workChanged && !entry.run && !entry.background.active) this.retire(entry);
+      if (!entry.turn?.update(update) && !workChanged) return;
+    }
     // Keep token bursts from waking every desktop stream once per token.
     entry.updateTimer ??= setTimeout(() => {
       entry.updateTimer = undefined;
@@ -903,6 +1093,13 @@ export class AntigravityRuntimeProvider
     method: string,
     params: Record<string, unknown>,
   ) {
+    if (!entry.closed && !entry.stopping && entry.nativeId &&
+        params.sessionId === entry.nativeId &&
+        (method === 'session/request_permission' || method === 'elicitation/create' ||
+          method === 'session/elicitation')) {
+      if (!entry.run) this.beginDetachedReply(entry);
+      else if (entry.background.settling) entry.background.replyStarted();
+    }
     const turn =
       entry.run &&
       !entry.stopping &&
@@ -914,6 +1111,8 @@ export class AntigravityRuntimeProvider
       method,
       params,
       turn && ((nativeId) => turn.toolId(nativeId)),
+      entry.selection.plan !== true && entry.selection.mode === FULL_ACCESS &&
+        entry.options.mode?.current !== 'plan',
     );
   }
 
@@ -958,21 +1157,29 @@ export class AntigravityRuntimeProvider
 
   async interrupt(sessionId: number): Promise<void> {
     const entry = this.entries.get(sessionId);
-    if (!entry?.run || entry.stopping) return;
+    if (!entry || (!entry.run && !entry.background.active) || entry.stopping) return;
     entry.stopping = true;
     entry.queuePaused = entry.pendingPrompts.length > 0;
-    if (entry.turn && entry.transport && !entry.transport.closed) {
+    if (entry.transport && !entry.transport.closed) {
       entry.transport.notify('session/cancel', { sessionId: entry.nativeId });
-      entry.stopTimer = setTimeout(
-        () => entry.transport?.close(),
-        CANCEL_TIMEOUT,
-      ).unref();
+      if (entry.promptOpen) {
+        entry.stopTimer = setTimeout(
+          () => entry.transport?.close(),
+          CANCEL_TIMEOUT,
+        ).unref();
+      }
     } else {
       entry.transport?.close();
     }
     entry.decisions.cancel();
+    entry.background.clear();
+    entry.settleAbort?.abort();
     this.emitState(sessionId);
-    await entry.run.catch(() => undefined);
+    if (entry.run) await entry.run.catch(() => undefined);
+    else {
+      entry.stopping = false;
+      this.retire(entry);
+    }
   }
 
   cancelPendingPrompt(sessionId: number, id: string): Promise<void> {
@@ -997,12 +1204,40 @@ export class AntigravityRuntimeProvider
     return Promise.resolve();
   }
 
-  steerPendingPrompt(): Promise<void> {
-    return Promise.reject(
-      new BadRequestException(
-        'Antigravity follow-ups are queued until the current turn completes.',
-      ),
-    );
+  private canSteer(entry: Entry) {
+    return entry.acceptsSteering && entry.promptOpen && !entry.stopping &&
+      !entry.steerRequest && !entry.decisions.current;
+  }
+
+  async steerPendingPrompt(sessionId: number, id: string) {
+    const entry = this.entries.get(sessionId);
+    const index = entry?.pendingPrompts.findIndex((item) => item.id === id) ?? -1;
+    if (!entry || !this.canSteer(entry) || !entry.turn || !entry.transport || index < 0)
+      throw new ConflictException('This Antigravity message cannot be sent into the active turn.');
+    const prompt = entry.pendingPrompts[index];
+    if (prompt.images?.length && !entry.imagePrompts)
+      throw new BadRequestException('This Antigravity runtime does not accept images.');
+    entry.pendingPrompts.splice(index, 1);
+    entry.turn.appendPrompt({
+      id: randomUUID(),
+      kind: 'user',
+      content: prompt.visiblePrompt ?? prompt.prompt,
+      timestamp: new Date().toISOString(),
+      editUnsupported: true,
+    });
+    // A second prompt steers native agy 1.5+, without canceling its in-flight work.
+    // Once sent, its outcome can be unknown and the message must never return to the queue.
+    entry.steerRequest = entry.transport.request('session/prompt', {
+      sessionId: entry.nativeId,
+      prompt: [
+        { type: 'text', text: prompt.prompt },
+        ...(prompt.images ?? []).map((image) => ({
+          type: 'image', mimeType: image.mediaType, data: image.data,
+        })),
+      ],
+    }, 0);
+    void entry.steerRequest.catch(() => undefined);
+    this.emitState(sessionId);
   }
 
   async resumePendingPrompts(
@@ -1066,7 +1301,7 @@ export class AntigravityRuntimeProvider
   }
 
   private retire(entry: Entry) {
-    if (entry.closed || entry.run) return;
+    if (entry.closed || entry.run || entry.background.active) return;
     clearTimeout(entry.idleTimer);
     entry.idleTimer = setTimeout(() => {
       entry.transport?.close();
@@ -1078,6 +1313,7 @@ export class AntigravityRuntimeProvider
   private dispose(entry: Entry) {
     entry.closed = true;
     entry.titleJob?.controller.abort();
+    entry.settleAbort?.abort();
     clearTimeout(entry.idleTimer);
     clearTimeout(entry.stopTimer);
     clearTimeout(entry.updateTimer);
@@ -1109,7 +1345,8 @@ export class AntigravityRuntimeProvider
       payload: {
         sessionId,
         runPhase: this.phase(entry),
-        canInterrupt: !!entry?.run,
+        canInterrupt: !!entry && (!!entry.run || entry.background.active),
+        backgroundWork: this.backgroundItems(entry),
         pendingPrompts: entry?.pendingPrompts.map(({ id }) => ({ id })) ?? [],
       },
     });

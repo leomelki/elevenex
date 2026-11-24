@@ -40,11 +40,13 @@ Antigravity owns authentication, tool execution and its native helpers. Elevenex
 relays messages you submit in desktop chat, renders decisions, and restores
 the conversation after reconnecting. Follow-ups wait in the queue. The model
 picker discovers available models and their advertised thinking levels before
-the first message. The composer’s permissions menu shows the execution modes
-reported by the installed CLI. Choose **Ask first**, **Accept edits**, or
-**Plan** when offered. **Auto** appears when Antigravity supports it for the
-account and terminal sandbox on the machine running the engine. Elevenex
-saves the choice per conversation and applies it before the next turn.
+the first message. Use the composer’s **Plan / Code** switch to set native
+planning mode. In Code, choose **Ask first**, **Accept edits**, **Auto**, or
+**Full access**. Auto appears when the installed CLI advertises it for the
+account and terminal sandbox on the machine running the engine. Full access
+approves tool requests once as they arrive. Antigravity’s own restrictions
+and questions still apply. Elevenex saves both choices per conversation and
+applies them before the next turn.
 See [Antigravity execution modes](https://antigravity.google/docs/cli/modes).
 
 Elevenex names new Antigravity sessions in the background from their first

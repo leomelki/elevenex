@@ -76,6 +76,7 @@ export const sessions = sqliteTable(
         model?: string | null;
         reasoningEffort?: string | null;
         mode?: string | null;
+        plan?: boolean;
       }>(),
     hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
       mode: 'boolean',

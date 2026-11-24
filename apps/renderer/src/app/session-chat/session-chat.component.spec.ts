@@ -1329,19 +1329,20 @@ describe("connected subscription quota", () => {
     const antigravity = {
       ...state,
       provider: "antigravity",
-      controls: { plan: false, reasoning: true, fast: false },
+      controls: { plan: true, reasoning: true, fast: false },
       permissionMode: "default",
-      permissionModes: ["default", "accept-edits", "auto", "plan"],
+      permissionModes: ["default", "accept-edits", "auto", "bypassPermissions"],
     };
     const { fixture, root, bridge, publish, complete } = setup([], antigravity);
     await settle(fixture);
+    expect(root.querySelector('ex-mode-toggle')?.textContent).toContain('Plan');
     const trigger = root.querySelector<HTMLButtonElement>("ex-permission-picker > button")!;
     expect(trigger.textContent).toContain("Ask first");
     trigger.click();
     await settle(fixture);
     const choices = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Agent permissions"] .choice')];
     expect(choices.map(choice => choice.querySelector("strong")?.textContent)).toEqual([
-      "Ask first", "Accept edits", "Auto", "Plan",
+      "Ask first", "Accept edits", "Auto", "Full access",
     ]);
     choices[2]!.click();
     expect(bridge.sessionChatCommand).toHaveBeenCalledWith("scope", expect.objectContaining({
@@ -1355,6 +1356,44 @@ describe("connected subscription quota", () => {
     await settle(fixture);
     expect(trigger.textContent).toContain("Auto");
     expect(trigger.disabled).toBe(true);
+  });
+  it("uses Plan/Code independently of Antigravity Full access when Auto is unavailable", async () => {
+    const antigravity: SessionChatState = {
+      ...state,
+      provider: "antigravity",
+      controls: { plan: true, reasoning: true, fast: false },
+      permissionMode: "default",
+      permissionModes: ["default", "accept-edits", "bypassPermissions"],
+    };
+    const { fixture, root, bridge, publish, complete } = setup([], antigravity);
+    await settle(fixture);
+    const trigger = root.querySelector<HTMLButtonElement>("ex-permission-picker > button")!;
+    trigger.click();
+    await settle(fixture);
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Agent permissions"] .choice')];
+    expect(choices.map(choice => choice.querySelector("strong")?.textContent)).toEqual([
+      "Ask first", "Accept edits", "Full access",
+    ]);
+    choices[2]!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({
+      action: { type: "permission-mode", mode: "bypassPermissions" },
+    }));
+    publish({
+      taskId: 1, sessionId: 2, cursor: "full-access", reset: false, items: [], events: [], before: null,
+      state: { ...antigravity, permissionMode: "bypassPermissions" },
+    });
+    complete();
+    await settle(fixture);
+    expect(trigger.textContent).toContain("Full access");
+    const plan = [...root.querySelectorAll<HTMLButtonElement>("ex-mode-toggle button")]
+      .find(button => button.textContent?.includes("Plan"));
+    expect(plan).toBeDefined();
+    plan!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({
+      action: { type: "plan", enabled: true },
+    }));
+    complete();
+    await settle(fixture);
   });
 });
 

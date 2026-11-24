@@ -179,8 +179,10 @@ Older engines omit the capability and retain their original send contract.
 The backend adapter supports Claude, Codex, Pi, OpenCode and Antigravity.
 Antigravity connects to the official CLI over ACP in the task workspace.
 The picker reads the model catalog before the first message. The same read
-discovers Antigravity's native execution modes for the composer permissions
-menu. Mode choices apply to subsequent turns and are disabled during a turn.
+discovers Antigravity's native planning and approval capabilities. The
+Plan/Code switch is separate from the permissions menu, which includes Full
+access and shows Auto when the CLI offers it. Changes apply to subsequent
+turns and are disabled during a turn.
 Task turns start
 on direct desktop chat submission. The runtime restores saved transcripts
 without launching the CLI, and resumes the native conversation when it

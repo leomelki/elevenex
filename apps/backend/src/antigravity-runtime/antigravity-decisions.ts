@@ -47,6 +47,7 @@ export class AntigravityDecisions {
     method: string,
     params: Record<string, unknown>,
     toolId?: (nativeId: string) => string,
+    fullAccess = false,
   ): unknown {
     const permission = method === 'session/request_permission';
     if (
@@ -75,6 +76,10 @@ export class AntigravityDecisions {
       }
       if (!nativeId || !options.has('allow_once'))
         return permissionOutcome(options.get('reject_once'));
+      // An interaction can use the permission RPC for a choice. Only
+      // approve ordinary tool requests, and never remember the approval.
+      if (fullAccess && !nativeId.startsWith('interaction_'))
+        return permissionOutcome(options.get('allow_once'));
       const view = acpPermission(
         requestId,
         toolId(nativeId),

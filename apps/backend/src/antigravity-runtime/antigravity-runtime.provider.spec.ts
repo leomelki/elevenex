@@ -299,10 +299,12 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect(await provider.getRuntimeState(sessionId)).toMatchObject({
       permissionMode: 'default',
       permissionModes: chosen === 'auto'
-        ? ['default', 'accept-edits', 'plan', 'auto']
-        : ['default', 'accept-edits', 'plan'],
+        ? ['default', 'accept-edits', 'auto', 'bypassPermissions']
+        : ['default', 'accept-edits', 'bypassPermissions'],
+      planMode: false,
+      planAvailable: true,
     });
-    await expect(provider.setPermissionMode(sessionId, 'bypassPermissions')).rejects.toThrow('unavailable');
+    await expect(provider.setPermissionMode(sessionId, 'bypassPermissions')).rejects.toThrow('desktop conversation');
     if (chosen !== 'auto')
       await expect(provider.setPermissionMode(sessionId, 'auto')).rejects.toThrow('unavailable');
     await Promise.all([
@@ -323,9 +325,46 @@ describe('interactive Antigravity through ACP stdio', () => {
     await reportMode(reconnected);
     expect((await reconnected.getHistory(sessionId)).filter(item => item.kind === 'assistant')
       .map(item => item.content)).toEqual([`new in ${chosen}`, `resumed in ${chosen}`]);
-    await reconnected.setPermissionMode(sessionId, 'plan');
+    await reconnected.setPlanMode(sessionId, true);
+    expect(await reconnected.getRuntimeState(sessionId)).toMatchObject({ planMode: true, permissionMode: chosen });
     await reportMode(reconnected);
     expect((await reconnected.getHistory(sessionId)).at(-1)?.content).toBe('resumed in plan');
+    await reconnected.cleanupSession(sessionId);
+    const restored = makeProvider();
+    expect(await restored.getRuntimeState(sessionId)).toMatchObject({ planMode: true });
+    await restored.setPlanMode(sessionId, false);
+    await reportMode(restored);
+    expect((await restored.getHistory(sessionId)).at(-1)?.content).toBe(`resumed in ${chosen}`);
+  });
+
+  it('reads a previously saved Plan permission as Plan mode and returns to Code', async () => {
+    db.prepare('UPDATE sessions SET antigravity_selection = ?').run(JSON.stringify({ mode: 'plan' }));
+    const provider = makeProvider();
+    expect(await provider.getRuntimeState(sessionId)).toMatchObject({ planMode: true, permissionMode: 'default' });
+    await provider.setPlanMode(sessionId, false);
+    await provider.submitPrompt(sessionId, 'report mode', undefined, undefined, { ...request, waitForCompletion: true });
+    expect((await provider.getHistory(sessionId)).at(-1)?.content).toBe('new in default');
+  });
+
+  it('uses one-time tool approvals in Full access and waits for human input and Plan approvals', async () => {
+    const provider = makeProvider();
+    await provider.getModelCatalog();
+    await provider.setPermissionMode(sessionId, 'bypassPermissions', 'desktop-chat');
+    await provider.submitPrompt(sessionId, 'review', undefined, undefined, request);
+    const question = await waitFor(provider, state => !!state.pendingUserInputRequest);
+    expect(question.permissionMode).toBe('bypassPermissions');
+    expect(question.pendingPermissionRequest).toBeNull();
+    expect(question.liveItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'tool_result', content: 'allow' }),
+    ]));
+    await provider.answerUserInput(sessionId, question.pendingUserInputRequest!.requestId, 'accept', { reply: 'Continue.' });
+    await waitFor(provider, state => state.runPhase === 'idle');
+    await provider.setPlanMode(sessionId, true);
+    await provider.submitPrompt(sessionId, 'review', undefined, undefined, request);
+    const approval = await waitFor(provider, state => !!state.pendingPermissionRequest);
+    expect(approval.planMode).toBe(true);
+    await provider.interrupt(sessionId);
+    await waitFor(provider, state => !state.canInterrupt);
   });
 
   it.each([

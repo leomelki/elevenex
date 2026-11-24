@@ -245,6 +245,7 @@ export interface AgentRuntimeProviderFeatures {
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentRuntimeStatePayload>;
   setPlanMode(
     sessionId: number,

@@ -42,6 +42,7 @@ function errorDetail(error: RpcObject): string {
 interface AcpHandlers {
   request(method: string, params: RpcObject): unknown;
   notification(method: string, params: RpcObject): void;
+  closed?(error: Error): void;
 }
 
 const FRAME_LIMIT = 32 * 1024 * 1024;
@@ -130,6 +131,7 @@ export class AcpStdio {
       request.reject(error);
     }
     this.pending.clear();
+    this.handlers.closed?.(error);
     this.child.stdin.destroy();
     if (
       this.child.exitCode !== null ||

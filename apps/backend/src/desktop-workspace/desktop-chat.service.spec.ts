@@ -1305,32 +1305,44 @@ describe('selected session chat', () => {
   });
   it('publishes session mode choices after Antigravity catalog discovery and routes selections', async () => {
     runtime.info = { ...runtime.info, id: 'antigravity', displayName: 'Antigravity', permissionModes: undefined };
+    const setPlanMode = jest.fn();
+    Object.assign(runtime, { setPlanMode });
     advertised.mockReturnValue([runtime.info]);
     session.mockImplementation(async () => ({
       workspaceId: 1, surface: 'session', status, activeAgentProvider: 'antigravity',
     }));
     started.mockReturnValue(false);
-    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle' });
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', planAvailable: false });
     const abort = new AbortController();
     const stream = await chat.openStream(1, 2, 'progressive', undefined,
       AbortSignal.any([abort.signal, AbortSignal.timeout(2_000)]));
     try {
       const initial = await stream.next();
-      expect(initial.value?.page.state?.permissionModes).toEqual([]);
+      expect(initial.value?.page.state).toMatchObject({
+        permissionModes: [], controls: { plan: false },
+      });
       listModelCatalogs.mockImplementationOnce(async () => {
         runtime.getRuntimeState.mockResolvedValue({
-          runPhase: 'idle', permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'plan'],
+          runPhase: 'idle', permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'bypassPermissions'],
+          planAvailable: true,
         });
         return [{ displayName: 'Antigravity', models: [] }];
       });
       await chat.catalog(1, 2, 'antigravity');
       expect((await stream.next()).value?.page.state).toMatchObject({
-        permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'plan'],
+        permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'bypassPermissions'],
+        controls: { plan: true },
       });
       await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'auto' })).rejects.toThrow('Unsupported permission mode');
       await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'accept-edits' })).resolves.toEqual({ accepted: true });
-      expect(runtime.setPermissionMode.mock.calls).toEqual([[2, 'accept-edits']]);
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'bypassPermissions' })).resolves.toEqual({ accepted: true });
+      expect(runtime.setPermissionMode.mock.calls).toEqual([
+        [2, 'accept-edits', 'desktop-chat'], [2, 'bypassPermissions', 'desktop-chat'],
+      ]);
+      await expect(chat.command(1, 2, { type: 'plan', enabled: true })).resolves.toEqual({ accepted: true });
+      expect(setPlanMode).toHaveBeenCalledWith(2, true);
     } finally {
+      Reflect.deleteProperty(runtime, 'setPlanMode');
       abort.abort();
       await stream.return(undefined);
     }

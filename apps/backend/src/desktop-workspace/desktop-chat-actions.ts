@@ -268,7 +268,11 @@ export async function executeChatAction(
       ).permissionModes;
       if (!Array.isArray(available) || !available.includes(mode))
         throw new BadRequestException('Unsupported permission mode.');
-      await feature('setPermissionMode').setPermissionMode(sessionId, mode);
+      const runtime = feature('setPermissionMode');
+      if (provider.info.id === 'antigravity')
+        await runtime.setPermissionMode(sessionId, mode, 'desktop-chat');
+      else
+        await runtime.setPermissionMode(sessionId, mode);
       break;
     }
     default:
