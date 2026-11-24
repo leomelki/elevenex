@@ -12,7 +12,7 @@ export const ANTIGRAVITY_PROVIDER: AgentRuntimeProviderInfo = {
   id: 'antigravity',
   displayName: 'Antigravity',
   capabilities: {
-    mcp: false,
+    mcp: true,
     subagents: false,
     permissions: true,
     userInput: true,

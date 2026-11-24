@@ -1,4 +1,5 @@
 const readline = require('node:readline');
+const { deepStrictEqual, match } = require('node:assert/strict');
 
 const input = readline.createInterface({ input: process.stdin });
 const sessionId = 'native-session';
@@ -18,6 +19,22 @@ let model = 'default-model';
 let mode = 'default';
 const modes = ['default', 'accept-edits', 'plan', ...(process.env.ACP_FIXTURE_AUTO ? ['auto'] : [])];
 const legacyModes = process.env.ACP_FIXTURE_LEGACY_MODES === '1';
+const titleHelper = process.argv.includes('--include-default-customizations=false');
+const httpMcp = process.argv.includes('--process-per-session') && !process.env.ACP_FIXTURE_NO_HTTP_MCP;
+const checkMcp = servers => {
+  if (!httpMcp) {
+    deepStrictEqual(servers, []);
+    return;
+  }
+  const authorization = servers[0]?.headers[0]?.value;
+  const expectedToken = process.env.ACP_FIXTURE_EXPECT_MCP_TOKEN;
+  if (expectedToken) deepStrictEqual(authorization, `Bearer ${expectedToken}`);
+  else match(authorization, /^Bearer evx_[A-Za-z0-9_-]{32}$/);
+  deepStrictEqual(servers, [{
+    type: 'http', name: 'elevenex', url: process.env.ELEVENEX_MCP_URL,
+    headers: [{ name: 'Authorization', value: authorization }],
+  }]);
+};
 const modeOption = () => ({
   id: 'mode', type: 'select', category: 'mode', currentValue: mode,
   options: modes.map(value => ({ value, name: value })),
@@ -43,9 +60,11 @@ input.on('line', line => {
     case 'initialize':
       result(id, { protocolVersion: 1, agentCapabilities: {
         promptCapabilities: { image: true }, sessionCapabilities: { resume: {}, close: {} },
+        ...(httpMcp ? { mcpCapabilities: { http: true } } : {}),
       } });
       break;
     case 'session/new':
+      checkMcp(params.mcpServers);
       if (process.env.ACP_FIXTURE_SIGNED_OUT === '1') {
         send({ id, error: { code: -32000, message: 'Secret login diagnostics' } });
         break;
@@ -62,6 +81,7 @@ input.on('line', line => {
       result(id, {});
       break;
     case 'session/resume':
+      checkMcp(params.mcpServers);
       if (params.sessionId !== sessionId) throw new Error('Wrong session to resume');
       conversation = 'resumed';
       result(id, configuration());
@@ -81,7 +101,20 @@ input.on('line', line => {
     case 'session/prompt': {
       promptId = id;
       const prompt = params.prompt[0].text;
-      if (prompt === 'review' || prompt === 'stop') {
+      if (titleHelper) {
+        const { firstMessage } = JSON.parse(prompt.split('\n').at(-1));
+        if (firstMessage === 'tool attempt') {
+          update({ sessionUpdate: 'tool_call', ...permission, status: 'pending' });
+          text('{"title":"Reject This Title"}');
+        } else if (firstMessage === 'Review the session list layout') {
+          text('{"title":"New session"}');
+        } else {
+          deepStrictEqual(firstMessage, 'visible prompt');
+          text('```json\n{"title":');
+          text('"Generated Antigravity Title"}\n```');
+        }
+        result(id, { stopReason: 'end_turn' });
+      } else if (prompt === 'review' || prompt === 'stop') {
         text('Ready ');
         text('to review.');
         update({ sessionUpdate: 'tool_call', ...permission, status: 'pending' });
@@ -95,6 +128,8 @@ input.on('line', line => {
         send({ id, error: { code: -32603, message:
           'RESOURCE_EXHAUSTED: You have exhausted your capacity on this model. Your quota will reset after 2h30m0s.' } });
       } else {
+        if (prompt === 'expanded prompt' || prompt === 'tool attempt')
+          update({ sessionUpdate: 'session_info_update', title: 'Native Antigravity Title' });
         text(prompt === 'report mode' ? `${conversation} in ${mode}` : `${conversation}, ${model}: ${prompt}`);
         update({ sessionUpdate: 'usage_update', used: 12000, size: 1048576 });
         result(id, { stopReason: 'end_turn' });

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
 
 type RpcId = string | number;
 type RpcObject = Record<string, unknown>;
@@ -66,8 +67,13 @@ export class AcpStdio {
     cwd: string,
     env: NodeJS.ProcessEnv,
     private readonly handlers: AcpHandlers,
+    flags: readonly string[] = [],
   ) {
-    this.child = spawn(binary, ['acp'], { cwd, env, windowsHide: true });
+    this.child = spawn(binary, ['acp', ...flags], {
+      cwd,
+      env,
+      windowsHide: true,
+    });
     this.child.stdout
       .setEncoding('utf8')
       .on('data', (chunk: string) => this.receive(chunk));
@@ -134,6 +140,19 @@ export class AcpStdio {
     this.child.kill();
     const force = setTimeout(() => this.child.kill('SIGKILL'), 2_000).unref();
     this.child.once('exit', () => clearTimeout(force));
+  }
+
+  async closeAndWait(): Promise<void> {
+    this.close();
+    if (
+      !this.child.pid ||
+      this.child.exitCode !== null ||
+      this.child.signalCode !== null
+    )
+      return;
+    await once(this.child, 'close', {
+      signal: AbortSignal.timeout(2_500),
+    }).catch(() => undefined);
   }
 
   private send(message: RpcObject): void {

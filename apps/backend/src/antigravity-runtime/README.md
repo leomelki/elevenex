@@ -14,6 +14,13 @@ with a bounded process shutdown if the CLI does not settle. Idle processes
 expire. Reconnect resumes the saved native session on the next explicit send,
 without redispatching an interrupted turn.
 
+Conversation processes use `agy acp --process-per-session` to enable ACP's HTTP
+MCP transport. When the CLI advertises HTTP MCP support, the provider passes the
+shared Elevenex MCP endpoint and the conversation's session bearer on
+each new, loaded, or resumed connection. This gives Antigravity the same tool
+catalog and caller identity as the other coding harnesses. The catalog probe
+uses a temporary session with an empty MCP server list.
+
 `AntigravityTurn` projects ACP updates to stable transcript items.
 `AntigravityDecisions` presents native permission options and form requests in
 order, and cancels them on stop or disposal. Tool actions stay inside the CLI.
@@ -21,6 +28,19 @@ The session row retains the native ID and session model and mode preferences. SQ
 stores the user receipt at dispatch and finalizes that turn’s transcript in the
 same row at settlement. Desktop history reads do not spawn the CLI.
 The shared turn-change service supplies the worktree review.
+
+When the first desktop prompt is dispatched for a session with a default name,
+Elevenex asks Antigravity's default model for a short title in a background ACP
+session. The helper runs in a temporary directory with sandbox restrictions,
+an empty MCP server list and no Elevenex session bearer. It stops on tool or
+input requests. It skips profiles with global hooks, MCP servers or installed
+plugins because they can run before ACP can refuse a request.
+
+If the helper yields no title, Elevenex uses a title reported by the live ACP
+session when available. Otherwise it uses a short excerpt of the first user
+message after that turn settles. The rename only applies while the original
+placeholder is current. The helper's output stays out of the conversation
+transcript, and later prompts do not start another title job.
 
 The engine discovers model options on the first catalog read through an empty
 ACP session in a temporary directory. Discovery sends no prompts, coalesces

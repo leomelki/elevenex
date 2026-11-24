@@ -75,7 +75,7 @@ export async function executeChatAction(
       await provider.submitPrompt(
         sessionId,
         prompt,
-        undefined,
+        provider.info.id === 'antigravity' ? input : undefined,
         images,
         {
           human: true,

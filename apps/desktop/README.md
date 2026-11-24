@@ -47,6 +47,15 @@ account and terminal sandbox on the machine running the engine. Elevenex
 saves the choice per conversation and applies it before the next turn.
 See [Antigravity execution modes](https://antigravity.google/docs/cli/modes).
 
+Elevenex names new Antigravity sessions in the background from their first
+message and keeps any name you choose. If a dedicated title request is
+unavailable, the sidebar uses Antigravity's reported title or a short excerpt
+of your first message.
+
+Antigravity sessions get the same Elevenex MCP tools and session identity as
+other harnesses. The installed `agy` must advertise HTTP MCP support in ACP
+worker mode (`--process-per-session`) to connect these tools.
+
 Google’s
 [interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
 distinguishes this workflow from third-party agent delegation. Antigravity turns

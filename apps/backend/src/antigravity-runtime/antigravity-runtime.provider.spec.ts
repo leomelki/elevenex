@@ -1,14 +1,19 @@
 import childProcess from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import * as paths from '../config/system-paths.js';
 import * as schema from '../database/schema/index.js';
+import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import type { SessionsService } from '../sessions/sessions.service.js';
 import type { SettingsService } from '../settings/settings.service.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
+import type { TextAgentGenerationService } from '../agent-generation/text-agent-generation.service.js';
+import { SessionTitleService } from '../session-title/session-title.service.js';
 import { AntigravityRuntimeProvider } from './antigravity-runtime.provider.js';
 
 jest.mock('../sessions/sessions.service.js', () => ({
@@ -23,12 +28,16 @@ jest.mock('../config/system-paths.js', () => ({
 }));
 
 const request = { origin: 'desktop-chat', waitForCompletion: false } as const;
+const mcpUrl = 'http://127.0.0.1:8765/api/mcp';
+const existingToken = 'evx_fixture_session_7';
 
 describe('interactive Antigravity through ACP stdio', () => {
   let db: Database.Database;
   let runs: AntigravityRuntimeProvider[];
   let spawn: jest.SpiedFunction<typeof childProcess.spawn>;
   let complete: jest.Mock;
+  let renameTitle: jest.Mock;
+  let profileHome: string;
   const sessionId = 7;
 
   const makeProvider = () => {
@@ -43,6 +52,7 @@ describe('interactive Antigravity through ACP stdio', () => {
           worktreePath: __dirname,
           ...orm
             .select({
+              name: schema.sessions.name,
               antigravitySessionId: schema.sessions.antigravitySessionId,
               antigravitySelection: schema.sessions.antigravitySelection,
             })
@@ -53,6 +63,7 @@ describe('interactive Antigravity through ACP stdio', () => {
       ),
       assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
       markCompletionUnreviewed: complete,
+      renameFromGeneratedTitle: renameTitle,
     };
     const runtime = new AntigravityRuntimeProvider(
       sessions as unknown as SessionsService,
@@ -61,7 +72,7 @@ describe('interactive Antigravity through ACP stdio', () => {
           model: null,
           reasoningEffort: null,
         }),
-      } as SettingsService,
+      } as unknown as SettingsService,
       {
         begin: jest.fn().mockResolvedValue(undefined),
         finish: jest.fn().mockResolvedValue(undefined),
@@ -70,7 +81,9 @@ describe('interactive Antigravity through ACP stdio', () => {
             Promise.resolve(items),
         ),
       } as unknown as TurnChangesService,
+      new McpAgentTokenService(orm),
       orm,
+      new SessionTitleService({} as TextAgentGenerationService),
     );
     runs.push(runtime);
     return runtime;
@@ -91,12 +104,18 @@ describe('interactive Antigravity through ACP stdio', () => {
     throw new Error('Antigravity did not reach the expected runtime state.');
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      ELEVENEX_MCP_URL: mcpUrl,
+    });
     runs = [];
     complete = jest.fn().mockResolvedValue(undefined);
+    renameTitle = jest.fn().mockResolvedValue(undefined);
+    profileHome = await mkdtemp(join(tmpdir(), 'elevenex-agy-test-home-'));
     db = new Database(':memory:');
-    db.exec(`CREATE TABLE sessions (id INTEGER PRIMARY KEY, status TEXT, surface TEXT, active_agent_provider TEXT);
-      INSERT INTO sessions VALUES (7, 'active', 'session', 'antigravity');`);
+    db.exec(`CREATE TABLE sessions (id INTEGER PRIMARY KEY, status TEXT, surface TEXT, active_agent_provider TEXT, mcp_agent_token TEXT, name TEXT NOT NULL);
+      INSERT INTO sessions VALUES (7, 'active', 'session', 'antigravity', NULL, 'Named by user');`);
     db.exec(
       readFileSync(
         join(__dirname, '../../drizzle/0056_antigravity.sql'),
@@ -106,15 +125,17 @@ describe('interactive Antigravity through ACP stdio', () => {
     jest.mocked(paths.findBinaryAsync).mockResolvedValue('official-agy');
     jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({
       ...process.env,
+      HOME: profileHome,
+      USERPROFILE: profileHome,
       ELEVENEX_CODE_ACCESS: 'fixture-token',
       ELEVENEX_DESKTOP_SOCKET: '/tmp/fixture.sock',
     });
     const realSpawn = childProcess.spawn;
     spawn = jest.spyOn(childProcess, 'spawn');
-    spawn.mockImplementation((_binary, _args, options) =>
+    spawn.mockImplementation((_binary, args, options) =>
       realSpawn(
         process.execPath,
-        [join(__dirname, 'test-fixtures/acp-agent.cjs')],
+        [join(__dirname, 'test-fixtures/acp-agent.cjs'), ...args],
         options ?? {},
       ),
     );
@@ -125,8 +146,9 @@ describe('interactive Antigravity through ACP stdio', () => {
       await runtime.cleanupSession(sessionId);
       await runtime.onModuleDestroy();
     }
-    spawn.mockRestore();
+    jest.restoreAllMocks();
     db.close();
+    await rm(profileHome, { recursive: true, force: true });
   });
 
   it('requires the desktop dispatch path before any process or native session is created', async () => {
@@ -140,6 +162,67 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect(await provider.getHistory(sessionId)).toEqual([]);
     await provider.getRuntimeState(sessionId);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  async function waitForTitle() {
+    const deadline = Date.now() + 3_000;
+    while (!renameTitle.mock.calls.length && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  it('generates a title once in a separate ACP session using the visible first prompt', async () => {
+    db.exec("UPDATE sessions SET name = 'Session 1'");
+    const provider = makeProvider();
+    await provider.submitPrompt(sessionId, 'expanded prompt', 'visible prompt', undefined, request);
+    await waitForTitle();
+    expect(renameTitle).toHaveBeenCalledWith(sessionId, 'Generated Antigravity Title', {
+      expectedName: 'Session 1',
+      signal: expect.any(AbortSignal),
+    });
+    const helper = spawn.mock.calls.find(([, args]) => args.includes('--sandbox'));
+    expect(helper).toBeDefined();
+    expect(helper?.[2]).toMatchObject({ cwd: expect.stringContaining('elevenex-agy-title-') });
+    expect(existsSync(String(helper?.[2]?.cwd))).toBe(false);
+    await waitFor(provider, (state) => state.runPhase === 'idle');
+    await provider.submitPrompt(sessionId, 'follow-up', undefined, undefined, request);
+    await waitFor(provider, (state) => state.runPhase === 'idle');
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(renameTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the native title when global hooks prevent a separate title job', async () => {
+    db.exec("UPDATE sessions SET name = 'Temporary session'");
+    const config = join(profileHome, '.gemini', 'config');
+    await mkdir(config, { recursive: true });
+    await writeFile(join(config, 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [] } }));
+    const provider = makeProvider();
+    await provider.submitPrompt(sessionId, 'expanded prompt', 'visible prompt', undefined, request);
+    await waitForTitle();
+    expect(renameTitle).toHaveBeenCalledWith(sessionId, 'Native Antigravity Title', {
+      expectedName: 'Temporary session',
+      signal: expect.any(AbortSignal),
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the title helper if its ACP session attempts tools', async () => {
+    db.exec("UPDATE sessions SET name = 'Session 1'");
+    const provider = makeProvider();
+    await provider.submitPrompt(sessionId, 'tool attempt', undefined, undefined, request);
+    await waitForTitle();
+    expect(renameTitle).toHaveBeenCalledWith(sessionId, 'Native Antigravity Title', expect.any(Object));
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(await provider.getHistory(sessionId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'new, default-model: tool attempt' }),
+    ]));
+  });
+
+  it('falls back to the first message when neither ACP session returns a usable title', async () => {
+    db.exec("UPDATE sessions SET name = 'Session 1'");
+    const provider = makeProvider();
+    await provider.submitPrompt(sessionId, 'Review the session list layout', undefined, undefined, request);
+    await waitForTitle();
+    expect(renameTitle).toHaveBeenCalledWith(sessionId, 'Review the session list layout', expect.any(Object));
   });
 
   it('coalesces cold catalog reads and makes models selectable before the first turn', async () => {
@@ -159,6 +242,9 @@ describe('interactive Antigravity through ACP stdio', () => {
       unavailableReason: null,
     });
     expect(spawn).toHaveBeenCalledTimes(1);
+    expect(db.prepare('SELECT mcp_agent_token FROM sessions').get()).toEqual({
+      mcp_agent_token: null,
+    });
     expect(await provider.getModelCatalog()).toEqual(first);
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(await provider.getHistory(sessionId)).toEqual([]);
@@ -323,6 +409,13 @@ describe('interactive Antigravity through ACP stdio', () => {
   });
 
   it('streams and persists a turn, relays decisions, and resumes the same native conversation', async () => {
+    db.prepare('UPDATE sessions SET mcp_agent_token = ?').run(existingToken);
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({
+      ...process.env,
+      ELEVENEX_CODE_ACCESS: 'fixture-token',
+      ELEVENEX_DESKTOP_SOCKET: '/tmp/fixture.sock',
+      ACP_FIXTURE_EXPECT_MCP_TOKEN: existingToken,
+    });
     const provider = makeProvider();
     await provider.submitPrompt(
       sessionId,
@@ -367,7 +460,7 @@ describe('interactive Antigravity through ACP stdio', () => {
     ]);
     expect(spawn).toHaveBeenCalledWith(
       'official-agy',
-      ['acp'],
+      ['acp', '--process-per-session'],
       expect.objectContaining({ cwd: __dirname }),
     );
     const launch = spawn.mock.calls[0]?.[2];
@@ -390,6 +483,28 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect((await restarted.getHistory(sessionId)).at(-1)?.content).toBe(
       'resumed, other-model: continue the conversation',
     );
+  });
+
+  it('keeps chat available when the CLI does not advertise HTTP MCP', async () => {
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({
+      ...process.env,
+      ACP_FIXTURE_NO_HTTP_MCP: '1',
+    });
+    const provider = makeProvider();
+    await provider.submitPrompt(
+      sessionId,
+      'hello',
+      undefined,
+      undefined,
+      request,
+    );
+    await waitFor(provider, (state) => state.runPhase === 'idle');
+    expect((await provider.getHistory(sessionId)).at(-1)?.content).toBe(
+      'new, default-model: hello',
+    );
+    expect(db.prepare('SELECT mcp_agent_token FROM sessions').get()).toEqual({
+      mcp_agent_token: null,
+    });
   });
 
   it('cancels pending decisions and keeps user follow-ups paused until desktop resumes', async () => {
