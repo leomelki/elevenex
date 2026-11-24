@@ -740,10 +740,24 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   }
   reply = {items:[{id:2,taskId:1,repoId:3,name:'Invalid flag',status:'queued',provider:'codex',updatedAt:'',canDelete:'yes'}],nextCursor:null};
   assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1})).ok,false);
+  const priority = input => handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'priority',...input});
+  assert.throws(() => priority({ parentSessionId: null }));
+  const child = { id: 5, taskId: 1, repoId: 3, parentSessionId: 2, name: 'New reply', status: 'review', provider: 'codex', updatedAt: '' };
+  const parent = { ...child, id: 2, status: 'done', parentSessionId: null, childCount: 1 };
+  reply = { items: [child], parentSessions: [parent], nextCursor: '5' };
+  assert.equal((await priority({ limit: 1 })).value.parentSessions[0].id, 2);
+  assert.match(requests.at(-1).path, /state=priority/);
+  assert.equal((await priority({ cursor: '5' })).ok, false);
+  for (const invalid of [{ ...parent, taskId: 9 }, { ...parent, id: 7 }, { ...parent, status: 'archived' }]) {
+    reply = { ...reply, parentSessions: [invalid] };
+    assert.equal((await priority({})).ok, false);
+  }
+  const requestCount = requests.length;
   client.reset(42);
   assert.equal((await remove({taskId:1,sessionId:2})).error.code,'stale-scope');
   assert.equal((await archive(scope,{taskId:1,sessionId:2,confirmStop:false})).error.code,'stale-scope');
-  assert.equal(requests.length,15);
+  assert.equal((await priority({})).error.code,'stale-scope');
+  assert.equal(requests.length,requestCount);
   stop(); assert.equal(handlers.size,0);
 });
 
@@ -1221,8 +1235,9 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   // Neither another window nor an old scope can cancel the live read.
   handlers.get('workspace:cancel-wait')({senderFrame:frame,sender:{id:43}},scope,input.requestId);
   cancel(client.state(43).scope.id,input.requestId);
-  requests[0].response.writeHead(200,json); requests[0].response.end(JSON.stringify({revision:4,version:1,revisionWait:true,sessionNesting:true,sessionNestingOrder:true,private:'omit'}));
+  requests[0].response.writeHead(200,json); requests[0].response.end(JSON.stringify({revision:4,version:1,revisionWait:true,sessionPriority:true,sessionNesting:true,sessionNestingOrder:true,private:'omit'}));
   const result = await first; assert.equal(result.ok,true); assert.equal(result.value.revision,4); assert.equal(result.value.private,undefined);
+  assert.equal(result.value.sessionPriority,true);
   assert.equal(result.value.sessionNesting,true); assert.equal(result.value.sessionNestingOrder,true);
   assert.deepEqual(await duplicate,result);
   const pending = wait(scope,{...input, after:4});

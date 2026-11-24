@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { integer, text, sqliteTable, index, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { repos } from './repos.schema.js';
 import { workspaces } from './workspaces.schema.js';
@@ -99,6 +100,8 @@ export const sessions = sqliteTable(
       table.lastStateChangeAt,
       table.id,
     ),
+    index('sessions_workspace_unseen_idx').on(table.workspaceId, table.id)
+      .where(sql`has_unreviewed_completion = 1 and last_completion_at is not null`),
     index('sessions_workspace_activity_idx').on(
       table.workspaceId,
       table.surface,

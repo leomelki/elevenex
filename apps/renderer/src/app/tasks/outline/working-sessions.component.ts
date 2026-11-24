@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { afterNextRender, ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, Injector, input, linkedSignal, model, output, signal, viewChildren } from '@angular/core';
 import { EaseSwapComponent, FoldComponent, IconComponent, TickerComponent } from '../../ui';
 import { ListPresence } from '../../ui/motion/list-presence';
@@ -45,7 +46,16 @@ export class WorkingSessionsComponent {
   readonly activated = output<string>();
   readonly archiveRequested = output<TaskSession>();
   readonly deleteRequested = output<TaskSession>();
-  protected readonly window = computed(() => sessionWindow(this.roots(), this.cap(), this.sessions().find(session => session.id === this.selected())?.parentId ?? this.selected(), this.filtered(), this.disclosure()?.taskId === this.taskId() ? this.disclosure() : null));
+  private readonly priorityParents = computed(() => new Set(this.sessions()
+    .filter(session => session.parentId && isWorkspacePriorityStatus(session.status))
+    .map(session => session.parentId!)));
+  protected readonly window = computed(() => {
+    const selected = this.selected();
+    const parent = this.sessions().find(session => session.id === selected)?.parentId;
+    const disclosure = this.disclosure();
+    return sessionWindow(this.roots(), this.cap(), parent ?? selected, this.filtered(),
+      disclosure?.taskId === this.taskId() ? disclosure : null, this.priorityParents());
+  });
   protected readonly hidden = computed(() => this.window().hidden.size);
   protected readonly step = computed(() => Number.isFinite(this.capStep()) ? Math.max(1, Math.floor(this.capStep())) : 5);
   protected readonly next = computed(() => Math.min(this.step(), this.hidden()));

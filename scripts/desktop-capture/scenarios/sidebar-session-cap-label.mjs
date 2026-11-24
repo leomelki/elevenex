@@ -42,10 +42,10 @@ export default async function* (capture) {
     });
     await capture.click(`${task} .earlier-more`); await finish();
     assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] .earlier ex-ticker').dataset.identity), 'retained');
-    assert.equal((await labels(capture))[0].text, '2 older');
+    assert.equal((await labels(capture))[0].text, '4 older');
     for (const [direction, trigger, outgoing, incoming] of [
-      ['to-fewer', '.earlier-more', '2 older', 'Show fewer'],
-      ['to-older', '.earlier-fewer', 'Show fewer', '12 older'],
+      ['to-fewer', '.earlier-more', '4 older', 'Show fewer'],
+      ['to-older', '.earlier-fewer', 'Show fewer', '14 older'],
     ]) {
       await capture.motion.freeze(); await capture.click(`${task} ${trigger}`);
       await seekLabel(capture, 40);
@@ -77,7 +77,7 @@ export default async function* (capture) {
     await finish();
     assert.deepEqual((await labels(capture)).map(label => label.text), ['Show fewer']);
     await capture.click(`${task} .earlier-fewer`); await finish();
-    assert.deepEqual((await labels(capture)).map(label => label.text), ['12 older']);
+    assert.deepEqual((await labels(capture)).map(label => label.text), ['14 older']);
     yield { name: `${theme}-narrow-reduced`, inspect };
   }
 }

@@ -79,13 +79,20 @@ export interface WorkspaceTaskQuery extends WorkspacePageQuery {
   readonly projectId: number | null;
   readonly state?: 'active' | 'finished';
 }
+/** Priority pages can supply the root context for their nested sessions. */
+export interface WorkspaceSessionPage extends WorkspacePage<WorkspaceSession> {
+  readonly parentSessions?: readonly WorkspaceSession[];
+}
+export function isWorkspacePriorityStatus(status: string): boolean {
+  return status === 'running' || status === 'attention' || status === 'review' || status === 'failed';
+}
 export interface WorkspaceSessionQuery extends WorkspacePageQuery {
   /** Omit for legacy flat pages; null selects roots, an ID selects children. */
   readonly parentSessionId?: number | null;
   /** Opt-in append order for child pages. Requires sessionNestingOrder. */
   readonly childOrder?: 'nested';
   /** Explicit lifecycle window; omission preserves older callers, including closed-task history. */
-  readonly state?: 'normal' | 'archived';
+  readonly state?: 'normal' | 'archived' | 'priority';
   /** Newest bounded page, still returned in chronological display order. Omission preserves oldest-first callers. */
   readonly order?: 'latest';
   readonly taskId: number;
@@ -233,6 +240,7 @@ export interface WorkspaceRevision {
   readonly version: 1;
   readonly revisionWait?: true;
   readonly chatStream?: true;
+  readonly sessionPriority?: true;
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;

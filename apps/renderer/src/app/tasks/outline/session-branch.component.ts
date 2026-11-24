@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { ChangeDetectionStrategy, Component, computed, inject, input, linkedSignal, output } from '@angular/core';
 import { CdkMenuTrigger } from '@angular/cdk/menu';
 import { DropdownItemComponent, DropdownMenuComponent, FoldComponent, IconComponent, TickerComponent, TooltipDirective } from '../../ui';
@@ -27,6 +28,15 @@ export class SessionBranchComponent {
   readonly childrenRequested = output<{ readonly sessionId: string; readonly earlier?: boolean }>();
   protected readonly drag = inject(SessionNestingDragDirective, { optional: true });
   protected readonly children = computed(() => this.sessions().filter(row => row.parentId === this.session().id));
+  protected readonly isPriority = isWorkspacePriorityStatus;
+  protected readonly priorityChildCount = computed(() => this.children().filter(child => this.isPriority(child.status)).length);
+  protected readonly disclosureLabel = computed(() => {
+    const title = this.session().title;
+    if (this.priorityChildCount()) {
+      return this.expanded() ? 'Show only priority children of ' + title : 'Show all children of ' + title;
+    }
+    return (this.expanded() ? 'Collapse children of ' : 'Expand children of ') + title;
+  });
   protected readonly containsSelection = computed(() => this.children().some(row => row.id === this.selected()));
   protected readonly expanded = linkedSignal<{ id: string; selected: boolean }, boolean>({ source: () => ({ id: this.session().id, selected: this.containsSelection() || this.drag?.droppedParent() === this.session().id }), computation: (value, previous) => value.selected || (previous?.source.id === value.id && previous.value) || false });
   protected readonly targets = computed(() => this.sessions().filter(row => !row.parentId && !row.local && row.id !== this.session().id).slice(0, 20));

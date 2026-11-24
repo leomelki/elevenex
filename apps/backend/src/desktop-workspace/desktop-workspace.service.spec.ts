@@ -22,6 +22,42 @@ describe('DesktopWorkspaceService', () => {
   let repoId: number;
   let taskId: number;
   const retryTask = jest.fn();
+  const candidateIds = jest.fn<readonly number[], []>();
+  const liveStatuses = new Map<number, string>();
+  it('pages active sessions and unseen completions across root and child history', async () => {
+    const create = (values: Partial<typeof schema.sessions.$inferInsert> = {}) =>
+      database.db.insert(schema.sessions).values({
+        repoId, workspaceId: taskId, branchName: 'main', worktreePath: '/repo/task', ...values,
+      }).returning().get();
+    const parent = create();
+    const running = create({ parentSessionId: parent.id });
+    const waiting = create();
+    const unread = create({ status: 'active', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const incomplete = create({ hasUnreviewedCompletion: true });
+    const archived = create({ status: 'archived', hasUnreviewedCompletion: true, lastCompletionAt: '2026-11-24T00:00:00Z' });
+    const temporary = create({ isTemporary: true });
+    const foreign = create({ workspaceId: null });
+    for (let index = 0; index < 30; index++) create();
+    liveStatuses.set(running.id, 'running');
+    liveStatuses.set(waiting.id, 'attention');
+    liveStatuses.set(archived.id, 'running');
+    liveStatuses.set(temporary.id, 'running');
+    liveStatuses.set(foreign.id, 'running');
+    candidateIds.mockReturnValue([...liveStatuses.keys(), incomplete.id]);
+    const query = { state: 'priority', limit: '2' };
+    const latest = await service.listSessions(taskId, query);
+    expect(latest.items.map(row => row.id)).toEqual([unread.id]);
+    expect(latest.nextCursor).toBe(String(unread.id));
+    const earlier = await service.listSessions(taskId, { ...query, cursor: latest.nextCursor! });
+    expect(earlier.items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    expect(earlier.parentSessions?.map(row => row.id)).toEqual([parent.id]);
+    expect(earlier.nextCursor).toBeNull();
+    expect((await service.listSessions(taskId, { limit: '20', order: 'latest' })).items.every(row => row.id > unread.id)).toBe(true);
+    database.db.update(schema.sessions).set({ hasUnreviewedCompletion: false }).where(eq(schema.sessions.id, unread.id)).run();
+    expect((await service.listSessions(taskId, { ...query, limit: '100' })).items.map(row => row.id)).toEqual([running.id, waiting.id]);
+    await expect(service.listSessions(taskId, { ...query, parentSessionId: 'root' })).rejects.toThrow(BadRequestException);
+  });
+
   const activityStatus = jest.fn<string | undefined, []>();
   const detachedCommands = jest.fn<number, []>();
   const archiveSession = jest.fn();
@@ -56,6 +92,8 @@ describe('DesktopWorkspaceService', () => {
     expect(retryTask).not.toHaveBeenCalled();
   });
   beforeEach(async () => {
+    candidateIds.mockReset().mockReturnValue([]);
+    liveStatuses.clear();
     activityStatus.mockReset();
     detachedCommands.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();
@@ -95,8 +133,9 @@ describe('DesktopWorkspaceService', () => {
         TaskGitService,
         { provide: DesktopWorkspaceActivityService, useValue: {
           status: activityStatus,
+          priorityCandidateIds: candidateIds,
           view: (row: WorkspaceSessionActivity) => ({
-            status: activityStatus() ?? inactiveSessionStatus(row),
+            status: liveStatuses.get(row.id) ?? activityStatus() ?? inactiveSessionStatus(row),
             ...(detachedCommands() ? { turnStatus: 'review', commandCount: detachedCommands() } : {}),
           }),
         } },

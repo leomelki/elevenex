@@ -8,7 +8,7 @@ const inspect = [task, `${task} .earlier`, `${task} ex-session-batch`, `${task} 
 async function startProbe(capture) {
   await capture.evaluate(() => {
     const host = document.querySelector('[data-task-id="11"]');
-    const target = host.querySelector('[data-session-id="214"] .select');
+    const target = host.querySelector('[data-session-id="217"] .select');
     const samples = [];
     const leaks = [];
     const watched = new WeakSet();
@@ -86,7 +86,7 @@ export default async function* (capture) {
     await capture.component('ex-connected-workspace-demo', component => component.fixture.busyTask());
     await owner(async component => { component.store.sessionDisclosures.set(new Map()); await component.store.selectProject('2'); await component.store.selectProject('1'); });
     await finish();
-    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] .earlier-more').getAttribute('aria-label')), 'Show 5 older sessions (12 hidden)');
+    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] .earlier-more').getAttribute('aria-label')), 'Show 5 older sessions (14 hidden)');
     // A needs-you row at the boundary keeps its normal title color.
     assert.equal(await capture.evaluate(() => document.querySelectorAll('[data-task-id="11"] .muted').length), 0);
     yield { name: `${theme}-cap`, inspect };
@@ -94,8 +94,8 @@ export default async function* (capture) {
     await capture.click(`${task} .earlier-more`);
     const opening = await endProbe(capture, 18);
     await finish();
-    assert.equal((await visible()).length, 12);
-    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] .muted').closest('[data-session-id]').dataset.sessionId), '209');
+    assert.equal((await visible()).length, 10);
+    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] .muted').closest('[data-session-id]').dataset.sessionId), '211');
     await capture.press('Tab'); await capture.press('Tab', 8);
     assert.equal(await capture.evaluate(() => document.activeElement?.classList.contains('earlier-more')), true);
     assert.notEqual(await capture.evaluate(() => getComputedStyle(document.activeElement).boxShadow), 'none');
@@ -111,15 +111,15 @@ export default async function* (capture) {
     yield { name: `${theme}-opening`, inspect, metadata: { opening } };
     // Selection is controlled by the real owner. Its row and batch must survive.
     await capture.evaluate(() => {
-      const row = document.querySelector('[data-task-id="11"] ex-session-batch [data-session-id="209"]');
+      const row = document.querySelector('[data-task-id="11"] ex-session-batch [data-session-id="211"]');
       row.dataset.identity = 'retained';
     });
-    await capture.click(`${task} [data-session-id="209"] .select`); await finish();
-    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] ex-session-batch [data-session-id="209"]').dataset.identity), 'retained');
+    await capture.click(`${task} [data-session-id="211"] .select`); await finish();
+    assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] ex-session-batch [data-session-id="211"]').dataset.identity), 'retained');
     assert.equal(await capture.evaluate(() => document.querySelectorAll('[data-task-id="11"] .muted').length), 0);
     yield { name: `${theme}-selected-in-batch`, inspect };
     await capture.click(`${task} .earlier-fewer`); await finish();
-    assert((await visible()).includes('209'));
+    assert((await visible()).includes('211'));
     assert.equal(await capture.evaluate(() => document.querySelector('[data-task-id="11"] ex-session-batch')), null);
     yield { name: `${theme}-selected-after-fewer`, inspect };
     // Reset selection before measuring a two-batch close.

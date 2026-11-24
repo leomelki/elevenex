@@ -50,7 +50,7 @@ The `Component` suffix and `ex-` selector prefix apply to the names above. `bran
 ## Ownership and interaction
 
 - NewTask accepts an owner-supplied `projectMenu` template composed with the shared dropdown menu/radio controls. It opens directly from the header button without changing card layout; without a template the button still emits `projectRequested`. Bind `active=false` when a retained dialog closes or becomes busy to dispose its portaled menu. The connected-workspace preview demonstrates this composition.
-- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Completed and stopped sessions remain normal rows in the supplied order, with the same earlier-session cap as other sessions. Activity status never archives or groups a session; the owner excludes explicitly archived sessions from the normal task list.
+- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Seen completions and stopped sessions remain ordinary rows in the supplied order. Activity status never archives or groups a session; the owner excludes explicitly archived sessions from the normal task list.
 - Task and session controls expose their full titles through the shared hover/focus tooltip. Attention, failure and selected rows retain their semantic surfaces with distinct hover feedback. Supply `TaskOutline.repo` only when the project's repository context needs disambiguation; single-repository projects omit it. The containing feature owns the task-list scroll region so its header and pagination remain available.
 - Task headers share one full-row surface on hover or focus within; the New session icon retains its stronger local hover and focus ring. Hovering a session does not highlight its parent task header.
 - Feed a bounded task/session window into the outline and request pagination in the owning feature. BranchPicker shows at most seven results. It matches every query word, recognizes fully qualified refs and promotes exact/default matches. Branch lists held branches with their task name and disables them. From lets the user pick those branches as the source for a separate new branch. Use `BranchInfo.ref` to preserve Git identity when local and remote branches share a display name.
@@ -232,8 +232,13 @@ mounted across project reads so its outgoing rows can fold away and returning
 identities can reverse their exit. The workspace mounts initial history after
 the first read, then retains the outline through subsequent active-project reads.
 
-`TaskGroup.cap` / `TaskList.sessionCap` show the newest five normal sessions in
-supplied chronological order, plus attention/failed, selected and fresh rows.
+`TaskGroup.cap` / `TaskList.sessionCap` reserve the five default root slots for
+running, attention, failed and unseen-reply sessions, then fill any remaining
+slots with the newest ordinary sessions. Priority rows can overflow the cap.
+Selected and fresh rows also stay visible. The supplied chronological order is
+preserved within the main list and each revealed batch. A nested priority
+session reserves a slot for its parent, with the priority child visible while
+the group is folded. Expanding the group reveals its ordinary children.
 Each Older click reveals at most `capStep` more hidden sessions. Show fewer
 resets that disclosure; filters and cap 0 show every supplied match.
 The disclosure snapshots the remaining hidden IDs, so adding, removing or
@@ -270,7 +275,8 @@ so the list closes as one surface. Rows inside a batch retain the existing
 ListPresence/Fold archive behavior. Reduced motion is instant, including when
 its preference changes during a scroll. No per-row unroll delays remain.
 
-The cap works within the owner's bounded page, independently of backend paging.
+The cap applies to the supplied history and priority rows. Priority data from
+outside the current history page is supplied by the owner.
 `moreSessions` and `sessionsDirection` expose older/next page requests rather than
 fetching unbounded history. Production opens a newest-first 20-session page;
 older pages replace that window. Project settings → Tasks stores the device-local

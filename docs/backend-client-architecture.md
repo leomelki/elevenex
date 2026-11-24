@@ -51,6 +51,19 @@ cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.
 The provider still supplies the complete source snapshot for history reads.
 
+### Sidebar priority sessions
+
+Engines advertising `sessionPriority` accept `state=priority` on the existing
+task session read. This returns bounded descending-ID cursor pages in
+chronological display order, with a `parentSessions` list for referenced roots
+outside the page. The engine selects candidates from live activity IDs and an
+index of unseen completions, then applies the same activity projection used by
+ordinary navigation. The cursor advances over candidates even when one no longer
+qualifies. Main validates statuses, scope, context and cursor progress. The
+workspace reconciles priority data alongside each visible task's history, and
+existing session events invalidate both reads. Legacy history and archive
+requests keep their existing pagination and shapes.
+
 ### Selected chat stream
 
 Engines advertising `chatStream: true` in `workspaceRevision` serve

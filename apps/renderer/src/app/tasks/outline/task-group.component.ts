@@ -184,7 +184,14 @@ export class TaskGroupComponent implements OnChanges {
       ? false
       : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
-  protected readonly working = computed(() => this.task().sessions.filter(session => matchesSessionFilter(session.status, this.filter()) || this.task().sessions.some(child => child.parentId === session.id && matchesSessionFilter(child.status, this.filter()))));
+  protected readonly working = computed(() => {
+    const sessions = this.task().sessions;
+    const filter = this.filter();
+    if (!filter) return sessions;
+    const matches = sessions.filter(session => matchesSessionFilter(session.status, filter));
+    const included = new Set(matches.flatMap(session => session.parentId ? [session.id, session.parentId] : [session.id]));
+    return sessions.filter(session => included.has(session.id));
+  });
   protected readonly attention = computed(
     () =>
       this.everyone().filter(

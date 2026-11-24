@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from '../agent-runtime/agent-runtime.types.js';
@@ -70,6 +71,7 @@ export interface WorkspaceSessionView {
   readonly commandCount?: number;
 }
 interface ObservedActivity {
+  readonly sessionId: number;
   readonly activity: Activity;
   readonly turn: Activity;
   readonly commands: number;
@@ -81,6 +83,7 @@ export class DesktopWorkspaceActivityService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly runtime = new Map<string, ObservedActivity>();
+  private readonly priorityHookIds = new Set<number>();
   private readonly hookSignatures = new Map<number, string>();
   private readonly stop: (() => void)[] = [];
   constructor(
@@ -102,6 +105,7 @@ export class DesktopWorkspaceActivityService
         const key = `${info.id}:${event.payload.sessionId}`,
           activity = stateActivity(event.payload),
           next: ObservedActivity = {
+            sessionId: event.payload.sessionId,
             activity,
             turn: stateActivity(event.payload, false),
             commands: commandCount(event.payload),
@@ -129,6 +133,10 @@ export class DesktopWorkspaceActivityService
     }
     const activity = (event: { sessionId: number; provider?: string }) => {
       const snapshot = this.hooks.getActivity(event.sessionId);
+      if (snapshot.activityStatus !== 'idle' || snapshot.backgroundActive || snapshot.failed)
+        this.priorityHookIds.add(event.sessionId);
+      else
+        this.priorityHookIds.delete(event.sessionId);
       let cleared = false;
       // Hook activity is updated before run_state. Returning to idle must not
       // leave a cached spinner or input request alive after runtime teardown.
@@ -157,6 +165,7 @@ export class DesktopWorkspaceActivityService
       for (const info of this.registry.listProviders())
         this.runtime.delete(`${info.id}:${event.sessionId}`);
       this.hookSignatures.delete(event.sessionId);
+      this.priorityHookIds.delete(event.sessionId);
     };
     this.sessions.on('session-status-changed', lifecycle);
     this.stop.push(() =>
@@ -168,6 +177,15 @@ export class DesktopWorkspaceActivityService
     this.stop.length = 0;
     this.runtime.clear();
     this.hookSignatures.clear();
+    this.priorityHookIds.clear();
+  }
+  /** Candidate IDs only. The persisted row and provider determine the final status. */
+  priorityCandidateIds(): readonly number[] {
+    const ids = new Set(this.priorityHookIds);
+    for (const entry of this.runtime.values()) {
+      if (isWorkspacePriorityStatus(entry.turn)) ids.add(entry.sessionId);
+    }
+    return [...ids];
   }
   status(session: WorkspaceSessionActivity): string {
     return this.resolve(session, true);

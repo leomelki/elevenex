@@ -103,6 +103,17 @@ describe('bounded workspace sidebar activity', () => {
       }
     },
   );
+  it('discovers provider and hook-only candidates and retires them after activity clears', () => {
+    emit(1, { runPhase: 'running' });
+    emit(2, { runPhase: 'idle', backgroundWork: [{ kind: 'task' }] });
+    snapshots.set(3, { activityStatus: 'waiting', actionKind: 'user_input', actionLabel: 'Input needed', backgroundActive: false });
+    hooks.emit('status-changed', { sessionId: 3 });
+    expect(new Set(service.priorityCandidateIds())).toEqual(new Set([1, 3]));
+    emit(1, { runPhase: 'idle' });
+    snapshots.delete(3);
+    hooks.emit('status-changed', { sessionId: 3 });
+    expect(service.priorityCandidateIds()).toEqual([]);
+  });
   describe('detached commands', () => {
     const shell = (id: string) => ({ id: `task:${id}`, kind: 'task', label: 'npm run dev' });
     const agent = { id: 'subagent:a', kind: 'subagent', label: 'reviewer' };

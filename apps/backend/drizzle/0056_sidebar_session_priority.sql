@@ -1,0 +1,1 @@
+CREATE INDEX `sessions_workspace_unseen_idx` ON `sessions` (`workspace_id`,`id`) WHERE has_unreviewed_completion = 1 and last_completion_at is not null;

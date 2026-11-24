@@ -61,6 +61,7 @@ export class DesktopWorkspaceController {
       version: 1,
       revisionWait: true,
       chatStream: true,
+      sessionPriority: true,
       sessionNesting: true,
       sessionNestingOrder: true,
       taskRequests: true,

@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import type { BackendResult, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
@@ -173,7 +174,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, projectImages: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, projectImages: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionPriority: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));
@@ -193,11 +194,38 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
       if (this.childReadsFailed) return { ok: false as const, error: { code: 'transport' as const, message: 'Could not load child sessions. Try again.' } };
     }
     const nested = query.childOrder === 'nested';
+    const latest = query.order === 'latest' || query.state === 'priority';
+    const direction = latest ? -1 : 1;
     const [rank, cursorId] = query.cursor?.split(':').map(Number) ?? [];
-    const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.parentSessionId === undefined || (session.parentSessionId ?? null) === query.parentSessionId) && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || (nested ? (this.nestingRanks.get(session.id) ?? 0) < rank! || ((this.nestingRanks.get(session.id) ?? 0) === rank && session.id < cursorId!) : session.id < Number(query.cursor)))).sort((a,b) => (nested ? (this.nestingRanks.get(b.id) ?? 0) - (this.nestingRanks.get(a.id) ?? 0) : 0) || b.id - a.id);
+    const rows = this.sessionRows.filter(session => {
+      if (session.taskId !== query.taskId ||
+        (query.parentSessionId !== undefined && (session.parentSessionId ?? null) !== query.parentSessionId) ||
+        (query.state === 'archived' ? session.status !== 'archived' : session.status === 'archived') ||
+        (query.state === 'priority' && !isWorkspacePriorityStatus(session.turnStatus ?? session.status))
+      ) return false;
+      if (rank === undefined) return true;
+      if (!nested || cursorId === undefined) return (session.id - rank) * direction > 0;
+      const sessionRank = this.nestingRanks.get(session.id) ?? 0;
+      return ((sessionRank - rank) || (session.id - cursorId)) * direction > 0;
+    }).sort((a, b) => direction * (
+      (nested ? (this.nestingRanks.get(a.id) ?? 0) - (this.nestingRanks.get(b.id) ?? 0) : 0) || a.id - b.id
+    ));
     const limit = query.limit ?? 20;
     const last = rows[limit - 1];
-    return success({ items: rows.slice(0,limit).reverse().map(session => ({ ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length })), nextCursor: rows.length > limit ? nested ? `${this.nestingRanks.get(last!.id) ?? 0}:${last!.id}` : String(last!.id) : null });
+    const withChildCount = (session: WorkspaceSession) => ({
+      ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length,
+    });
+    const items = rows.slice(0, limit).map(withChildCount);
+    if (latest) items.reverse();
+    const parentIds = new Set(items.filter(item => !items.some(parent => parent.id === item.parentSessionId)).map(item => item.parentSessionId));
+    return success({
+      items, nextCursor: rows.length > limit ? nested ? `${this.nestingRanks.get(last!.id) ?? 0}:${last!.id}` : String(last!.id) : null,
+      ...(query.state === 'priority' ? {
+        parentSessions: this.sessionRows.filter(row =>
+          row.taskId === query.taskId && row.status !== 'archived' && parentIds.has(row.id),
+        ).map(withChildCount),
+      } : {}),
+    });
   };
   workspaceTask = async (_scope: string, id: number) => success(this.navigationTask(this.taskRows.find(task => task.id === id)!));
   workspaceRetryTask = async (scope: string, id: number, recovery?: WorkspaceTaskRecovery) => {
@@ -299,7 +327,18 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     return success(restored);
   };
   busyTask(): void {
-    this.sessionRows = Array.from({ length: 19 }, (_, index) => ({ id: 200 + index, taskId: 11, repoId: 1, name: `Investigate retry behavior ${index + 1}`, status: index === 0 ? 'attention' : index === 3 ? 'failed' : index === 18 ? 'review' : 'running', provider: 'codex', updatedAt: stamp }));
+    this.sessionRows = Array.from({ length: 19 }, (_, index) => ({ id: 200 + index, taskId: 11, repoId: 1, name: `Investigate retry behavior ${index + 1}`, status: index === 0 ? 'attention' : index === 3 ? 'failed' : index === 18 ? 'review' : index >= 16 ? 'running' : 'done', provider: 'codex', updatedAt: stamp }));
+  }
+  priorityScene(overflow: boolean): void {
+    this.sessionRows = Array.from({ length: 35 }, (_, index) => ({
+      id: 200 + index, taskId: 11, repoId: 1, provider: 'codex', updatedAt: stamp,
+      name: index === 0 ? 'Retry investigation' : index === 1 ? 'Reproduce timeout' :
+        index === 2 ? 'Confirm retry limit' : index === 3 ? 'Review recovery plan' : `Retry follow-up ${index - 3}`,
+      status: index === 1 ? 'running' : index === 2 ? 'attention' : overflow && index >= 4 && index <= 7 ? 'running' : 'done',
+      ...(index === 3 ? { parentSessionId: 200 } : {}),
+    }));
+    this.chat.scenario('reply-only', 203);
+    this.completeUnseen(203, overflow ? '2026-11-24T00:01:00.000Z' : '2026-11-24T00:00:00.000Z');
   }
   archivedHistory(): void {
     this.sessionRows = this.sessionRows.filter(session => session.id < 300).concat(Array.from({ length: 45 }, (_, index) => ({

@@ -2,6 +2,7 @@ import {
   prepareProjectRepositories,
   type ProjectRepositorySetup,
 } from './desktop-project-repositories.js';
+import { sidebarPriorityPage } from './sidebar-priority-page.js';
 import { moveSession, sessionChildCount } from './session-hierarchy.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
@@ -42,6 +43,7 @@ import {
   WORKSPACE_BRANCH_NAME_LIMIT,
   WORKSPACE_BRANCH_REF_LIMIT,
   type WorkspaceAppearance,
+  type WorkspaceSessionPage,
 } from '@elevenex/shared';
 import { taskBranchWindow, type TaskBranchChoice } from './desktop-task-branches.js';
 
@@ -354,8 +356,20 @@ export class DesktopWorkspaceService {
       projectRepositoryCount: repositories.count,
     };
   }
-  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string; parentSessionId?: string; childOrder?: string }) {
+  async listSessions(taskId: number, query: PageQuery & { order?: string; state?: string; parentSessionId?: string; childOrder?: string }): Promise<WorkspaceSessionPage> {
     if (query.order !== undefined && query.order !== 'latest') throw new BadRequestException('Invalid session order.');
+    if (query.state === 'priority') {
+      if (query.parentSessionId !== undefined || query.childOrder !== undefined)
+        throw new BadRequestException('Priority pages include all session levels.');
+      const { limit, cursor } = bounds(query);
+      const task = await this.tasks.record(taskId);
+      if (task.archivedAt) return { items: [], parentSessions: [], nextCursor: null };
+      return sidebarPriorityPage(
+        this.db, taskId, limit, cursor || null,
+        this.activity?.priorityCandidateIds() ?? [],
+        (row) => this.sessionView(row, taskId),
+      );
+    }
     if (query.state !== undefined && query.state !== 'normal' && query.state !== 'archived') throw new BadRequestException('Invalid session state.');
     const parentId = query.parentSessionId === undefined ? undefined : query.parentSessionId === 'root' ? null : resourceId(query.parentSessionId);
     if (query.childOrder !== undefined && (query.childOrder !== 'nested' || typeof parentId !== 'number')) throw new BadRequestException('Invalid child order.');

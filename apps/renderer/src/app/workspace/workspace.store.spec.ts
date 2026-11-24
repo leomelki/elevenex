@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
+import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionPage, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { SessionChatDrafts } from '../session-chat/session-chat-drafts';
 import { WorkspaceStore } from './workspace.store';
@@ -27,7 +27,7 @@ function setup(history = false) {
     workspaceProjects: vi.fn(async (scope: string, query: import('@elevenex/shared').WorkspacePageQuery) => { void scope; void query; return ok(page([project])); }),
     workspaceProjectNameAvailability: vi.fn(async (scope: string, name: string) => { void scope; void name; return ok({ available: true }); }),
     workspaceTasks: vi.fn(async (scope: string, query: import('@elevenex/shared').WorkspaceTaskQuery) => { void scope; void query; return ok(page([task])); }),
-    workspaceSessions: vi.fn<(scope: string, query: WorkspaceSessionQuery) => Promise<BackendResult<WorkspacePage<WorkspaceSession>>>>(async (_scope, query) => ok(page(query.state === 'archived' ? [] : [session]))),
+    workspaceSessions: vi.fn<(scope: string, query: WorkspaceSessionQuery) => Promise<BackendResult<WorkspaceSessionPage>>>(async (_scope, query) => ok(page(query.state === 'archived' ? [] : [session]))),
     workspaceProject: vi.fn(async () => ok(detail)),
     workspaceCreateProject: vi.fn(async () => ok(detail)),
     workspaceFolders: vi.fn(async (): Promise<BackendResult<readonly import('@elevenex/shared').WorkspaceFolder[]>> => ok([])),
@@ -239,7 +239,42 @@ describe('WorkspaceStore', () => {
     expect(store.tasks()[0]?.sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: '6' }), expect.objectContaining({ id: '5', parentId: '6' })]));
     expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, limit: 20, order: 'latest', parentSessionId: null });
     expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', { taskId: 3, cursor: '5', limit: 1, state: 'normal' });
-    expect(store.tasks()[0]?.sessions.length).toBeLessThanOrEqual(20);
+    expect(store.tasks()[0]?.sessions.length).toBe(22);
+    expect(store.tasks()[0]?.sessions).toContainEqual(expect.objectContaining({ id: '119' }));
+  });
+
+  it('keeps priority sessions and their parent across history pages until activity clears', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    const parent = { ...session, id: 3, status: 'done', childCount: 1 };
+    const nested = { ...session, parentSessionId: 3, status: 'review' };
+    const running = { ...session, id: 8, status: 'running' };
+    let revision = 1, cleared = false, broken = false;
+    bridge.workspaceRevision.mockImplementation(async () => ok({ revision, version: 1, sessionArchive: true, sessionPriority: true, sessionNesting: true }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => {
+      if (query.state !== 'priority') return query.cursor
+        ? ok(page([{ ...session, id: 23 }]))
+        : ok({ items: [{ ...session, id: 30 }], nextCursor: '30' });
+      if (query.cursor === '8' && broken) return { ok: false, error: { code: 'transport', message: 'Priority continuation failed' } };
+      if (cleared) return ok({ ...page([running]), parentSessions: [] });
+      return query.cursor === '8' ? ok({ ...page([nested]), parentSessions: [parent] })
+        : ok({ items: [running], nextCursor: '8', parentSessions: [] });
+    });
+    await start();
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '30', '5']);
+    expect(store.counts().review).toBe(1);
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    await store.nextSessions('3');
+    expect(store.selectedSession()?.id).toBe(5);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '5']);
+    store.selectSession({ taskId: '3', sessionId: '8' });
+    revision++; broken = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '5']);
+    revision++; broken = false; cleared = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['8', '30']);
+    expect(store.counts().review).toBe(0);
   });
 
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
@@ -476,7 +511,8 @@ describe('WorkspaceStore', () => {
     resolve(ok(page([task]))); await selecting;
     expect(store.selected()).toBe(selected);
     expect(store.selectedSession()).toEqual(session);
-    expect(store.tasks()[0]?.sessions).toHaveLength(20);
+    expect(store.tasks()[0]?.sessions).toHaveLength(21);
+    expect(store.tasks()[0]?.sessions).toContainEqual(expect.objectContaining({ id: '29' }));
     await store.selectProject('all');
     expect(store.selected()).toBe(selected);
     expect(store.selectedSession()).toEqual(session);

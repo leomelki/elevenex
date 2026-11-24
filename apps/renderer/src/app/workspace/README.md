@@ -107,7 +107,14 @@ starting runtimes or scanning all sessions at startup.
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.
   Each task initially loads at most 20 sessions, with four concurrent reads.
   Advancing a page replaces its window. Controls return to the first page;
-  a selected older session is retained during refresh without exceeding 20.
+  a selected older session and its parent can supplement that page during
+  refresh, preserving all history rows. Engines advertising
+  `sessionPriority` supply running, needs-action, failed and unseen-reply
+  sessions on separate metadata pages of up to 100, with root context for nested
+  rows. The workspace merges and deduplicates those pages independently of the
+  history cursor for each task in the current task window. A failed continuation
+  keeps the previous priority snapshot. Older engines prioritize sessions within
+  their loaded history and child windows.
 - The initial `workspaceRevision` probe verifies protocol version 1 before
   dispatching a workspace snapshot. Unsupported older runtimes receive an update
   message. `WorkspaceNavigationObserver` owns a five-second revision probe; only
