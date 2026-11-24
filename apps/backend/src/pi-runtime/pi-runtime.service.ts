@@ -72,6 +72,10 @@ interface PiActiveRun {
   completionPromise: Promise<void>;
   resolveCompletion: () => void;
   interruptRequested: boolean;
+  promptAccepted: boolean;
+  agentEnded: boolean;
+  agentEventVersion: number;
+  steeringSends: number;
   userInputRequests: Map<
     string,
     {
@@ -565,8 +569,21 @@ export class PiRuntimeService
     const trimmedPrompt = prompt.trim();
     const normalizedImages = this.normalizeImages(images);
     if (!trimmedPrompt && normalizedImages.length === 0) return;
-    this.assertSessionOwner(sessionId, this.sessionGeneration(sessionId));
+    const generation = this.sessionGeneration(sessionId);
+    this.assertSessionOwner(sessionId, generation);
 
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      (options.preferSteering || options.requireSteering) && !options.queue &&
+      this.activeRuns.has(sessionId) && !state?.queuePaused && (options.requireSteering || !state?.pendingPrompts.length)
+    ) {
+      const disposition = await this.steerActivePrompt(sessionId, trimmedPrompt, normalizedImages);
+      if (disposition) {
+        options.onAccepted?.(disposition);
+        return;
+      }
+      this.assertSessionOwner(sessionId, generation);
+    }
     if (options?.requireSteering)
       throw new ConflictException('No active turn can accept live steering.');
     if (
@@ -580,7 +597,6 @@ export class PiRuntimeService
     }
 
     this.initializingRuns.add(sessionId);
-    const generation = this.sessionGeneration(sessionId);
     let owned = false;
     let onAccepted: (() => void) | undefined;
     const receipt = options.waitForCompletion === false
@@ -607,6 +623,38 @@ export class PiRuntimeService
     return receipt ? Promise.race([receipt, task.then(() => {
       if (!owned) throw new ConflictException('Pi stopped before accepting the message.');
     })]) : task;
+  }
+
+  private async steerActivePrompt(
+    sessionId: number,
+    message: string,
+    images: Array<Record<string, string>>,
+  ): Promise<'steered' | 'running' | undefined> {
+    const run = this.activeRuns.get(sessionId);
+    const runtime = this.runtimes.get(sessionId)?.runtime;
+    if (!runtime || !run?.promptAccepted || run.agentEnded || run.interruptRequested)
+      return;
+    run.steeringSends++;
+    try {
+      const receipt = await runtime.send<{ disposition?: string } | undefined>({
+        type: 'prompt',
+        message,
+        streamingBehavior: 'steer',
+        ...(images.length ? { images } : {}),
+      });
+      return receipt?.disposition === 'started' ? 'running' : 'steered';
+    } finally {
+      // Pi may start a new native run if the old one ends during admission.
+      // Keep ownership until the receipt can be reconciled with the stream.
+      if (run.agentEnded && !run.interruptRequested && this.activeRuns.get(sessionId) === run) {
+        const version = run.agentEventVersion;
+        const state = await runtime.send<{ isStreaming?: boolean }>({ type: 'get_state' })
+          .catch(() => undefined);
+        if (state?.isStreaming && run.agentEventVersion === version) run.agentEnded = false;
+      }
+      run.steeringSends--;
+      if (run.agentEnded && !run.steeringSends) run.resolveCompletion();
+    }
   }
 
   private async runPrompt(
@@ -683,6 +731,10 @@ export class PiRuntimeService
         completionPromise,
         resolveCompletion,
         interruptRequested: false,
+        promptAccepted: false,
+        agentEnded: false,
+        agentEventVersion: 0,
+        steeringSends: 0,
         userInputRequests: new Map(),
       };
       this.activeRuns.set(sessionId, run);
@@ -718,6 +770,7 @@ export class PiRuntimeService
           ...(normalizedImages.length ? { images: normalizedImages } : {}),
         });
         accepted = true;
+        run.promptAccepted = true;
         onAccepted?.();
         await completionPromise;
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
@@ -851,21 +904,32 @@ export class PiRuntimeService
   async steerPendingPrompt(sessionId: number, id: string): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
     const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
-    if (!selected) return;
+    if (!selected || this.queuedDispatches.current(state).some(prompt => prompt.id === id)) return;
 
+    if (this.activeRuns.has(sessionId)) {
+      const finishDispatch = this.queuedDispatches.begin(state, selected);
+      state.pendingPrompts = state.pendingPrompts.filter(prompt => prompt !== selected);
+      try {
+        const disposition = await this.steerActivePrompt(
+          sessionId, selected.prompt, this.normalizeImages(selected.images),
+        );
+        if (!disposition)
+          throw new ConflictException('No active Pi turn can accept live steering.');
+        await this.cancelPendingPrompt(sessionId, id);
+      } catch (error) {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state) {
+          state.pendingPrompts = [selected, ...state.pendingPrompts];
+          state.queuePaused = true;
+          this.emitRunState(sessionId);
+        }
+        throw error;
+      }
+      return;
+    }
     state.pendingPrompts = [
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    const completion = this.activeRuns.get(sessionId)?.completionPromise;
-    await this.interrupt(sessionId);
-    await completion?.catch(() => undefined);
-    state.queuePaused = false;
-    this.emitRunState(sessionId);
     await this.resumePendingPrompts(sessionId);
   }
 
@@ -912,8 +976,9 @@ export class PiRuntimeService
 
   clearPendingPrompts(sessionId: number): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (!state.pendingPrompts.length && !state.queuePaused)
+    if (!state.pendingPrompts.length && !state.queuePaused && !this.queuedDispatches.current(state).length)
       return Promise.resolve();
+    this.queuedDispatches.clear(state);
     state.pendingPrompts = [];
     state.queuePaused = false;
     this.emitRunState(sessionId);
@@ -1438,9 +1503,15 @@ export class PiRuntimeService
     state.activity ??= { retry: null, compact: null, notifications: [] };
     if (applyPiActivity(state.activity, event)) { this.emitRunState(sessionId); return; }
     switch (event.type) {
-      case 'agent_start':
+      case 'agent_start': {
+        const run = this.activeRuns.get(sessionId);
+        if (run) {
+          run.agentEnded = false;
+          run.agentEventVersion++;
+        }
         state.activity.retry = null;
         return;
+      }
       case 'agent_end':
         if (event.willRetry === true) return;
         this.resolveActiveRun(sessionId);
@@ -1769,7 +1840,10 @@ export class PiRuntimeService
   private resolveActiveRun(sessionId: number): void {
     this.refreshStateFromRpc(sessionId).catch(() => undefined);
     const run = this.activeRuns.get(sessionId);
-    run?.resolveCompletion();
+    if (!run) return;
+    run.agentEnded = true;
+    run.agentEventVersion++;
+    if (!run.steeringSends || run.interruptRequested) run.resolveCompletion();
   }
 
   private finishRun(sessionId: number): void {

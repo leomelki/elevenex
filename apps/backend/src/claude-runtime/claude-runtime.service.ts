@@ -3052,12 +3052,10 @@ export class ClaudeRuntimeService
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    await this.interrupt(sessionId);
+    // On older Claude versions the selected input can run next while the
+    // current turn finishes naturally.
     state.queuePaused = false;
+    state.lastError = null;
     this.emitRunState(sessionId);
     this.drainPendingPrompts(sessionId);
   }

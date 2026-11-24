@@ -988,12 +988,13 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
-  it.each(['v1', 'v2'] as const)(
+  it.each(['legacy without steering', 'v1', 'v2'] as const)(
     'uses the available follow-up delivery on OpenCode %s',
     async (version) => {
       const f = fixture();
       const steerPrompt = jest.fn().mockResolvedValue(undefined);
-      if (version === 'v2') Object.assign(f.client, { steerPrompt });
+      if (version !== 'legacy without steering')
+        Object.assign(f.client, { steerPrompt });
       try {
         await f.provider.submitPrompt(1, 'Initial assignment');
         await tick();
@@ -1002,8 +1003,10 @@ describe('OpenCode runtime lifecycle', () => {
           preferSteering: true,
           onAccepted: accepted,
         });
-        if (version === 'v2') {
-          expect(steerPrompt).toHaveBeenCalledWith('s', 'Focus on the failing test');
+        if (version !== 'legacy without steering') {
+          expect(steerPrompt).toHaveBeenCalledWith(
+            's', 'Focus on the failing test', expect.any(Object), { signal: expect.any(AbortSignal) },
+          );
           expect(accepted).toHaveBeenCalledWith('steered');
           expect((await f.provider.getRuntimeState(1)).pendingPrompts).toEqual([]);
         } else {
@@ -1018,6 +1021,31 @@ describe('OpenCode runtime lifecycle', () => {
       }
     },
   );
+
+  it('keeps the OpenCode v1 turn active until the async steer reaches native history', async () => {
+    const f = fixture();
+    let recorded = false;
+    const receipt = jest.fn(async () => recorded);
+    Object.assign(f.client, { steerPrompt: jest.fn(async () => receipt) });
+    try {
+      await f.provider.submitPrompt(1, 'Initial assignment');
+      await tick();
+      await f.provider.submitPrompt(1, 'Redirect', undefined, undefined, { preferSteering: true });
+      f.turn.resolve({ data: undefined });
+      await tick();
+      expect(receipt).toHaveBeenCalled();
+      expect(f.sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      expect((await f.provider.getRuntimeState(1)).runPhase).toBe('running');
+
+      recorded = true;
+      const completed = deferred<void>();
+      f.sessions.markCompletionUnreviewed.mockImplementationOnce(async () => completed.resolve());
+      await completed.promise;
+      expect(f.client.session.abort).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
 
   it('queues prompts, pauses on interruption, and preserves the pending queue', async () => {
     const f = fixture();

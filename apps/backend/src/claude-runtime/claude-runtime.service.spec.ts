@@ -1934,7 +1934,7 @@ describe('ClaudeRuntimeService', () => {
     expect(drainPendingPrompts).toHaveBeenCalledWith(7);
   });
 
-  it('steers a selected queued prompt by interrupting and running it next', async () => {
+  it('moves the selected queued prompt forward without interrupting when live delivery is unavailable', async () => {
     const state = (service as any).ensureRuntimeState(7);
     state.pendingPrompts = [
       {
@@ -1957,7 +1957,7 @@ describe('ClaudeRuntimeService', () => {
 
     await service.steerPendingPrompt(7, 'queued-2');
 
-    expect(interrupt).toHaveBeenCalledWith(7);
+    expect(interrupt).not.toHaveBeenCalled();
     expect(state.queuePaused).toBe(false);
     expect(
       state.pendingPrompts.map((prompt: { id: string }) => prompt.id),

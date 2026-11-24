@@ -238,7 +238,9 @@ An explicit stop of the parent clears its outstanding notices.
 
 Use `prompt_session` for a focused follow-up. Authenticated sends carry the
 sender’s session ID. The tool starts an idle session and prefers live input
-for an active turn on Codex, Claude or OpenCode v2 when the harness can accept it.
+for an active turn on Codex, Claude, Pi, and OpenCode v1 or v2 when the harness
+can accept it. Claude schedules priority input for its next native boundary,
+and Pi delivers steering before its next model call.
 Busy harnesses without live steering queue the follow-up. An existing queue
 takes precedence over automatic steering. `mode:"queue"` or `queue:true` requests
 a separate turn. `mode:"steer"` requires a live turn that can accept steering.
