@@ -38,17 +38,14 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { BranchesService } from '../branches/branches.service.js';
 import { TaskGitService } from '../tasks/task-git.service.js';
 import {
+  isWorkspaceProjectImage,
   WORKSPACE_BRANCH_NAME_LIMIT,
   WORKSPACE_BRANCH_REF_LIMIT,
+  type WorkspaceAppearance,
 } from '@elevenex/shared';
 import { taskBranchWindow, type TaskBranchChoice } from './desktop-task-branches.js';
 
-type Appearance = {
-  look?: 'letters' | 'emoji' | 'icon';
-  hue?: 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
-  emoji?: string;
-  icon?: string;
-};
+type Appearance = { -readonly [Key in keyof WorkspaceAppearance]: WorkspaceAppearance[Key] };
 type Stage = 'planned' | 'active' | 'waiting';
 export interface PageQuery {
   limit?: string;
@@ -90,6 +87,12 @@ function appearance(input: unknown): Appearance {
     throw new BadRequestException('Invalid project appearance.');
   const result: Appearance = {};
   for (const [key, value] of Object.entries(input)) {
+    if (key === 'image') {
+      if (value !== null && !isWorkspaceProjectImage(value))
+        throw new BadRequestException('Invalid project image.');
+      result.image = value;
+      continue;
+    }
     if (
       typeof value !== 'string' ||
       value.length > 64 ||
@@ -166,13 +169,28 @@ export class DesktopWorkspaceService {
         set: { value: JSON.stringify(value) },
       });
   }
-  private async projectView(row: typeof schema.projects.$inferSelect) {
+  private async saveProjectAppearance(id: number, { image, ...appearance }: Appearance) {
+    const table = schema.desktopWorkspaceMetadata;
+    const imagePatch = image === undefined ? {} : { projectImage: image };
+    // Replace the legacy appearance independently so an older client can edit
+    // it without racing or discarding an image written by a newer client.
+    await this.db.insert(table)
+      .values({ kind: 'project', resourceId: id, value: JSON.stringify({ appearance, ...(image ? imagePatch : {}) }) })
+      .onConflictDoUpdate({
+        target: [table.kind, table.resourceId],
+        set: {
+          value: sql`json_patch(json_set(${table.value}, '$.appearance', json(${JSON.stringify(appearance)})), ${JSON.stringify(imagePatch)})`,
+        },
+      });
+  }
+  private async projectView(row: typeof schema.projects.$inferSelect, includeImage = true) {
     const meta = await this.metadata('project', row.id);
+    const image = includeImage && isWorkspaceProjectImage(meta.projectImage) ? meta.projectImage : undefined;
     return {
       id: row.id,
       name: row.name,
       agentInstructions: row.agentInstructions,
-      ...(meta.appearance ? { appearance: meta.appearance } : {}),
+      ...(meta.appearance || image ? { appearance: { ...meta.appearance as WorkspaceAppearance, ...(image ? { image } : {}) } } : {}),
     };
   }
   private async taskView(
@@ -219,7 +237,7 @@ export class DesktopWorkspaceService {
       parentSessionId: row.parentSessionId,
     };
   }
-  async listProjects(query: PageQuery) {
+  async listProjects(query: PageQuery & { images?: string }) {
     const { limit, cursor } = bounds(query);
     const rows = await this.db
       .select()
@@ -236,7 +254,7 @@ export class DesktopWorkspaceService {
     return page(
       await Promise.all(
         rows.map(async (row) => ({
-          ...(await this.projectView(row)),
+          ...(await this.projectView(row, query.images === 'true')),
           agentInstructions: null,
         })),
       ),
@@ -449,7 +467,7 @@ export class DesktopWorkspaceService {
     signal.throwIfAborted();
     const project = await this.projects.create(name, false, repositories);
     if (look)
-      await this.saveMetadata('project', project.id, { appearance: look });
+      await this.saveProjectAppearance(project.id, look);
     return this.project(project.id);
   }
   async retryTask(id: number, input: unknown = {}) {
@@ -525,10 +543,7 @@ export class DesktopWorkspaceService {
       .set(patch)
       .where(eq(schema.projects.id, id));
     if (look)
-      await this.saveMetadata('project', id, {
-        ...(await this.metadata('project', id)),
-        appearance: look,
-      });
+      await this.saveProjectAppearance(id, look);
     return this.project(id);
   }
   async createTask(input: {

@@ -4,27 +4,45 @@
       @if (blank()) { <span class="blank" aria-hidden="true"><ex-icon name="folder" [size]="21" /></span> }
       @else {
         @for (key of [(appearance().look || 'letters') + (appearance().emoji || '') + (appearance().icon || '')]; track key) {
-          <ex-project-mark class="face-swap" [name]="face().name" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="52" [decorative]="true" />
+          <ex-project-mark class="face-swap" [name]="face().name" [logo]="face().logo" [initials]="face().initials" [emoji]="face().emoji" [icon]="face().icon" [hue]="face().hue || 'steel'" [size]="52" [decorative]="true" />
         }
       }
     </span>
   }
   <div class="controls">
-    <ex-segmented label="Look" [value]="appearance().look || 'letters'" [options]="options()" (changed)="setLook($event)" />
-    <ex-fold [open]="appearance().look === 'emoji' || appearance().look === 'icon'">
-      <div class="grid">
-        @for (value of choices(); track value) {
-          <button class="cell" type="button" [disabled]="disabled()" [class.on]="selected(value)" [attr.aria-pressed]="selected(value)" [attr.aria-label]="value" (click)="choose(value)">
-            @if (appearance().look === 'icon') { <ex-icon [name]="value" [size]="16" /> }
-            @else { <span class="emoji">{{ value }}</span> }
-          </button>
+    @if (!appearance().image) {
+      <ex-segmented label="Look" [value]="appearance().look || 'letters'" [options]="options()" (changed)="setLook($event)" />
+      <ex-fold [open]="appearance().look === 'emoji' || appearance().look === 'icon'">
+        <div class="grid">
+          @for (value of choices(); track value) {
+            <button class="cell" type="button" [disabled]="disabled() || imagePending()" [class.on]="selected(value)" [attr.aria-pressed]="selected(value)" [attr.aria-label]="value" (click)="choose(value)">
+              @if (appearance().look === 'icon') { <ex-icon [name]="value" [size]="16" /> }
+              @else { <span class="emoji">{{ value }}</span> }
+            </button>
+          }
+        </div>
+      </ex-fold>
+      <div class="hues" role="radiogroup" aria-label="Color">
+        @for (hue of hues; track hue; let i = $index) {
+          <button #hueButton class="hue" type="button" role="radio" [disabled]="disabled() || imagePending()" [style.background]="'var(--project-' + hue + ')'" [class.on]="selectedHue() === hue" [attr.aria-checked]="selectedHue() === hue" [attr.aria-label]="hue" [attr.tabindex]="selectedHue() === hue ? 0 : -1" (click)="patch({ hue })" (keydown)="hueKey($event, i)"></button>
         }
       </div>
-    </ex-fold>
-    <div class="hues" role="radiogroup" aria-label="Color">
-      @for (hue of hues; track hue; let i = $index) {
-        <button #hueButton class="hue" type="button" role="radio" [disabled]="disabled()" [style.background]="'var(--project-' + hue + ')'" [class.on]="selectedHue() === hue" [attr.aria-checked]="selectedHue() === hue" [attr.aria-label]="hue" [attr.tabindex]="selectedHue() === hue ? 0 : -1" (click)="patch({ hue })" (keydown)="hueKey($event, i)"></button>
-      }
-    </div>
+    }
+    @if (allowImage()) {
+      <div class="image-controls">
+        <input #imageInput type="file" hidden [accept]="imageAccept" [disabled]="imageUnavailable()" (change)="chooseImage(imageInput)" />
+        <div class="image-actions">
+          <button #chooseButton exButton size="sm" type="button" [attr.aria-disabled]="imageUnavailable() || null" [attr.aria-describedby]="imageHintId" (click)="!imageUnavailable() && imageInput.click()">
+            <ex-icon name="folder" [size]="14" />
+            {{ appearance().image ? 'Replace image' : 'Choose image' }}
+          </button>
+          @if (appearance().image) {
+            <button exButton size="sm" type="button" variant="ghost" [disabled]="imageUnavailable()" (click)="removeImage()">Remove image</button>
+          }
+        </div>
+        <p class="image-hint" [id]="imageHintId" role="status">{{ imagePending() ? 'Preparing image…' : 'PNG, JPEG, or WebP · Up to 10 MB' }}</p>
+        @if (imageError(); as error) { <p class="image-error" role="alert">{{ error }}</p> }
+      </div>
+    }
   </div>
 </div>

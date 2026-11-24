@@ -29,6 +29,7 @@ import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-c
 import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
 export { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from './workspace';
+export * from './workspace-project-image';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
 import type { EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteDiagnostic, RemoteForwardInput, RemoteHost, RemoteHostInput } from './remote';
 import type { BackendClientState, BackendInfo, BackendResult } from './backend-client';

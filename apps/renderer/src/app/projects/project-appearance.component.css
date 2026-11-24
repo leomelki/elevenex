@@ -10,7 +10,12 @@ ex-segmented { align-self: flex-start; }
 .cell:hover:not(:disabled) { background: var(--surface-raised); }
 .cell.on { background: var(--accent-soft); color: var(--accent); }
 .emoji { font-size: 18px; line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
-.hues { display: flex; gap: 10px; padding: 2px 2px 0; }
+.hues { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 2px 0; }
+.image-controls { display: grid; gap: var(--space-2); }
+.image-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.image-hint, .image-error { margin: 0; color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.image-error { color: var(--danger); }
+.image-actions button[aria-disabled="true"] { opacity: .45; cursor: default; }
 .hue { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; transition: box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-glide) var(--ease-glide); }
 .hue:hover:not(:disabled) { transform: scale(1.1); }
 .hue.on { box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--ink-muted); }

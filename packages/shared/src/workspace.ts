@@ -135,6 +135,8 @@ export interface WorkspaceAppearance {
   readonly hue?: 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
   readonly emoji?: string;
   readonly icon?: string;
+  /** Normalized PNG data URL. Omit to preserve the image on update, or pass null to remove it. */
+  readonly image?: string | null;
 }
 export const WORKSPACE_BRANCH_NAME_LIMIT = 240;
 export const WORKSPACE_BRANCH_REF_LIMIT = WORKSPACE_BRANCH_NAME_LIMIT + 'refs/remotes/'.length;
@@ -237,6 +239,7 @@ export interface WorkspaceRevision {
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;
   readonly commitPanel?: true;
+  readonly projectImages?: true;
 }
 export interface WorkspaceRevisionWait {
   readonly after: number;

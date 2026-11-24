@@ -316,6 +316,7 @@ test('detached-window labels are bounded presentation data with no executable se
   const { windowContext } = require('../dist/browser/validation');
   const context = { projectName: 'Elevenex', taskName: 'Checkout', branchName: 'feat/checkout', machineName: 'This Mac', stage: 'active', hue: 'pine' };
   assert.deepEqual(windowContext(context), context);
+  assert.throws(() => windowContext({ ...context, projectImage: 'file:///tmp/icon.png' }), /Invalid project image/);
   for (const invalid of [{ ...context, preload: '/unsafe' }, { ...context, taskName: 'x'.repeat(257) }, { ...context, projectName: 'bad\nlabel' }, { ...context, stage: 'running' }, { ...context, hue: 'url(secret)' }]) assert.throws(() => windowContext(invalid));
 });
 

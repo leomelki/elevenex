@@ -29,6 +29,7 @@ export class NewProjectComponent implements OnInit {
   readonly busy = input(false);
   /** Unavailable integrations can disable a draft without claiming work is in progress. */
   readonly disabled = input(false);
+  readonly allowImage = input(true);
   readonly error = input<string | null>(null);
   readonly recoveryRequired = input(false);
   readonly recovering = input(false);
@@ -43,7 +44,7 @@ export class NewProjectComponent implements OnInit {
   protected readonly query = signal('~/');
   protected readonly appearance = signal<ProjectAppearance>({ name: '', look: 'letters', emoji: '🛒', icon: 'repo' });
   protected readonly face = computed(() => projectFace(this.appearance()));
-  protected readonly blankFace = computed(() => (this.appearance().look || 'letters') === 'letters' && !projectInitials(this.appearance().name));
+  protected readonly blankFace = computed(() => !this.face().logo && (this.appearance().look || 'letters') === 'letters' && !projectInitials(this.appearance().name));
   protected readonly addedPaths = computed(() => this.repos().map(repo => repo.path));
   protected readonly repoSummary = computed(() => this.repos().map(repo => repo.name).join(', '));
   private readonly name = computed(() => this.appearance().name.trim());
@@ -58,7 +59,7 @@ export class NewProjectComponent implements OnInit {
   protected readonly nameFailed = computed(() => this.currentNameReply()?.failed === true);
   protected readonly nameTaken = computed(() => this.currentNameReply()?.available === false && !this.nameFailed());
   protected readonly validName = computed(() => this.validNameSyntax() && (!this.checkName() || this.currentNameReply()?.available === true));
-  protected readonly canCreate = computed(() => this.repos().length > 0 && this.repos().length <= 20 && this.validName() && !this.blocked());
+  protected readonly canCreate = computed(() => this.repos().length > 0 && this.repos().length <= 20 && this.validName() && !this.blocked() && !this.appearanceEditor()?.imagePending());
   protected readonly canNext = computed(() => !this.blocked() && (this.step() === 'repos' ? this.repos().length > 0 && this.repos().length <= 20 : this.step() === 'name' ? this.validName() : this.canCreate()));
   protected readonly order: readonly NewProjectStep[] = ['repos', 'name', 'look'];
   private readonly root = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -66,6 +67,7 @@ export class NewProjectComponent implements OnInit {
   private readonly card = viewChild.required<ElementRef<HTMLElement>>('card');
   private readonly nameField = viewChild<ElementRef<HTMLInputElement>>('nameField');
   private readonly folders = viewChild(FolderSuggestionsComponent);
+  private readonly appearanceEditor = viewChild(ProjectAppearanceComponent);
   private readonly footer = viewChild<ElementRef<HTMLElement>>('footer');
   private named = false;
   protected readonly presence = new ListPresence(this.repos, repo => repo.id, this.root, inject(DestroyRef));
@@ -90,7 +92,7 @@ export class NewProjectComponent implements OnInit {
   ngOnInit(): void {
     const draft = this.draft();
     this.repos.set(draft.repos ?? []);
-    this.appearance.set({ name: draft.name || draft.repos?.[0]?.name || '', look: draft.look || 'letters', emoji: draft.emoji || '🛒', icon: draft.icon || 'repo', hue: draft.hue });
+    this.appearance.set({ name: draft.name || draft.repos?.[0]?.name || '', look: draft.look || 'letters', emoji: draft.emoji || '🛒', icon: draft.icon || 'repo', hue: draft.hue, image: draft.image });
     this.named = !!draft.name;
     this.query.set(draft.query ?? (draft.repos?.length ? '' : '~/'));
     this.step.set(draft.step || 'repos');
@@ -153,7 +155,7 @@ export class NewProjectComponent implements OnInit {
   private submit(): void {
     if (!this.active() || !this.canCreate()) return;
     const face = this.appearance();
-    this.create.emit({ project: { name: face.name.trim(), repos: this.repos(), look: face.look || 'letters', ...(face.look === 'emoji' ? { emoji: face.emoji } : face.look === 'icon' ? { icon: face.icon } : {}), hue: face.hue || projectHue(face.name) }, card: this.card().nativeElement });
+    this.create.emit({ project: { name: face.name.trim(), repos: this.repos(), look: face.look || 'letters', ...(face.look === 'emoji' ? { emoji: face.emoji } : face.look === 'icon' ? { icon: face.icon } : {}), ...(face.image && this.allowImage() ? { image: face.image } : {}), hue: face.hue || projectHue(face.name) }, card: this.card().nativeElement });
   }
   private focusStep(): void {
     afterNextRender(() => {

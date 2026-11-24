@@ -238,6 +238,13 @@ workspace-pool management remain disabled. Dialog content stays mounted through
 its modal exit; each new draft has a new identity. Timers, listeners, queued
 branch queries and selection epochs belong to their scoped owner.
 
+Project creation and settings offer a file picker on engines advertising
+`projectImages`. The renderer prepares a bounded raster thumbnail locally and
+uses the existing scope-bound project mutations to save it with project metadata.
+Project list requests explicitly opt into thumbnails to preserve the legacy page
+size. An appearance update with no image field preserves the stored image and
+an explicit null removes it, revealing the saved fallback face.
+
 Focused tests cover bounded/focused reconciliation, stale scopes, task setup and
 navigation cleanup, uncertain writes, server branch search, revision probing,
 git polling cleanup and navigating away/back during a git mutation. The

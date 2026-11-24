@@ -233,6 +233,7 @@ export interface BrowserAgentState {
 /** Labels are presentation data, never authority to access a task or machine. */
 export interface TaskBrowserWindowContext {
   readonly projectName: string;
+  readonly projectImage?: string;
   readonly taskName: string;
   readonly branchName: string;
   readonly machineName: string;

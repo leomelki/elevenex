@@ -1,4 +1,5 @@
 import { browserLoopbackHost } from '@elevenex/browser-network';
+import { isWorkspaceProjectImage } from '@elevenex/shared';
 import type { TaskBrowserWindowContext, BrowserAgentCommand, BrowserRect, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserStreamInput, TaskBrowserStreamEvent } from '@elevenex/shared';
 
 export function streamInput(value: unknown): TaskBrowserStreamInput {
@@ -121,11 +122,13 @@ export function intersect(box: BrowserRect, width: number, height: number): Brow
 
 export function windowContext(value: unknown): TaskBrowserWindowContext {
   const raw = record(value);
-  exact(raw, ['projectName', 'taskName', 'branchName', 'machineName', 'stage', 'hue']);
+  exact(raw, ['projectName', 'taskName', 'branchName', 'machineName', 'stage', 'hue', 'projectImage']);
   for (const key of ['projectName', 'taskName', 'branchName', 'machineName'])
     if (typeof raw[key] !== 'string' || raw[key].length > 256 || [...raw[key]].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new Error('Invalid browser window label');
   const stage = raw['stage'], hue = raw['hue'];
   if (stage !== 'planned' && stage !== 'active' && stage !== 'waiting' && stage !== 'closed') throw new Error('Invalid task stage');
   if (hue !== 'ocean' && hue !== 'pine' && hue !== 'plum' && hue !== 'rust' && hue !== 'steel' && hue !== 'rose') throw new Error('Invalid project hue');
-  return { projectName: String(raw['projectName']), taskName: String(raw['taskName']), branchName: String(raw['branchName']), machineName: String(raw['machineName']), stage, hue };
+  const projectImage = raw['projectImage'];
+  if (projectImage !== undefined && !isWorkspaceProjectImage(projectImage)) throw new Error('Invalid project image');
+  return { projectName: String(raw['projectName']), taskName: String(raw['taskName']), branchName: String(raw['branchName']), machineName: String(raw['machineName']), stage, hue, ...(projectImage ? { projectImage } : {}) };
 }
