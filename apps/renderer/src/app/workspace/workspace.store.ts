@@ -6,12 +6,13 @@ import { WorkspaceTaskOutbox, type WaitingTask } from './workspace-task-outbox';
 import { SessionChatDrafts, SessionDraft } from '../session-chat/session-chat-drafts';
 import { SessionChatOutbox } from '../session-chat/session-chat-outbox';
 import { DOCUMENT } from '@angular/common';
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import type { BackendResult, EnvironmentContext, EnvironmentSelection, WorkspacePage, WorkspaceViewState, WorkspaceCreateProject, WorkspaceBranch, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRepository, WorkspaceRevision, WorkspaceSession, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import type { Machine } from '../machines';
 import type { ConversationMention } from '../conversation';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
-import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
+import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSessionDisclosure, type TaskSessionHistoryRequest, type TaskRepository, type TaskStage } from '../tasks';
 import { workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
 import { mergeNavigationSessions, readPrioritySessions, type WorkspacePrioritySessions } from './workspace-priority-sessions';
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
@@ -40,6 +41,10 @@ export class WorkspaceStore {
       mergeNavigationSessions(sessions, priority?.get(taskId), parentId => children.get(parentId)?.sessions ?? []),
     ]));
   });
+  // Only explicitly expanded tasks extend the normal 20-row refresh.
+  private readonly sessionHistoryDepth = new Map<number, number>();
+  private navigationRefresh?: Promise<void>;
+  private readonly loadingOlderSessions = signal<number | null>(null);
   private readonly sessionCursors = signal<ReadonlyMap<number, string | null>>(new Map());
   private readonly detail = signal<WorkspaceProjectDetail | null>(null);
   private readonly chosen = signal<WorkspaceSelection | null>(null);
@@ -171,7 +176,7 @@ export class WorkspaceStore {
       earlier: !!this.archives.pages().get(task.id)?.cursor,
     } } : {}),
     moreSessions: !!this.sessionCursors().get(task.id),
-    sessionsDirection: 'earlier',
+    loadingOlderSessions: this.loadingOlderSessions() === task.id,
     canAddSession: task.state === 'ready',
     project: this.projects().find(project => project.id === String(task.projectId)) ?? (task.projectName ? projectFace({ name: task.projectName }) : undefined),
     // Unknown cardinality from older runtimes keeps their existing repository hint.
@@ -381,7 +386,15 @@ export class WorkspaceStore {
     this.restoring.set(false); this.resumeContext = null; this.revision++;
   }
 
-  private async refreshVisible(): Promise<void> {
+  private refreshVisible(): Promise<void> {
+    const reading = this.readVisibleNavigation();
+    this.navigationRefresh = reading;
+    return reading.finally(() => {
+      if (this.navigationRefresh === reading) this.navigationRefresh = undefined;
+    });
+  }
+
+  private async readVisibleNavigation(): Promise<void> {
     if (this.restoring()) { await this.refresh(); return; }
     const scope = this.scopeId(), revision = this.revision, listRevision = this.listRevision;
     if (!scope) return;
@@ -462,7 +475,7 @@ export class WorkspaceStore {
         const task = result.items[index++];
         if (!task) continue;
         const page = restored?.sessions?.taskId === task.id ? restored.sessions.page
-          : await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId: task.id, limit: 20, order: 'latest', ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}) }), () => revision === this.listRevision, background);
+          : await this.readSessionHistory(scope, task.id, current, background);
         if (!current()) return;
         if (!page && this.sessionPriorityAvailable() && !this.closed()) {
           const retained = this.priorityRecords().get(task.id);
@@ -738,23 +751,95 @@ export class WorkspaceStore {
     if (this.valid(scope)) this.busy.set(false);
   }
 
-  async nextSessions(id: string): Promise<void> {
-    const scope = this.scopeId(), taskId = Number(id), cursor = this.sessionCursors().get(taskId), revision = this.listRevision;
-    if (!scope || !cursor || this.busy() || !this.taskRecords().some(task => task.id === taskId)) return;
-    this.busy.set(true);
-    const page = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId, cursor, limit: 20, order: 'latest', ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}) }));
-    if (page && revision === this.listRevision) {
-      const retained = new Map(this.sessionRecords()).set(taskId, page.items);
-      this.hierarchy.retain([...retained.values()].flat().concat(
-        [...this.priorityRecords().values()].flatMap(({ items, parents }) => [...items, ...parents]),
-      ));
-      this.sessionRecords.set(retained);
-      this.sessionCursors.update(cursors => new Map(cursors).set(taskId, page.nextCursor));
-      const selection = this.chosen();
-      if (selection?.taskId === taskId && !this.navigationSessions().get(taskId)?.some(row => row.id === selection.sessionId))
-        this.chosen.set(null);
+  setSessionDisclosure(taskId: string, disclosure: TaskSessionDisclosure | null): void {
+    this.sessionDisclosures.update(records => {
+      const next = new Map(records);
+      next.delete(taskId);
+      if (disclosure) next.set(taskId, disclosure);
+      while (next.size > 200) {
+        const oldest = next.keys().next().value;
+        if (oldest !== undefined) next.delete(oldest);
+      }
+      return next;
+    });
+  }
+
+  /** Keep the expanded history depth across navigation revisions. The first
+   * page stays small, and all deeper reads still use bounded keyset pages. */
+  private async readSessionHistory(
+    scope: string, taskId: number, current: () => boolean, background: boolean,
+  ): Promise<WorkspacePage<WorkspaceSession> | null> {
+    const root = this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {};
+    let page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+      taskId, limit: 20, order: 'latest', ...root,
+    }), current, background);
+    if (!page) return null;
+    let remaining = (this.sessionHistoryDepth.get(taskId) ?? 20) - 20;
+    const pages = [page.items];
+    while (remaining > 0 && page.nextCursor) {
+      const cursor: string = page.nextCursor;
+      const limit = Math.min(100, remaining);
+      page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+        taskId, cursor, limit, order: 'latest', ...root,
+      }), current, background);
+      if (!page) return null;
+      pages.push(page.items);
+      remaining -= limit;
     }
-    if (this.scopeId() === scope) this.busy.set(false);
+    return { items: pages.reverse().flat(), nextCursor: page.nextCursor };
+  }
+
+  async loadOlderSessions(request: TaskSessionHistoryRequest): Promise<void> {
+    const { taskId: id, cap } = request;
+    const scope = this.scopeId(), taskId = Number(id);
+    if (!scope || !this.sessionCursors().get(taskId) || this.busy() || this.loading() ||
+      !this.taskRecords().some(task => task.id === taskId)) return;
+    const project = this.activeProject(), closed = this.closed(), taskCursor = this.currentTaskCursor;
+    const disclosure = this.sessionDisclosures().get(id);
+    const limit = Math.min(100, request.limit);
+    this.busy.set(true);
+    this.loadingOlderSessions.set(taskId);
+    try {
+      // An already-running refresh can replace the cursor. Finish it before
+      // paging so its older snapshot cannot overwrite a successful append.
+      if (this.navigationRefresh) await this.navigationRefresh.catch(() => undefined);
+      const cursor = this.sessionCursors().get(taskId), revision = this.listRevision;
+      if (!cursor || !this.valid(scope) || this.loading() || this.activeProject() !== project ||
+        this.closed() !== closed || this.currentTaskCursor !== taskCursor ||
+        !this.taskRecords().some(task => task.id === taskId)) return;
+      const current = () => revision === this.listRevision && this.valid(scope);
+      const page = await this.read(scope, () => this.bridge.workspaceSessions(scope, {
+        taskId, cursor, limit, order: 'latest',
+        ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}),
+      }), current);
+      if (!page || !current()) return;
+      const visibleIds = new Set(this.navigationSessions().get(taskId)?.map(row => row.id));
+      const existing = this.sessionRecords().get(taskId) ?? [];
+      const existingIds = new Set(existing.map(row => row.id));
+      this.sessionRecords.update(records => new Map(records).set(taskId,
+        [...page.items.filter(row => !existingIds.has(row.id)), ...existing].sort((a, b) => a.id - b.id),
+      ));
+      this.sessionCursors.update(cursors => new Map(cursors).set(taskId, page.nextCursor));
+      const depth = (this.sessionHistoryDepth.get(taskId) ?? 20) + limit;
+      this.sessionHistoryDepth.delete(taskId);
+      this.sessionHistoryDepth.set(taskId, depth);
+      if (this.sessionHistoryDepth.size > 200) {
+        const oldest = this.sessionHistoryDepth.keys().next().value;
+        if (oldest !== undefined) this.sessionHistoryDepth.delete(oldest);
+      }
+      if (cap === null || this.sessionDisclosures().get(id) !== disclosure) return;
+      const ids = page.items.filter(row => !visibleIds.has(row.id) &&
+        !isWorkspacePriorityStatus(workspaceSessionStatus(row))).map(row => String(row.id));
+      if (ids.length) this.setSessionDisclosure(id, {
+        taskId: id, cap, hiddenIds: disclosure?.cap === cap ? disclosure.hiddenIds : [],
+        batches: [...(disclosure?.cap === cap ? disclosure.batches ?? [] : []), ids],
+      });
+    } finally {
+      if (this.scopeId() === scope) {
+        this.loadingOlderSessions.set(null);
+        this.busy.set(false);
+      }
+    }
   }
   reconcileTaskBranch(scope: string, taskId: number, branch: string): void { if (this.valid(scope)) this.taskRecords.update(tasks => tasks.map(task => task.id === taskId ? { ...task, branchName: branch } : task)); }
   openNewProject(from: HTMLElement | null = null): void {
@@ -1187,6 +1272,7 @@ export class WorkspaceStore {
     this.chatStreamScope.set(null);
     this.projectImagesAvailable.set(false);
     this.priorityRecords.set(new Map()); this.sessionPriorityAvailable.set(false);
+    this.sessionHistoryDepth.clear(); this.loadingOlderSessions.set(null); this.navigationRefresh = undefined;
     this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;

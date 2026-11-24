@@ -264,16 +264,20 @@ describe('WorkspaceStore', () => {
     expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '30', '5']);
     expect(store.counts().review).toBe(1);
     store.selectSession({ taskId: '3', sessionId: '5' });
-    await store.nextSessions('3');
+    await store.loadOlderSessions({ taskId: '3', limit: 5, cap: 5 });
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', {
+      taskId: 3, limit: 5, cursor: '30', order: 'latest', parentSessionId: null,
+    });
+    expect(store.sessionDisclosures().get('3')?.batches).toEqual([['23']]);
     expect(store.selectedSession()?.id).toBe(5);
-    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '5']);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '30', '5']);
     store.selectSession({ taskId: '3', sessionId: '8' });
     revision++; broken = true;
     await vi.advanceTimersByTimeAsync(5000);
-    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '5']);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['3', '8', '23', '30', '5']);
     revision++; broken = false; cleared = true;
     await vi.advanceTimersByTimeAsync(5000);
-    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['8', '30']);
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['8', '23', '30']);
     expect(store.counts().review).toBe(0);
   });
 

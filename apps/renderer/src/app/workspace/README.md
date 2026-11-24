@@ -106,9 +106,11 @@ starting runtimes or scanning all sessions at startup.
 
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.
   Each task initially loads at most 20 sessions, with four concurrent reads.
-  Advancing a page replaces its window. Controls return to the first page;
-  a selected older session and its parent can supplement that page during
-  refresh, preserving all history rows. Engines advertising
+  Older reveals loaded rows first, then appends another bounded history batch
+  without changing the selection. The workspace remembers how much history the
+  user loaded for each task and revalidates that amount on refresh. Show fewer
+  restores the cap. A selected older session and its parent can supplement the
+  history window during refresh. Engines advertising
   `sessionPriority` supply running, needs-action, failed and unseen-reply
   sessions on separate metadata pages of up to 100, with root context for nested
   rows. The workspace merges and deduplicates those pages independently of the

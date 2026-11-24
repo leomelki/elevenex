@@ -13,7 +13,6 @@ permissions:
 
 # GITHUB_SHA describes the caller; generated build info must describe the checkout.
 env:
-  ELEVENEX_SKIP_LEGACY_ICONS: '1'
   GIT_SHA: ${{ inputs.source-sha }}
   # CPU bindings remain installed. Skip the optional CUDA libraries.
   ONNXRUNTIME_NODE_INSTALL: skip

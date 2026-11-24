@@ -2,21 +2,23 @@ import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { afterNextRender, ChangeDetectionStrategy, Component, computed, DestroyRef, ElementRef, inject, Injector, input, linkedSignal, model, output, signal, viewChildren } from '@angular/core';
 import { EaseSwapComponent, FoldComponent, IconComponent, TickerComponent } from '../../ui';
 import { ListPresence } from '../../ui/motion/list-presence';
-import type { TaskSession, TaskSessionDisclosure } from '../task.models';
+import type { TaskSession, TaskSessionDisclosure, TaskSessionHistoryRequest } from '../task.models';
 import { SessionBranchComponent } from './session-branch.component';
 import type { SessionMoveIntent } from '../task.models';
 import { SessionBatchComponent } from './session-batch.component';
-import { sessionWindow } from './session-window';
+import { sessionBatchSegments, sessionWindow } from './session-window';
 
 interface Batch {
   readonly key: string;
   readonly sessions: readonly TaskSession[];
+  readonly position: number;
   readonly open: boolean;
   readonly initial: boolean;
 }
 interface BatchSource {
   readonly taskId: string;
   readonly window: ReturnType<typeof sessionWindow>;
+  readonly roots: readonly TaskSession[];
 }
 
 /** Owns disclosure and placement, independently from the task/sub-task outline. */
@@ -32,6 +34,9 @@ export class WorkingSessionsComponent {
   readonly sessions = input.required<readonly TaskSession[]>();
   readonly selected = input<string | null>(null);
   readonly filtered = input(false);
+  readonly moreAvailable = input(false);
+  readonly loadingOlder = input(false);
+  readonly moreRequested = output<TaskSessionHistoryRequest>();
   readonly cap = input(5);
   readonly capStep = input(5);
   readonly allowArchive = input(false);
@@ -58,28 +63,58 @@ export class WorkingSessionsComponent {
   });
   protected readonly hidden = computed(() => this.window().hidden.size);
   protected readonly step = computed(() => Number.isFinite(this.capStep()) ? Math.max(1, Math.floor(this.capStep())) : 5);
+  protected readonly canReveal = computed(() => this.hidden() > 0 || this.moreAvailable());
   protected readonly next = computed(() => Math.min(this.step(), this.hidden()));
+  protected readonly actionLabel = computed(() => {
+    if (this.loadingOlder()) return 'Loading older sessions';
+    if (this.hidden()) return 'Show ' + this.next() + ' older sessions (' + this.hidden() + ' hidden)';
+    return this.moreAvailable() ? 'Load older sessions' : 'Show fewer sessions';
+  });
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly injector = inject(Injector);
   private readonly batchViews = viewChildren(SessionBatchComponent);
   protected readonly closingDistance = signal(0);
   protected readonly presence = new ListPresence(() => this.window().shown, session => session.renderId ?? session.id, this.host, inject(DestroyRef));
   protected readonly batches = linkedSignal<BatchSource, readonly Batch[]>({
-    source: () => ({ taskId: this.taskId(), window: this.window() }),
+    source: () => ({ taskId: this.taskId(), window: this.window(), roots: this.roots() }),
     computation: (source, previous) => {
       const initial = !previous || previous.source.taskId !== source.taskId;
-      const current = source.window.batches.map(batch => ({ ...batch, open: true, initial }));
+      const current = sessionBatchSegments(source.roots, source.window).map(batch => ({ ...batch, open: true, initial }));
       if (initial) return current;
       const keys = new Set(current.map(batch => batch.key));
-      const shown = new Set(source.window.shown.map(session => session.id));
-      return [...current, ...previous.value.filter(batch => !keys.has(batch.key)).map(batch => ({ ...batch, open: false, sessions: batch.sessions.filter(session => !shown.has(session.id)) }))];
+      const visible = new Set([
+        ...source.window.shown, ...current.flatMap(batch => batch.sessions),
+      ].map(session => session.id));
+      return [...current, ...previous.value.filter(batch => !keys.has(batch.key) &&
+        batch.sessions.some(session => !visible.has(session.id)))
+        .map(batch => ({ ...batch, open: false, sessions: batch.sessions.filter(session => !visible.has(session.id)) }))];
     },
   });
-  protected readonly orderedBatches = computed(() => [...this.batches()].reverse());
+  protected readonly outlineRows = computed(() => {
+    const positions = new Map(this.roots().map((root, position) => [root.id, position]));
+    const rows = this.presence.rows();
+    let next = positions.size;
+    const main = [...rows].reverse().map(row => {
+      const position = positions.get(row.value.id) ?? next - 0.5;
+      next = position;
+      return { kind: 'session' as const, key: `session:${row.key}`, position, row };
+    }).reverse();
+    const batches = this.batches().map(batch => ({
+      kind: 'batch' as const, key: batch.key, position: batch.position, batch,
+    }));
+    return [...main, ...batches].sort((a, b) => a.position - b.position);
+  });
   protected settled(key: string): void { this.batches.update(batches => batches.filter(batch => batch.key !== key || batch.open)); }
   protected more(): void {
     const window = this.window();
+    if (this.loadingOlder()) return;
     const hidden = [...window.hidden];
+    if (!hidden.length) {
+      this.moreRequested.emit({
+        taskId: this.taskId(), limit: this.step(), cap: this.filtered() || !this.cap() ? null : this.cap(),
+      });
+      return;
+    }
     const ids = hidden.splice(-this.step());
     this.disclosure.set({ taskId: this.taskId(), cap: this.cap(), hiddenIds: hidden,
       batches: [...window.batches.map(batch => batch.sessions.map(session => session.id)), ids] });

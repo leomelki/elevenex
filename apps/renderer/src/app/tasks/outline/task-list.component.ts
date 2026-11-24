@@ -18,6 +18,7 @@ import {
   type TaskOutline,
   type TaskSession,
   type TaskSessionDisclosure,
+  type TaskSessionHistoryRequest,
 } from "../task.models";
 import { TaskGroupComponent } from "./task-group.component";
 import { SessionRowComponent } from "./session-row.component";
@@ -104,7 +105,7 @@ export class TaskListComponent {
     readonly sessionId: string;
   }>();
   readonly addSession = output<string>();
-  readonly moreSessionsRequested = output<string>();
+  readonly moreSessionsRequested = output<TaskSessionHistoryRequest>();
   readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<{
     readonly taskId: string;

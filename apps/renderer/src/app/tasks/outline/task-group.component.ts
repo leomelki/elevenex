@@ -26,6 +26,7 @@ import {
   type TaskOutline,
   type TaskSession,
   type TaskSessionDisclosure,
+  type TaskSessionHistoryRequest,
   type SubTask,
 } from "../task.models";
 import { ListPresence } from "../../ui/motion/list-presence";
@@ -116,7 +117,7 @@ export class TaskGroupComponent implements OnChanges {
   readonly allowAddSubtask = input(true);
   readonly selectSession = output<string>();
   readonly addSession = output<string>();
-  readonly moreSessionsRequested = output<string>();
+  readonly moreSessionsRequested = output<TaskSessionHistoryRequest>();
   readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<string>();
   protected readonly collapsedValue = signal<boolean | null>(null);

@@ -51,3 +51,32 @@ export function sessionWindow(
   const muted = hidden.size && first && !pinned(first) ? first.id : null;
   return { hidden, batches, shown, muted, expanded };
 }
+
+/** Split a reveal where an already-visible row interrupts it. This lets each
+ * new run animate in place while existing rows keep their identity and order. */
+export function sessionBatchSegments(
+  roots: readonly TaskSession[],
+  window: ReturnType<typeof sessionWindow>,
+) {
+  const batchKeys = new Map(window.batches.flatMap(batch =>
+    batch.sessions.map(session => [session.id, batch.key] as const)));
+  const counters = new Map<string, number>();
+  const segments: { key: string; position: number; sessions: TaskSession[] }[] = [];
+  const shown = new Set(window.shown.map(row => row.id));
+  let lastBatch: string | undefined;
+  roots.forEach((session, position) => {
+    const batch = batchKeys.get(session.id);
+    if (!batch) {
+      if (shown.has(session.id)) lastBatch = undefined;
+      return;
+    }
+    if (batch !== lastBatch) {
+      const segment = counters.get(batch) ?? 0;
+      counters.set(batch, segment + 1);
+      segments.push({ key: segment ? `${batch}:${segment}` : batch, position, sessions: [] });
+      lastBatch = batch;
+    }
+    segments.at(-1)?.sessions.push(session);
+  });
+  return segments;
+}

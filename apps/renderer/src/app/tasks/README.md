@@ -68,9 +68,10 @@ The isolated showcase is `apps/renderer/preview/tasks-demo.component.*`. Its sam
 ## Production workspace adapters
 
 The connected [workspace feature](../workspace/README.md) supplies bounded backend
-windows to these components. `TaskOutline.moreSessions` enables the Next sessions
-intent (`TaskGroup` and `TaskList.moreSessionsRequested(taskId)`); advancing a
-window belongs to the owner. `TaskOutline.canAddSession=false` suppresses creation
+windows to these components. `TaskOutline.moreSessions` keeps Older available
+after all loaded rows are visible. `TaskGroup` and `TaskList` emit
+`moreSessionsRequested(TaskSessionHistoryRequest)` to let the owner append a
+bounded batch and update the controlled disclosure. `TaskOutline.canAddSession=false` suppresses creation
 while a workspace is preparing. An empty task header emits
 `emptyTaskRequested(taskId)` alongside its local disclosure, so the owner can
 show task preparation/recovery. `TaskList.disabled` disables session addition
@@ -235,8 +236,8 @@ the first read, then retains the outline through subsequent active-project reads
 `TaskGroup.cap` / `TaskList.sessionCap` reserve the five default root slots for
 running, attention, failed and unseen-reply sessions, then fill any remaining
 slots with the newest ordinary sessions. Priority rows can overflow the cap.
-Selected and fresh rows also stay visible. The supplied chronological order is
-preserved within the main list and each revealed batch. A nested priority
+Selected and fresh rows also stay visible. All rows keep their supplied
+chronological order. Older inserts each reveal around the rows already visible. A nested priority
 session reserves a slot for its parent, with the priority child visible while
 the group is folded. Expanding the group reveals its ordinary children.
 Each Older click reveals at most `capStep` more hidden sessions. Show fewer
@@ -255,7 +256,8 @@ retain their own disclosure until their task identity or cap no longer matches.
 Hidden sessions keep their activity and contribute to task counts; their DOM is
 created on reveal. A quiet 26px “› N older” button replaces the ghost pill, with
 an accurate next-batch accessible label and `aria-expanded`. Partial reveals
-show a separate Show fewer button; fully revealed lists use “⌄ Show fewer”.
+show a separate Show fewer button. After the last loaded row, Older loads the
+next batch in place while history remains. Fully revealed lists use “⌄ Show fewer”.
 Only the first title below a remaining cap is muted with `ink-muted`; selected,
 attention/failed and fresh rows retain their normal color. Titles ease color.
 
@@ -263,7 +265,8 @@ The internal `WorkingSessionsComponent` owns placement and disclosure;
 `SessionBatchComponent` owns one pixel-height scroll and its cleanup. Revealed
 batches snapshot identities, so selecting or changing a revealed row's status
 keeps its component and position. Archive gaps draw from the next older rows
-across batches, preserving chronology. New arrivals stay in the main list.
+across batches. A reveal splits into multiple animated runs when it crosses an
+already-visible row. New arrivals stay in their chronological position.
 Show fewer retains closing batches until they settle and keeps the selected row
 in the main list. Rapid reveals reverse from the painted height. A batch pins
 its rows to the bottom and masks its top 18px only while moving. Open batches
@@ -277,9 +280,9 @@ its preference changes during a scroll. No per-row unroll delays remain.
 
 The cap applies to the supplied history and priority rows. Priority data from
 outside the current history page is supplied by the owner.
-`moreSessions` and `sessionsDirection` expose older/next page requests rather than
-fetching unbounded history. Production opens a newest-first 20-session page;
-older pages replace that window. Project settings → Tasks stores the device-local
+Production opens with the newest 20 sessions. Each Older request beyond that
+window adds a bounded batch. Show fewer restores the cap over the loaded rows.
+Project settings → Tasks stores the device-local
 user cap (5, 10, 20 or all loaded sessions), shared across project views/windows.
 The Tasks preview includes A busy task; `/connected-workspace` exercises the full
 backend-backed owner using an isolated fixture.

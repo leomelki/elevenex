@@ -123,6 +123,42 @@ describe('working session window', () => {
     expect(sessionWindow(seen, 5, null, false).shown.map(row => row.id)).toEqual(['0', '1', '16', '17', '18']);
   });
 
+  it('reveals ordinary rows around an already-visible priority row without moving its DOM identity', () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const rows = sessions.map(row => row.id === '11' ? { ...row, status: 'running' as const } : row);
+    fixture.componentRef.setInput('task', { id: 'task', title: 'Busy task', sessions: rows });
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const visible = () => Array.from(host.querySelectorAll<HTMLElement>('.row[data-session-id]'))
+      .filter(row => !row.closest('[inert]')).map(row => row.dataset['sessionId']);
+    const running = host.querySelector('[data-session-id="11"]');
+    expect(visible()).toEqual(['11', '15', '16', '17', '18']);
+    host.querySelector<HTMLButtonElement>('.earlier-more')!.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(rows.slice(9).map(row => row.id));
+    expect(host.querySelector('[data-session-id="11"]')).toBe(running);
+    host.querySelector<HTMLButtonElement>('.earlier-fewer')!.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(['11', '15', '16', '17', '18']);
+    expect(host.querySelector('[data-session-id="11"]')).toBe(running);
+  });
+
+  it('uses Older to request the next batch after local reveals and keeps Show fewer available', () => {
+    const fixture = TestBed.createComponent(TaskGroupComponent);
+    const request = vi.fn();
+    fixture.componentInstance.moreSessionsRequested.subscribe(request);
+    fixture.componentRef.setInput('task', { id: 'task', title: 'Busy task', sessions: sessions.slice(0, 6), moreSessions: true });
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    const older = () => host.querySelector<HTMLButtonElement>('.earlier-more')!;
+    older().click(); fixture.detectChanges();
+    expect(request).not.toHaveBeenCalled();
+    expect(older().textContent?.trim()).toContain('Older');
+    expect(host.querySelector('.earlier-fewer')?.textContent).toContain('Show fewer');
+    older().click();
+    expect(request).toHaveBeenCalledExactlyOnceWith({ taskId: 'task', limit: 5, cap: 5 });
+  });
+
   it('shows all priority rows when they overflow, with the selected ordinary row still reachable', () => {
     const active = sessions.map((row, index) => index < 7 ? { ...row, status: 'running' as const } : row);
     const window = sessionWindow(active, 5, '18', false);

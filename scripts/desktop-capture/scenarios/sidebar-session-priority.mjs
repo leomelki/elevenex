@@ -43,18 +43,32 @@ export default async function* (capture) {
     await setUp(true);
     assert.deepEqual(await visible(), [200, 203, 201, 202, 204, 205, 206, 207]);
     yield { name: `${theme}-priority-overflow`, inspect };
-    assert.equal(await capture.evaluate(selector => {
-      const button = [...document.querySelectorAll(selector + ' button.outline-action')]
-        .find(button => button.textContent.trim() === 'Earlier sessions' && !button.closest('[inert]'));
-      button?.focus();
-      return !!button && document.activeElement === button;
-    }, task), true);
+    const older = `${task} .earlier-more`;
+    const olderLabel = () => capture.evaluate(selector => document.querySelector(selector)?.getAttribute('aria-label'), older);
+    for (let batch = 0; batch < 8 && await olderLabel() !== 'Load older sessions'; batch++) {
+      await capture.evaluate(selector => document.querySelector(selector)?.focus(), older);
+      await capture.press('Enter');
+      await settled();
+    }
+    assert.equal(await olderLabel(), 'Load older sessions');
+    await capture.evaluate(selector => document.querySelector(selector)?.focus(), older);
     await capture.press('Enter');
-    await capture.waitFor(selector => ![...document.querySelectorAll(selector + ' button.outline-action')]
-      .some(button => button.textContent.trim() === 'Earlier sessions' && !button.closest('[inert]')), task);
+    const firstNewOrdinary = theme === 'light' ? 210 : 208;
+    await capture.waitFor(selector => {
+      const row = document.querySelector(selector);
+      return !!row && !row.closest('[inert]');
+    }, session(firstNewOrdinary));
     await settled();
-    assert((await visible()).includes(203), 'Earlier history preserves unseen child replies');
-    assert((await visible()).includes(201), 'Earlier history preserves running sessions');
-    yield { name: `${theme}-priority-over-earlier-history`, inspect };
+    assert.deepEqual(await visible(), [200, 203, 201, 202, 204, 205, 206, 207,
+      ...Array.from({ length: 235 - firstNewOrdinary }, (_, index) => firstNewOrdinary + index)]);
+    assert.equal(await capture.evaluate(selector => [...document.querySelectorAll(selector + ' button')]
+      .some(button => button.textContent.trim() === 'Earlier sessions'), task), false);
+    yield { name: `${theme}-older-extends-history-in-place`, inspect };
+
+    await capture.evaluate(selector => document.querySelector(selector)?.focus(), `${task} .earlier-fewer`);
+    await capture.press('Enter');
+    await settled();
+    assert.deepEqual(await visible(), [200, 203, 201, 202, 204, 205, 206, 207]);
+    yield { name: `${theme}-show-fewer-keeps-priority`, inspect };
   }
 }
