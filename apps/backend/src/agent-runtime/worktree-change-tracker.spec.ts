@@ -224,6 +224,72 @@ describe('WorktreeChangeTracker (real git and filesystem)', () => {
     });
   });
 
+  it('preserves commits around a divergent rebase and compares later edits against the rebased tree', async () => {
+    await git('branch', 'task');
+    await git('checkout', '-qb', 'upstream');
+    await write('source.ts', 'upstream source\n');
+    await write('upstream.ts', 'upstream only\n');
+    await commit();
+    await git('checkout', 'task');
+    await write('previous.ts', 'already on the task branch\n');
+    await commit();
+
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    await write('before-rebase.ts', 'written during the turn\n');
+    await commit();
+    const command = tracker.beginCommand(turn, undefined, true)!;
+    await command.baselineReady;
+    await git(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.invalid',
+      'rebase',
+      'upstream',
+    );
+    await write('source.ts', 'upstream source\nthe new edit\n');
+    await commit();
+    await write('manual.ts', 'uncommitted work\n');
+    tracker.notePaths(['manual.ts', 'source.ts', 'upstream.ts', 'previous.ts']);
+    const observed = await tracker.endCommand(command);
+    expect(observed.files.map((file) => file.path)).toEqual([
+      'manual.ts',
+      'source.ts',
+    ]);
+    expect(observed.files.at(-1)).toMatchObject({ additions: 1, deletions: 0 });
+
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged.map((file) => file.path)).toEqual([
+      'before-rebase.ts',
+      'manual.ts',
+      'source.ts',
+    ]);
+    expect(result.filesChanged.at(-1)).toMatchObject({
+      additions: 1,
+      deletions: 0,
+    });
+  });
+
+  it('keeps conflicts visible when a rebase stops after switching to the upstream tree', async () => {
+    await git('branch', 'task');
+    await git('checkout', '-qb', 'upstream');
+    await write('source.ts', 'upstream source\n');
+    await write('upstream.ts', 'upstream only\n');
+    await commit();
+    await git('checkout', 'task');
+    await write('source.ts', 'task source\n');
+    await commit();
+
+    tracker = await WorktreeChangeTracker.create(directory, budget);
+    const turn = await tracker.begin();
+    await expect(git('rebase', 'upstream')).rejects.toThrow();
+    tracker.notePaths(['source.ts', 'upstream.ts']);
+
+    const result = await tracker.finish(turn);
+    expect(result.filesChanged.map((file) => file.path)).toEqual(['source.ts']);
+  });
+
   it('marks every overlapping turn shared and keeps each turn’s own starting state', async () => {
     tracker = await WorktreeChangeTracker.create(directory, budget);
     const first = await tracker.begin();

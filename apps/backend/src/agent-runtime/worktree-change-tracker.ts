@@ -11,6 +11,11 @@ import {
 } from './worktree-change-observer.js';
 import { git, nulStrings, renderPatch } from './worktree-content-diff.js';
 import {
+  changedTreePaths,
+  findRebaseBaseline,
+  type RebaseBaseline,
+} from './worktree-rebase.js';
+import {
   UNKNOWN_IGNORED_FILE_BASELINE,
   type TurnChangeDetails,
   type TurnChangedFile,
@@ -51,6 +56,7 @@ export interface WorktreeCommandCapture {
   readonly paths: Set<string>;
   readonly before: Map<string, SavedFile | null>;
   readonly baselineReady: Promise<void>;
+  readonly head?: Promise<string | null | undefined>;
   readonly priorPaths: Set<string>;
   readonly targets?: ReadonlySet<string>;
   readonly started: number;
@@ -87,7 +93,7 @@ export class ChangeContentBudget {
 
 /** A path journal accelerates candidate selection; Git reconciliation at each
  * boundary covers delayed/dropped watcher events, atomic saves and commits.
- * Git is used only for inventory and immutable original blobs, never ownership.
+ * Git distinguishes a rebase's checkout transition from edits around it.
  * No private index, git add, refs, hooks, objects or user index are written.
  */
 export class WorktreeChangeTracker {
@@ -207,6 +213,7 @@ export class WorktreeChangeTracker {
     const before = new Map<string, SavedFile | null>();
     const quota = { bytes: COMMAND_BYTES };
     const started = Date.now();
+    const head = targets ? undefined : this.readHead().catch(() => undefined);
     const command: WorktreeCommandCapture = {
       turn,
       before,
@@ -217,15 +224,19 @@ export class WorktreeChangeTracker {
       expires: started + COMMAND_WINDOW_MS,
       shared: turn.shared || this.commands.size > 0,
       partial: !targets && (!this.observer?.ready || this.observerFailed),
-      baselineReady: bounded(previous, async (path) => {
-        const file = await this.read(path, quota);
-        // An asynchronous start notification can reach us after the write.
-        // Do not use a new version for a path already seen in this window.
-        if (!beforeExecution && command.paths.has(path)) {
-          if (file) this.release(file);
-          command.partial = true;
-        } else before.set(path, file);
-      }),
+      head,
+      baselineReady: Promise.all([
+        head,
+        bounded(previous, async (path) => {
+          const file = await this.read(path, quota);
+          // An asynchronous start notification can reach us after the write.
+          // Do not use a new version for a path already seen in this window.
+          if (!beforeExecution && command.paths.has(path)) {
+            if (file) this.release(file);
+            command.partial = true;
+          } else before.set(path, file);
+        }),
+      ]).then(() => undefined),
     };
     for (const active of this.commands) active.shared = true;
     this.commands.add(command);
@@ -260,23 +271,36 @@ export class WorktreeChangeTracker {
     if (!this.commands.delete(command)) return { files: [], partial: true };
     const { turn, before } = command;
     const files: TurnChangedFile[] = [];
-    let originals = new Map<string, SavedFile>();
+    const originals = new Map<string, SavedFile>();
     const current = new Map<string, SavedFile | null>();
     try {
       await command.baselineReady;
       if (this.closed || turn.cancelled || Date.now() > command.expires)
         return { files, partial: true };
       const paths = [...new Set([...command.paths, ...before.keys()])].sort();
+      if (!paths.length)
+        return {
+          files,
+          partial: command.partial || (!command.targets && this.observerFailed),
+        };
+      const endingHead = command.head
+        ? this.readHead().catch(() => undefined)
+        : undefined;
       const readBudget = { bytes: COMMAND_BYTES };
       // Freeze postimages before Git or patch rendering can widen this window.
       await bounded(paths, async (path) => {
         current.set(path, await this.read(path, readBudget));
       });
+      const commandHead = await command.head;
+      const startHead =
+        commandHead === undefined ? turn.baseline.head : commandHead;
+      const rebase = await this.commandRebase(startHead, await endingHead);
       const unseen = paths.filter(
-        (path) => !before.has(path) && !turn.baseline.files.has(path),
+        (path) =>
+          !before.has(path) &&
+          (!turn.baseline.files.has(path) || startHead !== turn.baseline.head),
       );
-      if (turn.baseline.head && unseen.length)
-        originals = await this.originalFiles(turn.baseline.head, unseen);
+      await this.loadOriginals(originals, startHead, unseen, rebase?.baseline);
       // Git can distinguish a genuinely new untracked path from ignored files
       // whose preimages were outside the initial inventory.
       const ignored = await this.ignored(
@@ -286,6 +310,16 @@ export class WorktreeChangeTracker {
       for (const path of paths) {
         if (turn.cancelled || this.closed) return { files: [], partial: true };
         if (
+          rebase &&
+          !before.has(path) &&
+          !turn.baseline.files.has(path) &&
+          !rebase.baseline.earlierPaths.has(path) &&
+          !rebase.dirtyPaths.has(path) &&
+          !rebase.committedPaths.has(path) &&
+          !ignored.has(path)
+        )
+          continue;
+        if (
           !before.has(path) &&
           (command.targets || command.priorPaths.has(path) || ignored.has(path))
         ) {
@@ -294,7 +328,9 @@ export class WorktreeChangeTracker {
         }
         const old = before.has(path)
           ? before.get(path)
-          : (turn.baseline.files.get(path) ?? originals.get(path));
+          : startHead === turn.baseline.head && turn.baseline.files.has(path)
+            ? turn.baseline.files.get(path)
+            : originals.get(path);
         const after = current.get(path);
         const file = await this.compare(
           path,
@@ -326,6 +362,37 @@ export class WorktreeChangeTracker {
       this.releaseCommand(command);
       this.releaseBoundary({ files: current });
       for (const file of originals.values()) this.release(file);
+    }
+  }
+
+  private async commandRebase(
+    startHead: string | null,
+    endHead: string | null | undefined,
+  ) {
+    if (!endHead) return;
+    const baseline = await findRebaseBaseline(
+      this.root,
+      startHead,
+      endHead,
+      this.lifetime.signal,
+    );
+    if (!baseline) return;
+    try {
+      const end = await this.inventory();
+      if (end.head !== endHead) return;
+      const committedPaths = await changedTreePaths(
+        this.root,
+        baseline.head,
+        endHead,
+        this.lifetime.signal,
+      );
+      return {
+        baseline,
+        dirtyPaths: end.paths,
+        committedPaths: new Set(committedPaths),
+      };
+    } catch {
+      // A command's filesystem snapshots still provide a usable comparison.
     }
   }
 
@@ -447,6 +514,12 @@ export class WorktreeChangeTracker {
     capture.finished = true;
     try {
       const end = await this.inventory();
+      const rebase = await findRebaseBaseline(
+        this.root,
+        capture.baseline.head,
+        end.head,
+        this.lifetime.signal,
+      );
       const paths = new Set(capture.baseline.files.keys());
       // Without an inventoried starting state, an ignored file present at the
       // end is not known to be new. Only journaled edits mark those changed.
@@ -467,6 +540,9 @@ export class WorktreeChangeTracker {
       );
       const ignored = await this.ignored(journal);
       for (const path of journal) {
+        // Clean tracked paths written by the rebase need no content reads.
+        // Committed edits outside the rebase are added by the tree diff below.
+        if (rebase && !ignored.has(path)) continue;
         paths.add(path);
         if (!ignored.has(path)) continue;
         if (generatedPath(path)) {
@@ -477,25 +553,18 @@ export class WorktreeChangeTracker {
         if (this.ignoredFiles.size < JOURNAL_PATHS) this.ignoredFiles.add(path);
         else this.observerFailed = true;
       }
-      if (capture.baseline.head !== end.head) {
-        if (capture.baseline.head && end.head) {
-          const committed = await git(
+      const comparisonHead = rebase?.head ?? capture.baseline.head;
+      if (rebase) for (const path of rebase.earlierPaths) paths.add(path);
+      if (comparisonHead !== end.head) {
+        if (comparisonHead && end.head) {
+          for (const path of await changedTreePaths(
             this.root,
-            [
-              'diff',
-              '--name-only',
-              '--no-renames',
-              '-z',
-              capture.baseline.head,
-              end.head,
-              '--',
-            ],
-            undefined,
-            [0],
+            comparisonHead,
+            end.head,
             this.lifetime.signal,
-          );
-          for (const path of nulStrings(committed)) paths.add(path);
-        } else if (capture.baseline.head || end.head) {
+          ))
+            paths.add(path);
+        } else if (comparisonHead || end.head) {
           for (const path of nulStrings(
             await git(
               this.root,
@@ -504,7 +573,7 @@ export class WorktreeChangeTracker {
                 '-r',
                 '--name-only',
                 '-z',
-                (capture.baseline.head ?? end.head)!,
+                (comparisonHead ?? end.head)!,
               ],
               undefined,
               [0],
@@ -530,13 +599,14 @@ export class WorktreeChangeTracker {
       const filesChanged: TurnChangedFile[] = [];
       const unchangedPaths: string[] = [];
       const patchBudget = { bytes: TURN_PATCH_BYTES };
-      let originals = new Map<string, SavedFile>();
+      const originals = new Map<string, SavedFile>();
       try {
-        if (capture.baseline.head)
-          originals = await this.originalFiles(
-            capture.baseline.head,
-            cleanPaths,
-          );
+        await this.loadOriginals(
+          originals,
+          capture.baseline.head,
+          cleanPaths,
+          rebase,
+        );
         for (const [index, path] of candidates.entries()) {
           if (capture.cancelled || this.closed)
             throw new Error('Change capture was cancelled');
@@ -569,7 +639,8 @@ export class WorktreeChangeTracker {
         this.releaseBoundary({ files: current });
         for (const file of originals.values()) this.release(file);
       }
-      if (filesChanged.length) clearWorktreeFingerprintCache(this.root);
+      if (filesChanged.length || capture.baseline.head !== end.head)
+        clearWorktreeFingerprintCache(this.root);
       // A turn can overlap after the endpoint scan began, while patches render.
       if (capture.shared)
         for (const file of filesChanged) file.attribution = 'shared';
@@ -697,18 +768,7 @@ export class WorktreeChangeTracker {
       throw new Error('Starting state exceeds the path limit');
     const files = await this.readVersions([...paths]);
     try {
-      const verifiedHead =
-        (
-          await git(
-            this.root,
-            ['rev-parse', '--verify', '-q', 'HEAD'],
-            undefined,
-            [0, 1],
-            this.lifetime.signal,
-          )
-        )
-          .toString('utf8')
-          .trim() || null;
+      const verifiedHead = await this.readHead();
       if (verifiedHead !== head)
         throw new Error('The checkout changed revisions during capture');
       return { head, files, ignoredInventory };
@@ -716,6 +776,17 @@ export class WorktreeChangeTracker {
       this.releaseBoundary({ files });
       throw error;
     }
+  }
+
+  private async readHead(): Promise<string | null> {
+    const output = await git(
+      this.root,
+      ['rev-parse', '--verify', '-q', 'HEAD'],
+      undefined,
+      [0, 1],
+      this.lifetime.signal,
+    );
+    return output.toString('utf8').trim() || null;
   }
 
   private async readVersions(
@@ -876,9 +947,35 @@ export class WorktreeChangeTracker {
     return file;
   }
 
+  private async loadOriginals(
+    originals: Map<string, SavedFile>,
+    head: string | null,
+    paths: string[],
+    rebase?: RebaseBaseline,
+  ): Promise<void> {
+    const quota = { bytes: BOUNDARY_BYTES };
+    if (head) {
+      const earlier = rebase
+        ? paths.filter((path) => rebase.earlierPaths.has(path))
+        : paths;
+      for (const [path, file] of await this.originalFiles(head, earlier, quota))
+        originals.set(path, file);
+    }
+    if (rebase) {
+      const later = paths.filter((path) => !rebase.earlierPaths.has(path));
+      for (const [path, file] of await this.originalFiles(
+        rebase.head,
+        later,
+        quota,
+      ))
+        originals.set(path, file);
+    }
+  }
+
   private async originalFiles(
     head: string,
     paths: string[],
+    quota: { bytes: number },
   ): Promise<Map<string, SavedFile>> {
     const files = new Map<string, SavedFile>();
     const blobs = new Map<
@@ -919,14 +1016,12 @@ export class WorktreeChangeTracker {
       let reason: string | undefined;
       if (blob.size > FILE_BYTES)
         reason = 'File is too large for an inline diff';
-      else if (
-        bytes + blob.size > BOUNDARY_BYTES ||
-        !this.budget.reserve(blob.size)
-      )
+      else if (blob.size > quota.bytes || !this.budget.reserve(blob.size))
         reason =
           'Content omitted because the snapshot reached its memory limit';
       else {
         bytes += blob.size;
+        quota.bytes -= blob.size;
         selected.push([path, blob]);
       }
       files.set(path, {

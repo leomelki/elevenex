@@ -113,6 +113,53 @@ describe('TurnChangesService persistence and lifecycle', () => {
     ).toEqual({ n: 1 });
   });
 
+  it('keeps a fast-forward rebase out of the persisted turn and command diffs', async () => {
+    const checkout = join(directory, 'checkout');
+    const git = (...args: string[]) =>
+      execFileAsync('git', args, { cwd: directory });
+    await git('config', 'user.name', 'Test');
+    await git('config', 'user.email', 'test@example.invalid');
+    await git('checkout', '-qb', 'upstream');
+    await writeFile(join(directory, 'deleted.ts'), 'removed upstream\n');
+    await git('add', '-A');
+    await git('commit', '-qm', 'base');
+    const upstreamPaths = Array.from(
+      { length: 253 },
+      (_, i) => `upstream-${i}.ts`,
+    );
+    await Promise.all([
+      git('rm', '-q', 'deleted.ts'),
+      ...upstreamPaths.map((path) =>
+        writeFile(join(directory, path), 'existing upstream work\n'),
+      ),
+    ]);
+    await git('add', '-A');
+    await git('commit', '-qm', 'upstream changes');
+    await git('worktree', 'add', '-qb', 'task', checkout, 'HEAD~1');
+    await writeFile(join(checkout, 'existing.txt'), 'already untracked\n');
+
+    const capture = await service.begin(7, 'codex', checkout);
+    await service.startCommand(capture, 'rebase', 'Command');
+    await execFileAsync('git', ['rebase', 'upstream'], { cwd: checkout });
+    capture.tracker?.notePaths(['deleted.ts', ...upstreamPaths]);
+    await service.endCommand(capture, 'rebase');
+    const marker = await service.finish(capture, 'conversation');
+
+    expect(marker?.turnChanges).toMatchObject({
+      files: 0,
+      additions: 0,
+      deletions: 0,
+      filesChanged: [],
+      evidence: { tools: [] },
+    });
+    expect(await service.reviewDetails(7, 'codex', marker!.id)).toEqual(
+      marker?.turnChanges,
+    );
+    expect(await readFile(join(checkout, 'existing.txt'), 'utf8')).toBe(
+      'already untracked\n',
+    );
+  });
+
   it('keeps successful patches attributable when another session and a failed shell edit the same checkout', async () => {
     const path = join(directory, 'shared.txt');
     const git = (...args: string[]) =>

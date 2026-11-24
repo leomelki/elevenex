@@ -668,6 +668,12 @@ Turn capture lives in the backend, with one advisory filesystem observer per
 canonical checkout. A read-only Git inventory and file preimages establish the
 starting state. A second inventory and targeted content reads compare net worktree
 versions, including new untracked files and changes committed during the turn.
+When the checkout's recent HEAD reflog identifies a rebase within the capture
+window, turn and shell comparisons omit the revision switch and commit replay.
+Dirty paths and commits made before or after the rebase remain candidates for
+review. Edits after the rebase use the rebased content as their preimage on
+paths without earlier edits. If the reflog cannot establish the rebase
+boundaries, capture uses the ordinary endpoint comparison.
 The implementation leaves the real index, branches, refs and Git objects alone.
 The workspace Git Changes panel continues to read the checkout directly, including
 edits from outside the active session. Observed writes coalesce cache
