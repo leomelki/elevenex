@@ -19,6 +19,11 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
+The task row shows an agent icon beside the title when its creating agent can
+close it, keeping the row on one line. The row's tooltip explains the badge and
+the icon has the accessible name "Temporary task".
+The badge clears when the user chooses **Keep open** in the task header.
+
 The connected sidebar shows same-task MCP delegates in their coding session's
 child disclosure. When an already nested conversation delegates, its new child
 appears alongside it to keep the outline two levels deep. Sidebar moves change

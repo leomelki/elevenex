@@ -856,9 +856,11 @@ it('keeps a temporary task open without changing the selected session', async ()
   await start();
   await store.selectSession({ taskId: '3', sessionId: '5' });
   expect(store.selectedTask()?.temporary).toBe(true);
+  expect(store.tasks()[0]?.temporary).toBe(true);
   await store.keepTaskOpen();
   expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledExactlyOnceWith('scope', 3);
   expect(store.selectedTask()?.temporary).toBeUndefined();
+  expect(store.tasks()[0]?.temporary).toBeUndefined();
   expect(store.selectedSession()?.id).toBe(5);
   await store.keepTaskOpen();
   expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledTimes(1);

@@ -166,6 +166,7 @@ export class WorkspaceStore {
   readonly taskRepositories = computed<readonly TaskRepository[]>(() => this.repositories().map(repo => ({ id: String(repo.id), name: repo.name, path: repo.path, base: this.defaultBranches().get(String(repo.id)) ?? repo.defaultBase ?? undefined })));
   readonly tasks = computed<readonly TaskOutline[]>(() => this.taskRecords().map(task => ({
     id: String(task.id), title: task.name, stage: workspaceTaskStage(task),
+    temporary: task.temporary,
     ...(this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && this.hasArchivedSessions(task.id) ? { archive: {
       sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ ...workspaceAgentRow(session), id: String(session.id), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
       loaded: this.archives.pages().get(task.id)?.loaded ?? false,

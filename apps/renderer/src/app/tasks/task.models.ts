@@ -142,6 +142,7 @@ export interface SubTask {
 export interface TaskOutline {
   readonly id: string;
   readonly title: string;
+  readonly temporary?: true;
   readonly sessions: readonly TaskSession[];
   /** Optional, independently paginated archived history supplied by the owner. */
   readonly archive?: TaskSessionArchive;
