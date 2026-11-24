@@ -45,9 +45,9 @@ async function checkWindow(profile, signal) {
   const portFile = join(profile, 'DevToolsActivePort');
   let port = 0;
   while (!port) {
-    // Windows GUI executables do not reliably expose the DevTools banner on stderr.
+    // The port file may be absent or locked while Chromium writes it on Windows.
     const contents = await readFile(portFile, { encoding: 'utf8', signal }).catch(error => {
-      if (error.code === 'ENOENT') return '';
+      if (error.code === 'ENOENT' || error.code === 'EBUSY') return '';
       throw error;
     });
     const match = /^(\d+)\r?\n\/devtools\/browser\//.exec(contents);

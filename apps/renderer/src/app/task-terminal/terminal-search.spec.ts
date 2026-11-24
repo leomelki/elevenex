@@ -1,8 +1,15 @@
 import { Terminal } from '@xterm/xterm';
 import { findTerminalMatches } from './terminal-search';
 
-vi.hoisted(() => { vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); });
-afterAll(() => vi.restoreAllMocks());
+vi.hoisted(() => {
+  // xterm subscribes to media query changes during module initialization.
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+});
+afterAll(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 async function withTerminal(data: string, check: (terminal: Terminal) => void): Promise<void> {
   const terminal = new Terminal({ cols: 10, rows: 4, scrollback: 2000 });
