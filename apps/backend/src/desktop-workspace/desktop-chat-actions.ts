@@ -263,7 +263,10 @@ export async function executeChatAction(
     }
     case 'permission-mode': {
       const mode = text(action.mode);
-      if (!provider.info.permissionModes?.includes(mode))
+      const available = provider.info.permissionModes ?? record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      ).permissionModes;
+      if (!Array.isArray(available) || !available.includes(mode))
         throw new BadRequestException('Unsupported permission mode.');
       await feature('setPermissionMode').setPermissionMode(sessionId, mode);
       break;

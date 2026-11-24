@@ -312,7 +312,8 @@
       [harnesses]="harnesses()"
       [agentLocked]="store.state()?.providerLocked !== false"
       [settingsDisabled]="
-        store.offline() || store.waitingPending() || !!store.uncertain() || !store.state()
+        store.offline() || store.waitingPending() || !!store.uncertain() || !store.state() ||
+        (store.state()?.provider === 'antigravity' && store.state()?.canInterrupt === true)
       "
       [settingsBusy]="!!store.busy() || store.loading() || modelCatalog.loading()"
       [modelsRefreshAvailable]="!!store.state()?.presetCatalogs"

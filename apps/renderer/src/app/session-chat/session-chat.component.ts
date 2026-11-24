@@ -441,16 +441,20 @@ export class SessionChatComponent {
       });
     }
   }
-  readonly permissions = computed<readonly PermissionChoice[]>(() =>
-    (this.store.state()?.permissionModes ?? []).map((id) => ({
+  readonly permissions = computed<readonly PermissionChoice[]>(() => {
+    const state = this.store.state();
+    return (state?.permissionModes ?? []).map((id) => ({
       id,
       detail:
         (
           {
             default: "Ask before the agent takes protected actions",
             acceptEdits: "Apply edits; ask before commands",
+            "accept-edits": "Approve workspace edits automatically",
             bypassPermissions: "Allow actions without permission prompts",
-            auto: "Use the harness’s automatic permission policy",
+            auto: state?.provider === "antigravity"
+              ? "Approve edits and run routine commands automatically"
+              : "Use the harness’s automatic permission policy",
             plan: "Read and propose before making changes",
             dontAsk: "Deny actions that need permission",
           } as Readonly<Record<string, string>>
@@ -460,15 +464,15 @@ export class SessionChatComponent {
           {
             default: "Ask first",
             acceptEdits: "Auto-edit",
+            "accept-edits": "Accept edits",
             bypassPermissions: "Full auto",
             auto: "Auto",
             plan: "Plan",
             dontAsk: "Do not ask",
           } as Readonly<Record<string, string>>
         )[id] ?? id,
-    })),
-    { equal: equalViewData },
-  );
+    }));
+  }, { equal: equalViewData });
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
       id: q.id,

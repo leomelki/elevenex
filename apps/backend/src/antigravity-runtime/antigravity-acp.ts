@@ -57,6 +57,8 @@ export interface AcpOption {
   values: OptionValue[];
 }
 
+const executionModes = new Set(['default', 'accept-edits', 'auto', 'plan']);
+
 export function acpText(value: unknown, limit = 1000): string {
   return typeof value === 'string' ? value.slice(0, limit) : '';
 }
@@ -68,9 +70,11 @@ export function acpList(value: unknown, limit = 256): unknown[] {
 export function sessionOptions(result: Record<string, unknown>): {
   model?: AcpOption;
   thought?: AcpOption;
+  mode?: AcpOption;
 } {
   let model: AcpOption | undefined;
   let thought: AcpOption | undefined;
+  let mode: AcpOption | undefined;
   for (const data of acpList(result.configOptions).map(acpObject)) {
     if (data.type !== 'select') continue;
     const configId = acpText(data.id);
@@ -97,6 +101,7 @@ export function sessionOptions(result: Record<string, unknown>): {
     if (data.category === 'model' || configId === 'model') model = option;
     if (data.category === 'thought_level' || configId === 'thinking_level')
       thought = option;
+    if (data.category === 'mode' || configId === 'mode') mode = option;
   }
   // Older ACP releases used models and session/set_model before config options.
   if (!model) {
@@ -115,7 +120,34 @@ export function sessionOptions(result: Record<string, unknown>): {
     if (values.length)
       model = { configId: '', current: acpText(models.currentModelId), values };
   }
-  return { model, thought };
+  // Some CLI versions advertise the same selector with the older modes field.
+  if (!mode) {
+    const modes = acpObject(result.modes);
+    if (Array.isArray(modes.availableModes)) {
+      mode = {
+        configId: '',
+        current: acpText(modes.currentModeId),
+        values: acpList(modes.availableModes).map((value) => {
+          const data = acpObject(value);
+          const id = acpText(data.id);
+          return {
+            id,
+            displayName: acpText(data.name) || id,
+            description: acpText(data.description, 4000),
+          };
+        }),
+      };
+    }
+  }
+  if (mode) {
+    const seen = new Set<string>();
+    mode.values = mode.values.filter(({ id }) => {
+      if (!executionModes.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+  return { model, thought, mode };
 }
 
 const toolKinds = new Map<string, AgentToolKind>([

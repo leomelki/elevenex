@@ -234,7 +234,7 @@ export class DesktopChatService implements OnModuleDestroy {
       ...chatState(
         raw,
         session.activeAgentProvider,
-        provider.info.permissionModes ?? [],
+        provider.info.permissionModes,
       ),
       work,
       activity: legacyActivity(work),
@@ -739,7 +739,11 @@ export class DesktopChatService implements OnModuleDestroy {
 
   async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {
     await this.target(taskId, sessionId);
-    return chatCatalog(this.registry, this.settings, providerId, refresh);
+    const catalog = await chatCatalog(this.registry, this.settings, providerId, refresh);
+    // Antigravity discovers mode choices along with models on the same ACP probe.
+    if (providerId === 'antigravity' && this.feeds.get(sessionId)?.provider.info.id === providerId)
+      this.invalidate(sessionId);
+    return catalog;
   }
 
   private async rememberConfiguration(sessionId: number): Promise<void> {

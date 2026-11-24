@@ -63,7 +63,7 @@ interface Entry {
   selection: Selection;
   transport?: AcpStdio;
   options: ReturnType<typeof sessionOptions>;
-  defaults: { model?: string; thought?: string };
+  defaults: { model?: string; thought?: string; mode?: string };
   imagePrompts: boolean;
   decisions: AntigravityDecisions;
   pendingPrompts: ClaudePendingPrompt[];
@@ -158,6 +158,17 @@ export class AntigravityRuntimeProvider
     return { model: defaults.model, reasoningEffort: defaults.reasoningEffort };
   }
 
+  private currentSelection(session: Session): Selection {
+    // Read immediately before merging a change or reserving a turn. Another
+    // window can save preferences while findOne is still resolving.
+    const current = this.db
+      .select({ selection: sessions.antigravitySelection })
+      .from(sessions)
+      .where(this.activeSession(session.id))
+      .get();
+    return current?.selection ?? this.selection(session);
+  }
+
   private modelList(options: Entry['options']) {
     const reasoningEfforts = options.thought?.values.map((value) => value.id);
     return (options.model?.values ?? []).map((model) => ({
@@ -193,6 +204,11 @@ export class AntigravityRuntimeProvider
     const options = entry?.options.model
       ? entry.options
       : (this.catalog.current()?.options ?? {});
+    const mode = this.modeOption(entry);
+    const permissionModes = mode?.values.map(({ id }) => id) ?? [];
+    const preferredMode = selection.mode === null
+      ? entry?.defaults.mode ?? mode?.current
+      : selection.mode ?? mode?.current;
     const phase = this.phase(entry);
     const decision = entry?.decisions.current;
     return {
@@ -210,6 +226,11 @@ export class AntigravityRuntimeProvider
       selectedModel: selection.model ?? options.model?.current ?? null,
       reasoningEffort:
         selection.reasoningEffort ?? options.thought?.current ?? null,
+      permissionMode:
+        permissionModes.find((id) => id === preferredMode) ??
+        permissionModes.find((id) => id === mode?.current) ??
+        null,
+      permissionModes,
       availableModels: this.modelList(options),
       pendingPermissionRequest:
         decision?.kind === 'permission' ? decision.view : null,
@@ -242,16 +263,30 @@ export class AntigravityRuntimeProvider
     return this.setSelection(sessionId, { reasoningEffort });
   }
 
+  async setPermissionMode(sessionId: number, mode: string | null) {
+    return this.setSelection(sessionId, { mode });
+  }
+
+  private modeOption(entry?: Entry) {
+    return entry?.options.model || entry?.options.mode
+      ? entry.options.mode
+      : this.catalog.mode;
+  }
+
   private async setSelection(sessionId: number, patch: Selection) {
     const session = await this.sessionService.findOne(sessionId);
     this.assertInteractiveSession(session);
-    if (this.entries.get(sessionId)?.run)
+    const entry = this.entries.get(sessionId);
+    if (entry?.run)
       throw new ConflictException(
         'Wait for Antigravity to finish before changing its configuration.',
       );
-    const selection = { ...this.selection(session), ...patch };
-    const options =
-      this.entries.get(sessionId)?.options ?? this.catalog.current()?.options;
+    const options = entry?.options ?? this.catalog.current()?.options;
+    if (
+      patch.mode != null &&
+      !this.modeOption(entry)?.values.some(({ id }) => id === patch.mode)
+    )
+      throw new BadRequestException('This Antigravity mode is unavailable.');
     if (
       patch.model &&
       options?.model &&
@@ -268,6 +303,7 @@ export class AntigravityRuntimeProvider
       throw new BadRequestException(
         'This Antigravity thinking level is unavailable.',
       );
+    const selection = { ...this.currentSelection(session), ...patch };
     const updated = this.db
       .update(sessions)
       .set({ antigravitySelection: selection })
@@ -277,7 +313,6 @@ export class AntigravityRuntimeProvider
       throw new ConflictException(
         'The Antigravity session changed. Refresh the conversation.',
       );
-    const entry = this.entries.get(sessionId);
     if (entry) entry.selection = selection;
     this.emitState(sessionId);
     return this.getRuntimeState(sessionId);
@@ -371,7 +406,7 @@ export class AntigravityRuntimeProvider
     const entry: Entry = {
       id: session.id,
       nativeId: session.antigravitySessionId,
-      selection: this.selection(session),
+      selection: this.currentSelection(session),
       options: {},
       defaults: {},
       imagePrompts: false,
@@ -466,6 +501,7 @@ export class AntigravityRuntimeProvider
     entry.defaults = {
       model: entry.options.model?.current,
       thought: entry.options.thought?.current,
+      mode: entry.options.mode?.current,
     };
     if (isNewSession) this.catalog.observe(entry.options);
     return transport;
@@ -474,7 +510,7 @@ export class AntigravityRuntimeProvider
   private async configure(
     entry: Entry,
     transport: AcpStdio,
-    key: 'model' | 'thought',
+    key: 'model' | 'thought' | 'mode',
     value?: string | null,
   ) {
     if (value === undefined) return;
@@ -483,7 +519,7 @@ export class AntigravityRuntimeProvider
     if (!selected || selected === option?.current) return;
     if (!option?.values.some((item) => item.id === selected))
       throw new BadRequestException(
-        `The selected Antigravity ${key === 'model' ? 'model' : 'thinking level'} is unavailable.`,
+        `The selected Antigravity ${key === 'thought' ? 'thinking level' : key} is unavailable. Choose another before sending.`,
       );
     const result = option.configId
       ? await transport.request('session/set_config_option', {
@@ -491,16 +527,24 @@ export class AntigravityRuntimeProvider
           configId: option.configId,
           value: selected,
         })
-      : await transport.request('session/set_model', {
-          sessionId: entry.nativeId,
-          modelId: selected,
-        });
+      : await transport.request(
+          key === 'mode' ? 'session/set_mode' : 'session/set_model',
+          {
+            sessionId: entry.nativeId,
+            [key === 'mode' ? 'modeId' : 'modelId']: selected,
+          },
+        );
     const next = sessionOptions(result);
+    if (key === 'mode' && option.configId && next.mode?.current !== selected)
+      throw new BadRequestException(
+        'Antigravity did not activate the selected mode. Choose another before sending.',
+      );
     entry.options = {
       ...entry.options,
       [key]: { ...option, current: selected },
       ...(next.model ? { model: next.model } : {}),
       ...(next.thought ? { thought: next.thought } : {}),
+      ...(next.mode ? { mode: next.mode } : {}),
     };
   }
 
@@ -568,6 +612,7 @@ export class AntigravityRuntimeProvider
         'thought',
         entry.selection.reasoningEffort,
       );
+      await this.configure(entry, transport, 'mode', entry.selection.mode);
       if (images?.length && !entry.imagePrompts)
         throw new BadRequestException(
           'This Antigravity runtime does not accept images.',
@@ -699,6 +744,11 @@ export class AntigravityRuntimeProvider
           ),
         ),
       };
+    } else if (update.sessionUpdate === 'current_mode_update') {
+      const mode = entry.options.mode;
+      const current = acpText(update.currentModeId);
+      if (!mode?.values.some(({ id }) => id === current)) return;
+      entry.options = { ...entry.options, mode: { ...mode, current } };
     } else if (!entry.turn?.update(update)) return;
     // Keep token bursts from waking every desktop stream once per token.
     entry.updateTimer ??= setTimeout(() => {

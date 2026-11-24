@@ -82,7 +82,7 @@ export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, 
 export function chatState(
   raw: Record<string, unknown>,
   provider: string,
-  permissionModes: readonly string[],
+  permissionModes?: readonly string[],
 ): Omit<SessionChatState, 'activity'> {
   const permission = record(raw.pendingPermissionRequest),
     usage = record(raw.contextUsage);
@@ -170,7 +170,10 @@ export function chatState(
     fast: raw.fastMode === true,
     plan: raw.planMode === true,
     permissionMode: nullable(raw.permissionMode),
-    permissionModes: permissionModes.slice(0, 20),
+    permissionModes: permissionModes?.slice(0, 20) ??
+      list(raw.permissionModes).slice(0, 20).filter(
+        (mode): mode is string => typeof mode === 'string' && /^[\w-]{1,80}$/.test(mode),
+      ),
     context: raw.contextUsage
       ? {
           tokens: count(usage.totalTokens),

@@ -1325,6 +1325,37 @@ describe("connected subscription quota", () => {
     expect(root.querySelector("ex-agent-plan-meter")).toBeNull();
     expect(root.querySelector("ex-agent-usage-notice .notice")).toBeNull();
   });
+  it("offers the reported Antigravity modes and disables changes during a turn", async () => {
+    const antigravity = {
+      ...state,
+      provider: "antigravity",
+      controls: { plan: false, reasoning: true, fast: false },
+      permissionMode: "default",
+      permissionModes: ["default", "accept-edits", "auto", "plan"],
+    };
+    const { fixture, root, bridge, publish, complete } = setup([], antigravity);
+    await settle(fixture);
+    const trigger = root.querySelector<HTMLButtonElement>("ex-permission-picker > button")!;
+    expect(trigger.textContent).toContain("Ask first");
+    trigger.click();
+    await settle(fixture);
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Agent permissions"] .choice')];
+    expect(choices.map(choice => choice.querySelector("strong")?.textContent)).toEqual([
+      "Ask first", "Accept edits", "Auto", "Plan",
+    ]);
+    choices[2]!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith("scope", expect.objectContaining({
+      action: { type: "permission-mode", mode: "auto" },
+    }));
+    publish({
+      taskId: 1, sessionId: 2, cursor: "running", reset: false, items: [], events: [], before: null,
+      state: { ...antigravity, permissionMode: "auto", phase: "running", canInterrupt: true },
+    });
+    complete();
+    await settle(fixture);
+    expect(trigger.textContent).toContain("Auto");
+    expect(trigger.disabled).toBe(true);
+  });
 });
 
 

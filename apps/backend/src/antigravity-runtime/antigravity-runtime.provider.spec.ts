@@ -203,6 +203,66 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect(spawn).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { env: { ACP_FIXTURE_AUTO: '1' }, chosen: 'auto' },
+    { env: { ACP_FIXTURE_LEGACY_MODES: '1' }, chosen: 'accept-edits' },
+  ])('applies $chosen on the first turn and after resuming', async ({ env, chosen }) => {
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({ ...process.env, ...env });
+    const provider = makeProvider();
+    await provider.getModelCatalog();
+    expect(await provider.getRuntimeState(sessionId)).toMatchObject({
+      permissionMode: 'default',
+      permissionModes: chosen === 'auto'
+        ? ['default', 'accept-edits', 'plan', 'auto']
+        : ['default', 'accept-edits', 'plan'],
+    });
+    await expect(provider.setPermissionMode(sessionId, 'bypassPermissions')).rejects.toThrow('unavailable');
+    if (chosen !== 'auto')
+      await expect(provider.setPermissionMode(sessionId, 'auto')).rejects.toThrow('unavailable');
+    await Promise.all([
+      provider.setSelectedModel(sessionId, 'other-model'),
+      provider.setPermissionMode(sessionId, chosen),
+    ]);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(await provider.getRuntimeState(sessionId)).toMatchObject({
+      selectedModel: 'other-model',
+      permissionMode: chosen,
+    });
+    const reportMode = (runtime: AntigravityRuntimeProvider) => runtime.submitPrompt(
+      sessionId, 'report mode', undefined, undefined, { ...request, waitForCompletion: true },
+    );
+    await reportMode(provider);
+    await provider.cleanupSession(sessionId);
+    const reconnected = makeProvider();
+    await reportMode(reconnected);
+    expect((await reconnected.getHistory(sessionId)).filter(item => item.kind === 'assistant')
+      .map(item => item.content)).toEqual([`new in ${chosen}`, `resumed in ${chosen}`]);
+    await reconnected.setPermissionMode(sessionId, 'plan');
+    await reportMode(reconnected);
+    expect((await reconnected.getHistory(sessionId)).at(-1)?.content).toBe('resumed in plan');
+  });
+
+  it.each([
+    { connectEnv: { ACP_FIXTURE_AUTO: '1', ACP_FIXTURE_IGNORE_MODE: '1' }, error: 'did not activate the selected mode' },
+    { connectEnv: {}, error: 'selected Antigravity mode is unavailable' },
+  ])('does not send a prompt when Antigravity reports that it $error', async ({ connectEnv, error }) => {
+    const provider = makeProvider();
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({
+      ...process.env, ACP_FIXTURE_AUTO: '1',
+    });
+    await provider.getModelCatalog();
+    await provider.setPermissionMode(sessionId, 'auto');
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({ ...process.env, ...connectEnv });
+    await expect(provider.submitPrompt(sessionId, 'report mode', undefined, undefined, request))
+      .rejects.toThrow(error);
+    expect(await provider.getHistory(sessionId)).toEqual([]);
+    await provider.setPermissionMode(sessionId, 'default');
+    await provider.submitPrompt(sessionId, 'report mode', undefined, undefined, {
+      ...request, waitForCompletion: true,
+    });
+    expect((await provider.getHistory(sessionId)).at(-1)?.content).toBe('resumed in default');
+  });
+
   it('reports context, the account tier and model quota until that model completes again', async () => {
     const provider = makeProvider();
     await provider.submitPrompt(

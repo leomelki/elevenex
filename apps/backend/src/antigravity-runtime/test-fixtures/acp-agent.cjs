@@ -13,15 +13,28 @@ const permission = {
   locations: [{ path: 'README.md' }],
 };
 let promptId;
-let mode = 'new';
+let conversation = 'new';
 let model = 'default-model';
+let mode = 'default';
+const modes = ['default', 'accept-edits', 'plan', ...(process.env.ACP_FIXTURE_AUTO ? ['auto'] : [])];
+const legacyModes = process.env.ACP_FIXTURE_LEGACY_MODES === '1';
+const modeOption = () => ({
+  id: 'mode', type: 'select', category: 'mode', currentValue: mode,
+  options: modes.map(value => ({ value, name: value })),
+});
 const options = () => [{
   id: 'model', type: 'select', category: 'model', currentValue: model,
   options: [{ value: 'default-model', name: 'Default model' }, { value: 'other-model', name: 'Other model' }],
 }, {
   id: 'thinking_level', type: 'select', category: 'thought_level', currentValue: 'high',
   options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
-}];
+}, ...(legacyModes ? [] : [modeOption()])];
+const configuration = () => ({
+  configOptions: options(),
+  ...(legacyModes ? {
+    modes: { currentModeId: mode, availableModes: modes.map(id => ({ id, name: id })) },
+  } : {}),
+});
 
 input.on('line', line => {
   const message = JSON.parse(line);
@@ -39,7 +52,7 @@ input.on('line', line => {
       }
       // Mirrors the CLI: account tier in _meta, then an initial context report.
       result(id, {
-        sessionId, configOptions: options(),
+        sessionId, ...configuration(),
         _meta: { antigravity: { tier: { name: 'Antigravity Starter Quota', id: 'starter' } } },
       });
       update({ sessionUpdate: 'usage_update', used: 0, size: 1048576 });
@@ -50,12 +63,20 @@ input.on('line', line => {
       break;
     case 'session/resume':
       if (params.sessionId !== sessionId) throw new Error('Wrong session to resume');
-      mode = 'resumed';
-      result(id, { configOptions: options() });
+      conversation = 'resumed';
+      result(id, configuration());
       break;
     case 'session/set_config_option':
-      model = params.value;
+      if (params.configId === 'mode') {
+        if (legacyModes || !modes.includes(params.value)) throw new Error('Unexpected config mode');
+        if (!process.env.ACP_FIXTURE_IGNORE_MODE) mode = params.value;
+      } else if (params.configId === 'model') model = params.value;
       result(id, { configOptions: options() });
+      break;
+    case 'session/set_mode':
+      if (!legacyModes || !modes.includes(params.modeId)) throw new Error('Unexpected legacy mode');
+      mode = params.modeId;
+      result(id, {});
       break;
     case 'session/prompt': {
       promptId = id;
@@ -74,7 +95,7 @@ input.on('line', line => {
         send({ id, error: { code: -32603, message:
           'RESOURCE_EXHAUSTED: You have exhausted your capacity on this model. Your quota will reset after 2h30m0s.' } });
       } else {
-        text(`${mode}, ${model}: ${prompt}`);
+        text(prompt === 'report mode' ? `${conversation} in ${mode}` : `${conversation}, ${model}: ${prompt}`);
         update({ sessionUpdate: 'usage_update', used: 12000, size: 1048576 });
         result(id, { stopReason: 'end_turn' });
       }

@@ -72,7 +72,11 @@ export const sessions = sqliteTable(
     opencodeSessionId: text('opencode_session_id').default('-1'),
     antigravitySessionId: text('antigravity_session_id'),
     antigravitySelection: text('antigravity_selection', { mode: 'json' })
-      .$type<{ model?: string | null; reasoningEffort?: string | null }>(),
+      .$type<{
+        model?: string | null;
+        reasoningEffort?: string | null;
+        mode?: string | null;
+      }>(),
     hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
       mode: 'boolean',
     })

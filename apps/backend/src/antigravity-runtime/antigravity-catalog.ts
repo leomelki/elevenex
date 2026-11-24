@@ -37,6 +37,11 @@ export class AntigravityCatalog {
       : undefined;
   }
 
+  /** Keep the last advertised choices visible after the discovery TTL elapses. */
+  get mode() {
+    return this.cached?.value.options.mode;
+  }
+
   observe(options: Catalog['options']): void {
     if (options.model?.values.length) this.cache({ options });
   }

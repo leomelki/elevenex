@@ -17,7 +17,7 @@ without redispatching an interrupted turn.
 `AntigravityTurn` projects ACP updates to stable transcript items.
 `AntigravityDecisions` presents native permission options and form requests in
 order, and cancels them on stop or disposal. Tool actions stay inside the CLI.
-The session row retains the native ID and session model preferences. SQLite
+The session row retains the native ID and session model and mode preferences. SQLite
 stores the user receipt at dispatch and finalizes that turn’s transcript in the
 same row at settlement. Desktop history reads do not spawn the CLI.
 The shared turn-change service supplies the worktree review.
@@ -27,6 +27,15 @@ ACP session in a temporary directory. Discovery sends no prompts, coalesces
 concurrent reads, closes the session, and caches the advertised defaults for
 settings and new conversations. Each task conversation still receives its
 own options when it connects.
+
+The same catalog probe discovers execution modes. The composer offers the
+CLI's advertised choices, including Auto on eligible installations. A selection
+is saved in the session's existing JSON preferences and applied via ACP before
+each prompt as needed, including after resuming a native session. If the CLI
+no longer offers or declines to activate the selected mode, the turn stops
+before sending the prompt. Antigravity evaluates tool permissions in the
+selected mode and Elevenex relays the permission requests the CLI sends.
+
 ## Usage and quota
 
 `antigravity-usage.ts` reads only what the official CLI reports over ACP:
@@ -53,6 +62,6 @@ nullable `remainingPercentage` accepts them when a supported source exists.
 The engine does not read the CLI's credentials or call Google's internal quota
 endpoints.
 
-Follow-ups are queued per conversation. Plan mode, native steering, rewind,
+Follow-ups are queued per conversation. Native steering, rewind,
 and separate native subagent transcripts are outside this provider’s desktop
 capabilities.

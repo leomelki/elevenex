@@ -40,7 +40,14 @@ Antigravity owns authentication, tool execution and its native helpers. Elevenex
 relays messages you submit in desktop chat, renders decisions, and restores
 the conversation after reconnecting. Follow-ups wait in the queue. The model
 picker discovers available models and their advertised thinking levels before
-the first message. Google’s
+the first message. The composer’s permissions menu shows the execution modes
+reported by the installed CLI. Choose **Ask first**, **Accept edits**, or
+**Plan** when offered. **Auto** appears when Antigravity supports it for the
+account and terminal sandbox on the machine running the engine. Elevenex
+saves the choice per conversation and applies it before the next turn.
+See [Antigravity execution modes](https://antigravity.google/docs/cli/modes).
+
+Google’s
 [interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
 distinguishes this workflow from third-party agent delegation. Antigravity turns
 in Elevenex require a desktop chat submission, including when using an API key.

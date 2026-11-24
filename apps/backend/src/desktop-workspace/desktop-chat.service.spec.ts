@@ -36,7 +36,7 @@ describe('selected session chat', () => {
     live: AgentTranscriptItem[],
     status: string;
   const runtime = Object.assign(new EventEmitter(), {
-    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'], capabilities: { multimodalPrompts: true, rewindConversation: true } },
+    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'] as string[] | undefined, capabilities: { multimodalPrompts: true, rewindConversation: true } },
     getRuntimeState: jest.fn(),
     getHistory: jest.fn(),
     onClientAttached: jest.fn(),
@@ -49,6 +49,7 @@ describe('selected session chat', () => {
     setReasoningEffort: jest.fn(),
     setFastMode: jest.fn(),
     setSelectedModel: jest.fn(),
+    setPermissionMode: jest.fn(),
     stopBackgroundTask: jest.fn(),
     stopSubagent: jest.fn(),
   });
@@ -57,6 +58,7 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  const listModelCatalogs = jest.fn();
 
   it('resends one saved prompt at its native anchor, retaining earlier history and attachment context', async () => {
     const original = { ...item('bubble', 'Original wording'), kind: 'user' as const, sourceMessageId: 'provider-anchor',
@@ -547,6 +549,8 @@ describe('selected session chat', () => {
     jest.clearAllMocks();
     reviewDetails.mockReset();
     rememberAgentConfig.mockReset().mockResolvedValue(undefined);
+    listModelCatalogs.mockReset();
+    runtime.info = { ...runtime.info, id: 'codex', displayName: 'Codex', permissionModes: ['default'] };
     started.mockReturnValue(true);
     advertised.mockReturnValue([
       runtime.info,
@@ -579,7 +583,7 @@ describe('selected session chat', () => {
         { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
           provide: SettingsService,
-          useValue: { rememberAgentConfig, getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
+          useValue: { rememberAgentConfig, getAgentProviderDefaults: () => ({}), getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
         },
         {
           provide: SessionsService,
@@ -596,6 +600,7 @@ describe('selected session chat', () => {
           provide: AgentRuntimeRegistryService,
           useValue: {
             listProviders: advertised,
+            listModelCatalogs,
             getProvider: (id: string) => {
               if (
                 !advertised().some(
@@ -1297,6 +1302,38 @@ describe('selected session chat', () => {
   });
   it('rejects a catalog read for a conversation belonging to another task before probing a harness', async () => {
     await expect(chat.catalog(9, 2, 'claude')).rejects.toThrow('does not belong');
+  });
+  it('publishes session mode choices after Antigravity catalog discovery and routes selections', async () => {
+    runtime.info = { ...runtime.info, id: 'antigravity', displayName: 'Antigravity', permissionModes: undefined };
+    advertised.mockReturnValue([runtime.info]);
+    session.mockImplementation(async () => ({
+      workspaceId: 1, surface: 'session', status, activeAgentProvider: 'antigravity',
+    }));
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle' });
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined,
+      AbortSignal.any([abort.signal, AbortSignal.timeout(2_000)]));
+    try {
+      const initial = await stream.next();
+      expect(initial.value?.page.state?.permissionModes).toEqual([]);
+      listModelCatalogs.mockImplementationOnce(async () => {
+        runtime.getRuntimeState.mockResolvedValue({
+          runPhase: 'idle', permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'plan'],
+        });
+        return [{ displayName: 'Antigravity', models: [] }];
+      });
+      await chat.catalog(1, 2, 'antigravity');
+      expect((await stream.next()).value?.page.state).toMatchObject({
+        permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'plan'],
+      });
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'auto' })).rejects.toThrow('Unsupported permission mode');
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'accept-edits' })).resolves.toEqual({ accepted: true });
+      expect(runtime.setPermissionMode.mock.calls).toEqual([[2, 'accept-edits']]);
+    } finally {
+      abort.abort();
+      await stream.return(undefined);
+    }
   });
   it('advertises registered harnesses and reads an unstarted session without initializing a conversation', async () => {
     started.mockReturnValue(false);
