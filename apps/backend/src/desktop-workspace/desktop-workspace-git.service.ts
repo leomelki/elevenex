@@ -109,6 +109,7 @@ export class DesktopWorkspaceGitService {
       running: preview.agents,
       terminals: preview.terminals,
       actions: preview.actions,
+      ...(preview.apps ? { apps: preview.apps } : {}),
       unpushed: git?.ahead ?? 0,
       uncommitted: git?.files ?? 0,
     };

@@ -43,6 +43,7 @@ export class RemoteConnection {
   private attemptInteractive = false;
   private disposed = false;
   private challenge: { value: RemoteChallenge; owner: number; resolve: (value: string | null) => void } | undefined;
+  private remoteShell?: 'posix' | 'windows';
   private transport: RemoteTransport | undefined;
   private backendForward: Awaited<ReturnType<RemoteTransport['forward']>> | undefined;
   private forcePendingUpdate: (() => void) | undefined;
@@ -187,7 +188,7 @@ export class RemoteConnection {
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
+          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
@@ -211,6 +212,7 @@ export class RemoteConnection {
           },
         });
         if (signal.aborted) { await transport.close(); signal.throwIfAborted(); }
+        this.remoteShell = transport.remoteShell;
         this.transport = transport;
         this.backendForward = await transport.forward(0, 0);
         const url = `http://127.0.0.1:${this.backendForward.port}`;

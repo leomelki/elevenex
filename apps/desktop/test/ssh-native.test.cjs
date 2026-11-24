@@ -95,7 +95,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   const installation = join(remoteRoot, 'runtimes', `${release.tag}-${release.target}`);
   await mkdir(join(installation, 'backend/node/bin'), { recursive: true }); await symlink(process.execPath, join(installation, 'backend/node/bin/node'));
   await writeFile(join(installation, 'installation.sha256'), 'verified-fixture');
-  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http');const server=http.createServer((req,res)=>{if(req.url==='/agent')require('child_process').execFile('ssh-add',['-l'],{env:process.env},(error,stdout,stderr)=>res.end(stdout+stderr));else res.end(JSON.stringify({backendSha:${JSON.stringify(version)}}));});server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
+  await writeFile(join(installation, 'backend/main.cjs'), `const http=require('http');const server=http.createServer((req,res)=>{if(req.url==='/agent')require('child_process').execFile('ssh-add',['-l'],{env:process.env},(error,stdout,stderr)=>res.end(stdout+stderr));else if(req.url==='/api/info')res.end(JSON.stringify({backendSha:${JSON.stringify(version)}}));else res.writeHead(404).end();});server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
   const options = { host: { id: 'fixture', name: 'fixture', host: 'target', configFile: config }, root, helper: require.resolve('../dist/remote/askpass-helper.js'),
     release, interactive: true, ask: async value => value.kind === 'credential' ? 'fixture-passphrase' : 'yes', progress: () => undefined };
   const coldStart = performance.now(); const initialRuntime = await connectRemote({ ...options, signal: AbortSignal.timeout(10000) }); transports.push(initialRuntime);
@@ -224,7 +224,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   await mkdir(join(updatedInstallation, 'backend/node/bin'), { recursive: true });
   await symlink(process.execPath, join(updatedInstallation, 'backend/node/bin/node'));
   await writeFile(join(updatedInstallation, 'installation.sha256'), 'verified-fixture');
-  await writeFile(join(updatedInstallation, 'backend/main.cjs'), `const http=require('http');const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${JSON.stringify(updatedVersion)}})));server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
+  await writeFile(join(updatedInstallation, 'backend/main.cjs'), `const http=require('http');const server=http.createServer((req,res)=>req.url==='/api/info'?res.end(JSON.stringify({backendSha:${JSON.stringify(updatedVersion)}})):res.writeHead(404).end());server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);process.on('SIGTERM',()=>server.close(()=>process.exit(0)));`);
   const updated = await connectRemote({ ...options, release: updatedRelease, host: { ...options.host, host: 'jump' }, signal: AbortSignal.timeout(10000) }); transports.push(updated);
   const updatedBackend = await updated.forward(0, 0);
   assert.notEqual(updated.instance, initialRuntime.instance);

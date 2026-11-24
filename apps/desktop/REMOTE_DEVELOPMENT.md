@@ -111,12 +111,29 @@ receive cloned context snapshots during a download or typing burst.
 
 ## Setup and remote work lifetime
 
-The host must provide a POSIX shell, uname, Git, tar, gzip, head with `-c`,
-mktemp, and sha256sum or shasum. Supported remote targets are **Linux glibc and macOS,
-x64/arm64**, subject to the OS/libc requirements of the selected release's
-bundled Node and native modules. Alpine/musl and Windows SSH servers need a
-different runtime/bootstrap and are rejected. Home paths longer than the Unix
-socket limit require a shorter remote home. No administrator access is required.
+Linux glibc and macOS hosts use a POSIX shell, uname, Git, tar, gzip, head with
+`-c`, mktemp, and sha256sum or shasum. The release must ship a matching
+x64/arm64 backend with a bundled Node and native modules compatible with the
+host. Alpine/musl requires a different runtime. Home paths longer than the
+Unix socket limit require a shorter remote home.
+
+Windows SSH hosts use Windows PowerShell 5.1, built-in tar.exe, Task Scheduler,
+and Git on PATH. The desktop transfers the validated Windows x64/arm64 archive
+over SSH on the first connection. The Windows host verifies the size and digest
+before publishing the runtime in the account's private
+`%LOCALAPPDATA%\Elevenex\desktop-remote` directory. Checkout builds use
+`desktop-remote\dev\<namespace>`. Reparse points and unexpected permissions
+on runtime paths can prevent startup.
+
+The SSH user must also be signed in to a Windows graphical session to start
+the engine. Setup registers an on-demand **Elevenex Desktop <user SID>
+<production or development namespace>** task with a limited interactive token.
+It stores no password and has no login or startup trigger. The machine bridge
+uses an authenticated private pipe. This registration is specific to that Windows
+account and namespace. To remove it, finish or stop owned work first, close
+the machine connection, and delete the corresponding task in Windows Task
+Scheduler. The runtime root also contains user data and task history. Keep or
+back up those files when removing cached binaries.
 
 Repository operations use the remote machine's Git and its existing authentication
 and configuration. Current, maintained Git is the primary performance and
@@ -135,7 +152,7 @@ that compiler; agent-only background restoration does not compile it. Windows/Li
 verification and release-platform certification remain outstanding.
 
 The selected desktop release's `elevenex-backend-<target>.tar.gz` and checksum are
-first downloaded on the **server**, when its PATH provides Node 22+. This optional
+first downloaded on a **POSIX server**, when its PATH provides Node 22+. This optional
 installer receives the same HTTPS host/redirect allowlist, bounded download and
 safe archive validators as the client. It tries three times, each bounded to 45
 seconds, with one- and two-second backoff. It validates checksums, paths, entry

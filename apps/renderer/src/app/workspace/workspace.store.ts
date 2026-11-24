@@ -16,6 +16,7 @@ import { workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } f
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
+import { WorkspaceAppReveal } from './workspace-app-reveal';
 import { WorkspaceResume } from './workspace-resume';
 import { WorkspaceRestoration, projectWindowCursor, type RestoredTaskWindow } from './workspace-restoration';
 
@@ -56,6 +57,12 @@ export class WorkspaceStore {
   private readonly chatStreamScope = signal<string | null>(null);
   readonly chatStreamAvailable = computed(() => !!this.chosen() && this.chosen()?.scopeId === this.chatStreamScope());
   readonly hierarchy = new WorkspaceSessionHierarchy();
+  readonly taskAppsAvailable = signal(false);
+  readonly appLink = signal<(WorkspaceSelection & { readonly runId: string }) | null>(null);
+  private showingWorkspace = false;
+  private readonly appReveal = new WorkspaceAppReveal(this.document, () =>
+    this.showingWorkspace && !this.offline() && !this.selectedCreation() && !this.dialogOpen() ? this.selected() : null,
+    target => this.openApp(target), () => { if (this.taskAppsAvailable()) this.observer?.restartWait(); });
   readonly sessionNestingAvailable = signal(false);
   private readonly sessionNestingOrderAvailable = signal(false);
   readonly sessionArchiveAvailable = signal(false);
@@ -212,6 +219,10 @@ export class WorkspaceStore {
   private projectCompletion: { readonly scope: string; readonly projectId: number } | null = null;
 
   constructor() {
+    effect(() => {
+      this.selected(); this.selectedCreation(); this.dialogOpen();
+      if (this.taskAppsAvailable()) untracked(() => { this.appReveal.reset(); this.observer?.restartWait(); });
+    });
     const stopBrowserReveal = this.bridge.onTaskBrowserRevealTask?.(target => { if (this.scopeId() === target.scopeId && !this.offline()) void this.revealBrowserTask(target.taskId); });
     inject(DestroyRef).onDestroy(() => stopBrowserReveal?.());
     effect(() => { const saved = this.journal?.restored(); if (saved) untracked(() => { this.taskOutbox.restore(saved.tasks); this.sessionOutbox.restore(saved.sessions ?? []); }); });
@@ -233,7 +244,10 @@ export class WorkspaceStore {
             const result = await this.bridge.workspaceRevision(next);
             if (result.ok) this.applyCapabilities(next, result.value);
             return result;
-          }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } }, { wait: (after, requestId) => this.bridge.workspaceWait(next, { after, requestId }), cancel: requestId => this.bridge.workspaceCancelWait(next, requestId) });
+          }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } }, { wait: (after, requestId) => {
+            const wait = () => this.bridge.workspaceWait(next, { after, requestId });
+            return this.taskAppsAvailable() ? this.appReveal.wait(next, after, () => this.bridge.workspaceRevision(next), wait) : wait();
+          }, cancel: requestId => this.bridge.workspaceCancelWait(next, requestId) });
         }
       });
     });
@@ -242,7 +256,7 @@ export class WorkspaceStore {
       if (!scope || !environment || this.restoring() || this.loading() || this.busy()) return;
       this.saveView(scope, environment);
     });
-    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); this.stopBranchSearch(); this.observer?.dispose(); });
+    inject(DestroyRef).onDestroy(() => { this.appReveal.dispose(); this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); this.stopBranchSearch(); this.observer?.dispose(); });
   }
 
   private suspend(): void {
@@ -268,7 +282,9 @@ export class WorkspaceStore {
     this.scopeId.set(scope);
   }
 
-  connect(machine: Machine, active: boolean): void {
+  connect(machine: Machine, active: boolean, showingWorkspace = active): void {
+    if (this.showingWorkspace !== showingWorkspace) this.appReveal.reset();
+    this.showingWorkspace = showingWorkspace;
     if (!active || this.machineState()?.id !== machine.id) this.saveBeforeExit();
     const identity = JSON.stringify([machine.id, machine.address, machine.key]);
     if (this.machineIdentity && this.machineIdentity !== identity) { this.reset(null); this.outbox?.clear(); this.taskOutbox.clear(); this.sessionOutbox.clear(); }
@@ -288,8 +304,16 @@ export class WorkspaceStore {
     }
   }
 
+  openApp(link: WorkspaceSelection & { readonly runId: string }): void {
+    const selected = this.selected();
+    if (!this.valid(link.scopeId) || this.offline() || selected?.scopeId !== link.scopeId ||
+      selected.taskId !== link.taskId || selected.sessionId !== link.sessionId) return;
+    this.appLink.set(link);
+    this.selectPanel('apps');
+    this.panelOpen.set(true);
+  }
   selectPanel(panel: string): void {
-    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser') this.panel.set(panel);
+    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser' || panel === 'apps') this.panel.set(panel);
   }
 
   async refresh(): Promise<void> {
@@ -1024,11 +1048,11 @@ export class WorkspaceStore {
     if (result) this.detail.set(result);
     if (this.scopeId() === scope) this.busy.set(false);
   }
-  async closeTask(confirmStop = false): Promise<void> {
+  async closeTask(confirmStop = false, confirmedApps = 0): Promise<void> {
     const task = this.selectedTask(), scope = this.scopeId(), selection = this.chosen();
     if (!task || !scope || this.busy()) return;
     this.busy.set(true);
-    const result = await this.mutate(scope, () => this.bridge.workspaceFinishTask(scope, { taskId: task.id, confirmStop }));
+    const result = await this.mutate(scope, () => this.bridge.workspaceFinishTask(scope, { taskId: task.id, confirmStop, ...(confirmedApps ? { confirmedApps } : {}) }));
     if (result) {
       this.sessionArchiveUndo.set(null);
       this.closeUndo.set({ scopeId: scope, task });
@@ -1115,6 +1139,7 @@ export class WorkspaceStore {
     this.taskRequestsAvailable.set(capability?.taskRequests === true);
     this.commitPanelAvailable.set(capability?.commitPanel === true);
     this.projectImagesAvailable.set(capability?.projectImages === true);
+    this.taskAppsAvailable.set(capability?.taskApps === true);
     this.sessionNestingAvailable.set(capability?.sessionNesting === true);
     this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true);
     this.sessionArchiveAvailable.set(capability?.sessionArchive === true);
@@ -1123,6 +1148,7 @@ export class WorkspaceStore {
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
     this.chatStreamScope.set(null);
+    this.taskAppsAvailable.set(false); this.appLink.set(null); this.appReveal.reset();
     this.projectImagesAvailable.set(false);
     this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());

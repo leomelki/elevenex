@@ -1,3 +1,4 @@
+import { taskAppLinkId } from '../conversation';
 import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { DOCUMENT } from '@angular/common';
@@ -145,6 +146,7 @@ export class SessionChatComponent {
     const selection = this.selection();
     if (selection && !this.store.readOnly() && !this.store.busy()) this.browserPickRequested.emit({ ...selection, ...(tabId ? { tabId } : {}) });
   }
+  readonly appRequested = output<ChatSelection & { readonly runId: string }>();
   readonly fileLinkRequested = output<ChatSelection & { readonly path: string }>();
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
@@ -642,6 +644,12 @@ export class SessionChatComponent {
       );
   }
   openLink(value: string): void {
+    const runId = taskAppLinkId(value);
+    if (runId) {
+      const selection = this.selection();
+      if (selection && !this.store.offline()) this.appRequested.emit({ ...selection, runId });
+      return;
+    }
     try {
       const url = new URL(value);
       if (

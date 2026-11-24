@@ -122,7 +122,7 @@ export const TASK_LIFECYCLE_TOOLS = [
     currentSessionScope: 'task',
     annotations: { readOnlyHint: true },
     description:
-      'Inspect counts of running agents, terminals, and saved actions that finishing a task would stop. No cleanup is performed. Use before finish_task and any stop confirmation.',
+      'Inspect counts of running agents, terminals, apps, and saved actions that finishing a task would stop. No cleanup is performed. Use before finish_task and any stop confirmation.',
     inputShape: { taskId },
     handler: async (args, ctx) => ({
       data: {
@@ -143,7 +143,7 @@ export const TASK_LIFECYCLE_TOOLS = [
     mutates: true,
     destructive: true,
     description:
-      'Finish the whole task: archive all conversations, stop agents/terminals/actions, preserve branch/history, and release clean managed checkouts (dirty/external stay reserved). Does not commit, merge, or push. Use preview_finish_task first. Self-finish requires userRequested:true and queues cleanup until your final reply and background work end; cancel_finish_task can cancel it before cleanup starts. Other tasks finish immediately.',
+      'Finish the whole task: archive all conversations, stop agents/terminals/actions/apps, preserve branch/history, and release clean managed checkouts (dirty/external stay reserved). Does not commit, merge, or push. Use preview_finish_task first. Self-finish requires userRequested:true and queues cleanup until your final reply and background work end; cancel_finish_task can cancel it before cleanup starts. Other tasks finish immediately.',
     inputShape: {
       taskId,
       userRequested: z
@@ -156,7 +156,7 @@ export const TASK_LIFECYCLE_TOOLS = [
         .boolean()
         .default(false)
         .describe(
-          'True only after the human explicitly approves stopping running agents, terminals, and actions. Default false.',
+          'True only after the human explicitly approves stopping running agents, terminals, apps, and actions. Default false.',
         ),
     },
     handler: async (args, ctx) => {

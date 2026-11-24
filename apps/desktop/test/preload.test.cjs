@@ -1,3 +1,4 @@
+const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
 const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
 terminalMethods.push('taskTerminalCopyPort');
 const { test } = require('node:test');
@@ -33,7 +34,7 @@ test('preload exposes only the typed bridge and strips event objects', async () 
       };
     },
   });
-  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
+  assert.deepEqual(Object.keys(bridge).sort(), ['appVersion', 'writeClipboardText', 'backendStatus', 'gitStatus', 'onBackendChanged', 'onThemeChanged', 'platform', 'restartBackend', 'retryBackend', 'backendClientState', 'backendInfo', 'onBackendClientChanged', ...remote.methods, ...machines.methods, ...workspace.methods, ...terminalMethods, ...appMethods, ...chatMethods, 'codeWindowContext', 'codeOpen', 'codeRecover', 'codeLayout', 'codePresent', 'codeFocus', 'codeAction', 'codeDetach', 'codeOpenFile', 'codeRelease', 'onCodeChanged', 'onCodeExitRequested'].sort());
   assert.equal(Object.isFrozen(bridge), true);
   await bridge.appVersion();
   await bridge.gitStatus('/workspace');

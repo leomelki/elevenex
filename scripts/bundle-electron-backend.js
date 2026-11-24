@@ -113,6 +113,16 @@ async function main() {
   cpSync(path.join(backendRoot, 'src/user-terminal/shell-integration/scripts'),
     path.join(backendBundleRoot, 'shell-integration/scripts'), { recursive: true });
 
+  const bin = path.join(backendBundleRoot, 'bin');
+  cpSync(path.join(backendRoot, 'bin'), bin, { recursive: true });
+  if (process.platform === 'darwin') {
+    const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
+    await buildMacAppDisplay({ outputPath: path.join(bin, 'task-app-macos') });
+  } else if (process.platform === 'win32') {
+    const { buildWindowsAppDisplay } = require('./build-task-app-windows.cjs');
+    await buildWindowsAppDisplay({ outputPath: path.join(bin, 'task-app-windows.exe') });
+  }
+
   const esbuild = require(findEsbuildModule());
   await esbuild.build({
     entryPoints: [backendDistEntry],

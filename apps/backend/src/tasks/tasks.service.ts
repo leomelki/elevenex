@@ -38,6 +38,8 @@ import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
 import { ActionsService } from '../actions/actions.service.js';
 import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
+import type { TaskAppRun } from '@elevenex/shared';
+import { TaskAppHost, type AppLaunch, type AppRunObserver } from '../task-apps/task-app-host.js';
 import { TaskSetup } from './task.types.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
@@ -121,6 +123,7 @@ export class TasksService
     private readonly terminals: UserPtyManager,
     private readonly actions: ActionsService,
     private readonly worktreeContext: WorktreeContextService,
+    private readonly appHost: TaskAppHost,
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {}
 
@@ -1127,6 +1130,62 @@ export class TasksService
     });
   }
 
+  /** Admit the run under the same lock that releases and reassigns this checkout. */
+  async startApp(
+    sessionId: number,
+    checkout: Task,
+    launch: Omit<AppLaunch, 'taskId' | 'cwd'>,
+    authorize: () => Promise<'launch' | 'request'>,
+  ) {
+    const repo = await this.repo(checkout.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, async () => {
+      const current = await this.record(checkout.id);
+      if (current.isDefault || current.taskState !== 'ready' || current.archivedAt ||
+          current.taskFinishRequest || current.linkStatus !== 'linked' ||
+          this.releaseCheckoutToken(current) !== this.releaseCheckoutToken(checkout))
+        throw new ConflictException('The task checkout is unavailable or has changed.');
+      await this.projects.assertProjectIsActive(repo.projectId);
+      await this.sessions.assertSessionWorkspaceLinked(sessionId);
+      const operation = await authorize();
+      const request = { ...launch, taskId: current.id, cwd: current.path };
+      const existing = this.appHost.existing(request);
+      if (existing) return existing;
+      if (operation === 'request' && request.savedAction) await this.actions.checkAppAction(request, request.savedAction);
+      const run = operation === 'launch'
+        ? await this.runApp(request, observer => this.appHost.start(request, observer))
+        : this.appHost.propose(request, { sessionId, checkoutToken: this.releaseCheckoutToken(current) });
+      if (run.status === 'requested' || (run.mode === 'stream' && run.status === 'starting'))
+        this.navigationEvents?.openApp(run.runId, current.id, sessionId);
+      return run;
+    });
+  }
+
+  private runApp(request: AppLaunch, start: (observer?: AppRunObserver) => TaskAppRun | Promise<TaskAppRun>) {
+    if (!request.savedAction) return start();
+    return this.actions.runAppAction(request, request.savedAction, start,
+      runId => this.appHost.stop(request.taskId, runId));
+  }
+
+  /** Desktop-only consent applies to the exact stored argv and checkout. */
+  async approveApp(id: number, runId: string) {
+    const checkout = await this.record(id);
+    const repo = await this.repo(checkout.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, async () => {
+      const pending = this.appHost.pending(id, runId);
+      const current = await this.record(id);
+      const session = await this.sessions.findOne(pending.sessionId);
+      if (session.workspaceId !== id || session.status === 'archived' || current.archivedAt ||
+          current.taskState !== 'ready' || current.linkStatus !== 'linked' || current.taskFinishRequest ||
+          this.releaseCheckoutToken(current) !== pending.checkoutToken)
+        throw new ConflictException('The launch request no longer belongs to the active checkout.');
+      await this.projects.assertProjectIsActive(repo.projectId);
+      await this.sessions.assertSessionWorkspaceLinked(session.id);
+      return this.runApp(pending.launch, observer => this.appHost.approve(id, runId, observer));
+    });
+  }
+
   async finishPreview(id: number, excludeSessionId?: number) {
     const task = await this.record(id);
     const sessions = await this.db
@@ -1151,7 +1210,9 @@ export class TasksService
           (await this.terminals.hasTmuxSessionForTerminal(terminal.id)),
       ),
     );
+    const apps = this.appHost.count(id, true);
     return {
+      ...(apps ? { apps } : {}),
       agents: sessions.filter(
         (session) =>
           session.id !== excludeSessionId &&
@@ -1199,7 +1260,7 @@ export class TasksService
       const running = await this.finishPreview(id, sessionId);
       if (
         !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1270,7 +1331,7 @@ export class TasksService
     id: number,
     confirmStop = false,
     afterTurn?: FinishRequest,
-    options: { readonly allowArchivedProject?: boolean } = {},
+    options: { readonly allowArchivedProject?: boolean; readonly confirmedApps?: number } = {},
   ) {
     const afterSessionId = afterTurn?.sessionId;
     const task = await this.record(id);
@@ -1300,6 +1361,8 @@ export class TasksService
         if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
       }
       const running = await this.finishPreview(id);
+      if (options.confirmedApps !== undefined && (running.apps ?? 0) > options.confirmedApps)
+        throw new ConflictException('Running apps have changed. Check the close preview in an Apps-capable desktop before closing the task.');
       if (afterSessionId !== undefined) {
         // Terminal/action preview can await slow process checks. A new turn or
         // a membership change during that wait must never stop the caller.
@@ -1324,7 +1387,7 @@ export class TasksService
       }
       if (
         !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1362,6 +1425,7 @@ export class TasksService
       this.idleFinishRequests.delete(id);
       this.navigationEvents?.invalidate();
       try {
+        await this.appHost.stopAll(id);
         if (this.finishingListeners.size)
           await Promise.all(
             [...this.finishingListeners].map((listener) => listener(id)),
@@ -1759,7 +1823,7 @@ export class TasksService
       const running = await this.finishPreview(id);
       if (
         !confirmStop &&
-        (running.agents || running.terminals || running.actions)
+        (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
           code: 'running_work',
@@ -1790,7 +1854,7 @@ export class TasksService
           !confirmStop &&
           (latestRunning.agents ||
             latestRunning.terminals ||
-            latestRunning.actions)
+            latestRunning.actions || latestRunning.apps)
         ) {
           stopped = true; // No cleanup began; execution can safely be enabled again.
           throw new ConflictException({
@@ -1799,6 +1863,7 @@ export class TasksService
             ...latestRunning,
           });
         }
+        await this.appHost.stopAll(id);
         for (const session of sessions)
           await this.sessions.stopForWorktreeRelease(session.id);
         for (const terminal of await this.db

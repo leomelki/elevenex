@@ -1,4 +1,5 @@
 /** Remote startup and revision handoff; never signals a PID discovered on disk. */
+import { startWindowsRuntime } from './windows-runtime';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { queryDaemon, requestHandoff, type RuntimeHealth } from './runtime-control';
@@ -54,6 +55,7 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         replacing = health.instance;
         const reply = await requestHandoff(root, port, token, health, version, force).catch(() => undefined);
         if (reply && reply.instance === health.instance && reply.version === health.version && !reply.replacement) {
+          if (reply.appHandoffBlocked) throw new Error('EX11_UPDATE: task apps are running; stop them on the current engine before retrying');
           if (!force && reply.activeConnections) {
             replacing = undefined;
             waitingForUpdate?.(reply);
@@ -78,6 +80,12 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
       // reservation authorizes startup, including after an unconfirmed stop.
       if (!spawned) {
         spawned = true; starts++;
+        if (process.platform === 'win32') {
+          await startWindowsRuntime(signal);
+          // The scheduler can accept a request while the account is logged out.
+          // One start request is sufficient; observe readiness until the deadline.
+          continue;
+        }
         const child = spawn(process.execPath, [runtime, 'daemon', root, installation, version], { cwd: root, detached: true, stdio: 'ignore', env: process.env });
         child.once('error', () => { spawned = false; }); child.once('exit', () => { spawned = false; }); child.unref();
       }
@@ -85,5 +93,6 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
     await delay(health ? 100 : 250, undefined, { signal });
   }
   if (replacing) throw new Error('EX11_UPDATE: handoff timed out; check the remote daemon and retry explicitly');
+  if (process.platform === 'win32') throw new Error('EX11_COMPATIBILITY: Windows interactive runtime unavailable; sign in to the host with the SSH account');
   throw new Error('EX11_RUNTIME: backend did not become ready; check bundled Node compatibility and backend prerequisites');
 }

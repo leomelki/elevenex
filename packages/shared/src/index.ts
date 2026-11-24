@@ -1,3 +1,5 @@
+import type { TaskAppRun, TaskAppInput, TaskAppFrame, TaskAppClosed, TaskAppWindowContext } from './task-apps';
+export * from './task-apps';
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
 import type { TaskBrowserPlacement, TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
@@ -57,6 +59,17 @@ export interface GitStatus {
 }
 
 export interface InvokeContracts {
+  'task-app:read': { args: [scopeId: string, taskId: number]; result: BackendResult<readonly TaskAppRun[]> };
+  'task-app:output': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<string> };
+  'task-app:approve': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
+  'task-app:stop': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
+  'task-app:watch': { args: [scopeId: string, taskId: number, runId: string, watchId: string]; result: BackendResult<void> };
+  'task-app:unwatch': { args: [scopeId: string, watchId: string]; result: void };
+  'task-app:ack': { args: [scopeId: string, watchId: string, sequence: number]; result: void };
+  'task-app:input': { args: [scopeId: string, watchId: string, input: TaskAppInput]; result: void };
+  'task-app:release': { args: [scopeId: string, watchId: string]; result: void };
+  'task-app:pop-out': { args: [scopeId: string, taskId: number, runId: string]; result: void };
+  'task-app:window': { args: []; result: TaskAppWindowContext | null };
   'task-terminal:preferences': { args: [scopeId: string]; result: BackendResult<TaskTerminalPreferences> };
   'task-terminal:save-preferences': { args: [scopeId: string, value: TaskTerminalPreferences]; result: BackendResult<{ readonly accepted: true }> };
   'task-terminal:attach': { args: [scopeId: string, input: TaskTerminalAttach]; result: BackendResult<{ readonly accepted: true }> };
@@ -192,6 +205,8 @@ export interface InvokeContracts {
 }
 
 export interface EventContracts {
+  'task-app:frame': TaskAppFrame;
+  'task-app:closed': TaskAppClosed;
   'session-chat:stream': SessionChatStreamEvent;
   'task-terminal:stream': TaskTerminalStreamEvent;
   'code:exit-requested': CodeTarget;
@@ -220,6 +235,19 @@ export type Subscribe = <C extends keyof EventContracts>(
 
 /** The entire public preload API; raw IPC and Electron events stay private. */
 export interface ElevenexBridge {
+  taskAppsRead?(scopeId: string, taskId: number): Promise<BackendResult<readonly TaskAppRun[]>>;
+  taskAppOutput?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<string>>;
+  taskAppApprove?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
+  taskAppStop?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
+  taskAppWatch?(scopeId: string, taskId: number, runId: string, watchId: string): Promise<BackendResult<void>>;
+  taskAppUnwatch?(scopeId: string, watchId: string): Promise<void>;
+  taskAppFrameAck?(scopeId: string, watchId: string, sequence: number): Promise<void>;
+  taskAppInput?(scopeId: string, watchId: string, input: TaskAppInput): Promise<void>;
+  taskAppReleaseInput?(scopeId: string, watchId: string): Promise<void>;
+  taskAppPopOut?(scopeId: string, taskId: number, runId: string): Promise<void>;
+  taskAppWindowContext?(): Promise<TaskAppWindowContext | null>;
+  onTaskAppFrame?(listener: (frame: TaskAppFrame) => void): () => void;
+  onTaskAppClosed?(listener: (closed: TaskAppClosed) => void): () => void;
   taskTerminalPreferences(scopeId: string): Promise<BackendResult<TaskTerminalPreferences>>;
   taskTerminalSavePreferences(scopeId: string, value: TaskTerminalPreferences): Promise<BackendResult<{ readonly accepted: true }>>;
   taskTerminalAttach(scopeId: string, input: TaskTerminalAttach): Promise<BackendResult<{ readonly accepted: true }>>;

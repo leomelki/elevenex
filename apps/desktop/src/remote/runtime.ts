@@ -1,10 +1,11 @@
 /** Uploaded as plain CommonJS alongside wire.js; runs only on the SSH host. */
+import { connectWindowsPipe, windowsPipeKey } from './windows-pipe';
 import { fork, type ChildProcess } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { connect as connectSocket } from 'node:net';
 import { createSocket, type Socket as OwnershipSocket } from 'node:dgram';
 import { ForwardedAgentProxy } from './agent-proxy';
@@ -18,9 +19,13 @@ import { inheritOwnership, launchReplacement, prepareReplacement, publishReplace
 // Explicit bounded backend tuning only; never forward arbitrary runtime overrides.
 const SHELL_TUNING = /^ELEVENEX_SHELL_(?:CAPTURE_TIMEOUT_MS|QUEUE_TIMEOUT_MS|CAPTURE_CONCURRENCY|MAX_PENDING_CAPTURES|CACHE_ENTRIES|CACHE_BYTES|COLD_WAIT_MS|BOOTSTRAP_WAIT_MS)$/;
 
-async function backendReady(socketPath: string, version: string, signal: AbortSignal): Promise<boolean> {
+function appViewerAccess(token: string, instance: string): string {
+  return createHmac('sha256', token).update('elevenex-app-viewer:' + instance).digest('hex');
+}
+
+async function backendReady(socketPath: string, version: string, signal: AbortSignal, pipeKey?: string): Promise<boolean> {
   return new Promise(resolve => {
-    const req = request({ socketPath, path: '/api/info', method: 'GET', signal }, res => {
+    const req = request({ socketPath, path: '/api/info', ...(pipeKey ? { createConnection: () => connectWindowsPipe(socketPath, pipeKey) } : {}), method: 'GET', signal }, res => {
       let body = '';
       res.on('data', (chunk: Buffer) => { body += chunk; if (body.length > 4096) req.destroy(); });
       res.on('error', () => resolve(false));
@@ -29,6 +34,28 @@ async function backendReady(socketPath: string, version: string, signal: AbortSi
     const deadline = setTimeout(() => req.destroy(), 1000);
     req.once('close', () => clearTimeout(deadline));
     req.on('error', () => resolve(false)); req.end();
+  });
+}
+
+// A new runtime can be installed beside an older backend without this endpoint.
+async function prepareAppHandoff(socketPath: string, token: string, pipeKey?: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, method: 'POST', ...(pipeKey ? { createConnection: () => connectWindowsPipe(socketPath, pipeKey) } : {}), path: '/api/task-app-runtime/prepare-handoff',
+      headers: { 'x-elevenex-app-handoff': token }, signal: AbortSignal.timeout(1500) }, res => {
+      if (res.statusCode === 404) { res.resume(); resolve(0); return; }
+      let body = '';
+      res.on('data', chunk => { body += chunk; if (body.length > 512) req.destroy(new Error('Invalid app handoff reply')); });
+      res.on('error', reject);
+      res.on('end', () => {
+        try {
+          const { running } = JSON.parse(body);
+          if (res.statusCode !== 201 || !Number.isSafeInteger(running) || running < 0 || running > 1024)
+            throw new Error('Invalid app handoff reply');
+          resolve(running);
+        } catch (error) { reject(error); }
+      });
+    });
+    req.on('error', reject); req.end();
   });
 }
 
@@ -62,12 +89,16 @@ async function reserveOwnership(port: number): Promise<OwnershipSocket> {
 }
 
 async function daemon(root: string, installation: string, version: string, port: number, token: string, inherited?: OwnershipSocket): Promise<void> {
-  const instance = randomUUID();
-  const socketPath = backendSocketPath(root, { instance, handoff: 1 });
+  const windows = process.platform === 'win32';
+  let instance = randomUUID();
+  let socketPath = backendSocketPath(root, { instance, handoff: 1 });
+  let childToolchain = { executable: process.execPath, supervisor: join(__dirname, 'host.js') };
   let child: ChildProcess | undefined;
   let stopping = false;
   let ready = false;
   let replacement: string | undefined;
+  let appHandoffToken = randomBytes(32).toString('hex');
+  let appHandoffBlocked = false;
   let next: RuntimeReplacement | undefined;
   let preparing: Promise<void> | undefined;
   let preparingTarget: string | undefined;
@@ -79,14 +110,14 @@ async function daemon(root: string, installation: string, version: string, port:
     for (const [id, expires] of connections) if (expires <= now) connections.delete(id);
     return connections.size + Number(overflowUntil > now);
   };
-  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, activeConnections: activeConnections(), ...(replacement ? { replacement } : {}) });
+  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, activeConnections: activeConnections(), ...(appHandoffBlocked ? { appHandoffBlocked: true as const } : {}), ...(replacement ? { replacement } : {}) });
   const stop = () => {
     if (stopping) return;
     stopping = true; ready = false; lifetime.abort();
     if (child?.connected) child.send({ type: 'stop' }, () => undefined); else child?.kill('SIGTERM');
   };
   const agentPath = join(root, 'agent.sock');
-  const agents = new ForwardedAgentProxy(agentPath);
+  const agents = windows ? undefined : new ForwardedAgentProxy(agentPath);
   const health = createServer((req, res) => {
     const handoff = verifyHandoffRequest(req, token, snapshot());
     const nonce = handoff?.nonce ?? verifyHealthRequest(req, token);
@@ -104,12 +135,19 @@ async function daemon(root: string, installation: string, version: string, port:
       if (!stopping && !replacement) {
         if (!handoff.force && activeConnections()) { respond(); return; }
         preparingTarget = handoff.target;
-        preparing = prepareReplacement(root, handoff.target).then(plan => {
+        preparing = prepareReplacement(root, handoff.target).then(async plan => {
           // The descriptor check can yield to a new authenticated connection.
           if (stopping || (!handoff.force && activeConnections())) return;
+          appHandoffBlocked = (await prepareAppHandoff(socketPath, appHandoffToken, windows ? windowsPipeKey(token, instance) : undefined)) > 0;
+          if (appHandoffBlocked || stopping || (!handoff.force && activeConnections())) return;
           replacement = handoff.target;
           next = plan;
-          stop();
+          if (windows) {
+            ready = false;
+            // A host which already lost its IPC lease is draining its backend.
+            // Keep ownership even if that exit races this handoff decision.
+            if (child?.connected) child.send({ type: 'stop' }, () => undefined);
+          } else stop();
         }).finally(() => { preparing = undefined; preparingTarget = undefined; });
         void preparing.then(() => respond(), () => respond());
       } else {
@@ -129,7 +167,7 @@ async function daemon(root: string, installation: string, version: string, port:
         if (connections.has(lease) || activeConnections() < 256) connections.set(lease, expires);
         else overflowUntil = expires;
       }
-      agents.renew(lease, presence !== 'closed' && path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
+      agents?.renew(lease, presence !== 'closed' && path.startsWith('/') && !path.includes('\0') && path.length <= 1024 ? path : null);
     }
     respond();
   });
@@ -137,7 +175,7 @@ async function daemon(root: string, installation: string, version: string, port:
   // A separate UDP reservation can be retained by the supervisor without
   // accepting/swallowing any HTTP health connections in that other process.
   let previousOwnership = inherited && inherited.address().port !== port ? inherited : undefined;
-  const legacyPort = ownershipPort(homedir(), homedir(), process.getuid?.());
+  const legacyPort = windows ? port : ownershipPort(homedir(), homedir(), process.getuid?.());
   // An unreachable legacy daemon could still own this checkout's data. Take
   // its account-wide reservation before migrating an existing discovery record.
   if (!inherited && port !== legacyPort && await needsLegacyOwnership(root, port)) previousOwnership = await reserveOwnership(legacyPort);
@@ -152,16 +190,36 @@ async function daemon(root: string, installation: string, version: string, port:
     if (health.listening) await new Promise<void>(resolve => health.close(() => resolve()));
     ownership.close(); previousOwnership?.close(); throw error;
   }
-  try { await agents.listen(); }
+  try { await agents?.listen(); }
   catch (error) {
-    await agents.dispose(); health.closeAllConnections(); await new Promise<void>(resolve => health.close(() => resolve())); ownership.close(); previousOwnership?.close(); throw error;
+    await agents?.dispose(); health.closeAllConnections(); await new Promise<void>(resolve => health.close(() => resolve())); ownership.close(); previousOwnership?.close(); throw error;
   }
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   if (inherited && process.send) process.send({ type: 'adopted' }, () => undefined);
   const crashes: number[] = [];
   try {
     while (!stopping) {
-      await rm(socketPath, { force: true });
+      if (windows && next) {
+        // Windows cannot transfer a bound UDP handle between Node processes.
+        // Keep the logged-in supervisor and its kernel lock throughout handoff.
+        installation = next.installation;
+        version = next.version;
+        // The daemon retains the Windows ownership handle. The replacement's
+        // backend still requires its own Node ABI and its matching host shim.
+        childToolchain = { executable: next.executable, supervisor: join(dirname(next.runtime), 'host.js') };
+        next = undefined;
+        replacement = undefined;
+        instance = randomUUID();
+        socketPath = backendSocketPath(root, { instance, handoff: 1 });
+        appHandoffToken = randomBytes(32).toString('hex');
+        connections.clear();
+        overflowUntil = 0;
+        crashes.length = 0;
+        const address = health.address();
+        if (!address || typeof address === 'string') throw new Error('Remote health server closed');
+        await publishDaemon(root, address.port, instance, ownership.address().port);
+      }
+      if (!windows) await rm(socketPath, { force: true });
       if (stopping) break;
       const env = { ...process.env };
       for (const key of Object.keys(env)) {
@@ -169,16 +227,19 @@ async function daemon(root: string, installation: string, version: string, port:
       }
       // Reuse the local backend's process lease. Daemon death closes its IPC
       // pipe, so a replacement daemon cannot leave an orphan database owner.
-      child = fork(join(__dirname, 'host.js'), [join(installation, 'backend/main.cjs'), join(installation, 'backend'), '--ownership'], {
-        execPath: process.execPath, execArgv: [], cwd: join(installation, 'backend'), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {
+      child = fork(childToolchain.supervisor, [join(installation, 'backend/main.cjs'), join(installation, 'backend'), ...(windows ? [] : ['--ownership'])], {
+        execPath: childToolchain.executable, execArgv: [], cwd: join(installation, 'backend'), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {
           ...env, NODE_ENV: 'production', ELEVENEX_BACKEND_MODE: 'remote', ELEVENEX_BACKEND_SUPERVISED: '1',
           ELEVENEX_DATA_ROOT: join(root, 'data'), DB_PATH: join(root, 'data/elevenex.db'),
           ELEVENEX_BACKEND_RUNTIME_ROOT: join(installation, 'backend'), ELEVENEX_BIND_HOST: '127.0.0.1',
-          ELEVENEX_DESKTOP_SOCKET: socketPath, ELEVENEX_PROXY_PORT: '11111', FRONTEND_PORT: '11111',
-          SSH_AUTH_SOCK: agentPath,
+          ELEVENEX_DESKTOP_SOCKET: socketPath, ELEVENEX_APP_ACCESS: appViewerAccess(token, instance), ELEVENEX_APP_HANDOFF: appHandoffToken, ELEVENEX_PROXY_PORT: '11111', FRONTEND_PORT: '11111',
+          ...(windows ? {
+            ELEVENEX_WINDOWS_PIPE_KEY: windowsPipeKey(token, instance),
+            ELEVENEX_WINDOWS_OWNER_PIPE: '\\\\.\\pipe\\elevenex-owner-' + windowsPipeKey(token, 'database').slice(0, 32),
+          } : { SSH_AUTH_SOCK: agentPath }),
         },
       });
-      child.send({ type: 'ownership' }, ownership, { keepOpen: true }, () => undefined);
+      if (!windows) child.send({ type: 'ownership' }, ownership, { keepOpen: true }, () => undefined);
       let running = true;
       const monitoringLifetime = new AbortController();
       const monitoringSignal = AbortSignal.any([lifetime.signal, monitoringLifetime.signal]);
@@ -188,11 +249,11 @@ async function daemon(root: string, installation: string, version: string, port:
       });
       const monitoring = (async () => {
         while (running && !stopping) {
-          const current = await backendReady(socketPath, version, monitoringSignal);
+          const current = await backendReady(socketPath, version, monitoringSignal, windows ? windowsPipeKey(token, instance) : undefined);
           if (monitoringSignal.aborted) break;
           ready = current;
           // The backend can exit and unlink its socket during this probe.
-          if (ready) await chmod(socketPath, 0o600).catch(() => { ready = false; });
+          if (ready && !windows) await chmod(socketPath, 0o600).catch(() => { ready = false; });
           await delay(ready ? 1000 : 100, undefined, { signal: monitoringSignal }).catch(() => undefined);
         }
       })();
@@ -200,6 +261,7 @@ async function daemon(root: string, installation: string, version: string, port:
       await monitoring;
       ready = false;
       if (stopping) break;
+      if (windows && next) continue;
       const now = Date.now();
       while (crashes[0] !== undefined && crashes[0] < now - 60_000) crashes.shift();
       crashes.push(now);
@@ -212,13 +274,13 @@ async function daemon(root: string, installation: string, version: string, port:
     // a new daemon can bind its sockets just before this daemon removes them.
     try {
       await Promise.all([
-        agents.dispose(),
+        agents?.dispose(),
         new Promise<void>(resolve => health.close(() => resolve())),
       ]);
-      await rm(socketPath, { force: true }); await rm(agentPath, { force: true });
+      if (!windows) await Promise.all([rm(socketPath, { force: true }), rm(agentPath, { force: true })]);
       // Transfer the same kernel reservation after tree/socket cleanup. There
       // is no vacant interval for an older desktop to reclaim the database.
-      if (next) await launchReplacement(root, next, ownership);
+      if (next && !windows) await launchReplacement(root, next, ownership);
     } finally { ownership.close(); previousOwnership?.close(); }
   }
 }
@@ -251,7 +313,7 @@ async function bridge(root: string, installation: string, version: string, port:
         wire.send({ type: 'update-starting', instance });
       },
     });
-    lease = { id: randomUUID(), agent: process.env['SSH_AUTH_SOCK'] ?? null, presence: 'active', instance: health.instance };
+    lease = { id: randomUUID(), agent: process.platform === 'win32' ? null : process.env['SSH_AUTH_SOCK'] ?? null, presence: 'active', instance: health.instance };
     const joined = await queryDaemon(root, port, token, lease);
     setup.signal.throwIfAborted();
     if (!joined.ready || joined.instance !== health.instance || joined.version !== version) throw new Error('EX11_UPDATE: competing revision accepted an update during connection');
@@ -266,11 +328,12 @@ async function bridge(root: string, installation: string, version: string, port:
   const activeLease = lease;
   const destinations = new BrowserDestinations();
   const socketPath = backendSocketPath(root, health);
+  const privatePipe = process.platform === 'win32' ? () => connectWindowsPipe(socketPath, windowsPipeKey(token, health.instance)) : undefined;
   wire.on('message', (message: WireMessage) => {
-    if (message.type === 'open') channels.accept(message.id, message.port, socketPath, message.host);
+    if (message.type === 'open') channels.accept(message.id, message.port, socketPath, message.host, privatePipe, message.appBinary === true);
     else if (message.type === 'browser-open') channels.acceptBrowser(message.id, message.host, message.port, (host, targetPort) => destinations.resolve(host, targetPort));
     else if (message.type === 'probe') {
-      const socket = message.port === 0 ? connectSocket(socketPath) : connectSocket(message.port, message.host ?? '127.0.0.1');
+      const socket = message.port === 0 ? (privatePipe?.() ?? connectSocket(socketPath)) : connectSocket(message.port, message.host ?? '127.0.0.1');
       let done = false;
       const finish = (available: boolean) => {
         if (done) return; done = true; socket.destroy();
@@ -278,7 +341,7 @@ async function bridge(root: string, installation: string, version: string, port:
         try { wire.send({ type: 'probed', id: message.id, available }); } catch { /* Closed transport. */ }
       };
       const closed = () => finish(false);
-      socket.setTimeout(3000, () => finish(false)); socket.once('connect', () => finish(true)); socket.once('error', () => finish(false));
+      socket.setTimeout(3000, () => finish(false)); socket.once(privatePipe && message.port === 0 ? 'secureConnect' : 'connect', () => finish(true)); socket.once('error', () => finish(false));
       wire.once('closed', closed);
     }
     else if (message.type === 'ping') {
@@ -294,7 +357,7 @@ async function bridge(root: string, installation: string, version: string, port:
     void queryDaemon(root, port, token, { ...activeLease, agent: null, presence: 'closed' }).catch(() => undefined);
   };
   wire.once('closed', close); process.once('SIGTERM', close);
-  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: activeLease.agent !== null, browserProxy: true });
+  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: activeLease.agent !== null, appViewerAccess: appViewerAccess(token, health.instance), browserProxy: true, appBinary: true });
 }
 
 async function main(): Promise<void> {

@@ -1,4 +1,3 @@
-
 import { interceptProcessStreams } from './backend-logs/log-interceptor.js';
 interceptProcessStreams();
 
@@ -12,6 +11,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
+import { TaskAppGateway } from './task-apps/task-app.gateway.js';
+import { TaskAppController } from './task-apps/task-app.controller.js';
 import { RuntimeBrowserController } from './desktop-browser/runtime-browser.controller.js';
 import { RuntimeBrowserStream } from './desktop-browser/runtime-stream.js';
 
@@ -43,6 +44,7 @@ import {
   getElevenexProxyPort,
 } from './config/ports.js';
 import { chmod } from 'fs/promises';
+import { claimWindowsBackend, listenWindowsDesktop } from './config/windows-desktop-pipe.js';
 import { isAbsolute } from 'path';
 import {
   getBackendRuntimeRoot,
@@ -69,6 +71,15 @@ function listenServer(
 }
 
 async function bootstrap() {
+  const windowsSocket = process.platform === 'win32' && process.env.ELEVENEX_DESKTOP_SOCKET;
+  const windowsKey = process.env.ELEVENEX_WINDOWS_PIPE_KEY;
+  const windowsOwnerPipe = process.env.ELEVENEX_WINDOWS_OWNER_PIPE;
+  delete process.env.ELEVENEX_WINDOWS_OWNER_PIPE;
+  delete process.env.ELEVENEX_WINDOWS_PIPE_KEY;
+  delete process.env.ELEVENEX_APP_ACCESS;
+  delete process.env.ELEVENEX_APP_HANDOFF;
+  delete process.env.ELEVENEX_CODE_ACCESS;
+  if (windowsSocket) await claimWindowsBackend(windowsOwnerPipe ?? '');
   // The parsers are installed by hand further down, after the routes that need
   // to read the raw request stream themselves.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -236,6 +247,7 @@ async function bootstrap() {
   // MaxListenersExceededWarning on stderr that ends up masking real errors.
   httpServer.setMaxListeners(0);
 
+  app.get(TaskAppGateway).attach(httpServer, app.get(TaskAppController));
   app.get(RuntimeBrowserStream).attachToServer(httpServer, app.get(RuntimeBrowserController));
 
   const terminalGateway = app.get(TerminalGateway);
@@ -288,7 +300,9 @@ async function bootstrap() {
   // Opt-in desktop remote transport. A private Unix socket keeps the backend
   // inaccessible to other remote users; legacy/local launchers retain TCP.
   const desktopSocket = process.env.ELEVENEX_DESKTOP_SOCKET;
-  if (desktopSocket) {
+  if (windowsSocket) {
+    await listenWindowsDesktop(edgeProxyServer, windowsSocket, windowsKey ?? '');
+  } else if (desktopSocket) {
     if (!isAbsolute(desktopSocket) || desktopSocket.length > 100 || process.platform === 'win32') {
       throw new Error('Invalid desktop backend socket');
     }

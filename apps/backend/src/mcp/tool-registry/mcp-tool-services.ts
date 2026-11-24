@@ -1,3 +1,4 @@
+import { TaskAppHost } from '../../task-apps/task-app-host.js';
 import { DesktopBrowserService } from '../../desktop-browser/desktop-browser.service.js';
 import { BranchesService } from '../../branches/branches.service.js';
 import { Injectable } from '@nestjs/common';
@@ -56,5 +57,6 @@ export class McpToolServices {
     readonly branches: BranchesService,
     readonly portForwarding: DesktopPortForwardingGateway,
     readonly browsers: DesktopBrowserService,
+    readonly apps: TaskAppHost,
   ) {}
 }

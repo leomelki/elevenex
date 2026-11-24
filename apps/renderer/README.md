@@ -120,7 +120,7 @@ paint boundary before opening starts. Its scoped feature
 stores supply the existing presentational components; they never import the
 legacy renderer or contact the backend directly. The side views provide tabs, close and expansion behavior. Changes reviews the
 selected agent reply; Browser composes the [production task browser](src/app/task-browser/README.md);
-Code hosts the [task-confined web workbench](src/app/code/README.md); Terminal provides real task-owned shells and scripts. Actions retains its frame. See [terminal ownership and recovery](src/app/task-terminal/README.md). Expansion
+Code hosts the [task-confined web workbench](src/app/code/README.md); Terminal provides real task-owned shells and scripts. Apps shows [task-owned native and streamed app runs](src/app/task-apps/README.md). Actions retains its frame. See [terminal ownership and recovery](src/app/task-terminal/README.md). Expansion
 is available on every view and stays active when switching tabs.
 `/connected-workspace` exercises this production composition with a typed,
 preview-only backend adapter. Its fixture never enters the production build.

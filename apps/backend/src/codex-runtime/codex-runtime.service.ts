@@ -1552,6 +1552,15 @@ export class CodexRuntimeService
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  nativeAppLaunchPolicy(sessionId: number): import('../agent-runtime/agent-runtime.types.js').NativeAppLaunchPolicy {
+    const state = this.runtimeStates.get(sessionId);
+    if (state?.planMode) return 'plan';
+    if (state?.selectedPermissionMode !== 'bypassPermissions') return 'request';
+    const run = this.activeRuns.get(sessionId);
+    return !!run?.turnId && run.unrestrictedExecution === true &&
+      !run.interruptRequested && !run.abortController.signal.aborted ? 'launch' : 'request';
+  }
+
   async setPermissionMode(
     sessionId: number,
     mode: CodexPermissionMode | null,
@@ -4308,6 +4317,7 @@ export class CodexRuntimeService
         turnIdFilter = startedTurnId;
         if (activeRun) {
           activeRun.turnId = startedTurnId;
+          activeRun.unrestrictedExecution = permissionOptions.sandboxMode === 'danger-full-access';
           activeRun.resolveTurnReady();
         }
       }

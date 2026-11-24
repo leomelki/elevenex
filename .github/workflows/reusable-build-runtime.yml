@@ -74,8 +74,18 @@ jobs:
       - name: Install runtime build dependencies
         run: pnpm --filter elevenex-backend... install --frozen-lockfile
 
+      - name: Verify signed macOS app capture helper and H.264 bitstream
+        if: runner.os == 'macOS'
+        run: node scripts/test-task-app-macos.cjs
+
       - name: Build backend and portable Node archive
         run: pnpm desktop:backend
+
+      - name: Verify Windows private IPC, packaged app job and desktop capture
+        if: runner.os == 'Windows'
+        run: |
+          pnpm --dir apps/backend exec jest --runInBand --runTestsByPath src/config/windows-desktop-pipe.spec.ts
+          node scripts/test-task-app-windows.cjs dist-runtime/elevenex-backend-windows-x64.tar.gz
 
       # Existing SSH consumers use this archive layout and launcher.
       - name: Build SSH runtime

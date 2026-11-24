@@ -16,6 +16,7 @@ import type { ClaudeRuntimeWarmState } from './claude-runtime.types.js';
 import { claudeVersionAtLeast } from './claude-subagents.js';
 
 interface ActiveTurn {
+  unrestrictedExecution: boolean;
   messageIds: Set<string>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -264,8 +265,14 @@ export class ClaudeSessionRuntime {
     this.deps.options.model = model;
   }
 
+  get canLaunchNativeApp(): boolean {
+    return !this.closed && !!this.queryInstance && this.activeTurn?.unrestrictedExecution === true;
+  }
+
   async setPermissionMode(mode: PermissionMode): Promise<void> {
+    if (this.activeTurn && mode !== 'bypassPermissions') this.activeTurn.unrestrictedExecution = false;
     await this.queryInstance?.setPermissionMode?.(mode);
+    this.deps.options.permissionMode = mode;
   }
 
   async applyFlagSettings(
@@ -345,6 +352,7 @@ export class ClaudeSessionRuntime {
 
     const turnPromise = new Promise<void>((resolve, reject) => {
       this.activeTurn = {
+        unrestrictedExecution: this.deps.options.permissionMode === 'bypassPermissions',
         resolve,
         reject,
         settled: false,

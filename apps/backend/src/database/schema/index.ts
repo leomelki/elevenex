@@ -20,3 +20,4 @@ export * from './worktree-context.schema.js';
 export * from './app-settings.schema.js';
 export * from './turn-changes.schema.js';
 export * from './desktop-workspace.schema.js';
+export * from './task-app-journal.schema.js';

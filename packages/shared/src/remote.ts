@@ -13,7 +13,7 @@ export interface RemoteHost extends RemoteHostInput { readonly id: string }
 export type EnvironmentSelection = { readonly kind: 'local' } | { readonly kind: 'remote'; readonly hostId: string };
 /** Device-local workspace layout, saved independently for each window/backend. */
 export interface WorkspaceViewState {
-  readonly panel: 'terminal' | 'actions' | 'changes' | 'code' | 'browser';
+  readonly panel: 'terminal' | 'actions' | 'changes' | 'code' | 'browser' | 'apps';
   readonly panelOpen: boolean;
   readonly wideReview: boolean;
   readonly closed: boolean;

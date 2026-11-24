@@ -702,3 +702,8 @@ preimages, background commands and missed filesystem notifications can limit
 command review. A rename in net review is represented by the paths that were
 removed and added; an explicit Codex move also retains its source and destination
 in provider review.
+
+
+### Task app viewers
+
+Managed hosts advertise `taskApps` in the workspace revision. The visible window consumes bounded launch hints through the existing revision wait, scoped to the current machine, task and conversation. Named desktop operations own approval, output, subscriptions and input. The private SSH app route negotiates binary media framing and keeps each viewer's display receipts independent. See [task apps](task-apps.md) for the launch and host contracts.

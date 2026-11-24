@@ -9,7 +9,7 @@ describe('Workspace side-view shells', () => {
     fixture.detectChanges();
     const root: HTMLElement = fixture.nativeElement;
     const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Terminal', 'Actions', 'Changes', 'Code', 'Browser']);
+    expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Terminal', 'Actions', 'Changes', 'Code', 'Browser', 'Apps']);
     expect(root.querySelector('[role="tabpanel"]:not([hidden])')?.getAttribute('id')).toBe('workspace-panel-changes');
     const browserTab = tabs[4]!;
     browserTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
@@ -18,10 +18,10 @@ describe('Workspace side-view shells', () => {
     expect(document.activeElement).toBe(tabs[0]);
     for (const tab of tabs) expect(root.querySelector(`#${tab.getAttribute('aria-controls')}`)).not.toBeNull();
     expect(root.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1);
-    expect(root.querySelectorAll('[role="tabpanel"][inert]')).toHaveLength(4);
+    expect(root.querySelectorAll('[role="tabpanel"][inert]')).toHaveLength(5);
   });
 
-  it.each(['Terminal', 'Actions', 'Changes', 'Code', 'Browser'])('expands and restores %s while preserving expansion across tab changes', label => {
+  it.each(['Terminal', 'Actions', 'Changes', 'Code', 'Browser', 'Apps'])('expands and restores %s while preserving expansion across tab changes', label => {
     const fixture = TestBed.createComponent(WorkspacePanelsComponent);
     fixture.detectChanges();
     const wide = vi.fn();

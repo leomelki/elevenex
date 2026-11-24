@@ -77,6 +77,7 @@ export interface CodexLoginStartResult {
 }
 
 export interface CodexActiveRunState {
+  unrestrictedExecution?: boolean;
   threadId: string | null;
   /** The active app-server turnId; needed for `turn/interrupt` and `turn/steer`. */
   turnId: string | null;

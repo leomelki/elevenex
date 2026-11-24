@@ -21,6 +21,7 @@ with tool activity, decisions, queue controls and retained drafts. Completed
 replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with agent acquisition and explicit user Block agent/Allow agent controls;
 see [code-first browser automation](../../docs/browser-agent.md) and
 [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
+Apps presents task-owned graphical programs and Android emulators through a scoped interactive stream. See [task app launch, viewing and host setup](../../docs/task-apps.md).
 Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The app uses the backend's `desktop-workspace` routes. A versioned capability

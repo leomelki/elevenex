@@ -6,6 +6,7 @@ import { backendRelease } from '../backend/release';
 import type { DownloadProgress } from '../backend/download';
 import { RemoteError, failure, sshFailure } from './failure';
 import { spawnSsh } from './ssh';
+import { bootstrapWindowsScript } from './runtime-install-windows';
 import { bootstrapScript } from './runtime-install';
 import { archiveFor, type PrepareRemoteArchive } from './archives';
 import type { Ask } from './askpass';
@@ -15,6 +16,7 @@ import { browserSocks, browserLoopbackHost } from '@elevenex/browser-network';
 
 export interface RemoteTransport {
   readonly instance: string;
+  readonly remoteShell?: 'posix' | 'windows';
   readonly exited: Promise<void>;
   /** A reserved port value of zero addresses the private backend socket. */
   forward(port: number, localPort: number, onServiceChanged?: (available: boolean) => void, targetHost?: string): Promise<{ port: number; reachable: boolean; authorization: string | null; close(): Promise<void> }>;
@@ -26,6 +28,7 @@ export interface RemoteTransport {
   close(): Promise<void>;
 }
 export interface ConnectOptions {
+  readonly remoteShell?: 'posix' | 'windows';
   readonly host: RemoteHost;
   readonly root: string;
   readonly release: BackendRelease;
@@ -43,12 +46,44 @@ export interface ConnectOptions {
   readonly spawn?: typeof spawnSsh;
 }
 
+class RemoteShellUnavailable extends Error {}
+
+/** OpenSSH reserves 255 for transport/authentication failures. Remote shell
+ * diagnostics may be localized, so use command-not-found status or the failed
+ * command itself, and never fall back after an installer progress marker. */
+function missingShell(shell: 'posix' | 'windows', code: number | null, diagnostics: string): boolean {
+  if (code === 255 || code === null) return false;
+  if (shell === 'posix' && /EX11_COMPATIBILITY: Windows host needs PowerShell/.test(diagnostics)) return true;
+  if (/EX11_[A-Z]+:/.test(diagnostics)) return false;
+  if (code === 127 || code === 9009 || code === 49) return true;
+  if (code !== 1) return false;
+  return shell === 'posix'
+    ? /(?:^|\n)\s*(?:['"‘’“”«]\s*sh\s*['"‘’“”»]|sh\s*:)/i.test(diagnostics)
+    : /(?:^|\n)\s*(?:['"‘’“”«]\s*powershell\.exe\s*['"‘’“”»]|powershell\.exe\s*:)/i.test(diagnostics);
+}
+
 export async function connectRemote(options: ConnectOptions): Promise<RemoteTransport> {
+  const first = options.remoteShell ?? 'posix';
+  try { return await connectShell(options, first); }
+  catch (error) {
+    if (!(error instanceof RemoteShellUnavailable)) throw error;
+    options.signal.throwIfAborted();
+    try { return await connectShell(options, first === 'posix' ? 'windows' : 'posix'); }
+    catch (fallback) {
+      if (!(fallback instanceof RemoteShellUnavailable)) throw fallback;
+      throw failure('discovery', 'compatibility', 'The SSH account needs a POSIX shell on Linux or macOS, or Windows PowerShell 5.1 on Windows.', 'install-prerequisites');
+    }
+  }
+}
+
+async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'windows'): Promise<RemoteTransport> {
   const cancellation = new AbortController();
   const signal = AbortSignal.any([options.signal, cancellation.signal]);
   const { progress } = options;
   const nonce = randomBytes(16).toString('hex');
-  const { command, payload } = await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
+  const { command, payload } = remoteShell === 'windows'
+    ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive)
+    : await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
   const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
@@ -58,12 +93,17 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
   ssh.child.stdin.write(payload);
   const transportEnded = ssh.exited.then(() => {
     const stderr = ssh.diagnostics();
+    if (stage === 'authentication' && missingShell(remoteShell, ssh.child.exitCode, stderr)) throw new RemoteShellUnavailable();
+    if (/Windows interactive runtime unavailable|EX11_WINDOWS_LOGIN/.test(stderr)) throw failure('runtime', 'compatibility', 'Sign in to Windows with the SSH account so that its interactive app host can start, then retry.', 'retry');
     if (/EX11_UPDATE: legacy daemon/.test(stderr)) throw failure('runtime', 'compatibility', 'The running remote daemon predates automatic updates. Stop that verified daemon once using the remote development guide, then Retry. Later updates stop and replace it automatically.', 'retry');
     if (/EX11_UPDATE: explicit connection required/.test(stderr)) throw failure('runtime', 'compatibility', 'Another backend revision is running on this server. Choose Retry to replace it with this desktop’s version. Updating interrupts remote agents and terminals.', 'retry');
     if (/EX11_UPDATE: competing revision/.test(stderr)) throw failure('runtime', 'compatibility', 'Another desktop is updating this server to a different revision. Use matching desktop versions, then Retry.', 'retry');
+    if (/EX11_UPDATE: task apps are running/.test(stderr)) throw failure('runtime', 'compatibility', 'Apps are running on this machine. Stop them from the current desktop version, then retry the update.', 'retry');
     if (/EX11_UPDATE: handoff rejected/.test(stderr)) throw failure('runtime', 'configuration', 'The remote daemon could not accept the prepared runtime. Check its installation and permissions on the server, then Retry. The previous backend was left running.', 'retry');
     if (/EX11_UPDATE: handoff timed out/.test(stderr)) throw failure('runtime', 'configuration', 'The remote update did not become ready at the requested revision. Check the daemon on the server, then Retry. The desktop has not fallen back to an older revision.', 'retry');
-    if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
+    if (/EX11_COMPATIBILITY/.test(stderr)) throw failure(stage, 'compatibility', remoteShell === 'windows'
+      ? 'Verify Windows PowerShell 5.1, Git, Windows tar.exe, and a matching x64 or ARM64 backend archive.'
+      : 'Remote prerequisites or runtime compatibility need attention. Verify Git, tar, head, sha256sum/shasum, and a supported Linux glibc or macOS host.', 'install-prerequisites');
     if (/EX11_CONFIGURATION/.test(stderr)) throw failure(stage, 'configuration', 'Remote setup could not safely continue. Check disk space, permissions, runtime cache integrity, and the daemon control-port conflict described in the remote development guide.', 'edit');
     if (/EX11_RUNTIME/.test(stderr)) throw failure('runtime', 'compatibility', 'The remote backend did not become ready. Check OS/libc compatibility and the backend prerequisites.', 'install-prerequisites');
     throw sshFailure(stderr, stage);
@@ -191,10 +231,16 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
           }
           socket.setTimeout(0);
           const upgrade = lines.some(line => /^upgrade:/i.test(line));
-          const forwarded = lines.filter(line => !/^authorization:/i.test(line) && (upgrade || !/^connection:/i.test(line)));
+          const forwarded = lines.filter(line => !/^(?:authorization|x-elevenex-app-access):/i.test(line) && (upgrade || !/^connection:/i.test(line)));
+          // Only managed app endpoints receive the instance-scoped secret.
+          // In particular, never forward it to a proxied development service.
+          if (hello.appViewerAccess && /^(?:GET|POST) \/api\/(?:task-apps\/[1-9]\d*(?:\/[a-f0-9-]{36}\/(?:approve|stop|output|stream|watch))?|desktop-workspace\/revision(?:\?after=\d+)?) HTTP\/1\.[01]$/i.test(lines[0] ?? ''))
+            forwarded.push('X-Elevenex-App-Access: ' + hello.appViewerAccess);
           if (!upgrade) forwarded.push('Connection: close');
           const request = Buffer.concat([Buffer.from(forwarded.join('\r\n') + '\r\n\r\n', 'latin1'), header.subarray(end + 4)]);
-          socket.unshift(request); channels.open(socket, remotePort);
+          const appStream = upgrade && hello.appBinary === true &&
+            /^GET \/api\/task-apps\/[1-9]\d*\/[a-f0-9-]{36}\/stream HTTP\/1\.[01]$/.test(lines[0] ?? '');
+          socket.unshift(request); channels.open(socket, remotePort, undefined, undefined, appStream);
         };
         socket.on('data', authenticate);
       });
@@ -219,7 +265,7 @@ export async function connectRemote(options: ConnectOptions): Promise<RemoteTran
       if (closing) { await close(); throw new Error('Remote transport is closing'); }
       return { port: address.port, authorization, reachable, close };
     };
-    return { instance: hello.instance, exited: ssh.exited, health, forward, receivedAt: () => channel.receivedAt,
+    return { instance: hello.instance, remoteShell, exited: ssh.exited, health, forward, receivedAt: () => channel.receivedAt,
       browserProxy: async (authorize: (host: string, port: number) => void) => {
         if (closing || !hello.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
         const proxy = await browserSocks(async (host, port) => {

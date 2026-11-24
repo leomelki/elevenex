@@ -1,3 +1,4 @@
+import { TaskAppsComponent } from '../../task-apps';
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
 import type { TaskBrowserWindowContext } from '@elevenex/shared';
@@ -23,7 +24,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [TaskAppsComponent, CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -172,7 +173,7 @@ export class MachineWorkspaceComponent {
       const selected = this.store.selected(), target = this.reviewTarget();
       if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
     });
-    effect(() => this.store.connect(this.machine(), this.active() || this.preparing()));
+    effect(() => this.store.connect(this.machine(), this.active() || this.preparing(), this.active()));
     let creationOrigin: string | null = null;
     afterRenderEffect(() => {
       const key = this.store.selectedCreationKey();

@@ -35,6 +35,14 @@ export class WorkspaceNavigationObserver {
     void this.check(true);
   }
 
+  /** The focused conversation changed. Reuse the current watch slot immediately
+   * so a later launch is observed against the new conversation's baseline. */
+  restartWait(): void {
+    if (this.stopped || this.document.hidden) return;
+    if (this.reading) { this.resumeRequested = true; this.cancelWait(); }
+    else void this.check();
+  }
+
   dispose(): void {
     this.stopped = true; clearTimeout(this.timer); this.cancelWait();
     this.document.removeEventListener('visibilitychange', this.visible);

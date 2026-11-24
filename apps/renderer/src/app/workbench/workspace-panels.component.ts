@@ -18,6 +18,7 @@ export class WorkspacePanelsComponent {
   readonly changesContent = contentChild('workspaceChanges');
   readonly terminalContent = contentChild('workspaceTerminal');
   readonly browserContent = contentChild('workspaceBrowser');
+  readonly appsContent = contentChild('workspaceApps');
   readonly panel = model('changes');
   readonly unreachable = input<string>();
   readonly reconnectRequested = output<void>();
@@ -30,6 +31,7 @@ export class WorkspacePanelsComponent {
     { id: 'changes', label: 'Changes', icon: 'changes', panelId: 'workspace-panel-changes' },
     { id: 'code', label: 'Code', icon: 'code', panelId: 'workspace-panel-code' },
     { id: 'browser', label: 'Browser', icon: 'globe', panelId: 'workspace-panel-browser' },
+    { id: 'apps', label: 'Apps', icon: 'window', panelId: 'workspace-panel-apps' },
   ];
   protected readonly current = computed(() => this.tabs.find(tab => tab.id === this.panel()) ?? this.tabs[2]!);
 }

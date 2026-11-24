@@ -1,0 +1,21 @@
+<div class="viewport" [class.actual]="actual()" [class.controlling]="controlling()">
+  <canvas #canvas width="1" height="1" [hidden]="state() !== 'live'" [attr.aria-label]="name() + ' display'"
+    (pointerdown)="pointer($event, 'down')" (pointermove)="pointer($event, 'move')" (pointerup)="pointer($event, 'up')"
+    (lostpointercapture)="pointerLost()" (pointercancel)="pointerLost()" (wheel)="wheel($event)" (contextmenu)="$event.preventDefault()"></canvas>
+  @if (state() !== 'live') {
+    <div class="message" role="status">
+      {{ state() === 'connecting' ? 'Connecting to the app display…' : error() }}
+      @if (state() === 'interrupted') { <button exButton size="sm" (click)="start()">Retry stream</button> }
+    </div>
+  }
+</div>
+<textarea #keyboard class="keyboard" aria-label="Type in the remote app. Shift Escape releases the keyboard." tabindex="-1" autocapitalize="off" autocomplete="off" spellcheck="false"
+  (focus)="controlling.set(state() === 'live')" (blur)="release()" (keydown)="key($event, true)" (keyup)="key($event, false)"
+  (beforeinput)="beforeInput($event)" (compositionstart)="compositionStart()" (compositionend)="compositionEnd($event)"></textarea>
+@if (state() === 'live') {
+  <footer>
+    <button #focusButton exButton size="sm" variant="ghost" (mousedown)="$event.preventDefault()" (click)="controlling() ? release(true) : focus()">{{ controlling() ? 'Release keyboard' : 'Focus app' }}</button>
+    @if (error()) { <span role="status">{{ error() }}</span> }
+    @else if (controlling()) { <span>Shift + Esc</span> }
+  </footer>
+}

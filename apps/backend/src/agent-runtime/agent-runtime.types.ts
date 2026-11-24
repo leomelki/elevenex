@@ -147,6 +147,8 @@ export interface AgentImageInput {
   data: string;
 }
 
+export type NativeAppLaunchPolicy = 'launch' | 'request' | 'plan';
+
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
@@ -156,6 +158,8 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     sessionId: number,
     options?: { initialize?: boolean },
   ): Promise<AgentRuntimeStatePayload>;
+  /** In-memory authority of the running turn. Reading this must not start a provider. */
+  nativeAppLaunchPolicy?(sessionId: number): NativeAppLaunchPolicy;
   getSnapshot(sessionId: number): Promise<AgentSessionSnapshotPayload>;
   getAutocompleteItems(sessionId: number): Promise<AgentAutocompleteItem[]>;
   setSelectedModel(

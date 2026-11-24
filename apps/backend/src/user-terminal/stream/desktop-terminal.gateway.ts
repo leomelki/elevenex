@@ -1,4 +1,5 @@
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { localDesktopAccess } from '../../config/desktop-access.js';
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -11,7 +12,7 @@ import { DesktopTerminalConnection } from './desktop-terminal-connection.js';
 export function terminalStreamAuthorized(request: IncomingMessage): boolean {
   if (request.headers.origin || request.headers['sec-fetch-site']) return false;
   if (process.env.ELEVENEX_DESKTOP_SOCKET && request.socket.remoteAddress === undefined) return true;
-  const expected = process.env.ELEVENEX_CODE_ACCESS;
+  const expected = localDesktopAccess();
   const supplied = request.headers['x-elevenex-code-access'];
   if (expected) return typeof supplied === 'string' && /^[a-f\d]{64}$/.test(supplied) && Buffer.byteLength(supplied) === Buffer.byteLength(expected) &&
     timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));

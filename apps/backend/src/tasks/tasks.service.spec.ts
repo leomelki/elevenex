@@ -30,6 +30,7 @@ import { TextAgentGenerationService } from '../agent-generation/text-agent-gener
 import { BranchesService } from '../branches/branches.service.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
+import type { TaskAppHost } from '../task-apps/task-app-host.js';
 import { ActionsService } from '../actions/actions.service.js';
 import { TasksService, conciseFailureMessage } from './tasks.service.js';
 import { TasksController } from './tasks.controller.js';
@@ -94,6 +95,7 @@ describe('Task lifecycle with real Git and migrations', () => {
     getRunningCount: jest.fn(async () => ({ count: 0 })),
     stop: jest.fn(),
   };
+  const apps = { count: jest.fn(() => 0), stopAll: jest.fn(async (_id: number) => undefined) };
   let stopSession: jest.Mock;
   let releaseSession: jest.Mock;
   let reactivateRuntime: jest.Mock;
@@ -101,6 +103,8 @@ describe('Task lifecycle with real Git and migrations', () => {
   let assertProjectIsActive: jest.Mock;
 
   beforeEach(async () => {
+    apps.count.mockReturnValue(0);
+    apps.stopAll.mockReset().mockResolvedValue(undefined);
     root = await realpath(await mkdtemp(join(tmpdir(), 'elevenex-tasks-')));
     repoPath = join(root, 'repo');
     await mkdir(repoPath);
@@ -222,6 +226,7 @@ describe('Task lifecycle with real Git and migrations', () => {
       terminals as unknown as UserPtyManager,
       actions as unknown as ActionsService,
       worktreeContext,
+      apps as unknown as TaskAppHost,
     );
     service.onModuleInit();
   });
@@ -258,6 +263,18 @@ describe('Task lifecycle with real Git and migrations', () => {
     });
     return settled(task.id);
   }
+
+  it('retains the checkout when an app is still starting or its stop fails', async () => {
+    const task = await create('release-app');
+    apps.count.mockReturnValue(1);
+    expect(await service.releasePreview(task.id)).toMatchObject({ apps: 1 });
+    await expect(service.releaseWorktree(task.id)).rejects.toMatchObject({ response: { code: 'running_work' } });
+    expect(apps.stopAll).not.toHaveBeenCalled();
+    apps.stopAll.mockRejectedValueOnce(new Error('App still stopping'));
+    await expect(service.releaseWorktree(task.id, true)).rejects.toThrow();
+    expect((await service.record(task.id)).linkStatus).toBe('linked');
+    expect(apps.stopAll).toHaveBeenCalledWith(task.id);
+  });
 
   it('previews release without changing ownership or stopping processes, and reports actual local edits', async () => {
     const task = await create('release-preview');

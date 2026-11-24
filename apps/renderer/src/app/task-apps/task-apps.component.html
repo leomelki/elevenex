@@ -1,0 +1,59 @@
+@if (!scopeId() || !taskId() || !available() || readError() || !run()) {
+  <section class="empty" role="status">
+    <ex-icon name="window" [size]="24" />
+    @if (!scopeId()) { <h2>Waiting for {{ machine() || 'the machine' }}</h2> }
+    @else if (!taskId()) { <h2>Choose an active task</h2> }
+    @else if (!available()) { <h2>Apps unavailable</h2><p>Update the engine on {{ machine() || 'this machine' }} to view task apps.</p> }
+    @else if (readError()) {
+      <h2>Apps unavailable</h2><p>{{ readError() }}</p><button exButton size="sm" (click)="refresh()">Retry</button>
+    } @else if (loading()) { <p>Loading apps…</p> }
+    @else if (selected()) {
+      <h2>This run is unavailable</h2>
+      @if (!standalone() && runs().length) { <button exButton size="sm" (click)="choose(runs()[0]!.runId)">Show task apps</button> }
+    } @else { <h2>No apps running</h2><p>Ask your agent to launch an app in this task.</p> }
+  </section>
+} @else if (run(); as app) {
+  <header>
+    <div class="run-title">
+      @if (runs().length > 1 && !standalone()) {
+        <ex-dropdown appearance="quiet" label="Task app" [value]="app.runId" [options]="options()" (changed)="choose($event)" />
+      } @else { <strong>{{ app.name }}</strong> }
+      <div class="meta" role="status"><i [class.running]="app.status === 'running'" [class.failed]="app.status === 'failed'"></i>{{ labels[app.status] }}@if (machine()) { · {{ machine() }} }</div>
+    </div>
+    @if (app.mode === 'stream' && app.status === 'running') {
+      <ex-segmented size="sm" label="Display scale" [options]="scales" [value]="actual() ? 'actual' : 'fit'" (changed)="actual.set($event === 'actual')" />
+      @if (!standalone() && bridge.taskAppPopOut) { <ex-icon-button icon="window" label="Open app in separate window" [disabled]="busy()" (pressed)="popOut()" /> }
+    }
+  </header>
+  @if (actionError()) { <p role="alert" class="error">{{ actionError() }}</p> }
+  @if (app.mode === 'stream' && app.status === 'running' && !detached()) {
+    @for (id of [app.runId]; track scopeId() + ':' + taskId() + ':' + id) {
+      <ex-app-stream [scopeId]="scopeId()!" [taskId]="taskId()!" [runId]="id" [name]="app.name" [actual]="actual()" />
+    }
+  } @else if (app.status === 'requested') {
+    <section class="approval" aria-label="App launch request">
+      <h2>Launch {{ app.name }}?</h2>
+      <p>This command will run in the task checkout on {{ machine() || 'the task machine' }}.</p>
+      <pre tabindex="0" aria-label="Requested executable and arguments">{{ requestedCommand() }}</pre>
+      <div><button exButton size="sm" variant="primary" [disabled]="busy() || !app.pendingLaunch || !bridge.taskAppApprove" (click)="act('approve')">Launch on machine</button>
+        <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Cancel</button></div>
+    </section>
+  } @else {
+    <section class="empty" role="status"><ex-icon name="window" [size]="24" />
+      @if (app.status === 'failed') { <h2>App launch failed</h2> }
+      @else if (app.status === 'exited') { <h2>App exited</h2> }
+      @else if (app.status === 'stopping') { <h2>Stopping app…</h2> }
+      @else if (app.status === 'starting') { <h2>Starting {{ app.name }}…</h2> }
+      @else if (detached()) { <h2>Open in a separate window</h2><button exButton size="sm" (click)="detached.set(false)">View here</button> }
+      @else { <h2>Running on {{ machine() || 'this machine' }}</h2><p>Use the native app window to interact.</p> }
+      @if (app.detail) { <p>{{ app.detail }}</p> }
+    </section>
+  }
+  <section class="logs">
+    <div class="log-actions">
+      <button exButton size="sm" variant="ghost" [attr.aria-expanded]="logsOpen()" (click)="toggleLogs()"><ex-icon name="terminal" [size]="13" />{{ logsOpen() ? 'Hide logs' : 'View logs' }}</button>
+      @if (app.status === 'running' || app.status === 'starting' || app.status === 'stopping') { <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')"><ex-icon name="stop" [size]="13" />{{ app.status === 'stopping' ? 'Retry stop' : 'Stop app' }}</button> }
+    </div>
+    @if (logsOpen()) { <pre tabindex="0" aria-label="App output">{{ logs() === null ? 'Loading output…' : logs() || 'No output yet.' }}</pre> }
+  </section>
+}

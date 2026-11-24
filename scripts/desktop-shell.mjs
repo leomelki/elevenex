@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { watch } from 'node:fs';
 import { access, copyFile, mkdir } from 'node:fs/promises';
+import { stripVTControlCharacters } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -25,10 +26,10 @@ function launch(entry, args = [], cwd = root, env = {}) {
   return launchCommand(process.execPath, entry ? [entry, ...args] : args, cwd, env);
 }
 
-function launchCommand(command, args, cwd = root, env = {}) {
+function launchCommand(command, args, cwd = root, env = {}, captureOutput = false) {
   if (stopping) throw new Error('Desktop development is stopping');
   const child = spawn(command, args, {
-    cwd, stdio: 'inherit', env: { ...process.env, ...env },
+    cwd, stdio: captureOutput ? ['inherit', 'pipe', 'inherit'] : 'inherit', env: { ...process.env, ...env },
   });
   children.add(child);
   child.once('error', () => children.delete(child));
@@ -92,21 +93,35 @@ async function dev(args, sharedWorkspace = false) {
   const backendEnvironment = await prepareDevelopmentBackend(root, run, {
     linuxArchitecture, workspace, runCommand: (command, args, cwd) => completed(launchCommand(command, args, cwd)),
   });
-  const port = Number(process.env['ELEVENEX_DESKTOP_PORT'] ?? 4300);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid ELEVENEX_DESKTOP_PORT');
-  const url = `http://127.0.0.1:${port}`;
+  const nested = Boolean(process.env['ELEVENEX_TASK_APP_RUNTIME_DIR']);
+  const port = nested ? 0 : Number(process.env['ELEVENEX_DESKTOP_PORT'] ?? 4300);
+  if (!nested && (!Number.isInteger(port) || port < 1024 || port > 65535)) throw new Error('Invalid ELEVENEX_DESKTOP_PORT');
+  let url = nested ? undefined : `http://127.0.0.1:${port}`;
   const serveArgs = ['serve', '--host', '127.0.0.1', '--port', String(port)];
   if (sharedWorkspace) {
     console.log(`Shared SSH development workspace ${workspace}`);
     serveArgs.push('--watch=false', '--live-reload=false', '--hmr=false');
   }
-  const server = launch(ng, serveArgs, renderer);
+  const server = launchCommand(process.execPath, [ng, ...serveArgs], renderer, {}, nested);
+  // Angular reports its actual bound URL for port zero. Probing the usual dev
+  // port could attach a nested Electron instance to an unrelated checkout.
+  if (server.stdout) {
+    let tail = '';
+    server.stdout.on('data', bytes => {
+      process.stdout.write(bytes);
+      if (url) return;
+      tail = (tail + stripVTControlCharacters(bytes.toString())).slice(-4096);
+      const match = /Local:\s+(http:\/\/127\.0\.0\.1:\d{1,5})\//.exec(tail);
+      if (match) url = match[1];
+    });
+  }
   const serverCompleted = completed(server);
   let serverStopped = false;
   void serverCompleted.finally(() => { serverStopped = true; }).catch(() => undefined);
   let ready = false;
   for (let attempt = 0; attempt < 240; attempt++) {
     if (serverStopped || stopping) throw new Error('Renderer dev server stopped');
+    if (!url) { await delay(500); continue; }
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
       if (response.ok) { ready = true; break; }
@@ -210,7 +225,7 @@ try {
       await compileMain();
       await syncTokens();
       await run(null, ['--test', 'test/application-identity.test.cjs'], desktop);
-      await run(null, ['--test', 'test/preload.test.cjs', 'test/browser.test.cjs', 'test/native-pointer-input.test.cjs', 'test/browser-element-reference.test.cjs', 'test/browser-source.test.cjs', 'test/browser-framework-source.test.cjs', 'test/browser-files.test.cjs', 'test/browser-webauthn.test.cjs', 'test/browser-presentation.test.cjs', 'test/browser-stream.test.cjs', 'test/code-security.test.cjs', 'test/code-transfers.test.cjs', 'test/code-frame-router.test.cjs', 'test/code-html-preview.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/code-compact-layout.test.cjs', 'test/code-files-focus.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/task-terminal.test.cjs', 'test/terminal-stream.test.cjs', 'test/terminal-forwards.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/ssh-native.test.cjs'], desktop);
+      await run(null, ['--test', 'test/preload.test.cjs', 'test/browser.test.cjs', 'test/native-pointer-input.test.cjs', 'test/browser-element-reference.test.cjs', 'test/browser-source.test.cjs', 'test/browser-framework-source.test.cjs', 'test/browser-files.test.cjs', 'test/browser-webauthn.test.cjs', 'test/browser-presentation.test.cjs', 'test/browser-stream.test.cjs', 'test/code-security.test.cjs', 'test/code-transfers.test.cjs', 'test/code-frame-router.test.cjs', 'test/code-html-preview.test.cjs', 'test/code-artifact.test.cjs', 'test/code-save-recovery.test.cjs', 'test/code-compact-layout.test.cjs', 'test/code-files-focus.test.cjs', 'test/security.test.cjs', 'test/machines.test.cjs', 'test/backend-install.test.cjs', 'test/backend-development.test.cjs', 'test/backend-manager.test.cjs', 'test/backend-process.test.cjs', 'test/backend-client.test.cjs', 'test/task-terminal.test.cjs', 'test/terminal-stream.test.cjs', 'test/terminal-forwards.test.cjs', 'test/ipc.test.cjs', 'test/remote.test.cjs', 'test/remote-wire.test.cjs', 'test/remote-audit.test.cjs', 'test/remote-recovery.test.cjs', 'test/remote-install.test.cjs', 'test/remote-development.test.cjs', 'test/remote-update.test.cjs', 'test/task-app-stream.test.cjs', 'test/ssh-native.test.cjs'], desktop);
       await run(null, ['--test', 'scripts/desktop-capture/test/options.test.mjs', 'scripts/desktop-capture/test/lifecycle.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-icons.test.mjs']);
       await run(null, ['--test', 'scripts/desktop-backend-linux.test.mjs']);

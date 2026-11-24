@@ -31,7 +31,7 @@
           type="button"
           [class.file]="!node.external"
           (click)="
-            node.external
+            (node.external || node.app)
               ? openLink.emit(node.target)
               : openFile.emit(node.target)
           "

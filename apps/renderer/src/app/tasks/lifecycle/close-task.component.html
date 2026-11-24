@@ -7,6 +7,7 @@
     <h2>Close “{{ title() }}”?</h2>
     <ul>
       @if (terminals()) { <li><ex-icon name="terminal" [size]="14" />Stops {{ terminals() }} running terminals</li> }
+      @if (apps()) { <li><ex-icon name="window" [size]="14" />Stops {{ apps() }} running {{ apps() === 1 ? 'app' : 'apps' }}</li> }
       @if (actions()) { <li><ex-icon name="actions" [size]="14" />Stops {{ actions() }} running actions</li> }
       @if (running()) {
         <li>

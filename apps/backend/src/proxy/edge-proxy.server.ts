@@ -382,7 +382,8 @@ export function createEdgeProxyServer(
     const matchedRule = matchProxyRule(pathname, proxyConfig);
 
     const privateBrowserStream = /^\/api\/desktop-browser\/runtime\/tasks\/[1-9][0-9]*\/stream$/.test(pathname);
-    if (!matchedRule || (!matchedRule.ws && !privateBrowserStream)) {
+    const privateAppStream = /^\/api\/task-apps\/[1-9]\d*\/[a-f0-9-]{36}\/stream$/.test(pathname);
+    if (!matchedRule || (!matchedRule.ws && !privateBrowserStream && !privateAppStream)) {
       socket.destroy();
       return;
     }

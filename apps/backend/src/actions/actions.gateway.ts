@@ -14,11 +14,18 @@ export class ActionsGateway implements OnModuleDestroy {
   private wss: WebSocketServer | null = null;
   private connections = new Map<number, Set<ActionConnection>>();
 
+  private readonly appOutput = (id: number, chunk: string) =>
+    this.sendToAction(id, chunk);
+  private readonly appStatus = (id: number, status: string) =>
+    this.notifyStatus(id, status);
+
   constructor(
     private readonly ptyManager: ActionPtyManager,
     private readonly actionsService: ActionsService,
   ) {
     this.ptyManager.registerGateway(this);
+    this.actionsService.on('app-action-output', this.appOutput);
+    this.actionsService.on('app-action-status', this.appStatus);
   }
 
   attachToServer(server: HttpServer): void {
@@ -73,7 +80,9 @@ export class ActionsGateway implements OnModuleDestroy {
       if (ws.readyState !== WebSocket.OPEN) return;
       const output = this.ptyManager.isRunning(actionId)
         ? this.ptyManager.getCurrentOutput(actionId)
-        : action.currentOutput || action.lastOutput;
+        : action.status === 'running'
+          ? action.currentOutput
+          : action.currentOutput || action.lastOutput;
 
       if (output) {
         sendBounded(ws, output);
@@ -112,6 +121,8 @@ export class ActionsGateway implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    this.actionsService.off('app-action-output', this.appOutput);
+    this.actionsService.off('app-action-status', this.appStatus);
     for (const connections of this.connections.values()) {
       for (const { ws } of connections) {
         ws.close(1001, 'Server shutting down');

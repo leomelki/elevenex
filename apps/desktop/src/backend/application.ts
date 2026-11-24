@@ -6,9 +6,9 @@ import { startBackend } from './process';
 import { developmentBackend } from './development';
 
 /** Keep mutable data separate from the legacy app and immutable version caches. */
-export function createApplicationBackend(supervisor: string, isPackaged: boolean): BackendManager {
+export function createApplicationBackend(supervisor: string, isPackaged: boolean, root = join(homedir(), '.elevenex', 'desktop')): BackendManager {
   return new BackendManager({
-    root: join(homedir(), '.elevenex', 'desktop'),
+    root,
     release: () => readBackendRelease(join(__dirname, '..')),
     ...developmentBackend(isPackaged),
     start: (installation, root, version, signal) => startBackend(installation, root, version, signal, supervisor),
