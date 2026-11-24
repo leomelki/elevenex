@@ -12,13 +12,18 @@ import type { Machine } from '../machines';
 import type { ConversationMention } from '../conversation';
 import type { SessionAgentReference } from '@elevenex/shared';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
-import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
+import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSession, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
 import { workspaceAgentRow, workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
 import { WorkspaceResume } from './workspace-resume';
 import { WorkspaceRestoration, projectWindowCursor, type RestoredTaskWindow } from './workspace-restoration';
+
+interface SessionRemovalIntent {
+  readonly taskId: string;
+  readonly session: Pick<TaskSession, 'id' | 'status' | 'activeChildAgents' | 'childStopRequired'>;
+}
 
 /** A workspace owns bounded visible pages. Resource IDs never outlive their scope. */
 @Injectable()
@@ -60,10 +65,11 @@ export class WorkspaceStore {
   readonly sessionNestingAvailable = signal(false);
   private readonly sessionNestingOrderAvailable = signal(false);
   readonly sessionArchiveAvailable = signal(false);
+  private readonly sessionArchiveChildrenAvailable = signal(false);
   readonly sessionArchiveHistoryAvailable = signal(false);
   private readonly archives = new WorkspaceSessionArchives(this.bridge, scope => this.valid(scope));
   readonly sessionDisclosures = signal<ReadonlyMap<string, TaskSessionDisclosure>>(new Map());
-  readonly sessionArchiveUndo = signal<{ readonly scopeId: string; readonly session: WorkspaceSession } | null>(null);
+  readonly sessionArchiveUndo = signal<{ readonly scopeId: string; readonly session: WorkspaceSession; readonly group?: boolean } | null>(null);
   readonly scopeId = signal<string | null>(null);
   readonly offline = computed(() => !!this.scopeId() && (this.backend.state().scope?.id !== this.scopeId() || this.restoring() && !!this.chosen() && this.chosen()?.scopeId !== this.scopeId()));
   readonly asOf = signal<number | null>(null);
@@ -176,6 +182,7 @@ export class WorkspaceStore {
     ...(task.repoName && task.projectRepositoryCount !== 1 ? { repo: task.repoName } : {}),
     sessions: [
       ...(this.navigationSessions().get(task.id) ?? []).map(session => ({ ...workspaceAgentRow(session), id: String(session.id), renderId: this.sessionRenderIds().get(session.id),
+        ...(this.sessionArchiveChildrenAvailable() && session.childStopRequired ? { childStopRequired: true } : {}),
         ...(this.sessionNestingAvailable() && !this.closed() ? { childrenAppendOrder: this.sessionNestingOrderAvailable(), parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
           childrenLoading: this.hierarchy.windows().get(session.id)?.loading ?? false,
           childrenError: this.hierarchy.windows().get(session.id)?.error ?? null,
@@ -647,37 +654,43 @@ export class WorkspaceStore {
     if (previous) this.chosen.set({ scopeId: starting.scopeId, taskId: starting.taskId, sessionId: previous.id });
   }
 
-  async deleteSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string } }): Promise<boolean> {
+  async deleteSession(intent: SessionRemovalIntent): Promise<boolean> {
     return this.removeSession(intent, true);
   }
-  async archiveSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string; readonly activeChildAgents?: readonly number[] } }): Promise<boolean> {
+  async archiveSession(intent: SessionRemovalIntent): Promise<boolean> {
     return this.removeSession(intent, false);
   }
-  private async removeSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string; readonly activeChildAgents?: readonly number[] } }, deleting: boolean): Promise<boolean> {
+  private async removeSession(intent: SessionRemovalIntent, deleting: boolean): Promise<boolean> {
     const scope = this.scopeId(), taskId = Number(intent.taskId), sessionId = Number(intent.session.id), revision = this.listRevision;
     const session = this.navigationSessions().get(taskId)?.find(session => session.id === sessionId);
     if (!scope || !session || this.busy() || !this.sessionArchiveAvailable() || (deleting && !session.canDelete)) return false;
+    const includeChildren = !deleting && this.sessionArchiveChildrenAvailable();
+    const { status, activeChildAgents, childStopRequired } = intent.session;
+    const confirmStop = status === 'running' || !!session.commandCount ||
+      (includeChildren && (!!childStopRequired || !!activeChildAgents?.length));
     this.busy.set(true);
     const result = await this.mutate(scope, () => deleting
       ? this.bridge.workspaceDeleteSession(scope, { taskId, sessionId })
-      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' || !!session.commandCount,
-        ...(intent.session.activeChildAgents?.length ? { stopAgents: intent.session.activeChildAgents } : {}) }));
+      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop,
+        ...(includeChildren ? { includeChildren: true } : {}),
+        ...(activeChildAgents?.length ? { stopAgents: activeChildAgents } : {}) }));
     if (result) {
       if (deleting) this.drafts?.entry({ scopeId: scope, taskId, sessionId }).discard();
       this.closeUndo.set(null); this.archiveUndo.set(null);
-      this.sessionArchiveUndo.set(deleting ? null : { scopeId: scope, session });
+      this.sessionArchiveUndo.set(deleting ? null : { scopeId: scope, session, group: includeChildren && !!session.childCount });
       if (revision === this.listRevision) {
         const sessions = this.navigationSessions().get(taskId) ?? [], at = sessions.findIndex(session => session.id === sessionId);
-        const remaining = sessions.filter(session => session.id !== sessionId).map(row => row.parentSessionId === sessionId ? { ...row, parentSessionId: null } : row);
+        const removed = (row: WorkspaceSession) => row.id === sessionId || (includeChildren && row.parentSessionId === sessionId);
+        const remaining = sessions.filter(row => !removed(row)).map(row => row.parentSessionId === sessionId ? { ...row, parentSessionId: null } : row);
         this.hierarchy.removeSession(sessionId);
         this.sessionRecords.update(records => {
-          const roots = (records.get(taskId) ?? []).filter(row => row.id !== sessionId).map(row => row.id === session.parentSessionId ? { ...row, childCount: Math.max(0, (row.childCount ?? 0) - 1) } : row);
+          const roots = (records.get(taskId) ?? []).filter(row => !removed(row)).map(row => row.id === session.parentSessionId ? { ...row, childCount: Math.max(0, (row.childCount ?? 0) - 1) } : row);
           const rootIds = new Set(roots.map(row => row.id));
           const promoted = remaining.filter(row => sessions.find(previous => previous.id === row.id)?.parentSessionId === sessionId && !rootIds.has(row.id));
           return new Map(records).set(taskId, [...roots, ...promoted].sort((a,b) => a.id - b.id));
         });
         const selection = this.chosen();
-        if (selection?.taskId === taskId && selection.sessionId === sessionId) {
+        if (selection?.taskId === taskId && sessions.some(row => row.id === selection.sessionId && removed(row))) {
           const next = remaining[at] ?? remaining[0];
           this.chosen.set(next ? { scopeId: scope, taskId, sessionId: next.id } : null);
         }
@@ -1175,11 +1188,13 @@ export class WorkspaceStore {
     this.sessionNestingAvailable.set(capability?.sessionNesting === true);
     this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true);
     this.sessionArchiveAvailable.set(capability?.sessionArchive === true);
+    this.sessionArchiveChildrenAvailable.set(capability?.sessionArchiveChildren === true);
     this.sessionArchiveHistoryAvailable.set(capability?.sessionArchiveHistory === true);
   }
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
     this.chatStreamScope.set(null);
+    this.sessionArchiveChildrenAvailable.set(false);
     this.hierarchy.reset(); this.sessionNestingAvailable.set(false); this.sessionNestingOrderAvailable.set(false);
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;

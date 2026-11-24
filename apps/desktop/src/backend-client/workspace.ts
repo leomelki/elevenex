@@ -84,7 +84,7 @@ function parseRevision(value: unknown): WorkspaceRevision {
   const response = object(value);
   if (response['version'] !== 1) throw invalidResponse();
   const revision = count(response['revision']);
-  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel']) {
+  for (const capability of ['revisionWait', 'chatStream', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
@@ -95,6 +95,7 @@ function parseRevision(value: unknown): WorkspaceRevision {
     ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true } : {}),
     ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),
     ...(response['sessionArchive'] === true ? { sessionArchive: true } : {}),
+    ...(response['sessionArchiveChildren'] === true ? { sessionArchiveChildren: true } : {}),
     ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
     ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
   };
@@ -246,6 +247,7 @@ function session(value: unknown): WorkspaceSession {
     ...(raw['delegationDetail'] === undefined ? {} : { delegationDetail: text(raw['delegationDetail'], 300) }),
     ...(raw['parentWaiting'] === true ? { parentWaiting: true } : {}),
     ...(raw['activeChildAgents'] === undefined ? {} : { activeChildAgents: archiveAgents(raw['activeChildAgents'], sessionId) }),
+    ...(raw['childStopRequired'] === undefined ? {} : { childStopRequired: boolean(raw['childStopRequired']) }),
   };
 }
 function archiveAgents(value: unknown, sessionId: number): readonly number[] {
@@ -752,6 +754,7 @@ export function registerWorkspaceIpc(
   register('workspace:archive-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
     return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']),
+      ...(raw['includeChildren'] === undefined ? {} : { includeChildren: boolean(raw['includeChildren']) }),
       ...(raw['stopAgents'] === undefined ? {} : { stopAgents: archiveAgents(raw['stopAgents'], sessionId) }) }, accepted);
   });
   register('workspace:move-session', (window, scope, input) => {

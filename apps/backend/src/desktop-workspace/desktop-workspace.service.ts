@@ -610,20 +610,35 @@ export class DesktopWorkspaceService {
     );
     return { accepted: true as const };
   }
-  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown, stopAgents?: unknown) {
+  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown, stopAgents?: unknown, includeChildren?: unknown) {
     if (typeof confirmStop !== 'boolean') throw new BadRequestException('A stop confirmation is required.');
+    if (includeChildren !== undefined && typeof includeChildren !== 'boolean')
+      throw new BadRequestException('Invalid subsession archive option.');
     const session = await this.activeTaskSession(taskId, sessionId);
     if (this.sessionView(session, taskId).status === 'running' && !confirmStop)
       throw new BadRequestException('This session is running. Stop and archive to confirm.');
+    let approved: readonly number[] | undefined;
     if (stopAgents !== undefined) {
       if (!Array.isArray(stopAgents) || !stopAgents.length || stopAgents.length > WORKSPACE_ARCHIVE_AGENT_LIMIT ||
           new Set(stopAgents).size !== stopAgents.length || stopAgents.some(id => !Number.isSafeInteger(id) || id <= 0 || id === sessionId))
         throw new BadRequestException('Invalid agent stop confirmation.');
-      if (!await this.delegates?.stopChildren(taskId, sessionId, stopAgents))
+      approved = stopAgents;
+      if (!includeChildren && !await this.delegates?.stopChildren(taskId, sessionId, approved))
         throw new ConflictException('The running agents changed. Review them before archiving.');
     }
+    if (includeChildren) {
+      await this.sessions.archiveTaskSessionGroup(taskId, sessionId, rows => {
+        if (approved && !this.delegates?.confirmedChildren(taskId, sessionId, approved))
+          throw new ConflictException('The running agents changed. Review them before archiving.');
+        if (!confirmStop && rows.some(row => {
+          const { status, commandCount } = this.sessionView(row, taskId);
+          return status === 'running' || !!commandCount || (row.id !== sessionId && status === 'attention');
+        })) throw new BadRequestException('A conversation in this group is running or needs attention. Stop and archive to confirm.');
+      });
+      return { accepted: true as const };
+    }
     await this.sessions.archiveAndStop(sessionId, true);
-    // Grouping never makes archive recursive; children remain visible at task level.
+    // Older desktops expect children to return to task level after a single-session archive.
     await this.db.update(schema.sessions).set({ parentSessionId: null }).where(eq(schema.sessions.parentSessionId, sessionId));
     // Desktop row archives return on task reopen, just like archives made at close.
     // This does not change the legacy standalone session-archive semantics.

@@ -77,6 +77,7 @@ interface SessionListOptions {
 @Injectable()
 export class SessionsService extends EventEmitter {
   private readonly logger = new Logger(SessionsService.name);
+  private readonly archivingGroup = new Set<number>();
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -867,14 +868,19 @@ export class SessionsService extends EventEmitter {
       );
     }
 
-    const rows = await this.db
+    // A turn admitted just before a group archive may still try to mark
+    // itself active while its runtime is shutting down.
+    if (status !== 'archived' && this.archivingGroup.has(id))
+      throw new ConflictException('Session archive is already in progress.');
+    const rows = this.db
       .update(schema.sessions)
       .set({
         status,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.sessions.id, id))
-      .returning();
+      .returning()
+      .all();
 
     if (rows.length === 0) {
       throw new NotFoundException(`Session with id ${id} not found`);
@@ -1173,6 +1179,52 @@ export class SessionsService extends EventEmitter {
     return archived;
   }
 
+  async archiveTaskSessionGroup(
+    taskId: number,
+    id: number,
+    confirm: (rows: readonly (typeof schema.sessions.$inferSelect)[]) => void,
+  ): Promise<void> {
+    const { sessions, workspaces } = schema;
+    // Claim the group together so moves and new prompts cannot split the
+    // operation while process cleanup awaits.
+    const { archived, cleanup } = this.db.transaction(tx => {
+      const task = tx.select().from(workspaces).where(eq(workspaces.id, taskId)).get();
+      if (!task || task.archivedAt || task.taskState !== 'ready')
+        throw new BadRequestException('Task is not ready for session changes.');
+      const scope = and(
+        eq(sessions.workspaceId, taskId),
+        eq(sessions.repoId, task.repoId),
+        eq(sessions.surface, 'session'),
+      );
+      const targetScope = and(eq(sessions.id, id), scope);
+      const target = tx.select().from(sessions).where(targetScope).get();
+      if (!target) throw new BadRequestException('Session does not belong to this task.');
+      const childScope = and(eq(sessions.parentSessionId, id), eq(sessions.isTemporary, false), scope);
+      const rows = [target, ...tx.select().from(sessions).where(childScope).all()];
+      const active = rows.filter(row => row.status !== 'archived');
+      // A retry can finish cleanup after the group was already marked archived.
+      const cleanup = rows.filter(row => row.id === id || row.status !== 'archived' ||
+        (target.status === 'archived' && row.archivedByTask));
+      if (cleanup.some(row => this.archivingGroup.has(row.id)))
+        throw new ConflictException('Session archive is already in progress.');
+      confirm(active);
+      const archived = tx.update(sessions)
+        .set({ status: 'archived', archivedByTask: true, updatedAt: new Date().toISOString() })
+        .where(and(or(targetScope, childScope), ne(sessions.status, 'archived')))
+        .returning({ id: sessions.id }).all();
+      return { archived, cleanup };
+    });
+    for (const row of cleanup) this.archivingGroup.add(row.id);
+    try {
+      if (archived.length) this.navigationEvents?.invalidate();
+      for (const row of archived)
+        this.emit('session-status-changed', { sessionId: row.id, status: 'archived' });
+      await this.runArchiveCleanup(cleanup, sessionId => this.cleanupArchivedSessionProcesses(sessionId, true));
+    } finally {
+      for (const row of cleanup) this.archivingGroup.delete(row.id);
+    }
+  }
+
   /** Retire processes while preserving the conversation in the active task. */
   async stopForWorktreeRelease(id: number) {
     await this.cleanupArchivedSessionProcesses(id, true);
@@ -1235,6 +1287,13 @@ export class SessionsService extends EventEmitter {
     rows: { id: number }[],
     requireCleanup: boolean,
   ) {
+    await this.runArchiveCleanup(rows, id => this.archiveAndStop(id, requireCleanup));
+  }
+
+  private async runArchiveCleanup(
+    rows: readonly { id: number }[],
+    cleanup: (id: number) => Promise<unknown>,
+  ) {
     // Bound subprocess concurrency and await every cleanup, including failures,
     // before a caller can remove a repository with thousands of conversations.
     const pending = rows.values();
@@ -1243,7 +1302,7 @@ export class SessionsService extends EventEmitter {
       Array.from({ length: Math.min(8, rows.length) }, async () => {
         for (const session of pending) {
           try {
-            await this.archiveAndStop(session.id, requireCleanup);
+            await cleanup(session.id);
           } catch (error) {
             errors.push(error);
           }
@@ -1275,6 +1334,8 @@ export class SessionsService extends EventEmitter {
   async unarchive(id: number) {
     const session = await this.findOne(id);
 
+    if (this.archivingGroup.has(id))
+      throw new ConflictException('Session archive is already in progress.');
     if (session.status !== 'archived') {
       throw new BadRequestException('Only archived sessions can be unarchived');
     }

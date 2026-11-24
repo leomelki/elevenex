@@ -68,6 +68,8 @@ export interface WorkspaceSession {
   readonly delegationDetail?: string;
   readonly parentWaiting?: true;
   readonly activeChildAgents?: readonly number[];
+  /** Archiving this group requires stopping live subsession work. */
+  readonly childStopRequired?: boolean;
   readonly id: number;
   readonly taskId: number;
   readonly repoId: number;
@@ -215,6 +217,8 @@ export interface WorkspaceArchiveSession {
   readonly taskId: number;
   readonly sessionId: number;
   readonly confirmStop: boolean;
+  /** Archive the session's nested conversations. Requires sessionArchiveChildren. */
+  readonly includeChildren?: boolean;
   /** Explicitly approved currently running delegated children, verified again by the engine. */
   readonly stopAgents?: readonly number[];
 }
@@ -243,6 +247,7 @@ export interface WorkspaceRevision {
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;
+  readonly sessionArchiveChildren?: true;
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;
   readonly commitPanel?: true;

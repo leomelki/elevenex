@@ -310,13 +310,16 @@ Delegated rows carry the caller's identity independently of their outline parent
 Use the supplied agent selection for the harness mark and the caller, current
 activity and wait metadata for the hover and focus tooltip. Collapsed groups use
 the most urgent child state, in needs-you, failed, running and finished order.
-An expanded group keeps a newly finished child in place until the group is next
-opened. Completed delegates already present at opening sit under a finished
-disclosure, and a selected child always stays reachable.
+Opening a child group shows the last two sessions in the supplied order, reserving
+a slot for the selected child when needed. Show more reveals every child in the
+current page, including running sessions. Children keep their place when their
+status changes. Dragging a session into a group reveals the full page so the
+dropped row has a visible destination.
 
 When a parent has running delegated children, the archive confirmation names
 the number of affected agents. The engine verifies the exact approved child IDs
-before stopping those turns. Their sessions remain in the outline.
+before stopping those turns. For group archives the owner also supplies
+`childStopRequired` for live subsession work, including detached commands.
 
 The connected desktop uses two sidebar levels: root sessions and child sessions.
 `TaskSession.parentId` describes organization; fork `kind` still describes transcript

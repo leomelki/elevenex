@@ -157,9 +157,14 @@ export class DesktopSessionDelegates {
     return !!child.delegatedBySessionId && (status === 'running' || status === 'attention');
   }
 
-  async stopChildren(taskId: number, parentId: number, approved: readonly number[]): Promise<boolean> {
+  confirmedChildren(taskId: number, parentId: number, approved: readonly number[]): readonly Session[] | null {
     const children = this.transientChildren(taskId, [parentId]).filter(child => this.liveAgent(child));
-    if (children.length !== approved.length || children.some(child => !approved.includes(child.id))) return false;
+    return children.length === approved.length && children.every(child => approved.includes(child.id)) ? children : null;
+  }
+
+  async stopChildren(taskId: number, parentId: number, approved: readonly number[]): Promise<boolean> {
+    const children = this.confirmedChildren(taskId, parentId, approved);
+    if (!children) return false;
     // Stop only the confirmed turns. The sessions, their transcripts and drafts stay available.
     for (const child of children) {
       await this.registry.getProvider(sessionAgentProvider(child)).interrupt(child.id);
@@ -169,7 +174,7 @@ export class DesktopSessionDelegates {
   }
 
   childSummaries(taskId: number, parents: readonly number[]): ReadonlyMap<number, {
-    childSummary?: SessionChildSummary; activeChildAgents?: readonly number[];
+    childSummary?: SessionChildSummary; activeChildAgents?: readonly number[]; childStopRequired?: boolean;
   }> {
     if (!parents.length) return new Map();
     const filter = and(eq(sessions.workspaceId, taskId), usable, inArray(sessions.parentSessionId, parents));
@@ -182,11 +187,15 @@ export class DesktopSessionDelegates {
       then 1 else 0 end)`;
     const counts = new Map(this.db.select({ id: sessions.parentSessionId, done }).from(sessions)
       .where(filter).groupBy(sessions.parentSessionId).all()
-      .map(row => [row.id, { attention: 0, failed: 0, running: 0, done: row.done, active: [] as number[] }]));
+      .map(row => [row.id, { attention: 0, failed: 0, running: 0, done: row.done, active: [] as number[], stopRequired: false }]));
     for (const child of this.transientChildren(taskId, parents)) {
       const counter = counts.get(child.parentSessionId);
-      const status = this.activity.turnStatus(child);
-      if (!counter || (status !== 'attention' && status !== 'failed' && status !== 'running')) continue;
+      if (!counter) continue;
+      const activity = this.activity.view(child);
+      if (activity.status === 'running' || activity.status === 'attention' || activity.commandCount)
+        counter.stopRequired = true;
+      const status = activity.turnStatus ?? activity.status;
+      if (status !== 'attention' && status !== 'failed' && status !== 'running') continue;
       counter[status]++;
       if (counter.active.length <= WORKSPACE_ARCHIVE_AGENT_LIMIT && this.liveAgent(child, status))
         counter.active.push(child.id);
@@ -196,8 +205,9 @@ export class DesktopSessionDelegates {
     return new Map(parents.flatMap(id => {
       const count = counts.get(id);
       const status = count && order.find(status => count[status] > 0);
-      return count && status ? [[id, {
-        childSummary: { status, count: count[status] },
+      return count && (status || count.stopRequired) ? [[id, {
+        ...(status ? { childSummary: { status, count: count[status] } } : {}),
+        ...(count.stopRequired ? { childStopRequired: true } : {}),
         ...(count.active.length && count.active.length <= WORKSPACE_ARCHIVE_AGENT_LIMIT ? { activeChildAgents: count.active } : {}),
       }] as const] : [];
     }));

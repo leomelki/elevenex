@@ -179,7 +179,7 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   empty(): void { this.projectRows = []; this.taskRows = []; this.sessionRows = []; this.failReads = false; this.ready(); }
   failure(): void { this.failReads = true; this.ready(); }
   recoverWorkspace(): void { this.failReads = false; this.ready(); }
-  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
+  override workspaceRevision = async () => success({ revision: this.navigationRevision, version: 1 as const, ...(this.revisionWaitEnabled ? { revisionWait: true as const } : {}), taskRequests: true as const, commitPanel: true as const, sessionArchive: true as const, sessionArchiveChildren: true as const, sessionArchiveHistory: true as const, sessionNesting: true as const, sessionNestingOrder: true as const });
   override workspaceProjects = async () => this.failReads
     ? { ok: false as const, error: { code: 'transport' as const, message: 'The workspace could not be loaded.' } }
     : success(page(this.projectRows));
@@ -203,7 +203,10 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     const rows = this.sessionRows.filter(session => session.taskId === query.taskId && (query.parentSessionId === undefined || (session.parentSessionId ?? null) === query.parentSessionId) && (query.state === 'archived' ? session.status === 'archived' : session.status !== 'archived') && (!query.cursor || (nested ? (this.nestingRanks.get(session.id) ?? 0) < rank! || ((this.nestingRanks.get(session.id) ?? 0) === rank && session.id < cursorId!) : session.id < Number(query.cursor)))).sort((a,b) => (nested ? (this.nestingRanks.get(b.id) ?? 0) - (this.nestingRanks.get(a.id) ?? 0) : 0) || b.id - a.id);
     const limit = query.limit ?? 20;
     const last = rows[limit - 1];
-    return success({ items: rows.slice(0,limit).reverse().map(session => ({ ...session, childCount: this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived').length })), nextCursor: rows.length > limit ? nested ? `${this.nestingRanks.get(last!.id) ?? 0}:${last!.id}` : String(last!.id) : null });
+    return success({ items: rows.slice(0,limit).reverse().map(session => {
+      const children = this.sessionRows.filter(child => child.parentSessionId === session.id && child.status !== 'archived');
+      return { ...session, childCount: children.length, childStopRequired: children.some(child => child.status === 'running' || child.status === 'attention' || !!child.commandCount) };
+    }), nextCursor: rows.length > limit ? nested ? `${this.nestingRanks.get(last!.id) ?? 0}:${last!.id}` : String(last!.id) : null });
   };
   workspaceTask = async (_scope: string, id: number) => success(this.navigationTask(this.taskRows.find(task => task.id === id)!));
   workspaceRetryTask = async (scope: string, id: number, recovery?: WorkspaceTaskRecovery) => {
@@ -285,7 +288,12 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     return success({ accepted: true as const });
   };
   workspaceArchiveSession = async (_scope: string, input: WorkspaceArchiveSession) => {
-    this.sessionRows = this.sessionRows.map(session => session.taskId === input.taskId && session.id === input.sessionId ? { ...session, status: 'archived' } : session.parentSessionId === input.sessionId ? { ...session, parentSessionId: null } : session);
+    this.sessionRows = this.sessionRows.map(session => {
+      if (session.taskId !== input.taskId) return session;
+      if (session.id === input.sessionId) return { ...session, status: 'archived' };
+      if (session.parentSessionId !== input.sessionId) return session;
+      return input.includeChildren ? { ...session, status: 'archived' } : { ...session, parentSessionId: null };
+    });
     return success({ accepted: true as const });
   };
   workspaceMoveSession = async (_scope: string, input: import('@elevenex/shared').WorkspaceMoveSession) => {

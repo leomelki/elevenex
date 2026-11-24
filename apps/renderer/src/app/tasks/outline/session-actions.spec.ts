@@ -192,6 +192,17 @@ describe('session row archive intent', () => {
     archive.click();
     expect(archived).toHaveBeenCalledWith(changed);
   });
+  it('confirms before archiving a parent whose subsessions have live work', () => {
+    const { fixture, archive, archived } = row('done');
+    const parent = { id: 'one', title: 'Parent session', status: 'done', childStopRequired: true };
+    fixture.componentRef.setInput('session', parent);
+    fixture.detectChanges();
+    archive.click(); fixture.detectChanges();
+    expect(archive.getAttribute('aria-label')).toContain('Stop and archive');
+    expect(archived).not.toHaveBeenCalled();
+    archive.click();
+    expect(archived).toHaveBeenCalledWith(parent);
+  });
 });
 
 describe('session row detached commands', () => {

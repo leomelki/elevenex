@@ -5,11 +5,12 @@ import type { TaskSession } from '../task.models';
 const root: TaskSession = { id: '1', title: 'Plan', status: 'running', childCount: 1 };
 const child: TaskSession = { id: '2', title: 'Implementation', status: 'done', parentId: '1' };
 afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
-function setup() {
+function setup(children: readonly TaskSession[] = [child]) {
   vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
   const fixture = TestBed.createComponent(SessionBranchComponent);
-  fixture.componentRef.setInput('session', root);
-  fixture.componentRef.setInput('sessions', [root,child]);
+  const parent = { ...root, childCount: children.length };
+  fixture.componentRef.setInput('session', parent);
+  fixture.componentRef.setInput('sessions', [parent, ...children]);
   fixture.componentRef.setInput('allowNesting', true);
   fixture.detectChanges(); return fixture;
 }
@@ -36,5 +37,41 @@ describe('session groups', () => {
     const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(button => button.textContent?.includes('Move to task level'));
     expect(item).toBeDefined(); item!.click(); fixture.detectChanges();
     expect(moved).toHaveBeenCalledWith({ sessionId: '2', parentSessionId: null });
+  });
+
+  it('caps the mixed child list at two and reveals all running and finished delegates together', () => {
+    const running: TaskSession = { ...child, kind: 'delegated', status: 'running' };
+    const children: readonly TaskSession[] = [
+      running,
+      { ...running, id: '3' },
+      { ...running, id: '4' },
+      { ...running, id: '5', status: 'done' },
+    ];
+    const fixture = setup(children);
+    const host: HTMLElement = fixture.nativeElement;
+    const visible = () => [...host.querySelectorAll<HTMLElement>('.children [data-session-id]')]
+      .filter(row => !row.closest('[inert]')).map(row => row.dataset['sessionId']);
+    const disclosure = host.querySelector<HTMLButtonElement>('.disclosure')!;
+    disclosure.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(['4', '5']);
+
+    const more = host.querySelector<HTMLButtonElement>('.child-cap')!;
+    expect(more.textContent).toContain('Show 2 more');
+    more.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(['2', '3', '4', '5']);
+    const firstRow = host.querySelector('[data-session-id="2"]');
+    fixture.componentRef.setInput('sessions', [root, { ...running, status: 'done' }, ...children.slice(1)]);
+    fixture.detectChanges();
+    expect(visible()).toEqual(['2', '3', '4', '5']);
+    expect(host.querySelector('[data-session-id="2"]')).toBe(firstRow);
+
+    fixture.componentRef.setInput('selected', '2');
+    fixture.detectChanges();
+    more.click();
+    fixture.detectChanges();
+    expect(visible()).toEqual(['2', '5']);
+    expect(more.getAttribute('aria-expanded')).toBe('false');
   });
 });

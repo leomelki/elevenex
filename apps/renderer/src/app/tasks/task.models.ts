@@ -100,6 +100,7 @@ export interface TaskSession {
   readonly childCount?: number;
   readonly childSummary?: SessionChildSummary;
   readonly activeChildAgents?: readonly number[];
+  readonly childStopRequired?: boolean;
   readonly childrenLoading?: boolean;
   readonly childrenError?: string | null;
   readonly moreChildren?: boolean;

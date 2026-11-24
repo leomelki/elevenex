@@ -38,7 +38,7 @@
   </div>
   <ex-fold [open]="expanded() && (!!session().childCount || !!children().length)">
     <div class="children" [class.selected-family]="containsSelection() || selected() === session().id">
-      <ng-template #childRow let-row>
+      @for (row of presence.rows(); track row.key) {
         <ex-fold [open]="row.present && !row.entering" (transitionend)="presence.settled(row.key, $event)">
           <ex-session-branch [session]="row.value" [sessions]="sessions()" [selected]="selected()"
             [allowArchive]="allowArchive()" [allowNesting]="allowNesting()"
@@ -46,22 +46,12 @@
             (activated)="activated.emit($event)" (archiveRequested)="archiveRequested.emit($event)"
             (deleteRequested)="deleteRequested.emit($event)" (moveRequested)="moveRequested.emit($event)" />
         </ex-fold>
-      </ng-template>
-      @for (row of openChildren(); track row.key) {
-        <ng-container [ngTemplateOutlet]="childRow" [ngTemplateOutletContext]="{ $implicit: row }" />
       }
-      @if (finishedChildren().length; as count) {
-        <button type="button" class="finished" [attr.aria-expanded]="finishedOpen()" (click)="finishedOpen.set(!finishedOpen())">
-          <ex-icon [name]="finishedOpen() ? 'chevron-down' : 'chevron-right'" [size]="12" />
-          <span><ex-ticker [value]="count" /> finished</span>
+      @if (hiddenChildCount(); as count) {
+        <button type="button" class="child-cap" [attr.aria-expanded]="showAllChildren()" (click)="showAllChildren.set(!showAllChildren())">
+          <ex-icon [name]="showAllChildren() ? 'chevron-down' : 'chevron-right'" [size]="12" />
+          {{ showAllChildren() ? 'Show fewer' : 'Show ' + count + ' more' }}
         </button>
-        <ex-fold [open]="finishedOpen()">
-          <div>
-            @for (row of finishedChildren(); track row.key) {
-              <ng-container [ngTemplateOutlet]="childRow" [ngTemplateOutletContext]="{ $implicit: row }" />
-            }
-          </div>
-        </ex-fold>
       }
       @if (session().childrenLoading) { <p role="status">Loading children…</p> }
       @if (session().childrenError; as error) { <p role="alert">{{ error }} <button type="button" (click)="childrenRequested.emit({sessionId:session().id})">Retry</button></p> }

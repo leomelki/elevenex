@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Test, TestingModule } from '@nestjs/testing';
+import { eq } from 'drizzle-orm';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -642,6 +643,46 @@ describe('SessionsService', () => {
   });
 
   describe('archive', () => {
+    it('archives a whole task session group in place and strictly cleans up its runtimes', async () => {
+      const task = db.insert(schema.workspaces).values({ repoId, name: 'Task', path: '/tmp/wt', taskState: 'ready' }).returning().get();
+      const values = { repoId, workspaceId: task.id, branchName: 'main', worktreePath: task.path };
+      const parent = db.insert(schema.sessions).values(values).returning().get();
+      const child = { ...values, parentSessionId: parent.id };
+      const children = db.insert(schema.sessions).values(Array.from({ length: 25 }, () => child)).returning().all();
+      const [alreadyArchived, unrelated, otherTask, temporary] = db.insert(schema.sessions).values([
+        { ...child, status: 'archived' },
+        values,
+        { ...child, workspaceId: null },
+        { ...child, isTemporary: true },
+      ]).returning().all();
+      const saved = (id: number) => db.select().from(schema.sessions).where(eq(schema.sessions.id, id)).get();
+
+      await expect(service.archiveTaskSessionGroup(task.id, parent.id, () => {
+        throw new BadRequestException('Confirmation required');
+      })).rejects.toThrow('Confirmation required');
+      expect(saved(children[0].id)?.status).toBe('created');
+      expect(agentRuntimeCleanupMock.cleanupSession).not.toHaveBeenCalled();
+
+      agentRuntimeCleanupMock.cleanupSession.mockImplementationOnce(async () => {
+        expect(saved(children[24].id)?.status).toBe('archived');
+        await expect(service.unarchive(parent.id)).rejects.toThrow('archive is already in progress');
+        await expect(service.updateStatus(children[24].id, 'active')).rejects.toThrow('archive is already in progress');
+        throw new Error('Cleanup failed');
+      });
+      await expect(service.archiveTaskSessionGroup(task.id, parent.id, jest.fn())).rejects.toThrow('Cleanup failed');
+      expect(saved(parent.id)).toMatchObject({ status: 'archived', archivedByTask: true });
+      for (const row of children) {
+        expect(saved(row.id)).toMatchObject({ status: 'archived', parentSessionId: parent.id, archivedByTask: true });
+        expect(ptyManagerMock.stopForTask).toHaveBeenCalledWith(row.id);
+      }
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledTimes(26);
+      expect(saved(alreadyArchived.id)).toMatchObject({ status: 'archived', archivedByTask: false });
+      for (const row of [unrelated, otherTask, temporary]) expect(saved(row.id)?.status).toBe('created');
+
+      await service.archiveTaskSessionGroup(task.id, parent.id, jest.fn());
+      expect(ptyManagerMock.stopForTask).toHaveBeenCalledTimes(52);
+    });
+
     it('stops task processes without archiving a conversation on worktree release', async () => {
       const created = await service.create({ repoId, branchName: 'main', worktreePath: '/tmp/wt' });
       await service.stopForWorktreeRelease(created.id);

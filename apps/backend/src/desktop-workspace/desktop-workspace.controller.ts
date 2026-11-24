@@ -66,6 +66,7 @@ export class DesktopWorkspaceController {
       taskRequests: true,
       commitPanel: true,
       sessionArchive: true,
+      sessionArchiveChildren: true,
       sessionArchiveHistory: true,
     };
   }
@@ -228,6 +229,7 @@ export class DesktopWorkspaceController {
         resourceId(sessionId),
         options.confirmStop,
         options.stopAgents,
+        options.includeChildren,
       ),
     );
   }

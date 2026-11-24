@@ -43,7 +43,7 @@ export class SessionRowComponent implements OnChanges {
   protected readonly confirming = signal(false);
   /** Archiving stops both a working agent and the commands it left running. */
   private readonly live = computed(() => this.session().status === 'running' || !!this.session().commands ||
-    !!this.session().activeChildAgents?.length);
+    !!this.session().activeChildAgents?.length || this.session().childStopRequired === true);
   protected readonly archiveLabel = computed(() => {
     const count = this.session().activeChildAgents?.length ?? 0;
     return count ? 'Stop ' + count + (count === 1 ? ' agent' : ' agents') + ' and archive' : 'Stop and archive';
@@ -71,12 +71,14 @@ export class SessionRowComponent implements OnChanges {
   private readonly document = inject(DOCUMENT);
   private confirmationSession: string | null = null;
   private confirmationAgents?: readonly number[];
+  private confirmationChildStop?: boolean;
   private removeOutsideListener?: () => void;
 
   constructor() { inject(DestroyRef).onDestroy(() => this.cancelArchive()); }
   ngOnChanges(): void {
     const active = this.session().activeChildAgents;
     if (!this.allowArchive() || !this.live() || this.session().id !== this.confirmationSession ||
+        this.session().childStopRequired !== this.confirmationChildStop ||
         active?.length !== this.confirmationAgents?.length ||
         active?.some(id => !this.confirmationAgents?.includes(id))) this.cancelArchive();
   }
@@ -87,6 +89,7 @@ export class SessionRowComponent implements OnChanges {
     if (this.live() && !this.confirming()) {
       this.confirmationSession = this.session().id;
       this.confirmationAgents = this.session().activeChildAgents;
+      this.confirmationChildStop = this.session().childStopRequired;
       this.confirming.set(true);
       const button = event.currentTarget;
       const outside = (event: PointerEvent) => {
@@ -103,6 +106,7 @@ export class SessionRowComponent implements OnChanges {
     if (event && this.confirming()) { event.preventDefault(); event.stopPropagation(); }
     this.confirmationSession = null;
     this.confirmationAgents = undefined;
+    this.confirmationChildStop = undefined;
     this.confirming.set(false);
     this.removeOutsideListener?.();
     this.removeOutsideListener = undefined;

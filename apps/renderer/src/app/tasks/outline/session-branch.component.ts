@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, computed, effect, inject, input, linkedSignal, output, untracked } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
 import { CdkMenuTrigger } from '@angular/cdk/menu';
 import { DropdownItemComponent, DropdownMenuComponent, EaseSwapComponent, FoldComponent, IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective } from '../../ui';
 import { ListPresence } from '../../ui/motion/list-presence';
@@ -9,10 +8,11 @@ import { SessionRowComponent } from './session-row.component';
 
 /** A bounded two-level group; the owner supplies children and performs all moves. */
 const noChildren: readonly TaskSession[] = [];
+const compactChildLimit = 2;
 @Component({
   selector: 'ex-session-branch',
   imports: [CdkMenuTrigger, DropdownItemComponent, DropdownMenuComponent, EaseSwapComponent, FoldComponent, IconComponent,
-    NgTemplateOutlet, StatusGlyphComponent, TickerComponent, TooltipDirective, SessionRowComponent],
+    StatusGlyphComponent, TickerComponent, TooltipDirective, SessionRowComponent],
   templateUrl: './session-branch.component.html',
   styleUrl: './session-branch.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -56,24 +56,23 @@ export class SessionBranchComponent {
     const state = { attention: 'need you', failed: 'failed', running: 'running', done: 'finished' }[summary.status];
     return summary.count + ' of ' + count + ' ' + (summary.status === 'attention' && summary.count === 1 ? 'needs you' : state);
   });
-  private readonly finished = linkedSignal({
-    source: () => ({ expanded: this.expanded(), id: this.session().id, children: this.children() }),
-    computation: ({ expanded, id, children }, previous): ReadonlySet<string> => {
-      const complete = children.filter(row => row.kind === 'delegated' && row.status === 'done');
-      const fromSameView = expanded && previous?.source.expanded && previous.source.id === id;
-      // While viewing the group, a newly finished row keeps its place. The
-      // completion disclosure is recomputed when the group is opened again.
-      return new Set(complete.filter(row => !fromSameView || previous.value.has(row.id)).map(row => row.id));
-    },
+  protected readonly showAllChildren = linkedSignal({
+    source: () => ({ id: this.session().id, expanded: this.expanded(), droppedParent: this.drag?.droppedParent() }),
+    computation: ({ id, expanded, droppedParent }, previous): boolean =>
+      expanded && ((droppedParent === id && previous?.source.droppedParent !== id) ||
+        (previous?.source.id === id && previous.value)),
   });
-  protected readonly finishedOpen = linkedSignal({
-    source: () => ({ expanded: this.expanded(), selected: this.finished().has(this.selected() ?? '') }),
-    computation: (value, previous): boolean => value.expanded && (value.selected || !!previous?.value),
+  protected readonly hiddenChildCount = computed(() => Math.max(0, this.children().length - compactChildLimit));
+  private readonly visibleChildren = computed(() => {
+    const children = this.children();
+    if (this.showAllChildren() || !this.hiddenChildCount()) return children;
+    const compact = children.slice(-compactChildLimit);
+    const selected = children.find(row => row.id === this.selected());
+    if (selected && !compact.includes(selected)) compact[0] = selected;
+    return compact;
   });
-  protected readonly presence = new ListPresence(this.children, row => row.renderId ?? row.id,
+  protected readonly presence = new ListPresence(this.visibleChildren, row => row.renderId ?? row.id,
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement, inject(DestroyRef));
-  protected readonly openChildren = computed(() => this.presence.rows().filter(row => !this.finished().has(row.value.id)));
-  protected readonly finishedChildren = computed(() => this.presence.rows().filter(row => this.finished().has(row.value.id)));
 
   constructor() {
     let previous: { id: string; count: number } | undefined;

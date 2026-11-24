@@ -37,11 +37,11 @@ ex-session-row { flex: 1; min-width: 0; transition: background var(--dur-base) v
 .child-count[data-summary="failed"] { color: var(--danger); background: var(--danger-soft); }
 .child-count[data-summary="running"] { color: var(--running); }
 .rollup-value { display: inline-flex; align-items: center; gap: var(--space-1); }
-.children button.finished {
+.children button.child-cap {
   display: flex; align-items: center; gap: var(--space-1); color: var(--ink-muted);
   padding: var(--space-1) var(--space-2); font-size: var(--text-caption-size); min-height: 24px;
 }
-.children button.finished:hover { background: var(--surface-sunken); }
+.children button.child-cap:hover { background: var(--surface-sunken); }
 .child-arrived { background: var(--accent-soft); border-radius: var(--radius-sm); }
 .children ex-session-branch { transition: background-color var(--dur-slow) var(--ease-out); }
 @media (prefers-reduced-motion: reduce) { .children ex-session-branch { transition: none; } }

@@ -1100,6 +1100,30 @@ describe('Workspace outages', () => {
 });
 
 describe('session organization', () => {
+  it('archives the group and moves selection out of a removed child', async () => {
+    const { store, bridge, start } = setup();
+    const parent = { ...session, childCount: 25, childStopRequired: true };
+    const child = { ...session, id: 6, parentSessionId: parent.id };
+    const other = { ...session, id: 7 };
+    bridge.workspaceRevision.mockImplementation(async () => ok({
+      revision: 1, version: 1 as const, sessionArchive: true as const,
+      sessionArchiveChildren: true as const, sessionNesting: true as const,
+    }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) =>
+      ok(page(query.parentSessionId === parent.id ? [child] : [parent, other])));
+    await start();
+    await store.loadSessionChildren({ taskId: '3', sessionId: '5' });
+    store.selectSession({ taskId: '3', sessionId: '6' });
+    const parentRow = store.tasks()[0]!.sessions.find(row => row.id === '5')!;
+    expect(parentRow.childStopRequired).toBe(true);
+    await store.archiveSession({ taskId: '3', session: parentRow });
+    expect(bridge.workspaceArchiveSession).toHaveBeenCalledWith('scope', {
+      taskId: 3, sessionId: 5, includeChildren: true, confirmStop: true,
+    });
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['7']);
+    expect(store.hierarchy.windows().has(parent.id)).toBe(false);
+    expect(store.selected()?.sessionId).toBe(other.id);
+  });
   it('uses bounded root and child pages, then keeps the selected child through a confirmed move', async () => {
     const {store,bridge,start} = setup();
     let parentSessionId: number | null = null;

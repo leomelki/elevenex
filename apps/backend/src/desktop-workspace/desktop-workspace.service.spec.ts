@@ -25,6 +25,7 @@ describe('DesktopWorkspaceService', () => {
   const activityStatus = jest.fn<string | undefined, []>();
   const detachedCommands = jest.fn<number, []>();
   const archiveSession = jest.fn();
+  const archiveGroup = jest.fn();
   const restoreSession = jest.fn();
   it('appends older sessions with bounded nesting cursors while preserving legacy order', async () => {
     const create = (name: string) => database.db.insert(schema.sessions).values({repoId,workspaceId:taskId,branchName:'main',worktreePath:'/repo/task',name}).returning().get();
@@ -59,6 +60,7 @@ describe('DesktopWorkspaceService', () => {
     activityStatus.mockReset();
     detachedCommands.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();
+    archiveGroup.mockReset();
     archiveSession.mockImplementation(async (id: number) => {
       await database.db.update(schema.sessions).set({status: 'archived'}).where(eq(schema.sessions.id, id));
     });
@@ -140,6 +142,7 @@ describe('DesktopWorkspaceService', () => {
           useValue: {
             archiveAllByProject: jest.fn().mockResolvedValue(undefined),
             archiveAndStop: archiveSession,
+            archiveTaskSessionGroup: archiveGroup,
             deleteUnstarted: async (id: number, canDelete: (session: typeof schema.sessions.$inferSelect) => boolean) => {
               const session = db.select().from(schema.sessions).where(eq(schema.sessions.id,id)).get();
               if (!session || !canDelete(session)) throw new BadRequestException('This session has started. Archive it instead.');
@@ -234,6 +237,18 @@ describe('DesktopWorkspaceService', () => {
     expect(archiveSession).toHaveBeenCalledWith(session.id,true);
     const [row] = await database.db.select().from(schema.sessions).where(eq(schema.sessions.id,session.id));
     expect(row.archivedByTask).toBe(false);
+  });
+
+  it('requires confirmation for live subsessions when archiving a group', async () => {
+    const values = { repoId, workspaceId: taskId, branchName: 'build', worktreePath: '/repo/task' };
+    const parent = database.db.insert(schema.sessions).values(values).returning().get();
+    const child = database.db.insert(schema.sessions).values({ ...values, parentSessionId: parent.id }).returning().get();
+    activityStatus.mockReturnValueOnce('done').mockReturnValueOnce('done').mockReturnValueOnce('attention');
+    archiveGroup.mockImplementation(async (_task, _parent, confirm) => confirm([parent, child]));
+    await expect(service.archiveSession(taskId, parent.id, false, undefined, true)).rejects.toThrow('Stop and archive');
+    await expect(service.archiveSession(taskId, parent.id, true, undefined, true)).resolves.toEqual({ accepted: true });
+    expect(archiveGroup).toHaveBeenCalledWith(taskId, parent.id, expect.any(Function));
+    expect(archiveSession).not.toHaveBeenCalled();
   });
 
   it('bounds project pages, excludes hidden/archived projects, and validates cursors', async () => {

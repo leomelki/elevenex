@@ -404,9 +404,12 @@ errors and stale-result rejection. WorkspaceStore owns confirmed moves through
 `workspaceMoveSession`, task/scope validation and uncertain-outcome reconciliation.
 Moves do not restart agents or change tasks, workspaces or fork provenance.
 
-Archiving a parent affects that conversation only and returns its children to task
-level. Deleting a parent preserves children through `ON DELETE SET NULL`. Closing a
-task retains its organizational relationships for reopening. The automatic migration
+With `sessionArchiveChildren`, archiving a parent also archives its subsessions,
+including children outside the loaded page. The engine preserves their grouping and
+confirms before stopping live work. Each conversation can be restored from Archived.
+Older engines promote children to task level when their parent is archived. Deleting
+a parent preserves children through `ON DELETE SET NULL`. Closing a task retains its
+organizational relationships for reopening. The automatic migration
 maps each old nonempty folder to its earliest active durable session (or earliest
 archived member), preserving names and archive states. Legacy folder tables and
 endpoints remain available for older clients; the new desktop does not create folders.
