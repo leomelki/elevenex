@@ -30,7 +30,7 @@ import type {
 } from '../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
-import { chatPlanUsage } from './desktop-chat-usage.js';
+import { chatModelQuota, chatPlanUsage } from './desktop-chat-usage.js';
 import { chatWork, legacyActivity } from './desktop-chat-work.js';
 import {
   type ChatChangesCache,
@@ -239,6 +239,7 @@ export class DesktopChatService implements OnModuleDestroy {
       work,
       activity: legacyActivity(work),
       planUsage: chatPlanUsage(raw, session.activeAgentProvider),
+      modelQuota: chatModelQuota(raw, session.activeAgentProvider),
       providers: this.registry
         .listProviders()
         .slice(0, 32)

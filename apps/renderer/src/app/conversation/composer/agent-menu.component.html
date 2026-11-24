@@ -104,6 +104,13 @@
       >
         <ex-icon class="check" name="check" [size]="14" />
         <span class="label">{{ model.label }}</span>
+        @if (model.limit; as limit) {
+          <span
+            class="quota"
+            [attr.data-tone]="limit.left <= 0 ? 'danger' : limit.left <= 0.2 ? 'attention' : 'normal'"
+            ><span class="visually-hidden">, quota </span>{{ quotaText(limit) }}</span
+          >
+        }
       </button>
     } @empty {
       @if (choicesBusy()) {

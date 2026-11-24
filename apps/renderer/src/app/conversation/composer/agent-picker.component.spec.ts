@@ -247,6 +247,35 @@ describe("AgentPicker controlled settings and focus", () => {
       );
     },
   );
+  it("shows reported model quota beside each model so another can be chosen", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("harnesses", [
+      {
+        id: "antigravity",
+        label: "Antigravity",
+        mark: "Ag",
+        models: [
+          { id: "opus", label: "Claude Opus", thinking: [], limit: { id: "opus", label: "Claude Opus", left: 0, reset: "14:30", resetShort: "14:30" } },
+          { id: "flash", label: "Gemini Flash", thinking: [], limit: { id: "flash", label: "Gemini Flash", left: 0.15 } },
+          { id: "oss", label: "GPT-OSS", thinking: [] },
+        ],
+      },
+    ]);
+    fixture.componentRef.setInput("value", { harness: "antigravity", mark: "Ag", model: "opus" });
+    const changed = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
+    await open();
+    const rows = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      "Claude Opus, quota Used up · 14:30",
+      "Gemini Flash, quota 15% left",
+      "GPT-OSS",
+    ]);
+    expect(rows[0]!.querySelector(".quota")?.getAttribute("data-tone")).toBe("danger");
+    expect(rows[1]!.querySelector(".quota")?.getAttribute("data-tone")).toBe("attention");
+    rows[1]!.click();
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ model: "flash" }));
+  });
   it("hides thinking when the selected model has no reported efforts", async () => {
     const { fixture, open } = await setup();
     fixture.componentRef.setInput("harnesses", [

@@ -18,6 +18,9 @@ let model = 'default-model';
 const options = () => [{
   id: 'model', type: 'select', category: 'model', currentValue: model,
   options: [{ value: 'default-model', name: 'Default model' }, { value: 'other-model', name: 'Other model' }],
+}, {
+  id: 'thinking_level', type: 'select', category: 'thought_level', currentValue: 'high',
+  options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
 }];
 
 input.on('line', line => {
@@ -26,7 +29,7 @@ input.on('line', line => {
   switch (method) {
     case 'initialize':
       result(id, { protocolVersion: 1, agentCapabilities: {
-        promptCapabilities: { image: true }, sessionCapabilities: { resume: {} },
+        promptCapabilities: { image: true }, sessionCapabilities: { resume: {}, close: {} },
       } });
       break;
     case 'session/new':
@@ -34,7 +37,16 @@ input.on('line', line => {
         send({ id, error: { code: -32000, message: 'Secret login diagnostics' } });
         break;
       }
-      result(id, { sessionId, configOptions: options() });
+      // Mirrors the CLI: account tier in _meta, then an initial context report.
+      result(id, {
+        sessionId, configOptions: options(),
+        _meta: { antigravity: { tier: { name: 'Antigravity Starter Quota', id: 'starter' } } },
+      });
+      update({ sessionUpdate: 'usage_update', used: 0, size: 1048576 });
+      break;
+    case 'session/close':
+      if (params.sessionId !== sessionId) throw new Error('Wrong session to close');
+      result(id, {});
       break;
     case 'session/resume':
       if (params.sessionId !== sessionId) throw new Error('Wrong session to resume');
@@ -58,8 +70,12 @@ input.on('line', line => {
         } });
       } else if (prompt === 'exit') {
         process.exit(1);
+      } else if (prompt === 'quota') {
+        send({ id, error: { code: -32603, message:
+          'RESOURCE_EXHAUSTED: You have exhausted your capacity on this model. Your quota will reset after 2h30m0s.' } });
       } else {
         text(`${mode}, ${model}: ${prompt}`);
+        update({ sessionUpdate: 'usage_update', used: 12000, size: 1048576 });
         result(id, { stopReason: 'end_turn' });
       }
       break;

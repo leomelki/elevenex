@@ -22,8 +22,37 @@ stores the user receipt at dispatch and finalizes that turn’s transcript in th
 same row at settlement. Desktop history reads do not spawn the CLI.
 The shared turn-change service supplies the worktree review.
 
-Model options come from the connected ACP session. The bounded engine catalog
-retains the most recent advertised options for settings and new conversations.
+The engine discovers model options on the first catalog read through an empty
+ACP session in a temporary directory. Discovery sends no prompts, coalesces
+concurrent reads, closes the session, and caches the advertised defaults for
+settings and new conversations. Each task conversation still receives its
+own options when it connects.
+## Usage and quota
+
+`antigravity-usage.ts` reads only what the official CLI reports over ACP:
+
+- `usage_update` (`used`/`size`) is the conversation's context window. The
+  provider keeps the last report per conversation, bounded, so it survives idle
+  CLI shutdown until the next connection reports again.
+- `_meta.antigravity.tier` on session results names the account's quota tier.
+  The catalog's discovery session reports it too.
+- Antigravity meters quota per model. A `session/prompt` failure classified as
+  exhausted quota marks the current model exhausted, with the reset Google
+  reports in the error text or details (`reset after 2h3m`,
+  `quotaResetTimeStamp`, `retryDelay`). The desktop sees a fixed message, never
+  the provider text. A completed turn on that model, or its reported reset,
+  clears it. A model without a reported reset is kept for a day at most.
+
+`AntigravityQuota` is account-wide: one instance per provider, shared by every
+conversation and pushed to connected ones on change. It is in memory only and
+is projected as the optional `SessionChatState.modelQuota`, kept separate from
+`planUsage` because supported desktops validate that field strictly.
+
+ACP in agy 1.5 does not report remaining quota fractions. The contract's
+nullable `remainingPercentage` accepts them when a supported source exists.
+The engine does not read the CLI's credentials or call Google's internal quota
+endpoints.
+
 Follow-ups are queued per conversation. Plan mode, native steering, rewind,
 and separate native subagent transcripts are outside this provider’s desktop
 capabilities.

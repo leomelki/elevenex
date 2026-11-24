@@ -908,6 +908,21 @@ test('subscription usage stays optional, scoped to its provider and bounded at t
   for (const resetsAt of [-1, Infinity, 9e12, 'tomorrow']) assert.throws(() => parse({ ...usage, windows: [{ ...usage.windows[0], resetsAt }] }));
 });
 
+test('per-model quota stays optional, scoped to its provider and bounded at the bridge', () => {
+  const { parseChatPage } = require('../dist/backend-client/session-chat-validation');
+  const state = { provider: 'antigravity', phase: 'idle', canInterrupt: false, error: null, model: null, models: [], reasoning: null, plan: false, permissionMode: null, permissionModes: [], context: null, queue: [], queuePaused: false, permission: null, question: null, activity: [] };
+  const page = { taskId: 1, sessionId: 2, cursor: 'cursor', before: null, reset: true, items: [], events: [], state };
+  const model = { id: 'claude-opus', label: 'Claude Opus', remainingPercentage: null, exhausted: true, resetsAt: 1795000000 };
+  const quota = { provider: 'antigravity', tier: 'Antigravity Starter Quota', updatedAt: '2026-11-24T10:00:00Z', models: [model] };
+  const parse = modelQuota => parseChatPage({ ...page, state: { ...state, modelQuota } }, 1, 2).state.modelQuota;
+  assert.equal(parseChatPage(page, 1, 2).state.modelQuota, undefined);
+  assert.equal(parse(null), null);
+  assert.deepEqual(parse({ ...quota, credential: 'discard', models: [{ ...model, token: 'discard' }] }), quota);
+  assert.deepEqual(parse({ ...quota, tier: null, models: [] }), { ...quota, tier: null, models: [] });
+  for (const extra of [{ provider: 'codex' }, { updatedAt: 'invalid' }, { models: Array(33).fill(model) }, { models: [model, model] }]) assert.throws(() => parse({ ...quota, ...extra }));
+  for (const patch of [{ id: '' }, { exhausted: 'yes' }, { remainingPercentage: 101 }, { remainingPercentage: '5' }, { resetsAt: -1 }, { resetsAt: 9e12 }]) assert.throws(() => parse({ ...quota, models: [{ ...model, ...patch }] }));
+});
+
 test('starting presets validate bounded state and discard extra action fields', () => {
   const { parseChatAction, parseChatPage } = require('../dist/backend-client/session-chat-validation');
   const preset = { id: 'deep', name: 'Deep work', provider: 'codex', providerLabel: 'Codex', model: 'gpt', modelLabel: 'GPT', reasoning: 'high', fast: true };

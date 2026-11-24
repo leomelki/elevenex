@@ -513,7 +513,12 @@ thinking level beside it. The accessible name still includes the harness.
   actual provider IDs, labels, remaining fractions, optional `weekly`, `reset`
   and compact `resetShort` text. A weekly-only snapshot never invents a 5-hour
   allowance. Optional `exhausted` also reflects a provider-declared limit.
-  Missing plan data is omitted. No account catalog, provider or transport reads
+  `scope: "model"` marks a per-model allowance (Antigravity): the windows
+  describe the selected model, so the notice names that model and suggests
+  another instead of reporting a plan-wide limit. `AgentModel.limit` carries a
+  model's reported allowance; the menu shows it beside that row (“Used up ·
+  14:30”, “15% left”) and never disables the choice, since a reset can arrive
+  before the next report. Missing plan data is omitted. No account catalog, provider or transport reads
   originate in these components.
 - Internal `PopoverPresence` retains the two portaled surfaces and their
   readonly data snapshots through their token-based exit and owns reduced-motion subscriptions/fallback timers. It

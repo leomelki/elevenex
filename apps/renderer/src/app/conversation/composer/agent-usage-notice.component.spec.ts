@@ -43,6 +43,30 @@ describe("quota guidance", () => {
     fixture.detectChanges();
     expect(root.querySelector(".notice:not(.notice-leave)")).toBeNull();
   });
+  it("names the exhausted model and offers another model instead of a plan-wide stop", () => {
+    const fixture = TestBed.createComponent(AgentUsageNoticeComponent);
+    const root = fixture.nativeElement as HTMLElement;
+    const plan = {
+      name: "Antigravity",
+      tier: "Starter Quota",
+      scope: "model" as const,
+      exhausted: true,
+      windows: [{ id: "opus", label: "Claude Opus", left: 0, reset: "14:30", resetShort: "14:30" }],
+    };
+    fixture.componentRef.setInput("agent", { mark: "Ag", harness: "antigravity", model: "opus", plan });
+    fixture.detectChanges();
+    expect(root.querySelector(".notice")?.classList).toContain("danger");
+    expect(root.textContent).toContain("Claude Opus is out of quota.");
+    expect(root.textContent).toContain("Resets at 14:30. Choose another model to continue now.");
+    expect(root.textContent).not.toContain("limit reached");
+    expect(root.querySelector("button")).toBeNull();
+    const meter = TestBed.createComponent(AgentPlanMeterComponent);
+    meter.componentRef.setInput("plan", plan);
+    meter.detectChanges();
+    expect(meter.nativeElement.getAttribute("aria-label")).toBe(
+      "Claude Opus quota used up, resets 14:30",
+    );
+  });
   it("renders only actual provider windows and names the tighter model-specific allowance", () => {
     const plan = {
       name: "Claude plan",

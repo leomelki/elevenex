@@ -6,7 +6,7 @@ import type {
   AgentToolKind,
   ClaudePermissionRequest,
 } from '../claude-runtime/claude-runtime.types.js';
-import { acpObject } from './acp-stdio.js';
+import { acpObject, type AcpStdio } from './acp-stdio.js';
 
 export const ANTIGRAVITY_PROVIDER: AgentRuntimeProviderInfo = {
   id: 'antigravity',
@@ -24,6 +24,31 @@ export const ANTIGRAVITY_PROVIDER: AgentRuntimeProviderInfo = {
 
 export const ANTIGRAVITY_SIGN_IN =
   'Sign in with agy acp --login in a terminal on this machine, then send your message again.';
+export const ANTIGRAVITY_INSTALL =
+  'Install the official Antigravity CLI on this machine and make agy available on PATH.';
+export const ANTIGRAVITY_CATALOG_SIGN_IN =
+  'Sign in with agy acp --login on this machine, then refresh models.';
+
+export async function initializeAntigravity(transport: AcpStdio) {
+  const initialized = await transport.request('initialize', {
+    protocolVersion: 1,
+    clientInfo: { name: 'elevenex', title: 'Elevenex', version: '1' },
+    clientCapabilities: { elicitation: { form: {} } },
+  });
+  if (initialized.protocolVersion !== 1)
+    throw new Error(
+      'This Antigravity CLI uses an unsupported ACP protocol version.',
+    );
+  return acpObject(initialized.agentCapabilities);
+}
+
+export function antigravityEnvironment(env: NodeJS.ProcessEnv) {
+  const cliEnv = { ...env };
+  // These capabilities belong to the desktop/backend connection, never the CLI.
+  delete cliEnv.ELEVENEX_CODE_ACCESS;
+  delete cliEnv.ELEVENEX_DESKTOP_SOCKET;
+  return cliEnv;
+}
 
 type OptionValue = { id: string; displayName: string; description: string };
 export interface AcpOption {

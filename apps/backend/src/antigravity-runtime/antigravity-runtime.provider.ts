@@ -33,16 +33,27 @@ import { SessionsService } from '../sessions/sessions.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { AcpRequestError, AcpStdio, acpObject } from './acp-stdio.js';
 import {
+  ANTIGRAVITY_INSTALL,
   ANTIGRAVITY_PROVIDER,
   ANTIGRAVITY_SIGN_IN,
   AntigravityTurn,
   acpText,
+  antigravityEnvironment,
+  initializeAntigravity,
   sessionOptions,
 } from './antigravity-acp.js';
+import { AntigravityCatalog } from './antigravity-catalog.js';
 import {
   AntigravityDecisions,
   type AntigravityAnswer,
 } from './antigravity-decisions.js';
+import {
+  AntigravityQuota,
+  acpContextUsage,
+  acpQuotaTier,
+  antigravityQuotaFailure,
+  type AntigravityContextUsage,
+} from './antigravity-usage.js';
 
 type Session = Awaited<ReturnType<SessionsService['findOne']>>;
 type Selection = NonNullable<Session['antigravitySelection']>;
@@ -72,8 +83,10 @@ interface Entry {
 const IDLE_TIMEOUT = 60_000;
 const CANCEL_TIMEOUT = 5_000;
 const QUEUE_LIMIT = 8;
-const INSTALL_AGY =
-  'Install the official Antigravity CLI on this machine and make agy available on PATH.';
+/** Context outlives idle CLI processes; bound it for long-running backends. */
+const CONTEXT_LIMIT = 256;
+const ANTIGRAVITY_QUOTA =
+  'This model has used its Antigravity quota. Choose another model, or send again after it resets.';
 
 @Injectable()
 export class AntigravityRuntimeProvider
@@ -84,9 +97,14 @@ export class AntigravityRuntimeProvider
   private readonly entries = new Map<number, Entry>();
   private readonly dispatches = new QueuedPromptDispatches();
   private readonly logger = new Logger(AntigravityRuntimeProvider.name);
-  private catalog:
-    | { options: Entry['options']; model?: string; expiresAt: number }
-    | undefined;
+  /** Quota is metered per Google account, so every conversation shares it. */
+  private readonly quota = new AntigravityQuota(() => {
+    for (const id of this.entries.keys()) this.emitState(id);
+  });
+  private readonly catalog = new AntigravityCatalog((opened) =>
+    this.quota.observeTier(acpQuotaTier(opened)),
+  );
+  private readonly contexts = new Map<number, AntigravityContextUsage>();
   private destroyed = false;
 
   constructor(
@@ -100,9 +118,10 @@ export class AntigravityRuntimeProvider
 
   async onModuleDestroy(): Promise<void> {
     this.destroyed = true;
-    await Promise.all(
-      [...this.entries.keys()].map((id) => this.cleanupSession(id)),
-    );
+    await Promise.all([
+      this.catalog.close(),
+      ...[...this.entries.keys()].map((id) => this.cleanupSession(id)),
+    ]);
   }
 
   async getHistory(sessionId: number, options?: { changeDetails?: 'summary' }) {
@@ -132,12 +151,6 @@ export class AntigravityRuntimeProvider
     );
   }
 
-  private observedCatalog() {
-    return this.catalog && this.catalog.expiresAt > Date.now()
-      ? this.catalog
-      : undefined;
-  }
-
   private selection(session: Session): Selection {
     if (session.antigravitySelection) return session.antigravitySelection;
     if (session.antigravitySessionId) return {};
@@ -155,19 +168,18 @@ export class AntigravityRuntimeProvider
     }));
   }
 
-  async getModelCatalog(): Promise<AgentProviderModelCatalogPayload> {
-    const catalog = this.observedCatalog();
+  async getModelCatalog(
+    refresh = false,
+  ): Promise<AgentProviderModelCatalogPayload> {
+    const catalog = await this.catalog.load(refresh);
     const options = catalog?.options ?? {};
     return {
       models: this.modelList(options),
       reasoningEfforts: options.thought?.values.map((value) => value.id) ?? [],
-      providerDefaultModelId: catalog?.model ?? null,
+      providerDefaultModelId: options.model?.current || null,
+      providerDefaultReasoningEffort: options.thought?.current ?? null,
       supportsModelSelection: true,
-      unavailableReason: options.model
-        ? null
-        : (await findBinaryAsync('agy'))
-          ? 'Antigravity reports models when you start a conversation.'
-          : INSTALL_AGY,
+      unavailableReason: catalog?.unavailableReason ?? null,
     };
   }
 
@@ -180,7 +192,7 @@ export class AntigravityRuntimeProvider
       entry?.selection ?? (session ? this.selection(session) : {});
     const options = entry?.options.model
       ? entry.options
-      : (this.observedCatalog()?.options ?? {});
+      : (this.catalog.current()?.options ?? {});
     const phase = this.phase(entry);
     const decision = entry?.decisions.current;
     return {
@@ -208,6 +220,8 @@ export class AntigravityRuntimeProvider
       liveItems: entry?.liveItems.slice() ?? [],
       queuePaused: entry?.queuePaused ?? false,
       lastError: entry?.error ?? null,
+      contextUsage: this.contexts.get(sessionId) ?? null,
+      modelQuota: this.quota.snapshot(),
     };
   }
 
@@ -237,7 +251,7 @@ export class AntigravityRuntimeProvider
       );
     const selection = { ...this.selection(session), ...patch };
     const options =
-      this.entries.get(sessionId)?.options ?? this.observedCatalog()?.options;
+      this.entries.get(sessionId)?.options ?? this.catalog.current()?.options;
     if (
       patch.model &&
       options?.model &&
@@ -385,31 +399,19 @@ export class AntigravityRuntimeProvider
       buildAugmentedEnvAsync(process.env, cwd),
     ]);
     this.assertOpen(entry);
-    if (!binary) throw new BadRequestException(INSTALL_AGY);
-    const cliEnv = { ...env };
-    // These capabilities belong to the desktop/backend connection, never the CLI's tools.
-    delete cliEnv.ELEVENEX_CODE_ACCESS;
-    delete cliEnv.ELEVENEX_DESKTOP_SOCKET;
-    const transport = new AcpStdio(binary, cwd, cliEnv, {
+    if (!binary) throw new BadRequestException(ANTIGRAVITY_INSTALL);
+    const transport = new AcpStdio(binary, cwd, antigravityEnvironment(env), {
       notification: (method, params) =>
         this.notification(entry, method, params),
       request: (method, params) => this.decision(entry, method, params),
     });
     entry.transport = transport;
-    const initialized = await transport.request('initialize', {
-      protocolVersion: 1,
-      clientInfo: { name: 'elevenex', title: 'Elevenex', version: '1' },
-      clientCapabilities: { elicitation: { form: {} } },
-    });
+    const capabilities = await initializeAntigravity(transport);
     this.assertOpen(entry);
-    if (initialized.protocolVersion !== 1)
-      throw new Error(
-        'This Antigravity CLI uses an unsupported ACP protocol version.',
-      );
-    const capabilities = acpObject(initialized.agentCapabilities);
     entry.imagePrompts =
       acpObject(capabilities.promptCapabilities).image === true;
     const sessionParams = { cwd, mcpServers: [] };
+    const isNewSession = !entry.nativeId;
     const resume = acpObject(capabilities.sessionCapabilities).resume;
     if (
       entry.nativeId &&
@@ -460,21 +462,13 @@ export class AntigravityRuntimeProvider
       });
     }
     entry.options = sessionOptions(opened);
+    this.quota.observeTier(acpQuotaTier(opened));
     entry.defaults = {
       model: entry.options.model?.current,
       thought: entry.options.thought?.current,
     };
-    this.recordCatalog(entry);
+    if (isNewSession) this.catalog.observe(entry.options);
     return transport;
-  }
-
-  private recordCatalog(entry: Entry) {
-    if (entry.options.model)
-      this.catalog = {
-        options: entry.options,
-        model: entry.defaults.model,
-        expiresAt: Date.now() + 5 * 60_000,
-      };
   }
 
   private async configure(
@@ -508,7 +502,6 @@ export class AntigravityRuntimeProvider
       ...(next.model ? { model: next.model } : {}),
       ...(next.thought ? { thought: next.thought } : {}),
     };
-    this.recordCatalog(entry);
   }
 
   private startRun(
@@ -626,6 +619,7 @@ export class AntigravityRuntimeProvider
       if (!acpText(result.stopReason))
         throw new Error('Antigravity did not confirm completion.');
       successful = !entry.stopping && result.stopReason !== 'cancelled';
+      if (successful) this.quota.available(entry.options.model?.current);
       if (!successful && entry.pendingPrompts.length) entry.queuePaused = true;
     } catch (error) {
       entry.transport?.close();
@@ -676,14 +670,27 @@ export class AntigravityRuntimeProvider
     method: string,
     params: Record<string, unknown>,
   ) {
+    // One transport carries one session. Its first usage report can arrive
+    // before the session/new reply records the native ID.
     if (
       method !== 'session/update' ||
-      params.sessionId !== entry.nativeId ||
+      (entry.nativeId !== null && params.sessionId !== entry.nativeId) ||
       entry.closed
     )
       return;
     const update = acpObject(params.update);
-    if (update.sessionUpdate === 'config_option_update') {
+    if (update.sessionUpdate === 'usage_update') {
+      const usage = acpContextUsage(update);
+      if (!usage) return;
+      this.contexts.delete(entry.id);
+      this.contexts.set(entry.id, usage);
+      for (const oldest of this.contexts.keys()) {
+        if (this.contexts.size <= CONTEXT_LIMIT) break;
+        this.contexts.delete(oldest);
+      }
+    } else if (entry.nativeId === null) {
+      return;
+    } else if (update.sessionUpdate === 'config_option_update') {
       entry.options = {
         ...entry.options,
         ...Object.fromEntries(
@@ -692,7 +699,6 @@ export class AntigravityRuntimeProvider
           ),
         ),
       };
-      this.recordCatalog(entry);
     } else if (!entry.turn?.update(update)) return;
     // Keep token bursts from waking every desktop stream once per token.
     entry.updateTimer ??= setTimeout(() => {
@@ -853,6 +859,7 @@ export class AntigravityRuntimeProvider
   }
 
   async cleanupSession(sessionId: number): Promise<void> {
+    this.contexts.delete(sessionId);
     const entry = this.entries.get(sessionId);
     if (!entry) return;
     this.dispose(entry);
@@ -909,8 +916,19 @@ export class AntigravityRuntimeProvider
   }
 
   private fail(entry: Entry, error: unknown) {
-    const failure =
-      error instanceof AcpRequestError && error.code === -32000
+    const quota = antigravityQuotaFailure(error);
+    if (quota) {
+      const model = entry.options.model;
+      const id = model?.current || entry.selection.model || '';
+      this.quota.exhausted(
+        id,
+        model?.values.find((value) => value.id === id)?.displayName ?? id,
+        quota.resetsAt,
+      );
+    }
+    const failure = quota
+      ? new BadRequestException(ANTIGRAVITY_QUOTA)
+      : error instanceof AcpRequestError && error.code === -32000
         ? new BadRequestException(ANTIGRAVITY_SIGN_IN)
         : error instanceof Error
           ? error

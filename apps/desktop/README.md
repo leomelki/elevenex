@@ -38,8 +38,9 @@ Choose **Antigravity** in the harness picker of a new session and send a message
 Elevenex uses [Google’s interactive ACP workflow](https://antigravity.google/docs/ide/extensions/acp/).
 Antigravity owns authentication, tool execution and its native helpers. Elevenex
 relays messages you submit in desktop chat, renders decisions, and restores
-the conversation after reconnecting. Follow-ups wait in the queue. Models and
-thinking levels appear as Antigravity advertises them in the session. Google’s
+the conversation after reconnecting. Follow-ups wait in the queue. The model
+picker discovers available models and their advertised thinking levels before
+the first message. Google’s
 [interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
 distinguishes this workflow from third-party agent delegation. Antigravity turns
 in Elevenex require a desktop chat submission, including when using an API key.

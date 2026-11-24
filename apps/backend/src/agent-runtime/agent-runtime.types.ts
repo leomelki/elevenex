@@ -55,6 +55,7 @@ export interface AgentProviderModelCatalogPayload {
   reasoningEfforts: string[];
   /** What the provider falls back to when nothing is pinned, if known. */
   providerDefaultModelId: string | null;
+  providerDefaultReasoningEffort?: string | null;
   /** False when a model cannot be chosen ahead of a session. */
   supportsModelSelection: boolean;
   /** Set when the list is empty for a knowable reason (e.g. signed out). */

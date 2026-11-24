@@ -9,13 +9,33 @@ export function acpObject(value: unknown): RpcObject {
     : {};
 }
 
+/** Bounded provider error text, for classifying failures such as exhausted quota. */
+const ERROR_DETAIL_LIMIT = 4_000;
+
 export class AcpRequestError extends Error {
   constructor(
     readonly code: number,
     method: string,
+    /** Provider text is classified, never shown verbatim to the desktop. */
+    readonly detail = '',
   ) {
     super(`Antigravity rejected ${method} (ACP error ${code}).`);
   }
+}
+
+function errorDetail(error: RpcObject): string {
+  const message = typeof error.message === 'string' ? error.message : '';
+  let data = '';
+  if (error.data !== undefined) {
+    try {
+      data = JSON.stringify(error.data) ?? '';
+    } catch {
+      data = '';
+    }
+  }
+  return `${message.slice(0, ERROR_DETAIL_LIMIT)} ${data}`
+    .trim()
+    .slice(0, ERROR_DETAIL_LIMIT);
 }
 
 interface AcpHandlers {
@@ -175,9 +195,11 @@ export class AcpStdio {
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
-    const { code } = acpObject(message.error);
-    if (typeof code === 'number')
-      pending.reject(new AcpRequestError(code, pending.method));
+    const error = acpObject(message.error);
+    if (typeof error.code === 'number')
+      pending.reject(
+        new AcpRequestError(error.code, pending.method, errorDetail(error)),
+      );
     else if ('result' in message) pending.resolve(acpObject(message.result));
     else
       pending.reject(

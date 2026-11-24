@@ -601,6 +601,38 @@ export class SessionChatFixture {
     session.state = { ...session.state, provider: planUsage?.provider ?? session.state.provider, planUsage };
     this.changed();
   }
+  /** Antigravity meters quota per model, so the preview switches the session to that provider. */
+  antigravityUsage(
+    modelQuota: SessionChatState["modelQuota"],
+    context: SessionChatState["context"],
+    model = "claude-opus-4-6-thinking",
+    id = 101,
+  ): void {
+    const session = this.session(id);
+    const harness = { id: "antigravity", label: "Antigravity" };
+    session.state = {
+      ...session.state,
+      provider: harness.id,
+      providers: [...(session.state.providers ?? []).filter((provider) => provider.id !== harness.id), harness],
+      providerLocked: true,
+      model,
+      models: [
+        { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", reasoningEfforts: ["low", "medium", "high"] },
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)", reasoningEfforts: [] },
+        { id: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)", reasoningEfforts: [] },
+        { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)", reasoningEfforts: [] },
+      ],
+      reasoning: null,
+      fast: false,
+      permissionMode: null,
+      permissionModes: [],
+      controls: { plan: false, reasoning: true, fast: false },
+      planUsage: null,
+      context,
+      modelQuota,
+    };
+    this.changed();
+  }
   cancel(id: string): void {
     this.heldReads.get(id)?.();
     this.waiting.get(id)?.();

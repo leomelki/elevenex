@@ -142,6 +142,126 @@ describe('interactive Antigravity through ACP stdio', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('coalesces cold catalog reads and makes models selectable before the first turn', async () => {
+    const provider = makeProvider();
+    const [first, second] = await Promise.all([
+      provider.getModelCatalog(),
+      provider.getModelCatalog(),
+    ]);
+    expect(second).toEqual(first);
+    expect(first).toMatchObject({
+      models: [
+        { id: 'default-model', reasoningEfforts: ['low', 'high'] },
+        { id: 'other-model' },
+      ],
+      providerDefaultModelId: 'default-model',
+      providerDefaultReasoningEffort: 'high',
+      unavailableReason: null,
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(await provider.getModelCatalog()).toEqual(first);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(await provider.getHistory(sessionId)).toEqual([]);
+    expect(await provider.getRuntimeState(sessionId)).toMatchObject({
+      claudeSessionId: null,
+      selectedModel: 'default-model',
+    });
+    await provider.setSelectedModel(sessionId, 'other-model');
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await provider.submitPrompt(
+      sessionId,
+      'first message',
+      undefined,
+      undefined,
+      request,
+    );
+    await waitFor(provider, (state) => state.runPhase === 'idle');
+    expect(await provider.getHistory(sessionId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: 'new, other-model: first message' }),
+      ]),
+    );
+    expect(await provider.getModelCatalog()).toEqual(first);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports sign-in guidance and retries discovery immediately on refresh', async () => {
+    const provider = makeProvider();
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue({
+      ...process.env,
+      ACP_FIXTURE_SIGNED_OUT: '1',
+    });
+    const unavailable = await provider.getModelCatalog();
+    expect(unavailable.unavailableReason).toContain('agy acp --login');
+    expect(unavailable.unavailableReason).not.toContain(
+      'Secret login diagnostics',
+    );
+    expect(await provider.getModelCatalog()).toEqual(unavailable);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    jest.mocked(paths.buildAugmentedEnvAsync).mockResolvedValue(process.env);
+    expect((await provider.getModelCatalog(true)).models).toHaveLength(2);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports context, the account tier and model quota until that model completes again', async () => {
+    const provider = makeProvider();
+    await provider.submitPrompt(
+      sessionId,
+      'quota',
+      undefined,
+      undefined,
+      request,
+    );
+    const failed = await waitFor(
+      provider,
+      (state) => state.runPhase === 'error',
+    );
+    expect(failed.lastError).toContain('used its Antigravity quota');
+    expect(failed.lastError).not.toContain('RESOURCE_EXHAUSTED');
+    expect(failed.contextUsage).toEqual({
+      totalTokens: 0,
+      maxTokens: 1048576,
+      percentage: 0,
+    });
+    expect(failed.modelQuota).toMatchObject({
+      provider: 'antigravity',
+      tier: 'Antigravity Starter Quota',
+      models: [
+        {
+          id: 'default-model',
+          label: 'Default model',
+          remainingPercentage: 0,
+          exhausted: true,
+        },
+      ],
+    });
+    const resetIn = failed.modelQuota!.models[0].resetsAt! * 1000 - Date.now();
+    expect(resetIn).toBeGreaterThan(2.4 * 3_600_000);
+    expect(resetIn).toBeLessThanOrEqual(2.5 * 3_600_000 + 1_000);
+
+    await provider.submitPrompt(
+      sessionId,
+      'again',
+      undefined,
+      undefined,
+      request,
+    );
+    const completed = await waitFor(
+      provider,
+      (state) =>
+        state.runPhase === 'idle' && state.contextUsage?.totalTokens === 12000,
+    );
+    expect(completed.contextUsage).toEqual({
+      totalTokens: 12000,
+      maxTokens: 1048576,
+      percentage: 1.1,
+    });
+    expect(completed.modelQuota).toMatchObject({
+      tier: 'Antigravity Starter Quota',
+      models: [],
+    });
+  });
+
   it('streams and persists a turn, relays decisions, and resumes the same native conversation', async () => {
     const provider = makeProvider();
     await provider.submitPrompt(
