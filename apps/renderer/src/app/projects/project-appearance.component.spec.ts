@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectAppearanceComponent } from './project-appearance.component';
+import { readProjectImage } from './project-image';
 import type { ProjectAppearance } from './project.models';
 
 describe('Project image picker', () => {
@@ -38,6 +39,24 @@ describe('Project image picker', () => {
     expect(fixture.nativeElement.querySelector('ex-project-mark img')).toBeNull();
     expect(fixture.nativeElement.querySelector('ex-project-mark ex-icon')).not.toBeNull();
     expect(document.activeElement?.textContent).toContain('Choose image');
+  });
+
+  it('lets the user change the tile color with an uploaded image active', () => {
+    const { fixture, changed } = setup();
+    const tile = fixture.nativeElement.querySelector('ex-project-mark');
+    const choices = fixture.nativeElement.querySelector('[aria-label="Tile color"]');
+    const ocean: HTMLButtonElement = choices.querySelector('[aria-label="ocean"]');
+    ocean.click();
+    fixture.detectChanges();
+    expect(changed).toHaveBeenCalledWith({ ...appearance, hue: 'ocean', image });
+    expect(ocean.getAttribute('aria-checked')).toBe('true');
+    expect(tile.style.backgroundColor).toBe('var(--project-ocean)');
+    expect(tile.querySelector('img').getAttribute('src')).toBe(image);
+  });
+
+  it('enforces the SVG upload limit', async () => {
+    const file = new File([new Uint8Array(512 * 1024 + 1)], 'icon.svg');
+    await expect(readProjectImage(file, new AbortController().signal)).rejects.toThrow('Choose an SVG under 512 KB.');
   });
 
   it('keeps the previous icon after a failed replacement and discards a selection when closed', async () => {

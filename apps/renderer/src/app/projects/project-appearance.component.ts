@@ -83,7 +83,7 @@ export class ProjectAppearanceComponent {
   protected selected(value: string): boolean { return this.appearance().look === 'icon' ? this.appearance().icon === value : this.appearance().emoji === value; }
   protected choose(value: string): void { this.patch(this.appearance().look === 'icon' ? { icon: value } : { emoji: value }); }
   protected hueKey(event: KeyboardEvent, index: number): void {
-    if (this.disabled() || this.imagePending()) return;
+    if (!this.active() || this.disabled() || this.imagePending()) return;
     const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
     if (!direction && event.key !== 'Home' && event.key !== 'End') return;
     event.preventDefault();

@@ -16,7 +16,7 @@ import { IconComponent } from '../../ui/icon/icon.component';
     '[style.width.px]': 'size()',
     '[style.height.px]': 'size()',
     '[style.font-size.px]': 'fontSize()',
-    '[style.background]': 'background()',
+    '[style.background-color]': 'background()',
     '[class.large]': 'size() >= 28',
     '[class.medium]': 'size() >= 20 && size() < 28',
     '[class.emoji]': '!!emoji()',
@@ -39,9 +39,7 @@ export class ProjectMarkComponent {
   protected readonly fontSize = computed(() => Math.round(this.size() * .36));
   protected readonly iconSize = computed(() => Math.round(this.size() * .5));
   protected readonly failedLogo = signal<string | undefined>(undefined);
-  protected readonly background = computed(
-    () => this.logo() && this.failedLogo() !== this.logo() ? 'var(--surface-raised)' : `var(--project-${this.hue()})`,
-  );
+  protected readonly background = computed(() => `var(--project-${this.hue()})`);
   protected readonly monogram = computed(
     () => this.initials() || this.name().slice(0, 2).toUpperCase(),
   );
