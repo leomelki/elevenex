@@ -51,7 +51,7 @@ export async function launchSessionPrompt(
     const disposition = await submitSessionPrompt(
       runtime,
       session.id,
-      sessionMessage(prompt, ctx.agentSessionId, true),
+      await sessionMessage(prompt, ctx, true),
       {
         signal: ctx.signal,
         titlePrompt: prompt,

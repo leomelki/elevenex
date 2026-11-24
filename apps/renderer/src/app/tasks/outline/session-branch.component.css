@@ -30,3 +30,18 @@ ex-session-row { flex: 1; min-width: 0; transition: background var(--dur-base) v
 .child-count { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); font: var(--text-mono-meta-size)/var(--text-mono-meta-line) var(--font-mono); transition: color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
 .child-count.pending { color: var(--on-accent); background: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .disclosure ex-icon, .branch, .branch-row, ex-session-row, .children, .child-count { transition: none; } }
+
+.selected-family { border-left-color: var(--accent); }
+.child-count { min-width: 18px; display: inline-flex; justify-content: center; }
+.child-count[data-summary="attention"] { color: var(--attention); background: var(--attention-soft); box-shadow: 0 0 0 1px color-mix(in oklab, var(--attention) 25%, transparent); }
+.child-count[data-summary="failed"] { color: var(--danger); background: var(--danger-soft); }
+.child-count[data-summary="running"] { color: var(--running); }
+.rollup-value { display: inline-flex; align-items: center; gap: var(--space-1); }
+.children button.finished {
+  display: flex; align-items: center; gap: var(--space-1); color: var(--ink-muted);
+  padding: var(--space-1) var(--space-2); font-size: var(--text-caption-size); min-height: 24px;
+}
+.children button.finished:hover { background: var(--surface-sunken); }
+.child-arrived { background: var(--accent-soft); border-radius: var(--radius-sm); }
+.children ex-session-branch { transition: background-color var(--dur-slow) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .children ex-session-branch { transition: none; } }

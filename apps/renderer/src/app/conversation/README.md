@@ -95,6 +95,20 @@ provider to Chat, Turn or WorkTimeline for a viewed image. The tool disclosure
 requests a compact preview when opened and releases it after the fold closes.
 Activating the preview opens the full-size viewer.
 
+## Agents in the timeline
+
+`ChatExchange` accepts a structured sender, an agent list and returned reply
+receipts. `WorkStep` accepts a board, a quoted reply or a named tool action.
+Keep stable IDs on launches and messages so status changes keep the row and
+disclosure mounted. The board handles single-to-group layout, pending message
+states and expandable detail. Quoted replies use the Markdown renderer and
+bounded changed-file chips. The owning chat handles typed `AgentWorkIntent`
+outputs, including opening sessions and inspecting native agents.
+
+Use the `chatHeader` slot for a linked session breadcrumb. The agent identity
+exports also have a small `conversation/agents` entry for UI families that need
+a harness mark without importing the chat composition.
+
 ## Scrolling and performance
 
 `ChatLoading` lays out two placeholder exchanges above a pinned composer.

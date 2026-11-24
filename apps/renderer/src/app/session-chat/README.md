@@ -6,6 +6,27 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+## Agent work
+
+Session tool calls and native launches carry bounded operation metadata alongside
+their ordinary evidence references. The transcript adapter preserves launch
+identity across retries, places quoted replies at their receipt positions and
+projects one board for the agents started during a turn. Collapsed completed
+turns use a compact agent index for their outcome chips. Opening saved activity
+still uses the existing bounded timeline reader.
+
+The selected feed supplies live status, recent outcomes, and pending decisions.
+Agent surfaces share the same data, so a parent shows a child's request above
+the composer and in Activity. Opening the request navigates to the child and
+focuses the decision in its transcript. An assignment or returned reply links
+back to the caller. The workspace resolves links outside the current outline by
+scoped session identity and restores the origin when it is present in the
+retained parent window. Native Inspect opens the existing focus-managed modal
+from its card and pins a finished reply above the paged transcript.
+
+The preview's connected workspace fixture exercises this flow through
+`scripts/desktop-capture/scenarios/session-delegation.mjs`.
+
 The pencil on a saved prompt opens an editor with the original text, the
 impact on later turns, and an indication of any retained context. Escape
 cancels the edit. Control or Command plus Enter resends the revision.

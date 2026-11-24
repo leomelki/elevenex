@@ -13,9 +13,10 @@ import {
 import { IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective } from "../../ui";
 import type { TaskSession } from "../task.models";
 import { writeSessionDrag } from '../session-drag';
+import { AgentMarkComponent, agentIdentity, sessionAgentTitle } from '../../conversation/agents';
 @Component({
   selector: "ex-session-row",
-  imports: [IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective],
+  imports: [AgentMarkComponent, IconComponent, StatusGlyphComponent, TickerComponent, TooltipDirective],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: "./session-row.component.html",
   styleUrl: "./session-row.component.css",
@@ -41,7 +42,18 @@ export class SessionRowComponent implements OnChanges {
   readonly deleteRequested = output<TaskSession>();
   protected readonly confirming = signal(false);
   /** Archiving stops both a working agent and the commands it left running. */
-  private readonly live = computed(() => this.session().status === 'running' || !!this.session().commands);
+  private readonly live = computed(() => this.session().status === 'running' || !!this.session().commands ||
+    !!this.session().activeChildAgents?.length);
+  protected readonly archiveLabel = computed(() => {
+    const count = this.session().activeChildAgents?.length ?? 0;
+    return count ? 'Stop ' + count + (count === 1 ? ' agent' : ' agents') + ' and archive' : 'Stop and archive';
+  });
+  protected readonly tooltip = computed(() => {
+    const row = this.session(), parent = row.delegatedBy;
+    if (!parent) return row.title;
+    return [row.title, 'Started by ' + sessionAgentTitle(parent), agentIdentity(row.agentSelection, true),
+      row.delegationDetail, row.parentWaiting ? 'Parent is waiting for this reply' : ''].filter(Boolean).join(' · ');
+  });
   protected readonly commandsLabel = computed(() => {
     const count = this.session().commands ?? 0;
     return count === 1
@@ -56,11 +68,15 @@ export class SessionRowComponent implements OnChanges {
   }
   private readonly document = inject(DOCUMENT);
   private confirmationSession: string | null = null;
+  private confirmationAgents?: readonly number[];
   private removeOutsideListener?: () => void;
 
   constructor() { inject(DestroyRef).onDestroy(() => this.cancelArchive()); }
   ngOnChanges(): void {
-    if (!this.allowArchive() || !this.live() || this.session().id !== this.confirmationSession) this.cancelArchive();
+    const active = this.session().activeChildAgents;
+    if (!this.allowArchive() || !this.live() || this.session().id !== this.confirmationSession ||
+        active?.length !== this.confirmationAgents?.length ||
+        active?.some(id => !this.confirmationAgents?.includes(id))) this.cancelArchive();
   }
 
   protected archive(event: Event): void {
@@ -68,6 +84,7 @@ export class SessionRowComponent implements OnChanges {
     if (this.session().canDelete) { this.deleteRequested.emit(this.session()); return; }
     if (this.live() && !this.confirming()) {
       this.confirmationSession = this.session().id;
+      this.confirmationAgents = this.session().activeChildAgents;
       this.confirming.set(true);
       const button = event.currentTarget;
       const outside = (event: PointerEvent) => {
@@ -83,6 +100,7 @@ export class SessionRowComponent implements OnChanges {
   protected cancelArchive(event?: Event): void {
     if (event && this.confirming()) { event.preventDefault(); event.stopPropagation(); }
     this.confirmationSession = null;
+    this.confirmationAgents = undefined;
     this.confirming.set(false);
     this.removeOutsideListener?.();
     this.removeOutsideListener = undefined;

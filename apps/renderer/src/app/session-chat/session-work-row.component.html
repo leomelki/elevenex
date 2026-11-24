@@ -4,11 +4,13 @@
 <div class="title-line">
   @if (view().inspectable) {
     <button
+      #workTitle
       type="button"
       class="inspect"
-      [attr.aria-label]="'Inspect ' + view().title + (view().identity ? ' · ' + view().identity : '')"
-      (click)="inspect()"
+      [attr.aria-label]="(view().session ? 'Open ' : 'Inspect ') + view().title + (view().identity ? ' · ' + view().identity : '')"
+      [disabled]="!!view().session && sessionsDisabled()" (click)="inspect(workTitle)"
     >
+      @if (view().item.kind === 'agent') { <ex-agent-mark [harness]="view().session?.selection?.provider ?? harness()" mark="A" /> }
       <span class="title">{{ view().title }}</span>
       @if (view().identity) {
         <span class="role" [exTooltip]="view().identity">{{ view().identity }}</span>
@@ -78,7 +80,8 @@
     size="sm"
     class="answer above"
     [attr.aria-label]="'Answer ' + view().title + ' in the conversation'"
-    (click)="answerRequested.emit()"
+    [disabled]="!!view().session && sessionsDisabled()"
+    (click)="answer($event)"
   >
     Answer
   </button>

@@ -95,6 +95,8 @@
     [inspectTool]="inspectTool()"
     [toolImages]="toolImages()"
     [copiedCode]="copiedCode()"
+    [agentNavigationDisabled]="agentNavigationDisabled()"
+    (agentRequested)="agentRequested.emit($event)"
     (inspectionChanged)="inspecting.set($event)"
     (openFile)="openFile.emit($event); fileLink.emit($event)"
     (openLink)="openLink.emit($event)"
@@ -124,8 +126,42 @@
       }
     </div>
   }
+  @for (receipt of returnedTo(); track receipt.itemId + ':' + receipt.recipient.sessionId) {
+    <div class="handoff">
+      <ex-icon name="check" [size]="13" />
+      <span>Sent to</span>
+      <button exButton variant="ghost" size="sm" type="button"
+        [disabled]="agentNavigationDisabled()" (click)="followHandoff(receipt, $event)">{{ agentTitle(receipt.recipient) }}</button>
+      <time [attr.datetime]="receipt.at">{{ receipt.at | date: 'shortTime' }}</time>
+    </div>
+  }
   <ex-fold [open]="status() !== 'live'"
     ><footer>
+      @if (agentCards().length) {
+        <div class="agent-outcomes" aria-label="Agents in this turn">
+          @for (card of agentCards(); track card.id) {
+            @let state = agentState(card.status);
+            @let target = card.target;
+            @if (target) {
+              <button exButton variant="ghost" size="sm" type="button" class="agent-chip"
+                [attr.aria-label]="card.title + ' · ' + state.label"
+                [exTooltip]="card.title + ' · ' + state.label"
+                [disabled]="agentNavigationDisabled() && target.kind === 'session'"
+                [attr.data-agent-session]="target.kind === 'session' ? target.session.sessionId : null"
+                (click)="openAgent(card, $event)">
+                <ex-status-glyph [status]="state.glyph" [size]="12" />
+                <ex-agent-mark [harness]="card.selection?.provider" mark="A" />
+                <span>{{ card.title }}</span>
+              </button>
+            } @else {
+              <span class="agent-chip" [attr.aria-label]="card.title + ' · ' + state.label">
+                <ex-status-glyph [status]="state.glyph" [size]="12" />
+                <span>{{ card.title }}</span>
+              </span>
+            }
+          }
+        </div>
+      }
       <ex-outcome-bar
         [files]="files()"
         [filesTotal]="filesTotal()"

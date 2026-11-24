@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { serializeSessionMention } from '../../../agent-runtime/session-mention.js';
+import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { untilSessionDeadline } from '../session-deadline.js';
 import { resolveSessionProvider } from './provider.util.js';
@@ -121,10 +123,11 @@ export const promptSessionTool = defineTool({
 
     const runtime = ctx.services.agentRuntime.getProvider(provider);
     await startSessionForPrompt(sessions, session);
+    const messageId = ctx.agentSessionId === null ? undefined : randomUUID();
     const disposition = await submitSessionPrompt(
       runtime,
       session.id,
-      sessionMessage(prompt, ctx.agentSessionId),
+      await sessionMessage(prompt, ctx, false, messageId),
       { signal: ctx.signal, queue: args.queue, titlePrompt: args.prompt },
     );
     // The receipt proves acceptance. This single bounded read only augments
@@ -148,7 +151,9 @@ export const promptSessionTool = defineTool({
     return {
       data: {
         sessionId: session.id,
+        session: sessionAgentReference(session),
         accepted: disposition !== undefined,
+        ...(messageId ? { messageId } : {}),
         provider,
         status,
         ...(disposition && { disposition }),

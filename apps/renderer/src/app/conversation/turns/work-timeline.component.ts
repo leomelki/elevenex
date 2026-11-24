@@ -1,3 +1,7 @@
+import { AgentWorkBoardComponent } from '../agents/agent-work-board.component';
+import { AgentWorkReplyComponent } from '../agents/agent-work-reply.component';
+import type { AgentWorkIntent, AgentWorkTarget } from '../agents/agent-work.models';
+import { IconButtonComponent } from '../../ui';
 import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
@@ -39,6 +43,9 @@ import { formatDuration, isProse, stepIcon, stepVerb } from "./work-summary";
 @Component({
   selector: "ex-work-timeline",
   imports: [
+    AgentWorkBoardComponent,
+    AgentWorkReplyComponent,
+    IconButtonComponent,
     NgTemplateOutlet,
     AutoHeightDirective,
     FoldComponent,
@@ -79,6 +86,11 @@ export class WorkTimelineComponent implements OnChanges {
   readonly openPage = output<string>();
   readonly copyCode = output<string>();
   readonly contentRequested = output<ToolContentRequest>();
+  readonly agentRequested = output<AgentWorkIntent>();
+  readonly agentNavigationDisabled = input(false);
+  protected openAgent(target: AgentWorkTarget, event: HTMLElement): void {
+    this.agentRequested.emit({ target, action: 'open', origin: event });
+  }
   readonly layoutChanging = output<HTMLElement>();
   readonly inspectionChanged = output<boolean>();
   readonly openGroups = signal<ReadonlySet<string>>(new Set());

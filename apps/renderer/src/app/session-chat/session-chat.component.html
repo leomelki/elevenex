@@ -2,11 +2,14 @@
   <ex-chat-loading [pending]="opening()" [class.hydrated]="!!store.state()" label="Loading conversation…" />
   @if (store.state() || store.starting()) {
 <ex-chat
+  [animate.enter]="agentFocus()?.selection === selection() && !!agentFocus() ? 'agent-session-in' : ''"
   [reach]="store.offline() ? { machine: machineName(), since: outageSince() ?? 0 } : undefined"
   [resolve]="media.resolve"
   [inspectTool]="store.tools.provider()"
   [toolImages]="media.toolImages()"
-  [exchanges]="store.exchanges()"
+  [exchanges]="exchanges()"
+  [agentNavigationDisabled]="agentNavigationDisabled()"
+  (agentRequested)="agentIntent($event)"
   [promptEditing]="!archived()"
   [promptEditDisabledReason]="store.promptEditDisabledReason()"
   (promptEditRequested)="openPromptEditor($event)"
@@ -40,6 +43,27 @@
   (contentRequested)="openToolContent({ itemId: $event, part: 'text' })"
   (toolContentRequested)="openToolContent($event)"
 >
+  <div chatHeader class="agent-chat-header">
+    @if (delegated()?.parent; as parent) {
+      <nav class="delegation-breadcrumb" aria-label="Agent session" tabindex="-1">
+        <button exButton variant="ghost" size="sm" type="button" [disabled]="agentNavigationDisabled()"
+          (click)="openParent(parent, $event)">
+          <ex-agent-mark [harness]="parent.selection?.provider" mark="A" />
+          <span>{{ agentTitle(parent) }}</span>
+        </button>
+        <ex-icon name="chevron-right" [size]="12" />
+        <strong [attr.title]="sessionTitle()">{{ sessionTitle() || 'Agent session' }}</strong>
+        @let selection = delegated()?.selection;
+        @if (selection) {
+          <span class="delegation-identity" [title]="agentIdentity(selection, true)">
+            <ex-agent-mark [harness]="selection.provider" mark="A" appearance="tinted" />
+            <span>{{ agentIdentity(selection) }}</span>
+          </span>
+        }
+      </nav>
+    }
+    @if (agentNavigationError()) { <p class="feedback error" role="alert">{{ agentNavigationError() }}</p> }
+  </div>
   <div chatContent>
     @if (store.state()?.permission; as request) {
       <ex-approval-card
@@ -102,6 +126,50 @@
     }
   </div>
   <div chatComposer class="session-composer">
+    <ex-fold [open]="decisionAgents().length > 0">
+      @if (retainedDecisions()[0]; as first) {
+        <section class="agent-requests" animate.enter="agent-attention-in" aria-label="Agent requests">
+          <div class="agent-request-line">
+            <ex-status-glyph status="attention" [size]="16" />
+            <div class="agent-request-text" role="status">
+              @if (retainedDecisions().length === 1) {
+                <strong>{{ agentTitle(first.session) }} needs you</strong>
+                @if (first.detail) { <span>{{ first.detail }}</span> }
+              } @else {
+                <strong><ex-ticker [value]="retainedDecisions().length" /> agents need you</strong>
+              }
+            </div>
+            @if (retainedDecisions().length === 1) {
+              <button exButton variant="secondary" size="sm" type="button"
+                [disabled]="agentNavigationDisabled()" (click)="openDecision(first.session, $event)">
+                Open to answer <ex-icon name="forward" [size]="12" />
+              </button>
+            } @else {
+              <button exButton variant="secondary" size="sm" type="button"
+                [attr.aria-expanded]="moreDecisions()" (click)="moreDecisions.set(!moreDecisions())">
+                {{ moreDecisions() ? 'Hide requests' : 'View requests' }}
+              </button>
+            }
+          </div>
+          <ex-fold [open]="moreDecisions() && retainedDecisions().length > 1">
+            <ul>
+              @for (agent of retainedDecisions(); track agent.session.sessionId) {
+                <li><button exButton variant="ghost" size="sm" type="button"
+                  [disabled]="agentNavigationDisabled()" (click)="openDecision(agent.session, $event)">
+                  <ex-agent-mark [harness]="agent.session.selection?.provider" mark="A" />
+                  <span>{{ agentTitle(agent.session) }}</span><ex-icon name="forward" [size]="12" />
+                </button></li>
+              }
+            </ul>
+          </ex-fold>
+        </section>
+      }
+    </ex-fold>
+    @if (delegated()?.parentWaiting && delegated()?.parent; as waitingParent) {
+      <div class="parent-waiting" role="status">
+        <ex-icon name="clock" [size]="13" />{{ agentTitle(waitingParent) }} is waiting for this reply
+      </div>
+    }
     @if (showWelcome()) {
       <section class="start"
         [class.preset-editing]="presetEditing()"
@@ -376,6 +444,7 @@
             <ex-session-activity
               [work]="work"
               [provider]="providerLabel()"
+              [harness]="store.state()?.provider"
               [disabledReason]="activityDisabledReason()"
               [backgrounding]="store.busy() === 'background-agent'"
               (backgroundRequested)="store.perform({ type: 'background-agent', id: $event })"
@@ -384,6 +453,7 @@
               [stopping]="store.busy() === 'stop-background'"
               (stopRequested)="store.perform({ type: 'stop-background', id: $event })"
               [decisionPending]="!!store.state()?.permission || !!store.state()?.question"
+              [sessionsDisabled]="agentNavigationDisabled()" (sessionRequested)="agentIntent($event)"
               (answerRequested)="focusDecision()"
             />
           }
@@ -480,6 +550,7 @@
   @if (agentId(); as id) {
     @for (key of [identity() + ':' + id]; track key) {
       <ex-session-agent [selection]="selected" [agentId]="id" [work]="agentWork()" [unreachable]="store.offline()"
+        [origin]="agentOrigin()" [provider]="store.state()?.provider" [statusHint]="inspectedStatus()"
         [copiedCode]="copiedCode()" (copyRequested)="copy($event, true)" (linkRequested)="openLink($event)" (fileLinkRequested)="agentId.set(null); openFileLink($event)"
         (closed)="agentId.set(null)" />
     }

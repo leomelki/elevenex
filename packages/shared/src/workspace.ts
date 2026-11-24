@@ -62,6 +62,12 @@ export interface WorkspaceSession {
   readonly canDelete?: boolean;
   readonly parentSessionId?: number | null;
   readonly childCount?: number;
+  readonly delegatedBy?: import('./session-agents').SessionAgentReference;
+  readonly agentSelection?: import('./session-agents').SessionAgentSelection;
+  readonly childSummary?: import('./session-agents').SessionChildSummary;
+  readonly delegationDetail?: string;
+  readonly parentWaiting?: true;
+  readonly activeChildAgents?: readonly number[];
   readonly id: number;
   readonly taskId: number;
   readonly repoId: number;
@@ -209,7 +215,10 @@ export interface WorkspaceArchiveSession {
   readonly taskId: number;
   readonly sessionId: number;
   readonly confirmStop: boolean;
+  /** Explicitly approved currently running delegated children, verified again by the engine. */
+  readonly stopAgents?: readonly number[];
 }
+export const WORKSPACE_ARCHIVE_AGENT_LIMIT = 32;
 export interface WorkspaceDeleteSession {
   readonly taskId: number;
   readonly sessionId: number;

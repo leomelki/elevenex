@@ -1,4 +1,5 @@
 /** Renderer view models. Owners feed data and handle intents; these components never access the platform. */
+import type { SessionAgentReference, SessionAgentSelection, SessionChildSummary } from '@elevenex/shared';
 export type SessionStatus =
   | 'running'
   | 'attention'
@@ -97,6 +98,8 @@ export interface TaskSession {
   readonly childrenAppendOrder?: boolean;
   readonly parentId?: string | null;
   readonly childCount?: number;
+  readonly childSummary?: SessionChildSummary;
+  readonly activeChildAgents?: readonly number[];
   readonly childrenLoading?: boolean;
   readonly childrenError?: string | null;
   readonly moreChildren?: boolean;
@@ -110,7 +113,11 @@ export interface TaskSession {
   readonly mentionScope?: string;
   readonly title: string;
   readonly status: SessionStatus;
-  readonly kind?: 'main' | 'fork' | 'side' | 'auto';
+  readonly kind?: 'main' | 'fork' | 'side' | 'auto' | 'delegated';
+  readonly delegatedBy?: SessionAgentReference;
+  readonly agentSelection?: SessionAgentSelection;
+  readonly delegationDetail?: string;
+  readonly parentWaiting?: true;
   readonly diff?: { readonly add: number; readonly del: number };
   readonly meta?: string;
   /**
@@ -242,4 +249,15 @@ export function matchesSessionFilter(
     status === filter ||
     (filter === 'attention' && status === 'failed')
   );
+}
+
+/** Counts summarized children outside the current navigation window. */
+export function unloadedChildCounts(rows: readonly TaskSession[]): ReadonlyMap<string, number> {
+  const loaded = new Map<string, number>();
+  const summaries = new Map(rows.filter(row => !!row.childSummary).map(row => [row.id, row.childSummary!]));
+  for (const row of rows) {
+    if (row.parentId && summaries.get(row.parentId)?.status === row.status)
+      loaded.set(row.parentId, (loaded.get(row.parentId) ?? 0) + 1);
+  }
+  return new Map([...summaries].map(([id, summary]) => [id, Math.max(0, summary.count - (loaded.get(id) ?? 0))]));
 }

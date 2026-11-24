@@ -175,6 +175,23 @@ describe('session row archive intent', () => {
     view.componentRef.setInput('session', sessions[0]); view.detectChanges();
     expect(view.nativeElement.querySelector('.archive')).toBeNull();
   });
+  it('confirms the displayed child agents and resets confirmation if they change', () => {
+    const { fixture, archive, archived } = row('done');
+    const parent = { id: 'one', title: 'Parent session', status: 'done', activeChildAgents: [2, 3] };
+    fixture.componentRef.setInput('session', parent);
+    fixture.detectChanges();
+    archive.click();
+    fixture.detectChanges();
+    expect(archive.getAttribute('aria-label')).toContain('Stop 2 agents and archive');
+    const changed = { ...parent, activeChildAgents: [2, 4] };
+    fixture.componentRef.setInput('session', changed);
+    fixture.detectChanges();
+    expect(archive.getAttribute('aria-label')).toBe('Archive Parent session');
+    archive.click();
+    expect(archived).not.toHaveBeenCalled();
+    archive.click();
+    expect(archived).toHaveBeenCalledWith(changed);
+  });
 });
 
 describe('session row detached commands', () => {

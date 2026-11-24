@@ -1,4 +1,5 @@
-import { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from '@elevenex/shared';
+import { WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from '@elevenex/shared';
+import { parseAgentReference, parseAgentSelection, parseChildSummary } from './session-agent-values';
 import type {
   BackendResult,
   InvokeContracts,
@@ -222,9 +223,13 @@ function commitPhase(value: unknown): 'writing' | 'committing' | 'pushing' {
 }
 function session(value: unknown): WorkspaceSession {
   const raw = object(value);
+  const sessionId = id(raw['id']), taskId = id(raw['taskId']);
+  const delegatedBy = raw['delegatedBy'] === undefined ? undefined : parseAgentReference(raw['delegatedBy']);
+  if (delegatedBy && (delegatedBy.sessionId === sessionId || delegatedBy.taskId !== taskId)) throw invalidResponse();
+  if (raw['parentWaiting'] !== undefined && (raw['parentWaiting'] !== true || !delegatedBy)) throw invalidResponse();
   return {
-    id: id(raw['id']),
-    taskId: id(raw['taskId']),
+    id: sessionId,
+    taskId,
     repoId: id(raw['repoId']),
     name: text(raw['name'], 160),
     status: text(raw['status'], 64),
@@ -235,7 +240,19 @@ function session(value: unknown): WorkspaceSession {
     ...(raw['canDelete'] === undefined ? {} : { canDelete: boolean(raw['canDelete']) }),
     ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? null : id(raw['parentSessionId']) }),
     ...(raw['childCount'] === undefined ? {} : { childCount: nonnegativeCount(raw['childCount']) }),
+    ...(delegatedBy ? { delegatedBy } : {}),
+    ...(raw['agentSelection'] === undefined ? {} : { agentSelection: parseAgentSelection(raw['agentSelection']) }),
+    ...(raw['childSummary'] === undefined ? {} : { childSummary: parseChildSummary(raw['childSummary']) }),
+    ...(raw['delegationDetail'] === undefined ? {} : { delegationDetail: text(raw['delegationDetail'], 300) }),
+    ...(raw['parentWaiting'] === true ? { parentWaiting: true } : {}),
+    ...(raw['activeChildAgents'] === undefined ? {} : { activeChildAgents: archiveAgents(raw['activeChildAgents'], sessionId) }),
   };
+}
+function archiveAgents(value: unknown, sessionId: number): readonly number[] {
+  if (!Array.isArray(value) || !value.length || value.length > WORKSPACE_ARCHIVE_AGENT_LIMIT) throw invalidResponse();
+  const ids = value.map(id);
+  if (ids.includes(sessionId) || new Set(ids).size !== ids.length) throw invalidResponse();
+  return ids;
 }
 function nonnegativeCount(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
@@ -734,7 +751,8 @@ export function registerWorkspaceIpc(
   });
   register('workspace:archive-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
-    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']) }, accepted);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']),
+      ...(raw['stopAgents'] === undefined ? {} : { stopAgents: archiveAgents(raw['stopAgents'], sessionId) }) }, accepted);
   });
   register('workspace:move-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);

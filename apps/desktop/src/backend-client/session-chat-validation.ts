@@ -1,4 +1,5 @@
 import { parseChangeSummary } from "./session-chat-changes";
+import { parseAgentContext, parseAgentEntry, parseAgentSender, parseDelegatedWork } from './session-agent-values';
 import {
   SESSION_CHAT_FULL_TIMELINE_SLOTS,
   SESSION_CHAT_PROMPT_LIMIT,
@@ -174,8 +175,12 @@ function item(value: unknown): SessionChatRecord {
   if (mentions && kind !== 'user') throw invalid();
   const editable = raw['editable'];
   if (editable !== undefined && (editable !== true || kind !== 'user')) throw invalid();
+  const id = chatText(raw["id"]);
+  const sender = raw['sender'] === undefined ? undefined : parseAgentSender(raw['sender']);
+  const agent = raw['agent'] === undefined ? undefined : parseAgentEntry(raw['agent'], kind === 'tool_result', kind === 'tool_use' ? id : undefined);
+  if ((sender && (kind !== 'user' || editable)) || (agent && kind !== 'tool_use' && kind !== 'tool_result')) throw invalid();
   return {
-    id: chatText(raw["id"]),
+    id,
     kind,
     ...(editable === true ? { editable } : {}),
     ...(assistantPhase === undefined ? {} : { assistantPhase }),
@@ -188,6 +193,8 @@ function item(value: unknown): SessionChatRecord {
     error: bool(raw["error"]),
     truncated: bool(raw["truncated"]),
     ...(mentions === undefined ? {} : { mentions }),
+    ...(sender ? { sender } : {}),
+    ...(agent ? { agent } : {}),
     ...(raw["media"] !== undefined ? { media: mediaReferences(raw["media"]) } : {}),
     ...(raw["execution"] !== undefined ? { execution: execution(raw["execution"]) } : {}),
     ...(raw["changes"] !== undefined ? { changes: parseChangeSummary(raw["changes"]) } : {}),
@@ -340,6 +347,7 @@ function timelineRow(value: unknown, turnId: string): SessionChatTurnTimelineRow
         (resultId !== undefined && (kind !== 'call' || !resultId || resultId === turnId || resultId === id))) throw invalid();
     return {
       kind, id, label, toolKind: nullable(raw['toolKind']),
+      ...(raw['agent'] === undefined ? {} : { agent: parseAgentEntry(raw['agent'], kind === 'result', kind === 'call' ? id : undefined) }),
       ...(resultId ? { resultId } : {}), ...(error ? { error } : {}), ...(media ? { media } : {}),
       ...(meta === undefined ? {} : { meta }),
     };
@@ -390,9 +398,11 @@ function historyItem(value: unknown, summaryAllowed: boolean, detailsAllowed: bo
   const beforeReply = workCount(turn['beforeReply']);
   const failures = workCount(turn['failures']);
   const reply = array(turn['reply'], SESSION_CHAT_TURN_REPLY_LIMIT, item);
+  const agents = turn['agents'] === undefined ? undefined : array(turn['agents'], 16, value => parseAgentEntry(value, false));
   if (!row.id || !endId || endId === row.id || !total || beforeReply > total ||
     reply.some(part => part.kind !== 'assistant' || !part.id || part.id === row.id) ||
-    new Set(reply.map(part => part.id)).size !== reply.length) throw invalid();
+    new Set(reply.map(part => part.id)).size !== reply.length ||
+    (agents && (agents.length > total || agents.some(entry => entry.id === row.id) || new Set(agents.map(entry => entry.id)).size !== agents.length))) throw invalid();
   const categoryCounts = chatObject(turn['counts']);
   const counts: SessionChatCompletedTurn['counts'] = Object.fromEntries(SESSION_CHAT_TOOL_CATEGORIES.flatMap(category => {
     const value = categoryCounts[category];
@@ -403,6 +413,7 @@ function historyItem(value: unknown, summaryAllowed: boolean, detailsAllowed: bo
     ...row,
     completedTurn: {
       revision: contentRevision(turn['revision']), endId, total, beforeReply, failures, counts, reply,
+      ...(agents?.length ? { agents } : {}),
       ...(turn['duration'] === undefined ? {} : { duration: number(turn['duration']) }),
       ...(turn['changes'] === undefined ? {} : { changes: parseChangeSummary(turn['changes'], SESSION_CHAT_TURN_FILES_LIMIT) }),
     },
@@ -451,10 +462,12 @@ export function parseChatAgentPage(value: unknown, agentId: string): SessionChat
     message: chatText(raw["message"], 1000),
   };
 }
-function work(value: unknown): SessionChatWork {
+function work(value: unknown, sessionId?: number, taskId?: number): SessionChatWork {
   const raw = chatObject(value);
   return {
     ...(raw["totalRunning"] === undefined ? {} : { totalRunning: workCount(raw["totalRunning"]) }),
+    ...(raw["sessions"] === undefined ? {} : { sessions: parseDelegatedWork(raw["sessions"], sessionId, taskId) }),
+    ...(raw["totalSessionsRunning"] === undefined ? {} : { totalSessionsRunning: workCount(raw["totalSessionsRunning"]) }),
     running: array(raw["running"], 16, (value): SessionChatBackgroundWork => {
       const item = chatObject(value);
       const id = chatText(item["id"], 400);
@@ -473,6 +486,7 @@ function work(value: unknown): SessionChatWork {
         ...(item["status"] === undefined ? {} : { status: oneOf(item["status"], agentStatuses) }),
         ...(item["background"] === undefined ? {} : { background: bool(item["background"]) }),
         ...(item["agentId"] === undefined ? {} : { agentId: chatText(item["agentId"], 256) }),
+        ...(item["parentToolUseId"] === undefined ? {} : { parentToolUseId: chatText(item["parentToolUseId"]) }),
         ...(item["inspectable"] === undefined ? {} : { inspectable: bool(item["inspectable"]) }),
         ...(item["canBackground"] === undefined ? {} : { canBackground: bool(item["canBackground"]) }),
         ...(item["model"] === undefined ? {} : { model: chatText(item["model"], 160) }),
@@ -491,6 +505,8 @@ function work(value: unknown): SessionChatWork {
         detail: chatText(event["detail"], 1100),
         at: workTime(event["at"]),
         ...(event["agentId"] === undefined ? {} : { agentId: chatText(event["agentId"], 256) }),
+        ...(event["agentStatus"] === undefined ? {} : { agentStatus: oneOf(event["agentStatus"], agentStatuses) }),
+        ...(event["parentToolUseId"] === undefined ? {} : { parentToolUseId: chatText(event["parentToolUseId"]) }),
       };
     }),
   };
@@ -539,7 +555,7 @@ function planUsage(
     updatedAt,
   };
 }
-export function parseChatState(value: unknown): SessionChatState {
+export function parseChatState(value: unknown, sessionId?: number, taskId?: number): SessionChatState {
   const raw = chatObject(value),
     phase = raw["phase"];
   if (
@@ -604,7 +620,9 @@ export function parseChatState(value: unknown): SessionChatState {
       : {
           planUsage: planUsage(raw["planUsage"], raw["provider"]),
         }),
-    ...(raw["work"] === undefined ? {} : { work: work(raw["work"]) }),
+    ...(raw["work"] === undefined ? {} : { work: work(raw["work"], sessionId, taskId) }),
+    ...(raw["delegation"] === undefined ? {} : { delegation: parseAgentContext(raw["delegation"], sessionId, taskId) }),
+    ...(raw["nativeAgentInspection"] === undefined ? {} : { nativeAgentInspection: bool(raw["nativeAgentInspection"]) }),
     ...(raw["providers"] === undefined
       ? {}
       : {
@@ -661,7 +679,8 @@ export function parseChatState(value: unknown): SessionChatState {
     },
     queue: array(raw["queue"], 50, (value) => {
       const q = chatObject(value);
-      return { id: chatText(q["id"]), text: chatText(q["text"], 64000) };
+      return { id: chatText(q["id"]), text: chatText(q["text"], 64000),
+        ...(q['sender'] === undefined ? {} : { sender: parseAgentSender(q['sender']) }) };
     }),
     queuePaused: bool(raw["queuePaused"]),
     ...(raw["dispatchingPrompts"] === undefined ? {} : {
@@ -672,6 +691,7 @@ export function parseChatState(value: unknown): SessionChatState {
         return {
           id, timestamp, text: chatText(prompt["text"], 64000),
           ...(prompt["mentions"] === undefined ? {} : { mentions: sessionMentions(prompt["mentions"]) }),
+          ...(prompt["sender"] === undefined ? {} : { sender: parseAgentSender(prompt["sender"]) }),
           ...(prompt["media"] === undefined ? {} : { media: mediaReferences(prompt["media"]) }),
         };
       }),
@@ -723,7 +743,7 @@ export function parseChatPage(
 ): SessionChatPage {
   const raw = chatObject(value);
   return { ...parseChatPageWindow(raw, taskId, sessionId, loadingMode, summarizeCompleted, deferToolDetails),
-    state: parseChatState(raw['state']) };
+    state: parseChatState(raw['state'], sessionId, taskId) };
 }
 
 export function parseChatPageWindow(

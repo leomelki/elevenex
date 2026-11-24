@@ -1,4 +1,4 @@
-import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
+import { elementMarkersIn, type BrowserElementSnapshot, type DelegatedSessionWork, type SessionAgentReference } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { DOCUMENT } from '@angular/common';
 import { SessionChatAttachments } from './session-chat-attachments';
@@ -16,6 +16,7 @@ import {
   effect,
   inject,
   input,
+  linkedSignal,
   output,
   signal,
   untracked,
@@ -24,6 +25,7 @@ import {
 import {
   ApprovalCardComponent,
   AgentUsageNoticeComponent,
+  AgentMarkComponent,
   ChatComponent,
   ChatLoadingComponent,
   ComposerComponent,
@@ -31,6 +33,10 @@ import {
   PresetPickerComponent,
   PresetCreatorComponent,
   ToolContentComponent,
+  agentIdentity,
+  agentControl,
+  sessionAgentTitle,
+  type AgentWorkIntent,
   type AgentQuestion,
   type ComposerSubmission,
   type QuestionAnswers,
@@ -50,6 +56,8 @@ import {
   FoldComponent,
   PresenceComponent,
   ToastComponent,
+  StatusGlyphComponent,
+  TickerComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -62,6 +70,14 @@ import { SessionChatClient } from "../backend/session-chat-client.service";
 import { sessionPlanUsage } from "./session-chat-usage";
 import { presentSessionTool } from './session-chat-tools';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { SessionAgentTurnProjection } from './session-agent-turns';
+
+export interface AgentChatFocus {
+  readonly selection: ChatSelection;
+  readonly action: AgentWorkIntent['action'];
+  readonly from: number;
+  readonly itemId?: string;
+}
 
 const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
@@ -85,6 +101,7 @@ function equalViewData<T>(left: T, right: T): boolean {
     ComposerComponent,
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
+    AgentMarkComponent,
     QuestionCardComponent,
     PresetPickerComponent,
     PresetCreatorComponent,
@@ -95,6 +112,8 @@ function equalViewData<T>(left: T, right: T): boolean {
     FoldComponent,
     PresenceComponent,
     ToastComponent,
+    StatusGlyphComponent,
+    TickerComponent,
   ],
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
@@ -139,6 +158,11 @@ export class SessionChatComponent {
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
+  readonly sessionTitle = input('');
+  readonly agentFocus = input<AgentChatFocus | null>(null);
+  readonly agentNavigationBusy = input(false);
+  readonly agentNavigationError = input('');
+  readonly agentSessionRequested = output<{ readonly source: ChatSelection; readonly intent: AgentWorkIntent & { readonly target: { readonly kind: 'session'; readonly session: SessionAgentReference } } }>();
   /** Without a tab, the browser picks on its current page. */
   readonly browserPickRequested = output<ChatSelection & { readonly tabId?: string }>();
   pickBrowserElement(tabId?: string): void {
@@ -148,6 +172,26 @@ export class SessionChatComponent {
   readonly fileLinkRequested = output<ChatSelection & { readonly path: string }>();
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  private readonly agentTurns = new SessionAgentTurnProjection();
+  protected readonly exchanges = computed(() => this.agentTurns.project(this.store.exchanges(), this.store.state(), this.selection()?.taskId),
+    { equal: (left, right) => left.length === right.length && left.every((exchange, index) => exchange === right[index]) });
+  protected readonly delegated = computed(() => this.store.state()?.delegation);
+  protected readonly agentNavigationDisabled = computed(() => this.store.offline() || this.agentNavigationBusy());
+  protected readonly agentTitle = sessionAgentTitle;
+  protected readonly agentIdentity = agentIdentity;
+  protected readonly decisionAgents = computed(() => this.archived() ? [] :
+    this.store.state()?.work?.sessions?.filter(agent => agent.status === 'waiting') ?? []);
+  protected readonly retainedDecisions = linkedSignal<
+    { readonly identity: string; readonly agents: readonly DelegatedSessionWork[] },
+    readonly DelegatedSessionWork[]
+  >({
+    source: () => ({ identity: this.identity(), agents: this.decisionAgents() }),
+    computation: ({ identity, agents }, previous) =>
+      agents.length || previous?.source.identity !== identity ? agents : previous.value,
+  });
+  protected readonly moreDecisions = signal(false);
+  private readonly agentClient = inject(SessionChatClient);
+  private readonly stoppingAgents = new Set<number>();
   /** One scroll/editor lifetime per selected session, retained through recovery. */
   readonly chatViews = computed(() => [{ revision: this.store.viewRevision() }]);
   readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
@@ -212,6 +256,8 @@ export class SessionChatComponent {
     !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
+  readonly agentOrigin = signal<HTMLElement | null>(null);
+  readonly inspectedStatus = computed(() => this.store.state()?.work?.recent.find(item => item.agentId === this.agentId())?.agentStatus);
   /** The inspected agent's live Activity record, while it is still listed. */
   readonly agentWork = computed(() => {
     const id = this.agentId();
@@ -521,7 +567,14 @@ export class SessionChatComponent {
       clearTimeout(this.copyTimer);
       this.copiedCode.set(null);
     });
-    effect(() => { this.store.viewRevision(); this.contentId.set(null); this.agentId.set(null); });
+    effect(() => {
+      this.store.viewRevision();
+      this.contentId.set(null);
+      this.agentId.set(null);
+      this.agentOrigin.set(null);
+      this.moreDecisions.set(false);
+      this.stoppingAgents.clear();
+    });
     let focusedDraft: string | null = null;
     afterRenderEffect(() => {
       const key = this.creationKey() ?? this.creation()?.id;
@@ -547,6 +600,23 @@ export class SessionChatComponent {
       opening = false;
       // Hydrated history must be positioned before paint, without scroll animation.
       untracked(() => scroll.scrollToEnd("instant"));
+    });
+    let focusedAgent: AgentChatFocus | null = null;
+    afterRenderEffect(() => {
+      const intent = this.agentFocus(), selection = this.selection();
+      const chat = this.chat(), request = this.requestElement()?.nativeElement;
+      if (!intent || intent === focusedAgent || intent.selection !== selection || !chat ||
+          !this.store.state() || this.store.loading() || !this.active()) return;
+      focusedAgent = intent;
+      untracked(() => {
+        if (intent.action === 'message' && !this.archived()) this.focusComposer();
+        else if (intent.action === 'answer' && request) chat.scroll()?.revealAgentAnchor(request);
+        else if (!chat.focusAgent(intent.from, intent.itemId)) {
+          const breadcrumb = this.element.querySelector<HTMLElement>('.delegation-breadcrumb');
+          if (breadcrumb) breadcrumb.focus({ preventScroll: true });
+          else chat.scroll()?.viewport().nativeElement.focus({ preventScroll: true });
+        }
+      });
     });
     afterRenderEffect(() => {
       this.visibilityRevision();
@@ -578,6 +648,38 @@ export class SessionChatComponent {
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();
     this.requestElement()?.nativeElement.focus({ preventScroll: true });
+  }
+  protected openParent(session: SessionAgentReference, event: Event): void {
+    this.agentIntent({ target: { kind: 'session', session }, action: 'return', origin: agentControl(event) });
+  }
+  protected openDecision(session: SessionAgentReference, event: Event): void {
+    this.agentIntent({ target: { kind: 'session', session }, action: 'answer', origin: agentControl(event) });
+  }
+  protected agentIntent(intent: AgentWorkIntent): void {
+    if (intent.target.kind === 'native') {
+      this.agentOrigin.set(intent.origin ?? null);
+      this.agentId.set(intent.target.agentId);
+      return;
+    }
+    const source = this.selection();
+    if (!source || this.agentNavigationDisabled()) return;
+    if (intent.action === 'stop') {
+      void this.stopDelegate(source, intent.target.session);
+      return;
+    }
+    this.agentSessionRequested.emit({ source, intent: { ...intent, target: intent.target } });
+  }
+  private async stopDelegate(source: ChatSelection, session: SessionAgentReference): Promise<void> {
+    const id = session.sessionId;
+    const active = this.store.state()?.work?.sessions?.find(row => row.session.sessionId === id);
+    if (this.archived() || !active || (active.status !== 'running' && active.status !== 'waiting') ||
+        active.session.taskId !== source.taskId || this.stoppingAgents.has(id)) return;
+    this.stoppingAgents.add(id);
+    const result = await this.agentClient.command(source.scopeId, { taskId: source.taskId, sessionId: id, action: { type: 'stop' } });
+    if (source !== this.selection()) return;
+    if (result.ok || result.error.code !== 'outcome-unknown') this.stoppingAgents.delete(id);
+    if (!result.ok) this.store.error.set(result.error.message);
+    else this.store.notice.set('Stop requested for ' + sessionAgentTitle(session));
   }
   focusComposer(): void {
     this.composer()?.focusEditor();

@@ -9,12 +9,13 @@ export function timelineRecord(row: NonNullable<SessionChatTurnTimelineRow>, rev
   return {
     ...base,
     kind: row.kind === 'call' ? 'tool_use' : 'tool_result',
-    toolId: row.kind === 'call' ? row.id : null,
+    toolId: row.agent?.toolId ?? (row.kind === 'call' ? row.id : null),
     toolName: row.label,
     toolKind: row.toolKind,
     error: row.error === true,
     toolDetails: { revision, summary: row.label, ...(row.meta ? { meta: row.meta } : {}) },
     ...(row.media ? { media: row.media } : {}),
+    ...(row.agent ? { agent: row.agent } : {}),
     ...(row.resultId ? { receipt: { id: row.resultId, error: row.error === true, toolDetails: { revision } } } : {}),
   };
 }

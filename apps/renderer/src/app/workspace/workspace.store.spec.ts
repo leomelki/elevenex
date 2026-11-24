@@ -242,6 +242,26 @@ describe('WorkspaceStore', () => {
     expect(store.tasks()[0]?.sessions.length).toBeLessThanOrEqual(20);
   });
 
+  it('opens an agent link outside the loaded session window and ignores a stale link', async () => {
+    const { store, bridge, start } = setup();
+    await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    const source = store.selected()!;
+    const reviewer = { ...session, id: 8, name: 'Reviewer', parentSessionId: 5, status: 'attention' };
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.cursor === '7' ? [reviewer] : [session])));
+    expect(await store.openLinkedSession(source, { sessionId: 8 })).toMatchObject({ taskId: 3, sessionId: 8 });
+    expect(store.selectedSession()).toMatchObject({ id: 8, status: 'attention' });
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', expect.objectContaining({ taskId: 3, limit: 1, cursor: '7' }));
+
+    let release: (result: BackendResult<WorkspacePage<WorkspaceSession>>) => void = () => undefined;
+    bridge.workspaceSessions.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const pending = store.openLinkedSession(store.selected()!, { sessionId: 9 });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    release(ok(page([{ ...reviewer, id: 9 }])));
+    expect(await pending).toBeNull();
+    expect(store.selectedSession()?.id).toBe(5);
+  });
+
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { store, bridge, start } = setup(); await start();

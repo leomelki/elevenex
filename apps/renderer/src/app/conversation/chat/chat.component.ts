@@ -1,3 +1,8 @@
+import { NgTemplateOutlet } from '@angular/common';
+import type { SessionAgentReference } from '@elevenex/shared';
+import { AgentAssignmentComponent } from '../agents/agent-assignment.component';
+import { AgentMarkComponent } from '../composer/agent-mark.component';
+import { agentControl, sessionAgentTitle, type AgentWorkIntent } from '../agents/agent-work.models';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -28,6 +33,9 @@ import { ElementProseComponent } from '../element/element-prose.component';
 @Component({
   selector: "ex-chat",
   imports: [
+    NgTemplateOutlet,
+    AgentAssignmentComponent,
+    AgentMarkComponent,
     ButtonComponent,
     AttachmentsComponent,
     TurnComponent,
@@ -64,6 +72,9 @@ export class ChatComponent {
   readonly copiedCode = input<string | null>(null);
   readonly contentRequested = output<string>();
   readonly toolContentRequested = output<ToolContentRequest>();
+  readonly agentRequested = output<AgentWorkIntent>();
+  readonly agentNavigationDisabled = input(false);
+  protected readonly agentTitle = sessionAgentTitle;
   readonly resolve = input<MarkdownAssetResolver>();
   readonly inspectTool = input<ToolDetailsProvider>();
   readonly toolImages = input<ToolImageProvider>();
@@ -100,5 +111,34 @@ export class ChatComponent {
   focusLastMessage(): void {
     const id = this.exchanges().at(-1)?.id;
     if (id) this.scroll()?.scrollToMessage(id);
+  }
+  protected openSender(session: SessionAgentReference, event: Event): void {
+    this.agentRequested.emit({ target: { kind: 'session', session }, action: 'return', origin: agentControl(event) });
+  }
+
+  focusAgent(sessionId: number, itemId?: string): boolean {
+    const scroll = this.scroll();
+    if (!scroll) return false;
+    const root = scroll.content().nativeElement;
+    const visible = (element?: HTMLElement | null): element is HTMLElement =>
+      !!element?.checkVisibility() && !element.closest('[inert], [hidden]');
+    if (itemId) {
+      const row = root.querySelector<HTMLElement>('[data-chat-row="' + CSS.escape(itemId) + '"]');
+      if (visible(row)) {
+        scroll.revealAgentAnchor(row);
+        return true;
+      }
+      const reply = this.exchanges().find(exchange => exchange.replyIds?.includes(itemId));
+      const turn = reply ? root.querySelector<HTMLElement>('[data-chat-anchor="' + CSS.escape(reply.id + ':reply') + '"]') : null;
+      if (visible(turn)) {
+        scroll.revealAgentAnchor(turn);
+        return true;
+      }
+    }
+    const links = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-agent-session="' + sessionId + '"]'));
+    const target = links.filter(link => !link.disabled && visible(link)).at(-1);
+    if (!target) return false;
+    scroll.revealAgentAnchor(target);
+    return true;
   }
 }

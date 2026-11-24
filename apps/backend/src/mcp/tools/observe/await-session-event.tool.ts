@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { latestConversationReply } from '../../../agent-runtime/conversation-export.service.js';
+import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
+import { changeSummary } from '../../../desktop-workspace/desktop-chat-changes.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { resolveSessionProvider } from '../drive/provider.util.js';
 import { untilSessionDeadline } from '../session-deadline.js';
@@ -77,17 +79,16 @@ export const awaitSessionEventTool = defineTool({
           id,
           provider,
           status: session.status,
+          session: sessionAgentReference(session),
           runtime: ctx.services.agentRuntime.getProvider(provider),
         };
       }),
     );
     const wanted = new Set(args.events?.length ? args.events : DEFAULT_EVENTS);
-    const { event, target, state } = await waitForSessionEvent(
-      targets,
-      wanted,
-      args.timeoutMs,
-      ctx,
-    );
+    const callerId = ctx.agentSessionId;
+    const handoffs = ctx.services.sessions.delegationHandoffs;
+    const release = callerId === null ? undefined : handoffs?.observe(callerId, ids);
+    const { event, target, state } = await waitForSessionEvent(targets, wanted, args.timeoutMs, ctx).finally(release);
     if (!target)
       return {
         data: { sessionIds: ids, event, status: event },
@@ -100,24 +101,39 @@ export const awaitSessionEventTool = defineTool({
     const pending = state?.pendingPrompts?.length ?? 0;
     const turnEnded =
       state?.sessionState === 'idle' && state.runPhase === 'idle';
-    const item =
+    const outcome =
       event === 'completed' && args.includeReply
         ? await untilSessionDeadline(
             target.runtime
               .getHistory(target.id, { changeDetails: 'summary' })
-              .then(latestConversationReply)
+              .then(history => {
+                const item = latestConversationReply(history);
+                const boundary = history.findLastIndex(row => row.kind === 'user');
+                let changes;
+                for (let at = history.length - 1; at > boundary; at--) {
+                  if (history[at].turnChanges) {
+                    changes = changeSummary(history[at].turnChanges, 3);
+                    break;
+                  }
+                }
+                return { item, changes };
+              })
               .catch(() => undefined),
             1_500,
             ctx.signal,
           )
         : undefined;
+    const item = outcome?.item;
     const text = item?.content?.trim();
+    const session = targets.find(row => row.id === target.id)?.session;
+    const changes = outcome?.changes;
     const reply =
       item && text
         ? {
             id: item.id,
             text: text.slice(0, REPLY_LIMIT),
             truncated: text.length > REPLY_LIMIT,
+            ...(changes?.files.length ? { changes } : {}),
           }
         : undefined;
 
@@ -155,9 +171,13 @@ export const awaitSessionEventTool = defineTool({
             : 'Use read_session to inspect the transcript.';
     }
 
+    if (reply && callerId !== null && !ctx.signal.aborted)
+      handoffs?.returned(target.id, reply.id, callerId);
+
     return {
       data: {
         sessionId: target.id,
+        ...(session ? { session } : {}),
         event,
         status: event,
         ...(reply && { reply }),

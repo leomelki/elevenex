@@ -1,3 +1,4 @@
+import { splitSessionAgentPrompt } from '../../sessions/session-agent-message.js';
 import { EventEmitter } from 'node:events';
 import type { AgentPromptOptions } from '../../agent-runtime/agent-runtime.types.js';
 import { readFile, unlink } from 'node:fs/promises';
@@ -272,9 +273,10 @@ describe('Drive tool group', () => {
           );
           expect(buildMention.mock.calls).toEqual([[42], [8]]);
           const sent = runtime.submitPrompt.mock.calls[0][1] as string;
-          expect(sent).toMatch(
-            /^\[Elevenex session message from session #42\]\n\nReview the auth outcomes\n\n<elevenex_session_mention>/,
-          );
+          expect(splitSessionAgentPrompt(sent)).toMatchObject({
+            text: expect.stringMatching(/^Review the auth outcomes\n\n<elevenex_session_mention>/),
+            sender: { purpose: 'message', session: { sessionId: 42 }, messageId: expect.any(String) },
+          });
           expect(sent.match(/<elevenex_session_mention>/g)).toHaveLength(2);
           expect(sent).toContain('Session ID: 42'); // The caller may be mentioned.
           expect(sent).toContain('Session ID: 8');

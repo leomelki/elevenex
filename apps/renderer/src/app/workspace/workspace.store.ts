@@ -10,9 +10,10 @@ import type { BackendResult, EnvironmentContext, EnvironmentSelection, Workspace
 import { BackendClientService, ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import type { Machine } from '../machines';
 import type { ConversationMention } from '../conversation';
+import type { SessionAgentReference } from '@elevenex/shared';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
 import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSessionDisclosure, type TaskRepository, type TaskStage } from '../tasks';
-import { workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
+import { workspaceAgentRow, workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
@@ -41,6 +42,7 @@ export class WorkspaceStore {
   private readonly sessionCursors = signal<ReadonlyMap<number, string | null>>(new Map());
   private readonly detail = signal<WorkspaceProjectDetail | null>(null);
   private readonly chosen = signal<WorkspaceSelection | null>(null);
+  private linkedSessionRequest = 0;
   private readonly resume = new WorkspaceResume(this.bridge);
   private readonly restoration = new WorkspaceRestoration(this.bridge);
   readonly resumeError = this.resume.error.asReadonly();
@@ -159,7 +161,7 @@ export class WorkspaceStore {
   readonly tasks = computed<readonly TaskOutline[]>(() => this.taskRecords().map(task => ({
     id: String(task.id), title: task.name, stage: workspaceTaskStage(task),
     ...(this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && this.hasArchivedSessions(task.id) ? { archive: {
-      sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ id: String(session.id), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
+      sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ ...workspaceAgentRow(session), id: String(session.id), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
       loaded: this.archives.pages().get(task.id)?.loaded ?? false,
       loading: this.archives.pages().get(task.id)?.loading ?? false,
       error: this.archives.pages().get(task.id)?.error ?? null,
@@ -173,7 +175,7 @@ export class WorkspaceStore {
     // Unknown cardinality from older runtimes keeps their existing repository hint.
     ...(task.repoName && task.projectRepositoryCount !== 1 ? { repo: task.repoName } : {}),
     sessions: [
-      ...(this.navigationSessions().get(task.id) ?? []).map(session => ({ id: String(session.id), renderId: this.sessionRenderIds().get(session.id),
+      ...(this.navigationSessions().get(task.id) ?? []).map(session => ({ ...workspaceAgentRow(session), id: String(session.id), renderId: this.sessionRenderIds().get(session.id),
         ...(this.sessionNestingAvailable() && !this.closed() ? { childrenAppendOrder: this.sessionNestingOrderAvailable(), parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
           childrenLoading: this.hierarchy.windows().get(session.id)?.loading ?? false,
           childrenError: this.hierarchy.windows().get(session.id)?.error ?? null,
@@ -540,6 +542,71 @@ export class WorkspaceStore {
     this.localSessionId.set(null);
     this.chosen.set({ scopeId, taskId, sessionId });
   }
+
+  /** A chat link may point outside the loaded outline. Resolve its exact scoped row first. */
+  async openLinkedSession(source: WorkspaceSelection, target: SessionAgentReference): Promise<WorkspaceSelection | null> {
+    const { scopeId } = source;
+    const taskId = target.taskId ?? source.taskId, sessionId = target.sessionId;
+    if (!this.valid(scopeId) || this.offline() || this.chosen() !== source) return null;
+    if (taskId === source.taskId && sessionId === source.sessionId) return source;
+
+    const request = ++this.linkedSessionRequest;
+    const project = this.activeProject(), closed = this.closed();
+    const current = () => this.valid(scopeId) && this.chosen() === source && project === this.activeProject() &&
+      closed === this.closed() && request === this.linkedSessionRequest;
+    const task = this.taskRecords().find(row => row.id === taskId);
+    if (!task) {
+      const result = await this.restoration.tasks(scopeId, {
+        saved: { taskId, sessionId, projectId: null, cursor: null, draft: '' },
+        projectId: null, archiveHistory: this.sessionArchiveHistoryAvailable(),
+      }, current);
+      if (!current()) return null;
+      if (!result.ok || !result.value.selection) {
+        this.error.set(result.ok ? 'This session is no longer available.' : result.error.message);
+        return null;
+      }
+      const window = result.value;
+      this.leaveResume(); this.stopPreparation();
+      this.activeProject.set('all'); this.filter.set(null); this.closed.set(window.closed);
+      this.currentTaskCursor = window.cursor;
+      const revision = ++this.listRevision;
+      await this.hydrateTasks(scopeId, revision, window.page, window.cursor, window);
+      if (!this.valid(scopeId) || request !== this.linkedSessionRequest || revision !== this.listRevision ||
+          (this.chosen() !== source && this.chosen() !== null)) return null;
+    } else if (!this.navigationSessions().get(taskId)?.some(row => row.id === sessionId) &&
+        !this.archives.pages().get(taskId)?.sessions.some(row => row.id === sessionId)) {
+      const exact = async (id: number, state?: 'normal' | 'archived') => this.read(scopeId, () =>
+        this.bridge.workspaceSessions(scopeId, { taskId, limit: 1, ...(id > 1 ? { cursor: String(id - 1) } : {}), state }), current);
+      const normal = await exact(sessionId);
+      if (!normal || !current()) return null;
+      let row = normal.items.find(item => item.id === sessionId);
+      if (!row && this.sessionArchiveHistoryAvailable()) {
+        const archive = await exact(sessionId, 'archived');
+        if (!archive || !current()) return null;
+        row = archive.items.find(item => item.id === sessionId);
+        if (row) this.archives.acceptRestoredWindow(scopeId, taskId, archive, sessionId > 1 ? String(sessionId - 1) : undefined);
+      }
+      if (!row) { this.error.set('This session is no longer available.'); return null; }
+      if (row.status !== 'archived' || closed) {
+        const parentId = row.parentSessionId;
+        const parent = parentId && !closed && !this.navigationSessions().get(taskId)?.some(item => item.id === parentId)
+          ? (await exact(parentId, 'normal'))?.items.find(item => item.id === parentId) : undefined;
+        if (!current()) return null;
+        this.sessionRecords.update(records => {
+          const loaded = (records.get(taskId) ?? []).filter(item => item.id !== sessionId && item.id !== parent?.id);
+          const pinned = [...(parent ? [parent] : []), row];
+          return new Map(records).set(taskId, [...loaded.slice(-(20 - pinned.length)), ...pinned].sort((a, b) => a.id - b.id));
+        });
+      }
+    }
+    this.selectSession({ taskId: String(taskId), sessionId: String(sessionId) });
+    const selected = this.chosen();
+    if (selected?.sessionId !== sessionId || selected.taskId !== taskId || selected.scopeId !== scopeId) return null;
+    const parentId = this.selectedSession()?.parentSessionId;
+    if (parentId && !this.closed() && this.sessionNestingAvailable())
+      void this.loadSessionChildren({ taskId: String(taskId), sessionId: String(parentId) });
+    return selected;
+  }
   openEmptyTask(id: string): void {
     const task = this.taskRecords().find(task => String(task.id) === id), scope = this.scopeId();
     if (!task || !scope || this.busy()) return;
@@ -583,17 +650,18 @@ export class WorkspaceStore {
   async deleteSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string } }): Promise<boolean> {
     return this.removeSession(intent, true);
   }
-  async archiveSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string } }): Promise<boolean> {
+  async archiveSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string; readonly activeChildAgents?: readonly number[] } }): Promise<boolean> {
     return this.removeSession(intent, false);
   }
-  private async removeSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string } }, deleting: boolean): Promise<boolean> {
+  private async removeSession(intent: { readonly taskId: string; readonly session: { readonly id: string; readonly status: string; readonly activeChildAgents?: readonly number[] } }, deleting: boolean): Promise<boolean> {
     const scope = this.scopeId(), taskId = Number(intent.taskId), sessionId = Number(intent.session.id), revision = this.listRevision;
     const session = this.navigationSessions().get(taskId)?.find(session => session.id === sessionId);
     if (!scope || !session || this.busy() || !this.sessionArchiveAvailable() || (deleting && !session.canDelete)) return false;
     this.busy.set(true);
     const result = await this.mutate(scope, () => deleting
       ? this.bridge.workspaceDeleteSession(scope, { taskId, sessionId })
-      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' || !!session.commandCount }));
+      : this.bridge.workspaceArchiveSession(scope, { taskId, sessionId, confirmStop: intent.session.status === 'running' || !!session.commandCount,
+        ...(intent.session.activeChildAgents?.length ? { stopAgents: intent.session.activeChildAgents } : {}) }));
     if (result) {
       if (deleting) this.drafts?.entry({ scopeId: scope, taskId, sessionId }).discard();
       this.closeUndo.set(null); this.archiveUndo.set(null);

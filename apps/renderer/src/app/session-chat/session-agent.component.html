@@ -1,5 +1,6 @@
 <ex-modal-layer
   [open]="open()"
+  [from]="origin()"
   (closeRequested)="close()"
   (closed)="closed.emit()"
 >
@@ -13,7 +14,9 @@
   >
     <header>
       <span class="mark" [attr.data-tone]="state().tone" aria-hidden="true">
-        <ex-icon name="subtask" [size]="16" />
+        @if (provider(); as provider) {
+          <ex-agent-mark [harness]="provider" mark="A" appearance="tinted" />
+        } @else { <ex-icon name="subtask" [size]="16" /> }
       </span>
       <div class="heading">
         <h2 [id]="titleId" tabindex="-1" cdkFocusInitial>
@@ -44,7 +47,7 @@
               </span>
             }
           } @else {
-            <span class="fact">Delegated agent</span>
+            <span class="fact">Agent</span>
           }
         </div>
       </div>
@@ -64,6 +67,34 @@
         />
       </div>
     </header>
+
+    @if (result(); as result) {
+      <section class="pinned-result" aria-label="Agent result">
+        <div class="result-head">
+          <ex-status-glyph [status]="state().tone" [size]="14" />
+          <strong>Result</strong>
+          <button exButton size="sm" variant="ghost" type="button" class="result-copy"
+            (click)="copyRequested.emit(result.text)"><ex-icon name="copy" [size]="12" />Copy</button>
+        </div>
+        @if (resultLong() && !resultOpen()) { <p class="result-preview">{{ result.text }}</p> }
+        <ex-fold [open]="!resultLong() || resultOpen()">
+          <div class="result-body" [id]="titleId + '-result'">
+            @if (!resultLong() || resultOpen()) {
+              <ex-markdown [source]="result.text" [copiedCode]="copiedCode()"
+                (copyCode)="copyRequested.emit($event)" (openLink)="linkRequested.emit($event)"
+                (openFile)="fileLinkRequested.emit($event)" (openPage)="notice.set(pageNotice)" />
+            }
+          </div>
+        </ex-fold>
+        @if (resultLong()) {
+          <button exButton variant="ghost" size="sm" type="button" class="result-more"
+            [attr.aria-expanded]="resultOpen()" [attr.aria-controls]="titleId + '-result'"
+            (click)="resultOpen.set(!resultOpen())">{{ resultOpen() ? 'Show less' : 'Show result' }}</button>
+        }
+      </section>
+    } @else if (work()?.detail; as detail) {
+      <p class="banner" role="status">{{ detail }}</p>
+    }
 
     @if (page()?.prompt; as prompt) {
       <div class="assignment">

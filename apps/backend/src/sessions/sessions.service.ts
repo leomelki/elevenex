@@ -1,3 +1,4 @@
+import { SessionDelegationHandoffs } from './session-delegation-handoffs.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { hasStartedAgentConversation, sessionAgentProvider, type SessionProviderColumns } from './session-provider.js';
 import {
@@ -88,7 +89,10 @@ export class SessionsService extends EventEmitter {
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {
     super();
+    this.delegationHandoffs = new SessionDelegationHandoffs(this.db, sessionId =>
+      this.emit('session-handoff-changed', { sessionId }));
   }
+  readonly delegationHandoffs: SessionDelegationHandoffs;
 
   async create(dto: {
     repoId: number;
@@ -160,7 +164,10 @@ export class SessionsService extends EventEmitter {
         throw new BadRequestException('Delegation requires a durable task session.');
       const result = insertTaskSession(this.db, { ...values, workspaceId: resolved.workspaceId }, dto.delegatingSessionId, dto.launch);
       if (result.created) this.navigationEvents?.invalidate();
-      return this.findOne(result.sessionId);
+      const created = await this.findOne(result.sessionId);
+      if (result.created && created.delegatedBySessionId)
+        this.emit('session-delegate-created', { sessionId: created.delegatedBySessionId });
+      return created;
     }
 
     const rows = await this.db.insert(schema.sessions).values(values).returning();
@@ -203,13 +210,21 @@ export class SessionsService extends EventEmitter {
     provider: AgentProviderId,
     patch: Omit<schema.SessionAgentSelection, 'provider'>,
   ): void {
-    this.db.transaction(tx => {
+    const changed = this.db.transaction(tx => {
       const session = tx.select({ selection: schema.sessions.agentSelection })
         .from(schema.sessions).where(eq(schema.sessions.id, id)).get();
       if (session?.selection?.provider !== provider) return;
+      const { model, reasoningEffort } = session.selection;
+      if (('model' in patch ? patch.model === model : true) &&
+          ('reasoningEffort' in patch ? patch.reasoningEffort === reasoningEffort : true)) return;
       tx.update(schema.sessions).set({ agentSelection: { ...session.selection, ...patch } })
         .where(eq(schema.sessions.id, id)).run();
+      return true;
     }, { behavior: 'immediate' });
+    if (changed) {
+      this.navigationEvents?.invalidate();
+      this.emit('session-configuration-changed', { sessionId: id });
+    }
   }
 
   private async resolveSessionWorkspace(dto: {

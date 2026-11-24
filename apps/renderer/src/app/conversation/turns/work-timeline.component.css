@@ -188,3 +188,8 @@ ex-fold.step-fold {
     mask-image: none;
   }
 }
+
+.agent-step { margin-block: var(--space-1); }
+.agent-tool { display: flex; align-items: start; gap: var(--space-1); }
+.agent-tool ex-tool-step { flex: 1; min-width: 0; }
+.agent-tool-action { flex: none; }

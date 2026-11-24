@@ -5,6 +5,8 @@ import {
 import { moveSession, sessionChildCount } from '../sessions/session-hierarchy.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
+import { sessionAgentReference } from '../sessions/session-agent-message.js';
 import { inactiveSessionStatus } from './desktop-session-status.js';
 import { sessionAgentProvider } from '../sessions/session-provider.js';
 import {
@@ -40,6 +42,7 @@ import { TaskGitService } from '../tasks/task-git.service.js';
 import {
   WORKSPACE_BRANCH_NAME_LIMIT,
   WORKSPACE_BRANCH_REF_LIMIT,
+  WORKSPACE_ARCHIVE_AGENT_LIMIT,
 } from '@elevenex/shared';
 import { taskBranchWindow, type TaskBranchChoice } from './desktop-task-branches.js';
 
@@ -123,6 +126,7 @@ export class DesktopWorkspaceService {
     private readonly branches: BranchesService,
     private readonly taskGit: TaskGitService,
     @Optional() private readonly activity?: DesktopWorkspaceActivityService,
+    @Optional() private readonly delegates?: DesktopSessionDelegates,
   ) {}
 
   private async metadata(
@@ -215,6 +219,7 @@ export class DesktopWorkspaceService {
       // Additive: older desktops keep the legacy status above.
       ...(commandCount ? { turnStatus, commandCount } : {}),
       provider: sessionAgentProvider(row),
+      ...(row.delegatedBySessionId ? { agentSelection: sessionAgentReference(row).selection } : {}),
       updatedAt: row.updatedAt,
       parentSessionId: row.parentSessionId,
     };
@@ -373,7 +378,15 @@ export class DesktopWorkspaceService {
       )
       .orderBy(...(nested ? [latest ? desc(schema.sessions.nestingOrder) : asc(schema.sessions.nestingOrder)] : []), latest ? desc(schema.sessions.id) : asc(schema.sessions.id))
       .limit(limit + 1);
-    const result = page(rows.map(row => ({ ...this.sessionView(row.session, taskId), childCount: row.childCount })), limit);
+    const parentRefs = this.delegates?.parentReferences(rows.map(row => row.session), taskId);
+    const summaries = task.archivedAt ? undefined : this.delegates?.childSummaries(taskId,
+      rows.filter(row => row.childCount > 0).map(row => row.session.id));
+    const result = page(rows.map(({ session, childCount }) => {
+      const delegatedBy = parentRefs?.get(session.id);
+      return { ...this.sessionView(session, taskId), childCount,
+        ...(delegatedBy ? { delegatedBy, ...this.delegates?.sidebarDetail(session, delegatedBy) } : {}),
+        ...summaries?.get(session.id) };
+    }), limit);
     if (nested && rows.length > limit) result.nextCursor = `${rows[limit - 1].session.nestingOrder}:${rows[limit - 1].session.id}`;
     return latest ? { ...result, items: result.items.reverse() } : result;
   }
@@ -587,7 +600,8 @@ export class DesktopWorkspaceService {
   async moveSession(taskId: number, sessionId: number, parentSessionId: unknown) {
     await this.activeTaskSession(taskId, sessionId);
     const moved = moveSession(this.db, taskId, sessionId, parentSessionId === null ? null : resourceId(parentSessionId));
-    return this.sessionView(moved, taskId);
+    const delegatedBy = this.delegates?.parentReferences([moved], taskId).get(moved.id);
+    return { ...this.sessionView(moved, taskId), ...(delegatedBy ? { delegatedBy } : {}) };
   }
   async deleteSession(taskId: number, sessionId: number) {
     await this.activeTaskSession(taskId, sessionId);
@@ -596,11 +610,18 @@ export class DesktopWorkspaceService {
     );
     return { accepted: true as const };
   }
-  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown) {
+  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown, stopAgents?: unknown) {
     if (typeof confirmStop !== 'boolean') throw new BadRequestException('A stop confirmation is required.');
     const session = await this.activeTaskSession(taskId, sessionId);
     if (this.sessionView(session, taskId).status === 'running' && !confirmStop)
       throw new BadRequestException('This session is running. Stop and archive to confirm.');
+    if (stopAgents !== undefined) {
+      if (!Array.isArray(stopAgents) || !stopAgents.length || stopAgents.length > WORKSPACE_ARCHIVE_AGENT_LIMIT ||
+          new Set(stopAgents).size !== stopAgents.length || stopAgents.some(id => !Number.isSafeInteger(id) || id <= 0 || id === sessionId))
+        throw new BadRequestException('Invalid agent stop confirmation.');
+      if (!await this.delegates?.stopChildren(taskId, sessionId, stopAgents))
+        throw new ConflictException('The running agents changed. Review them before archiving.');
+    }
     await this.sessions.archiveAndStop(sessionId, true);
     // Grouping never makes archive recursive; children remain visible at task level.
     await this.db.update(schema.sessions).set({ parentSessionId: null }).where(eq(schema.sessions.parentSessionId, sessionId));

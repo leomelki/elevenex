@@ -221,11 +221,13 @@ export class DesktopWorkspaceController {
     @Param('sessionId') sessionId: string,
     @Body() input: unknown,
   ) {
+    const options = workspaceBody(input);
     return this.changed(
       this.workspace.archiveSession(
         resourceId(taskId),
         resourceId(sessionId),
-        workspaceBody(input).confirmStop,
+        options.confirmStop,
+        options.stopAgents,
       ),
     );
   }

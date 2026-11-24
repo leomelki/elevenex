@@ -11,6 +11,9 @@ import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-r
 import { createTestDb } from '../../database/testing/create-test-db.js';
 import * as schema from '../../database/schema/index.js';
 import { DesktopWorkspaceService } from '../../desktop-workspace/desktop-workspace.service.js';
+import { DesktopSessionDelegates } from '../../desktop-workspace/desktop-session-delegates.js';
+import { DesktopWorkspaceActivityService } from '../../desktop-workspace/desktop-workspace-activity.service.js';
+import type { ClaudeHooksService } from '../../claude-hooks/claude-hooks.service.js';
 import { NavigationEventsService } from '../../navigation/navigation-events.service.js';
 import { SessionsService } from '../../sessions/sessions.service.js';
 import type { TasksService } from '../../tasks/tasks.service.js';
@@ -23,6 +26,7 @@ import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import type { McpToolServices } from '../tool-registry/mcp-tool-services.js';
 import { ToolRegistryService } from '../tool-registry/tool-registry.service.js';
 import { McpServerFactory } from '../transport/mcp-server.factory.js';
+import { splitSessionAgentPrompt } from '../../sessions/session-agent-message.js';
 
 describe('cross-harness delegation through MCP', () => {
   async function fixture() {
@@ -91,6 +95,12 @@ describe('cross-harness delegation through MCP', () => {
         reasoningEfforts: ['low', 'high'],
       }),
       setReasoningEffort: jest.fn(),
+      interrupt: jest.fn(async (_id: number) => undefined),
+      getRuntimeState: jest.fn(async () => ({ sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [] })),
+      getHistory: jest.fn(async () => [
+        { id: 'brief', kind: 'user', content: 'Review', timestamp: new Date().toISOString() },
+        { id: 'final', kind: 'assistant', assistantPhase: 'final', content: '**Reviewed.**', timestamp: new Date().toISOString() },
+      ]),
       submitPrompt: jest.fn(
         async (
           _id: number,
@@ -110,6 +120,12 @@ describe('cross-harness delegation through MCP', () => {
       record: async () => task,
       repo: async () => repo,
     } as unknown as TasksService;
+    const hooks = Object.assign(new EventEmitter(), {
+      getActivity: () => ({ activityStatus: 'idle', actionKind: null, actionLabel: null, backgroundActive: false }),
+    }) as unknown as ClaudeHooksService;
+    const activity = new DesktopWorkspaceActivityService(agentRuntime, hooks, navigation, sessions);
+    activity.onModuleInit();
+    const delegates = new DesktopSessionDelegates(db, activity, sessions, agentRuntime);
     const workspace = new DesktopWorkspaceService(
       db,
       { assertProjectIsActive: async () => undefined } as never,
@@ -118,6 +134,8 @@ describe('cross-harness delegation through MCP', () => {
       sessions,
       {} as never,
       {} as never,
+      activity,
+      delegates,
     );
     const tokens = new McpAgentTokenService(db);
     const services = {
@@ -174,9 +192,11 @@ describe('cross-harness delegation through MCP', () => {
       sessions,
       runtime,
       workspace,
+      delegates,
       connect,
       async close() {
         await Promise.all(closeConnections.map((close) => close()));
+        activity.onModuleDestroy();
         navigation.onModuleDestroy();
         sqlite.close();
       },
@@ -229,11 +249,15 @@ describe('cross-harness delegation through MCP', () => {
       expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(1);
       expect(f.runtime.submitPrompt).toHaveBeenCalledWith(
         childId,
-        `[Elevenex delegation from session #${f.root.id}]\n\n${args.prompt}`,
+        expect.stringContaining(`[Elevenex delegation from session #${f.root.id}]`),
         args.prompt,
         undefined,
         expect.objectContaining({ queue: true, waitForCompletion: false }),
       );
+      expect(splitSessionAgentPrompt(f.runtime.submitPrompt.mock.calls[0][1])).toMatchObject({
+        text: args.prompt,
+        sender: { purpose: 'assignment', session: { sessionId: f.root.id, taskId: f.task.id, selection: { provider: 'claude' } } },
+      });
       expect(await call('create_session', args)).toMatchObject({
         data: { sessionId: childId, promptStatus: 'accepted' },
       });
@@ -309,6 +333,51 @@ describe('cross-harness delegation through MCP', () => {
       expect(
         (await f.sessions.findOne(remaining.id)).delegatedBySessionId,
       ).toBeNull();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('persists an exact reply handoff once and releases the live wait', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      for (let index = 0; index < 2; index++)
+        expect(await call('await_session_event', { sessionId: child.id, includeReply: true, timeoutMs: 500 }))
+          .toMatchObject({ data: { session: { sessionId: child.id, taskId: f.task.id }, event: 'completed', reply: { id: 'final', text: '**Reviewed.**' } } });
+      expect(f.sessions.delegationHandoffs.waiting(f.root.id, child.id)).toBe(false);
+      expect(f.db.select().from(schema.sessionReplyReturns).all()).toMatchObject([
+        { sessionId: child.id, recipientId: f.root.id, itemId: 'final' },
+      ]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('projects a waiting delegate into the parent feed and outline with its exact archive consent target', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      f.runtime.emit('event', { type: 'run_state', payload: {
+        sessionId: child.id, runPhase: 'waiting', pendingPermissionRequest: { description: 'Approve the test command' },
+      } });
+      const parent = await f.sessions.findOne(f.root.id);
+      expect(f.delegates.read(parent, false)).toMatchObject({
+        sessions: [{ session: { sessionId: child.id, taskId: f.task.id, selection: { provider: 'codex', model: 'worker' } },
+          status: 'waiting', detail: 'Approve the test command' }],
+        totalSessionsRunning: 1,
+      });
+      const outline = await f.workspace.listSessions(f.task.id, { parentSessionId: 'root' });
+      expect(outline.items).toMatchObject([{ childSummary: { status: 'attention', count: 1 }, activeChildAgents: [child.id] }]);
+      expect(await f.delegates.stopChildren(f.task.id, f.root.id, [child.id + 1])).toBe(false);
+      expect(f.runtime.interrupt).not.toHaveBeenCalled();
+      expect(await f.delegates.stopChildren(f.task.id, f.root.id, [child.id])).toBe(true);
+      expect(f.runtime.interrupt).toHaveBeenCalledWith(child.id);
+      expect(f.runtime.getHistory).not.toHaveBeenCalled();
     } finally {
       await f.close();
     }

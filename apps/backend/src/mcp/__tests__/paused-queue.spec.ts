@@ -308,7 +308,7 @@ describe('explicit paused queue recovery', () => {
       ctx,
     );
     expect(runtime.submitPrompt).toHaveBeenCalledWith(
-      7, '[Elevenex session message from session #42]\n\nNew work', 'New work',
+      7, expect.stringContaining('\n\nNew work'), 'New work',
       undefined, expect.objectContaining({ waitForCompletion: false }),
     );
     expect(runtime.resumePendingPrompts).not.toHaveBeenCalled();

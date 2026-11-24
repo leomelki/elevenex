@@ -5,6 +5,7 @@ import type {
 } from '../../../agent-runtime/agent-runtime.types.js';
 import type { ToolContext } from '../../tool-registry/tool.types.js';
 import { ToolError } from '../../tool-registry/tool.types.js';
+import { sessionAgentPrompt, sessionAgentReference } from '../../../sessions/session-agent-message.js';
 import { untilSessionDeadline } from '../session-deadline.js';
 import {
   describePausedQueue,
@@ -27,12 +28,17 @@ export function assertCanDelegatePrompt(caller: {
     });
 }
 
-export function sessionMessage(
+export async function sessionMessage(
   prompt: string,
-  senderSessionId: number | null,
+  ctx: ToolContext,
   delegation = false,
-): string {
+  messageId?: string,
+): Promise<string> {
+  const senderSessionId = ctx.agentSessionId;
   if (senderSessionId === null) return prompt;
+  const session = await ctx.services.sessions.findOne(senderSessionId).catch(() => null);
+  if (session?.id === senderSessionId)
+    return sessionAgentPrompt(prompt, sessionAgentReference(session), delegation ? 'assignment' : 'message', messageId);
   const sender = `[Elevenex ${delegation ? 'delegation' : 'session message'} from session #${senderSessionId}]`;
   return `${sender}\n\n${prompt}`;
 }

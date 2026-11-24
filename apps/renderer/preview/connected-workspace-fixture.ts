@@ -2,6 +2,7 @@ import { DestroyRef, Injectable, inject } from '@angular/core';
 import type { BackendResult, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceCommitQuery, WorkspaceGitAction, WorkspaceGitSummary, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskQuery, WorkspaceTaskRecovery, WorkspaceUpdateProject } from '@elevenex/shared';
 import { MachineStartupFixture } from './machine-startup-fixture';
 import { SessionChatFixture } from './session-chat-fixture';
+import { seedDelegation, type DelegationScene } from './session-delegation-fixture';
 
 const stamp = '2026-10-26T12:30:00.000Z';
 const success = <T>(value: T): BackendResult<T> => ({ ok: true, value });
@@ -69,6 +70,11 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
   liveSessionStatus(sessionId: number, status: WorkspaceSession['status']): void {
     this.revisionWaitEnabled = true;
     this.sessionRows = this.sessionRows.map(row => row.id === sessionId ? { ...row, status } : row);
+    this.navigationRevision++;
+  }
+  delegationScene(scene: DelegationScene): void {
+    this.revisionWaitEnabled = true;
+    this.sessionRows = [...this.sessionRows.filter(row => row.taskId !== 11), ...seedDelegation(this.chat, scene)];
     this.navigationRevision++;
   }
   override workspaceWait = async (_scope: string, input: import('@elevenex/shared').WorkspaceRevisionWait) => {
