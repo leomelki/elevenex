@@ -12,6 +12,20 @@ import type { AgentRunLifecycle } from '../../agent-runtime/agent-runtime.types.
  */
 export type SessionRuntimeSnapshot = AgentRunLifecycle;
 
+type ActionState = SessionRuntimeSnapshot & {
+  pendingPermissionRequest?: { requestId: string };
+  pendingUserInputRequest?: { requestId: string; isBlocking?: boolean };
+};
+
+export function pendingActionKey(state: ActionState): string | null {
+  const permission = state.pendingPermissionRequest?.requestId;
+  if (permission) return `permission:${permission}`;
+  const input = state.pendingUserInputRequest;
+  return input?.requestId && input.isBlocking !== false
+    ? `input:${input.requestId}`
+    : null;
+}
+
 /** What a waiting agent needs to know about one live background item. */
 export interface BackgroundWorkSummary {
   kind: string;

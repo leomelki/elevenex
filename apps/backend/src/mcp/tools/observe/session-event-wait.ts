@@ -6,6 +6,7 @@ import {
   getSessionAttentionStatus,
   hasPausedQueue,
   isSessionSettled,
+  pendingActionKey,
   type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
 
@@ -21,6 +22,7 @@ export interface SessionEventTarget {
 interface WatchedSession extends SessionEventTarget {
   delivery: SessionLaunchDelivery;
   state?: SessionRuntimeSnapshot;
+  actionKey?: string | null;
   revision: number;
   readPending: boolean;
   readAgain: boolean;
@@ -29,6 +31,7 @@ interface WatchedSession extends SessionEventTarget {
 export interface SessionEventResult {
   event: string;
   target?: SessionEventTarget;
+  actionKey?: string | null;
   state?: SessionRuntimeSnapshot;
 }
 
@@ -94,6 +97,7 @@ export function waitForSessionEvent(
     ) => {
       if (finished) return;
       if (state) {
+        target.actionKey = pendingActionKey(state);
         // Hold only lifecycle data. The source may carry a large live transcript.
         const {
           sessionState,
@@ -131,7 +135,7 @@ export function waitForSessionEvent(
           wanted.has(event) ||
           hasPausedQueue(target.state))
       )
-        finish({ event, target, state: target.state });
+        finish({ event, target, state: target.state, actionKey: target.actionKey });
     };
 
     const inspect = (target: WatchedSession) => {

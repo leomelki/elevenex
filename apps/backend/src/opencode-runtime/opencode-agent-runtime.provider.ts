@@ -993,13 +993,15 @@ export class OpenCodeAgentRuntimeProvider
       !active.interruptRequested &&
       !active.controller.signal.aborted &&
       !state.queuePaused &&
-      !state.pendingPrompts.length &&
+      (options.requireSteering || !state.pendingPrompts.length) &&
       !this.interrupts.has(sessionId)
     ) {
       await active.client.steerPrompt(state.claudeSessionId, prompt);
       options.onAccepted?.('steered');
       return;
     }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       state.canInterrupt ||
       state.queuePaused ||

@@ -414,6 +414,13 @@
       "when": 1795515506657,
       "tag": "0058_session_completion_notices",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1795516839723,
+      "tag": "0059_session-delegation-actions",
+      "breakpoints": true
     }
   ]
 }

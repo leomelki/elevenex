@@ -567,6 +567,8 @@ export class PiRuntimeService
     if (!trimmedPrompt && normalizedImages.length === 0) return;
     this.assertSessionOwner(sessionId, this.sessionGeneration(sessionId));
 
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||

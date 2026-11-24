@@ -20,6 +20,10 @@ export const sessionCompletionNotices = sqliteTable(
         'unconfirmed',
       ],
     }).notNull(),
+    actionKey: text('action_key'),
+    actionDelivered: integer('action_delivered', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     outcome: text('outcome', { enum: ['completed', 'failed'] }),
   },
   (table) => [

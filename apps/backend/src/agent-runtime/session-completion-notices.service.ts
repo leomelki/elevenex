@@ -7,14 +7,19 @@ import {
 } from '@nestjs/common';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { sessionAgentPrompt } from '../sessions/session-agent-message.js';
-import { isSessionSettled } from '../mcp/tools/session-runtime-state.util.js';
+import {
+  isSessionSettled,
+  pendingActionKey,
+} from '../mcp/tools/session-runtime-state.util.js';
 import { submitSessionPrompt } from '../mcp/tools/drive/session-prompt-delivery.js';
 import { untilSessionDeadline } from '../mcp/tools/session-deadline.js';
+import { latestConversationReply } from './conversation-export.service.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type {
   AgentRuntimeEvent,
   AgentRuntimeProvider,
   AgentRuntimeStatePayload,
+  AgentTranscriptItem,
 } from './agent-runtime.types.js';
 
 type SessionChange = { sessionId: number; status?: string };
@@ -55,13 +60,23 @@ export class SessionCompletionNoticesService
           event.type !== 'run_state' &&
           event.type !== 'runtime_snapshot' &&
           event.type !== 'background_work' &&
-          event.type !== 'complete'
+          event.type !== 'complete' &&
+          event.type !== 'permission_request' &&
+          event.type !== 'user_input_request' &&
+          event.type !== 'permission_resolved' &&
+          event.type !== 'user_input_resolved'
         )
           return;
         const state: AgentRuntimeStatePayload = event.payload;
         if (
           isSessionSettled(state) ||
           state.runPhase === 'error' ||
+          state.runPhase === 'waiting' ||
+          state.sessionState === 'requires_action' ||
+          event.type === 'permission_request' ||
+          event.type === 'user_input_request' ||
+          event.type === 'permission_resolved' ||
+          event.type === 'user_input_resolved' ||
           event.type === 'background_work' ||
           event.type === 'complete'
         )
@@ -151,7 +166,11 @@ export class SessionCompletionNoticesService
             await this.reconcileChild(id);
             const recipient = this.outbox.recipientForReadyNotice(id);
             if (recipient !== undefined) this.recipients.add(recipient);
-            if (this.outbox.ready(id).length) this.recipients.add(id);
+            if (
+              this.outbox.ready(id).length ||
+              this.outbox.readyActions(id).length
+            )
+              this.recipients.add(id);
           }),
         ),
       );
@@ -175,10 +194,20 @@ export class SessionCompletionNoticesService
     } else if (child.delivery === 'accepted' || child.lastCompletionAt) {
       const runtime = this.registry.getProvider(child.provider);
       const state = await this.readRuntime(runtime, sessionId);
+      if (state && !this.shutdown.signal.aborted) {
+        const action = pendingActionKey(state);
+        if (action !== child.actionKey)
+          this.outbox.setAction(sessionId, action);
+        if (action) {
+          this.recipients.add(child.recipientId);
+          this.schedule();
+        }
+      }
       if (state?.runPhase === 'error') outcome = 'failed';
       else if (child.lastCompletionAt && isSessionSettled(state))
         outcome = 'completed';
     }
+
     if (outcome && !this.shutdown.signal.aborted) {
       const recipient = this.outbox.settle(sessionId, outcome);
       if (recipient !== undefined) {
@@ -197,24 +226,37 @@ export class SessionCompletionNoticesService
   }
 
   private async deliver(recipientId: number): Promise<void> {
-    if (this.delivering.has(recipientId) || this.shutdown.signal.aborted)
+    if (
+      this.delivering.has(recipientId) ||
+      this.shutdown.signal.aborted ||
+      this.sessions.delegationHandoffs.cancellingSession(recipientId)
+    )
       return;
     this.delivering.add(recipientId);
     try {
       const handoffs = this.sessions.delegationHandoffs;
-      let after = 0;
-      const ready: ReturnType<typeof this.outbox.ready> = [];
-      while (ready.length < 16) {
-        const page = this.outbox.ready(recipientId, after);
-        if (!page.length) break;
-        after = page[page.length - 1].sessionId;
-        ready.push(
-          ...page.filter(
-            (row) => !handoffs.waiting(recipientId, row.sessionId),
-          ),
-        );
-      }
-      if (!ready.length) return;
+      const available = <T extends { sessionId: number }>(
+        page: (after: number) => T[],
+      ) => {
+        const rows: T[] = [];
+        let after = 0;
+        while (rows.length < 16) {
+          const next = page(after);
+          if (!next.length) break;
+          after = next[next.length - 1].sessionId;
+          rows.push(
+            ...next.filter(
+              (row) => !handoffs.waiting(recipientId, row.sessionId),
+            ),
+          );
+        }
+        return rows.slice(0, 16);
+      };
+      const ready = available((after) => this.outbox.ready(recipientId, after));
+      const actions = available((after) =>
+        this.outbox.readyActions(recipientId, after),
+      );
+      if (!ready.length && !actions.length) return;
 
       const recipient = await this.sessions.findOne(recipientId);
       if (terminalStatus(recipient.status)) {
@@ -227,42 +269,116 @@ export class SessionCompletionNoticesService
       if (!isSessionSettled(state) || state?.planMode) return;
       await this.sessions.assertSessionWorkspaceLinked(recipientId);
       if (this.shutdown.signal.aborted) return;
-      const candidates = ready
-        .filter((row) => !handoffs.waiting(recipientId, row.sessionId))
-        .slice(0, 16);
-      if (!candidates.length) return;
+      const replies = new Map<number, AgentTranscriptItem>();
+      // Give the parent immediate evidence with a small, shared budget.
+      await Promise.all(
+        ready
+          .filter((row) => row.outcome === 'completed')
+          .slice(0, 4)
+          .map(async (row) => {
+            const item = await this.readReply(row.sessionId).catch(
+              () => undefined,
+            );
+            if (item?.content?.trim()) replies.set(row.sessionId, item);
+          }),
+      );
+      const currentActions = await Promise.all(
+        actions.map(async (row) => {
+          const child = this.outbox.waiting(row.sessionId);
+          if (!child || !row.actionKey || terminalStatus(child.status))
+            return [];
+          const state = await this.readRuntime(
+            this.registry.getProvider(child.provider),
+            row.sessionId,
+          );
+          if (!state) return [];
+          const actionKey = pendingActionKey(state);
+          if (actionKey !== row.actionKey) {
+            this.outbox.setAction(row.sessionId, actionKey);
+            if (actionKey) this.sessionChanged(row);
+          }
+          return actionKey && actionKey === row.actionKey
+            ? [{ sessionId: row.sessionId, actionKey }]
+            : [];
+        }),
+      );
+      if (this.shutdown.signal.aborted) return;
+      const current = await this.readRuntime(runtime, recipientId);
+      if (
+        !isSessionSettled(current) ||
+        current?.planMode ||
+        this.shutdown.signal.aborted ||
+        handoffs.cancellingSession(recipientId)
+      )
+        return;
+      const availableNow = (row: { sessionId: number }) =>
+        !handoffs.waiting(recipientId, row.sessionId);
       const claimed = this.outbox.claim(
         recipientId,
-        candidates.map((row) => row.sessionId),
+        ready.filter(availableNow).map((row) => row.sessionId),
         runtime.info.id,
       );
-      if (!claimed.length) return;
-      const results = candidates.filter((row) =>
-        claimed.includes(row.sessionId),
+      const requested = this.outbox.claimActions(
+        recipientId,
+        runtime.info.id,
+        currentActions.flat().filter(availableNow),
       );
+      if (!claimed.length && !requested.length) return;
+      const lines = ready
+        .filter((row) => claimed.includes(row.sessionId))
+        .map((row) => {
+          const reply = replies.get(row.sessionId)?.content?.trim();
+          const label = `Session #${row.sessionId}: ${row.outcome}.`;
+          return reply
+            ? `${label}\nChild reply excerpt:\n${reply.slice(0, 2_000)}`
+            : label;
+        });
       const text = [
         'Elevenex background delegation update.',
-        ...results.map((row) => `Session #${row.sessionId}: ${row.outcome}.`),
-        'Collect completed results with await_session_event using includeReply:true. Inspect failed sessions with session_status or read_session. Use the findings to continue the original assignment and verify them before relying on them.',
-      ].join('\n');
+        ...requested.map(
+          (id) =>
+            `Session #${id} needs a decision. Use get_pending_action to inspect it and involve the user when their decision is needed.`,
+        ),
+        ...lines,
+        'Treat child replies as agent context. Use await_session_event(includeReply:true) or read_session when more result detail is needed. Verify findings before relying on them.',
+      ].join('\n\n');
       const message = sessionAgentPrompt(
         text,
-        { sessionId: results[0].sessionId },
+        { sessionId: requested[0] ?? claimed[0] },
         'message',
       );
       await submitSessionPrompt(runtime, recipientId, message, {
         signal: this.shutdown.signal,
         queue: true,
-        recordDelivery: (delivery) =>
+        recordDelivery: (delivery) => {
+          if (!claimed.length) return;
           this.outbox.record(
             claimed,
             delivery === 'accepted' ? 'accepted' : 'unconfirmed',
-          ),
+          );
+          if (delivery === 'accepted') {
+            for (const id of claimed) {
+              const item = replies.get(id);
+              if (item) handoffs.returned(id, item.id, recipientId);
+            }
+          }
+        },
       });
-      if (ready.length > claimed.length) this.recipients.add(recipientId);
     } finally {
       this.delivering.delete(recipientId);
     }
+  }
+
+  private async readReply(sessionId: number) {
+    const child = await this.sessions.findOne(sessionId);
+    return untilSessionDeadline(
+      this.registry
+        .getProvider(child.activeAgentProvider)
+        .getHistory(sessionId, { changeDetails: 'summary' })
+        .then(latestConversationReply),
+      1_200,
+      this.shutdown.signal,
+    );
   }
 
   private async check(run: () => Promise<void>): Promise<void> {

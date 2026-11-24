@@ -1761,17 +1761,17 @@ describe('CodexRuntimeService', () => {
     expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
   });
 
-  it.each(['live', 'queued', 'existing queue', 'rejected', 'unknown'] as const)(
+  it.each(['live', 'queued', 'existing queue', 'explicit', 'rejected', 'rejected explicit', 'unknown'] as const)(
     'delivers an agent follow-up with %s steering',
     async (delivery) => {
       const { service, appServer } = createService();
       const wire = wireAppServerTurn(appServer);
       const initial = service.submitPrompt(7, 'Initial assignment');
       await new Promise<void>((resolve) => setImmediate(resolve));
-      if (delivery === 'existing queue')
+      if (delivery === 'existing queue' || delivery === 'explicit')
         await service.submitPrompt(7, 'Earlier queued work');
       const accepted = jest.fn();
-      if (delivery === 'rejected') {
+      if (delivery === 'rejected' || delivery === 'rejected explicit') {
         appServer.request.mockRejectedValueOnce(
           new CodexAppServerResponseError('Active turn cannot be steered.', -32600),
         );
@@ -1782,15 +1782,19 @@ describe('CodexRuntimeService', () => {
         const sent = service.submitPrompt(7, 'Focus on the failing test', undefined, undefined, {
           waitForCompletion: false,
           preferSteering: true,
+          requireSteering: delivery === 'explicit' || delivery === 'rejected explicit',
           queue: delivery === 'queued',
           onAccepted: accepted,
         });
         if (delivery === 'unknown') {
           await expect(sent).rejects.toThrow('Request timed out');
           expect(accepted).not.toHaveBeenCalled();
+        } else if (delivery === 'rejected explicit') {
+          await expect(sent).rejects.toThrow('No active turn can accept live steering.');
+          expect(accepted).not.toHaveBeenCalled();
         } else {
           await sent;
-          expect(accepted).toHaveBeenCalledWith(delivery === 'live' ? 'steered' : 'queued');
+          expect(accepted).toHaveBeenCalledWith(delivery === 'live' || delivery === 'explicit' ? 'steered' : 'queued');
         }
         const steers = appServer.request.mock.calls.filter(([method]) => method === 'turn/steer');
         expect(steers).toEqual(delivery === 'queued' || delivery === 'existing queue' ? [] : [['turn/steer', {
@@ -1803,7 +1807,9 @@ describe('CodexRuntimeService', () => {
             live: [],
             queued: ['Focus on the failing test'],
             'existing queue': ['Earlier queued work', 'Focus on the failing test'],
+            explicit: ['Earlier queued work'],
             rejected: ['Focus on the failing test'],
+            'rejected explicit': [],
             unknown: [],
           }[delivery]);
         expect(appServer.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);

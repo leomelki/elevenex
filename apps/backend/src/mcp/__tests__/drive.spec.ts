@@ -134,6 +134,7 @@ describe('Drive tool group', () => {
     expect(names).toEqual(
       [
         'archive_session',
+        'cancel_session_delegation',
         'rename_session',
         'unarchive_session',
         'fork_session',
@@ -226,6 +227,41 @@ describe('Drive tool group', () => {
         accepted: true,
         disposition: queue ? 'queued' : 'steered',
       });
+    });
+
+    it('uses explicit steering without starting an idle session', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex' },
+      });
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        expect(options).toMatchObject({ preferSteering: true, requireSteering: true });
+        options?.onAccepted?.('steered');
+      });
+      expect(await promptSessionTool.handler({ sessionId: 7, prompt: 'Redirect', mode: 'steer' }, makeCtx(services)))
+        .toMatchObject({ data: { disposition: 'steered' } });
+      expect(services.sessions.start).not.toHaveBeenCalled();
+    });
+
+    it('confirms restart before submitting and preserves existing queued work', async () => {
+      const { services, runtime } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex' },
+      });
+      const input = { sessionId: 7, prompt: 'Try again', mode: 'restart' as const };
+      runtime.getRuntimeState.mockResolvedValueOnce({
+        sessionState: 'running', runPhase: 'running', pendingPrompts: [{}],
+      });
+      await expect(promptSessionTool.handler(input, makeCtx(services)))
+        .rejects.toMatchObject({ code: 'restart_queue_not_empty' });
+      expect(runtime.interrupt).not.toHaveBeenCalled();
+      expect(runtime.submitPrompt).not.toHaveBeenCalled();
+
+      runtime.getRuntimeState.mockResolvedValueOnce({ sessionState: 'running', runPhase: 'running' });
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        expect(runtime.interrupt).toHaveBeenCalledWith(7);
+        options?.onAccepted?.('running');
+      });
+      await expect(promptSessionTool.handler(input, makeCtx(services)))
+        .resolves.toMatchObject({ data: { disposition: 'running' } });
     });
 
     it.each(['claude', 'codex', 'opencode', 'pi'])(

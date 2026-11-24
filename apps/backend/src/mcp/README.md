@@ -148,7 +148,7 @@ guarantees so individual tools can't regress them:
   `move_session_to_folder`, `archive_session_folder`, `unarchive_session_folder`,
   `delete_session_folder`.
 - **Drive**: `prompt_session`, `interrupt_session`, `stop_background_task`, `fork_session`, `archive_session`,
-  `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
+  `cancel_session_delegation`, `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
   `prompt_session` accepts optional `mentionSessionIds` (up to 10; deduplicated), attaching the same
   compact snapshots and transcript exports as chat mentions without returning transcript bodies to
@@ -179,7 +179,9 @@ harness before they appear in the discovery catalog.
   "provider": "codex",
   "name": "Review concurrent sends",
   "prompt": "Review the prompt queue for lost sends. Report findings with file references. Leave the shared files untouched.",
-  "requestId": "review-concurrent-sends"
+  "requestId": "review-concurrent-sends",
+  "role": "review",
+  "mode": "async"
 }
 ```
 
@@ -211,13 +213,21 @@ completion includes the latest final reply when available, capped at 8,000
 characters, with its transcript item ID. Remove handled IDs before waiting
 again. Use `read_session` or `read_session_range` for detailed evidence.
 
-Use `completion:"notify"` on a same-task delegate with a first prompt when
-its work may outlast the parent turn. Elevenex waits for the child to settle
-and then sends the parent a short notice with session IDs and outcomes. Ready
-siblings can share one notice. A parent that is still working or waiting for
-input receives the notice once it is idle. Collecting the final reply through
-`await_session_event` suppresses the corresponding notice. The default
-`completion:"wait"` leaves the parent in control of collection.
+Use `mode:"async"` on a same-task delegate when work may outlast the parent
+turn. When the child asks for a blocking decision or finishes, Elevenex can
+resume an idle parent with the child session ID, outcome, and a short result
+excerpt when available. Ready siblings can share one notice. A parent already
+waiting on the child receives the event through the wait. The notice asks the
+parent to inspect pending decisions through `get_pending_action` and involve
+the user when authorization is required.
+
+Use `mode:"wait"` to launch and wait for one child in the same call. The wait
+lasts up to 45 seconds. When it times out, the child continues and retains its
+parent wakeup. `completion:"notify"` remains an alias for asynchronous notice
+delivery. Omitting both fields preserves explicit collection with
+`await_session_event`. An optional `role` adds a responsibility to the initial
+brief. For an independent re-check, launch a fresh delegate with the current
+brief, prior findings, and changes.
 
 The backend recovers outstanding notices from its database. If the harness
 may have accepted a notice before a crash, Elevenex leaves it unconfirmed
@@ -230,14 +240,21 @@ Use `prompt_session` for a focused follow-up. Authenticated sends carry the
 sender’s session ID. The tool starts an idle session and prefers live input
 for an active turn on Codex, Claude or OpenCode v2 when the harness can accept it.
 Busy harnesses without live steering queue the follow-up. An existing queue
-takes precedence over automatic steering. Set `queue:true` to request a
-separate turn when the target is busy. The send reports `running`, `steered`
+takes precedence over automatic steering. `mode:"queue"` or `queue:true` requests
+a separate turn. `mode:"steer"` requires a live turn that can accept steering.
+`mode:"restart"` explicitly interrupts active work before submitting and requires
+an empty prompt queue. The send reports `running`, `steered`
 or `queued` as its acceptance disposition. If acceptance is pending or
 transport failed during delivery, inspect the session before resending.
 Session messages and results provide
 agent context and evidence. User decisions still go through the existing
 approval tools. A child can return findings, changed files, checks and blockers
 in its final reply for its parent to collect.
+
+Use `cancel_session_delegation` for a direct delegate you no longer need. It
+interrupts active work and clears queued prompts in the delegate and its
+Elevenex descendants while retaining their conversations. For a single
+interruption with the queue preserved, use `interrupt_session`.
 
 ## Testing
 

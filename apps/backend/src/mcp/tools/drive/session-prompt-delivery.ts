@@ -28,6 +28,18 @@ export function assertCanDelegatePrompt(caller: {
     });
 }
 
+export function assertSessionNotCancelling(
+  sessions: ToolContext['services']['sessions'],
+  ...sessionIds: (number | null)[]
+): void {
+  if (sessionIds.some(id => id !== null && sessions.delegationHandoffs?.cancellingSession(id)))
+    throw new ToolError({
+      code: 'session_cancellation_in_progress',
+      message: 'An agent is cancelling work in this delegation.',
+      remediation: 'Inspect its status before retrying.',
+    });
+}
+
 export async function sessionMessage(
   prompt: string,
   ctx: ToolContext,
@@ -60,6 +72,7 @@ export function submitSessionPrompt(
     signal: AbortSignal;
     queue?: boolean;
     preferSteering?: boolean;
+    requireSteering?: boolean;
     recordDelivery?: (delivery: 'accepted' | 'failed') => void;
     titlePrompt?: string;
   },
@@ -82,6 +95,7 @@ export function submitSessionPrompt(
         waitForCompletion: false,
         queue: options.queue,
         ...(options.preferSteering ? { preferSteering: true } : {}),
+        ...(options.requireSteering ? { requireSteering: true } : {}),
         onAccepted: (disposition) => {
           if (accepted) return;
           accepted = true;

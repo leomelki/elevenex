@@ -110,6 +110,7 @@ describe('cross-harness delegation through MCP', () => {
       }),
       setReasoningEffort: jest.fn(),
       interrupt: jest.fn(async (_id: number) => undefined),
+      clearPendingPrompts: jest.fn(async (_id: number) => undefined),
       getRuntimeState: jest.fn(async (_id: number) => ({
         sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [] as readonly unknown[],
       })),
@@ -422,7 +423,7 @@ describe('cross-harness delegation through MCP', () => {
       const call = await f.connect(f.root.id);
       f.startNotices();
       for (const requestId of ['tests', 'review'])
-        expect(await call('create_session', { requestId, provider: 'codex', prompt: requestId, completion: 'notify' }))
+        expect(await call('create_session', { requestId, provider: 'codex', prompt: requestId, mode: 'async' }))
           .toMatchObject({ data: { completion: 'notify', accepted: true } });
       const { items: [tests, review] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
       let testsRunning = true;
@@ -446,13 +447,128 @@ describe('cross-harness delegation through MCP', () => {
       expect(parentId).toBe(f.root.id);
       expect(notice).toContain(`Session #${tests.id}: completed.`);
       expect(notice).toContain(`Session #${review.id}: completed.`);
-      expect(f.runtime.getHistory).not.toHaveBeenCalled();
+      expect(notice).toContain('Child reply excerpt:\n**Reviewed.**');
+      expect(f.runtime.getHistory).toHaveBeenCalledTimes(2);
       expect(await call('session_status', { sessionId: review.id })).toMatchObject({
         data: { completionNotice: { state: 'accepted', outcome: 'completed' } },
       });
       f.startNotices();
       await delay(100);
       expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('returns a blocking launch result and wakes the parent after a timed-out launch', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      f.startNotices();
+      const base = { provider: 'codex', prompt: 'Review', mode: 'wait' };
+      expect(await call('create_session', { ...base, requestId: 'quick', timeoutMs: 500 }))
+        .toMatchObject({ data: { result: { event: 'completed', reply: { text: '**Reviewed.**' } } } });
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+
+      f.runtime.getRuntimeState.mockResolvedValue({
+        sessionState: 'running', runPhase: 'running', pendingPrompts: [], backgroundWork: [],
+      });
+      expect(await call('create_session', { ...base, requestId: 'slow', timeoutMs: 20 }))
+        .toMatchObject({ data: { result: { event: 'timeout' } } });
+      const { items: [quick, slow] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      f.runtime.getRuntimeState.mockResolvedValue({
+        sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [],
+      });
+      await f.sessions.markCompletionUnreviewed(quick.id);
+      await f.sessions.markCompletionUnreviewed(slow.id);
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${slow.id}: completed.`);
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).not.toContain(`Session #${quick.id}: completed.`);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('wakes a parent once for a blocking decision and still delivers completion', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      f.startNotices();
+      const result = await call('create_session', {
+        requestId: 'decision', provider: 'codex', prompt: 'Review', role: 'review', completion: 'notify',
+      });
+      expect(result).toMatchObject({ data: { accepted: true } });
+      expect(f.runtime.submitPrompt.mock.calls[0][1]).toContain('Act as the review subagent');
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      f.runtime.getRuntimeState.mockResolvedValue({
+        sessionState: 'requires_action', runPhase: 'waiting', pendingPrompts: [], backgroundWork: [],
+        pendingUserInputRequest: { requestId: 'question-1' },
+      } as Awaited<ReturnType<typeof f.runtime.getRuntimeState>>);
+      f.runtime.emit('event', { type: 'user_input_request', payload: { sessionId: child.id } });
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${child.id} needs a decision.`);
+      f.startNotices();
+      await delay(120);
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+      f.runtime.getRuntimeState.mockResolvedValue({
+        sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [],
+      });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(2));
+      expect(f.parentRuntime.submitPrompt.mock.calls[1][1]).toContain(`Session #${child.id}: completed.`);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('suppresses a question wake when the parent collects it during a wait', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      f.startNotices();
+      await call('create_session', { requestId: 'question', provider: 'codex', prompt: 'Review', mode: 'async' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      f.runtime.getRuntimeState.mockResolvedValue({
+        sessionState: 'running', runPhase: 'running', pendingPrompts: [], backgroundWork: [],
+      });
+      const wait = call('await_session_event', { sessionId: child.id, includeReply: true, timeoutMs: 500 });
+      await eventually(() => expect(f.sessions.delegationHandoffs.waiting(f.root.id, child.id)).toBe(true));
+      const waiting = {
+        sessionState: 'requires_action', runPhase: 'waiting', pendingPrompts: [], backgroundWork: [],
+        pendingPermissionRequest: { requestId: 'permission-1' },
+      };
+      f.runtime.getRuntimeState.mockResolvedValue(waiting);
+      f.runtime.emit('event', { type: 'run_state', payload: { sessionId: child.id, ...waiting } });
+      expect(await wait).toMatchObject({ data: { event: 'requires_action' } });
+      f.startNotices();
+      await delay(200);
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('cancels a direct delegate and descendants while preserving their conversations', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { requestId: 'child', provider: 'codex', prompt: 'Review' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      const callChild = await f.connect(child.id);
+      await callChild('create_session', { requestId: 'grandchild', provider: 'codex', prompt: 'Verify' });
+      const grandchild = f.sessions.delegationHandoffs.children(child.id)[0];
+      expect(await call('cancel_session_delegation', { sessionId: grandchild }))
+        .toMatchObject({ error: { code: 'not_your_delegate' } });
+      expect(await call('cancel_session_delegation', { sessionId: child.id }))
+        .toMatchObject({ data: { sessionId: child.id, cancelled: 2 } });
+      for (const id of [child.id, grandchild]) {
+        expect(f.runtime.interrupt).toHaveBeenCalledWith(id);
+        expect(f.runtime.clearPendingPrompts).toHaveBeenCalledWith(id);
+        expect((await f.sessions.findOne(id)).status).toBe('active');
+      }
     } finally {
       await f.close();
     }

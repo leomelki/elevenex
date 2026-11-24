@@ -7,6 +7,7 @@ import { untilSessionDeadline } from '../session-deadline.js';
 import { resolveSessionProvider } from './provider.util.js';
 import {
   assertCanDelegatePrompt,
+  assertSessionNotCancelling,
   sessionMessage,
   sessionPromptNextStep,
   startSessionForPrompt,
@@ -26,7 +27,7 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    'Send a follow-up to another session by ID. Starts an idle session, steers a live turn when supported, or queues. Use queue:true for a separate turn. Authenticated sends carry the sender session ID. Returns the delivery disposition or acceptance_pending after 5s. Use await_session_event for the result; do not resend an unconfirmed prompt.',
+    'Send a follow-up to another session by ID. Starts an idle session, steers a live turn when supported, or queues. Use mode to explicitly queue, require live steering, or restart; queue:true also queues. Authenticated sends carry the sender session ID. Returns the delivery disposition or acceptance_pending after 5s. Use await_session_event for the result; do not resend an unconfirmed prompt.',
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
@@ -49,6 +50,9 @@ export const promptSessionTool = defineTool({
       .describe(
         'Queue a separate turn if busy. Omit to prefer live steering where supported.',
       ),
+    mode: z.enum(['auto', 'queue', 'steer', 'restart']).optional().describe(
+      'Auto starts an idle session, prefers steering or queues. Queue waits for a separate turn. Steer requires a live turn. Restart interrupts the current turn before sending and requires an empty queue.',
+    ),
     mentionSessionIds: z
       .array(z.number().int().positive())
       .max(10)
@@ -58,6 +62,12 @@ export const promptSessionTool = defineTool({
       ),
   },
   handler: async (args, ctx) => {
+    if (args.mode !== undefined && args.queue !== undefined)
+      throw new ToolError({
+        code: 'conflicting_delivery_modes',
+        message: 'Pass mode or queue.',
+      });
+    const mode = args.mode ?? (args.queue ? 'queue' : 'auto');
     const { sessions } = ctx.services;
     await sessions.assertSessionWorkspaceLinked(args.sessionId);
     let { session, provider } = await resolveSessionProvider(
@@ -122,16 +132,33 @@ export const promptSessionTool = defineTool({
     ctx.signal.throwIfAborted();
 
     const runtime = ctx.services.agentRuntime.getProvider(provider);
-    await startSessionForPrompt(sessions, session);
+    assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
+    if (mode === 'restart') {
+      const state = await runtime.getRuntimeState(session.id, { initialize: false });
+      if (hasPausedQueue(state) || state.pendingPrompts?.length || state.dispatchingPrompts?.length)
+        throw new ToolError({
+          code: 'restart_queue_not_empty',
+          message: 'Resolve the existing prompt queue before requesting restart.',
+        });
+      ctx.signal.throwIfAborted();
+      assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
+      if (!isSessionSettled(state) && (session.status === 'active' || session.status === 'running'))
+        await runtime.interrupt(session.id);
+      ctx.signal.throwIfAborted();
+    }
+    if (mode !== 'steer') await startSessionForPrompt(sessions, session);
     const messageId = ctx.agentSessionId === null ? undefined : randomUUID();
+    const message = await sessionMessage(prompt, ctx, false, messageId);
+    assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
     const disposition = await submitSessionPrompt(
       runtime,
       session.id,
-      await sessionMessage(prompt, ctx, false, messageId),
+      message,
       {
         signal: ctx.signal,
-        queue: args.queue,
-        preferSteering: args.queue !== true,
+        queue: args.mode === undefined ? args.queue : mode === 'queue' || mode === 'restart',
+        preferSteering: mode === 'auto' || mode === 'steer',
+        requireSteering: mode === 'steer',
         titlePrompt: args.prompt,
       },
     );

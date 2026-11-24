@@ -1748,7 +1748,7 @@ export class CodexRuntimeService
       !validatedImages.length &&
       this.activeRuns.has(sessionId)
     ) {
-      if (await this.trySteerFollowUp(sessionId, trimmedPrompt)) {
+      if (await this.trySteerFollowUp(sessionId, trimmedPrompt, options.requireSteering === true)) {
         onAccepted?.('steered');
         return;
       }
@@ -1762,6 +1762,8 @@ export class CodexRuntimeService
         );
       }
     }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
       onAccepted?.('queued');
       return;
@@ -1999,6 +2001,7 @@ export class CodexRuntimeService
   private async trySteerFollowUp(
     sessionId: number,
     text: string,
+    explicit: boolean,
   ): Promise<boolean> {
     const run = this.activeRuns.get(sessionId);
     const state = this.runtimeStates.get(sessionId);
@@ -2009,7 +2012,7 @@ export class CodexRuntimeService
       run.abortController.signal.aborted ||
       this.unconfirmedStops.has(sessionId) ||
       state?.queuePaused ||
-      state?.pendingPrompts.length
+      (!explicit && state?.pendingPrompts.length)
     ) return false;
 
     try {

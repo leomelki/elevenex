@@ -2,6 +2,7 @@ import { ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
 import { DELEGATED_ASSIGNMENT_CONTEXT } from '../../../sessions/session-agent-message.js';
 import {
   assertCanDelegatePrompt,
+  assertSessionNotCancelling,
   sessionMessage,
   startSessionForPrompt,
   submitSessionPrompt,
@@ -19,8 +20,10 @@ export async function launchSessionPrompt(
   session: { id: number; status: string; activeAgentProvider: string; delegatedBySessionId?: number | null },
   prompt: string,
   ctx: ToolContext,
+  role?: string,
 ): Promise<LaunchStatus> {
   const { sessions, agentRuntime } = ctx.services;
+  assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
   const receipt = () => sessions.getSessionLaunchDelivery(session.id);
   const existing = receipt();
   if (existing !== 'ready')
@@ -48,11 +51,15 @@ export async function launchSessionPrompt(
   try {
     await startSessionForPrompt(sessions, session);
     ctx.signal.throwIfAborted();
-    const brief = session.delegatedBySessionId === ctx.agentSessionId && ctx.agentSessionId !== null
-      ? `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n${prompt}`
+    const assignment = role && role !== 'general'
+      ? `Act as the ${role} subagent for this assignment.\n\n${prompt}`
       : prompt;
+    const brief = session.delegatedBySessionId === ctx.agentSessionId && ctx.agentSessionId !== null
+      ? `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n${assignment}`
+      : assignment;
     const message = await sessionMessage(brief, ctx, true);
     ctx.signal.throwIfAborted();
+    assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
     dispatched = true;
     const disposition = await submitSessionPrompt(
       runtime,
@@ -75,7 +82,9 @@ export async function launchSessionPrompt(
     if (!dispatched)
       sessions.recordSessionLaunchDelivery(
         session.id,
-        ctx.signal.aborted ? 'ready' : 'failed',
+        ctx.signal.aborted && !sessions.delegationHandoffs?.cancellingSession(session.id)
+          ? 'ready'
+          : 'failed',
       );
     ctx.signal.throwIfAborted();
     throw new ToolError({

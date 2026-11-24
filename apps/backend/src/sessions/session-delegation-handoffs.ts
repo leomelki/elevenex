@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, gt } from 'drizzle-orm';
 import { Logger } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { sessionReplyReturns, sessions } from '../database/schema/index.js';
@@ -8,10 +8,27 @@ import { SessionCompletionOutbox } from './session-completion-outbox.js';
 export class SessionDelegationHandoffs {
   private readonly logger = new Logger(SessionDelegationHandoffs.name);
   private readonly waits = new Map<number, Map<number, number>>();
+  private readonly cancelling = new Set<number>();
   readonly outbox: SessionCompletionOutbox;
 
   constructor(private readonly db: DrizzleDB, private readonly changed: (sessionId: number) => void) {
     this.outbox = new SessionCompletionOutbox(db);
+  }
+
+  children(recipientId: number, after = 0): number[] {
+    return this.db.select({ id: sessions.id }).from(sessions)
+      .where(and(eq(sessions.delegatedBySessionId, recipientId), gt(sessions.id, after)))
+      .orderBy(asc(sessions.id)).limit(32).all().map(row => row.id);
+  }
+
+  cancellingSession(sessionId: number): boolean {
+    return this.cancelling.has(sessionId);
+  }
+
+  beginCancellation(sessionId: number): (() => void) | undefined {
+    if (this.cancelling.has(sessionId)) return undefined;
+    this.cancelling.add(sessionId);
+    return () => { this.cancelling.delete(sessionId); };
   }
 
   waiting(recipientId: number, sessionId: number): boolean {
@@ -55,6 +72,14 @@ export class SessionDelegationHandoffs {
     } catch (error) {
       // A presentation receipt must never prevent the tool from delivering its reply.
       this.logger.warn('Could not record a session reply handoff: ' + String(error));
+    }
+  }
+
+  acknowledgedAction(sessionId: number, recipientId: number, key: string): void {
+    try {
+      this.outbox.acknowledgeAction(sessionId, recipientId, key);
+    } catch (error) {
+      this.logger.warn('Could not record pending action acknowledgement: ' + String(error));
     }
   }
 

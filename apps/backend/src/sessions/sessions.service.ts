@@ -196,6 +196,15 @@ export class SessionsService extends EventEmitter {
       )).returning({ sessionId: schema.sessionLaunches.sessionId }).get();
   }
 
+  cancelReadySessionLaunch(sessionId: number): void {
+    const result = this.db.update(schema.sessionLaunches).set({ delivery: 'failed' })
+      .where(and(
+        eq(schema.sessionLaunches.sessionId, sessionId),
+        eq(schema.sessionLaunches.delivery, 'ready'),
+      )).run();
+    if (result.changes) this.emit('session-launch-delivery', { sessionId, delivery: 'failed' });
+  }
+
   recordSessionLaunchDelivery(sessionId: number, delivery: 'ready' | 'accepted' | 'failed'): void {
     const result = this.db.update(schema.sessionLaunches).set({ delivery }).where(and(
       eq(schema.sessionLaunches.sessionId, sessionId),

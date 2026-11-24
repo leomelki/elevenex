@@ -4,8 +4,10 @@ import { DEFAULT_AGENT_PROVIDERS } from '../../../settings/settings.types.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import {
   assertCanDelegatePrompt,
+  assertSessionNotCancelling,
   sessionPromptNextStep,
 } from '../drive/session-prompt-delivery.js';
+import { awaitSessionEventTool } from '../observe/await-session-event.tool.js';
 import { launchSessionPrompt } from './session-launch-prompt.js';
 import { resolveLaunchSelection } from './session-launch-selection.js';
 import { taskOperation } from './task.util.js';
@@ -21,7 +23,7 @@ export const createSessionTool = defineTool({
   mutates: true,
   currentSessionScope: 'task',
   description:
-    'Launch a cross-harness subagent or create an empty conversation. Prefer native subagents in your own harness. A prompt and stable requestId start work without copying parent history. Same-task delegates share your checkout. Use completion:"notify" for background work that should wake your conversation when done, or await_session_event to collect results you need now.',
+    'Launch a cross-harness subagent or create an empty conversation. Prefer native subagents in your own harness. A prompt and stable requestId start work without copying parent history. Same-task delegates share your checkout. Use mode:"async" for background work that should wake you, mode:"wait" to wait briefly on this child, or await_session_event to collect across children.',
   inputShape: {
     taskId: z
       .number()
@@ -68,6 +70,9 @@ export const createSessionTool = defineTool({
       .describe(
         'Optional first prompt. Give a self-contained brief with scope, file ownership and expected result.',
       ),
+    role: z.enum(['research', 'review', 'design', 'test', 'general']).optional().describe(
+      'Optional role to include in the initial brief.',
+    ),
     requestId: z
       .string()
       .trim()
@@ -77,6 +82,12 @@ export const createSessionTool = defineTool({
       .describe(
         'Required with prompt. Reuse the same caller/task requestId and inputs after a timeout to recover the original session and delivery state.',
       ),
+    mode: z.enum(['async', 'wait']).optional().describe(
+      'Same-task delegation only. Async wakes the parent when work settles. Wait briefly returns the child’s result or decision, with a later wake if still outstanding.',
+    ),
+    timeoutMs: z.number().int().min(1).max(45_000).optional().describe(
+      'Mode wait only, up to 45000 ms. A timeout leaves the child running and enables a later wake.',
+    ),
     completion: z
       .enum(['wait', 'notify'])
       .optional()
@@ -112,7 +123,12 @@ export const createSessionTool = defineTool({
       args.placement !== 'task' && args.folderId === undefined
         ? (ctx.agentSessionId ?? undefined)
         : undefined;
-    const notifyOnCompletion = args.completion === 'notify';
+    if ((args.mode && args.completion) || (args.timeoutMs !== undefined && args.mode !== 'wait'))
+      throw new ToolError({
+        code: 'invalid_session_delegation_mode',
+        message: 'Pass mode or completion. timeoutMs is only available with mode:"wait".',
+      });
+    const notifyOnCompletion = args.mode !== undefined || args.completion === 'notify';
     if (notifyOnCompletion && (!args.prompt || delegatingSessionId === undefined))
       throw new ToolError({
         code: 'invalid_session_completion',
@@ -130,6 +146,7 @@ export const createSessionTool = defineTool({
             args.reasoningEffort,
             args.prompt,
             ...(notifyOnCompletion ? ['notify'] : []),
+            ...(args.role && args.role !== 'general' ? [{ role: args.role }] : []),
           ]),
           hasPrompt: !!args.prompt,
           ...(notifyOnCompletion && { notifyOnCompletion }),
@@ -154,6 +171,7 @@ export const createSessionTool = defineTool({
           )
         : undefined;
       ctx.signal.throwIfAborted();
+      assertSessionNotCancelling(sessions, ctx.agentSessionId);
       return sessions.create({
         repoId: task.repoId,
         workspaceId: task.id,
@@ -173,12 +191,28 @@ export const createSessionTool = defineTool({
       : await taskOperation(create);
     const promptStatus =
       launch && args.prompt
-        ? await launchSessionPrompt(session, args.prompt, ctx)
+        ? await launchSessionPrompt(session, args.prompt, ctx, args.role)
         : undefined;
     const accepted =
       promptStatus === 'accepted' ||
       promptStatus === 'running' ||
       promptStatus === 'queued';
+    const observed = args.mode === 'wait' && accepted
+      ? await awaitSessionEventTool.handler({
+          sessionId: session.id, includeReply: true, timeoutMs: args.timeoutMs ?? 45_000,
+        }, ctx)
+      : undefined;
+    const outcome = observed?.data;
+    const timedOut = !!outcome && typeof outcome === 'object' &&
+      'event' in outcome && outcome.event === 'timeout';
+    let nextStep = observed?.nextStep;
+    if (timedOut)
+      nextStep = 'Continue independent work. The delegate will wake this session once the result is ready.';
+    else if (!nextStep && notifyOnCompletion && accepted)
+      nextStep = 'Continue independent work. This session will wake if the result is still outstanding. Use await_session_event(includeReply:true) if you need it now.';
+    else if (!nextStep && promptStatus)
+      nextStep = sessionPromptNextStep(promptStatus, session.id, undefined, promptStatus === 'queued');
+
     return {
       data: {
         taskId: args.taskId,
@@ -192,6 +226,7 @@ export const createSessionTool = defineTool({
         parentSessionId: session.parentSessionId ?? null,
         delegatedBySessionId: session.delegatedBySessionId ?? null,
         ...(notifyOnCompletion && { completion: 'notify' }),
+        ...(observed && { result: observed.data }),
         ...(session.agentSelection?.provider ===
           session.activeAgentProvider && {
           model:
@@ -207,16 +242,8 @@ export const createSessionTool = defineTool({
       },
       touched: { sessionId: session.id },
       deepLink: ctx.deepLink.session(session.id),
-      nextStep: notifyOnCompletion && accepted
-        ? 'Continue independent work. A completion notice will follow if you have not collected the result. If the result is needed now, use await_session_event with includeReply:true.'
-        : promptStatus
-        ? sessionPromptNextStep(
-            promptStatus,
-            session.id,
-            undefined,
-            promptStatus === 'queued',
-          )
-        : 'Use prompt_session to start work. Give it a scoped brief and coordinate writes to the shared worktree.',
+      nextStep: nextStep ??
+        'Use prompt_session to start work. Give it a scoped brief and coordinate writes to the shared worktree.',
     };
   },
 });

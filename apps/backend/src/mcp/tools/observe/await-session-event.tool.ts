@@ -90,7 +90,7 @@ export const awaitSessionEventTool = defineTool({
     const release =
       callerId === null ? undefined : handoffs?.observe(callerId, ids);
     try {
-      const { event, target, state } = await waitForSessionEvent(
+      const { event, target, state, actionKey } = await waitForSessionEvent(
         targets,
         wanted,
         args.timeoutMs,
@@ -182,6 +182,8 @@ export const awaitSessionEventTool = defineTool({
 
       if (callerId !== null && !ctx.signal.aborted) {
         if (reply) handoffs?.returned(target.id, reply.id, callerId);
+        if (event === 'requires_action' && actionKey)
+          handoffs?.acknowledgedAction(target.id, callerId, actionKey);
         if (reply || event === 'failed')
           handoffs?.collected(target.id, callerId);
       }

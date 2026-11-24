@@ -166,6 +166,8 @@ export interface AgentPromptOptions {
   queue?: boolean;
   /** Prefer same-turn delivery for a text follow-up, when the harness can do so. */
   preferSteering?: boolean;
+  /** Reject before dispatch if no active turn can accept live input. */
+  requireSteering?: boolean;
   /** Return when the harness owns this specific prompt. */
   waitForCompletion?: boolean;
   onAccepted?: (disposition: AgentPromptDisposition) => void;

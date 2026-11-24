@@ -2545,20 +2545,21 @@ export class ClaudeRuntimeService
     }
 
     const running = this.activeRuns.get(sessionId);
+    const preserveQueueOrder = options.preferSteering && !options.requireSteering;
     if (
       running &&
       !running.interruptRequested &&
       running.query.canSteer &&
       !options.queue &&
       !this.runtimeStates.get(sessionId)?.queuePaused &&
-      !(options.preferSteering && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
+      !(preserveQueueOrder && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
     ) {
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (
         this.activeRuns.get(sessionId) !== running ||
         running.interruptRequested ||
         this.runtimeStates.get(sessionId)?.queuePaused ||
-        (options.preferSteering && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
+        (preserveQueueOrder && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
       )
         return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
       running.query.steer(
@@ -2567,6 +2568,8 @@ export class ClaudeRuntimeService
       options.onAccepted?.('steered');
       return;
     }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
