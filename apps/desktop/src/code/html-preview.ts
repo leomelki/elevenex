@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { fileReadReply } from './validation';
-import { STATIC_PREVIEW_POLICY } from './webview';
+import { declaredCharset, PREVIEW_BRIDGE, PREVIEW_BRIDGE_PATH, withPreviewBridge } from './html-preview-bridge';
 
 const HTML = 'text/html';
 const mimeTypes = new Map([
@@ -34,6 +34,14 @@ interface PreviewLease {
 export function isHtmlPreviewOrigin(url: URL): boolean {
   return url.protocol === 'https:' && !url.port && !url.username && !url.password &&
     /^elevenex-preview-[a-f0-9]{32}\.invalid$/.test(url.hostname);
+}
+
+/** Only ordinary web links leave the preview, and never another preview. */
+export function externalLinkUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  const url = URL.parse(value);
+  if (!url || !['https:', 'http:'].includes(url.protocol) || url.username || url.password || isHtmlPreviewOrigin(url)) return undefined;
+  return url.href;
 }
 
 function previewFile(path: unknown): { path: string; mime: string } | undefined {
@@ -96,6 +104,11 @@ export class HtmlPreview {
     const lease = this.lease;
     if (!lease || !this.current(url)) return new Response(null, { status: 403 });
     if (request.method !== 'GET') return new Response(null, { status: 405 });
+    const frameAncestors = `frame-ancestors https://*.preview.${this.authority} https://${this.authority} ${this.shellOrigin}`;
+    if (url.pathname === PREVIEW_BRIDGE_PATH) return new Response(PREVIEW_BRIDGE, { headers: {
+      'Content-Type': 'text/javascript; charset=utf-8', 'Content-Security-Policy': "default-src 'none'",
+      'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    } });
     const file = resource(url);
     if (!file) return new Response(null, { status: 404 });
     let bytes: Buffer<ArrayBuffer>;
@@ -108,14 +121,23 @@ export class HtmlPreview {
       if (!result.ok) return new Response(null, { status: result.error.status ?? 503 });
       bytes = result.value;
     }
+    let contentType = file.mime;
+    if (file.mime === HTML) {
+      const charset = declaredCharset(bytes);
+      if (charset) contentType += `; charset=${charset}`;
+      bytes = withPreviewBridge(bytes, url.origin);
+    }
+    // Page scripts stay off. The sandbox permits scripts only so the exact
+    // bridge URL can run; it still blocks forms, popups and top navigation,
+    // and a unique preview origin keeps the page away from the editor.
     const csp = [
-      STATIC_PREVIEW_POLICY, "frame-src 'none'", "img-src 'self' data:",
-      "font-src 'self' data:", "media-src 'self'", "base-uri 'self'",
-      "sandbox allow-same-origin",
-      `frame-ancestors https://*.preview.${this.authority} https://${this.authority} ${this.shellOrigin}`,
+      `script-src ${url.origin}${PREVIEW_BRIDGE_PATH}`, "connect-src 'none'", "worker-src 'none'",
+      "object-src 'none'", "manifest-src 'none'", "form-action 'none'", "frame-src 'none'",
+      "img-src 'self' data:", "font-src 'self' data:", "media-src 'self'", "base-uri 'self'",
+      'sandbox allow-scripts allow-same-origin', frameAncestors,
     ];
     return new Response(bytes, { headers: {
-      'Content-Type': file.mime, 'Content-Security-Policy': csp.join('; '),
+      'Content-Type': contentType, 'Content-Security-Policy': csp.join('; '),
       'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'X-DNS-Prefetch-Control': 'off', 'Referrer-Policy': 'no-referrer',
     } });

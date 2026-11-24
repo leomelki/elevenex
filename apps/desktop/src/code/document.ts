@@ -6,6 +6,8 @@ import type { WorkspaceDescriptor } from './validation';
 export const CODE_EXTENSION_PATH = '/extension-v2';
 const htmlResource = 'resourceScheme == elevenex-task && resourceExtname =~ /\\.html?$/i';
 const htmlPreviewActive = `activeWebviewPanelId == ${HTML_PREVIEW_VIEW}`;
+// Markdown's preview shortcuts, for an HTML source in the editor or Explorer.
+const htmlPreviewKeys = `${htmlResource} && (editorTextFocus || filesExplorerFocus && !inputFocus)`;
 export const EXTENSION = {
   name: 'task-workspace', publisher: 'elevenex', version: '1.4.0', displayName: 'Elevenex task workspace',
   engines: { vscode: '^1.144.0' }, browser: './extension.js', activationEvents: ['onFileSystem:elevenex-task', '*'],
@@ -22,26 +24,28 @@ export const EXTENSION = {
         { command: 'elevenex.code.upload-folder', when: 'resourceScheme == elevenex-task', group: '5b_importexport@30' },
       ],
       'editor/title': [
-        { command: 'elevenex.code.preview-html', when: htmlResource, group: 'navigation@1' },
+        { command: 'elevenex.code.preview-html', alt: 'elevenex.code.preview-html-side', when: htmlResource, group: 'navigation@1' },
         { command: 'elevenex.code.preview-html-source', when: htmlPreviewActive, group: 'navigation@1' },
         { command: 'elevenex.code.refresh-html-preview', when: htmlPreviewActive, group: 'navigation@2' },
       ],
       commandPalette: [
         { command: 'elevenex.code.preview-html', when: htmlResource },
+        { command: 'elevenex.code.preview-html-side', when: htmlResource },
         { command: 'elevenex.code.preview-html-source', when: htmlPreviewActive },
         { command: 'elevenex.code.refresh-html-preview', when: htmlPreviewActive },
       ],
       'editor/title/context': [{ command: 'elevenex.code.download', when: 'resourceScheme == elevenex-task', group: '2_files@10' }],
       'view/title': [{ command: 'elevenex.code.find-file', when: 'view == workbench.explorer.fileView && elevenex.compact', group: 'navigation@0' }, { command: 'elevenex.code.upload', when: 'view == workbench.explorer.fileView', group: 'navigation@10' }, { command: 'elevenex.code.upload-folder', when: 'view == workbench.explorer.fileView', group: '1_transfer@2' }, { command: 'elevenex.code.download', when: 'view == workbench.explorer.fileView', group: '1_transfer@3' }] },
     commands: [
-      { command: 'elevenex.code.preview-html', title: 'Preview HTML', icon: '$(open-preview)' },
-      { command: 'elevenex.code.preview-html-source', title: 'Open HTML Source', icon: '$(code)' },
-      { command: 'elevenex.code.refresh-html-preview', title: 'Refresh HTML Preview', icon: '$(refresh)' },
+      { command: 'elevenex.code.preview-html', title: 'Open Preview', category: 'HTML', icon: '$(open-preview)' },
+      { command: 'elevenex.code.preview-html-side', title: 'Open Preview to the Side', category: 'HTML', icon: '$(open-preview)' },
+      { command: 'elevenex.code.preview-html-source', title: 'Show Source', category: 'HTML', icon: '$(go-to-file)' },
+      { command: 'elevenex.code.refresh-html-preview', title: 'Refresh Preview', category: 'HTML', icon: '$(refresh)' },
       { command: 'elevenex.code.upload', enablement: '!elevenex.transferRunning', title: 'Upload Files…', category: 'Task', icon: '$(cloud-upload)' },
       { command: 'elevenex.code.upload-folder', enablement: '!elevenex.transferRunning', title: 'Upload Folder…', category: 'Task', icon: '$(new-folder)' },
       { command: 'elevenex.code.download', enablement: '!elevenex.transferRunning', title: 'Download…', category: 'Task', icon: '$(cloud-download)' },
       { command: 'elevenex.code.find-file', title: 'Find file', icon: '$(search)' }, { command: 'elevenex.code.browse-files', title: 'Browse task files', icon: '$(files)' }, { command: 'elevenex.code.dismiss-files', title: 'Back to editor (Esc)', icon: '$(arrow-left)' }, { command: 'elevenex.code.reconnect', title: 'Reconnect task workspace' }, { command: 'elevenex.code.reconcile-save', title: 'Inspect unconfirmed task save' }, { command: 'elevenex.code.return-to-chat', title: 'Return to chat', enablement: 'elevenex.embedded' }],
-    keybindings: [{ command: 'elevenex.code.find-file', key: 'ctrl+p', mac: 'cmd+p', when: 'elevenex.compactFiles && !inQuickOpen' }, { command: 'list.toggleExpand', key: 'enter', mac: 'enter', when: 'elevenex.compactFiles && filesExplorerFocus && listFocus && explorerResourceIsFolder && !inputFocus' }, { command: 'explorer.openAndPassFocus', key: 'enter', mac: 'enter', when: 'elevenex.compactFiles && filesExplorerFocus && listFocus && !explorerResourceIsFolder && !inputFocus' }, { command: 'elevenex.code.browse-files', key: 'ctrl+shift+e', mac: 'cmd+shift+e', when: 'elevenex.compact' }, { command: 'elevenex.code.browse-files', key: 'ctrl+b', mac: 'cmd+b', when: 'elevenex.compact' }, { command: 'elevenex.code.dismiss-files', key: 'ctrl+b', mac: 'cmd+b', when: 'elevenex.compactFiles && elevenex.hasEditors' }, { command: 'elevenex.code.dismiss-files', key: 'escape', when: 'elevenex.compactFiles && elevenex.hasEditors && !inputFocus && !contextMenuVisible && !listFindWidgetVisible' }, { command: 'workbench.action.quickTextSearch', key: 'ctrl+shift+f', mac: 'cmd+shift+f', when: 'elevenex.compact' }, { command: 'elevenex.code.return-to-chat', key: 'ctrl+shift+r', mac: 'cmd+shift+r', when: 'elevenex.embedded' }],
+    keybindings: [{ command: 'elevenex.code.preview-html', key: 'ctrl+shift+v', mac: 'cmd+shift+v', when: htmlPreviewKeys }, { command: 'elevenex.code.preview-html-side', key: 'ctrl+k v', mac: 'cmd+k v', when: htmlPreviewKeys }, { command: 'elevenex.code.preview-html-source', key: 'ctrl+shift+v', mac: 'cmd+shift+v', when: htmlPreviewActive }, { command: 'elevenex.code.find-file', key: 'ctrl+p', mac: 'cmd+p', when: 'elevenex.compactFiles && !inQuickOpen' }, { command: 'list.toggleExpand', key: 'enter', mac: 'enter', when: 'elevenex.compactFiles && filesExplorerFocus && listFocus && explorerResourceIsFolder && !inputFocus' }, { command: 'explorer.openAndPassFocus', key: 'enter', mac: 'enter', when: 'elevenex.compactFiles && filesExplorerFocus && listFocus && !explorerResourceIsFolder && !inputFocus' }, { command: 'elevenex.code.browse-files', key: 'ctrl+shift+e', mac: 'cmd+shift+e', when: 'elevenex.compact' }, { command: 'elevenex.code.browse-files', key: 'ctrl+b', mac: 'cmd+b', when: 'elevenex.compact' }, { command: 'elevenex.code.dismiss-files', key: 'ctrl+b', mac: 'cmd+b', when: 'elevenex.compactFiles && elevenex.hasEditors' }, { command: 'elevenex.code.dismiss-files', key: 'escape', when: 'elevenex.compactFiles && elevenex.hasEditors && !inputFocus && !contextMenuVisible && !listFindWidgetVisible' }, { command: 'workbench.action.quickTextSearch', key: 'ctrl+shift+f', mac: 'cmd+shift+f', when: 'elevenex.compact' }, { command: 'elevenex.code.return-to-chat', key: 'ctrl+shift+r', mac: 'cmd+shift+r', when: 'elevenex.embedded' }],
   },
 };
 export function codePolicy(authority: string, nonce: string, extensionWorker = false, hashes: readonly string[] = [], shellOrigin = 'app://elevenex'): string {

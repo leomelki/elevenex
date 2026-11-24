@@ -56,6 +56,7 @@ app.whenReady().then(async () => {
 <img src="../diagram.svg" alt="Task diagram">
 <a href="./next.htm">Next page</a>
 <a id="external" href="https://example.invalid/">External</a>
+<div style="height: 3000px"></div>
 <script>document.querySelector('h1').textContent = 'Script ran'</script>`);
     await writeFile(join(repository, 'site', 'preview.css'), 'h1 { color: rgb(16, 80, 120); }');
     await writeFile(join(repository, 'site', 'next.htm'), '<h1>Second page</h1>');
@@ -159,10 +160,19 @@ app.whenReady().then(async () => {
       await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...position });
       for (const type of ['mousePressed', 'mouseReleased']) await window.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, button: 'left', clickCount: 1, ...position });
     };
-    const page = () => frame.framesInSubtree.find(child => child.url.startsWith('https://elevenex-preview-'));
+    // The webview document that owns the page frames, and its visible page.
+    const outer = () => frame.framesInSubtree.find(child => child.url.includes('/fake.html') &&
+      child.parent?.url.includes('extensionId=elevenex.task-workspace'));
+    const view = expression => outer()?.executeJavaScript(expression);
+    const currentOrigin = async () => {
+      const source = await view("document.querySelector('#stage iframe:not(.incoming)')?.src ?? ''").catch(() => '');
+      return source ? new URL(source).origin : undefined;
+    };
     const inspectPage = async expression => {
+      const origin = await currentOrigin();
+      if (!origin) return;
       const { targetInfos } = await window.webContents.debugger.sendCommand('Target.getTargets');
-      const preview = targetInfos.find(info => info.type === 'iframe' && info.url === page()?.url);
+      const preview = targetInfos.find(info => info.type === 'iframe' && info.url.startsWith(origin + '/'));
       if (!preview) return;
       const { sessionId } = await window.webContents.debugger.sendCommand('Target.attachToTarget', { targetId: preview.targetId, flatten: true });
       try {
@@ -172,35 +182,58 @@ app.whenReady().then(async () => {
         await window.webContents.debugger.sendCommand('Target.detachFromTarget', { sessionId }).catch(() => undefined);
       }
     };
-    await click('Preview HTML');
-    await wait(page, 'HTML preview did not load from a single click');
+    const tab = label => frame.executeJavaScript(`!!document.querySelector('.tab[aria-label^=${JSON.stringify(label)}]')`);
+    await click('Open Preview');
+    await wait(currentOrigin, 'HTML preview did not load from a single click');
     await wait(() => inspectPage(`document.querySelector('h1')?.textContent === 'Task HTML preview' &&
       getComputedStyle(document.querySelector('h1')).color === 'rgb(16, 80, 120)' &&
       getComputedStyle(document.querySelector('h1')).fontSize === '36px' &&
       document.querySelector('img')?.naturalWidth === 40`), 'HTML, relative stylesheet or local image did not render');
     assert.equal(await inspectPage('typeof window.elevenex'), 'undefined');
-    await inspectPage("document.querySelector('a').click()").catch(() => undefined);
-    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Second page'"), 'Relative HTML link did not navigate');
-    await click('Refresh HTML Preview');
-    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Task HTML preview'"), 'Refresh did not return to the previewed file');
-    const previousOrigin = new URL(page().url).origin;
-    await inspectPage("document.querySelector('#external').click()").catch(() => undefined);
+    await wait(async () => /Scripts don’t run/.test(await view("document.getElementById('notice').hidden ? '' : document.getElementById('notice-text').textContent")), 'Blocked page script was not explained');
+    assert.equal(await inspectPage("document.querySelector('h1').textContent"), 'Task HTML preview', 'Page scripts must stay blocked');
+
+    // External links ask before leaving, and never navigate the preview.
+    const previousOrigin = await currentOrigin();
+    await inspectPage("document.querySelector('#external').click()");
+    const confirmation = "(() => { const widget = document.querySelector('.quick-input-widget'); return !!widget && widget.style.display !== 'none' && widget.textContent.includes('https://example.invalid/'); })()";
+    await wait(() => frame.executeJavaScript(confirmation), 'External link was not confirmed');
+    for (const type of ['keyDown', 'keyUp']) await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await wait(async () => !(await frame.executeJavaScript(confirmation)), 'Link confirmation did not close');
     assert.ok(!frame.framesInSubtree.some(child => child.url.startsWith('https://example.invalid')), 'Preview must remain in the task');
-    await wait(() => button('Open HTML Source', true), 'Missing return-to-source control');
+    assert.equal(await currentOrigin(), previousOrigin);
+
+    // Editing the source keeps the reader's place.
+    await inspectPage('scrollTo(0, 900)');
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await wait(() => button('Show Source', true), 'Missing return-to-source control');
     for (const type of ['keyDown', 'keyUp']) await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-    await wait(() => button('Preview HTML'), 'Open HTML Source did not return to the source tab');
+    await wait(() => button('Open Preview'), 'Show Source did not return to the source tab');
     const command = name => frame.executeJavaScript(`import('/assets/out/vs/workbench/workbench.web.main.internal.js').then(({commands}) => commands.executeCommand(${JSON.stringify(name)}))`);
     await command('workbench.action.focusActiveEditorGroup');
     await command('editor.action.selectAll');
-    const updated = '<!doctype html><h1>Updated after saving</h1>';
+    const updated = '<!doctype html><h1>Updated after saving</h1><a href="./next.htm">Next page</a><div style="height: 3000px"></div>';
     await window.webContents.debugger.sendCommand('Input.insertText', { text: updated });
     await command('workbench.action.files.save');
     await wait(async () => (await readFile(join(worktree, 'site', 'Preview page.HTML'), 'utf8')).includes(updated), 'HTML source did not save');
     // Return to the retained preview tab directly. Opening the preview command
-    // again would refresh it independently of the save subscription.
+    // again only reveals it.
     await command('workbench.action.nextEditorInGroup');
-    await wait(() => page() && new URL(page().url).origin !== previousOrigin &&
-      inspectPage("document.querySelector('h1')?.textContent === 'Updated after saving'"), 'Retained HTML preview did not refresh on save');
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Updated after saving'"), 'Retained HTML preview did not refresh on save');
+    const restored = await inspectPage('scrollY');
+    assert.ok(Math.abs(restored - 900) <= 2, `Refresh did not keep the scroll position (${restored})`);
+
+    // Following a link retargets the tab, Refresh and Show Source.
+    await inspectPage("document.querySelector('a').click()");
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Second page'"), 'Relative HTML link did not navigate');
+    await wait(() => tab('Preview · next.htm'), 'Preview title did not follow navigation');
+    await click('Refresh Preview');
+    await wait(async () => (await view("document.querySelectorAll('#stage iframe').length")) === 1 &&
+      inspectPage("document.querySelector('h1')?.textContent === 'Second page'"), 'Refresh did not stay on the current page');
+
+    // An agent's disk edit refreshes the visible preview without a save.
+    await writeFile(join(worktree, 'site', 'next.htm'), '<h1>Edited on disk</h1>');
+    await wait(() => inspectPage("document.querySelector('h1')?.textContent === 'Edited on disk'"), 'Disk edit did not refresh the preview', 20_000);
     assert.equal(await frame.executeJavaScript("document.querySelectorAll('.tab[aria-label^=\"Preview ·\"]').length"), 1);
     window.webContents.debugger.detach();
     return finish('HTML_PREVIEW_SMOKE_OK');

@@ -1,9 +1,9 @@
 export const HTML_PREVIEW_EXTENSION = 'elevenex.task-workspace';
 export const HTML_PREVIEW_VIEW = 'elevenex.htmlPreview';
 
-// Preview styles can be inline. The private session routes stylesheet URLs
-// through the same checkout allowlist as other resources.
-export const STATIC_PREVIEW_POLICY = "script-src 'none'; connect-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; form-action 'none'";
+// Message channels between an HTML preview page's bridge and its webview.
+export const PREVIEW_BRIDGE_CHANNEL = 'elevenex-html-preview';
+export const PREVIEW_HOST_CHANNEL = 'elevenex-html-preview-host';
 
 const PREVIEW_ASSETS = '/assets/out/vs/workbench/contrib/webview/browser/pre';
 

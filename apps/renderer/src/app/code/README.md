@@ -255,14 +255,28 @@ The workbench owns explorer, tabs, Quick Open, search, editing, language basics
 and backups. Its built-in Markdown preview commands work in the side panel and
 separate Code window, including images resolved relative to a task file.
 
-Choose **Preview HTML** in an HTML editor’s title bar, the Explorer context
-menu, or the Command Palette. It opens the saved `.html` or `.htm` file in a
-reusable editor tab at the current width. **Open HTML Source** returns to the
-source tab. The preview updates when the source is saved and **Refresh HTML
-Preview** reloads it and its assets. Relative links to other HTML files and
-workspace CSS, images, fonts and media use the same checkout on local and SSH
-machines. This is a static preview. For apps that need JavaScript, APIs or a
-build step, use the Task Browser with the app’s development server.
+Choose **Open Preview** in an HTML editor’s title bar, the Explorer context
+menu, the Command Palette (**HTML: Open Preview**) or press `Ctrl/Cmd+Shift+V`.
+With room for both, as in the expanded panel, the preview opens beside its
+source and keeps focus in the editor. In the compact side panel it opens as a
+tab in the same group. **Open Preview to the Side** (`Ctrl/Cmd+K V`, or
+Alt-click the title action) always splits. One reusable preview tab follows the
+page you are reading: relative links retarget its title, **Refresh Preview** and
+**Show Source**.
+
+The preview reloads shortly after a save of an HTML, CSS or SVG file in the
+task, or when the page's directory, an ancestor or a subdirectory changes on
+disk, including agent edits. A hidden preview reloads when shown. Each version
+loads out of sight and replaces the previous one at the same scroll position,
+so edits neither flash nor jump. Relative links, workspace CSS, images, fonts
+and media use the same checkout on local and SSH machines.
+
+This is a static preview. The page's scripts don't run and it loads nothing from
+the network. A dismissible notice says when scripts or remote resources were
+blocked. Clicking an external link asks before opening it in the system browser
+or copying it. Missing files and connection failures show a retryable state.
+For apps that need JavaScript, APIs or a build step, use the Task Browser with
+the app’s development server.
 
 Chrome uses the upstream textarea/CPU editor paths for predictable
 embedded input/rendering. The app supplies its local fonts and token-derived
@@ -325,9 +339,19 @@ provider. Preview origins have no direct task API access or external network acc
 HTML uses an app-owned webview wrapper around a separate, sandboxed document
 origin. Its short-lived preview URL is scoped to the visible owning workbench,
 backend scope and checkout generation. The protocol serves only allowlisted
-static file types via the existing confined read operation. It blocks scripts,
-forms, nested frames and external requests. The lease is replaced on refresh
-and revoked on close or workspace reset. Neither preview needs a listener port.
+static file types via the existing confined read operation. Its CSP admits one
+script: a fixed bridge served from a dot-prefixed path no checkout file can
+occupy (`html-preview-bridge.ts`). The page's own scripts, inline handlers and
+`javascript:` URLs stay blocked, as do forms, popups, top navigation, nested
+frames, workers and network connections. The sandbox includes
+`allow-same-origin` only so the page can load its own files. That keyword can
+escape a sandbox only when the frame shares its parent's origin, and each
+preview has its own unique origin. The bridge reports scroll position, the
+current document and blocked resources to its wrapper, restores a position on
+request, and routes external link clicks to an editor confirmation. Main opens
+a confirmed `http(s)` link only for the focused, active editor window, never for
+another preview origin. The lease is replaced on refresh and revoked on close or
+workspace reset. Neither preview needs a listener port.
 
 Filename and text-search registration use upstream's proposed provider APIs,
 explicitly enabled only for the bundled extension. Their installed definitions

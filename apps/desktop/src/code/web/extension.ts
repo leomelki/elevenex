@@ -333,7 +333,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const files = new TaskFiles(base, root, new SaveLedger(context.workspaceState));
   registerTransfers(context, root, (operation, input) => files.call(operation, input));
   const layout = new CompactLayout(context.workspaceState, (filesOpen, hasEditors) => files.call('presentation', {filesOpen, hasEditors}));
-  registerHtmlPreview(context, root, layout, (operation, input, signal) => files.call(operation, input, signal));
+  registerHtmlPreview(context, root, layout, (operation, input, signal) => files.call(operation, input, signal), files.onDidChangeFile);
   registerLinkedFiles(context, layout, (operation, input) => files.call(operation, input));
   context.subscriptions.push(layout,
     vscode.commands.registerCommand('elevenex.code.find-file', () => vscode.commands.executeCommand('workbench.action.quickOpen')),

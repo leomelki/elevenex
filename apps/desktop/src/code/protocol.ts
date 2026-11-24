@@ -13,7 +13,7 @@ import { codeTransferCall } from './transfer-client';
 import { CodeLinks } from './links';
 import { CodeTransfers } from './transfers';
 import type { TransferDialogs } from './transfer-contracts';
-import { HtmlPreview } from './html-preview';
+import { externalLinkUrl, HtmlPreview } from './html-preview';
 
 const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
 /** A private session-local HTTPS handler, not an Internet or loopback listener. */
@@ -42,6 +42,7 @@ export class CodeProtocol {
     originIdentity = workspace.storageIdentity,
     private readonly presented: (filesOpen: boolean, hasEditors: boolean) => void = () => undefined,
     private readonly transferDialogs?: TransferDialogs,
+    private readonly openExternal: (url: string) => boolean = () => false,
   ) {
     this.links = new CodeLinks(this.client, this.lifetime.signal);
     this.authority = `w-${originIdentity.slice(0, 32)}.${originIdentity.slice(32)}.code.elevenex.invalid`;
@@ -132,13 +133,19 @@ export class CodeProtocol {
     finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
     let input: Record<string, unknown>;
     try { input = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { return new Response(null, { status: 400 }); }
-    if (operation === 'html-preview' || operation === 'html-preview-close') {
+    if (operation === 'html-preview' || operation === 'html-preview-close' || operation === 'html-preview-open-external') {
       const { windowId, target: { scopeId, taskId }, workspace: { identity: generation }, transportRevision } = this;
       if (input['generation'] !== generation || input['transportRevision'] !== transportRevision)
         return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
       if (operation === 'html-preview-close') {
         this.htmlPreview.close(input['origin']);
         return Response.json({ accepted: true }, { headers });
+      }
+      if (operation === 'html-preview-open-external') {
+        // The workbench confirms each link first. Main still validates the URL
+        // and requires the visible, focused editor window.
+        const url = externalLinkUrl(input['url']);
+        return Response.json({ accepted: !!url && this.active && this.ready && this.openExternal(url) }, { headers });
       }
       const current = () => !this.closed && this.active && this.ready && this.windowId === windowId &&
         this.workspace.identity === generation && this.transportRevision === transportRevision &&
