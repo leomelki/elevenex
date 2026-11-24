@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-/** The default progressive page starts at the tail on its first rendered frame. */
+/** The default progressive page starts at the tail and follows live output. */
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
@@ -73,6 +73,43 @@ export default async function* (capture) {
         .find(row => row.getAttribute('data-chat-anchor') === id)?.getBoundingClientRect().top, anchor.id);
       assert.ok(top !== undefined && Math.abs(top - anchor.top) < 2,
         `Refresh moved ${anchor.id} from ${anchor.top}px to ${top ?? 'outside the window'}`);
+
+      await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.scenario('tools-running', 102));
+      await capture.component('ex-session-chat', owner => owner.store.refresh());
+      await capture.waitFor(() => document.querySelector('ex-session-chat ex-tool-step'));
+      await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '101' }));
+      await capture.waitFor(() => document.querySelector('ex-session-chat ex-chat'));
+      await capture.component('ex-connected-workspace-demo', owner => {
+        owner.fixture.chat.appendAssistant('Fresh activity at reopen.\n\n' + 'The agent is reporting its progress.\n\n'.repeat(36), 102);
+        owner.fixture.chat.holdReads(true);
+      });
+      await capture.component('ex-machine-workspace', owner => owner.store.selectSession({ taskId: '11', sessionId: '102' }));
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-session-chat ex-tool-step')), false);
+      const firstPaint = await capture.component('ex-connected-workspace-demo', async owner => {
+        owner.fixture.chat.holdReads(false);
+        for (let frame = 0; frame < 180; frame++) {
+          await new Promise(requestAnimationFrame);
+          const viewport = document.querySelector('ex-session-chat .viewport');
+          if (viewport?.textContent.includes('Fresh activity at reopen.')) {
+            const overflow = viewport.scrollHeight - viewport.clientHeight;
+            return { gap: overflow - viewport.scrollTop, overflow };
+          }
+        }
+        throw new Error('Fresh conversation did not render');
+      });
+      assert.ok(firstPaint.overflow > 0 && Math.abs(firstPaint.gap) <= 1, JSON.stringify(firstPaint));
+      await capture.component('ex-connected-workspace-demo', owner => {
+        owner.fixture.chat.appendAssistant('Later live output.\n\n' + 'More progress from the agent.\n\n'.repeat(16), 102);
+      });
+      await capture.waitFor(() => {
+        const viewport = document.querySelector('ex-session-chat .viewport');
+        return viewport?.textContent.includes('Later live output.') &&
+          Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop) <= 1;
+      });
+      yield { name: `${theme}-${narrow ? 'narrow-reduced' : 'full'}-running-reopened`,
+        inspect: ['ex-chat-scroll .viewport', 'ex-composer'] };
+      await capture.component('ex-connected-workspace-demo', owner => owner.fixture.chat.scenario('history', 102));
+      await capture.component('ex-session-chat', owner => owner.store.refresh());
     }
   }
 }

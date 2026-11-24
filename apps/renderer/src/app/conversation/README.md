@@ -131,9 +131,11 @@ range subscriptions are released with the rail. The `/conversation` preview has
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
 End following also reconciles viewport-only height changes, including composer
-growth, without marking existing messages unread. The connected session owner
-mounts history and configured controls together after its first page. A cached
-latest window renders and positions immediately while refreshing. A different
+growth, without marking existing messages unread. A late scroll event from the
+previous bottom position or a transient restoration of that offset preserves
+following while layout settles. The connected session owner mounts history and
+configured controls together after its first page. A cached settled window
+renders and positions immediately while refreshing. A different
 session gets fresh scroll/disclosure ownership; same-session refresh and verified
 same-machine recovery retain the mounted view and reading position. Local session
 creation keeps its immediate editable welcome through the durable receipt.

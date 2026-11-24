@@ -405,6 +405,36 @@ describe("connected chat reply rendering", () => {
     expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
   });
 
+  it('opens a recently running session on fresh tool activity', async () => {
+    const running = { ...state, phase: 'running' as const, canInterrupt: true };
+    const prompt = item('prompt', 'user', 'Run verification');
+    const tool = (id: string, command: string) => ({
+      ...item(id, 'tool_use', ''), toolId: id, toolKind: 'bash', toolName: 'Bash',
+      input: JSON.stringify({ command }),
+    });
+    const { fixture, root, bridge } = setup([prompt, tool('old-call', 'pnpm lint')], running);
+    await settle(fixture);
+    expect(root.querySelector('ex-tool-step')?.textContent).toContain('pnpm lint');
+    fixture.componentInstance.store.setDraft('Retain my writing');
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(() => undefined));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 3 });
+    await settle(fixture);
+
+    let resolve!: (result: BackendResult<SessionChatPage>) => void;
+    bridge.sessionChatRead.mockImplementationOnce(() => new Promise(yes => { resolve = yes; }));
+    fixture.componentRef.setInput('selection', { scopeId: 'scope', taskId: 1, sessionId: 2 });
+    await settle(fixture);
+    expect(root.querySelector('ex-tool-step')).toBeNull();
+    expect(bridge.sessionChatRead.mock.calls.at(-1)?.[1].after).toBeUndefined();
+
+    resolve({ ok: true, value: { taskId: 1, sessionId: 2, cursor: 'fresh', reset: true,
+      before: null, events: [], state: running, items: [prompt, tool('new-call', 'pnpm build')] } });
+    await settle(fixture);
+    expect(root.querySelector('ex-tool-step')?.textContent).toContain('pnpm build');
+    expect(root.querySelector('[data-work-step].step-enter')).toBeNull();
+    expect(fixture.componentInstance.composer()!.draft()).toBe('Retain my writing');
+  });
+
   it('releases seen-view foreground listeners on teardown', async () => {
     const windowAdded = vi.spyOn(window, 'addEventListener');
     const documentAdded = vi.spyOn(document, 'addEventListener');

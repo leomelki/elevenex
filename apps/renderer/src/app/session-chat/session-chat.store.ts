@@ -388,7 +388,12 @@ export class SessionChatStore {
     this.pendingQueue.set(null);
     if (!recovery) this.queuedDeliveries.set(new Map());
     if (!recovery && !startingHandoff) { this.viewRevision.update(value => value + 1); this.turnArrivals.set(new Map()); this.queueRenderIds.set(new Map()); }
-    const cached = this.drafts.snapshot(selection.sessionId);
+    const snapshot = this.drafts.snapshot(selection.sessionId);
+    // A running turn can change its visible tools while another session is
+    // selected. Open on a fresh bounded page so that work paints only once.
+    const cachedLive = snapshot && (snapshot.state.phase === 'running' ||
+      snapshot.state.phase === 'waiting' || !!snapshot.state.dispatchingPrompts?.length);
+    const cached = !readOnly && !this.offline() && cachedLive ? undefined : snapshot;
     if (!recovery) { this.items.set(cached?.items ?? []); this.leadingPrompt.set(cached?.leadingPrompt ?? null); this.trailingContext.set([]); this.state.set(cached?.state ?? null); }
     this.before.set(recovery ? previousBefore : cached?.before ?? null);
     if (!recovery) this.next.set(null);

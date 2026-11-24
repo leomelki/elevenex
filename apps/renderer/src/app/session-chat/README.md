@@ -285,7 +285,7 @@ open shows a transcript and composer skeleton after 150 ms. The real chat
 renders as soon as the page is ready, with the latest reply positioned before
 paint. The placeholder surface crossfades to that view over 140 ms while the
 composer stays interactive. Reduced motion swaps the surface immediately.
-Cached opens, new-session drafts and background history reads use their
+Cached settled opens, new-session drafts and background history reads use their
 existing content immediately. History prefetch preserves the reading position.
 
 An override can start in window mode at **320 records / 2 MiB** and defer
@@ -308,10 +308,13 @@ Omission retains legacy 80-item pages; older engines may
 ignore the new option and continue returning those pages. Main validates the
 option and the corresponding reply bound. Active-session fallback hydration shares
 the backend's in-flight source/runtime reads; cancelled responses skip projection.
-Cached reopening renders immediately and revalidates from its saved incremental
-cursor, without blocking the composer or repeating an initial history read when
-the feed is still current. The backend provider's source-history API remains a
-full-history read, so a cold provider parse can still dominate initial latency.
+Cached settled conversations render immediately and revalidate from their saved
+incremental cursor. When the last snapshot has a running, waiting or dispatching
+turn, an online reopen paints from a fresh bounded page, so tool activity that
+changed during navigation appears on the first transcript paint. Offline
+reopening can still use the cached snapshot. The backend provider's source-history
+API remains a full-history read, so a cold provider parse can still dominate
+initial latency.
 
 ### Saved turn activity
 
