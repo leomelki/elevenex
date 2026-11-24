@@ -63,6 +63,10 @@ describe('Code-first browser over the real MCP SDK', () => {
           .map((tool) => tool.name)
           .sort(),
       ).toEqual(['browser_reset', 'browser_run', 'browser_wait_user']);
+      const browserRun = listed.tools.find((tool) => tool.name === 'browser_run');
+      // Keep the published description, including the scope suffix, compact
+      // for Antigravity. The full instructions are returned by the tool.
+      expect(browserRun?.description?.length).toBeLessThanOrEqual(256);
       const guide = await client.callTool({
         name: 'browser_run',
         arguments: {},
