@@ -57,6 +57,7 @@ export interface PiSessionSnapshotPayload extends PiRuntimeStatePayload {
 }
 
 export interface PiRuntimeState {
+  persistedSelectionLoaded?: boolean;
   activity?: import('./pi-activity.js').PiActivity;
   piSessionPath: string | null;
   cachedWorktreePath: string | null;

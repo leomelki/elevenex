@@ -730,6 +730,7 @@ export type ClaudeRuntimeEvent =
         pendingPermissionRequest: ClaudePermissionRequest | null;
         pendingUserInputRequest: ClaudeUserInputRequest | null;
         pendingPrompts: ClaudePendingPrompt[];
+        dispatchingPrompts?: ClaudeRuntimeStatePayload['dispatchingPrompts'];
         queuePaused: boolean;
       };
     }

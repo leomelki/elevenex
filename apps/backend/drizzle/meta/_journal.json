@@ -393,6 +393,13 @@
       "when": 1795466243083,
       "tag": "0055_turn_change_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1795477315321,
+      "tag": "0056_session_delegation",
+      "breakpoints": true
     }
   ]
 }

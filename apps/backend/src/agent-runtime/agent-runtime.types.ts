@@ -66,7 +66,18 @@ export interface AgentProviderModelCatalog extends AgentProviderModelCatalogPayl
   displayName: string;
 }
 
-export interface AgentRuntimeStatePayload {
+export interface AgentRunLifecycle {
+  sessionState?: string | null;
+  runPhase?: string | null;
+  backgroundWork?: readonly unknown[] | null;
+  pendingPrompts?: readonly unknown[] | null;
+  dispatchingPrompts?: readonly unknown[] | null;
+  queuePaused?: boolean | null;
+  /** Provider task history, used to describe live work. */
+  tasks?: readonly unknown[] | null;
+}
+
+export interface AgentRuntimeStatePayload extends AgentRunLifecycle {
   sessionId: number;
   reasoningEffort?: AgentReasoningEffort | null;
   fastMode?: boolean;
@@ -147,6 +158,16 @@ export interface AgentImageInput {
   data: string;
 }
 
+export type AgentPromptDisposition = 'running' | 'queued' | 'steered';
+
+export interface AgentPromptOptions {
+  human?: boolean;
+  queue?: boolean;
+  /** Return when the harness owns this specific prompt. */
+  waitForCompletion?: boolean;
+  onAccepted?: (disposition: AgentPromptDisposition) => void;
+}
+
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
@@ -168,12 +189,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: {
-      human?: boolean;
-      queue?: boolean;
-      /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
-      waitForCompletion?: boolean;
-    },
+    options?: AgentPromptOptions,
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;

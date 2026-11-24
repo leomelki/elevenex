@@ -150,6 +150,24 @@ function fixture(nativeSessionId = '-1', changes?: Pick<TurnChangesService, 'beg
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('keeps a delegated model and variant through project catalog initialization', async () => {
+    const f = fixture();
+    const selection = {
+      ...await f.sessions.findOne(1),
+      agentSelection: { provider: 'opencode', model: 'local/reviewer', reasoningEffort: 'thorough' },
+    };
+    f.sessions.findOne.mockResolvedValue(selection);
+    try {
+      const receipt = jest.fn();
+      await f.provider.submitPrompt(1, 'Review', undefined, undefined, { onAccepted: receipt });
+      await tick();
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({
+        model: { providerID: 'local', modelID: 'reviewer' }, variant: 'thorough',
+      }), expect.anything());
+    } finally { f.provider.onModuleDestroy(); }
+  });
+
   it('lists owned child activity and stops only that child after native confirmation', async () => {
     const f = fixture('s');
     f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));

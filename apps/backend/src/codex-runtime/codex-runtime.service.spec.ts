@@ -1761,6 +1761,40 @@ describe('CodexRuntimeService', () => {
     expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
   });
 
+  it('uses durable delegation options and queues a second send racing the cold first turn', async () => {
+    const { service, appServer, sessionsService } = createService();
+    const delegated = {
+      ...session,
+      agentSelection: { provider: 'codex', model: 'gpt-test', reasoningEffort: 'high' },
+    };
+    sessionsService.findOne.mockResolvedValue(delegated);
+    const wire = wireAppServerTurn(appServer);
+    const first = jest.fn();
+    const second = jest.fn();
+    const running = service.submitPrompt(7, 'first', undefined, undefined, { onAccepted: first });
+    try {
+      await service.submitPrompt(7, 'second', undefined, undefined, {
+        waitForCompletion: false, onAccepted: second,
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(first).toHaveBeenCalledWith('running');
+      expect(second).toHaveBeenCalledWith('queued');
+      expect(appServer.request).toHaveBeenCalledWith('thread/start', expect.objectContaining({
+        model: 'gpt-test', modelReasoningEffort: 'high',
+      }));
+      expect(wire.turnStartParams).toMatchObject({ input: [{ type: 'text', text: 'first' }] });
+      expect((await service.getRuntimeState(7)).pendingPrompts).toMatchObject([{ prompt: 'second' }]);
+    } finally {
+      await service.clearPendingPrompts(7);
+      wire.notificationHandler({
+        method: 'turn/completed',
+        params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+      });
+      await running;
+      service.onModuleDestroy();
+    }
+  });
+
   it('rejects an unaccepted desktop send without starting a turn', async () => {
     const { service, appServer } = createService();
     await service.cleanupSession(7);

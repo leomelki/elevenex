@@ -4,6 +4,11 @@ import { workspaces } from './workspaces.schema.js';
 import { sessionFolders } from './session-folders.schema.js';
 
 export type ClaudeModelSelection = { model: string | null };
+export type SessionAgentSelection = {
+  provider: string;
+  model?: string | null;
+  reasoningEffort?: string | null;
+};
 
 export const sessions = sqliteTable(
   'sessions',
@@ -20,6 +25,10 @@ export const sessions = sqliteTable(
     }),
     // Sidebar organization, independent of transcript fork provenance.
     parentSessionId: integer('parent_session_id').references((): AnySQLiteColumn => sessions.id, {
+      onDelete: 'set null',
+    }),
+    // Delegation provenance survives independent desktop moves.
+    delegatedBySessionId: integer('delegated_by_session_id').references((): AnySQLiteColumn => sessions.id, {
       onDelete: 'set null',
     }),
     // Append order within a desktop group; ID breaks ties for migrated rows.
@@ -67,6 +76,9 @@ export const sessions = sqliteTable(
     // delegates model selection to Claude Code.
     claudeModelSelection: text('claude_model_selection', { mode: 'json' })
       .$type<ClaudeModelSelection>(),
+    // Explicit MCP selections survive cold starts. Existing sessions inherit settings.
+    agentSelection: text('agent_selection', { mode: 'json' })
+      .$type<SessionAgentSelection>(),
     codexSessionId: text('codex_session_id').default('-1'),
     piSessionPath: text('pi_session_path').default('-1'),
     opencodeSessionId: text('opencode_session_id').default('-1'),
@@ -91,6 +103,7 @@ export const sessions = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
   },
   (table) => [
+    index('sessions_delegated_by_idx').on(table.delegatedBySessionId),
     index('sessions_nesting_order_idx').on(table.parentSessionId, table.workspaceId, table.nestingOrder, table.id),
     index('sessions_parent_idx').on(table.parentSessionId, table.workspaceId, table.status, table.id),
     index('sessions_repo_activity_idx').on(

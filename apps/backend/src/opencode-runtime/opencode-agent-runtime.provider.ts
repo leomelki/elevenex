@@ -30,6 +30,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentLoginMode,
 } from '../agent-runtime/agent-runtime.types.js';
@@ -168,8 +169,11 @@ export class OpenCodeAgentRuntimeProvider
     return this.catalog.continueLogin(options);
   }
 
-  private async state(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
-    const session = await this.sessions.findOne(sessionId);
+  private async state(
+    sessionId: number,
+    session?: Awaited<ReturnType<SessionsService['findOne']>>,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    session ??= await this.sessions.findOne(sessionId);
     let state = this.states.get(sessionId);
     if (!state) {
       const catalog = await this.catalog.getModelCatalog();
@@ -177,6 +181,7 @@ export class OpenCodeAgentRuntimeProvider
         this.settings.getAgentProviderDefaults('opencode'),
         catalog.models,
         catalog.providerDefaultModelId,
+        session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined,
       );
       state = {
         sessionId,
@@ -355,6 +360,7 @@ export class OpenCodeAgentRuntimeProvider
       entry.resources = resources;
       entry.agent = resources?.defaultAgent;
       state.availableModels = loaded.catalog.models;
+      const selection = session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined;
       if (!state.claudeSessionId && !this.selectionChanged.has(sessionId))
         Object.assign(
           state,
@@ -362,6 +368,7 @@ export class OpenCodeAgentRuntimeProvider
             this.settings.getAgentProviderDefaults('opencode'),
             loaded.catalog.models,
             loaded.catalog.providerDefaultModelId,
+            selection,
           ),
         );
       if (
@@ -370,8 +377,12 @@ export class OpenCodeAgentRuntimeProvider
         !this.selectionChanged.has(sessionId)
       ) {
         const selected = await entry.client.selection(state.claudeSessionId);
-        state.selectedModel = selected.model;
-        state.reasoningEffort = selected.variant;
+        if (!this.selectionChanged.has(sessionId)) {
+          state.selectedModel = selection?.model === undefined ? selected.model : selection.model;
+          state.reasoningEffort = selection?.reasoningEffort === undefined
+            ? selected.variant
+            : selection.reasoningEffort;
+        }
         entry.agent = selected.agent ?? entry.agent;
       }
       state.sessionMetadata = {
@@ -916,7 +927,11 @@ export class OpenCodeAgentRuntimeProvider
     }, { authoritative: true, provider: 'opencode' });
     this.emit('event', {
       type: 'runtime_snapshot',
-      payload: { ...state, liveItems: [...state.liveItems] },
+      payload: {
+        ...state,
+        liveItems: [...state.liveItems],
+        dispatchingPrompts: this.queuedDispatches.current(state),
+      },
     });
   }
   private fail(entry: RuntimeEntry, error: unknown): void {
@@ -940,6 +955,7 @@ export class OpenCodeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ): Promise<void> {
     this.assertNotRewinding(sessionId);
     if (!prompt.trim() && !images?.length)
@@ -975,6 +991,7 @@ export class OpenCodeAgentRuntimeProvider
       )
         state.queuePaused = true;
       this.emit('event', { type: 'run_state', payload: state });
+      options?.onAccepted?.('queued');
       return;
     }
     state.canInterrupt = true;
@@ -1037,6 +1054,7 @@ export class OpenCodeAgentRuntimeProvider
     void entry.run.catch((error) => {
       if (!entry.controller.signal.aborted) this.fail(entry, error);
     });
+    options?.onAccepted?.('running');
   }
   private async run(
     entry: RuntimeEntry,
@@ -1338,20 +1356,23 @@ export class OpenCodeAgentRuntimeProvider
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
     if (model) openCodeModel(model);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
+    this.selectionChanged.add(sessionId);
     state.selectedModel = model;
     if (!model) state.reasoningEffort = null;
     const known = state.availableModels.find((item) => item.id === model);
     if (known && !known.reasoningEfforts?.includes(state.reasoningEffort ?? ''))
       state.reasoningEffort = null;
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { model, reasoningEffort: state.reasoningEffort ?? null });
     this.emit('event', { type: 'run_state', payload: state });
     return state;
   }
   async setReasoningEffort(sessionId: number, effort: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
     const known = state.availableModels.find(
       (item) => item.id === state.selectedModel,
     );
@@ -1359,6 +1380,9 @@ export class OpenCodeAgentRuntimeProvider
       throw new BadRequestException(
         'This model does not support that OpenCode variant.',
       );
+    this.selectionChanged.add(sessionId);
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.emit('event', { type: 'run_state', payload: state });
     return state;

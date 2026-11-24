@@ -1890,6 +1890,26 @@ describe('ClaudeRuntimeService', () => {
     ]);
   });
 
+  it('starts a queued send when the previous run ends during its session read', async () => {
+    const session = await sessionsService.findOne(7);
+    let release!: (value: unknown) => void;
+    sessionsService.findOne.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+    (service as any).initializingRuns.set(7, 'finishing');
+    const accepted = jest.fn();
+    const submit = service.submitPrompt(7, 'Run when available', undefined, undefined, {
+      queue: true, onAccepted: accepted,
+    });
+    (service as any).initializingRuns.delete(7);
+    const dispatch = jest.spyOn(service, 'submitPrompt').mockResolvedValue(undefined);
+    try {
+      release(session);
+      await submit;
+      expect(accepted).toHaveBeenCalledWith('queued');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(dispatch).toHaveBeenCalledWith(7, 'Run when available', undefined, undefined, { human: false });
+    } finally { dispatch.mockRestore(); }
+  });
+
   it('pauses queued prompts on interrupt and resumes them explicitly', async () => {
     const state = (service as any).ensureRuntimeState(7);
     state.pendingPrompts = [
@@ -3083,6 +3103,19 @@ describe('ClaudeRuntimeService', () => {
     expect(result.claudeSessionId).toBe('claude-session-1');
     expect(runtime.close).toHaveBeenCalledTimes(1);
     expect(prewarm).toHaveBeenCalledWith(7);
+  });
+
+  it('hydrates the delegated model and effort from the persisted selection', async () => {
+    sessionsService.findOne.mockResolvedValue({
+      id: 7,
+      worktreePath: '/tmp/project',
+      claudeSessionId: '-1',
+      claudeModelSelection: { model: 'sonnet' },
+      agentSelection: { provider: 'claude', reasoningEffort: 'high' },
+    });
+    expect(await service.getRuntimeState(7)).toMatchObject({
+      selectedModel: 'sonnet', reasoningEffort: 'high',
+    });
   });
 
   it.each(['high', null] as const)(

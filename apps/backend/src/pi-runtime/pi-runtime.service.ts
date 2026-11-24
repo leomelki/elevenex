@@ -25,10 +25,12 @@ import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import type { SessionAgentSelection } from '../database/schema/index.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
   AgentImageInput,
+  AgentPromptOptions,
 } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
 import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
@@ -246,7 +248,7 @@ export class PiRuntimeService
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
 
     if (state.piSessionPath) {
       try {
@@ -271,7 +273,7 @@ export class PiRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     state.authStatus = await this.authService.getStatus();
 
@@ -481,8 +483,7 @@ export class PiRuntimeService
     model: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
-    state.selectedModel = model;
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     const parsed = this.parseModelRef(model);
     if (parsed) {
       const runtime = await this.ensureRuntime(sessionId);
@@ -493,6 +494,9 @@ export class PiRuntimeService
       });
       await this.refreshStateFromRpc(sessionId);
     }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { model });
+    state.selectedModel = model;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -502,13 +506,15 @@ export class PiRuntimeService
     effort: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     const entry = this.runtimes.get(sessionId);
     if (effort !== null && entry) {
       await entry.runtime.send({ type: 'set_thinking_level', level: effort });
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
     }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     if (entry) await this.refreshStateFromRpc(sessionId);
     this.emitRunState(sessionId);
@@ -536,7 +542,7 @@ export class PiRuntimeService
     enabled: boolean,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.fastMode = enabled;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -553,7 +559,7 @@ export class PiRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options: { waitForCompletion?: boolean } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
@@ -567,6 +573,7 @@ export class PiRuntimeService
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
       this.queuePendingPrompt(sessionId, trimmedPrompt, images);
+      options.onAccepted?.('queued');
       return;
     }
 
@@ -575,7 +582,14 @@ export class PiRuntimeService
     let owned = false;
     let onAccepted: (() => void) | undefined;
     const receipt = options.waitForCompletion === false
-      ? new Promise<void>(resolve => { onAccepted = () => { owned = true; resolve(); }; }) : undefined;
+      ? new Promise<void>(resolve => {
+          onAccepted = () => {
+            owned = true;
+            options.onAccepted?.('running');
+            resolve();
+          };
+        })
+      : undefined;
     const task = this.runPrompt(
       sessionId,
       trimmedPrompt,
@@ -616,7 +630,7 @@ export class PiRuntimeService
         `Pi session title eligibility checked session=${sessionId} hasPiSessionPath=${Boolean(session.piSessionPath && session.piSessionPath !== '-1')} currentName=${JSON.stringify(session.name)} shouldGenerate=${isNewSession}`,
       );
 
-      state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+      state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
       state.cachedWorktreePath = session.worktreePath;
       state.runPhase = 'running';
       state.sessionState = 'running';
@@ -1064,7 +1078,7 @@ export class PiRuntimeService
     this.assertSessionOwner(sessionId, generation);
     if (session.status === 'archived')
       throw new ConflictException('Pi session is closed.');
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     let agentConfigDir: string | undefined;
     let entry: PiRuntimeEntry | undefined;
@@ -1127,7 +1141,7 @@ export class PiRuntimeService
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
-      await this.applyConfiguredDefaultModel(sessionId, runtime);
+      await this.applyConfiguredDefaultModel(sessionId, runtime, session.agentSelection);
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
@@ -1164,14 +1178,17 @@ export class PiRuntimeService
   private async applyConfiguredDefaultModel(
     sessionId: number,
     runtime: PiSessionRuntime,
+    agentSelection?: SessionAgentSelection | null,
   ): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (state.piSessionPath) {
+    const pinned = agentSelection?.provider === 'pi' ? agentSelection.model : undefined;
+    if (state.piSessionPath && pinned === undefined) {
       return;
     }
 
-    const configured =
-      this.settingsService.getAgentProviderDefaults('pi').model;
+    const configured = pinned === undefined
+      ? this.settingsService.getAgentProviderDefaults('pi').model
+      : pinned;
     const parsed = this.parseModelRef(configured);
     if (!parsed) {
       return;
@@ -1184,6 +1201,7 @@ export class PiRuntimeService
         modelId: parsed.modelId,
       });
     } catch (error) {
+      if (pinned !== undefined) throw error;
       // A default that Pi rejects (renamed/unavailable model) must not stop the
       // session from starting; it just falls back to Pi's own choice.
       this.logger.warn(
@@ -1860,19 +1878,18 @@ export class PiRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     piSessionPath?: string | null,
+    agentSelection?: SessionAgentSelection | null,
   ): PiRuntimeState {
+    const selection = agentSelection?.provider === 'pi' ? agentSelection : undefined;
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (piSessionPath && piSessionPath !== '-1')
         existing.piSessionPath = piSessionPath;
+      if (selection && !existing.persistedSelectionLoaded)
+        Object.assign(existing, this.startupModelSettings(existing.availableModels, selection));
       return existing;
     }
     const availableModels = this.modelsCache ? [...this.modelsCache] : [];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('pi'),
-      availableModels,
-    );
-
     const state: PiRuntimeState = {
       piSessionPath:
         piSessionPath && piSessionPath !== '-1' ? piSessionPath : null,
@@ -1887,12 +1904,7 @@ export class PiRuntimeService
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('pi').fastMode === true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(availableModels, selection),
       availableModels,
       contextUsage: null,
       sessionMetadata: null,
@@ -1900,6 +1912,20 @@ export class PiRuntimeService
     };
     this.runtimeStates.set(sessionId, state);
     return state;
+  }
+
+  private startupModelSettings(
+    availableModels: readonly PiRuntimeState['availableModels'][number][],
+    selection?: SessionAgentSelection,
+  ) {
+    const defaults = this.settingsService.getAgentProviderDefaults('pi');
+    const startup = resolveAgentStartupSelection(defaults, availableModels, null, selection);
+    return {
+      ...startup,
+      persistedSelectionLoaded: selection !== undefined,
+      fastMode: defaults.fastMode === true &&
+        availableModels.find(model => model.id === startup.selectedModel)?.supportsFastMode === true,
+    };
   }
 
   private emitSessionMetadata(sessionId: number): void {
@@ -1951,6 +1977,7 @@ export class PiRuntimeService
         pendingPermissionRequest: null,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
       },
     });

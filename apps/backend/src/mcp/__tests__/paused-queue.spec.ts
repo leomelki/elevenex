@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import type { AgentPromptOptions } from '../../agent-runtime/agent-runtime.types.js';
+import { SessionEventSubscriptions } from '../session-event-subscriptions.js';
 import { z } from 'zod';
 import { DeltaCursorStore } from '../tool-registry/delta-cursor.store.js';
 import { DeepLinkBuilder } from '../deep-link/deep-link.builder.js';
@@ -70,9 +72,12 @@ function fixture(state: SessionRuntimeSnapshot = paused, provider = 'claude') {
   const runtime = Object.assign(new EventEmitter(), {
     getRuntimeState: jest.fn().mockResolvedValue(state),
     resumePendingPrompts: jest.fn().mockResolvedValue(undefined),
-    submitPrompt: jest.fn().mockResolvedValue(undefined),
+    submitPrompt: jest.fn(async (
+      _id: number, _message: string, _title?: string, _images?: unknown, options?: AgentPromptOptions,
+    ) => { options?.onAccepted?.('queued'); }),
   });
   const sessions = Object.assign(new EventEmitter(), {
+    getSessionLaunchDelivery: jest.fn().mockReturnValue(null),
     findOne: jest.fn(async (id: number) => ({
       id,
       status: 'active',
@@ -82,6 +87,7 @@ function fixture(state: SessionRuntimeSnapshot = paused, provider = 'claude') {
     assertSessionWorkspaceLinked: jest.fn().mockResolvedValue(undefined),
   });
   const services = {
+    sessionEvents: new SessionEventSubscriptions(),
     sessions,
     agentRuntime: { getProvider: jest.fn(() => runtime) },
     conversationExport: {
@@ -271,7 +277,6 @@ describe('explicit paused queue recovery', () => {
     async ({ status, action, state }) => {
       const { ctx, runtime } = fixture(state);
       runtime.getRuntimeState
-        .mockResolvedValueOnce(state)
         .mockResolvedValue({
           ...state,
           pendingPrompts: [
@@ -291,7 +296,7 @@ describe('explicit paused queue recovery', () => {
 
   it('does not resume old work when prompt_session enqueues a new prompt', async () => {
     const { ctx, runtime } = fixture();
-    runtime.getRuntimeState.mockResolvedValueOnce(paused).mockResolvedValue({
+    runtime.getRuntimeState.mockResolvedValue({
       ...paused,
       pendingPrompts: [
         ...paused.pendingPrompts!,
@@ -302,7 +307,10 @@ describe('explicit paused queue recovery', () => {
       { sessionId: 7, prompt: 'New work' },
       ctx,
     );
-    expect(runtime.submitPrompt).toHaveBeenCalledWith(7, 'New work');
+    expect(runtime.submitPrompt).toHaveBeenCalledWith(
+      7, '[Elevenex session message from session #42]\n\nNew work', 'New work',
+      undefined, expect.objectContaining({ waitForCompletion: false }),
+    );
     expect(runtime.resumePendingPrompts).not.toHaveBeenCalled();
     expect(res.data).toMatchObject({
       accepted: true,
@@ -370,9 +378,11 @@ describe('explicit paused queue recovery', () => {
 
       it(`${name} prioritizes ${status} in the subscription race recheck`, async () => {
         const { ctx, runtime } = fixture();
-        runtime.getRuntimeState
-          .mockResolvedValueOnce(running)
-          .mockResolvedValue(state);
+        runtime.getRuntimeState.mockImplementationOnce(async () => {
+          if (name === 'await')
+            runtime.emit('event', { type: 'run_state', payload: { sessionId: 7, ...state } });
+          return running;
+        }).mockResolvedValue(state);
         const res = await wait(ctx);
         expectPrimary(res, status, action);
         expect(runtime.listenerCount('event')).toBe(0);
@@ -448,9 +458,11 @@ describe('explicit paused queue recovery', () => {
 
     it(`${name} catches a pause between its initial read and listener registration`, async () => {
       const { ctx, runtime } = fixture();
-      runtime.getRuntimeState
-        .mockResolvedValueOnce(running)
-        .mockResolvedValue(paused);
+      runtime.getRuntimeState.mockImplementationOnce(async () => {
+          if (name === 'await')
+            runtime.emit('event', { type: 'run_state', payload: { sessionId: 7, ...paused } });
+          return running;
+        }).mockResolvedValue(paused);
       const res = await wait(ctx);
       expect(res.data).toMatchObject({
         status: 'paused',

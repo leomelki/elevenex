@@ -40,6 +40,12 @@ import {
   querySessionHandles,
   type SessionHandleQuery,
 } from './session-handle-query.js';
+import {
+  insertTaskSession,
+  readSessionLaunch,
+  type SessionLaunchDelivery,
+  type SessionLaunchRequest,
+} from './session-creation.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
@@ -94,7 +100,13 @@ export class SessionsService extends EventEmitter {
     isTemporary?: boolean;
     surface?: SessionSurface;
     activeAgentProvider?: AgentProviderId;
+    agentSelection?: schema.SessionAgentSelection;
+    delegatingSessionId?: number;
+    launch?: SessionLaunchRequest;
+    signal?: AbortSignal;
   }) {
+    const prior = dto.launch && this.getSessionLaunch(dto.launch);
+    if (prior) return this.findOne(prior.sessionId);
     const resolved = await this.resolveSessionWorkspace(dto);
     let sessionName = dto.name;
     const surface = this.normalizeSurface(dto.surface);
@@ -118,31 +130,86 @@ export class SessionsService extends EventEmitter {
         : `Session ${sessionCount + 1}`;
     }
 
-    const rows = await this.db
-      .insert(schema.sessions)
-      .values({
-        repoId: dto.repoId,
-        workspaceId: resolved.workspaceId,
-        folderId: dto.folderId ?? null,
-        branchName: resolved.branchName,
-        worktreePath: resolved.worktreePath,
-        transcriptWorktreePath: resolved.worktreePath,
-        name: sessionName,
-        surface,
-        isTemporary: dto.isTemporary ?? false,
-        status: 'created',
-        activeAgentProvider,
-        claudeSessionId: '-1',
-        codexSessionId: '-1',
-        piSessionPath: '-1',
-        hasInjectedWorktreeContext: false,
-      })
-      .returning();
+    const values: typeof schema.sessions.$inferInsert = {
+      repoId: dto.repoId,
+      workspaceId: resolved.workspaceId,
+      folderId: dto.folderId ?? null,
+      branchName: resolved.branchName,
+      worktreePath: resolved.worktreePath,
+      transcriptWorktreePath: resolved.worktreePath,
+      name: sessionName,
+      surface,
+      isTemporary: dto.isTemporary ?? false,
+      status: 'created',
+      activeAgentProvider,
+      claudeSessionId: '-1',
+      codexSessionId: '-1',
+      piSessionPath: '-1',
+      hasInjectedWorktreeContext: false,
+      ...(dto.agentSelection && {
+        agentSelection: dto.agentSelection,
+        ...(activeAgentProvider === 'claude' && dto.agentSelection.model !== undefined
+          ? { claudeModelSelection: { model: dto.agentSelection.model } }
+          : {}),
+      }),
+    };
+    dto.signal?.throwIfAborted();
+    if (dto.launch || dto.delegatingSessionId !== undefined) {
+      if (!resolved.workspaceId || surface !== 'session' || dto.isTemporary ||
+          (dto.delegatingSessionId !== undefined && dto.folderId !== undefined))
+        throw new BadRequestException('Delegation requires a durable task session.');
+      const result = insertTaskSession(this.db, { ...values, workspaceId: resolved.workspaceId }, dto.delegatingSessionId, dto.launch);
+      if (result.created) this.navigationEvents?.invalidate();
+      return this.findOne(result.sessionId);
+    }
+
+    const rows = await this.db.insert(schema.sessions).values(values).returning();
 
     // Return the same navigation metadata as GET /sessions/:id so the client
     // can open this newly created session without another round trip.
     this.navigationEvents?.invalidate();
     return this.findOne(rows[0].id);
+  }
+
+  getSessionLaunch(request: SessionLaunchRequest) {
+    return readSessionLaunch(this.db, request);
+  }
+
+  getSessionLaunchDelivery(sessionId: number): SessionLaunchDelivery {
+    return this.db.select({ delivery: schema.sessionLaunches.delivery })
+      .from(schema.sessionLaunches).where(eq(schema.sessionLaunches.sessionId, sessionId))
+      .get()?.delivery ?? null;
+  }
+
+  claimSessionLaunch(sessionId: number): boolean {
+    return !!this.db.update(schema.sessionLaunches).set({ delivery: 'dispatching' })
+      .where(and(
+        eq(schema.sessionLaunches.sessionId, sessionId),
+        eq(schema.sessionLaunches.delivery, 'ready'),
+      )).returning({ sessionId: schema.sessionLaunches.sessionId }).get();
+  }
+
+  recordSessionLaunchDelivery(sessionId: number, delivery: 'ready' | 'accepted' | 'failed'): void {
+    const result = this.db.update(schema.sessionLaunches).set({ delivery }).where(and(
+      eq(schema.sessionLaunches.sessionId, sessionId),
+      eq(schema.sessionLaunches.delivery, 'dispatching'),
+    )).run();
+    if (result.changes) this.emit('session-launch-delivery', { sessionId, delivery });
+  }
+
+  /** Keep edits to an opted-in session's selection durable across cold starts. */
+  updateSessionAgentSelection(
+    id: number,
+    provider: AgentProviderId,
+    patch: Omit<schema.SessionAgentSelection, 'provider'>,
+  ): void {
+    this.db.transaction(tx => {
+      const session = tx.select({ selection: schema.sessions.agentSelection })
+        .from(schema.sessions).where(eq(schema.sessions.id, id)).get();
+      if (session?.selection?.provider !== provider) return;
+      tx.update(schema.sessions).set({ agentSelection: { ...session.selection, ...patch } })
+        .where(eq(schema.sessions.id, id)).run();
+    }, { behavior: 'immediate' });
   }
 
   private async resolveSessionWorkspace(dto: {
@@ -1347,7 +1414,7 @@ export class SessionsService extends EventEmitter {
     );
   }
 
-  private async resolveInitialAgentProvider(
+  async resolveInitialAgentProvider(
     provider: AgentProviderId | undefined,
   ): Promise<AgentProviderId> {
     const explicit = typeof provider === 'string' ? provider.trim() : '';

@@ -190,6 +190,7 @@ import type {
   AgentForkConversationResult,
   AgentPlanUsage,
   AgentProviderModelCatalogPayload,
+  AgentPromptOptions,
 } from '../agent-runtime/agent-runtime.types.js';
 import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import { SettingsService } from '../settings/settings.service.js';
@@ -328,6 +329,7 @@ interface AgentRuntimeSession {
   transcriptWorktreePath?: string | null;
   claudeSessionId: string | null;
   claudeModelSelection?: schema.ClaudeModelSelection | null;
+  agentSelection?: schema.SessionAgentSelection | null;
   surface?: string;
   agentAutonomyMode?: string | null;
 }
@@ -1722,6 +1724,8 @@ export class ClaudeRuntimeService
   ): Promise<ClaudeRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
     const state = this.ensureSessionState(sessionId, session);
+    if (session.agentSelection?.provider === 'claude')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'claude', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.restartIdleRuntimeForOptionChange(sessionId);
     this.emitRunState(sessionId);
@@ -2504,7 +2508,7 @@ export class ClaudeRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: ClaudeImageInput[],
-    options: { human?: boolean; queue?: boolean } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     let accepted!: () => void;
     const receipt = new Promise<void>((resolve) => {
@@ -2512,7 +2516,10 @@ export class ClaudeRuntimeService
     });
     const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
       ...options,
-      onAccepted: accepted,
+      onAccepted: (disposition) => {
+        options.onAccepted?.(disposition);
+        accepted();
+      },
     });
     // The completion rejection stays observed after acceptance, and the worker
     // publishes later failures through its normal error/run-state pipeline.
@@ -2524,7 +2531,7 @@ export class ClaudeRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: ClaudeImageInput[],
-    options: { human?: boolean; queue?: boolean; onAccepted?: () => void } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     if (this.rewinding.has(sessionId))
       throw new ConflictException('A Claude message edit is already in progress.');
@@ -2554,7 +2561,7 @@ export class ClaudeRuntimeService
       running.query.steer(
         this.buildSdkUserMessage(trimmedPrompt, validatedImages, options.human),
       );
-      options.onAccepted?.();
+      options.onAccepted?.('steered');
       return;
     }
     if (
@@ -2568,7 +2575,7 @@ export class ClaudeRuntimeService
         validatedImages,
         options.human,
       );
-      options.onAccepted?.();
+      options.onAccepted?.('queued');
       return;
     }
 
@@ -2808,7 +2815,7 @@ export class ClaudeRuntimeService
               validatedImages,
               options.human,
             ),
-            options.onAccepted,
+            () => options.onAccepted?.('running'),
           );
         }
       } catch (error) {
@@ -2889,7 +2896,12 @@ export class ClaudeRuntimeService
     images: ClaudeImageInput[],
     human = false,
   ): Promise<void> {
+    const generation = this.sessionGenerations.get(sessionId);
     const existingSession = await this.sessionsService.findOne(sessionId);
+    if (this.invalidatedSessions.has(sessionId) ||
+        this.sessionGenerations.get(sessionId) !== generation ||
+        existingSession.status === 'archived')
+      throw new ConflictException('This session was closed. Reopen its task before continuing.');
     const existingState = this.ensureSessionState(sessionId, existingSession);
     existingState.pendingPrompts = [
       ...existingState.pendingPrompts,
@@ -2905,6 +2917,8 @@ export class ClaudeRuntimeService
       existingState.queuePaused = true;
     }
     this.emitRunState(sessionId);
+    // The previous turn can finish while the session row is being read.
+    this.drainPendingPrompts(sessionId);
   }
 
   private static readonly IMAGE_MIME_ALLOWLIST: readonly ClaudeImageMediaType[] =
@@ -5895,6 +5909,7 @@ export class ClaudeRuntimeService
     sessionId: number,
     claudeSessionId?: string | null,
     modelSelection?: schema.ClaudeModelSelection | null,
+    agentSelection?: schema.SessionAgentSelection | null,
   ): RuntimeState {
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
@@ -5903,10 +5918,10 @@ export class ClaudeRuntimeService
       }
       if (existing.modelSelection === undefined && modelSelection !== undefined) {
         existing.modelSelection = modelSelection;
-        if (modelSelection)
+        if (modelSelection || agentSelection)
           Object.assign(
             existing,
-            this.startupModelSettings(existing.availableModels, modelSelection),
+            this.startupModelSettings(existing.availableModels, modelSelection, agentSelection),
           );
       }
       return existing;
@@ -5938,7 +5953,7 @@ export class ClaudeRuntimeService
       queuePaused: false,
       liveItems: [],
       lastError: null,
-      ...this.startupModelSettings(availableModels, modelSelection),
+      ...this.startupModelSettings(availableModels, modelSelection, agentSelection),
       modelSelection,
       selectedPermissionMode: 'auto',
       planMode: false,
@@ -5992,17 +6007,23 @@ export class ClaudeRuntimeService
       sessionId,
       session.claudeSessionId,
       session.claudeModelSelection ?? null,
+      session.agentSelection,
     );
   }
 
   private startupModelSettings(
     availableModels: readonly ClaudeModelOption[],
     selection: schema.ClaudeModelSelection | null | undefined,
+    agentSelection?: schema.SessionAgentSelection | null,
   ) {
     const defaults = this.settingsService.getAgentProviderDefaults('claude');
     const startup = resolveAgentStartupSelection(
       { ...defaults, ...selection },
       availableModels,
+      null,
+      agentSelection?.provider === 'claude'
+        ? { reasoningEffort: agentSelection.reasoningEffort }
+        : undefined,
     );
     return {
       ...startup,
@@ -6048,6 +6069,7 @@ export class ClaudeRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
       },
     });

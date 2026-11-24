@@ -2,7 +2,7 @@ import {
   prepareProjectRepositories,
   type ProjectRepositorySetup,
 } from './desktop-project-repositories.js';
-import { moveSession, sessionChildCount } from './session-hierarchy.js';
+import { moveSession, sessionChildCount } from '../sessions/session-hierarchy.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
 import { inactiveSessionStatus } from './desktop-session-status.js';

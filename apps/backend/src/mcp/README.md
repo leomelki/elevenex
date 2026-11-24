@@ -65,6 +65,7 @@ human-channel/                    notify/show/approval sink (panel consumes its 
 deep-link/                        /projects/:id, /tasks/:id, /sessions/:id (+ panel/diff)
 tool-registry/                    ToolDefinition contract, registry (caps+guards+envelope), cursors
 server-instructions.ts            the elevenex object-model primer (sent once)
+session-event-subscriptions.ts    keyed lifecycle subscriptions and shared state reads
 tools/{observe,setup,folders,drive,ask}/  tool primitives, grouped + barrelled
 __tests__/                        per-group unit specs (mock the service bag)
 ```
@@ -162,6 +163,61 @@ guarantees so individual tools can't regress them:
   `request_approval`, `escalate_to_user` (BLOCK on the human via the panel). Backed by
   `AgentHumanChannelService`; `AgentChannelGateway` (`/agent-channel` WS) streams these to the panel
   and accepts the human's decision to unblock the waiting tool call.
+
+## Cross-harness delegation
+
+Coding sessions use native subagents for work in their own harness when available.
+Use `list_agent_harnesses` for the other harness IDs and native subagent support.
+Passing `provider` pages that harness’s models and reasoning efforts before a
+conversation exists. Explicit model and effort selections are saved with the
+session before the first turn runs. Known capability mismatches fail before
+creation. Project-local and newly available models may be accepted by the
+harness before they appear in the discovery catalog.
+
+```json
+{
+  "provider": "codex",
+  "name": "Review concurrent sends",
+  "prompt": "Review the prompt queue for lost sends. Report findings with file references. Leave the shared files untouched.",
+  "requestId": "review-concurrent-sends"
+}
+```
+
+Pass these arguments to `create_session`. It defaults to the authenticated
+coding session’s task and places the child in the parent’s sidebar group.
+Delegation from a nested session adds a sibling in the same two-level group and
+records the actual delegator. `get_current_session` identifies both the sidebar
+parent and the delegator. Sidebar moves preserve the delegator identity.
+`placement:"task"` or an explicit folder places a session at task level.
+Mission and external calls supply a task ID and create at task level.
+
+Give each child a self-contained brief and clear file ownership. Sessions in
+a task share its checkout. Separate tasks provide checkout isolation. Coding
+sessions in plan mode can compose a brief and begin delegation after approval
+to leave plan mode. Each child uses its harness’s own runtime permission policy.
+
+The first prompt requires a `requestId`. If the response is lost, reuse the
+same request ID and inputs. The session row and receipt are committed together,
+and the backend claims the first delivery once. A pending receipt means the
+harness may still accept the original instruction. After an interruption or
+backend restart, use the existing handle to reconcile the transcript before
+sending more work. A blank `create_session` still supports a later `prompt_session`.
+
+Start independent work before waiting. `await_session_event` accepts one
+`sessionId` or up to 16 `sessionIds`. It returns the first completion, pending
+decision, failure or paused queue. Work still held by a harness’s background
+jobs or prompt queue keeps the session active. With `includeReply:true`, a
+completion includes the latest final reply when available, capped at 8,000
+characters, with its transcript item ID. Remove handled IDs before waiting
+again. Use `read_session` or `read_session_range` for detailed evidence.
+
+Use `prompt_session` for a focused follow-up. Authenticated sends carry the
+sender’s session ID. `queue:true` asks for a separate turn when the target
+is busy. The return value describes that send’s acceptance, independently of
+other prompts and prior live activity. Session messages and results provide
+agent context and evidence. User decisions still go through the existing
+approval tools. A child can return findings, changed files, checks and blockers
+in its final reply for its parent to collect.
 
 ## Testing
 

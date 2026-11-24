@@ -19,6 +19,12 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
+The connected sidebar shows same-task MCP delegates in their coding session's
+child disclosure. When an already nested conversation delegates, its new child
+appears alongside it to keep the outline two levels deep. Sidebar moves change
+placement, and the backend retains the original delegator for agent handoffs.
+See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harness-delegation).
+
 `SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
 
 | Component | Main inputs | Intent outputs |

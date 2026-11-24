@@ -253,6 +253,31 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('applies the saved delegation model and effort before delivering the first prompt', async () => {
+    const { service, sessions } = createService();
+    const selection = {
+      ...await sessions.findOne(1),
+      agentSelection: { provider: 'pi', model: 'anthropic/claude-sonnet', reasoningEffort: 'high' },
+    };
+    sessions.findOne.mockResolvedValue(selection);
+    const child = createPiProcess('/tmp/pi-delegated-selection.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      const receipt = jest.fn();
+      await service.submitPrompt(1, 'Review', undefined, undefined, {
+        waitForCompletion: false, onAccepted: receipt,
+      });
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(child.stdin.writes.map(line => JSON.parse(line)).filter(command =>
+        ['set_model', 'set_thinking_level', 'prompt'].includes(command.type),
+      )).toMatchObject([
+        { type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet' },
+        { type: 'set_thinking_level', level: 'high' },
+        { type: 'prompt', message: 'Review' },
+      ]);
+    } finally { await service.onModuleDestroy(); }
+  });
+
   it('passes the socket-mode MCP endpoint to the Pi extension environment', async () => {
     const environment = jest.replaceProperty(process, 'env', {
       ...process.env,

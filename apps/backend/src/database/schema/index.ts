@@ -4,6 +4,7 @@ export * from './repo-worktrees.schema.js';
 export * from './workspaces.schema.js';
 export * from './task-reservations.schema.js';
 export * from './sessions.schema.js';
+export * from './session-launches.schema.js';
 export * from './session-folders.schema.js';
 export * from './session-forks.schema.js';
 export * from './plan-chat-forks.schema.js';

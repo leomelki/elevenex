@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../../tool-registry/tool.types.js';
 import { getCurrentSessionTool } from './get-current-session.tool.js';
 import { getSessionConfigTool } from './get-session-config.tool.js';
+import { listAgentHarnessesTool } from './list-agent-harnesses.tool.js';
 import { PROJECT_NOTES_TOOLS } from './project-notes.tools.js';
 import { findBranchesTool } from './find-branches.tool.js';
 import { projectOverviewTool } from './project-overview.tool.js';
@@ -26,6 +27,7 @@ import { pollSessionStatusTool } from './poll-session-status.tool.js';
 export const OBSERVE_TOOLS: ToolDefinition[] = [
   getCurrentSessionTool,
   getSessionConfigTool,
+  listAgentHarnessesTool,
   projectOverviewTool,
   findSessionsTool,
   findBranchesTool,
