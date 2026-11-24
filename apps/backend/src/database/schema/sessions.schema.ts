@@ -71,6 +71,17 @@ export const sessions = sqliteTable(
     codexSessionId: text('codex_session_id').default('-1'),
     piSessionPath: text('pi_session_path').default('-1'),
     opencodeSessionId: text('opencode_session_id').default('-1'),
+    antigravitySessionId: text('antigravity_session_id'),
+    antigravitySelection: text('antigravity_selection', { mode: 'json' })
+      .$type<{
+        model?: string | null;
+        reasoningEffort?: string | null;
+        mode?: string | null;
+        plan?: boolean;
+        /** A rewind creates a fresh native session on the next explicit send. */
+        resetPending?: true;
+        legacyNativeId?: string;
+      }>(),
     hasInjectedWorktreeContext: integer('has_injected_worktree_context', {
       mode: 'boolean',
     })

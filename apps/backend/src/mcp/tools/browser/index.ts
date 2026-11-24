@@ -59,8 +59,10 @@ const browserRun = defineTool({
   currentSessionScope: 'task',
   mutates: true,
   annotations: { openWorldHint: true, idempotentHint: false },
+  // Antigravity 1.5.15 discovered the longer description over MCP but did
+  // not expose the tool to the model. Keep detailed instructions in the guide.
   description:
-    'Run JavaScript against the task browser with real Playwright, assertions, files, screenshots and human requests. FIRST call without code for the API and host choices; reuse that guide afterward. Do as much useful work as possible per call: acquire, inspect, act, wait for conditions and verify together; return only for new reasoning, human input or deadlines. Update browser.step at meaningful phases and use browser.cursor.move to show targets within that same call. Genuine input also moves the displayed cursor. No animation sleeps or unnecessary observations. Top-level await/return; await operations. Human Stop revokes access. Never replay interrupted scripts; inspect first.',
+    'Run JavaScript with Playwright in the Elevenex task browser. Call without code first for the API guide and available browser hosts.',
   inputShape: {
     ...scope,
     code: z

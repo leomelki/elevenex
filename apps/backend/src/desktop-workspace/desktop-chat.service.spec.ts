@@ -36,7 +36,7 @@ describe('selected session chat', () => {
     live: AgentTranscriptItem[],
     status: string;
   const runtime = Object.assign(new EventEmitter(), {
-    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'], capabilities: { multimodalPrompts: true, rewindConversation: true } },
+    info: { id: 'codex', displayName: 'Codex', permissionModes: ['default'] as string[] | undefined, capabilities: { multimodalPrompts: true, rewindConversation: true } },
     getRuntimeState: jest.fn(),
     getHistory: jest.fn(),
     onClientAttached: jest.fn(),
@@ -49,6 +49,7 @@ describe('selected session chat', () => {
     setReasoningEffort: jest.fn(),
     setFastMode: jest.fn(),
     setSelectedModel: jest.fn(),
+    setPermissionMode: jest.fn(),
     stopBackgroundTask: jest.fn(),
     stopSubagent: jest.fn(),
   });
@@ -57,8 +58,16 @@ describe('selected session chat', () => {
   const updateProvider = jest.fn();
   const advertised = jest.fn();
   const rememberAgentConfig = jest.fn();
+  const listModelCatalogs = jest.fn();
 
-  it('resends one saved prompt at its native anchor, retaining earlier history and attachment context', async () => {
+  it.each(['codex', 'antigravity'])('resends a saved %s prompt at its native anchor with its attachment context', async (provider) => {
+    runtime.info.id = provider;
+    session.mockImplementation(async () => ({
+      workspaceId: 1, worktreePath: '/workspace', surface: 'session', status,
+      activeAgentProvider: provider, workspaceArchivedAt: null,
+    }));
+    advertised.mockReturnValue([runtime.info]);
+    const origin = provider === 'antigravity' ? 'desktop-chat' : undefined;
     const original = { ...item('bubble', 'Original wording'), kind: 'user' as const, sourceMessageId: 'provider-anchor',
       images: [{ mediaType: 'image/png' as const, data: 'aW1hZ2U=' }] };
     const mention = '<elevenex_session_mention>\nSession: Triage\nSession ID: 5\n\nSaved context\n</elevenex_session_mention>';
@@ -79,9 +88,9 @@ describe('selected session chat', () => {
     expect(JSON.stringify(preview)).not.toContain('Saved context');
     const action = { type: 'edit-prompt', itemId: 'bubble', text: 'Revised wording', revision: preview.revision };
     expect(await chat.command(1, 2, action)).toEqual({ accepted: true });
-    expect(runtime.rewindConversation.mock.calls).toEqual([[2, 'provider-anchor']]);
+    expect(runtime.rewindConversation.mock.calls).toEqual([[2, 'provider-anchor', ...(origin ? [origin] : [])]]);
     expect(runtime.submitPrompt.mock.calls).toEqual([[2, 'Revised wording\n\n' + mention, 'Revised wording',
-      original.images, { human: true, queue: false, waitForCompletion: false }]]);
+      original.images, { human: true, queue: false, waitForCompletion: false, ...(origin ? { origin } : {}) }]]);
     const after = (await chat.read(1, 2, before.cursor, undefined, signal))!;
     expect(after.reset).toBe(true);
     expect(after.state.historyRewrite).toBeDefined();
@@ -547,6 +556,8 @@ describe('selected session chat', () => {
     jest.clearAllMocks();
     reviewDetails.mockReset();
     rememberAgentConfig.mockReset().mockResolvedValue(undefined);
+    listModelCatalogs.mockReset();
+    runtime.info = { ...runtime.info, id: 'codex', displayName: 'Codex', permissionModes: ['default'] };
     started.mockReturnValue(true);
     advertised.mockReturnValue([
       runtime.info,
@@ -579,7 +590,7 @@ describe('selected session chat', () => {
         { provide: ConversationExportService, useValue: { buildMention: jest.fn() } },
         {
           provide: SettingsService,
-          useValue: { rememberAgentConfig, getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
+          useValue: { rememberAgentConfig, getAgentProviderDefaults: () => ({}), getAgentModelPresets: () => [], getAgentPresetDefault: () => ({ id: null, provider: 'codex', defaultIds: [], revision: 'a'.repeat(64) }) },
         },
         {
           provide: SessionsService,
@@ -596,6 +607,7 @@ describe('selected session chat', () => {
           provide: AgentRuntimeRegistryService,
           useValue: {
             listProviders: advertised,
+            listModelCatalogs,
             getProvider: (id: string) => {
               if (
                 !advertised().some(
@@ -1297,6 +1309,50 @@ describe('selected session chat', () => {
   });
   it('rejects a catalog read for a conversation belonging to another task before probing a harness', async () => {
     await expect(chat.catalog(9, 2, 'claude')).rejects.toThrow('does not belong');
+  });
+  it('publishes session mode choices after Antigravity catalog discovery and routes selections', async () => {
+    runtime.info = { ...runtime.info, id: 'antigravity', displayName: 'Antigravity', permissionModes: undefined };
+    const setPlanMode = jest.fn();
+    Object.assign(runtime, { setPlanMode });
+    advertised.mockReturnValue([runtime.info]);
+    session.mockImplementation(async () => ({
+      workspaceId: 1, surface: 'session', status, activeAgentProvider: 'antigravity',
+    }));
+    started.mockReturnValue(false);
+    runtime.getRuntimeState.mockResolvedValue({ runPhase: 'idle', planAvailable: false });
+    const abort = new AbortController();
+    const stream = await chat.openStream(1, 2, 'progressive', undefined,
+      AbortSignal.any([abort.signal, AbortSignal.timeout(2_000)]));
+    try {
+      const initial = await stream.next();
+      expect(initial.value?.page.state).toMatchObject({
+        permissionModes: [], controls: { plan: false },
+      });
+      listModelCatalogs.mockImplementationOnce(async () => {
+        runtime.getRuntimeState.mockResolvedValue({
+          runPhase: 'idle', permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'bypassPermissions'],
+          planAvailable: true,
+        });
+        return [{ displayName: 'Antigravity', models: [] }];
+      });
+      await chat.catalog(1, 2, 'antigravity');
+      expect((await stream.next()).value?.page.state).toMatchObject({
+        permissionMode: 'default', permissionModes: ['default', 'accept-edits', 'bypassPermissions'],
+        controls: { plan: true },
+      });
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'auto' })).rejects.toThrow('Unsupported permission mode');
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'accept-edits' })).resolves.toEqual({ accepted: true });
+      await expect(chat.command(1, 2, { type: 'permission-mode', mode: 'bypassPermissions' })).resolves.toEqual({ accepted: true });
+      expect(runtime.setPermissionMode.mock.calls).toEqual([
+        [2, 'accept-edits', 'desktop-chat'], [2, 'bypassPermissions', 'desktop-chat'],
+      ]);
+      await expect(chat.command(1, 2, { type: 'plan', enabled: true })).resolves.toEqual({ accepted: true });
+      expect(setPlanMode).toHaveBeenCalledWith(2, true);
+    } finally {
+      Reflect.deleteProperty(runtime, 'setPlanMode');
+      abort.abort();
+      await stream.return(undefined);
+    }
   });
   it('advertises registered harnesses and reads an unstarted session without initializing a conversation', async () => {
     started.mockReturnValue(false);

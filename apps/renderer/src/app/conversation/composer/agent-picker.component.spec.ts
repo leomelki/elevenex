@@ -133,6 +133,24 @@ function key(target: HTMLElement, key: string): KeyboardEvent {
 }
 
 describe("AgentPicker controlled settings and focus", () => {
+  it("uses the monochrome Antigravity logo in the chip and harness rail", async () => {
+    const { fixture, trigger, open } = await setup();
+    const antigravity = {
+      id: "antigravity", label: "Antigravity", mark: "An",
+      models: [{ id: "gemini", label: "Gemini", thinking: [] }],
+    };
+    fixture.componentRef.setInput("harnesses", [...harnesses, antigravity]);
+    fixture.componentRef.setInput("value", { harness: antigravity.id, model: "gemini", mark: "An" });
+    fixture.componentRef.setInput("locked", false);
+    await settle(fixture);
+    expect(trigger.getAttribute("aria-label")).toContain("Antigravity");
+    expect(trigger.querySelector('ex-agent-mark[data-harness="antigravity"] svg[fill="currentColor"] path')).not.toBeNull();
+    await open();
+    const rail = button('.agent-settings [role="radio"][aria-label="Antigravity"]');
+    expect(rail.getAttribute("aria-checked")).toBe("true");
+    expect(rail.querySelector('ex-agent-mark[data-harness="antigravity"] svg[fill="currentColor"] path')).not.toBeNull();
+  });
+
   it('retains an owner-supplied display label while a secondary catalog arrives', async () => {
     const { fixture, trigger, open } = await setup();
     fixture.componentRef.setInput('value', { ...agent, preset: undefined, modelLabel: 'Configured model' });
@@ -229,6 +247,35 @@ describe("AgentPicker controlled settings and focus", () => {
       );
     },
   );
+  it("shows reported model quota beside each model so another can be chosen", async () => {
+    const { fixture, open } = await setup();
+    fixture.componentRef.setInput("harnesses", [
+      {
+        id: "antigravity",
+        label: "Antigravity",
+        mark: "Ag",
+        models: [
+          { id: "opus", label: "Claude Opus", thinking: [], limit: { id: "opus", label: "Claude Opus", left: 0, reset: "14:30", resetShort: "14:30" } },
+          { id: "flash", label: "Gemini Flash", thinking: [], limit: { id: "flash", label: "Gemini Flash", left: 0.15 } },
+          { id: "oss", label: "GPT-OSS", thinking: [] },
+        ],
+      },
+    ]);
+    fixture.componentRef.setInput("value", { harness: "antigravity", mark: "Ag", model: "opus" });
+    const changed = vi.fn();
+    fixture.componentInstance.changed.subscribe(changed);
+    await open();
+    const rows = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(rows.map((row) => row.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      "Claude Opus, quota Used up · 14:30",
+      "Gemini Flash, quota 15% left",
+      "GPT-OSS",
+    ]);
+    expect(rows[0]!.querySelector(".quota")?.getAttribute("data-tone")).toBe("danger");
+    expect(rows[1]!.querySelector(".quota")?.getAttribute("data-tone")).toBe("attention");
+    rows[1]!.click();
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ model: "flash" }));
+  });
   it("hides thinking when the selected model has no reported efforts", async () => {
     const { fixture, open } = await setup();
     fixture.componentRef.setInput("harnesses", [

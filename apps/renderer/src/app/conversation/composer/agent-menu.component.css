@@ -248,6 +248,22 @@ header {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Per-model quota stays beside its row so another model can be chosen in place. */
+.quota {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
+  line-height: var(--text-caption-line);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.quota[data-tone="attention"] {
+  color: var(--attention);
+}
+.quota[data-tone="danger"] {
+  color: var(--danger);
+}
 .refresh {
   align-self: flex-start;
 }

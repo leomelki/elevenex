@@ -194,7 +194,9 @@ export class ConversationExportService {
             ? session.opencodeSessionId
             : provider === 'pi'
               ? session.piSessionPath
-              : null;
+              : provider === 'antigravity'
+                ? session.antigravitySessionId
+                : null;
 
     return {
       sessionId,

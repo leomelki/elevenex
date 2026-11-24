@@ -334,7 +334,16 @@ One meaning per shortcut, everywhere. Check this table before giving anything a 
 - Fixed meanings: `terminal`, `code`, `changes`, `actions`, `globe` (browser) for side views; `fork` and `side-chat` for branching a conversation; `branch`, `commit` and `push` for git; `close-task` (a ticked square) for closing a task, `archive` only for lists of closed things; `workspace` for workspaces; `expand` / `shrink` for Wider review; `expand-up`, `expand-down` and `unfold` for opening context around a hunk; `wrap` for line wrapping; `folder` in file lists.
 - The bundled set is original and small. For icons it lacks, use Lucide at the same 1.5 stroke; flag any mismatch rather than mixing styles.
 - No emoji (except a project face someone picked) and no filled icons; PRs and tickets show the `pr` / `merged` / `ticket` icons.
-- Agent harnesses are the one other place for outside marks: wherever you choose or recognise a harness (the agent chip and menu, preset cards and reply gutter), Claude Code, Codex, OpenCode and Pi show their real logos (`AgentMark`), bundled with the app, in `currentColor` for compact picker/preset controls. Reply gutters use soft 28px tinted tiles: Claude in terracotta on peach; Codex in an app-inspired periwinkle gradient on a blue tint; OpenCode and Pi in `ink` on a neutral tint. These identity colours live in the theme-aware `harness-*` tokens, separately from status colours; they do not indicate selection or activity. Optical sizing balances the thin Claude rays against the denser marks. Unknown harnesses keep a two-letter monogram (on `accent-soft` in compact controls, neutral with `ink-muted` in replies). The live turn retains its teal breathing ring; reduced motion stops it.
+- `AgentMark` bundles the Antigravity, Claude Code, Codex, OpenCode and Pi logos
+  for harness chips, menus, presets and reply gutters. Compact picker and preset
+  controls use `currentColor`. Reply gutters use soft 28px tinted tiles. Claude uses
+  terracotta on peach and Codex uses an app-inspired periwinkle gradient on a blue
+  tint. Antigravity uses Google's full-color mark on a neutral tint. OpenCode and
+  Pi use `ink` on a neutral tint. The theme-aware `harness-*` tokens define tile
+  and identity colors independently of status and selection. Optical sizing
+  balances the thin Claude rays against denser marks. Unknown harnesses use
+  two-letter monograms on `accent-soft` in compact controls and neutral with
+  `ink-muted` in replies. Reduced motion stops the live turn's teal breathing ring.
 - Projects are the one place for outside imagery: each may carry its own logo (`ProjectMark`), shown as given, never recolored. Without one, the face is two letters, an emoji or an icon from the set, on the project's color. The sample logos in these previews are placeholders.
 - The Elevenex logo is traced in the root `elevenex-logo.svg`. `pnpm desktop:icons`
   generates the pale-on-charcoal application tile and monochrome system-tray

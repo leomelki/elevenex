@@ -1,9 +1,15 @@
-import type { SessionChatPlanUsage } from '@elevenex/shared';
+import type {
+  SessionChatModelQuota,
+  SessionChatPlanUsage,
+} from '@elevenex/shared';
 import { record } from './desktop-chat-projection.js';
 import { allowsClaudePlanUsage } from '../claude-runtime/claude-plan-usage.js';
 
 /** Only expose bounded subscription facts, never authentication or provider payloads. */
-export function chatPlanUsage(raw: Record<string, unknown>, provider: string): SessionChatPlanUsage | null {
+export function chatPlanUsage(
+  raw: Record<string, unknown>,
+  provider: string,
+): SessionChatPlanUsage | null {
   if (
     (provider !== 'codex' && provider !== 'claude') ||
     (provider === 'codex'
@@ -66,5 +72,63 @@ export function chatPlanUsage(raw: Record<string, unknown>, provider: string): S
         windows,
         updatedAt: plan.updatedAt,
       }
+    : null;
+}
+
+/** Per-model allowance; only providers that meter quota by model report it. */
+export function chatModelQuota(
+  raw: Record<string, unknown>,
+  provider: string,
+): SessionChatModelQuota | null {
+  const quota = record(raw.modelQuota);
+  if (
+    provider !== 'antigravity' ||
+    quota.provider !== provider ||
+    typeof quota.updatedAt !== 'string' ||
+    quota.updatedAt.length > 100 ||
+    !Number.isFinite(Date.parse(quota.updatedAt)) ||
+    !Array.isArray(quota.models)
+  )
+    return null;
+  const ids = new Set<string>();
+  const models = quota.models.slice(0, 32).flatMap((value) => {
+    const model = record(value);
+    const id = typeof model.id === 'string' ? model.id.slice(0, 1000) : '';
+    const remaining = model.remainingPercentage;
+    if (
+      !id ||
+      ids.has(id) ||
+      typeof model.label !== 'string' ||
+      typeof model.exhausted !== 'boolean' ||
+      (remaining !== null &&
+        (typeof remaining !== 'number' ||
+          !Number.isFinite(remaining) ||
+          remaining < 0 ||
+          remaining > 100))
+    )
+      return [];
+    ids.add(id);
+    return [
+      {
+        id,
+        label: model.label.slice(0, 1000) || id,
+        remainingPercentage: remaining,
+        exhausted: model.exhausted,
+        resetsAt:
+          typeof model.resetsAt === 'number' &&
+          Number.isFinite(model.resetsAt) &&
+          model.resetsAt > 0 &&
+          model.resetsAt <= 8.64e12
+            ? model.resetsAt
+            : null,
+      },
+    ];
+  });
+  const tier =
+    typeof quota.tier === 'string' && quota.tier.trim()
+      ? quota.tier.trim().slice(0, 100)
+      : null;
+  return tier || models.length
+    ? { provider, tier, models, updatedAt: quota.updatedAt }
     : null;
 }

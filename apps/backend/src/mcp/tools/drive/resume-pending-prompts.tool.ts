@@ -22,6 +22,13 @@ export const resumePendingPromptsTool = defineTool({
       ctx,
       args.sessionId,
     );
+    if (provider === 'antigravity') {
+      throw new ToolError({
+        code: 'interactive_provider',
+        message: 'Resume the Antigravity queue from desktop chat.',
+        remediation: 'Open the Antigravity session in the desktop app and select Resume queue.',
+      });
+    }
     if (session.status === 'archived') {
       throw new ToolError({
         code: 'session_archived',

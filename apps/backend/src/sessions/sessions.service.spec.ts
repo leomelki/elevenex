@@ -205,6 +205,26 @@ describe('SessionsService', () => {
       });
     });
 
+    it('keeps a name changed while an automatic title was being generated', async () => {
+      const session = await service.create({
+        repoId,
+        branchName: 'main',
+        worktreePath: '/tmp/temporary-worktree',
+        isTemporary: true,
+      });
+      await service.update(session.id, { name: 'Session 42' });
+      const titleChanged = jest.fn();
+      service.on('session-title-changed', titleChanged);
+
+      const result = await service.renameFromGeneratedTitle(session.id, 'Generated title', {
+        expectedName: 'Temporary session',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.name).toBe('Session 42');
+      expect(titleChanged).not.toHaveBeenCalled();
+    });
+
     it('should use the configured default agent provider for new sessions', async () => {
       settingsServiceMock.findOne.mockResolvedValueOnce({
         defaultClaudeSessionSurface: 'claude-ui',

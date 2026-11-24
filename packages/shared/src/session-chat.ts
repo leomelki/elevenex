@@ -256,6 +256,27 @@ export interface SessionChatPlanUsage {
   }[];
   readonly updatedAt: string;
 }
+/**
+ * Provider-reported allowance metered per model, such as Antigravity's.
+ * Separate from `planUsage` so desktops that validate that field strictly
+ * ignore it; a model absent from `models` has no reported quota state.
+ */
+export interface SessionChatModelQuota {
+  readonly provider: string;
+  /** The provider's name for the account's quota tier. */
+  readonly tier: string | null;
+  readonly models: readonly {
+    /** Matches a `SessionChatState.models` ID. */
+    readonly id: string;
+    readonly label: string;
+    /** 0–100 when reported; null when the provider reports only exhaustion. */
+    readonly remainingPercentage: number | null;
+    readonly exhausted: boolean;
+    /** Unix seconds, never a renderer-local countdown. */
+    readonly resetsAt: number | null;
+  }[];
+  readonly updatedAt: string;
+}
 export interface SessionChatState {
   /** Changes after the engine replaces saved history in this conversation. */
   readonly historyRewrite?: string;
@@ -288,6 +309,7 @@ export interface SessionChatState {
   readonly fast?: boolean;
   readonly phase: "idle" | "running" | "waiting" | "error";
   readonly canInterrupt: boolean;
+  readonly canSteer?: boolean;
   readonly error: string | null;
   readonly model: string | null;
   readonly models: readonly {
@@ -307,6 +329,8 @@ export interface SessionChatState {
   } | null;
   /** Optional for compatibility with engines predating subscription usage. */
   readonly planUsage?: SessionChatPlanUsage | null;
+  /** Optional; omitted by engines and providers without per-model quota. */
+  readonly modelQuota?: SessionChatModelQuota | null;
   readonly queue: readonly { readonly id: string; readonly text: string }[];
   readonly queuePaused: boolean;
   /** Queue entries handed off to the harness, awaiting native transcript items. */

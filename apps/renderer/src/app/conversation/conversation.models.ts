@@ -43,6 +43,8 @@ export interface AgentPlanUsage {
   /** Actual provider windows take precedence over the legacy two-window shorthand. */
   readonly windows?: readonly AgentPlanLimit[];
   readonly exhausted?: boolean;
+  /** Model quota covers only the selected model; other models may still be usable. */
+  readonly scope?: "account" | "model";
 }
 export interface AgentPlanLimit {
   readonly id: string;
@@ -57,6 +59,8 @@ export interface AgentModel {
   readonly label: string;
   readonly thinking: readonly string[];
   readonly supportsFastMode?: boolean;
+  /** Reported per-model quota; absent when the provider has not reported one. */
+  readonly limit?: AgentPlanLimit;
 }
 export interface PermissionChoice {
   readonly id: string;

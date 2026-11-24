@@ -55,6 +55,7 @@ export interface AgentProviderModelCatalogPayload {
   reasoningEfforts: string[];
   /** What the provider falls back to when nothing is pinned, if known. */
   providerDefaultModelId: string | null;
+  providerDefaultReasoningEffort?: string | null;
   /** False when a model cannot be chosen ahead of a session. */
   supportsModelSelection: boolean;
   /** Set when the list is empty for a knowable reason (e.g. signed out). */
@@ -147,6 +148,9 @@ export interface AgentImageInput {
   data: string;
 }
 
+/** Set by desktop chat handlers, never copied from prompt request bodies. */
+export type InteractivePromptOrigin = 'desktop-chat';
+
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
 
@@ -170,6 +174,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     images?: AgentImageInput[],
     options?: {
       human?: boolean;
+      origin?: InteractivePromptOrigin;
       queue?: boolean;
       /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
       waitForCompletion?: boolean;
@@ -177,8 +182,8 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
-  steerPendingPrompt(sessionId: number, id: string): Promise<void>;
-  resumePendingPrompts(sessionId: number): Promise<void>;
+  steerPendingPrompt(sessionId: number, id: string, origin?: InteractivePromptOrigin): Promise<void>;
+  resumePendingPrompts(sessionId: number, origin?: InteractivePromptOrigin): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
   reactivateSession?(sessionId: number): Promise<void> | void;
@@ -240,6 +245,7 @@ export interface AgentRuntimeProviderFeatures {
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentRuntimeStatePayload>;
   setPlanMode(
     sessionId: number,
@@ -261,6 +267,7 @@ export interface AgentRuntimeProviderFeatures {
   rewindConversation(
     sessionId: number,
     messageId: string,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentTranscriptItem[]>;
   approvePermission(
     sessionId: number,

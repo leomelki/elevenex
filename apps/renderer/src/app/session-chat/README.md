@@ -178,8 +178,21 @@ Older engines omit the capability and retain their original send contract.
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.
 
-The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Codex
+The backend adapter supports Claude, Codex, Pi, OpenCode and Antigravity.
+Antigravity connects to the official CLI over ACP in the task workspace.
+The picker reads the model catalog before the first message. The same read
+discovers Antigravity's native planning and approval capabilities. The
+Plan/Code switch is separate from the permissions menu, which includes Full
+access and shows Auto when the CLI offers it. Changes apply to subsequent
+turns and are disabled during a turn.
+Task turns start
+on direct desktop chat submission. The runtime restores saved transcripts
+without launching the CLI, and resumes the native conversation when it
+receives the next message. Its runtime advertises `canSteer: false` so the
+composer queues follow-ups and disables steering on queued rows. See
+[Antigravity setup](../../../../desktop/README.md#antigravity).
+
+Codex
 projects native user-message receipts into the live transcript, including prompts
 dispatched from the queue or steered into an active turn. Live and saved native
 receipts share the provider item ID; rewind/fork retain their saved record anchors.
@@ -586,6 +599,17 @@ this display integration does not promise or simulate them.
 The menu’s snapshot stays mounted through
 its inert exit. The dedicated `/agent-picker` preview and `agent-picker.mjs`
 verify the full reference component independently of transcript motion.
+
+Antigravity meters quota per model, so it reports the optional
+`SessionChatState.modelQuota` (tier plus per-model state) instead of `planUsage`.
+`sessionModelLimits` maps the reported models; an exhaustion-only report ends at
+its reported reset because there is no fraction to go stale. The selected
+model's limit becomes a model-scoped `plan` (`scope: "model"`) for the ring, the
+hover card and the notice, which names the model and points to another one. The
+other models' limits are rendered beside their rows in the model menu. Antigravity
+context comes from ACP `usage_update` reports through the existing `context` field.
+`session-antigravity-quota.mjs` covers context, the exhausted selected model,
+choosing another model and narrow reduced-motion layouts in both themes.
 
 `session-quota.mjs` exercises connected quota updates, the tighter weekly/model
 window, hover and keyboard disclosure, low/exhausted states, dismissal focus,

@@ -333,6 +333,14 @@ export const promptSessionTool = defineTool({
       ctx.signal.throwIfAborted();
     }
 
+    if (provider === 'antigravity') {
+      throw new ToolError({
+        code: 'interactive_provider',
+        message: 'Antigravity accepts messages sent directly from desktop chat.',
+        remediation: 'Open the Antigravity session in the desktop app to send a message.',
+      });
+    }
+
     // Idempotent start: archived sessions throw inside start(); active ones are
     // a cheap no-op. We start unless already in a live run state.
     if (session.status !== 'active' && session.status !== 'running') {

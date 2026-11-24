@@ -30,7 +30,7 @@ import type {
 } from '../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
-import { chatPlanUsage } from './desktop-chat-usage.js';
+import { chatModelQuota, chatPlanUsage } from './desktop-chat-usage.js';
 import { chatWork, legacyActivity } from './desktop-chat-work.js';
 import {
   type ChatChangesCache,
@@ -227,18 +227,19 @@ export class DesktopChatService implements OnModuleDestroy {
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
       controls: {
-        plan: typeof provider.setPlanMode === 'function',
+        plan: typeof provider.setPlanMode === 'function' && raw.planAvailable !== false,
         reasoning: typeof provider.setReasoningEffort === 'function',
         fast: typeof provider.setFastMode === 'function',
       },
       ...chatState(
         raw,
         session.activeAgentProvider,
-        provider.info.permissionModes ?? [],
+        provider.info.permissionModes,
       ),
       work,
       activity: legacyActivity(work),
       planUsage: chatPlanUsage(raw, session.activeAgentProvider),
+      modelQuota: chatModelQuota(raw, session.activeAgentProvider),
       providers: this.registry
         .listProviders()
         .slice(0, 32)
@@ -738,7 +739,11 @@ export class DesktopChatService implements OnModuleDestroy {
 
   async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {
     await this.target(taskId, sessionId);
-    return chatCatalog(this.registry, this.settings, providerId, refresh);
+    const catalog = await chatCatalog(this.registry, this.settings, providerId, refresh);
+    // Antigravity discovers mode choices along with models on the same ACP probe.
+    if (providerId === 'antigravity' && this.feeds.get(sessionId)?.provider.info.id === providerId)
+      this.invalidate(sessionId);
+    return catalog;
   }
 
   private async rememberConfiguration(sessionId: number): Promise<void> {
@@ -777,6 +782,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const history = await provider.getHistory(sessionId);
     return savedChatPrompt(history, itemId, [
       taskId, sessionId, provider.info.id, session.claudeSessionId, session.codexSessionId, session.piSessionPath, session.opencodeSessionId,
+      ...(provider.info.id === 'antigravity' ? [session.antigravitySessionId] : []),
     ]);
   }
 
@@ -815,7 +821,9 @@ export class DesktopChatService implements OnModuleDestroy {
     assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
     if (session.status === 'stopped') await this.sessions.reactivateRuntime(sessionId);
     const previousRewrite = this.feeds.get(sessionId)?.historyRewrite;
-    await rewind(sessionId, saved.sourceId);
+    const interactive = provider.info.id === 'antigravity' ? 'desktop-chat' : undefined;
+    if (interactive) await rewind(sessionId, saved.sourceId, interactive);
+    else await rewind(sessionId, saved.sourceId);
     const feed = this.feeds.get(sessionId);
     if (feed && previousRewrite === feed.historyRewrite) {
       feed.historyRewrite = randomUUID();
@@ -824,7 +832,7 @@ export class DesktopChatService implements OnModuleDestroy {
       this.invalidate(sessionId, true);
     }
     try {
-      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false });
+      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false, ...(interactive ? { origin: interactive } : {}) });
     } catch {
       // History has already changed. The caller must read before sending again.
       throw new ServiceUnavailableException('Could not confirm the edited message after updating the conversation.');

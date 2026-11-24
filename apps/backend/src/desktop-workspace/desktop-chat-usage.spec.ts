@@ -1,4 +1,4 @@
-import { chatPlanUsage } from './desktop-chat-usage.js';
+import { chatModelQuota, chatPlanUsage } from './desktop-chat-usage.js';
 
 const usage = {
   provider: 'codex',
@@ -89,6 +89,63 @@ describe('desktop subscription allowance', () => {
           planUsage: { ...usage, provider: 'claude' },
         },
         'claude',
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('desktop per-model allowance', () => {
+  const quota = {
+    provider: 'antigravity',
+    tier: 'Antigravity Starter Quota',
+    updatedAt: '2026-11-24T10:00:00Z',
+    models: [
+      {
+        id: 'claude-opus',
+        label: 'Claude Opus',
+        remainingPercentage: 0,
+        exhausted: true,
+        resetsAt: 1795000000,
+      },
+    ],
+  };
+  it('projects bounded per-model facts only for Antigravity', () => {
+    expect(
+      chatModelQuota(
+        { modelQuota: { ...quota, secret: 'token' } },
+        'antigravity',
+      ),
+    ).toEqual(quota);
+    expect(chatModelQuota({ modelQuota: quota }, 'codex')).toBeNull();
+    expect(chatModelQuota({}, 'antigravity')).toBeNull();
+  });
+  it('drops malformed models and keeps a tier-only report', () => {
+    expect(
+      chatModelQuota(
+        {
+          modelQuota: {
+            ...quota,
+            models: [
+              { ...quota.models[0], remainingPercentage: 140 },
+              { ...quota.models[0], exhausted: 'yes' },
+              { ...quota.models[0], id: '' },
+              { ...quota.models[0], remainingPercentage: null, resetsAt: -4 },
+              { ...quota.models[0], remainingPercentage: null },
+            ],
+          },
+        },
+        'antigravity',
+      ),
+    ).toEqual({
+      ...quota,
+      models: [
+        { ...quota.models[0], remainingPercentage: null, resetsAt: null },
+      ],
+    });
+    expect(
+      chatModelQuota(
+        { modelQuota: { ...quota, tier: ' ', models: [] } },
+        'antigravity',
       ),
     ).toBeNull();
   });
