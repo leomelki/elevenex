@@ -817,6 +817,11 @@ test('delegation metadata validates identities, tool receipts and view bounds', 
   const call = { ...user, kind: 'tool_use', agent: { id: user.id, at, operation: { type: 'wait', sessions: [3] } } };
   assert.equal(parseChatPage({ ...page, items: [call] }, 1, 2).items[0].agent.operation.type, 'wait');
   assert.throws(() => parseChatPage({ ...page, items: [{ ...call, agent: { ...call.agent, id: 'different' } }] }, 1, 2));
+  const notice = { ...user, id: 'notice', kind: 'system', agent: { id: 'notice', at, endedAt: at,
+    operation: { type: 'native-wait', agents: ['ses_review'] },
+    result: { agents: [{ agentId: 'ses_review', status: 'completed' }] } } };
+  assert.equal(parseChatPage({ ...page, items: [notice] }, 1, 2).items[0].agent.result.agents[0].status, 'completed');
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...notice, kind: 'assistant' }] }, 1, 2));
 });
 
 test('harness selection requires a known action shape and an expected current provider', () => {

@@ -89,6 +89,23 @@ describe('OpenCode protocol normalization', () => {
       options: [{ label: 'A, B' }],
     });
   });
+  it('exposes OpenCode native tasks while running and keeps background results out of user prompts', () => {
+    const part = {
+      id: 'p', sessionID: 'ses_parent', messageID: 'm', type: 'tool', tool: 'task', callID: 'call',
+      state: { status: 'running', input: { description: 'Review', subagent_type: 'explore' },
+        metadata: { sessionId: 'ses_reviewer', model: { providerID: 'local', modelID: 'worker' }, background: true },
+        time: { start: 10 } },
+    } satisfies Part;
+    expect(openCodePartItems(part)[0]).toMatchObject({
+      kind: 'tool_use', timestamp: new Date(10).toISOString(),
+      nativeTask: { agentId: 'ses_reviewer', status: 'running', model: 'local/worker' },
+    });
+    const info = { id: 'm', sessionID: 'ses_parent', role: 'user', time: { created: 50 } } as Message;
+    expect(openCodePartItems({
+      id: 'result', messageID: 'm', sessionID: 'ses_parent', type: 'text', synthetic: true,
+      text: '<task id="ses_reviewer" state="completed">\n<task_result>Review complete.</task_result>\n</task>',
+    }, info)[0]).toMatchObject({ kind: 'system', content: 'Review complete.', nativeTask: { agentId: 'ses_reviewer', status: 'completed' } });
+  });
   it('preserves typed v2 forms including numeric and multiselect fields', () => {
     const request = openCodeQuestion({
       id: 'f',

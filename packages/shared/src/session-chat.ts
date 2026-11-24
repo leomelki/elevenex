@@ -377,6 +377,7 @@ export interface SessionChatBackgroundWork {
   readonly inspectable?: boolean;
   readonly canBackground?: boolean;
   readonly model?: string;
+  readonly effort?: string;
   readonly context?: SessionChatAgentContext;
 }
 export type SessionChatWorkStatus = "pending" | "running" | "waiting" | "paused" | "completed" | "interrupted" | "stopped" | "error" | "closed" | "unavailable";

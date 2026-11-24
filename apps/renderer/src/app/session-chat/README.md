@@ -24,6 +24,13 @@ scoped session identity and restores the origin when it is present in the
 retained parent window. Native Inspect opens the existing focus-managed modal
 from its card and pins a finished reply above the paged transcript.
 
+Claude Code, Codex, Pi and OpenCode share the delegation presentation. The
+backend projects the harness's actual receipt format and uses native
+inspection only where the harness supports it. OpenCode tasks can become
+inspectable from their running metadata and retain their identity when resumed.
+Its background result notification updates the agent outcome without appearing
+as a human prompt.
+
 The preview's connected workspace fixture exercises this flow through
 `scripts/desktop-capture/scenarios/session-delegation.mjs`.
 

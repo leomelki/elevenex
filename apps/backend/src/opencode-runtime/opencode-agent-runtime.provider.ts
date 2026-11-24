@@ -856,6 +856,7 @@ export class OpenCodeAgentRuntimeProvider
     }
   }
   private emitPart(entry: RuntimeEntry, part: Part): void {
+    let settled = false;
     for (const item of entry.transcript.partItems(part)) {
       const index = entry.state.liveItems.findIndex(
         (existing) => existing.id === item.id,
@@ -877,7 +878,19 @@ export class OpenCodeAgentRuntimeProvider
                 : 'message_start',
         payload: { sessionId: entry.state.sessionId, item },
       });
+      const result = item.kind === 'system' ? item.nativeTask : undefined;
+      if (result?.status !== 'completed' && result?.status !== 'error') continue;
+      const agent = entry.state.subagents.find(child => child.agentId === result.agentId);
+      if (!agent || (agent.status === 'stopped' && agent.executionStatus === result.status &&
+          (!result.detail || agent.lastAssistantMessage === result.detail))) continue;
+      agent.status = 'stopped';
+      agent.executionStatus = result.status;
+      agent.lastAssistantMessage = result.detail ?? agent.lastAssistantMessage;
+      agent.completedAt = item.timestamp;
+      agent.canStop = false;
+      settled = true;
     }
+    if (settled) this.emitState(entry);
   }
   private syncRequests(entry: RuntimeEntry): void {
     entry.state.pendingPermissionRequest = entry.permissions[0]

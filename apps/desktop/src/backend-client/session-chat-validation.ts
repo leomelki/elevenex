@@ -178,7 +178,9 @@ function item(value: unknown): SessionChatRecord {
   const id = chatText(raw["id"]);
   const sender = raw['sender'] === undefined ? undefined : parseAgentSender(raw['sender']);
   const agent = raw['agent'] === undefined ? undefined : parseAgentEntry(raw['agent'], kind === 'tool_result', kind === 'tool_use' ? id : undefined);
-  if ((sender && (kind !== 'user' || editable)) || (agent && kind !== 'tool_use' && kind !== 'tool_result')) throw invalid();
+  if ((sender && (kind !== 'user' || editable)) ||
+      (agent && kind !== 'tool_use' && kind !== 'tool_result' &&
+        !(kind === 'system' && agent.id === id && agent.operation.type === 'native-wait'))) throw invalid();
   return {
     id,
     kind,
@@ -490,6 +492,7 @@ function work(value: unknown, sessionId?: number, taskId?: number): SessionChatW
         ...(item["inspectable"] === undefined ? {} : { inspectable: bool(item["inspectable"]) }),
         ...(item["canBackground"] === undefined ? {} : { canBackground: bool(item["canBackground"]) }),
         ...(item["model"] === undefined ? {} : { model: chatText(item["model"], 160) }),
+        ...(item["effort"] === undefined ? {} : { effort: chatText(item["effort"], 80) }),
         ...(item["context"] === undefined ? {} : { context: agentContext(item["context"]) }),
         ...(item["tokens"] === undefined ? {} : { tokens: workCount(item["tokens"]) }),
         ...(item["toolUses"] === undefined ? {} : { toolUses: workCount(item["toolUses"]) }),

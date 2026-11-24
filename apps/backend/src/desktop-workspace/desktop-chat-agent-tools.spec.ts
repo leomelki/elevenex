@@ -9,6 +9,19 @@ const row = (id: string, kind: AgentTranscriptItem['kind'], extra: Partial<Agent
   ({ id, kind, timestamp: at, ...extra });
 
 describe('projecting delegation into chat', () => {
+  it.each([
+    ['Claude Code', 'mcp__elevenex__create_session', { name: 'Review' }, [{ type: 'text', text: '{"data":{"sessionId":8,"provider":"claude"}}' }]],
+    ['Codex', 'create_session', { server: 'elevenex', arguments: { name: 'Review' } }, { structured_content: { data: { sessionId: 8, provider: 'codex' } } }],
+    ['Pi', 'mcp__elevenex__create_session', { name: 'Review' }, { details: { data: { sessionId: 8, provider: 'pi' } } }],
+    ['OpenCode', 'elevenex_create_session', { name: 'Review' }, '{"data":{"sessionId":8,"provider":"opencode"}}'],
+  ])('projects the %s invocation and receipt', (_label, providerToolName, toolInput, providerToolResult) => {
+    const call = row('call', 'tool_use', { providerToolName, toolInput, toolKind: 'mcp' });
+    const receipt = row('receipt', 'tool_result', { providerToolResult });
+    expect(chatAgentEntry(call, receipt)).toMatchObject({
+      operation: { type: 'launch', title: 'Review' },
+      result: { session: { sessionId: 8, selection: { provider: expect.any(String) } } },
+    });
+  });
   it('projects authenticated sender metadata from saved, dispatching and legacy prompts', () => {
     const parent = { sessionId: 7, taskId: 4, title: 'Review <retry>', selection: { provider: 'claude' } };
     const prompt = sessionAgentPrompt('Review the queue.', parent, 'assignment');

@@ -31,6 +31,7 @@ export interface ChatBackgroundWork {
   inspectable?: boolean;
   canBackground?: boolean;
   model?: string;
+  effort?: string;
   context?: ReturnType<typeof agentContext>;
 }
 export interface ChatWorkEvent {
@@ -265,6 +266,7 @@ function running(
               }
             : {}),
           ...(text(agent?.model) ? { model: line(agent?.model, 160) } : {}),
+          ...(text(agent?.reasoningEffort) ? { effort: line(agent?.reasoningEffort, 80) } : {}),
           ...(context ? { context } : {}),
           ...(count(usage.totalTokens) !== undefined
             ? { tokens: count(usage.totalTokens) }

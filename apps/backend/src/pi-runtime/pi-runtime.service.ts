@@ -1500,6 +1500,7 @@ export class PiRuntimeService
             toolUseId: String(event.toolCallId ?? ''),
             toolName: String(event.toolName ?? 'Tool'),
             content: this.stringifyToolResult(event.result),
+            ...(String(event.toolName ?? '').startsWith('mcp__elevenex__') ? { providerToolResult: event.result } : {}),
             isError: Boolean(event.isError),
             timestamp: new Date().toISOString(),
             authoredAt: new Date().toISOString(),
@@ -2373,6 +2374,7 @@ export class PiRuntimeService
           toolName:
             typeof message.toolName === 'string' ? message.toolName : undefined,
           content: this.contentToText(message.content),
+          ...(typeof message.toolName === 'string' && message.toolName.startsWith('mcp__elevenex__') ? { providerToolResult: { details: message.details } } : {}),
           isError: Boolean(message.isError),
           sourceMessageId: id,
           transcriptMessageId,

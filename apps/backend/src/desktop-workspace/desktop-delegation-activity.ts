@@ -4,9 +4,15 @@ import { splitSessionAgentPrompt } from '../sessions/session-agent-message.js';
 
 const LIMIT = 2048;
 const PROGRESS_INTERVAL = 600;
+const RECENT_TOOL_IDS = 64;
 export const activityLine = (value: unknown) => typeof value === 'string'
   ? value.trim().slice(0, 600).replace(/\s+/g, ' ').slice(0, 300) : '';
 const number = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+function deliveredMessage(value: unknown): string | undefined {
+  const item = record(value);
+  return item.kind === 'user' && typeof item.content === 'string'
+    ? splitSessionAgentPrompt(item.content).sender?.messageId : undefined;
+}
 
 interface Progress {
   detail: string;
@@ -18,7 +24,7 @@ interface Progress {
   tokens?: number;
   paused?: boolean;
   interrupted?: boolean;
-  lastTool?: string;
+  toolIds?: readonly string[];
   deliveries?: readonly string[];
   message?: { readonly id: string; readonly text: string };
 }
@@ -95,13 +101,19 @@ export class DesktopDelegationActivity {
     const old = this.entries.get(sessionId);
     const active = state === 'running' || state === 'attention';
     const first = active && (!old?.startedAt || old.endedAt !== null);
-    const finished = semantic && (previous === 'running' || previous === 'attention') && !active;
+    // Some harnesses clear the sidebar hook before publishing their idle snapshot.
+    const finished = state !== undefined && !active && !!old?.startedAt && old.endedAt === null;
     const snapshot = state !== undefined;
     const item = record(raw.item);
-    const newTool = event.type === 'tool_use' && item.kind === 'tool_use' && item.id !== old?.lastTool;
+    const toolId = event.type === 'tool_use' && item.kind === 'tool_use' && typeof item.id === 'string'
+      ? item.id.slice(0, 256) : undefined;
+    const newTool = !!toolId && !old?.toolIds?.includes(toolId);
     const startingMessage = event.type === 'message_start';
-    const user = startingMessage && item.kind === 'user' && typeof item.content === 'string'
-      ? splitSessionAgentPrompt(item.content).sender : undefined;
+    const messageIds = [
+      ...(startingMessage ? [deliveredMessage(item)] : []),
+      ...((event.type === 'runtime_snapshot' || event.type === 'session_snapshot') && Array.isArray(raw.liveItems)
+        ? raw.liveItems.slice(-16).map(deliveredMessage) : []),
+    ].filter((id): id is string => !!id && !old?.deliveries?.includes(id));
     const priorMessage = old?.message;
     const body = startingMessage && item.kind === 'assistant' && typeof item.id === 'string'
       ? { id: item.id.slice(0, 1000), text: typeof item.content === 'string' ? item.content.slice(0, 300) : '' }
@@ -109,7 +121,7 @@ export class DesktopDelegationActivity {
           typeof raw.delta === 'string'
         ? { ...priorMessage, text: priorMessage.text + raw.delta.slice(0, 300 - priorMessage.text.length) }
         : undefined;
-    if (!snapshot && !newTool && !user && !body) return;
+    if (!snapshot && !newTool && !messageIds.length && !body) return;
     const said = activityLine(body?.text);
     const permission = record(raw.pendingPermissionRequest);
     const question = record(raw.pendingUserInputRequest);
@@ -123,10 +135,9 @@ export class DesktopDelegationActivity {
     const effort = activityLine(raw.reasoningEffort).slice(0, 80) || old?.effort;
     const usage = record(raw.contextUsage);
     const now = () => new Date().toISOString();
-    if (!old && !semantic && !tool && !body && !user) return;
-    const messageId = user?.messageId;
-    const deliveries = messageId && !old?.deliveries?.includes(messageId)
-      ? [...(old?.deliveries ?? []).slice(-7), messageId] : old?.deliveries;
+    if (!old && !semantic && !tool && !body && !messageIds.length) return;
+    const deliveries = messageIds.length
+      ? [...new Set([...(old?.deliveries ?? []), ...messageIds])].slice(-8) : old?.deliveries;
     const next: Progress = {
       detail: error || decision || said || tool ||
         (first || (semantic && previous === 'attention') ? '' : old?.detail ?? ''),
@@ -136,7 +147,7 @@ export class DesktopDelegationActivity {
       message: newTool || finished ? undefined : body ?? (first ? undefined : old?.message),
       toolUses: newTool ? (old?.toolUses ?? 0) + 1 : first ? undefined : old?.toolUses,
       tokens: number(usage.totalTokens) ?? (first ? undefined : old?.tokens),
-      lastTool: newTool && typeof item.id === 'string' ? item.id.slice(0, 256) : old?.lastTool,
+      toolIds: first ? undefined : newTool ? [...(old?.toolIds ?? []).slice(1 - RECENT_TOOL_IDS), toolId] : old?.toolIds,
       paused: snapshot ? raw.queuePaused === true : old?.paused,
       interrupted: !first && old?.interrupted,
     };
@@ -144,7 +155,7 @@ export class DesktopDelegationActivity {
     this.entries.delete(sessionId);
     this.entries.set(sessionId, next);
     this.trim();
-    if (semantic || messageId) this.change(sessionId);
+    if (semantic || messageIds.length || finished) this.change(sessionId);
     else if (this.listeners.size) {
       this.pending.add(sessionId);
       this.timer ??= setTimeout(() => {

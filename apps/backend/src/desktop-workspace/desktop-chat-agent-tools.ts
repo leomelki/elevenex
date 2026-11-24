@@ -46,17 +46,19 @@ function operation(call: AgentTranscriptItem): SessionAgentOperation | undefined
   const prefix = /^(?:mcp__elevenex__|elevenex_)(.+)$/.exec(name);
   if (!prefix && call.toolKind !== 'mcp' && call.toolKind !== 'task_agent' && call.toolKind !== 'agent_collaboration') return;
   const input = record(decode(call.toolInput ?? call.providerToolInput));
-  if (call.toolKind === 'agent_collaboration' && /(?:^|[.])wait(?:_agent)?$/.test(name)) {
+  const nativeName = name.split('.').at(-1);
+  if (call.toolKind === 'agent_collaboration' && (nativeName === 'wait' || nativeName === 'wait_agent' || nativeName === 'waitAgent')) {
     const ids: unknown = input.receiverThreadIds ?? input.ids ?? input.targets;
     return { type: 'native-wait', agents: [...new Set((Array.isArray(ids) ? ids.slice(0, 16) : []).flatMap(
       value => line(value, 256) ?? [],
     ))] };
   }
-  if (call.toolKind === 'task_agent' || (call.toolKind === 'agent_collaboration' && /(?:^|[.])spawn_agent$/.test(name)))
+  if (call.toolKind === 'task_agent' || (call.toolKind === 'agent_collaboration' && (nativeName === 'spawn_agent' || nativeName === 'spawnAgent')))
     return {
       type: 'native',
       title: line(input.description ?? input.task_name ?? input.name ?? input.prompt, 300),
       message: line(input.subagent_type ?? input.agent_type, 80),
+      ...(call.nativeTask ? { identity: { provider: call.nativeTask.provider, model: line(call.nativeTask.model, 160) } } : {}),
     };
 
   const tool = prefix?.[1] ?? (input.server === 'elevenex' ? (line(input.tool, 80) ?? name) : undefined);
@@ -77,20 +79,21 @@ function operation(call: AgentTranscriptItem): SessionAgentOperation | undefined
   };
 }
 
-function envelope(result: AgentTranscriptItem): Record<string, unknown> {
-  for (const value of [result.providerToolResult, result.content]) {
-    const decoded = decode(value);
-    const raw = record(decoded);
-    const structured = record(raw.structuredContent ?? raw.structured_content);
-    if (structured.data || structured.error) return structured;
-    if (raw.data || raw.error) return raw;
-    const content = Array.isArray(decoded) ? decoded : Array.isArray(raw.content) ? raw.content : [];
-    for (const block of content.slice(0, 4)) {
-      const payload = record(decode(record(block).text));
-      if (payload.data || payload.error) return payload;
-    }
+function envelopeFrom(value: unknown, depth: number): Record<string, unknown> | undefined {
+  const decoded = decode(value);
+  const raw = record(decoded);
+  const structured = record(raw.structuredContent ?? raw.structured_content ?? raw.details);
+  if (structured.data || structured.error) return structured;
+  if (raw.data || raw.error) return raw;
+  if (!depth) return;
+  const content = Array.isArray(decoded) ? decoded : Array.isArray(raw.content) ? raw.content : [];
+  for (const block of content.slice(0, 4)) {
+    const payload = envelopeFrom(record(block).text, depth - 1);
+    if (payload) return payload;
   }
-  return {};
+}
+function envelope(result: AgentTranscriptItem): Record<string, unknown> {
+  return envelopeFrom(result.providerToolResult, 2) ?? envelopeFrom(result.content, 2) ?? {};
 }
 function status(value: unknown): SessionAgentStatus | undefined {
   switch (value) {
@@ -112,6 +115,11 @@ function status(value: unknown): SessionAgentStatus | undefined {
 
 function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeReply: boolean): SessionAgentOperationResult {
   if (op.type === 'native' || op.type === 'native-wait') {
+    if (row.nativeTask) return {
+      agentId: row.nativeTask.agentId,
+      status: row.isError ? 'error' : row.nativeTask.status,
+      detail: line(row.nativeTask.detail, 360),
+    };
     const native = { ...record(decode(row.content)), ...record(row.providerToolResult) };
     const states = record(native.agentsStates ?? native.status);
     const agents = Object.entries(states).slice(0, 16).flatMap(([agentId, value]) => {
@@ -157,7 +165,7 @@ function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeR
       op.type === 'catalog' && catalog !== undefined ? catalog + (Array.isArray(data.models) ? ' models' : ' harnesses') : undefined);
   return {
     session, event, messageId: typeof data.messageId === 'string' && /^[a-f0-9-]{36}$/.test(data.messageId) ? data.messageId : undefined,
-    status: row.isError ? 'error' : op.type === 'stop' && data.interrupted === true ? 'stopped'
+    status: row.isError || Object.keys(error).length ? 'error' : op.type === 'stop' && data.interrupted === true ? 'stopped'
       : status(deliveryStatus) ?? (op.type === 'launch' && session ? 'pending' : undefined),
     ...(deliveryStatus === 'acceptance_pending' ? { delivery: 'unconfirmed' as const } :
       deliveryStatus === 'queued' || data.queued === true ? { delivery: 'queued' as const } :
@@ -175,18 +183,27 @@ function resultFor(op: SessionAgentOperation, row: AgentTranscriptItem, includeR
 
 /** The call owns the lifecycle. The returned Markdown stays on its receipt in source order. */
 export function chatAgentEntry(raw: AgentTranscriptItem, peer?: AgentTranscriptItem): SessionAgentTurnEntry | undefined {
+  if (raw.kind === 'system' && raw.nativeTask?.status && Date.parse(raw.timestamp) >= 0) {
+    const { agentId, status, detail } = raw.nativeTask;
+    return { id: raw.id, at: raw.timestamp, endedAt: raw.timestamp,
+      operation: { type: 'native-wait', agents: [agentId] },
+      result: { agents: [{ agentId, status, detail: line(detail, 360) }] },
+    };
+  }
   const call = raw.kind === 'tool_use' ? raw : raw.kind === 'tool_result' ? peer : undefined;
   if (!call || call.kind !== 'tool_use' || !call.id || call.id.length > 1000 ||
       !Number.isFinite(Date.parse(call.timestamp))) return;
   const op = operation(call);
   if (!op) return;
   const result = raw.kind === 'tool_result' ? raw : peer;
-  const failed = chatItemFailed(call) || (result && chatItemFailed(result));
+  const outcome = result ? resultFor(op, result, raw.kind === 'tool_result')
+    : call.nativeTask ? { agentId: call.nativeTask.agentId, status: 'running' as const } : undefined;
+  const failed = chatItemFailed(call) || (result && (chatItemFailed(result) || outcome?.status === 'error'));
   return {
     id: call.id, toolId: call.toolUseId && call.toolUseId.length <= 1000 ? call.toolUseId : undefined, at: call.timestamp,
     operation: op,
-    ...(result ? { endedAt: Number.isFinite(Date.parse(result.timestamp)) ? result.timestamp : call.timestamp,
-      result: resultFor(op, result, raw.kind === 'tool_result') } : {}),
+    ...(result ? { endedAt: Number.isFinite(Date.parse(result.timestamp)) ? result.timestamp : call.timestamp } : {}),
+    ...(outcome ? { result: outcome } : {}),
     ...(failed ? { failed: true as const } : {}),
   };
 }

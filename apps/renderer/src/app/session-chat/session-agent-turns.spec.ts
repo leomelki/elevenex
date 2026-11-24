@@ -53,4 +53,28 @@ describe('session agent turn projection', () => {
     expect(after[1]?.agentCards?.[0]?.messages?.[0]?.status).toBe('Delivered');
     expect(projector.project([ordinary, annotated], streams(['send-id']), 4)[1]).toBe(after[1]);
   });
+
+  it('keeps OpenCode native tasks inspectable before completion and reconciles a resumed task and its background result', () => {
+    const running: SessionAgentTurnEntry = {
+      id: 'task', at, operation: { type: 'native', title: 'Review', identity: { provider: 'opencode', model: 'local/worker' } },
+      result: { agentId: 'ses_review', status: 'running' },
+    };
+    const resumed: SessionAgentTurnEntry = { ...running, id: 'resume', operation: { ...running.operation, title: 'Review the follow-up' } };
+    const returned: SessionAgentTurnEntry = {
+      id: 'output', at: later, endedAt: later, operation: { type: 'native-wait', agents: ['ses_review'] },
+      result: { agents: [{ agentId: 'ses_review', status: 'completed', detail: 'Review complete.' }] },
+    };
+    const projector = new SessionAgentTurnProjection();
+    const state = { provider: 'opencode', nativeAgentInspection: true };
+    expect(projector.project([exchange([step(running)])], state)[0]?.agentCards).toMatchObject([
+      { id: 'task', status: 'running', target: { kind: 'native', agentId: 'ses_review' } },
+    ]);
+    const [first, next] = projector.project([
+      exchange([step(running), step(resumed)], 'done'),
+      { ...exchange([{ ...step(returned), kind: 'note' }]), id: 'follow-up' },
+    ], state);
+    expect(first?.agentCards).toMatchObject([{ id: 'task', status: 'completed', detail: 'Review complete.', selection: { provider: 'opencode', model: 'local/worker' } }]);
+    expect(first?.steps.map(row => row.id)).toEqual(['task']);
+    expect(next?.steps).toHaveLength(1);
+  });
 });

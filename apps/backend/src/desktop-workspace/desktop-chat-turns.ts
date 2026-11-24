@@ -54,7 +54,7 @@ export class ChatCompletedTurns {
     for (const value of [
       item.id, item.kind, item.assistantPhase, item.timestamp, item.toolUseId, item.toolKind,
       item.toolDisplayName, item.providerToolName, item.toolName, item.isError,
-      item.content, item.toolInput, item.providerToolResult, item.agentMessage?.body,
+      item.content, item.toolInput, item.providerToolResult, item.nativeTask, item.agentMessage?.body,
       changeSummary(item.turnChanges),
     ]) {
       const encoded = typeof value === 'string' ? value : JSON.stringify(value ?? null);
@@ -159,7 +159,7 @@ export class ChatCompletedTurns {
       if (index < reply.start) beforeReply++;
       const peer = links.peer(item);
       if (item.kind === 'tool_result' && peer) continue;
-      if (agents.length < 16 && item.kind === 'tool_use') {
+      if (agents.length < 16 && (item.kind === 'tool_use' || item.nativeTask)) {
         const entry = chatAgentEntry(item, peer);
         if (entry && ['launch', 'native', 'wait', 'native-wait', 'message', 'stop'].includes(entry.operation.type)) agents.push(entry);
       }

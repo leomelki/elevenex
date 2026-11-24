@@ -20,6 +20,7 @@ type Runtime = {
   readonly native: ReadonlyMap<string, SessionChatBackgroundWork>;
   readonly recent: ReadonlyMap<string, SessionChatWorkEvent>;
   readonly references: ReadonlyMap<number, SessionAgentReference>;
+  readonly nativeOutcomes: ReadonlyMap<string, SessionAgentTurnEntry>;
 };
 type AgentState = Pick<SessionChatState, 'work' | 'provider' | 'delegation' | 'nativeAgentInspection'>;
 type Launch = { readonly key: string; readonly entry: SessionAgentTurnEntry };
@@ -35,15 +36,18 @@ function indexRuntime(state: AgentState | null, exchanges: readonly ChatExchange
     if (item.parentToolUseId) recent.set(item.parentToolUseId, item);
   }
   const references = new Map<number, SessionAgentReference>();
+  const nativeOutcomes = new Map<string, SessionAgentTurnEntry>();
   for (const exchange of exchanges) {
     const add = (entry: SessionAgentTurnEntry | undefined) => {
       const reference = entry?.result?.session;
       if (reference?.title) references.set(reference.sessionId, reference);
+      if (entry?.operation.type === 'native-wait' && entry.endedAt)
+        for (const agent of entry.result?.agents ?? []) nativeOutcomes.set(agent.agentId, entry);
     };
     for (const entry of exchange.agentIndex ?? []) add(entry);
     for (const step of exchange.steps) add(step.agentEntry);
   }
-  return { native, recent, references, sessions: new Map(state?.work?.sessions?.map(item => [item.session.sessionId, item])) };
+  return { native, recent, references, nativeOutcomes, sessions: new Map(state?.work?.sessions?.map(item => [item.session.sessionId, item])) };
 }
 
 function target(session?: SessionAgentReference): AgentWorkTarget | undefined {
@@ -140,16 +144,21 @@ function cardFor(launch: Launch, operations: readonly SessionAgentTurnEntry[], r
     const lookup = result?.agentId ?? entry.toolId ?? entry.id;
     const work = runtime.native.get(lookup), recent = runtime.recent.get(lookup);
     const agentId = work?.agentId ?? recent?.agentId ?? result?.agentId;
-    const received = agentId ? operations.flatMap(operation => operation.result?.agents?.flatMap(agent =>
+    const later = agentId ? runtime.nativeOutcomes.get(agentId) : undefined;
+    const outcome = later?.endedAt && Date.parse(later.endedAt) >= (startedAt ?? 0) ? later : undefined;
+    const received = agentId ? [...operations, ...(outcome ? [outcome] : [])].flatMap(operation => operation.result?.agents?.flatMap(agent =>
       agent.agentId === agentId ? [{ ...agent, endedAt: operation.endedAt }] : []) ?? []).at(-1) : undefined;
     const receipt = result?.status;
     const reported = receipt === 'running' && !live ? 'unavailable' : receipt;
-    const status = work?.status ?? recent?.agentStatus ?? received?.status ?? (failed ? 'error' : reported ?? (live ? 'pending' : 'unavailable'));
+    const status = work?.status ?? received?.status ?? recent?.agentStatus ?? (failed ? 'error' : reported ?? (live ? 'pending' : 'unavailable'));
     return {
       id: key, title: work?.title || operation.title || work?.label || 'Agent',
-      status, selection: state?.provider ? { provider: state.provider, model: work?.model } : undefined,
+      status, selection: operation.identity || state?.provider ? {
+        provider: operation.identity?.provider ?? state?.provider ?? 'agent',
+        model: work?.model ?? operation.identity?.model, effort: work?.effort ?? operation.identity?.effort,
+      } : undefined,
       role: work?.role ?? operation.message,
-      detail: work?.detail || recent?.detail || received?.detail || result?.detail || '',
+      detail: work?.detail || received?.detail || recent?.detail || result?.detail || '',
       startedAt: timestamp(work?.startedAt) ?? startedAt,
       endedAt: agentWorkLive(status) ? undefined : timestamp(recent?.at ?? received?.endedAt) ?? endedAt,
       usage: work ? formatUsage(work) : '', stoppable: work?.stoppable,
@@ -189,13 +198,18 @@ function cardFor(launch: Launch, operations: readonly SessionAgentTurnEntry[], r
   };
 }
 
+function launchIdentity(entry: SessionAgentTurnEntry): string {
+  const { operation, result } = entry;
+  return operation.requestId ? 'request:' + operation.requestId :
+    result?.session ? 'session:' + result.session.sessionId :
+    result?.agentId ? 'native:' + result.agentId : entry.id;
+}
 function launches(operations: readonly SessionAgentTurnEntry[]): readonly Launch[] {
   const found = new Map<string, Launch>();
   for (const entry of operations) {
     const { operation, result } = entry;
     if (operation.type !== 'launch' && operation.type !== 'native') continue;
-    const identity = operation.requestId ? 'request:' + operation.requestId :
-      result?.session ? 'session:' + result.session.sessionId : entry.id;
+    const identity = launchIdentity(entry);
     const previous = found.get(identity);
     if (!previous && found.size >= CARD_LIMIT) break;
     // Keep the first mounted row through a retry. An unconfirmed replay cannot
@@ -229,6 +243,7 @@ function project(exchange: ChatExchange, runtime: Runtime, state: AgentState | n
   const operations = [...calls.values()];
   const live = exchange.status === 'live';
   const groups = launches(operations);
+  const groupedLaunches = new Set(groups.map(launch => launchIdentity(launch.entry)));
   const cards = groups.map(launch => cardFor(launch, operations, runtime, state, live));
   const ownSessions = new Set(cards.flatMap(card => card.target?.kind === 'session' ? [card.target.session.sessionId] : []));
   const native = new Set(cards.flatMap(card => card.target?.kind === 'native' ? [card.target.agentId] : []));
@@ -254,11 +269,10 @@ function project(exchange: ChatExchange, runtime: Runtime, state: AgentState | n
       } }];
     }
     const entry = calls.get(source.id) ?? source;
+    if (step.kind === 'note' && source.operation.type === 'native-wait') return coversNative(source) ? [] : [step];
     if (step.id === first && cards.length)
       return [{ ...step, agentBoard: { agents: cards, wait, waiting: !!wait && !waiting?.endedAt }, status: live ? 'running' : 'done' }];
-    if (groups.some(launch => launch.entry.id === entry.id || launch.key === step.id)) return [];
-    if (entry.operation.requestId && operations.some(other => other !== entry &&
-        other.operation.requestId === entry.operation.requestId && groups.some(launch => launch.entry.id === other.id))) return [];
+    if ((entry.operation.type === 'launch' || entry.operation.type === 'native') && groupedLaunches.has(launchIdentity(entry))) return [];
     const ref = sessionOf(entry, runtime);
     const mergedMessage = entry.operation.type === 'message' && ref && ownSessions.has(ref.sessionId);
     const mergedWait = entry.operation.type === 'wait' && !entry.failed &&

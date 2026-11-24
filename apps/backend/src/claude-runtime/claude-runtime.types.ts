@@ -108,6 +108,14 @@ export interface ClaudeTranscriptItem {
   toolInput?: unknown;
   providerToolInput?: unknown;
   providerToolResult?: unknown;
+  /** Native child identity reported by the tool before its terminal receipt. */
+  nativeTask?: {
+    readonly agentId: string;
+    readonly provider: string;
+    readonly model?: string;
+    readonly status?: 'running' | 'completed' | 'error';
+    readonly detail?: string;
+  };
   interaction?: ClaudeToolInteractionSummary;
   isError?: boolean;
   isSynthetic?: boolean;

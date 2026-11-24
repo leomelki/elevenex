@@ -1,4 +1,5 @@
 import { DesktopDelegationActivity } from './desktop-delegation-activity.js';
+import { sessionAgentPrompt } from '../sessions/session-agent-message.js';
 
 describe('lightweight delegated activity', () => {
   it('coalesces progress bursts, publishes decisions promptly and releases pending work', () => {
@@ -15,6 +16,8 @@ describe('lightweight delegated activity', () => {
         const payload = { sessionId, item: { id: String(index), kind: 'tool_use', toolKind: 'read', toolInput: { file_path: 'src/' + index + '.ts' } } };
         activity.update({ type: 'tool_use', payload }, 'running', undefined, false);
       }
+      const duplicate = { sessionId, item: { id: '0', kind: 'tool_use' } };
+      activity.update({ type: 'tool_use', payload: duplicate }, 'running', undefined, false);
       jest.advanceTimersByTime(599);
       expect(updates).not.toHaveBeenCalled();
       jest.advanceTimersByTime(1);
@@ -32,6 +35,20 @@ describe('lightweight delegated activity', () => {
       activity.dispose();
       expect(jest.getTimerCount()).toBe(0);
       jest.useRealTimers();
+    }
+  });
+
+  it('recovers queued delivery from snapshots and ends a turn even after hooks clear its activity', () => {
+    const activity = new DesktopDelegationActivity();
+    const sessionId = 9;
+    const messageId = '00000000-0000-4000-8000-000000000001';
+    try {
+      activity.update({ type: 'run_state', payload: { sessionId } }, undefined, 'running', true);
+      const payload = { sessionId, liveItems: [{ kind: 'user', content: sessionAgentPrompt('Review', { sessionId: 2 }, 'message', messageId) }] };
+      activity.update({ type: 'runtime_snapshot', payload }, undefined, 'idle', false);
+      expect(activity.get(sessionId)).toMatchObject({ deliveries: [messageId], endedAt: expect.any(String) });
+    } finally {
+      activity.dispose();
     }
   });
 });

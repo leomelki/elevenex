@@ -385,6 +385,7 @@ function projectExchanges(
                       ? "tool"
                       : "note",
               text: messageText(item),
+              agentEntry: item.agent,
               detail: item.kind === "error" ? item.text : undefined,
               status:
                 item.error || item.kind === "error"

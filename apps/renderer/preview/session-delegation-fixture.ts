@@ -4,12 +4,13 @@ import type {
 } from '@elevenex/shared';
 import { previewChatState, type SessionChatFixture } from './session-chat-fixture';
 
-export type DelegationScene = 'starting' | 'running' | 'waiting' | 'reply' | 'settled' | 'failed';
+export type DelegationScene = 'starting' | 'running' | 'waiting' | 'reply' | 'settled' | 'failed' | 'harnesses';
 
 const parent = { sessionId: 101, taskId: 11, title: 'Coordinate the retry fix', selection: { provider: 'claude', model: 'Opus', effort: 'high' } };
 const review = { sessionId: 202, taskId: 11, title: 'Review the retry boundary', selection: { provider: 'codex', model: 'GPT-6', effort: 'high' } };
 const tests = { sessionId: 203, taskId: 11, title: 'Write regression tests', selection: { provider: 'codex', model: 'GPT-6', effort: 'medium' } };
 const docs = { sessionId: 204, taskId: 11, title: 'Check provider documentation', selection: { provider: 'pi', model: 'Sonnet', effort: 'low' } };
+const openCode = { sessionId: 205, taskId: 11, title: 'Check the fallback path', selection: { provider: 'opencode', model: 'openrouter/anthropic/claude-sonnet', effort: 'high' } };
 const reply = 'Both requests can reach the provider before the original check records the claim.\n\n' +
   '### What I checked\n\n- The retry key stays stable while a pending request is owned.\n' +
   '- Delayed successes preserve the existing claim.\n- Conflicting requests now share the same result.\n\n' +
@@ -50,6 +51,7 @@ export function seedDelegation(chat: SessionChatFixture, scene: DelegationScene)
       launch(tests, true),
       tool('spawn-native', { type: 'native', title: 'Audit the callback paths', message: 'Explore' },
         { agentId: 'native-inspect', status: 'completed', detail: 'The callback preserves the original retry key.' }),
+      ...(scene === 'harnesses' ? [launch(docs, true), launch(openCode, true)] : []),
       tool('message-review', { type: 'message', sessions: [202], message: 'Check delayed provider responses too.' },
         { session: review, messageId, delivery: 'queued' }),
       wait,
@@ -62,6 +64,7 @@ export function seedDelegation(chat: SessionChatFixture, scene: DelegationScene)
     { ...childWork(review, incoming ? 'completed' : failed ? 'error' : 'running', incoming ? 'Two requests can race before the original claim.' : failed ? 'The harness reached its rate limit. Try again when capacity is available.' : 'Reading retry-claims.ts'), ...(incoming ? { delivered: [messageId] } : {}) },
     childWork(tests, waiting ? 'waiting' : done ? 'completed' : 'running', waiting ? 'Choose how long the retry claim should remain valid.' : done ? 'Both concurrent-request regressions pass.' : 'Running the concurrency tests'),
     childWork(docs, 'completed', 'Confirmed the provider retains keys for 24 hours.'),
+    ...(scene === 'harnesses' ? [childWork(openCode, 'running', 'Reading the provider fallback')] : []),
   ] : [];
   const base = previewChatState();
   chat.seed(101, { items, state: { ...base, provider: 'claude', providerLocked: true, model: 'Opus', nativeAgentInspection: true,
@@ -91,6 +94,7 @@ export function seedDelegation(chat: SessionChatFixture, scene: DelegationScene)
     permission: waiting ? { id: 'agent-approval', title: 'Run payment regression tests', description: 'The test command needs your approval.',
       input: '{"command":"pnpm test retry-claims --runInBand"}', allowAlways: false } : null });
   child(docs, { phase: 'idle' });
+  if (scene === 'harnesses') child(openCode, { provider: 'opencode', model: openCode.selection.model, phase: 'running', canInterrupt: true });
   const parentRow: WorkspaceSession = { id: 101, taskId: 11, repoId: 1, name: parent.title, provider: 'claude', status: done ? 'done' : 'running', updatedAt: at(),
     ...(started ? { childSummary: { status: waiting ? 'attention' : failed ? 'failed' : 'running', count: waiting || failed || incoming ? 1 : 2 },
       activeChildAgents: incoming || failed ? [203] : [202, 203] } : {}) };
