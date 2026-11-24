@@ -183,6 +183,16 @@ app.whenReady().then(async () => {
       }
     };
     const tab = label => frame.executeJavaScript(`!!document.querySelector('.tab[aria-label^=${JSON.stringify(label)}]')`);
+    const previewLabel = () => frame.executeJavaScript(`(() => {
+      const action = document.querySelector('.editor-actions [role="button"][aria-label^="Open Preview"]');
+      if (!action || getComputedStyle(action, '::before').content === 'none') return;
+      return getComputedStyle(action, '::after').content;
+    })()`);
+    await wait(async () => (await previewLabel())?.startsWith('"Preview"'), 'HTML title action did not show its icon and label');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width = '240px'");
+    await wait(async () => (await previewLabel()) === 'none', 'Narrow editor did not keep an accessible icon-only preview action');
+    await window.webContents.executeJavaScript("document.querySelector('iframe').style.width = '432px'");
+    await wait(async () => (await previewLabel())?.startsWith('"Preview"'), 'Preview label did not return after widening the editor');
     await click('Open Preview');
     await wait(currentOrigin, 'HTML preview did not load from a single click');
     await wait(() => inspectPage(`document.querySelector('h1')?.textContent === 'Task HTML preview' &&

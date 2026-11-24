@@ -255,8 +255,10 @@ The workbench owns explorer, tabs, Quick Open, search, editing, language basics
 and backups. Its built-in Markdown preview commands work in the side panel and
 separate Code window, including images resolved relative to a task file.
 
-Choose **Open Preview** in an HTML editor’s title bar, the Explorer context
-menu, the Command Palette (**HTML: Open Preview**) or press `Ctrl/Cmd+Shift+V`.
+Choose **Preview** in an HTML editor’s title bar. In narrow editor groups it
+appears as a browser-window icon with an **Open Preview** tooltip. You can also
+choose **Open Preview** in the Explorer context menu, run **HTML: Open Preview**
+from the Command Palette or press `Ctrl/Cmd+Shift+V`.
 With room for both, as in the expanded panel, the preview opens beside its
 source and keeps focus in the editor. In the compact side panel it opens as a
 tab in the same group. **Open Preview to the Side** (`Ctrl/Cmd+K V`, or

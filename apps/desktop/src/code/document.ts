@@ -6,6 +6,7 @@ import type { WorkspaceDescriptor } from './validation';
 export const CODE_EXTENSION_PATH = '/extension-v2';
 const htmlResource = 'resourceScheme == elevenex-task && resourceExtname =~ /\\.html?$/i';
 const htmlPreviewActive = `activeWebviewPanelId == ${HTML_PREVIEW_VIEW}`;
+const htmlPreviewIcon = 'elevenex-html-preview';
 // Markdown's preview shortcuts, for an HTML source in the editor or Explorer.
 const htmlPreviewKeys = `${htmlResource} && (editorTextFocus || filesExplorerFocus && !inputFocus)`;
 export const EXTENSION = {
@@ -14,6 +15,9 @@ export const EXTENSION = {
   enabledApiProposals: ['fileSearchProvider', 'textSearchProvider'],
   capabilities: { virtualWorkspaces: true, untrustedWorkspaces: { supported: true } },
   contributes: {
+    icons: {
+      [htmlPreviewIcon]: { description: 'Open an HTML page preview', default: 'browser' },
+    },
     viewsContainers: { secondarySidebar: [{ id: 'elevenex-files', title: 'Files', icon: '$(files)' }] },
     views: { explorer: [{ id: 'elevenex.linkedFiles', name: 'Linked folders', when: 'elevenex.hasLinkedFolder' }] },
     menus: {
@@ -37,8 +41,8 @@ export const EXTENSION = {
       'editor/title/context': [{ command: 'elevenex.code.download', when: 'resourceScheme == elevenex-task', group: '2_files@10' }],
       'view/title': [{ command: 'elevenex.code.find-file', when: 'view == workbench.explorer.fileView && elevenex.compact', group: 'navigation@0' }, { command: 'elevenex.code.upload', when: 'view == workbench.explorer.fileView', group: 'navigation@10' }, { command: 'elevenex.code.upload-folder', when: 'view == workbench.explorer.fileView', group: '1_transfer@2' }, { command: 'elevenex.code.download', when: 'view == workbench.explorer.fileView', group: '1_transfer@3' }] },
     commands: [
-      { command: 'elevenex.code.preview-html', title: 'Open Preview', category: 'HTML', icon: '$(open-preview)' },
-      { command: 'elevenex.code.preview-html-side', title: 'Open Preview to the Side', category: 'HTML', icon: '$(open-preview)' },
+      { command: 'elevenex.code.preview-html', title: 'Open Preview', category: 'HTML', icon: `$(${htmlPreviewIcon})` },
+      { command: 'elevenex.code.preview-html-side', title: 'Open Preview to the Side', category: 'HTML', icon: `$(${htmlPreviewIcon})` },
       { command: 'elevenex.code.preview-html-source', title: 'Show Source', category: 'HTML', icon: '$(go-to-file)' },
       { command: 'elevenex.code.refresh-html-preview', title: 'Refresh Preview', category: 'HTML', icon: '$(refresh)' },
       { command: 'elevenex.code.upload', enablement: '!elevenex.transferRunning', title: 'Upload Files…', category: 'Task', icon: '$(cloud-upload)' },
@@ -58,7 +62,9 @@ function colors(css: string, dark: boolean): Record<string, string> {
   return Object.fromEntries([...((block ?? '').matchAll(/--([a-z-]+):\s*(#[a-fA-F0-9]+);/g))].map(m => [m[1]!, m[2]!]));
 }
 export function workbenchDocument(workspace: WorkspaceDescriptor, authority: string, tokens: string, dark: boolean, shellOrigin = 'app://elevenex'): { html: string; policy: string } {
-  const nonce = randomBytes(18).toString('base64'), palette = colors(tokens, dark);
+  const nonce = randomBytes(18).toString('base64');
+  const lightPalette = colors(tokens, false), darkPalette = colors(tokens, true);
+  const palette = dark ? darkPalette : lightPalette;
   const uiColors = (palette: Record<string, string>) => ({
     'editor.background': palette['surface'], 'editor.foreground': palette['ink'], 'sideBar.background': palette['surface-sunken'], 'sideBar.foreground': palette['ink'],
     'activityBar.background': palette['surface'], 'activityBar.foreground': palette['ink'], 'activityBarBadge.background': palette['accent'], 'activityBarBadge.foreground': palette['on-accent'],
@@ -84,7 +90,7 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
     additionalBuiltinExtensions: [{ scheme: 'https', authority, path: CODE_EXTENSION_PATH }],
     enabledExtensionProposedApi: ['elevenex.task-workspace'],
     productConfiguration: { nameShort: 'Code OSS', nameLong: 'Code OSS', applicationName: 'elevenex-code', quality: 'stable', commit: 'elevenex-code-oss-1.144.0', enableTelemetry: false, webEndpointUrlTemplate: `https://{{uuid}}.${authority}`, extensionEnabledApiProposals: { 'elevenex.task-workspace': ['fileSearchProvider', 'textSearchProvider'] } },
-    configurationDefaults: { 'telemetry.telemetryLevel': 'off', 'chat.disableAIFeatures': true, 'chat.agentFilesLocations': {}, 'chat.agentSkillsLocations': {}, 'chat.instructionsFilesLocations': {}, 'chat.hookFilesLocations': {}, 'chat.useAgentSkills': false, 'chat.useHooks': false, 'chat.useClaudeHooks': false, 'workbench.startupEditor': 'none', 'workbench.tips.enabled': false, 'workbench.colorTheme': dark ? 'Dark Modern' : 'Light Modern', 'workbench.colorCustomizations': { '[Dark Modern]': uiColors(colors(tokens, true)), '[Light Modern]': uiColors(colors(tokens, false)) }, 'editor.tokenColorCustomizations': { '[Dark Modern]': syntaxColors(colors(tokens, true)), '[Light Modern]': syntaxColors(colors(tokens, false)) }, 'window.autoDetectColorScheme': false, 'workbench.preferredDarkColorTheme': 'Dark Modern', 'workbench.preferredLightColorTheme': 'Light Modern', 'editor.fontFamily': '"Geist Mono", monospace', 'editor.fontSize': 12.5, 'editor.editContext': false, 'editor.experimentalGpuAcceleration': 'off', 'editor.minimap.enabled': false, 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'files.hotExit': 'onExitAndWindowClose', 'window.menuBarVisibility': 'compact', 'window.titleBarStyle': 'custom', 'window.commandCenter': false, 'workbench.layoutControl.enabled': false, 'window.title': 'Code', 'chat.microsoftAuthentication.enabled': false, 'security.workspace.trust.enabled': false, 'search.followSymlinks': false, 'extensions.ignoreRecommendations': true },
+    configurationDefaults: { 'telemetry.telemetryLevel': 'off', 'chat.disableAIFeatures': true, 'chat.agentFilesLocations': {}, 'chat.agentSkillsLocations': {}, 'chat.instructionsFilesLocations': {}, 'chat.hookFilesLocations': {}, 'chat.useAgentSkills': false, 'chat.useHooks': false, 'chat.useClaudeHooks': false, 'workbench.startupEditor': 'none', 'workbench.tips.enabled': false, 'workbench.colorTheme': dark ? 'Dark Modern' : 'Light Modern', 'workbench.colorCustomizations': { '[Dark Modern]': uiColors(darkPalette), '[Light Modern]': uiColors(lightPalette) }, 'editor.tokenColorCustomizations': { '[Dark Modern]': syntaxColors(darkPalette), '[Light Modern]': syntaxColors(lightPalette) }, 'window.autoDetectColorScheme': false, 'workbench.preferredDarkColorTheme': 'Dark Modern', 'workbench.preferredLightColorTheme': 'Light Modern', 'editor.fontFamily': '"Geist Mono", monospace', 'editor.fontSize': 12.5, 'editor.editContext': false, 'editor.experimentalGpuAcceleration': 'off', 'editor.minimap.enabled': false, 'files.autoSave': 'afterDelay', 'files.autoSaveDelay': 1000, 'files.hotExit': 'onExitAndWindowClose', 'window.menuBarVisibility': 'compact', 'window.titleBarStyle': 'custom', 'window.commandCenter': false, 'workbench.layoutControl.enabled': false, 'window.title': 'Code', 'chat.microsoftAuthentication.enabled': false, 'security.workspace.trust.enabled': false, 'search.followSymlinks': false, 'extensions.ignoreRecommendations': true },
     windowIndicator: { label: '$(code)', tooltip: 'Task workspace' },
     defaultLayout: { views: [{ id: 'workbench.explorer.fileView' }] },
     enableWorkspaceTrust: false,
@@ -94,7 +100,37 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
   // header presentation changes. Expanded Explorer retains its upstream title.
   const header = '.elevenex-compact-files .part.auxiliarybar > .title:has(.action-label[aria-label^="Find file"])';
   const find = '.action-label[aria-label^="Find file"]';
-  const uiTokens = Object.fromEntries([...tokens.matchAll(/--(space-[12]|control-height|radius-sm|text-ui-size|text-ui-weight):\s*([^;]+);/g)].map(match => [match[1], match[2]]));
+  const uiTokens = Object.fromEntries([...tokens.matchAll(/--(space-[126]|control-height|radius-sm|text-caption-size|text-ui-size|text-ui-weight):\s*([^;]+);/g)].map(match => [match[1], match[2]]));
+  // Style the contributed icon only in the native editor toolbar. Code OSS
+  // keeps ownership of the action, accessible name, tooltip and Alt behavior.
+  const previewToolbar = '.monaco-workbench:is(.vs, .vs-dark) .part.editor .editor-group-container > .title';
+  const previewAction = `${previewToolbar} .editor-actions .action-item .action-label.codicon-${htmlPreviewIcon}`;
+  const previewActionCss = `
+    .monaco-workbench.vs { --preview-accent: ${lightPalette['accent']}; --preview-surface: ${lightPalette['accent-soft']}; }
+    .monaco-workbench.vs-dark { --preview-accent: ${darkPalette['accent']}; --preview-surface: ${darkPalette['accent-soft']}; }
+    ${previewToolbar}:has(.editor-actions .codicon-${htmlPreviewIcon}) { container-type: inline-size; }
+    ${previewAction} {
+      box-sizing: border-box;
+      width: auto;
+      height: ${uiTokens['space-6']};
+      padding: 0 ${uiTokens['space-2']};
+      gap: ${uiTokens['space-1']};
+      border-radius: ${uiTokens['radius-sm']};
+      background-color: var(--preview-surface);
+      color: var(--preview-accent);
+    }
+    ${previewAction}::after {
+      content: 'Preview' / '';
+      font: ${uiTokens['text-ui-weight']} ${uiTokens['text-caption-size']} 'Instrument Sans', sans-serif;
+    }
+    ${previewAction}:hover { background-color: color-mix(in srgb, var(--preview-accent) 5%, var(--preview-surface)); }
+    ${previewAction}:active { background-color: color-mix(in srgb, var(--preview-accent) 8%, var(--preview-surface)); }
+    ${previewAction}:focus-visible { outline: 1px solid var(--preview-accent); outline-offset: 1px; }
+    @container (width < 260px) {
+      ${previewAction} { padding-inline: ${uiTokens['space-1']}; }
+      ${previewAction}::after { content: none; }
+    }
+  `;
   // The pinned web embedder has no API for removing built-in view containers.
   // Hide only these navigation items (including their keyboard targets), in
   // both expanded and standalone workbenches. Source Control stays available.
@@ -114,5 +150,5 @@ export function workbenchDocument(workspace: WorkspaceDescriptor, authority: str
     ${header} ${find}::after { content: 'Find file…'; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Instrument Sans', sans-serif; font-size: ${uiTokens['text-ui-size'] ?? 'inherit'}; font-weight: ${uiTokens['text-ui-weight'] ?? 'inherit'}; }
   `;
   const json = JSON.stringify(options).replaceAll('<', '\\u003c');
-  return { policy: codePolicy(authority, nonce, false, [], shellOrigin), html: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Code OSS</title><link rel="icon" href="/assets/favicon.ico"><link rel="stylesheet" href="/assets/out/vs/workbench/workbench.web.main.internal.css"><style nonce="${nonce}">html,body{height:100%;margin:0;background:${palette['surface']}}@font-face{font-family:'Geist Mono';src:url('/fonts/geist-mono.woff2');font-weight:100 900;font-display:swap}@font-face{font-family:'Instrument Sans';src:url('/fonts/instrument-sans.woff2');font-weight:100 900;font-display:swap}body,.monaco-workbench{font-family:'Instrument Sans',sans-serif}${navigationCss}${compactHeaderCss}</style></head><body></body><script nonce="${nonce}" type="module">void navigator.storage.persist().catch(()=>false);globalThis._VSCODE_FILE_ROOT=location.origin+'/assets/out/';await import('/assets/out/nls.messages.js');const [{create,URI,commands},{FilesFocus}]=await Promise.all([import('/assets/out/vs/workbench/workbench.web.main.internal.js'),import('${CODE_EXTENSION_PATH}/files-focus.browser.js')]);const filesFocus=new FilesFocus(document,()=>commands.executeCommand('elevenex.code.dismiss-files'));addEventListener('pagehide',()=>filesFocus.dispose(),{once:true});const config=${json};const initial=config.workspace;initial.folderUri=URI.from(initial.folderUri);delete config.workspace;create(document.body,{...config,commands:[{id:'explorer.download',handler:(...args)=>commands.executeCommand('elevenex.code.download',...args)},{id:'explorer.upload',handler:(...args)=>commands.executeCommand('elevenex.code.upload',...args)},{id:'elevenex.code.files-layout',handler:(browsing)=>{if(typeof browsing==='boolean')filesFocus.setBrowsing(browsing);}}],workspaceProvider:{workspace:initial,trusted:true,open:async()=>false}});</script></html>` };
+  return { policy: codePolicy(authority, nonce, false, [], shellOrigin), html: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Code OSS</title><link rel="icon" href="/assets/favicon.ico"><link rel="stylesheet" href="/assets/out/vs/workbench/workbench.web.main.internal.css"><style nonce="${nonce}">html,body{height:100%;margin:0;background:${palette['surface']}}@font-face{font-family:'Geist Mono';src:url('/fonts/geist-mono.woff2');font-weight:100 900;font-display:swap}@font-face{font-family:'Instrument Sans';src:url('/fonts/instrument-sans.woff2');font-weight:100 900;font-display:swap}body,.monaco-workbench{font-family:'Instrument Sans',sans-serif}${navigationCss}${compactHeaderCss}${previewActionCss}</style></head><body></body><script nonce="${nonce}" type="module">void navigator.storage.persist().catch(()=>false);globalThis._VSCODE_FILE_ROOT=location.origin+'/assets/out/';await import('/assets/out/nls.messages.js');const [{create,URI,commands},{FilesFocus}]=await Promise.all([import('/assets/out/vs/workbench/workbench.web.main.internal.js'),import('${CODE_EXTENSION_PATH}/files-focus.browser.js')]);const filesFocus=new FilesFocus(document,()=>commands.executeCommand('elevenex.code.dismiss-files'));addEventListener('pagehide',()=>filesFocus.dispose(),{once:true});const config=${json};const initial=config.workspace;initial.folderUri=URI.from(initial.folderUri);delete config.workspace;create(document.body,{...config,commands:[{id:'explorer.download',handler:(...args)=>commands.executeCommand('elevenex.code.download',...args)},{id:'explorer.upload',handler:(...args)=>commands.executeCommand('elevenex.code.upload',...args)},{id:'elevenex.code.files-layout',handler:(browsing)=>{if(typeof browsing==='boolean')filesFocus.setBrowsing(browsing);}}],workspaceProvider:{workspace:initial,trusted:true,open:async()=>false}});</script></html>` };
 }
