@@ -11,7 +11,7 @@ jest.mock('../sessions/sessions.service.js', () => ({
 }));
 
 import { CodexRuntimeService } from './codex-runtime.service.js';
-import { CodexAppServerClient } from './codex-app-server.js';
+import { CodexAppServerClient, CodexAppServerResponseError } from './codex-app-server.js';
 import type { CodexAppServerNotification } from './codex-app-server.js';
 import { chatWork } from '../desktop-workspace/desktop-chat-work.js';
 import type { TurnChangesService } from '../agent-runtime/turn-changes.service.js';
@@ -1761,6 +1761,64 @@ describe('CodexRuntimeService', () => {
     expect(await service.getRuntimeState(7)).toMatchObject({ runPhase: 'idle', canInterrupt: false });
   });
 
+  it.each(['live', 'queued', 'existing queue', 'rejected', 'unknown'] as const)(
+    'delivers an agent follow-up with %s steering',
+    async (delivery) => {
+      const { service, appServer } = createService();
+      const wire = wireAppServerTurn(appServer);
+      const initial = service.submitPrompt(7, 'Initial assignment');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (delivery === 'existing queue')
+        await service.submitPrompt(7, 'Earlier queued work');
+      const accepted = jest.fn();
+      if (delivery === 'rejected') {
+        appServer.request.mockRejectedValueOnce(
+          new CodexAppServerResponseError('Active turn cannot be steered.', -32600),
+        );
+      } else if (delivery === 'unknown') {
+        appServer.request.mockRejectedValueOnce(new Error('Request timed out'));
+      }
+      try {
+        const sent = service.submitPrompt(7, 'Focus on the failing test', undefined, undefined, {
+          waitForCompletion: false,
+          preferSteering: true,
+          queue: delivery === 'queued',
+          onAccepted: accepted,
+        });
+        if (delivery === 'unknown') {
+          await expect(sent).rejects.toThrow('Request timed out');
+          expect(accepted).not.toHaveBeenCalled();
+        } else {
+          await sent;
+          expect(accepted).toHaveBeenCalledWith(delivery === 'live' ? 'steered' : 'queued');
+        }
+        const steers = appServer.request.mock.calls.filter(([method]) => method === 'turn/steer');
+        expect(steers).toEqual(delivery === 'queued' || delivery === 'existing queue' ? [] : [['turn/steer', {
+          threadId: 'thread-1',
+          expectedTurnId: 'turn-1',
+          input: [{ type: 'text', text: 'Focus on the failing test' }],
+        }]]);
+        expect((await service.getRuntimeState(7)).pendingPrompts.map(({ prompt }) => prompt))
+          .toEqual({
+            live: [],
+            queued: ['Focus on the failing test'],
+            'existing queue': ['Earlier queued work', 'Focus on the failing test'],
+            rejected: ['Focus on the failing test'],
+            unknown: [],
+          }[delivery]);
+        expect(appServer.request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(1);
+      } finally {
+        await service.clearPendingPrompts(7);
+        wire.notificationHandler({
+          method: 'turn/completed',
+          params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+        });
+        await initial;
+        service.onModuleDestroy();
+      }
+    },
+  );
+
   it('uses durable delegation options and queues a second send racing the cold first turn', async () => {
     const { service, appServer, sessionsService } = createService();
     const delegated = {
@@ -1774,7 +1832,7 @@ describe('CodexRuntimeService', () => {
     const running = service.submitPrompt(7, 'first', undefined, undefined, { onAccepted: first });
     try {
       await service.submitPrompt(7, 'second', undefined, undefined, {
-        waitForCompletion: false, onAccepted: second,
+        waitForCompletion: false, preferSteering: true, onAccepted: second,
       });
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(first).toHaveBeenCalledWith('running');

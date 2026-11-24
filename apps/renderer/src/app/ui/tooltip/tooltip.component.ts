@@ -20,7 +20,7 @@ import { ChangeDetectionStrategy, Component, input } from "@angular/core";
       line-height: var(--text-caption-line);
       font-weight: 500;
       max-width: min(64ch, calc(100vw - var(--space-8)));
-      white-space: normal;
+      white-space: pre-line;
       overflow-wrap: anywhere;
       box-shadow: var(--shadow-pop);
       pointer-events: none;

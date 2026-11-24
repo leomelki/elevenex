@@ -2550,12 +2550,15 @@ export class ClaudeRuntimeService
       !running.interruptRequested &&
       running.query.canSteer &&
       !options.queue &&
-      !this.runtimeStates.get(sessionId)?.queuePaused
+      !this.runtimeStates.get(sessionId)?.queuePaused &&
+      !(options.preferSteering && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
     ) {
       await this.sessionsService.assertSessionWorkspaceLinked(sessionId);
       if (
         this.activeRuns.get(sessionId) !== running ||
-        running.interruptRequested
+        running.interruptRequested ||
+        this.runtimeStates.get(sessionId)?.queuePaused ||
+        (options.preferSteering && this.runtimeStates.get(sessionId)?.pendingPrompts.length)
       )
         return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
       running.query.steer(

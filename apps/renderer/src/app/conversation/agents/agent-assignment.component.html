@@ -9,13 +9,14 @@
   </header>
   @if (long() && !open()) { <p class="preview">{{ text() }}</p> }
   <ex-fold [open]="open()"><div class="brief" [id]="contentId"><ng-content /></div></ex-fold>
-  @if (long()) {
-    <div class="action">
+  <footer>
+    <span class="workspace"><ex-icon name="subtask" [size]="12" />Works in this task’s shared workspace</span>
+    @if (long()) {
       <button exButton variant="ghost" size="sm" type="button"
         [attr.aria-expanded]="open()" [attr.aria-controls]="contentId" (click)="open.set(!open())">
         {{ open() ? 'Show less' : 'Show the whole brief' }}
         <ex-icon [name]="open() ? 'chevron-up' : 'chevron-down'" [size]="12" />
       </button>
-    </div>
-  }
+    }
+  </footer>
 </section>

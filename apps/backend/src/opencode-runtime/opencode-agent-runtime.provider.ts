@@ -982,11 +982,29 @@ export class OpenCodeAgentRuntimeProvider
       throw new ConflictException(
         'OpenCode has not confirmed that the previous turn stopped. Retry stopping it before continuing.',
       );
+    const active = this.entries.get(sessionId);
+    if (
+      options?.preferSteering &&
+      !options.queue &&
+      !images?.length &&
+      active?.run &&
+      active.client?.steerPrompt &&
+      state.claudeSessionId &&
+      !active.interruptRequested &&
+      !active.controller.signal.aborted &&
+      !state.queuePaused &&
+      !state.pendingPrompts.length &&
+      !this.interrupts.has(sessionId)
+    ) {
+      await active.client.steerPrompt(state.claudeSessionId, prompt);
+      options.onAccepted?.('steered');
+      return;
+    }
     if (
       state.canInterrupt ||
       state.queuePaused ||
       this.interrupts.has(sessionId) ||
-      this.entries.get(sessionId)?.run
+      active?.run
     ) {
       state.pendingPrompts = [
         ...state.pendingPrompts,

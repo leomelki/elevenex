@@ -211,10 +211,30 @@ completion includes the latest final reply when available, capped at 8,000
 characters, with its transcript item ID. Remove handled IDs before waiting
 again. Use `read_session` or `read_session_range` for detailed evidence.
 
+Use `completion:"notify"` on a same-task delegate with a first prompt when
+its work may outlast the parent turn. Elevenex waits for the child to settle
+and then sends the parent a short notice with session IDs and outcomes. Ready
+siblings can share one notice. A parent that is still working or waiting for
+input receives the notice once it is idle. Collecting the final reply through
+`await_session_event` suppresses the corresponding notice. The default
+`completion:"wait"` leaves the parent in control of collection.
+
+The backend recovers outstanding notices from its database. If the harness
+may have accepted a notice before a crash, Elevenex leaves it unconfirmed
+and avoids starting a second turn. The delegating session can see
+`completionNotice` in `session_status` and inspect the child directly.
+Plan mode and pending task finish requests prevent automatic continuation.
+An explicit stop of the parent clears its outstanding notices.
+
 Use `prompt_session` for a focused follow-up. Authenticated sends carry the
-sender’s session ID. `queue:true` asks for a separate turn when the target
-is busy. The return value describes that send’s acceptance, independently of
-other prompts and prior live activity. Session messages and results provide
+sender’s session ID. The tool starts an idle session and prefers live input
+for an active turn on Codex, Claude or OpenCode v2 when the harness can accept it.
+Busy harnesses without live steering queue the follow-up. An existing queue
+takes precedence over automatic steering. Set `queue:true` to request a
+separate turn when the target is busy. The send reports `running`, `steered`
+or `queued` as its acceptance disposition. If acceptance is pending or
+transport failed during delivery, inspect the session before resending.
+Session messages and results provide
 agent context and evidence. User decisions still go through the existing
 approval tools. A child can return findings, changed files, checks and blockers
 in its final reply for its parent to collect.

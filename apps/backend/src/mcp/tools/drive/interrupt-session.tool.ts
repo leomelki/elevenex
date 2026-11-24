@@ -26,6 +26,8 @@ export const interruptSessionTool = defineTool({
     const { provider, session } = await resolveSessionProvider(ctx, args.sessionId);
     const runtime = ctx.services.agentRuntime.getProvider(provider);
     await runtime.interrupt(args.sessionId);
+    if (ctx.agentSessionId !== null && session.delegatedBySessionId === ctx.agentSessionId)
+      ctx.services.sessions.delegationHandoffs?.collected(args.sessionId, ctx.agentSessionId);
     ctx.services.sessions.emit?.('session-turn-interrupted', { sessionId: args.sessionId });
     return {
       data: { sessionId: args.sessionId, interrupted: true, session: sessionAgentReference(session) },

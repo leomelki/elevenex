@@ -2,13 +2,17 @@ import { and, eq } from 'drizzle-orm';
 import { Logger } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { sessionReplyReturns, sessions } from '../database/schema/index.js';
+import { SessionCompletionOutbox } from './session-completion-outbox.js';
 
 /** Owns active waits and durable acknowledgements from session tools. */
 export class SessionDelegationHandoffs {
   private readonly logger = new Logger(SessionDelegationHandoffs.name);
   private readonly waits = new Map<number, Map<number, number>>();
+  readonly outbox: SessionCompletionOutbox;
 
-  constructor(private readonly db: DrizzleDB, private readonly changed: (sessionId: number) => void) {}
+  constructor(private readonly db: DrizzleDB, private readonly changed: (sessionId: number) => void) {
+    this.outbox = new SessionCompletionOutbox(db);
+  }
 
   waiting(recipientId: number, sessionId: number): boolean {
     return this.waits.get(sessionId)?.has(recipientId) ?? false;
@@ -51,6 +55,14 @@ export class SessionDelegationHandoffs {
     } catch (error) {
       // A presentation receipt must never prevent the tool from delivering its reply.
       this.logger.warn('Could not record a session reply handoff: ' + String(error));
+    }
+  }
+
+  collected(sessionId: number, recipientId: number): void {
+    try {
+      this.outbox.consume(sessionId, recipientId);
+    } catch (error) {
+      this.logger.warn('Could not record completion notice collection: ' + String(error));
     }
   }
 }

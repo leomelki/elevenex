@@ -77,10 +77,11 @@ export function seedDelegation(chat: SessionChatFixture, scene: DelegationScene)
     'Reproduce two calls with the same idempotency key. Inspect when the claim is written, confirm which call owns it, and include delayed successes in the checks.\n\n' +
     'Report what you find, the smallest safe change, and how to verify it. Coordinate edits with the other agent working on regression coverage.';
   const child = (ref: SessionAgentReference, state: Partial<SessionChatState>, isReview = false) => {
-    const assignment = record('child-brief-' + ref.sessionId, 'user', isReview ? brief.repeat(3) : brief,
+    const assignment = record('child-brief-' + ref.sessionId, 'user', isReview ? [brief, brief, brief].join('\n\n') : brief,
       { sender: { session: parent, purpose: 'assignment' } });
     const childItems = [assignment];
     if (isReview && incoming) {
+      childItems.push(record('child-progress', 'assistant', 'I’ll trace the claim path first.', { assistantPhase: 'commentary' }));
       childItems.push(record('child-message', 'user', 'Check delayed provider responses too.', { sender: { session: parent, purpose: 'message', messageId } }));
       childItems.push(record('review-reply', 'assistant', reply, { assistantPhase: 'final' }));
     }

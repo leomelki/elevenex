@@ -129,10 +129,12 @@
   @for (receipt of returnedTo(); track receipt.itemId + ':' + receipt.recipient.sessionId) {
     <div class="handoff">
       <ex-icon name="check" [size]="13" />
-      <span>Sent to</span>
-      <button exButton variant="ghost" size="sm" type="button"
-        [disabled]="agentNavigationDisabled()" (click)="followHandoff(receipt, $event)">{{ agentTitle(receipt.recipient) }}</button>
-      <time [attr.datetime]="receipt.at">{{ receipt.at | date: 'shortTime' }}</time>
+      <span class="handoff-text">Sent to <strong>{{ agentTitle(receipt.recipient) }}</strong>
+        <time [attr.datetime]="receipt.at">{{ receipt.at | date: 'shortTime' }}</time></span>
+      <button exButton variant="ghost" size="sm" type="button" [attr.aria-label]="'Go to ' + agentTitle(receipt.recipient)"
+        [disabled]="agentNavigationDisabled()" (click)="followHandoff(receipt, $event)">
+        Go to parent <ex-icon name="forward" [size]="12" />
+      </button>
     </div>
   }
   <ex-fold [open]="status() !== 'live'"

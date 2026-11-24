@@ -26,7 +26,7 @@ export const promptSessionTool = defineTool({
   costClass: 'heavy',
   mutates: true,
   description:
-    'Send a prompt or follow-up to another session. Authenticated messages carry their sender session ID. Returns when the harness accepts this send or after 5s with acceptance_pending. Use await_session_event for the result; do not resend an unconfirmed prompt.',
+    'Send a follow-up to another session by ID. Starts an idle session, steers a live turn when supported, or queues. Use queue:true for a separate turn. Authenticated sends carry the sender session ID. Returns the delivery disposition or acceptance_pending after 5s. Use await_session_event for the result; do not resend an unconfirmed prompt.',
   disallowSelfTarget: 'session',
   inputShape: {
     sessionId: z
@@ -47,7 +47,7 @@ export const promptSessionTool = defineTool({
       .boolean()
       .optional()
       .describe(
-        "Queue as a new turn if busy. Omit to use the harness's normal live steering or queue behavior.",
+        'Queue a separate turn if busy. Omit to prefer live steering where supported.',
       ),
     mentionSessionIds: z
       .array(z.number().int().positive())
@@ -128,7 +128,12 @@ export const promptSessionTool = defineTool({
       runtime,
       session.id,
       await sessionMessage(prompt, ctx, false, messageId),
-      { signal: ctx.signal, queue: args.queue, titlePrompt: args.prompt },
+      {
+        signal: ctx.signal,
+        queue: args.queue,
+        preferSteering: args.queue !== true,
+        titlePrompt: args.prompt,
+      },
     );
     // The receipt proves acceptance. This single bounded read only augments
     // its result with a pause, pending decision or an already completed turn.

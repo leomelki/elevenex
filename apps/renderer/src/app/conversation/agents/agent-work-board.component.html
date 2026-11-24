@@ -7,7 +7,7 @@
             <ex-agent-mark [harness]="agent.selection?.provider" mark="A" appearance="tinted" />
           }
         </span>
-        <strong><ex-ticker [value]="board().agents.length" /> agents</strong>
+        <strong>@if (live()) {Working with }<ex-ticker [value]="board().agents.length" /> agents</strong>
         <span class="tally">
           @for (fact of tally(); track fact.status) {
             <span [attr.aria-label]="fact.count + ' ' + fact.label" [exTooltip]="fact.count + ' ' + fact.label">
@@ -50,11 +50,14 @@
               }
             </span>
             @if (agent.target && (grouped() || !detailed)) {
-              <button exButton size="sm" variant="ghost" type="button" class="quick-open"
+              @let primary = sessionId && (agent.status === 'waiting' || agent.status === 'error');
+              <button exButton size="sm" [variant]="agent.status === 'waiting' ? 'secondary' : 'ghost'" type="button" class="quick-open"
+                [class.labelled]="primary"
                 [attr.data-agent-session]="sessionId" [disabled]="controlsDisabled() && !!sessionId"
-                [attr.aria-label]="(agent.status === 'waiting' && sessionId ? 'Open to answer ' : 'Open ') + agent.title"
-                [exTooltip]="agent.status === 'waiting' && sessionId ? 'Open to answer' : 'Open ' + agent.title"
-                (click)="request(agent, agent.status === 'waiting' && sessionId ? 'answer' : 'open', $event)">
+                [attr.aria-label]="(agent.status === 'waiting' && sessionId ? 'Open to answer ' : agent.status === 'error' && sessionId ? 'Open to retry ' : 'Open ') + agent.title"
+                [exTooltip]="agent.status === 'waiting' && sessionId ? 'Open to answer' : agent.status === 'error' && sessionId ? 'Open to retry' : 'Open ' + agent.title"
+                (click)="request(agent, agent.status === 'waiting' && sessionId ? 'answer' : agent.status === 'error' && sessionId ? 'message' : 'open', $event)">
+                @if (primary) { <span class="quick-label">{{ agent.status === 'waiting' ? 'Open to answer' : 'Open to retry' }}</span> }
                 <ex-icon [name]="agent.status === 'waiting' && sessionId ? 'hand' : 'forward'" [size]="13" />
               </button>
             }

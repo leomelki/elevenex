@@ -21,7 +21,7 @@ export const createSessionTool = defineTool({
   mutates: true,
   currentSessionScope: 'task',
   description:
-    'Launch a cross-harness subagent in your ready task, or create an empty conversation. Prefer native subagents for work in your own harness. Set provider, model and reasoningEffort as needed. A prompt plus a stable requestId starts one turn with only that brief. Same-task creations are nested under the caller by default and share its files. Use create_task for isolated work.',
+    'Launch a cross-harness subagent or create an empty conversation. Prefer native subagents in your own harness. A prompt and stable requestId start work without copying parent history. Same-task delegates share your checkout. Use completion:"notify" for background work that should wake your conversation when done, or await_session_event to collect results you need now.',
   inputShape: {
     taskId: z
       .number()
@@ -77,6 +77,12 @@ export const createSessionTool = defineTool({
       .describe(
         'Required with prompt. Reuse the same caller/task requestId and inputs after a timeout to recover the original session and delivery state.',
       ),
+    completion: z
+      .enum(['wait', 'notify'])
+      .optional()
+      .describe(
+        'Wait (default) leaves collection to await_session_event. Notify queues a completion notice for the caller if it has not collected the result. Requires a first prompt and same-task nested placement.',
+      ),
     placement: z
       .enum(['auto', 'task'])
       .optional()
@@ -106,6 +112,12 @@ export const createSessionTool = defineTool({
       args.placement !== 'task' && args.folderId === undefined
         ? (ctx.agentSessionId ?? undefined)
         : undefined;
+    const notifyOnCompletion = args.completion === 'notify';
+    if (notifyOnCompletion && (!args.prompt || delegatingSessionId === undefined))
+      throw new ToolError({
+        code: 'invalid_session_completion',
+        message: 'Completion notices require a first prompt and a same-task coding delegate.',
+      });
     const launch = args.requestId
       ? {
           key: hash([ctx.agentSessionId, args.taskId, args.requestId]),
@@ -117,8 +129,10 @@ export const createSessionTool = defineTool({
             args.model,
             args.reasoningEffort,
             args.prompt,
+            ...(notifyOnCompletion ? ['notify'] : []),
           ]),
           hasPrompt: !!args.prompt,
+          ...(notifyOnCompletion && { notifyOnCompletion }),
         }
       : undefined;
     const prior = launch && sessions.getSessionLaunch(launch);
@@ -161,6 +175,10 @@ export const createSessionTool = defineTool({
       launch && args.prompt
         ? await launchSessionPrompt(session, args.prompt, ctx)
         : undefined;
+    const accepted =
+      promptStatus === 'accepted' ||
+      promptStatus === 'running' ||
+      promptStatus === 'queued';
     return {
       data: {
         taskId: args.taskId,
@@ -173,6 +191,7 @@ export const createSessionTool = defineTool({
         status: session.status,
         parentSessionId: session.parentSessionId ?? null,
         delegatedBySessionId: session.delegatedBySessionId ?? null,
+        ...(notifyOnCompletion && { completion: 'notify' }),
         ...(session.agentSelection?.provider ===
           session.activeAgentProvider && {
           model:
@@ -183,15 +202,14 @@ export const createSessionTool = defineTool({
         }),
         ...(promptStatus !== undefined && {
           promptStatus,
-          accepted:
-            promptStatus === 'accepted' ||
-            promptStatus === 'running' ||
-            promptStatus === 'queued',
+          accepted,
         }),
       },
       touched: { sessionId: session.id },
       deepLink: ctx.deepLink.session(session.id),
-      nextStep: promptStatus
+      nextStep: notifyOnCompletion && accepted
+        ? 'Continue independent work. A completion notice will follow if you have not collected the result. If the result is needed now, use await_session_event with includeReply:true.'
+        : promptStatus
         ? sessionPromptNextStep(
             promptStatus,
             session.id,

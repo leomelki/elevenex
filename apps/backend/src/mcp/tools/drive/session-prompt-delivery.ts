@@ -59,6 +59,7 @@ export function submitSessionPrompt(
   options: {
     signal: AbortSignal;
     queue?: boolean;
+    preferSteering?: boolean;
     recordDelivery?: (delivery: 'accepted' | 'failed') => void;
     titlePrompt?: string;
   },
@@ -80,6 +81,7 @@ export function submitSessionPrompt(
       .submitPrompt(sessionId, prompt, options.titlePrompt, undefined, {
         waitForCompletion: false,
         queue: options.queue,
+        ...(options.preferSteering ? { preferSteering: true } : {}),
         onAccepted: (disposition) => {
           if (accepted) return;
           accepted = true;

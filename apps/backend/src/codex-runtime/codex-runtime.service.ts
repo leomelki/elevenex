@@ -71,6 +71,7 @@ import {
   CodexAppServerClient,
   CodexAppServerNotification,
   CodexAppServerRequest,
+  CodexAppServerResponseError,
 } from './codex-app-server.js';
 import {
   CodexModelCatalogRetry,
@@ -1667,15 +1668,18 @@ export class CodexRuntimeService
     options: AgentPromptOptions = {},
   ): Promise<void> {
     if (options.waitForCompletion !== false)
-      return this.runPrompt(sessionId, prompt, titlePrompt, images, options.onAccepted);
+      return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
     let owned = false;
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     let accepted!: () => void;
     const receipt = new Promise<void>((resolve) => { accepted = resolve; });
-    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, disposition => {
-      owned = true;
-      options.onAccepted?.(disposition);
-      accepted();
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
+      ...options,
+      onAccepted: (disposition) => {
+        owned = true;
+        options.onAccepted?.(disposition);
+        accepted();
+      },
     });
     // Keep runtime ownership and stop/cleanup intact after HTTP acknowledges the send.
     // In particular a late turn-change cleanup failure must still reach the live UI.
@@ -1730,13 +1734,34 @@ export class CodexRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    onAccepted?: AgentPromptOptions['onAccepted'],
+    options: AgentPromptOptions = {},
   ): Promise<void> {
+    const { onAccepted } = options;
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const validatedImages = this.validateImageInputs(images);
     if (!trimmedPrompt && !validatedImages.length) return;
+    if (
+      options.preferSteering &&
+      !options.queue &&
+      !validatedImages.length &&
+      this.activeRuns.has(sessionId)
+    ) {
+      if (await this.trySteerFollowUp(sessionId, trimmedPrompt)) {
+        onAccepted?.('steered');
+        return;
+      }
+      this.assertNotRewinding(sessionId);
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
+    }
     if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
       onAccepted?.('queued');
       return;
@@ -1968,6 +1993,41 @@ export class CodexRuntimeService
           this.dispatchQueuedPrompt(sessionId, state);
         }
       }
+    }
+  }
+
+  private async trySteerFollowUp(
+    sessionId: number,
+    text: string,
+  ): Promise<boolean> {
+    const run = this.activeRuns.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      !run?.threadId ||
+      !run.turnId ||
+      run.interruptRequested ||
+      run.abortController.signal.aborted ||
+      this.unconfirmedStops.has(sessionId) ||
+      state?.queuePaused ||
+      state?.pendingPrompts.length
+    ) return false;
+
+    try {
+      await this.appServer.request('turn/steer', {
+        threadId: run.threadId,
+        expectedTurnId: run.turnId,
+        input: [{ type: 'text', text }],
+      });
+      return true;
+    } catch (error) {
+      // Invalid requests include a turn that settled before the steer arrived.
+      // A transport failure has an unknown outcome and must never replay input.
+      if (
+        error instanceof CodexAppServerResponseError &&
+        (error.code === -32600 || error.code === -32601 || error.code === -32602)
+      )
+        return false;
+      throw error;
     }
   }
 

@@ -28,6 +28,7 @@ export class AgentWorkBoardComponent {
     source: this.grouped,
     computation: (grouped, previous): string | null => grouped && previous?.source ? previous.value : null,
   });
+  protected readonly live = computed(() => this.board().agents.some(agent => agentWorkLive(agent.status)));
   protected readonly now = signal(Date.now());
   protected readonly tally = computed(() => {
     const counts = new Map<ReturnType<typeof agentWorkState>['glyph'], { count: number; label: string }>();

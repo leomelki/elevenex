@@ -87,110 +87,125 @@ export const awaitSessionEventTool = defineTool({
     const wanted = new Set(args.events?.length ? args.events : DEFAULT_EVENTS);
     const callerId = ctx.agentSessionId;
     const handoffs = ctx.services.sessions.delegationHandoffs;
-    const release = callerId === null ? undefined : handoffs?.observe(callerId, ids);
-    const { event, target, state } = await waitForSessionEvent(targets, wanted, args.timeoutMs, ctx).finally(release);
-    if (!target)
-      return {
-        data: { sessionIds: ids, event, status: event },
-        nextStep:
-          'Continue independent work or wait again on the remaining sessions.',
-      };
+    const release =
+      callerId === null ? undefined : handoffs?.observe(callerId, ids);
+    try {
+      const { event, target, state } = await waitForSessionEvent(
+        targets,
+        wanted,
+        args.timeoutMs,
+        ctx,
+      );
+      if (!target)
+        return {
+          data: { sessionIds: ids, event, status: event },
+          nextStep:
+            'Continue independent work or wait again on the remaining sessions.',
+        };
 
-    const backgroundWork = summarizeBackgroundWork(state);
-    const paused = hasPausedQueue(state);
-    const pending = state?.pendingPrompts?.length ?? 0;
-    const turnEnded =
-      state?.sessionState === 'idle' && state.runPhase === 'idle';
-    const outcome =
-      event === 'completed' && args.includeReply
-        ? await untilSessionDeadline(
-            target.runtime
-              .getHistory(target.id, { changeDetails: 'summary' })
-              .then(history => {
-                const item = latestConversationReply(history);
-                const boundary = history.findLastIndex(row => row.kind === 'user');
-                let changes;
-                for (let at = history.length - 1; at > boundary; at--) {
-                  if (history[at].turnChanges) {
-                    changes = changeSummary(history[at].turnChanges, 3);
-                    break;
+      const backgroundWork = summarizeBackgroundWork(state);
+      const paused = hasPausedQueue(state);
+      const pending = state?.pendingPrompts?.length ?? 0;
+      const turnEnded =
+        state?.sessionState === 'idle' && state.runPhase === 'idle';
+      const outcome =
+        event === 'completed' && args.includeReply
+          ? await untilSessionDeadline(
+              target.runtime
+                .getHistory(target.id, { changeDetails: 'summary' })
+                .then((history) => {
+                  const item = latestConversationReply(history);
+                  const boundary = history.findLastIndex(
+                    (row) => row.kind === 'user',
+                  );
+                  let changes;
+                  for (let at = history.length - 1; at > boundary; at--) {
+                    if (history[at].turnChanges) {
+                      changes = changeSummary(history[at].turnChanges, 3);
+                      break;
+                    }
                   }
-                }
-                return { item, changes };
-              })
-              .catch(() => undefined),
-            1_500,
-            ctx.signal,
+                  return { item, changes };
+                })
+                .catch(() => undefined),
+              1_500,
+              ctx.signal,
+            )
+          : undefined;
+      const item = outcome?.item;
+      const text = item?.content?.trim();
+      const session = targets.find((row) => row.id === target.id)?.session;
+      const changes = outcome?.changes;
+      const reply =
+        item && text
+          ? {
+              id: item.id,
+              text: text.slice(0, REPLY_LIMIT),
+              truncated: text.length > REPLY_LIMIT,
+              ...(changes?.files.length ? { changes } : {}),
+            }
+          : undefined;
+
+      let nextStep: string;
+      switch (event) {
+        case 'paused':
+          nextStep = describePausedQueue(target.id, pending);
+          break;
+        case 'requires_action':
+          nextStep =
+            'Use get_pending_action to inspect what the session needs, then resolve_action when authorized.';
+          break;
+        case 'timeout':
+          nextStep =
+            'Still waiting. Call await_session_event again or continue independent work.';
+          if (
+            turnEnded &&
+            hasQueuedWork(state) &&
+            (pending || backgroundWork.length)
           )
-        : undefined;
-    const item = outcome?.item;
-    const text = item?.content?.trim();
-    const session = targets.find(row => row.id === target.id)?.session;
-    const changes = outcome?.changes;
-    const reply =
-      item && text
-        ? {
-            id: item.id,
-            text: text.slice(0, REPLY_LIMIT),
-            truncated: text.length > REPLY_LIMIT,
-            ...(changes?.files.length ? { changes } : {}),
-          }
-        : undefined;
+            nextStep += ` Its turn has ended. ${describeQueuedWork(backgroundWork, pending)}`;
+          break;
+        case 'provider_changed':
+          nextStep =
+            'The target harness changed. Inspect the session or wait again on its new harness.';
+          break;
+        case 'aborted':
+          nextStep =
+            'Use session_status or begin another wait to continue observing.';
+          break;
+        default:
+          nextStep =
+            reply && !reply.truncated
+              ? 'Use prompt_session for a focused follow-up or read_session for more context.'
+              : 'Use read_session to inspect the transcript.';
+      }
 
-    let nextStep: string;
-    switch (event) {
-      case 'paused':
-        nextStep = describePausedQueue(target.id, pending);
-        break;
-      case 'requires_action':
-        nextStep =
-          'Use get_pending_action to inspect what the session needs, then resolve_action when authorized.';
-        break;
-      case 'timeout':
-        nextStep =
-          'Still waiting. Call await_session_event again or continue independent work.';
-        if (
-          turnEnded &&
-          hasQueuedWork(state) &&
-          (pending || backgroundWork.length)
-        )
-          nextStep += ` Its turn has ended. ${describeQueuedWork(backgroundWork, pending)}`;
-        break;
-      case 'provider_changed':
-        nextStep =
-          'The target harness changed. Inspect the session or wait again on its new harness.';
-        break;
-      case 'aborted':
-        nextStep =
-          'Use session_status or begin another wait to continue observing.';
-        break;
-      default:
-        nextStep =
-          reply && !reply.truncated
-            ? 'Use prompt_session for a focused follow-up or read_session for more context.'
-            : 'Use read_session to inspect the transcript.';
+      if (callerId !== null && !ctx.signal.aborted) {
+        if (reply) handoffs?.returned(target.id, reply.id, callerId);
+        if (reply || event === 'failed')
+          handoffs?.collected(target.id, callerId);
+      }
+
+      return {
+        data: {
+          sessionId: target.id,
+          ...(session ? { session } : {}),
+          event,
+          status: event,
+          ...(reply && { reply }),
+          ...(backgroundWork.length ? { backgroundWork } : {}),
+          ...(paused ? { queuePaused: true, pendingPromptCount: pending } : {}),
+        },
+        deepLink: ctx.deepLink.session(target.id),
+        nextStep:
+          nextStep +
+          (paused && event !== 'paused'
+            ? ` ${describePausedQueue(target.id, pending)}`
+            : ''),
+        truncated: reply?.truncated,
+      };
+    } finally {
+      release?.();
     }
-
-    if (reply && callerId !== null && !ctx.signal.aborted)
-      handoffs?.returned(target.id, reply.id, callerId);
-
-    return {
-      data: {
-        sessionId: target.id,
-        ...(session ? { session } : {}),
-        event,
-        status: event,
-        ...(reply && { reply }),
-        ...(backgroundWork.length ? { backgroundWork } : {}),
-        ...(paused ? { queuePaused: true, pendingPromptCount: pending } : {}),
-      },
-      deepLink: ctx.deepLink.session(target.id),
-      nextStep:
-        nextStep +
-        (paused && event !== 'paused'
-          ? ` ${describePausedQueue(target.id, pending)}`
-          : ''),
-      truncated: reply?.truncated,
-    };
   },
 });

@@ -3,11 +3,13 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { eq } from 'drizzle-orm';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import type {
   AgentPromptOptions,
   AgentRuntimeProvider,
 } from '../../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-registry.service.js';
+import { SessionCompletionNoticesService } from '../../agent-runtime/session-completion-notices.service.js';
 import { createTestDb } from '../../database/testing/create-test-db.js';
 import * as schema from '../../database/schema/index.js';
 import { DesktopWorkspaceService } from '../../desktop-workspace/desktop-workspace.service.js';
@@ -27,6 +29,18 @@ import type { McpToolServices } from '../tool-registry/mcp-tool-services.js';
 import { ToolRegistryService } from '../tool-registry/tool-registry.service.js';
 import { McpServerFactory } from '../transport/mcp-server.factory.js';
 import { splitSessionAgentPrompt } from '../../sessions/session-agent-message.js';
+
+async function eventually(assertion: () => void) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (attempt === 39) throw error;
+      await delay(25);
+    }
+  }
+}
 
 describe('cross-harness delegation through MCP', () => {
   async function fixture() {
@@ -96,7 +110,9 @@ describe('cross-harness delegation through MCP', () => {
       }),
       setReasoningEffort: jest.fn(),
       interrupt: jest.fn(async (_id: number) => undefined),
-      getRuntimeState: jest.fn(async () => ({ sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [] })),
+      getRuntimeState: jest.fn(async (_id: number) => ({
+        sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [] as readonly unknown[],
+      })),
       getHistory: jest.fn(async () => [
         { id: 'brief', kind: 'user', content: 'Review', timestamp: new Date().toISOString() },
         { id: 'final', kind: 'assistant', assistantPhase: 'final', content: '**Reviewed.**', timestamp: new Date().toISOString() },
@@ -113,9 +129,23 @@ describe('cross-harness delegation through MCP', () => {
         },
       ),
     });
+    const parentRuntime = Object.assign(new EventEmitter(), {
+      info: { id: 'claude', displayName: 'Claude' },
+      getRuntimeState: jest.fn(async (): Promise<{ sessionState: string; runPhase: string; planMode?: boolean }> =>
+        ({ sessionState: 'idle', runPhase: 'idle' })),
+      submitPrompt: jest.fn(async (
+        _id: number,
+        _prompt: string,
+        _title?: string,
+        _images?: unknown,
+        options?: AgentPromptOptions,
+      ) => { options?.onAccepted?.('running'); }),
+    });
     const agentRuntime = new AgentRuntimeRegistryService([
       runtime as unknown as AgentRuntimeProvider,
+      parentRuntime as unknown as AgentRuntimeProvider,
     ]);
+    let notices: SessionCompletionNoticesService | undefined;
     const tasks = {
       record: async () => task,
       repo: async () => repo,
@@ -191,10 +221,17 @@ describe('cross-harness delegation through MCP', () => {
       task,
       sessions,
       runtime,
+      parentRuntime,
       workspace,
       delegates,
       connect,
+      startNotices() {
+        notices?.onModuleDestroy();
+        notices = new SessionCompletionNoticesService(agentRuntime, sessions);
+        notices.onApplicationBootstrap();
+      },
       async close() {
+        notices?.onModuleDestroy();
         await Promise.all(closeConnections.map((close) => close()));
         activity.onModuleDestroy();
         navigation.onModuleDestroy();
@@ -341,16 +378,136 @@ describe('cross-harness delegation through MCP', () => {
   it('persists an exact reply handoff once and releases the live wait', async () => {
     const f = await fixture();
     try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      f.startNotices();
       const call = await f.connect(f.root.id);
-      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries' });
+      await call('create_session', { requestId: 'review', provider: 'codex', model: 'worker', prompt: 'Review retries', completion: 'notify' });
       const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
-      for (let index = 0; index < 2; index++)
-        expect(await call('await_session_event', { sessionId: child.id, includeReply: true, timeoutMs: 500 }))
-          .toMatchObject({ data: { session: { sessionId: child.id, taskId: f.task.id }, event: 'completed', reply: { id: 'final', text: '**Reviewed.**' } } });
+      const history = await f.runtime.getHistory();
+      let releaseHistory = () => {};
+      const historyReady = new Promise<void>(resolve => { releaseHistory = resolve; });
+      f.runtime.getHistory.mockImplementationOnce(async () => { await historyReady; return history; });
+      const input = { sessionId: child.id, includeReply: true, timeoutMs: 500 };
+      const result = { data: { session: { sessionId: child.id, taskId: f.task.id }, event: 'completed', reply: { id: 'final', text: '**Reviewed.**' } } };
+      const wait = call('await_session_event', input);
+      try {
+        await eventually(() => expect(f.runtime.getHistory).toHaveBeenCalledTimes(2));
+        await f.sessions.markCompletionUnreviewed(child.id);
+        await eventually(() => expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id))
+          .toMatchObject({ state: 'ready' }));
+        expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+      } finally {
+        releaseHistory();
+      }
+      expect(await wait).toMatchObject(result);
+      expect(await call('await_session_event', input)).toMatchObject(result);
       expect(f.sessions.delegationHandoffs.waiting(f.root.id, child.id)).toBe(false);
       expect(f.db.select().from(schema.sessionReplyReturns).all()).toMatchObject([
         { sessionId: child.id, recipientId: f.root.id, itemId: 'final' },
       ]);
+      expect(f.db.select().from(schema.sessionCompletionNotices).all()).toMatchObject([
+        { sessionId: child.id, recipientId: f.root.id, state: 'consumed' },
+      ]);
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('wakes an idle parent once for ready siblings after their background work settles', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      f.parentRuntime.getRuntimeState.mockResolvedValue({ sessionState: 'running', runPhase: 'running' });
+      const call = await f.connect(f.root.id);
+      f.startNotices();
+      for (const requestId of ['tests', 'review'])
+        expect(await call('create_session', { requestId, provider: 'codex', prompt: requestId, completion: 'notify' }))
+          .toMatchObject({ data: { completion: 'notify', accepted: true } });
+      const { items: [tests, review] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      let testsRunning = true;
+      f.runtime.getRuntimeState.mockImplementation(async sessionId => ({
+        sessionState: 'idle', runPhase: 'idle', pendingPrompts: [],
+        backgroundWork: sessionId === tests.id && testsRunning ? [{ id: 'task:test' }] : [],
+      }));
+      await f.sessions.markCompletionUnreviewed(tests.id);
+      await f.sessions.markCompletionUnreviewed(review.id);
+      const states = () => f.db.select().from(schema.sessionCompletionNotices).all().map(row => row.state);
+      await eventually(() => expect(states()).toEqual(['waiting', 'ready']));
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+      testsRunning = false;
+      f.runtime.emit('event', { type: 'background_work', payload: { sessionId: tests.id } });
+      await eventually(() => expect(states()).toEqual(['ready', 'ready']));
+      f.parentRuntime.getRuntimeState.mockResolvedValue({ sessionState: 'idle', runPhase: 'idle' });
+      f.parentRuntime.emit('event', { type: 'run_state', payload: { sessionId: f.root.id, sessionState: 'idle', runPhase: 'idle' } });
+      await eventually(() => expect(states()).toEqual(['accepted', 'accepted']));
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+      const [parentId, notice] = f.parentRuntime.submitPrompt.mock.calls[0];
+      expect(parentId).toBe(f.root.id);
+      expect(notice).toContain(`Session #${tests.id}: completed.`);
+      expect(notice).toContain(`Session #${review.id}: completed.`);
+      expect(f.runtime.getHistory).not.toHaveBeenCalled();
+      expect(await call('session_status', { sessionId: review.id })).toMatchObject({
+        data: { completionNotice: { state: 'accepted', outcome: 'completed' } },
+      });
+      f.startNotices();
+      await delay(100);
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('recovers a persisted child completion and keeps an interrupted send unconfirmed', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      for (const requestId of ['recover', 'ambiguous'])
+        await call('create_session', { requestId, provider: 'codex', prompt: requestId, completion: 'notify' });
+      const { items: [recover, ambiguous] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(recover.id);
+      await f.sessions.markCompletionUnreviewed(ambiguous.id);
+      f.db.update(schema.sessionCompletionNotices).set({ state: 'dispatching', outcome: 'completed' })
+        .where(eq(schema.sessionCompletionNotices.sessionId, ambiguous.id)).run();
+      await f.sessions.updatePlanMode(f.root.id, true);
+      f.startNotices();
+      const states = () => f.db.select().from(schema.sessionCompletionNotices).all().map(row => row.state);
+      await eventually(() => expect(states()).toEqual(['ready', 'unconfirmed']));
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+      f.parentRuntime.getRuntimeState.mockResolvedValue({ sessionState: 'idle', runPhase: 'idle', planMode: true });
+      await f.sessions.updatePlanMode(f.root.id, false);
+      await eventually(() => expect(f.parentRuntime.getRuntimeState).toHaveBeenCalled());
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+      f.parentRuntime.getRuntimeState.mockResolvedValue({ sessionState: 'idle', runPhase: 'idle', planMode: false });
+      f.parentRuntime.emit('event', { type: 'run_state', payload: { sessionId: f.root.id, sessionState: 'idle', runPhase: 'idle', planMode: false } });
+      await eventually(() => expect(states()).toEqual(['accepted', 'unconfirmed']));
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${recover.id}: completed.`);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('reports failed launches and suppresses notices when the delegator stops the child', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      f.startNotices();
+      const call = await f.connect(f.root.id);
+      expect(await call('create_session', { requestId: 'outside', placement: 'task', provider: 'codex', prompt: 'Review', completion: 'notify' }))
+        .toMatchObject({ error: { code: 'invalid_session_completion' } });
+      await call('create_session', { requestId: 'cancel', provider: 'codex', prompt: 'Review', completion: 'notify' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await call('interrupt_session', { sessionId: child.id });
+      f.runtime.submitPrompt.mockRejectedValueOnce(new Error('Harness unavailable'));
+      expect(await call('create_session', { requestId: 'failure', provider: 'codex', prompt: 'Review', completion: 'notify' }))
+        .toMatchObject({ error: { code: 'session_launch_failed' } });
+      await eventually(() => expect(f.db.select().from(schema.sessionCompletionNotices).all()).toMatchObject([
+        { state: 'consumed' }, { state: 'accepted', outcome: 'failed' },
+      ]));
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1);
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).not.toContain(`Session #${child.id}:`);
     } finally {
       await f.close();
     }

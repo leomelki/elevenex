@@ -79,6 +79,7 @@ export interface AgentRunLifecycle {
 
 export interface AgentRuntimeStatePayload extends AgentRunLifecycle {
   sessionId: number;
+  planMode?: boolean | null;
   reasoningEffort?: AgentReasoningEffort | null;
   fastMode?: boolean;
 }
@@ -163,6 +164,8 @@ export type AgentPromptDisposition = 'running' | 'queued' | 'steered';
 export interface AgentPromptOptions {
   human?: boolean;
   queue?: boolean;
+  /** Prefer same-turn delivery for a text follow-up, when the harness can do so. */
+  preferSteering?: boolean;
   /** Return when the harness owns this specific prompt. */
   waitForCompletion?: boolean;
   onAccepted?: (disposition: AgentPromptDisposition) => void;

@@ -209,6 +209,25 @@ describe('Drive tool group', () => {
       expect(services.sessions.start).not.toHaveBeenCalled();
     });
 
+    it.each([undefined, true])('reports this follow-up delivery with queue=%s', async queue => {
+      const runtime = makeRuntime();
+      runtime.submitPrompt.mockImplementation(async (_id, _prompt, _title, _images, options) => {
+        options?.onAccepted?.(options.preferSteering ? 'steered' : 'queued');
+      });
+      const { services } = makeServices({
+        session: { id: 7, status: 'active', activeAgentProvider: 'codex', delegatedBySessionId: 42 },
+        runtime,
+      });
+      const result = await promptSessionTool.handler(
+        { sessionId: 7, prompt: 'Focus on the failing test', queue },
+        makeCtx(services),
+      );
+      expect(result.data).toMatchObject({
+        accepted: true,
+        disposition: queue ? 'queued' : 'steered',
+      });
+    });
+
     it.each(['claude', 'codex', 'opencode', 'pi'])(
       'hands off multiple chat mentions to %s without copying intermediate or nested context',
       async (provider) => {

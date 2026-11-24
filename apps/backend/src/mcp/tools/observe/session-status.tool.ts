@@ -102,6 +102,9 @@ export const sessionStatusTool = defineTool({
       runtimeState = undefined;
     }
 
+    const completionNotice = ctx.agentSessionId === null
+      ? undefined
+      : sessions.delegationHandoffs?.outbox.status(session.id, ctx.agentSessionId);
     return {
       data: {
         sessionId: session.id,
@@ -112,6 +115,7 @@ export const sessionStatusTool = defineTool({
         hasQueuedWork: queuedWork,
         queuePaused,
         pendingPromptCount,
+        ...(completionNotice && { completionNotice }),
         ...(backgroundWork.length ? { backgroundWork } : {}),
         lastActivityAt: session.lastStateChangeAt ?? undefined,
       },

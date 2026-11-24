@@ -407,6 +407,13 @@
       "when": 1795486080051,
       "tag": "0057_session_reply_returns",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1795515506657,
+      "tag": "0058_session_completion_notices",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import type { DrizzleDB } from '../database/database.provider.js';
 import {
   sessionLaunches,
+  sessionCompletionNotices,
   sessions,
   workspaces,
 } from '../database/schema/index.js';
@@ -12,6 +13,7 @@ export interface SessionLaunchRequest {
   key: string;
   fingerprint: string;
   hasPrompt: boolean;
+  notifyOnCompletion?: boolean;
 }
 
 export type SessionLaunchDelivery =
@@ -86,6 +88,8 @@ export function insertTaskSession(
               .get();
       if (caller?.status === 'archived')
         throw new ConflictException('The delegating session was archived.');
+      if (launch?.notifyOnCompletion && (!caller || !launch.hasPrompt))
+        throw new ConflictException('Completion notices require a launched delegate in the caller’s task.');
 
       if (caller) {
         // The desktop shows two levels. Siblings can delegate while retaining
@@ -116,6 +120,10 @@ export function insertTaskSession(
             sessionId,
             delivery: launch.hasPrompt ? 'ready' : null,
           })
+          .run();
+      if (caller && launch?.notifyOnCompletion)
+        tx.insert(sessionCompletionNotices)
+          .values({ sessionId, recipientId: caller.id, state: 'waiting' })
           .run();
       return { sessionId, created: true };
     },

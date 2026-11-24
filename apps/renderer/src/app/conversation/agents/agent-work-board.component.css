@@ -71,6 +71,12 @@ ul { margin: 0; padding: 0; list-style: none; }
 .wait-line { color: var(--ink-muted); border-top: 1px solid var(--line); padding: var(--space-2) var(--space-3); font-size: var(--text-caption-size); }
 .wait-line ex-ease-swap { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .icon-button, .quick-open { padding-inline: var(--space-1); min-width: 26px; }
+/* Needs-you and failed rows name their next step; narrow boards fall back to the icon. */
+.quick-label { display: none; }
+@container (min-width: 560px) {
+  .quick-open.labelled { padding-inline: var(--space-2); }
+  .quick-open.labelled .quick-label { display: inline; }
+}
 .board-head-in, .message-in { animation: agent-work-arrive var(--dur-base) var(--ease-out) both; }
 @keyframes agent-work-arrive { from { opacity: 0; transform: translateY(4px); } }
 :host { container-type: inline-size; }

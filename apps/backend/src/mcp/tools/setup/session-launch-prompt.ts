@@ -1,4 +1,5 @@
 import { ToolError, type ToolContext } from '../../tool-registry/tool.types.js';
+import { DELEGATED_ASSIGNMENT_CONTEXT } from '../../../sessions/session-agent-message.js';
 import {
   assertCanDelegatePrompt,
   sessionMessage,
@@ -15,7 +16,7 @@ type LaunchStatus =
   | 'queued';
 
 export async function launchSessionPrompt(
-  session: { id: number; status: string; activeAgentProvider: string },
+  session: { id: number; status: string; activeAgentProvider: string; delegatedBySessionId?: number | null },
   prompt: string,
   ctx: ToolContext,
 ): Promise<LaunchStatus> {
@@ -47,11 +48,16 @@ export async function launchSessionPrompt(
   try {
     await startSessionForPrompt(sessions, session);
     ctx.signal.throwIfAborted();
+    const brief = session.delegatedBySessionId === ctx.agentSessionId && ctx.agentSessionId !== null
+      ? `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n${prompt}`
+      : prompt;
+    const message = await sessionMessage(brief, ctx, true);
+    ctx.signal.throwIfAborted();
     dispatched = true;
     const disposition = await submitSessionPrompt(
       runtime,
       session.id,
-      await sessionMessage(prompt, ctx, true),
+      message,
       {
         signal: ctx.signal,
         titlePrompt: prompt,

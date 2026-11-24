@@ -988,6 +988,37 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
+  it.each(['v1', 'v2'] as const)(
+    'uses the available follow-up delivery on OpenCode %s',
+    async (version) => {
+      const f = fixture();
+      const steerPrompt = jest.fn().mockResolvedValue(undefined);
+      if (version === 'v2') Object.assign(f.client, { steerPrompt });
+      try {
+        await f.provider.submitPrompt(1, 'Initial assignment');
+        await tick();
+        const accepted = jest.fn();
+        await f.provider.submitPrompt(1, 'Focus on the failing test', undefined, undefined, {
+          preferSteering: true,
+          onAccepted: accepted,
+        });
+        if (version === 'v2') {
+          expect(steerPrompt).toHaveBeenCalledWith('s', 'Focus on the failing test');
+          expect(accepted).toHaveBeenCalledWith('steered');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts).toEqual([]);
+        } else {
+          expect(accepted).toHaveBeenCalledWith('queued');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts)
+            .toMatchObject([{ prompt: 'Focus on the failing test' }]);
+        }
+        expect(f.client.session.prompt).toHaveBeenCalledTimes(1);
+        expect(f.client.session.abort).not.toHaveBeenCalled();
+      } finally {
+        f.provider.onModuleDestroy();
+      }
+    },
+  );
+
   it('queues prompts, pauses on interruption, and preserves the pending queue', async () => {
     const f = fixture();
     try {

@@ -51,8 +51,10 @@ export class SessionRowComponent implements OnChanges {
   protected readonly tooltip = computed(() => {
     const row = this.session(), parent = row.delegatedBy;
     if (!parent) return row.title;
+    // One fact per line: the tooltip keeps line breaks so provenance reads as a short card.
     return [row.title, 'Started by ' + sessionAgentTitle(parent), agentIdentity(row.agentSelection, true),
-      row.delegationDetail, row.parentWaiting ? 'Parent is waiting for this reply' : ''].filter(Boolean).join(' · ');
+      row.delegationDetail ? 'Now: ' + row.delegationDetail : '',
+      row.parentWaiting ? 'Reply goes to its parent, which is waiting' : ''].filter(Boolean).join('\n');
   });
   protected readonly commandsLabel = computed(() => {
     const count = this.session().commands ?? 0;
