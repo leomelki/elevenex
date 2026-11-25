@@ -782,6 +782,10 @@ the direct evidence reveal, retry focus and cached reopen in the
 connected-workspace preview. The dark run uses a narrow viewport and reduced
 motion.
 
+`scenarios/panel-resize.mjs` uses the connected workspace preview to check
+pointer dragging, Escape cancellation, keyboard controls, width retention and
+window constraints in both themes and with reduced motion.
+
 `scenarios/task-code-compact.mjs` verifies the genuine compact Code workbench
 through production UI/IPC against a running disposable Nest backend. Supply
 `ELEVENEX_CODE_CAPTURE_ORIGIN`, `ELEVENEX_CODE_CAPTURE_ACCESS`, the existing
@@ -792,7 +796,9 @@ It covers both themes, native Quick Open/Quick Search, actual toolbar saving,
 dirty-file retention through expansion/collapse, narrow/reduced-motion layout
 and hidden iframe focus and actual settings layered over the live editor. Use `--built` after `desktop:build`. Its window debugger
 uses focus emulation and trusted input into the focused cross-origin iframe.
-The scenario checks the absence of native editor views and retains the same
+The scenario drags the splitter across the iframe, checks live viewport changes
+and the final Explorer layout, and verifies that focus returns to the same editor.
+It checks the absence of native editor views and retains the same
 frame through tab changes and expansion. It also holds real extension bootstrap
 to check exclusive loading, repeats close/reopen and resizing in both themes,
 scrubs interrupted expansions/collapses, measures exactly one real iframe

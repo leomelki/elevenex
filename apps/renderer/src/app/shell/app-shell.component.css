@@ -76,16 +76,18 @@
   right: 0;
   width: 0;
   min-width: 0;
-  overflow: clip;
-  /* Clip composited editor/snapshot layers even at the final subpixel widths. */
-  clip-path: inset(0 round var(--radius-lg));
   opacity: 0;
   transition: width var(--dur-slow) var(--ease-in-out);
 }
-/* The panel's clip-path would clip its own shadow, so a twin layer tracks its
-   width and casts the takeover's shadow onto the receded chat. It paints last
-   because the receded chat is its own layer: outer shadows stay outside the
-   panel, and dark mode's inset highlight lands on the panel's edge. */
+.panel-clip {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  /* Clip composited editor and snapshot layers while the gutter stays interactive. */
+  clip-path: inset(0 round var(--radius-lg));
+}
+/* A twin layer casts the takeover's shadow onto the receded chat and paints
+   its inset highlight over the panel contents in dark mode. */
 .workspace::after {
   content: "";
   position: absolute;
@@ -108,6 +110,53 @@
   min-height: 0;
   /* Follow wider review's animated width, but keep content stable while closing. */
   width: max(100%, var(--side-panel-width));
+}
+.panel-resize {
+  position: absolute;
+  z-index: 3;
+  inset-block: 0;
+  left: calc(-1 * (var(--space-2) + var(--space-1)));
+  width: var(--space-4);
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+.panel-resize::before {
+  content: "";
+  width: var(--space-1);
+  height: calc(var(--space-8) + var(--space-2));
+  max-height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--line-strong);
+}
+.panel-resize:is(:hover, :focus-visible)::before,
+:host(.panel-resizing) .panel-resize::before {
+  background: var(--accent);
+}
+.panel-resize:focus-visible {
+  outline: none;
+}
+.panel-resize:focus-visible::before {
+  box-shadow: var(--focus-ring);
+}
+/* Pointer capture owns the gesture. The shield also takes embedded documents
+   out of hit testing while the pointer crosses them, without hiding them. */
+:host(.panel-resizing) .workspace::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: col-resize;
+}
+:host(.panel-resizing) .workspace {
+  user-select: none;
+}
+:host(.direct-panel-width) .panel,
+:host(.direct-panel-width) .workspace::after,
+:host(.direct-panel-width) .main {
+  transition: none;
 }
 :host(.panel-open) .panel,
 :host(.panel-open) .workspace::after {
@@ -228,11 +277,14 @@
   transition: scale var(--dur-instant) var(--ease-out);
 }
 @media (max-width: 1000px) {
-  :host {
-    --side-panel-width: min(var(--panel-width), 40vw);
-  }
   .sidebar {
     flex-basis: min(var(--sidebar-width), 23vw);
+  }
+}
+@media (pointer: coarse) {
+  .panel-resize {
+    left: calc(-1 * var(--space-4));
+    width: var(--space-6);
   }
 }
 @media (prefers-reduced-motion: reduce) {
