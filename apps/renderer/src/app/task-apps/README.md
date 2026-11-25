@@ -24,6 +24,9 @@ Native runs present in their platform window. Streamed runs use a bounded H.264
 viewer over the named preload operations. The surface fits the available space
 by default. **Actual size** preserves pixels and allows scrolling. Separate
 windows connect independently.
+Fitting is local to the viewer and leaves the host capture size unchanged.
+Paint acknowledgments are cumulative, with one pending IPC call per viewer.
+The viewer continues decoding while that call completes.
 
 Click the surface to send pointer and keyboard input. Keyboard users Tab to the
 surface and press **Enter**. **Shift + Escape** returns focus to the surface

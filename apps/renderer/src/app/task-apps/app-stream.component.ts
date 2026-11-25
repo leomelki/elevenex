@@ -32,6 +32,7 @@ export class AppStreamComponent {
   private queue: TaskAppFrame[] = [];
   private queuedBytes = 0;
   private painting = false;
+  private receipt?: { sequence: number };
   private lastComposition?: string;
   private compositionTimer?: ReturnType<typeof setTimeout>;
   private readonly decoder = new H264Decoder({ width: APP_VIDEO_MAX_AXIS, height: APP_VIDEO_MAX_AXIS, pixels: APP_VIDEO_MAX_PIXELS });
@@ -123,9 +124,35 @@ export class AppStreamComponent {
       this.width = frame.width;
       this.height = frame.height;
       this.state.set('live');
-      await this.bridge.taskAppFrameAck?.(frame.scopeId, frame.watchId, frame.sequence);
+      this.acknowledge(frame);
     } catch { if (frame.watchId === this.watchId) this.interrupt('The app display was interrupted.'); }
     finally { bitmap?.close(); }
+  }
+
+  private acknowledge(frame: TaskAppFrame): void {
+    if (this.receipt) {
+      this.receipt.sequence = frame.sequence;
+      return;
+    }
+    const receipt = { sequence: frame.sequence };
+    this.receipt = receipt;
+    void this.sendReceipts(frame.scopeId, frame.watchId, receipt);
+  }
+
+  private async sendReceipts(scopeId: string, watchId: string, receipt: { sequence: number }): Promise<void> {
+    try {
+      // Receipts are cumulative. Keep at most one IPC call pending without
+      // making decode and frame release wait for its reply.
+      while (this.receipt === receipt) {
+        const sequence = receipt.sequence;
+        await this.bridge.taskAppFrameAck?.(scopeId, watchId, sequence);
+        if (sequence === receipt.sequence) break;
+      }
+    } catch {
+      if (this.receipt === receipt) this.interrupt('The app display was interrupted.');
+    } finally {
+      if (this.receipt === receipt) this.receipt = undefined;
+    }
   }
 
   private interrupt(message: string): void { this.disconnect(); this.error.set(message); this.state.set('interrupted'); }
@@ -134,6 +161,7 @@ export class AppStreamComponent {
     this.release();
     const id = this.watchId;
     this.watchId = undefined;
+    this.receipt = undefined;
     this.queue = []; this.queuedBytes = 0;
     this.width = this.height = 0;
     this.decoder.reset();
