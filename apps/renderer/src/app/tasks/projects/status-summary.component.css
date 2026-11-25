@@ -1,16 +1,18 @@
 :host {
   display: block;
+  container-type: inline-size;
 }
 div {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Reserve space for each label independently of live counts. */
+  grid-template-columns: minmax(0, 5.25fr) minmax(0, 4.5fr) minmax(0, 5fr) minmax(0, 3.5fr);
   gap: var(--space-1);
 }
 button {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px;
+  padding: 6px var(--space-1);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -48,5 +50,13 @@ button:focus-visible {
 .label {
   font-size: 11px;
   line-height: 14px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@container (max-width: 230px) {
+  div { gap: 0; }
+  button { padding-inline: calc(var(--space-1) / 2); }
 }

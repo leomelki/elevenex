@@ -25,7 +25,8 @@ export default async function* (capture) {
       await capture.fill('ex-composer textarea', 'Keep my draft and cursor');
       await capture.evaluate(() => {
         const viewport = document.querySelector('ex-chat-scroll .viewport');
-        viewport.scrollTop = 150;
+        // Keep this probe away from the edge that prefetches older history.
+        viewport.scrollTop = (viewport.scrollHeight - viewport.clientHeight) / 2;
         viewport.dispatchEvent(new window.Event('scroll'));
       });
       await capture.waitFor(() => document.getAnimations().every(animation =>

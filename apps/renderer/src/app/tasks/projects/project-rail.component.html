@@ -16,8 +16,8 @@
       (click)="selectProject.emit('all')"
     >
       <ex-icon name="layers" />
-      @if (!allActivity().muted && allActivity().attention) {
-        @for (count of [allActivity().attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
+      @if (!allActivity().muted && allActivity().attention; as count) {
+        <span class="pip" aria-hidden="true"><ex-ticker [value]="count" /></span>
       } @else if (!allActivity().muted && allActivity().running) {
         <span class="running" aria-hidden="true"
           ><ex-status-glyph status="running" [size]="14"
@@ -53,8 +53,8 @@
         [hue]="project.hue ?? 'steel'"
         [decorative]="true"
       />
-      @if (!project.muted && project.attention) {
-        @for (count of [project.attention]; track count) { <span class="pip" aria-hidden="true">{{ count }}</span> }
+      @if (!project.muted && project.attention; as count) {
+        <span class="pip" aria-hidden="true"><ex-ticker [value]="count" /></span>
       } @else if (!project.muted && project.running) {
         <span class="running" aria-hidden="true"
           ><ex-status-glyph status="running" [size]="14"

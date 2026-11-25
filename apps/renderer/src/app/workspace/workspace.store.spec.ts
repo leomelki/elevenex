@@ -244,6 +244,27 @@ describe('WorkspaceStore', () => {
     expect(store.tasks()[0]?.sessions).toContainEqual(expect.objectContaining({ id: '119' }));
   });
 
+  it('refreshes the selected child without moving it ahead of its loaded siblings', async () => {
+    vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { store, bridge, start } = setup();
+    const parent = { ...session, id: 6, parentSessionId: null, childCount: 2 };
+    const selected = { ...session, parentSessionId: 6 };
+    const sibling = { ...selected, id: 7 };
+    let revision = 1;
+    bridge.workspaceRevision.mockImplementation(async () => ok({ revision, version: 1, sessionArchive: true, sessionNesting: true, sessionNestingOrder: true }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page<WorkspaceSession>(
+      query.parentSessionId === 6 ? [sibling, selected] :
+        query.limit === 1 ? [{ ...selected, name: 'Refreshed selection' }] : [parent],
+    )));
+    await start();
+    await store.loadSessionChildren({ taskId: '3', sessionId: '6' });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    revision++;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.selectedSession()?.name).toBe('Refreshed selection');
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['6', '7', '5']);
+  });
+
   it('keeps priority sessions and their parent across history pages until activity clears', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { store, bridge, start } = setup();

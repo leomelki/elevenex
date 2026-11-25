@@ -44,15 +44,19 @@ export function mergeNavigationSessions(
   const children = new Map<number, WorkspaceSession>();
   for (const parent of rows.values()) {
     for (const child of childrenOf(parent.id)) {
-      children.set(child.id, extraChildren.get(child.id) ?? child);
+      const current = rows.get(child.id) ?? extraChildren.get(child.id) ?? child;
+      // A focused lookup can update a child before its page refreshes. Use the
+      // newer record without moving it out of the engine's nesting order.
+      if (current.parentSessionId !== parent.id) continue;
+      children.set(child.id, current);
       extraChildren.delete(child.id);
     }
   }
   // Keep loaded children in their engine-provided nesting order and insert
   // sparse children from outside that window ahead of them.
   return [
-    ...[...rows.values()].sort((a, b) => a.id - b.id),
+    ...[...rows.values()].filter(row => !children.has(row.id)).sort((a, b) => a.id - b.id),
     ...[...extraChildren.values()].sort((a, b) => a.id - b.id),
-    ...[...children.values()].filter(child => !rows.has(child.id)),
+    ...children.values(),
   ];
 }

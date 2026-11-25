@@ -9,15 +9,16 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
-import { FlipDirective, IconComponent, StatusGlyphComponent } from '../../ui';
+import { FlipDirective, IconComponent, StatusGlyphComponent, TickerComponent } from '../../ui';
 import type { Project, ProjectActivity } from '../task.models';
 import { ProjectMarkComponent } from './project-mark.component';
 
 @Component({
   selector: 'ex-project-rail',
-  imports: [ProjectMarkComponent, FlipDirective, IconComponent, StatusGlyphComponent],
+  imports: [ProjectMarkComponent, FlipDirective, IconComponent, StatusGlyphComponent, TickerComponent],
   templateUrl: './project-rail.component.html',
   styleUrl: './project-rail.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -28,10 +29,13 @@ export class ProjectRailComponent {
   readonly activeId = input('all');
   readonly selectProject = output<string>();
   readonly addProject = output<HTMLElement>();
-  protected readonly projectIds = computed(() => this.projects().map(project => project.id));
+  protected readonly projectIds = computed(() => this.projects().map(project => project.id), {
+    equal: (before, after) => before.length === after.length && before.every((id, index) => id === after[index]),
+  });
   readonly reorderProjects = output<readonly string[]>();
   readonly projectMenuRequested = output<{ readonly projectId: string; readonly x: number; readonly y: number }>();
   protected readonly allActivity = computed(() => this.all() || {});
+  private readonly showAll = computed(() => this.all() !== false);
   protected readonly indicatorY = signal<number | null>(null);
   private readonly root =
     inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
@@ -41,42 +45,47 @@ export class ProjectRailComponent {
   private previousActive?: string;
 
   private previousProjects?: ReadonlySet<string>;
-  private additions: Animation[] = [];
-  private rings: HTMLElement[] = [];
+  private readonly additions = new Map<string, () => void>();
 
   constructor() {
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     const cancel = () => { if (media.matches) { this.clearAdditions(); this.indicatorAnimation?.cancel(); } };
     media.addEventListener('change', cancel);
     afterRenderEffect(() => {
-      const projects = this.projects();
+      const ids = new Set(this.projectIds());
       const previous = this.previousProjects;
-      this.previousProjects = new Set(projects.map(project => project.id));
-      this.clearAdditions();
+      this.previousProjects = ids;
+      for (const [id, cancel] of this.additions) if (!ids.has(id)) cancel();
       // A machine's first project has its own jumpHome/settleMark owner.
-      if (!previous?.size || media.matches) return;
-      for (const project of projects) {
+      if (!previous?.size || media.matches || [...ids].every(id => previous.has(id))) return;
+      const tiles = new Map(Array.from(this.root.querySelectorAll<HTMLElement>('[data-project-id]'))
+        .map(tile => [tile.dataset['projectId'], tile]));
+      for (const project of untracked(this.projects)) {
         if (previous.has(project.id)) continue;
-        const tile = Array.from(this.root.querySelectorAll<HTMLElement>('[data-project-id]')).find(tile => tile.dataset['projectId'] === project.id);
+        const tile = tiles.get(project.id);
         const mark = tile?.querySelector('ex-project-mark');
         if (!tile || !mark?.animate) continue;
         const style = getComputedStyle(tile);
         const delay = parseFloat(style.getPropertyValue('--dur-fast'));
-        this.additions.push(mark.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(1.1)', opacity: 1, offset: .55 }, { transform: 'scale(.97)', offset: .8 }, { transform: 'none', opacity: 1 }], { duration: 520, delay, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'backwards' }));
+        const entry = mark.animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(1.1)', opacity: 1, offset: .55 }, { transform: 'scale(.97)', offset: .8 }, { transform: 'none', opacity: 1 }], { duration: 520, delay, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)', fill: 'backwards' });
         const ring = tile.ownerDocument.createElement('span');
         ring.setAttribute('aria-hidden', 'true');
         Object.assign(ring.style, { position: 'absolute', inset: '-3px', borderRadius: 'inherit', border: `2px solid var(--project-${project.hue ?? 'steel'})`, pointerEvents: 'none' });
-        tile.append(ring); this.rings.push(ring);
+        tile.append(ring);
         const animation = ring.animate([{ transform: 'scale(.8)', opacity: .7 }, { transform: 'scale(1.55)', opacity: 0 }], { duration: 620, delay, easing: style.getPropertyValue('--ease-out').trim(), fill: 'both' });
-        this.additions.push(animation);
-        void animation.finished.then(() => ring.remove(), () => undefined);
+        const clean = () => { ring.remove(); this.additions.delete(project.id); };
+        const cancelAddition = () => { entry.cancel(); animation.cancel(); clean(); };
+        this.additions.set(project.id, cancelAddition);
+        void animation.finished.then(() => {
+          if (this.additions.get(project.id) === cancelAddition) clean();
+        }, () => undefined);
       }
     });
     afterRenderEffect({
       earlyRead: () => {
-        this.projects();
+        this.projectIds();
         this.activeId();
-        this.all();
+        this.showAll();
         const selected = this.root.querySelector<HTMLElement>(
           '[aria-current="true"]',
         );
@@ -101,7 +110,7 @@ export class ProjectRailComponent {
     inject(DestroyRef).onDestroy(() => { this.indicatorAnimation?.cancel(); this.clearAdditions(); media.removeEventListener('change', cancel); });
   }
 
-  private clearAdditions(): void { for (const animation of this.additions) animation.cancel(); this.additions = []; for (const ring of this.rings) ring.remove(); this.rings = []; }
+  private clearAdditions(): void { for (const cancel of this.additions.values()) cancel(); }
   protected add(tile: HTMLElement): void { this.addProject.emit(tile); }
 
   protected contextMenu(event: MouseEvent, projectId: string): void {

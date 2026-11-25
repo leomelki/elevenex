@@ -210,7 +210,7 @@ export class WorkspaceStore {
         ...(this.sessionNestingAvailable() && !this.closed() ? { childrenAppendOrder: this.sessionNestingOrderAvailable(), parentId: session.parentSessionId == null ? null : String(session.parentSessionId), childCount: session.childCount ?? 0,
           childrenLoading: this.hierarchy.windows().get(session.id)?.loading ?? false,
           childrenError: this.hierarchy.windows().get(session.id)?.error ?? null,
-          earlierChildren: this.hierarchy.windows().get(session.id)?.earlier ?? false, moreChildren: !!this.hierarchy.windows().get(session.id)?.nextCursor } : {}), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session), ...(session.commandCount ? { commands: session.commandCount } : {}) })),
+          earlierChildren: !!this.hierarchy.windows().get(session.id)?.cursor, moreChildren: !!this.hierarchy.windows().get(session.id)?.nextCursor } : {}), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session), ...(session.commandCount ? { commands: session.commandCount } : {}) })),
       ...this.sessionCreation.items().filter(item => item.taskId === task.id).map(item => ({ id: item.id, renderId: item.id, title: 'New session', status: 'queued' as const, local: true, fresh: true, meta: item.status === 'creating' ? 'Creating…' : item.status === 'unknown' ? 'Check creation' : 'Try again' })),
     ],
   })));
@@ -608,17 +608,17 @@ export class WorkspaceStore {
       const parent = previous.parentSessionId ? this.navigationSessions().get(selection.taskId)?.find(row => row.id === previous.parentSessionId) : undefined;
       // A retained selection supplements the history page. Evicting a history
       // row would hide it on both sides of the backend cursor.
-      if (!parent || !roots.some(row => row.id === parent.id))
-        sessions.set(selection.taskId, [...roots, ...(parent ? [parent] : []), previous].sort((a, b) => a.id - b.id));
+      const missingParent = parent && !roots.some(row => row.id === parent.id) && !priority.get(selection.taskId)?.parents.some(row => row.id === parent.id);
+      sessions.set(selection.taskId, [...roots, ...(missingParent ? [parent] : []), previous].sort((a, b) => a.id - b.id));
     }
     this.priorityRecords.set(priority);
     this.hierarchy.retain([...sessions.values()].flat().concat(
       [...priority.values()].flatMap(({ items, parents }) => [...items, ...parents]),
     ));
-    for (const [parentId, window] of this.hierarchy.windows()) {
-      void this.loadSessionChildren({ taskId: String(window.taskId), sessionId: String(parentId) });
-    }
     this.taskRecords.set(result.items); this.sessionRecords.set(sessions); this.sessionCursors.set(cursors); this.tasksCursor.set(result.nextCursor); this.taskPage.set(!!cursor);
+    for (const [parentId, window] of this.hierarchy.windows()) {
+      void this.readChildWindow(window.taskId, parentId, 'refresh');
+    }
     if (this.chosen() && !result.items.some(task => task.id === this.chosen()?.taskId)) this.chosen.set(null);
     if (!background && !this.restoring()) this.loading.set(false);
   }
@@ -851,11 +851,18 @@ export class WorkspaceStore {
   }
 
   async loadSessionChildren(intent: { readonly taskId: string; readonly sessionId: string; readonly earlier?: boolean }): Promise<void> {
-    const scope = this.scopeId(), taskId = Number(intent.taskId), parentId = Number(intent.sessionId), revision = this.listRevision;
-    if (!scope || !this.sessionNestingAvailable() || !this.navigationSessions().get(taskId)?.some(row => row.id === parentId)) return;
-    await this.hierarchy.load(taskId, parentId, intent.earlier ?? false,
+    await this.readChildWindow(Number(intent.taskId), Number(intent.sessionId), intent.earlier ? 'earlier' : 'latest');
+  }
+
+  private async readChildWindow(taskId: number, parentId: number, page: 'latest' | 'earlier' | 'refresh'): Promise<void> {
+    const scope = this.scopeId();
+    const current = () => this.sessionNestingAvailable() && !this.closed() &&
+      this.taskRecords().some(task => task.id === taskId) &&
+      !!this.navigationSessions().get(taskId)?.some(row => row.id === parentId && row.parentSessionId == null);
+    if (!scope || !current()) return;
+    await this.hierarchy.load(taskId, parentId, page,
       cursor => this.bridge.workspaceSessions(scope, { taskId, parentSessionId: parentId, limit: 20, order: 'latest', ...(this.sessionNestingOrderAvailable() ? { childOrder: 'nested' } : {}), ...(cursor ? { cursor } : {}) }),
-      () => this.valid(scope) && revision === this.listRevision);
+      () => this.valid(scope) && current());
   }
   async moveSession(intent: { readonly taskId: string; readonly sessionId: string; readonly parentSessionId: string | null }): Promise<void> {
     const scope = this.scopeId(), taskId = Number(intent.taskId), sessionId = Number(intent.sessionId);

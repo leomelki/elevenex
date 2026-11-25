@@ -131,7 +131,10 @@ permission to close it independently. Older engines omit the temporary flag.
   rows. The workspace merges and deduplicates those pages independently of the
   history cursor for each task in the current task window. A failed continuation
   keeps the previous priority snapshot. Older engines prioritize sessions within
-  their loaded history and child windows.
+  their loaded history and child windows. Background updates revalidate the
+  open child page at its current cursor and retain its rows and controls while
+  the read is pending or fails. Explicit paging takes precedence. A selected
+  child can receive a focused status update without changing its nesting order.
 - The initial `workspaceRevision` probe verifies protocol version 1 before
   dispatching a workspace snapshot. Unsupported older runtimes receive an update
   message. `WorkspaceNavigationObserver` owns a five-second revision probe; only
