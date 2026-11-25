@@ -119,7 +119,7 @@ Electron. The local machine runs that bundle with the launcher's Node executable
 and skips the GitHub release download. The development runtime is assembled under
 `apps/desktop/.stage/development-backend/`, with links to the workspace's installed
 dependencies, migrations and assets. Mutable data remains under
-`~/.elevenex/desktop/data/`. Install dependencies for the Node version used to
+`~/.elevenex/desktop-dev/data/` (see [data locations](#data-locations)). Install dependencies for the Node version used to
 launch development (including the `better-sqlite3` and `node-pty` native modules).
 The launcher also attempts to assemble a standalone SSH archive with bundled
 Node and validated native dependencies. In development, a matching server receives
@@ -261,8 +261,8 @@ original-page copy against the native clipboard in both themes, plus failure
 and retry feedback. Run it with the component preview URL as described in the
 [capture guide](../../scripts/desktop-capture/README.md).
 
-Window state is saved asynchronously in `Elevenex Desktop/window-state.json`
-under Electron's application-data directory, separate from the existing app.
+Window state is saved asynchronously in `window-state.json` in the Electron
+profile described under [data locations](#data-locations).
 Shift+Cmd+N on macOS, or Shift+Ctrl+N elsewhere, opens another window.
 
 ## Local backend
@@ -272,7 +272,26 @@ renderer can open while installation proceeds; closing a window does not stop
 the backend while the application is alive. A second app process focuses the
 existing instance instead of opening a second database owner.
 
-`~/.elevenex/desktop/` contains:
+### Data locations
+
+Packaged and unpackaged builds never share mutable state, so a branch build
+cannot save settings or migrate a database that an installed release cannot
+read. Both are separate from the legacy app's `Elevenex` profile and
+`~/.elevenex/elevenex.db`. `src/profile.ts` owns this choice.
+
+| Build | Electron profile (settings, machines, window state, caches) | Backend root |
+| --- | --- | --- |
+| Packaged | `<appData>/Elevenex Desktop/` | `~/.elevenex/desktop/` |
+| Unpackaged (`desktop:dev`, local launches) | `<appData>/Elevenex Desktop Development/` | `~/.elevenex/desktop-dev/` |
+
+`<appData>` is Electron's application-data directory, for example
+`~/Library/Application Support` on macOS. An explicit `--user-data-dir` replaces
+the profile directory, and test launchers redirect `appData` to stay isolated.
+Because the profiles differ, a development build can run beside the installed
+app. Remote runtimes are already separate: `desktop-remote/` for releases and
+`desktop-remote-dev/<id>/` for development, both on the server.
+
+The backend root contains:
 
 - `runtimes/<release-tag>-<platform>-<architecture>/`: installed backend and its
   bundled Node executable, plus a completed installation marker.

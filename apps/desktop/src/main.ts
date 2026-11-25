@@ -19,7 +19,7 @@ import { RemoteManager } from './remote/manager';
 import { registerRemoteIpc } from './remote/ipc';
 import { readBackendRelease } from './backend/release';
 import { developmentRemote } from './remote/development';
-import { homedir } from 'node:os';
+import { desktopProfile } from './profile';
 import { RemoteArchiveCache } from './remote/archives';
 import { createBackendClient } from './backend-client/application';
 import { registerBackendClientIpc } from './backend-client/ipc';
@@ -45,9 +45,10 @@ if (devUrl) {
 
 // Keep the new skeleton's state separate from the existing Elevenex app.
 app.setName('Elevenex Desktop');
+const profile = desktopProfile(app.isPackaged);
 // Electron resolves an explicit profile before the main script runs.
 if (!app.commandLine.getSwitchValue('user-data-dir')) {
-  app.setPath('userData', join(app.getPath('appData'), 'Elevenex Desktop'));
+  app.setPath('userData', join(app.getPath('appData'), profile.userDataName));
 }
 const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
@@ -55,12 +56,11 @@ const rendererRoot = join(__dirname, '../renderer');
 // its process-tree helper are unpacked, never the renderer or privileged bridge.
 const backend = createApplicationBackend(app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
-  : join(__dirname, 'backend/host.js'), app.isPackaged);
-const remoteRoot = join(homedir(), '.elevenex', 'desktop');
+  : join(__dirname, 'backend/host.js'), app.isPackaged, profile.root);
 const remoteDevelopment = developmentRemote(app.isPackaged);
-const remoteArchives = new RemoteArchiveCache(remoteRoot, remoteDevelopment?.archive);
+const remoteArchives = new RemoteArchiveCache(profile.root, remoteDevelopment?.archive);
 const remote = new RemoteManager({
-  root: remoteRoot,
+  root: profile.root,
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
   settingsPath: join(app.getPath('userData'), remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),

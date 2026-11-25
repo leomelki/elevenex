@@ -5,6 +5,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { developmentBackend } = require('../dist/backend/development');
 const { BackendManager } = require('../dist/backend/manager');
+const { desktopProfile } = require('../dist/profile');
 const { version } = require('./backend-fixtures.cjs');
 
 test('packaged apps and ordinary launches ignore development backend configuration', () => {
@@ -24,6 +25,12 @@ async function setup(t) {
   t.after(async () => { await manager.dispose(); await rm(root, { recursive: true, force: true }); });
   return { manager, directory, options };
 }
+
+test('unpackaged builds keep settings, database and runtimes apart from the installed app', () => {
+  const home = '/Users/example';
+  assert.deepEqual(desktopProfile(true, home), { userDataName: 'Elevenex Desktop', root: join(home, '.elevenex/desktop') });
+  assert.deepEqual(desktopProfile(false, home), { userDataName: 'Elevenex Desktop Development', root: join(home, '.elevenex/desktop-dev') });
+});
 
 test('local backend starts, restarts and stops under Node without download phases', async t => {
   const { manager, directory } = await setup(t);
