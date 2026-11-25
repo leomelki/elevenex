@@ -5,6 +5,7 @@ import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../ui';
 import { ViewTabsComponent, type ViewTab } from '../views';
 import { AppStreamComponent } from './app-stream.component';
+import { TaskAppSetupComponent } from './task-app-setup.component';
 
 interface AppTarget { readonly scopeId: string; readonly taskId: number }
 interface RunLink extends AppTarget { readonly runId: string }
@@ -23,13 +24,14 @@ function isActive(run: TaskAppRun): boolean {
 
 @Component({
   selector: 'ex-task-apps',
-  imports: [AppStreamComponent, ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective, ViewTabsComponent],
+  imports: [AppStreamComponent, TaskAppSetupComponent, ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective, ViewTabsComponent],
   templateUrl: './task-apps.component.html', styleUrl: './task-apps.component.css', changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskAppsComponent {
   readonly scopeId = input<string | null>(null);
   readonly taskId = input<number | null>(null);
   readonly machine = input('');
+  readonly remote = input(false);
   readonly available = input(true);
   readonly monitor = input(true);
   readonly viewerVisible = input(true);
@@ -43,15 +45,17 @@ export class TaskAppsComponent {
     return snapshot && this.matches(snapshot) ? snapshot : null;
   });
   readonly runs = computed(() => this.currentSnapshot()?.runs ?? []);
-  readonly hasActiveApp = computed(() => this.runs().some(isActive));
+  private readonly dismissedSetup = signal('');
+  readonly hasActiveApp = computed(() => this.runs().some(isActive) ||
+    (!!this.run()?.setupIssue && this.run()?.runId !== this.dismissedSetup()));
   readonly selected = signal('');
   readonly run = computed(() => this.runs().find(item => item.runId === this.selected()));
   readonly tabs = computed<readonly ViewTab[]>(() => {
     // A separate window belongs to one run, so it shows only that run's tab.
     const runs = this.standalone() ? this.runs().filter(item => item.runId === this.selected()) : this.runs();
     return runs.map(item => ({
-      id: item.runId, title: item.name, tip: `${item.name} · ${labels[item.status]}`,
-      icon: item.status === 'requested' ? 'hand' : 'window', status: tabStatus[item.status], statusLabel: labels[item.status],
+      id: item.runId, title: item.name, tip: `${item.name} · ${this.statusLabel(item)}`,
+      icon: item.status === 'requested' ? 'hand' : 'window', status: tabStatus[item.status], statusLabel: this.statusLabel(item),
     }));
   });
   readonly requestedCommand = computed(() => {
@@ -64,6 +68,7 @@ export class TaskAppsComponent {
   readonly loading = computed(() => this.monitor() && (!this.currentSnapshot() || (this.reading() && !this.run())));
   readonly readError = signal('');
   readonly actionError = signal('');
+  readonly setupFeedback = signal('');
   readonly actual = signal(false);
   readonly detached = signal(false);
   readonly logsOpen = signal(false);
@@ -138,6 +143,7 @@ export class TaskAppsComponent {
     const cached = target && this.recentTasks.get(target.taskId);
     if (target) this.recentTasks.delete(target.taskId);
     this.target = target;
+    this.dismissedSetup.set('');
     this.snapshot.set(cached?.snapshot ?? null);
     this.select(cached?.selected ?? '');
     this.readError.set('');
@@ -158,7 +164,9 @@ export class TaskAppsComponent {
       if (!current()) return;
       if (!reply.ok) { this.readError.set(reply.error.message); return; }
       this.readError.set('');
+      const previousIssue = this.run()?.setupIssue;
       this.snapshot.set({ ...target, runs: reply.value });
+      if (previousIssue !== this.run()?.setupIssue) this.setupFeedback.set('');
       if (!this.requestedRun && !reply.value.some(run => run.runId === this.selected())) {
         const run = reply.value.find(run => run.status === 'running' || run.status === 'starting') ??
           reply.value.find(isActive) ?? reply.value[0];
@@ -181,10 +189,22 @@ export class TaskAppsComponent {
     this.logGeneration++;
     this.selected.set(id);
     this.busy.set(false); this.actionError.set(''); this.detached.set(false); this.actual.set(false);
+    this.setupFeedback.set('');
     this.logsOpen.set(false); this.logs.set(null);
   }
 
-  choose(id: string): void { this.requestedRun = ''; this.select(id); }
+  choose(id: string): void { this.requestedRun = ''; this.dismissedSetup.set(''); this.select(id); }
+
+  statusLabel(run: TaskAppRun): string {
+    return run.setupIssue && (run.status === 'requested' || run.status === 'failed') ? 'Setup required' : labels[run.status];
+  }
+
+  dismissSetup(): void {
+    this.dismissedSetup.set(this.selected());
+    const active = this.runs().find(isActive);
+    if (active) this.choose(active.runId);
+    else this.idle.emit();
+  }
 
   toggleLogs(): void {
     this.logsOpen.update(open => !open);
@@ -203,18 +223,35 @@ export class TaskAppsComponent {
     } catch { if (!this.disposed && generation === this.logGeneration) this.logs.set('App logs could not be read.'); }
   }
 
-  async act(action: 'approve' | 'stop'): Promise<void> {
+  async act(action: 'approve' | 'stop' | 'setup-settings'): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy()) return;
-    this.busy.set(true); this.actionError.set('');
+    this.busy.set(true); this.actionError.set(''); this.setupFeedback.set('');
     const current = () => generation === this.generation && this.run()?.runId === run.runId;
     try {
-      const result = action === 'approve'
-        ? run.status === 'requested' && run.pendingLaunch ? await this.bridge.taskAppApprove?.(scope, task, run.runId) : undefined
-        : await this.bridge.taskAppStop?.(scope, task, run.runId);
-      if (current() && !result?.ok) this.actionError.set(result?.error.message ?? 'App action unavailable.');
+      const invoke = action === 'approve' ? this.bridge.taskAppApprove
+        : action === 'stop' ? this.bridge.taskAppStop : this.bridge.taskAppOpenSetupSettings;
+      if (action === 'approve' && (run.status !== 'requested' || !run.pendingLaunch)) return;
+      const result = await invoke?.call(this.bridge, scope, task, run.runId);
+      if (current() && !result?.ok) this.actionError.set(action === 'setup-settings'
+        ? 'Could not confirm settings opened. Follow the steps manually on the task machine.'
+        : result?.error.message ?? 'App action unavailable.');
+      else if (current() && action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue)
+        this.setupFeedback.set(this.remote() ? 'Settings opened on the task machine.' : 'Settings opened.');
     } catch { if (current()) this.actionError.set('The request was interrupted. Check the run before trying again.'); }
     finally { if (current()) { this.busy.set(false); void this.refresh(); } }
+  }
+
+  async copySetup(text: string): Promise<void> {
+    const generation = this.generation, run = this.run();
+    if (!run) return;
+    let message: string;
+    try {
+      await this.bridge.writeClipboardText(text);
+      message = 'Instructions copied.';
+    } catch { message = 'Could not copy the instructions.'; }
+    if (generation === this.generation && this.run()?.runId === run.runId && this.run()?.setupIssue === run.setupIssue)
+      this.setupFeedback.set(message);
   }
 
   async popOut(): Promise<void> {

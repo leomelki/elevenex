@@ -42,7 +42,7 @@ async function buildWindowsAppDisplay({ outputPath }) {
       '/DUNICODE', '/D_UNICODE', '/D_WIN32_WINNT=0x0A00',
       join(sources, 'main.cpp'), join(sources, 'launch.cpp'), join(sources, 'view.cpp'),
       '/Fe:' + target, '/link', '/DYNAMICBASE', '/NXCOMPAT', 'windowsapp.lib',
-      'd3d11.lib', 'dwmapi.lib', 'advapi32.lib', 'user32.lib'],
+      'd3d11.lib', 'dwmapi.lib', 'advapi32.lib', 'user32.lib', 'shell32.lib'],
     { cwd: directory, env, windowsHide: true, maxBuffer: 4 * 1024 * 1024 })
       .catch(error => { throw new Error('Windows app helper build failed\n' + (error.stdout || error.message) + '\n' + (error.stderr || '')); });
     await mkdir(dirname(outputPath), { recursive: true });

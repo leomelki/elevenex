@@ -59,7 +59,7 @@
         }
       </div>
       <div workspaceApps #workspaceApps class="review-content">
-        <ex-task-apps [available]="store.taskAppsAvailable()" [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [machine]="machine().name" [link]="store.appLink()" [monitor]="active() && panelOpen()" [viewerVisible]="active() && panelOpen() && panel() === 'apps'" (idle)="onAppsIdle()" />
+        <ex-task-apps [available]="store.taskAppsAvailable()" [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [machine]="machine().name" [remote]="machine().kind !== 'local'" [link]="store.appLink()" [monitor]="active() && panelOpen()" [viewerVisible]="active() && panelOpen() && panel() === 'apps'" (idle)="onAppsIdle()" />
       </div>
       <ex-task-browser [windowContext]="browserWindowContext()" workspaceBrowser #workspaceBrowser [scopeId]="store.offline() ? null : store.scopeId()" [taskId]="store.selectedTask()?.state === 'ready' ? store.selectedTask()!.id : null" [sessionId]="store.selected()?.sessionId ?? null" [active]="active() && panelOpen() && panel() === 'browser' && !store.offline()" (attentionRequested)="browserAttention()" (contextRequested)="browserContext($event)" />
     </ex-workspace-panels>

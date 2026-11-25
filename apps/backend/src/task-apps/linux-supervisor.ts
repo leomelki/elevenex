@@ -1,4 +1,5 @@
 import { x11Input } from './x11-input.js';
+import { LINUX_APP_PROGRAM_PATH } from './app-host-setup.js';
 
 // The backend bundle carries this helper verbatim, so a remote engine does not
 // need a checkout or a native Node addon. fd 3 belongs only to the supervisor.
@@ -43,7 +44,7 @@ def terminated(signum, frame):
     raise SystemExit(128 + signum)
 
 def system_program(name):
-    path = shutil.which(name, path='/usr/bin:/bin:/usr/local/bin')
+    path = shutil.which(name, path='${LINUX_APP_PROGRAM_PATH}')
     if not path:
         raise RuntimeError('Install %s on the Linux task host' % name)
     return path

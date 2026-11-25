@@ -15,6 +15,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   taskAppsRead: (...args) => invoke('task-app:read', ...args),
   taskAppOutput: (...args) => invoke('task-app:output', ...args),
   taskAppApprove: (...args) => invoke('task-app:approve', ...args),
+  taskAppOpenSetupSettings: (...args) => invoke('task-app:setup-settings', ...args),
   taskAppStop: (...args) => invoke('task-app:stop', ...args),
   taskAppWatch: (...args) => invoke('task-app:watch', ...args),
   taskAppUnwatch: (...args) => invoke('task-app:unwatch', ...args),

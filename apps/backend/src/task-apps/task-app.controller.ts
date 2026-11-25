@@ -56,8 +56,8 @@ export class TaskAppController {
     @Param('taskId') value: string,
     @Param('runId') runId: string,
   ) {
-    await this.tasks.approveApp(await this.task(request, value), runId);
-    return { approved: true };
+    const run = await this.tasks.approveApp(await this.task(request, value), runId);
+    return { approved: true, ...(run?.setupIssue ? { setupRequired: true } : {}) };
   }
 
   @Post(':runId/stop') async stop(
@@ -67,6 +67,20 @@ export class TaskAppController {
   ) {
     await this.apps.stop(await this.task(request, value), runId);
     return { stopped: true };
+  }
+
+  @Post(':runId/setup-settings') async setupSettings(
+    @Req() request: IncomingMessage,
+    @Param('taskId') value: string,
+    @Param('runId') runId: string,
+  ) {
+    const taskId = await this.task(request, value);
+    try {
+      await this.apps.openSetupSettings(taskId, runId);
+    } catch {
+      throw new BadRequestException('Settings could not open on the task machine. Follow the steps there manually.');
+    }
+    return { opened: true };
   }
 
   @Post(':runId/watch') async watch(

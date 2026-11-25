@@ -15,6 +15,7 @@
 } @else if (run(); as app) {
   @let streaming = app.mode === 'stream' && app.status === 'running' && viewerVisible() && !detached();
   @let stoppable = app.status === 'running' || app.status === 'starting' || app.status === 'stopping';
+  @let setupIssue = app.status === 'stopping' ? undefined : app.setupIssue;
   <!-- One row: a tab per run, with the selected run's actions at the right. -->
   <ex-view-tabs label="Task apps" [items]="tabs()" [active]="app.runId" [closable]="false" [addable]="false" (selected)="choose($event)">
     <div class="tools">
@@ -27,12 +28,39 @@
       @if (stoppable) { <ex-icon-button icon="stop" [label]="app.status === 'stopping' ? 'Retry stop' : 'Stop app'" size="sm" [disabled]="busy()" (pressed)="act('stop')" /> }
     </div>
   </ex-view-tabs>
-  <span class="app-status visually-hidden" role="status">{{ app.name }}: {{ labels[app.status] }}</span>
+  <span class="app-status visually-hidden" role="status">{{ app.name }}: {{ statusLabel(app) }}</span>
   @if (actionError()) { <p role="alert" class="error"><ex-icon name="x" [size]="12" />{{ actionError() }}</p> }
+  @if (setupIssue; as issue) {
+    <ex-task-app-setup [class.alongside-stream]="streaming" [issue]="issue" [machine]="machine()" [remote]="remote()" [detail]="app.detail ?? ''"
+      [canOpenSettings]="!!bridge.taskAppOpenSetupSettings" [busy]="busy()" [feedback]="setupFeedback()"
+      (openSettings)="act('setup-settings')" (copyInstructions)="copySetup($event)">
+      @if (app.status === 'requested') {
+        <details class="setup-command">
+          <summary>Requested command</summary>
+          <pre tabindex="0" aria-label="Requested executable and arguments">{{ requestedCommand() }}</pre>
+        </details>
+        <div class="actions setup-actions">
+          <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Decline</button>
+          <button exButton size="sm" variant="primary" [disabled]="busy() || !bridge.taskAppApprove" (click)="act('approve')">Check and launch</button>
+        </div>
+      } @else if (app.status === 'failed') {
+        <p class="setup-next">When setup is complete, ask your agent to launch {{ app.name }} again.</p>
+        <div class="actions setup-actions">
+          <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissSetup()">Dismiss</button>
+        </div>
+      } @else if (app.status === 'running') {
+        <p class="setup-next">{{ issue === 'macos-accessibility'
+          ? 'After granting permission, click the app to try control again.'
+          : 'When the host is ready, reconnect the app stream.' }}</p>
+      }
+    </ex-task-app-setup>
+  }
   @if (streaming) {
     @for (id of [app.runId]; track scopeId() + ':' + taskId() + ':' + id) {
       <ex-app-stream [scopeId]="scopeId()!" [taskId]="taskId()!" [runId]="id" [name]="app.name" [actual]="actual()" />
     }
+  } @else if (setupIssue) {
+    @if (detached()) { <button exButton size="sm" variant="secondary" (click)="detached.set(false)">Show here</button> }
   } @else if (app.status === 'requested') {
     <section class="approval" aria-label="App launch request">
       <h2>Launch {{ app.name }}?</h2>

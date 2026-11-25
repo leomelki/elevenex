@@ -4,6 +4,11 @@
 #import <fcntl.h>
 #import <unistd.h>
 
+static uint8_t captureFailure(NSError *error) {
+    BOOL denied = [error.domain isEqualToString:SCStreamErrorDomain] && error.code == SCStreamErrorUserDeclined;
+    return denied || !CGPreflightScreenCaptureAccess() ? 21 : 24;
+}
+
 @interface AppDisplay : NSObject
 @property(nonatomic, strong) AppWindow *target;
 @property(nonatomic, strong) AppEncoder *encoder;
@@ -38,7 +43,8 @@
 }
 - (void)tick {
     if (!self.active) return;
-    if (!AppSessionActive() || !CGPreflightScreenCaptureAccess()) { [self end:20]; return; }
+    if (!AppSessionActive()) { [self end:20]; return; }
+    if (!CGPreflightScreenCaptureAccess()) { [self end:21]; return; }
     if (kill(-self.target.group, 0) != 0) { [self end:23]; return; }
     NSDictionary *row = self.target.firstOwnedWindow;
     if (!row && !self.stream) { if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22]; return; }
@@ -62,7 +68,7 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!self.active || generation != self.generation) return;
             self.selecting = NO;
-            if (!content) { [self end:21]; return; }
+            if (!content) { [self end:captureFailure(error)]; return; }
             for (SCWindow *window in content.windows) {
                 pid_t owner = window.owningApplication.processID;
                 if (window.windowID != selected || !ownsAppProcess(self.target.group, owner)) continue;
@@ -89,7 +95,11 @@
                 self.stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self.encoder];
                 NSError *streamError = nil;
                 if (![self.stream addStreamOutput:self.encoder type:SCStreamOutputTypeScreen sampleHandlerQueue:self.frames error:&streamError]) { [self end:24]; return; }
-                [self.stream startCaptureWithCompletionHandler:^(NSError *failure) { if (failure) dispatch_async(dispatch_get_main_queue(), ^{ if (generation == self.generation) [self end:21]; }); }];
+                [self.stream startCaptureWithCompletionHandler:^(NSError *failure) {
+                    if (failure) dispatch_async(dispatch_get_main_queue(), ^{
+                        if (generation == self.generation) [self end:captureFailure(failure)];
+                    });
+                }];
                 return;
             }
             if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22];
@@ -110,6 +120,20 @@ int main(int argc, char *argv[]) {
             CGRequestScreenCaptureAccess();
             NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES };
             return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options) && CGPreflightScreenCaptureAccess() ? 0 : 21;
+        }
+        if (argc == 2 && (!strcmp(argv[1], "--screen-settings") || !strcmp(argv[1], "--accessibility-settings"))) {
+            if (!AppSessionActive()) return 20;
+            BOOL screen = !strcmp(argv[1], "--screen-settings");
+            NSString *pane = screen ? @"Privacy_ScreenCapture" : @"Privacy_Accessibility";
+            NSURL *url = [NSURL URLWithString:[@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane]];
+            if (![NSWorkspace.sharedWorkspace openURL:url]) return 24;
+            // Request only the selected permission, so the helper is listed even on first use.
+            if (screen && !CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
+            if (!screen && !AXIsProcessTrusted()) {
+                NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES };
+                AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            }
+            return 0;
         }
         if (argc == 2 && !strcmp(argv[1], "--check")) {
             if (!AppSessionActive()) return 20;

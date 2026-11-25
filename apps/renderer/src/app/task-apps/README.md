@@ -49,6 +49,13 @@ When an agent needs the user to launch a proposed command, the panel displays
 the executable and individual arguments. **Launch** accepts that
 run. **Decline** dismisses it. Viewing the request never starts a process.
 
+When a run reports a host prerequisite, the same panel shows its setup steps
+and the machine that needs them. The open-settings intent is scoped to the
+run and opens the macOS pane on the host. Copy instructions uses the local
+clipboard. The reviewed command remains available and **Check and launch**
+rechecks the original request. The Accessibility guide leaves video attached
+while input is unavailable.
+
 Fresh host launch events can reveal Apps for the selected conversation in the
 focused, visible workspace. The first revision after navigating or regaining
 focus establishes a baseline and never replays earlier launch events.

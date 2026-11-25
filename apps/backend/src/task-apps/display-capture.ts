@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { Readable } from 'node:stream';
+import type { TaskAppSetupIssue } from '@elevenex/shared';
 import { RuntimeVideoHost } from '../desktop-browser/runtime-video-host.js';
 import {
   videoTargetId,
@@ -25,7 +26,7 @@ export interface AppFrame {
 export type AppStreamEnd = 'permission' | 'window-changed' | 'window-missing';
 export interface AppFrameListener {
   frame(frame: AppFrame): boolean | void;
-  end(reason: string, disposition?: AppStreamEnd): void;
+  end(reason: string, disposition?: AppStreamEnd, setupIssue?: TaskAppSetupIssue): void;
 }
 
 /** The packet-size pipe and the H.264 pipe can arrive in either order. */

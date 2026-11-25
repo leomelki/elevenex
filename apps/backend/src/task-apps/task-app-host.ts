@@ -14,6 +14,8 @@ import { androidArguments } from './android-app.js';
 
 import { DarwinAppDisplay } from './darwin-display.js';
 import { WindowsAppDisplay } from './windows-display.js';
+import { AppSetupError } from './app-setup-error.js';
+import { prepareAppHost, type AppHostReady } from './app-host-setup.js';
 import {
   spawnAppSupervisor,
   launchFingerprint,
@@ -60,6 +62,9 @@ interface Run {
   viewers: number;
   control?: { viewer: string; timer: NodeJS.Timeout };
   setup?: Promise<void>;
+  preflight?: Promise<AppHostReady | null>;
+  setupSettings?: Promise<void>;
+  setupIssue?: TaskAppRun['setupIssue'];
   shutdown?: Promise<void>;
   exited?: Promise<void>;
   closing?: Promise<void>;
@@ -72,6 +77,7 @@ interface Run {
 @Injectable()
 export class TaskAppHost implements OnModuleDestroy {
   private readonly runs = new Map<string, Run>();
+  private readonly hostChecks = new Map<AppLaunch['mode'], Promise<AppHostReady>>();
   private readonly videoHost: RuntimeVideoHost;
   constructor(
     @Optional() private readonly sharedVideoHost?: RuntimeVideoHost,
@@ -93,11 +99,12 @@ export class TaskAppHost implements OnModuleDestroy {
   async start(
     request: AppLaunch,
     observer?: AppRunObserver,
+    hostReady?: AppHostReady,
   ): Promise<TaskAppRun> {
-    return this.reserve(request, undefined, observer);
+    return this.reserve(request, undefined, observer, hostReady);
   }
 
-  propose(request: AppLaunch, authority: LaunchAuthority): TaskAppRun {
+  propose(request: AppLaunch, authority: LaunchAuthority, blocker?: AppSetupError): TaskAppRun {
     if (
       !Number.isSafeInteger(authority.sessionId) ||
       authority.sessionId <= 0 ||
@@ -105,7 +112,7 @@ export class TaskAppHost implements OnModuleDestroy {
       authority.checkoutToken.length > 4096
     )
       throw new Error('Invalid app launch authority');
-    return this.reserve(request, authority);
+    return this.reserve(request, authority, undefined, undefined, blocker);
   }
 
   pending(taskId: number, runId: string): PendingLaunch {
@@ -116,10 +123,50 @@ export class TaskAppHost implements OnModuleDestroy {
     return run.proposal.value;
   }
 
+  checkHost(mode: AppLaunch['mode']): Promise<AppHostReady> {
+    const current = this.hostChecks.get(mode);
+    if (current) return current;
+    const check = prepareAppHost(mode).finally(() => this.hostChecks.delete(mode));
+    this.hostChecks.set(mode, check);
+    return check;
+  }
+
+  prepareApproval(taskId: number, runId: string): Promise<AppHostReady | null> {
+    const run = this.owned(taskId, runId);
+    const pending = this.pending(taskId, runId);
+    run.preflight ??= this.checkHost(pending.launch.mode).catch(error => {
+      if (!(error instanceof AppSetupError)) throw error;
+      // A permission check must never consume an approval or resurrect a
+      // proposal that expired or was dismissed while the host was checked.
+      this.pending(taskId, runId);
+      this.updateRun(run, { ...run.state, setupIssue: error.issue, detail: error.message });
+      return null;
+    }).finally(() => { run.preflight = undefined; });
+    return run.preflight;
+  }
+
+  async openSetupSettings(taskId: number, runId: string): Promise<void> {
+    const run = this.owned(taskId, runId);
+    if (run.proposal) this.pending(taskId, runId);
+    if (run.state.status === 'stopping' || run.state.status === 'exited')
+      throw new Error('The app is no longer available for setup.');
+    const issue = run.state.setupIssue;
+    if (run.setupSettings) return run.setupSettings;
+    const open = process.platform === 'darwin' && (issue === 'macos-screen-recording' || issue === 'macos-accessibility')
+      ? DarwinAppDisplay.openSetupSettings(issue)
+      : process.platform === 'win32' && issue === 'windows-capture'
+        ? WindowsAppDisplay.openSetupSettings()
+        : undefined;
+    if (!open) throw new Error('No system settings are available for this run.');
+    run.setupSettings = open.finally(() => { run.setupSettings = undefined; });
+    return run.setupSettings;
+  }
+
   approve(
     taskId: number,
     runId: string,
     observer?: AppRunObserver,
+    hostReady?: AppHostReady,
   ): TaskAppRun {
     const run = this.owned(taskId, runId);
     const { launch } = this.pending(taskId, runId);
@@ -127,9 +174,9 @@ export class TaskAppHost implements OnModuleDestroy {
     this.journal?.approve(runId);
     clearTimeout(run.proposal!.timer);
     run.proposal = undefined;
-    const { pendingLaunch, ...previous } = run.state;
+    const { pendingLaunch, setupIssue, detail, ...previous } = run.state;
     this.updateRun(run, { ...previous, status: 'starting' });
-    this.begin(run, launch, observer);
+    this.begin(run, launch, observer, hostReady);
     return run.state;
   }
 
@@ -138,7 +185,7 @@ export class TaskAppHost implements OnModuleDestroy {
     this.journal?.finish(run.state.runId, detail === 'Launch request expired' ? 'expired' : 'cancelled');
     clearTimeout(run.proposal.timer);
     run.proposal = undefined;
-    const { pendingLaunch, ...previous } = run.state;
+    const { pendingLaunch, setupIssue, ...previous } = run.state;
     this.updateRun(run, { ...previous, status: 'exited', detail });
     run.cleaned = true;
   }
@@ -169,6 +216,8 @@ export class TaskAppHost implements OnModuleDestroy {
     original: AppLaunch,
     authority?: LaunchAuthority,
     observer?: AppRunObserver,
+    hostReady?: AppHostReady,
+    blocker?: AppSetupError,
   ): TaskAppRun {
     const request = Object.freeze({
       ...original,
@@ -221,6 +270,7 @@ export class TaskAppHost implements OnModuleDestroy {
           }
         : {}),
       startedAt: Date.now(),
+      ...(blocker ? { setupIssue: blocker.issue, detail: blocker.message } : {}),
     };
     const receipt = this.journal?.reserve(request, state);
     if (receipt) return receipt;
@@ -249,13 +299,14 @@ export class TaskAppHost implements OnModuleDestroy {
         expires: Date.now() + 600_000,
         value: Object.freeze({ launch: request, ...authority }),
       };
-    } else this.begin(run, request, observer);
+    } else this.begin(run, request, observer, hostReady);
     return run.state;
   }
 
-  private begin(run: Run, request: AppLaunch, observer?: AppRunObserver): void {
+  private begin(run: Run, request: AppLaunch, observer?: AppRunObserver, hostReady?: AppHostReady): void {
     run.observer = observer;
-    run.setup = this.launch(run, request).catch(async (error: unknown) => {
+    run.setup = this.launch(run, request, hostReady).catch(async (error: unknown) => {
+      if (error instanceof AppSetupError) run.setupIssue = error.issue;
       run.failure =
         error instanceof Error
           ? error.message.slice(0, 320)
@@ -283,7 +334,7 @@ export class TaskAppHost implements OnModuleDestroy {
   }
 
   private updateRun(run: Run, state: TaskAppRun): void {
-    const changed = run.state.status !== state.status;
+    const changed = run.state.status !== state.status || run.state.setupIssue !== state.setupIssue;
     run.state = state;
     if (changed) for (const wake of run.waiters) wake(state);
   }
@@ -337,7 +388,9 @@ export class TaskAppHost implements OnModuleDestroy {
     return total;
   }
 
-  private async launch(run: Run, request: AppLaunch): Promise<void> {
+  private async launch(run: Run, request: AppLaunch, hostReady?: AppHostReady): Promise<void> {
+    const host = hostReady ?? await this.checkHost(request.mode);
+    if (run.stopped) return this.finish(run);
     const directory = appRunDirectory(run.state.runId);
     await mkdir(directory, { mode: 0o700 });
     run.directory = directory;
@@ -348,6 +401,7 @@ export class TaskAppHost implements OnModuleDestroy {
       run.directory,
       run.lifetime.signal,
       !!this.journal,
+      host,
     );
     run.child = child;
     for (const output of process.platform === 'win32'
@@ -490,9 +544,17 @@ export class TaskAppHost implements OnModuleDestroy {
       }
     };
     const close = run.capture.watch({
-      frame: (frame) => listener.frame(frame),
-      end: (reason, disposition) => {
+      frame: (frame) => {
+        if (run.state.setupIssue && run.state.setupIssue !== 'macos-accessibility') {
+          const { setupIssue, ...state } = run.state;
+          this.updateRun(run, state);
+        }
+        return listener.frame(frame);
+      },
+      end: (reason, disposition, setupIssue) => {
         decrement();
+        if (setupIssue && run.state.status === 'running' && run.state.setupIssue !== setupIssue)
+          this.updateRun(run, { ...run.state, setupIssue });
         listener.end(reason, disposition);
       },
     });
@@ -548,8 +610,19 @@ export class TaskAppHost implements OnModuleDestroy {
     if (run.control?.viewer !== viewer || run.state.status !== 'running')
       throw new Error('App control has expired');
     run.control.timer.refresh();
-    if (run.capture && 'input' in run.capture) await run.capture.input(event);
-    else await this.write(run, hostInput(event, run.displaySize));
+    try {
+      if (run.capture && 'input' in run.capture) await run.capture.input(event);
+      else await this.write(run, hostInput(event, run.displaySize));
+      if (run.state.setupIssue === 'macos-accessibility') {
+        const { setupIssue, ...state } = run.state;
+        this.updateRun(run, state);
+      }
+    } catch (error) {
+      if (error instanceof AppSetupError && run.state.status === 'running' &&
+          run.state.setupIssue !== error.issue)
+        this.updateRun(run, { ...run.state, setupIssue: error.issue });
+      throw error;
+    }
   }
 
   async releaseInput(
@@ -635,9 +708,11 @@ export class TaskAppHost implements OnModuleDestroy {
       }
       this.journal?.finish(run.state.runId, status === 'success' ? 'exited' : status);
       run.cleaned = true;
+      const { setupIssue, ...previous } = run.state;
       this.updateRun(run, {
-        ...run.state,
+        ...previous,
         status: status === 'failed' ? 'failed' : 'exited',
+        ...(status === 'failed' && run.setupIssue ? { setupIssue: run.setupIssue } : {}),
         detail: status === 'stopped'
           ? 'Stopped'
           : (run.failure ?? 'Exited with code ' + (run.exitCode ?? 0)),

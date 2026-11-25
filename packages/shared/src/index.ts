@@ -62,6 +62,7 @@ export interface InvokeContracts {
   'task-app:read': { args: [scopeId: string, taskId: number]; result: BackendResult<readonly TaskAppRun[]> };
   'task-app:output': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<string> };
   'task-app:approve': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
+  'task-app:setup-settings': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
   'task-app:stop': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
   'task-app:watch': { args: [scopeId: string, taskId: number, runId: string, watchId: string]; result: BackendResult<void> };
   'task-app:unwatch': { args: [scopeId: string, watchId: string]; result: void };
@@ -239,6 +240,7 @@ export interface ElevenexBridge {
   taskAppsRead?(scopeId: string, taskId: number): Promise<BackendResult<readonly TaskAppRun[]>>;
   taskAppOutput?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<string>>;
   taskAppApprove?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
+  taskAppOpenSetupSettings?(...args: InvokeContracts['task-app:setup-settings']['args']): Promise<BackendResult<void>>;
   taskAppStop?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
   taskAppWatch?(scopeId: string, taskId: number, runId: string, watchId: string): Promise<BackendResult<void>>;
   taskAppUnwatch?(scopeId: string, watchId: string): Promise<void>;

@@ -1,4 +1,4 @@
-const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
+const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOpenSetupSettings', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
 const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
 terminalMethods.push('taskTerminalCopyPort');
 const { test } = require('node:test');

@@ -46,7 +46,7 @@ it('keeps the first coalesced IDR, waits for native input receipts, and revokes 
   channel.push(receipt(0, 20));
   channel.push(packet);
   await new Promise((resolve) => setImmediate(resolve));
-  expect(listener.end).toHaveBeenCalledWith(expect.any(String), 'permission');
+  expect(listener.end).toHaveBeenCalledWith(expect.any(String), 'permission', 'macos-session');
   expect(listener.frame).toHaveBeenCalledTimes(1);
   stop();
   channel.destroy();

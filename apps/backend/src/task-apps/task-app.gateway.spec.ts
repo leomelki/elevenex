@@ -70,10 +70,22 @@ describe('task app private desktop transport', () => {
     }
   });
 
+  it('only opens permission settings for an authenticated desktop viewer and forwards the owned target', async () => {
+    const openSetupSettings = jest.fn().mockResolvedValue(undefined);
+    const controller = new TaskAppController(tasks, { openSetupSettings } as unknown as TaskAppHost);
+    await expect(controller.setupSettings(request(), '17', runId)).rejects.toThrow('Forbidden');
+    expect(openSetupSettings).not.toHaveBeenCalled();
+    const headers = { 'x-elevenex-code-access': access };
+    await expect(controller.setupSettings(request(headers), '17', runId)).resolves.toEqual({ opened: true });
+    expect(openSetupSettings).toHaveBeenCalledWith(17, runId);
+  });
+
   it('delivers scoped binary video over the shipped edge and restarts a slow subscriber on a keyframe', async () => {
     let source!: AppFrameListener;
     const release = jest.fn(async () => undefined);
-    const stop = jest.fn();
+    let didStop!: () => void;
+    const stopped = new Promise<void>(resolve => { didStop = resolve; });
+    const stop = jest.fn(didStop);
     const host = {
       get: () => ({ status: 'running', mode: 'stream' }),
       watch: (_id: number, _run: string, listener: AppFrameListener) => {
@@ -151,6 +163,9 @@ describe('task app private desktop transport', () => {
       gateway.onModuleDestroy();
       await new Promise<void>((resolve) => edge.close(() => resolve()));
     }
+    // The proxied client may observe its close before the upstream viewer
+    // releases input and detaches from the task app.
+    await stopped;
     expect(stop).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledWith(taskId, runId, expect.any(String));
   });

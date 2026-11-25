@@ -1,4 +1,4 @@
-import type { TaskAppRun } from "@elevenex/shared";
+import { TASK_APP_SETUP_ISSUES, type TaskAppRun } from "@elevenex/shared";
 import { invalidResponse } from "../backend-client/transport";
 
 export function appUuid(value: unknown): value is string {
@@ -85,6 +85,10 @@ export function appRuns(value: unknown, taskId: number): readonly TaskAppRun[] {
     if ((item.status === "requested") !== !!pendingLaunch)
       throw invalidResponse();
     ids.add(item.runId);
+    // Unknown additive issue codes fall back to the existing detail text.
+    const setupIssue = "setupIssue" in item
+      ? TASK_APP_SETUP_ISSUES.find(issue => issue === item.setupIssue)
+      : undefined;
     return {
       taskId,
       runId: item.runId,
@@ -93,6 +97,7 @@ export function appRuns(value: unknown, taskId: number): readonly TaskAppRun[] {
       mode: item.mode,
       status: item.status,
       ...(pendingLaunch ? { pendingLaunch } : {}),
+      ...(setupIssue ? { setupIssue } : {}),
       ...("detail" in item && typeof item.detail === "string"
         ? { detail: item.detail }
         : {}),

@@ -40,6 +40,7 @@ import { TaskGitService, taskBranchSlug } from './task-git.service.js';
 import { TaskWorktreeAllocator } from './task-worktree-allocator.service.js';
 import type { TaskAppRun } from '@elevenex/shared';
 import { TaskAppHost, type AppLaunch, type AppRunObserver } from '../task-apps/task-app-host.js';
+import { AppSetupError } from '../task-apps/app-setup-error.js';
 import { TaskSetup } from './task.types.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
@@ -1142,6 +1143,12 @@ export class TasksService
   ) {
     const repo = await this.repo(checkout.repoId);
     const key = await this.git.repositoryKey(repo.path);
+    // A host check is read-only and can take seconds. Keep it off the
+    // repository lock, then validate the checkout and consent as usual.
+    const host = await this.appHost.checkHost(launch.mode).catch(error => {
+      if (!(error instanceof AppSetupError)) throw error;
+      return error;
+    });
     return this.git.exclusive(key, async () => {
       const current = await this.record(checkout.id);
       if (current.isDefault || current.taskState !== 'ready' || current.archivedAt ||
@@ -1154,10 +1161,13 @@ export class TasksService
       const request = { ...launch, taskId: current.id, cwd: current.path };
       const existing = this.appHost.existing(request);
       if (existing) return existing;
-      if (operation === 'request' && request.savedAction) await this.actions.checkAppAction(request, request.savedAction);
-      const run = operation === 'launch'
-        ? await this.runApp(request, observer => this.appHost.start(request, observer))
-        : this.appHost.propose(request, { sessionId, checkoutToken: this.releaseCheckoutToken(current) });
+      const blocker = host instanceof AppSetupError ? host : undefined;
+      const needsApproval = operation === 'request' || !!blocker;
+      const hostReady = host instanceof AppSetupError ? undefined : host;
+      if (needsApproval && request.savedAction) await this.actions.checkAppAction(request, request.savedAction);
+      const run = needsApproval
+        ? this.appHost.propose(request, { sessionId, checkoutToken: this.releaseCheckoutToken(current) }, blocker)
+        : await this.runApp(request, observer => this.appHost.start(request, observer, hostReady));
       if (run.status === 'requested' || (run.mode === 'stream' && run.status === 'starting'))
         this.navigationEvents?.openApp(run.runId, current.id, sessionId);
       return run;
@@ -1175,6 +1185,8 @@ export class TasksService
     const checkout = await this.record(id);
     const repo = await this.repo(checkout.repoId);
     const key = await this.git.repositoryKey(repo.path);
+    const hostReady = await this.appHost.prepareApproval(id, runId);
+    if (!hostReady) return this.appHost.get(id, runId);
     return this.git.exclusive(key, async () => {
       const pending = this.appHost.pending(id, runId);
       const current = await this.record(id);
@@ -1185,7 +1197,7 @@ export class TasksService
         throw new ConflictException('The launch request no longer belongs to the active checkout.');
       await this.projects.assertProjectIsActive(repo.projectId);
       await this.sessions.assertSessionWorkspaceLinked(session.id);
-      return this.runApp(pending.launch, observer => this.appHost.approve(id, runId, observer));
+      return this.runApp(pending.launch, observer => this.appHost.approve(id, runId, observer, hostReady));
     });
   }
 

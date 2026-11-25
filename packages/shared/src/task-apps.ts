@@ -9,6 +9,12 @@ export const APP_VIDEO_MAX_AXIS = 4096;
 export const APP_VIDEO_MAX_PIXELS = 4_194_304;
 export const APP_VIDEO_MAX_BYTES = 3_000_000;
 
+export const TASK_APP_SETUP_ISSUES = [
+  "macos-screen-recording", "macos-accessibility", "macos-session", "macos-runtime",
+  "windows-session", "windows-capture", "windows-runtime", "linux-display-tools", "linux-session",
+] as const;
+export type TaskAppSetupIssue = (typeof TASK_APP_SETUP_ISSUES)[number];
+
 /** A task owns the run. Windows subscribe independently to its presentation. */
 export interface TaskAppRun {
   readonly runId: string;
@@ -28,6 +34,8 @@ export interface TaskAppRun {
     readonly args: readonly string[];
   };
   readonly detail?: string;
+  /** A prerequisite on the host, independent of the viewer's operating system. */
+  readonly setupIssue?: TaskAppSetupIssue;
 }
 
 export type TaskAppInput =

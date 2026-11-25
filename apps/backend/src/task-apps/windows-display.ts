@@ -8,6 +8,7 @@ import { join, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
 import type { TaskAppInput } from '@elevenex/shared';
 import { RuntimeVideoHost } from '../desktop-browser/runtime-video-host.js';
+import { AppSetupError } from './app-setup-error.js';
 import {
   DisplayCapture,
   type AppFrameListener,
@@ -18,7 +19,7 @@ const exec = promisify(execFile);
 export function windowsAppHelper(): string {
   const root = process.env.ELEVENEX_BACKEND_RUNTIME_ROOT;
   if (!root || !isAbsolute(root))
-    throw new Error(
+    throw new AppSetupError('windows-runtime',
       'A managed Windows backend with the app display helper is required',
     );
   return join(root, 'bin', 'task-app-windows.exe');
@@ -160,11 +161,19 @@ export class WindowsAppDisplay {
         timeout: 4000,
         maxBuffer: 2048,
       });
-    } catch {
-      throw new Error(
-        'A logged-in, unlocked Windows 10 1903+ session with the managed app helper is required',
-      );
+    } catch (error) {
+      if (error instanceof AppSetupError) throw error;
+      if (error && typeof error === 'object' && 'code' in error && error.code === 20)
+        throw new AppSetupError('windows-session', 'Sign in to and unlock the task machine’s Windows desktop.');
+      if (error && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'EACCES'))
+        throw new AppSetupError('windows-runtime', 'The managed Windows app helper is unavailable.');
+      throw new AppSetupError('windows-capture',
+        'Windows Graphics Capture is unavailable. Check the Windows version, graphics driver, and managed Elevenex engine.');
     }
+  }
+
+  static async openSetupSettings(): Promise<void> {
+    await exec(windowsAppHelper(), ['--about-settings'], { windowsHide: true, timeout: 5000, maxBuffer: 1024 });
   }
 
   watch(listener: AppFrameListener): () => void {
@@ -348,6 +357,9 @@ export class WindowsAppDisplay {
     this.pending.clear();
     child?.kill();
     source?.close(reason);
-    for (const listener of viewers) listener.end(reason, disposition);
+    for (const listener of viewers) {
+      if (disposition === 'permission') listener.end(reason, disposition, 'windows-session');
+      else listener.end(reason, disposition);
+    }
   }
 }

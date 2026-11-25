@@ -1,0 +1,33 @@
+<section class="setup" aria-label="App sharing setup" [attr.aria-busy]="busy()">
+  <div class="setup-card">
+    <header>
+      <span class="setup-mark"><ex-icon name="hand" [size]="18" /></span>
+      <div>
+        <p class="eyebrow">Setup required · {{ machine() || 'Task machine' }}</p>
+        <h2>{{ guide().title }}</h2>
+      </div>
+    </header>
+    @if (issue() === 'macos-accessibility') {
+      <p>You can watch this app while keyboard and mouse control is unavailable.</p>
+    }
+    <ol>
+      @for (step of guide().steps; track $index) {
+        <li>{{ step }}</li>
+      }
+    </ol>
+    @if (issue() === 'linux-display-tools' && detail()) { <p class="detail">{{ detail() }}</p> }
+    @if (remote()) {
+      <p>Someone at the task machine needs to complete these steps.</p>
+    }
+    <div class="actions">
+      @if (guide().settings && canOpenSettings()) {
+        <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="openSettings.emit()">
+          {{ remote() ? 'Open settings on host' : 'Open System Settings' }}
+        </button>
+      }
+      <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="copy()">Copy instructions</button>
+    </div>
+    <p role="status">{{ feedback() }}</p>
+    <ng-content />
+  </div>
+</section>

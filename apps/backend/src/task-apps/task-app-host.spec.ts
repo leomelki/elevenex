@@ -6,6 +6,8 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { AppPacketReader } from './display-capture.js';
 import { appDisplaySize } from './app-display-size.js';
 import { hostInput } from './app-input.js';
+import { AppSetupError } from './app-setup-error.js';
+import * as hostSetup from './app-host-setup.js';
 import {
   appEnvironment,
   TaskAppHost,
@@ -340,6 +342,32 @@ it('expires a pending launch without starting or retaining its checkout', async 
     expect(host.count(run.taskId)).toBe(0);
   } finally {
     jest.useRealTimers();
+    await host.onModuleDestroy();
+  }
+});
+
+it('preserves the command and approval while host setup is blocked', async () => {
+  const host = new TaskAppHost();
+  const probe = jest.spyOn(hostSetup, 'prepareAppHost')
+    .mockRejectedValueOnce(new AppSetupError('macos-screen-recording', 'Allow Screen Recording.'))
+    .mockResolvedValueOnce({});
+  try {
+    const run = host.propose(request, { sessionId: 10, checkoutToken: 'generation' });
+    await expect(host.prepareApproval(run.taskId, run.runId)).resolves.toBeNull();
+    expect(host.get(run.taskId, run.runId)).toMatchObject({
+      status: 'requested', setupIssue: 'macos-screen-recording',
+    });
+    expect(host.pending(run.taskId, run.runId).launch.args).toEqual(request.args);
+    expect(host.count(run.taskId)).toBe(0);
+    expect(host.output(run.taskId, run.runId)).toBe('');
+    const ready = await host.prepareApproval(run.taskId, run.runId);
+    expect(ready).not.toBeNull();
+    expect(host.approve(run.taskId, run.runId, undefined, ready ?? undefined)).toMatchObject({
+      status: 'starting', runId: run.runId,
+    });
+    expect(host.get(run.taskId, run.runId).setupIssue).toBeUndefined();
+  } finally {
+    probe.mockRestore();
     await host.onModuleDestroy();
   }
 });

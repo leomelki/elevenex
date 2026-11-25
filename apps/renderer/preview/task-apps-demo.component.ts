@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import type { ElevenexBridge, TaskAppClosed, TaskAppFrame, TaskAppInput, TaskAppRun } from '@elevenex/shared';
+import type { ElevenexBridge, TaskAppClosed, TaskAppFrame, TaskAppInput, TaskAppRun, TaskAppSetupIssue } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../src/app/backend/backend-client.service';
 import { TaskAppsComponent } from '../src/app/task-apps';
 
@@ -19,6 +19,13 @@ class AppsFixture implements Partial<ElevenexBridge> {
   propose(): void {
     this.runs = [{ ...run, status: 'requested', pendingLaunch: { executable: 'pnpm', args: ['run', 'desktop:dev'] } }];
   }
+  requireSetup(issue: TaskAppSetupIssue): void {
+    this.propose();
+    this.runs = [{ ...this.runs[0]!, setupIssue: issue,
+      ...(issue === 'linux-display-tools' ? { detail: 'Missing on the task machine: Xvfb, dbus-daemon.' } : {}) }];
+  }
+  async taskAppOpenSetupSettings() { return { ok: true as const, value: undefined }; }
+  async writeClipboardText() { /* The isolated preview does not write to the host clipboard. */ }
   async taskAppApprove() { this.runs = [{ ...run, status: 'starting' }]; return { ok: true as const, value: undefined }; }
   async taskAppStop() { this.runs = [{ ...run, status: 'exited' }]; return { ok: true as const, value: undefined }; }
   async taskAppWatch(_scope: string, _task: number, _run: string, id: string) { this.watchId = id; this.receipts = 0; return { ok: true as const, value: undefined }; }
@@ -36,7 +43,7 @@ class AppsFixture implements Partial<ElevenexBridge> {
 }
 @Component({
   selector: 'ex-task-apps-demo', imports: [TaskAppsComponent], providers: [AppsFixture, { provide: ELEVENEX_BRIDGE, useExisting: AppsFixture }],
-  template: '<ex-task-apps scopeId="preview" [taskId]="41" machine="Development server" />',
+  template: '<ex-task-apps scopeId="preview" [taskId]="41" machine="Development server" [remote]="true" />',
   styles: ':host { display: flex; max-width: 800px; height: 100%; margin: auto; border-inline: 1px solid var(--line); background: var(--surface); }',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

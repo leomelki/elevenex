@@ -1,5 +1,6 @@
 #include "platform.h"
 #include <iostream>
+#include <shellapi.h>
 #include <tlhelp32.h>
 #include <thread>
 #include <winrt/base.h>
@@ -37,6 +38,12 @@ static void stopWithParent() {
 int wmain(int argc, wchar_t** argv) {
     try {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        if (argc == 2 && std::wstring(argv[1]) == L"--about-settings") {
+            if (!apphost::interactive()) throw apphost::DisplayError(20,"No interactive Windows desktop");
+            const auto opened = ShellExecuteW(nullptr, L"open", L"ms-settings:about", nullptr, nullptr, SW_SHOWNORMAL);
+            apphost::require(reinterpret_cast<INT_PTR>(opened) > 32, "Could not open Windows Settings");
+            return 0;
+        }
         if (argc == 2 && std::wstring(argv[1]) == L"--check") {
             if (!apphost::interactive()) throw apphost::DisplayError(20,"No interactive Windows desktop");
             apphost::require(apphost::captureSupported(), "Windows Graphics Capture is unavailable in this session");

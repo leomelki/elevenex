@@ -1,4 +1,4 @@
-const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
+const appMethods = ['taskAppsRead', 'taskAppApprove', 'taskAppOpenSetupSettings', 'taskAppOutput', 'taskAppStop', 'taskAppWatch', 'taskAppUnwatch', 'taskAppFrameAck', 'taskAppInput', 'taskAppReleaseInput', 'taskAppPopOut', 'taskAppWindowContext', 'onTaskAppFrame', 'onTaskAppClosed'];
 const terminalMethods = ['taskTerminalAttach', 'taskTerminalDetach', 'taskTerminalStreamWrite', 'taskTerminalStreamResize', 'taskTerminalStreamFocus', 'taskTerminalStreamAcknowledge', 'taskTerminalContext', 'onTaskTerminalStream', 'taskTerminalPreferences', 'taskTerminalSavePreferences', 'taskTerminalList', 'taskTerminalCreate', 'taskTerminalRead', 'taskTerminalCommands', 'taskTerminalInput', 'taskTerminalResize', 'taskTerminalAction', 'taskTerminalClose', 'taskTerminalOpenPort'];
 // Run with Electron after building. This exercises the real sandboxed preload
 // and app:// handler, rather than Node mocks. Not part of the headless unit suite.
@@ -53,8 +53,9 @@ const chatStreamCursor = 'a'.repeat(36) + ':1:0';
 const chatPromptEdit = { taskId: 1, sessionId: 2, itemId: 'saved-prompt', text: 'Original text',
   revision: 'd'.repeat(64), laterPrompts: 1, keepsContext: false };
 const editActions = [];
-const testAppRun = { runId: '50cbfe13-ccf4-4920-864b-b3a14cde5593', taskId: 1, name: 'Electron', startedAt: 12, mode: 'stream', status: 'requested', pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
+const testAppRun = { runId: '50cbfe13-ccf4-4920-864b-b3a14cde5593', taskId: 1, name: 'Electron', startedAt: 12, mode: 'stream', status: 'requested', setupIssue: 'macos-screen-recording', pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
 let approvedApps = 0;
+let settingsOpened = 0;
 
 // Replace only the composition boundary in this test process. Native IPC and
 // preload are real; download/process behavior has separate integration tests.
@@ -88,6 +89,13 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
     };
     const http = createServer((request, response) => {
       const { pathname, searchParams } = new URL(request.url, 'http://127.0.0.1');
+      if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/setup-settings') {
+        assert.equal(request.method, 'POST');
+        settingsOpened++;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ opened: true }));
+        return;
+      }
       if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/approve') {
         assert.equal(request.method, 'POST');
         approvedApps++;
@@ -400,6 +408,10 @@ void (async () => {
   console.log('Unstarted session deletion passed through the sandboxed preload and scoped HTTP adapter');
   const appRuns = await window.webContents.executeJavaScript(`window.elevenex.taskAppsRead('${firstScope.scope.id}', 1)`);
   assert.deepEqual(appRuns, { ok: true, value: [testAppRun] });
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppOpenSetupSettings('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
+  assert.equal(settingsOpened, 0);
+  assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppOpenSetupSettings('${firstScope.scope.id}',1,'${testAppRun.runId}').then(r => r.ok)`), true);
+  assert.equal(settingsOpened, 1);
   assert.equal(approvedApps, 0);
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppApprove('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
   assert.equal(approvedApps, 0);

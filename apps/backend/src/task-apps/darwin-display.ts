@@ -9,8 +9,10 @@ import {
   APP_VIDEO_MAX_PIXELS,
   APP_VIDEO_MAX_BYTES,
   type TaskAppInput,
+  type TaskAppSetupIssue,
 } from '@elevenex/shared';
 import type { AppFrameListener, AppStreamEnd } from './display-capture.js';
+import { AppSetupError } from './app-setup-error.js';
 
 const exec = promisify(execFile);
 const limit = APP_VIDEO_MAX_BYTES;
@@ -18,7 +20,7 @@ const limit = APP_VIDEO_MAX_BYTES;
 function helperPath(): string {
   const root = process.env.ELEVENEX_BACKEND_RUNTIME_ROOT;
   if (!root || !root.startsWith('/'))
-    throw new Error(
+    throw new AppSetupError('macos-runtime',
       'A managed macOS backend with the app display helper is required',
     );
   return join(root, 'bin', 'task-app-macos');
@@ -39,6 +41,17 @@ function errorForCode(code: unknown): string {
   }
 }
 
+function preflightError(code: unknown): AppSetupError {
+  return new AppSetupError(
+    code === 20 ? 'macos-session' : code === 21 ? 'macos-screen-recording' : 'macos-runtime',
+    errorForCode(code),
+  );
+}
+
+function exitCode(error: unknown): unknown {
+  return error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+}
+
 export type DarwinAppSession = 'user' | 'direct';
 
 /** Use the logged-in account's bootstrap context, without changing user or privileges. */
@@ -49,7 +62,7 @@ export function darwinAppCommand(
   if (session === 'direct') return command;
   const uid = process.getuid?.();
   if (!uid)
-    throw new Error(
+    throw new AppSetupError('macos-session',
       'App streaming requires a signed-in, unprivileged macOS account.',
     );
   return {
@@ -101,22 +114,32 @@ export class DarwinAppDisplay {
       await exec(command.executable, command.args, options);
       return 'direct';
     } catch (error) {
-      const code =
-        typeof error === 'object' && error && 'code' in error
-          ? error.code
-          : undefined;
-      if (code !== 20) throw new Error(errorForCode(code));
+      if (exitCode(error) !== 20) throw preflightError(exitCode(error));
     }
     const graphical = darwinAppCommand(command, 'user');
     try {
       await exec(graphical.executable, graphical.args, options);
       return 'user';
     } catch (error) {
-      const code =
-        typeof error === 'object' && error && 'code' in error
-          ? error.code
-          : undefined;
-      throw new Error(errorForCode(code));
+      // launchctl itself may fail before the graphical helper can report its status.
+      const code = exitCode(error);
+      throw preflightError(code === 1 ? 20 : code);
+    }
+  }
+
+  static async openSetupSettings(issue: 'macos-screen-recording' | 'macos-accessibility'): Promise<void> {
+    const command = {
+      executable: helperPath(),
+      args: [issue === 'macos-screen-recording' ? '--screen-settings' : '--accessibility-settings'],
+    };
+    const options = { timeout: 5000, maxBuffer: 1024, env: { PATH: '/usr/bin:/bin' } };
+    try {
+      await exec(command.executable, command.args, options);
+    } catch (error) {
+      const code = exitCode(error);
+      if (code !== 20 && code !== 24) throw error;
+      const graphical = darwinAppCommand(command, 'user');
+      await exec(graphical.executable, graphical.args, options);
     }
   }
 
@@ -173,7 +196,7 @@ export class DarwinAppDisplay {
               : result === 3
                 ? APP_INPUT_GUIDANCE.foreground
                 : 'App input unavailable';
-          reject(new Error(message));
+          reject(result === 2 ? new AppSetupError('macos-accessibility', message) : new Error(message));
         }
       });
       this.channel.write(JSON.stringify({ id, ...message }) + '\n', (error) => {
@@ -217,7 +240,8 @@ export class DarwinAppDisplay {
                     : flag === 23
                       ? 'window-changed'
                       : undefined;
-              this.end(errorForCode(flag), disposition);
+              const setupIssue = flag === 20 ? 'macos-session' : flag === 21 ? 'macos-screen-recording' : undefined;
+              this.end(errorForCode(flag), disposition, setupIssue);
             } else {
               this.controls.get(id)?.(flag);
               this.controls.delete(id);
@@ -278,13 +302,13 @@ export class DarwinAppDisplay {
     void this.send({ kind: 'unwatch' }).catch(() => undefined);
   }
 
-  private end(reason: string, disposition?: AppStreamEnd): void {
+  private end(reason: string, disposition?: AppStreamEnd, setupIssue?: TaskAppSetupIssue): void {
     this.generation++;
     this.attached = false;
     for (const done of this.controls.values()) done(0);
     this.controls.clear();
     const listeners = [...this.listeners.keys()];
     this.listeners.clear();
-    for (const listener of listeners) listener.end(reason, disposition);
+    for (const listener of listeners) listener.end(reason, disposition, setupIssue);
   }
 }

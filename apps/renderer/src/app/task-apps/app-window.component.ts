@@ -7,14 +7,14 @@ import { TaskAppsComponent } from './task-apps.component';
   selector: 'ex-app-window', imports: [TitleBarComponent, TaskAppsComponent],
   template: `<ex-title-bar>Apps</ex-title-bar>
     @if (context(); as run) {
-      <ex-task-apps [standalone]="true" [scopeId]="scope()" [taskId]="run.taskId" [link]="link()" />
+      <ex-task-apps [standalone]="true" [scopeId]="scope()" [remote]="backend.state().scope?.environment?.kind === 'remote'" [taskId]="run.taskId" [link]="link()" />
     } @else { <p role="status">{{ message() }}</p> }`,
   styles: ':host { display: flex; flex-direction: column; height: 100dvh; background: var(--surface); } ex-title-bar { flex: none; color: var(--ink-muted); font-size: var(--text-caption-size); } p { margin: auto; }',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppWindowComponent {
   private readonly bridge = inject(ELEVENEX_BRIDGE);
-  private readonly backend = inject(BackendClientService);
+  protected readonly backend = inject(BackendClientService);
   readonly context = signal<{ taskId: number; runId: string } | null>(null);
   readonly scope = computed(() => this.backend.state().scope?.id ?? null);
   readonly link = computed(() => {

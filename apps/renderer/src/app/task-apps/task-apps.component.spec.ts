@@ -9,6 +9,42 @@ const run = (taskId: number, runId: string): TaskAppRun => ({
 
 describe('Task apps panel ownership', () => {
   afterEach(() => TestBed.resetTestingModule());
+  it('guides the remote viewer to host settings and launches only after a separate confirmation', async () => {
+    let state: TaskAppRun = {
+      ...run(2, 'request'), mode: 'stream', status: 'requested', setupIssue: 'macos-screen-recording',
+      pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] },
+    };
+    const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [state] }));
+    const taskAppOpenSetupSettings = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const writeClipboardText = vi.fn(async () => undefined);
+    const taskAppApprove = vi.fn(async () => {
+      state = { ...run(2, 'request'), status: 'starting' };
+      return { ok: true as const, value: undefined };
+    });
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: {
+      taskAppsRead, taskAppOpenSetupSettings, writeClipboardText, taskAppApprove,
+    } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent);
+    fixture.componentRef.setInput('scopeId', 'machine');
+    fixture.componentRef.setInput('taskId', 2);
+    fixture.componentRef.setInput('machine', 'Studio Mac');
+    fixture.componentRef.setInput('remote', true);
+    fixture.detectChanges();
+    const element: HTMLElement = fixture.nativeElement;
+    const button = (name: string) => [...element.querySelectorAll('button')].find(b => b.textContent?.trim() === name);
+    await vi.waitFor(() => { fixture.detectChanges(); expect(button('Open settings on host')).toBeDefined(); });
+    expect(element.textContent).toContain('Screen & System Audio Recording');
+    expect(fixture.componentInstance.hasActiveApp()).toBe(true);
+    button('Open settings on host')!.click();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Settings opened on the task machine.'); });
+    expect(taskAppOpenSetupSettings).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
+    expect(taskAppApprove).not.toHaveBeenCalled();
+    button('Copy instructions')!.click();
+    expect(writeClipboardText).toHaveBeenCalledWith(expect.stringContaining('Studio Mac'));
+    button('Check and launch')!.click();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Starting…'); });
+    expect(taskAppApprove).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
+  });
   it('discards late metadata from the previous task and never substitutes an unrelated run for a chat link', async () => {
     let finish!: (r: BackendResult<readonly TaskAppRun[]>) => void;
     const taskAppsRead = vi.fn(async (_scope: string, taskId: number): Promise<BackendResult<readonly TaskAppRun[]>> => {

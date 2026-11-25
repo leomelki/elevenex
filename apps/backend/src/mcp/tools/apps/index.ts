@@ -177,8 +177,9 @@ export const startAppTool = defineTool({
     );
     return {
       data: { run, openApp: `[Open app](elevenex-app:${run.runId})` },
-      nextStep:
-        'Include the Open app link in your reply. If requested, the user can approve the exact command there. Use get_app for run state and read_app_output for startup errors.',
+      nextStep: run.setupIssue
+        ? 'Include the Open app link and explain the setup required on the task machine. The user can follow the steps in Apps, then check and launch there.'
+        : 'Include the Open app link in your reply. If requested, the user can approve the exact command there. Use get_app for run state and read_app_output for startup errors.',
     };
   },
 });
@@ -196,7 +197,7 @@ export const getAppTool = defineTool({
   ...read,
   name: 'get_app',
   title: 'Get app',
-  description: 'Read an app run. Pass its last status to wait for a change, such as a build producing a window. A timeout returns the current run without restarting it.',
+  description: 'Read an app run. Pass its last status to wait for a lifecycle or host setup change. A timeout returns the current run without restarting it.',
   inputShape: {
     ...runScope,
     afterStatus: z.enum(['requested','starting','running','stopping','exited','failed']).optional().describe('Wait only while the run still has this status.'),

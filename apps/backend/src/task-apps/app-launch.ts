@@ -3,7 +3,8 @@ import { isAbsolute } from 'node:path';
 import { buildAugmentedEnvAsync } from '../config/system-paths.js';
 import { prepareAndroidApp } from './android-app.js';
 import { DarwinAppDisplay } from './darwin-display.js';
-import { WindowsAppDisplay, windowsAppHelper } from './windows-display.js';
+import { windowsAppHelper } from './windows-display.js';
+import type { AppHostReady } from './app-host-setup.js';
 import { windowsLaunchCommand } from './windows-launch.js';
 import { appDisplaySize, type AppDisplaySize } from './app-display-size.js';
 import { linuxSupervisor } from './linux-supervisor.js';
@@ -114,6 +115,7 @@ export async function spawnAppSupervisor(
   directory: string,
   signal: AbortSignal,
   journaled: boolean,
+  host: AppHostReady,
 ): Promise<Supervisor> {
   const taskEnvironment = await buildAugmentedEnvAsync(
     process.env,
@@ -130,10 +132,6 @@ export async function spawnAppSupervisor(
   const common = { cwd: request.cwd, env };
 
   if (process.platform === 'linux') {
-    if (request.mode === 'native' && !env.DISPLAY && !env.WAYLAND_DISPLAY)
-      throw new Error(
-        'No graphical login. Launch with stream mode on this Linux host.',
-      );
     return {
       child: spawn('/usr/bin/python3', ['-I', '-u', '-c', linuxSupervisor], {
         ...common,
@@ -154,7 +152,6 @@ export async function spawnAppSupervisor(
     };
   }
   if (process.platform === 'win32') {
-    if (request.mode === 'stream') await WindowsAppDisplay.preflight();
     const launch = await windowsLaunchCommand(command, env, request.cwd);
     signal.throwIfAborted();
     return {
@@ -165,9 +162,7 @@ export async function spawnAppSupervisor(
       ),
     };
   }
-  const session =
-    request.mode === 'stream' ? await DarwinAppDisplay.preflight() : 'direct';
-  const launch = DarwinAppDisplay.launchCommand(command, session);
+  const launch = DarwinAppDisplay.launchCommand(command, host.darwinSession ?? 'direct');
   signal.throwIfAborted();
   return {
     child: spawn(launch.executable, [...launch.args], {

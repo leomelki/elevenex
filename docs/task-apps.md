@@ -16,6 +16,20 @@ The active conversation can reveal a newly requested app without moving keyboard
 
 ## Host setup
 
+Apps checks the task machine before launching. A missing prerequisite keeps
+the original command available in Apps for review and launch. On macOS,
+**Open settings on host** opens the relevant Privacy & Security pane on the
+task Mac and requests that permission. Someone signed in to the Mac must
+grant it. Remote viewers can **Copy instructions** for that person. On
+Windows, Apps explains how to prepare the desktop session or opens System →
+About on the Windows host to check its version. On Linux, it lists missing
+display tools.
+
+Use **Check and launch** after setup to recheck and launch the reviewed
+command, or **Decline** to cancel the request. Setup does not extend the
+request's expiration. If Accessibility is missing while a Mac app streams,
+the viewer stays open and offers setup for keyboard and mouse control.
+
 | Host | Requirements and behavior |
 | --- | --- |
 | Linux | Python 3 at `/usr/bin/python3`, Xvfb, the XTEST extension, D-Bus and a working H.264 encoder. Run the backend as an ordinary user. The host creates a private X11 display, authorization cookie, runtime directories and session bus. Openbox or Fluxbox enables ordinary window placement and dialog management. X11-compatible apps work on headless hosts and on machines whose regular desktop uses Wayland. Native Wayland-only apps require an X11-compatible launch mode. |

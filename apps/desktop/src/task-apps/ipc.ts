@@ -151,6 +151,18 @@ export function registerTaskApps(
       },
     ),
     handleForWindow(
+      "task-app:setup-settings",
+      trusted,
+      (windowId, scope, taskId, runId) => {
+        const path = target(windowId, scope, taskId, runId) + "/setup-settings";
+        return client.execute(windowId, scope, null, true, async (endpoint, signal) => {
+          const result = await requestBackendJson(endpoint, { path, method: "POST", limit: 256 }, signal);
+          if (!result || typeof result !== "object" || !("opened" in result) || result.opened !== true)
+            throw invalidResponse();
+        });
+      },
+    ),
+    handleForWindow(
       "task-app:stop",
       trusted,
       (windowId, scope, taskId, runId) => {
