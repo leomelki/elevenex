@@ -108,6 +108,54 @@ describe("Desktop region ownership", () => {
     expect(unrelated).not.toHaveBeenCalled();
   });
 
+  it('bounds keyboard resizing and restores the chosen width after takeovers, closing and window constraints', async () => {
+    const fixture = TestBed.createComponent(AppShellComponent);
+    const root: HTMLElement = fixture.nativeElement;
+    const workspace = root.querySelector<HTMLElement>('.workspace')!;
+    let available = 1080;
+    Object.defineProperty(workspace, 'clientWidth', { get: () => available });
+    let measure = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { measure = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    const settle = async () => { fixture.detectChanges(); await fixture.whenStable(); };
+    fixture.componentRef.setInput('panelOpen', true);
+    await settle();
+    const handle = () => root.querySelector<HTMLElement>('[role="separator"]')!;
+    const width = () => Number(handle().getAttribute('aria-valuenow'));
+    const key = async (key: string) => {
+      handle().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      await settle();
+    };
+    expect(width()).toBe(440);
+    expect(handle().getAttribute('aria-controls')).toBe(root.querySelector('.panel')?.id);
+    await key('ArrowLeft');
+    expect(width()).toBe(456);
+    await key('Home');
+    expect(width()).toBe(320);
+    await key('End');
+    expect(width()).toBe(712);
+    await key('ArrowLeft');
+    expect(width()).toBe(712);
+    available = 600;
+    measure(); await settle();
+    expect(width()).toBe(355);
+    fixture.componentRef.setInput('wideReview', true); await settle();
+    expect(handle()).toBeNull();
+    fixture.componentRef.setInput('panelOpen', false);
+    fixture.componentRef.setInput('wideReview', false);
+    await settle();
+    expect(handle()).toBeNull();
+    available = 1080;
+    measure();
+    fixture.componentRef.setInput('panelOpen', true); await settle();
+    expect(width()).toBe(712);
+    await key('Enter');
+    expect(width()).toBe(440);
+  });
+
   it("excludes the closed panel and the covered chat from keyboard navigation", () => {
     const fixture = TestBed.createComponent(AppShellComponent);
     fixture.detectChanges();

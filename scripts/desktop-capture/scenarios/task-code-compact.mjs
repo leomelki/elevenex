@@ -97,6 +97,41 @@ export default async function* (capture) {
     const press = async (key, code, vk, modifiers = 0) => { for (const type of ['keyDown', 'keyUp']) await capture.cdp('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode: vk, modifiers }); };
     const waitNative = async expression => { try { await waitMain(() => frame.executeJavaScript(expression), expression); } catch (error) { console.log('COMPACT_NATIVE_STATE', await frame.executeJavaScript('JSON.stringify({text:document.body.innerText.slice(-1800),inputs:[...document.querySelectorAll(".quick-input-widget input")].map(e=>({value:e.value,rect:e.getBoundingClientRect().toJSON()}))})')); throw error; } };
     const typeQuery = async text => { await press('a', 'KeyA', 65, process.platform === 'darwin' ? 4 : 2); await capture.cdp('Input.insertText', { text }); };
+    const handle = '[aria-label="Resize side panel"]';
+    const splitter = await capture.rect(handle);
+    const x = Math.round(splitter.x + splitter.width / 2), y = Math.round(splitter.y + splitter.height / 2);
+    const mouse = (type, x) => capture.cdp('Input.dispatchMouseEvent', {
+      type, x, y, button: 'left',
+      buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
+    });
+    await capture.evaluate(() => { window.resizingCodeFrame = document.querySelector('ex-code-panel iframe'); });
+    await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await mouse('mousePressed', x);
+    await capture.waitFor(() => !!document.querySelector('ex-app-shell.panel-resizing'));
+    // This move hits the iframe's original position. The shell must still own
+    // the gesture and resize the same child viewport by the pointer delta.
+    await mouse('mouseMoved', x + 72);
+    await waitNative('innerWidth === 360');
+    await mouse('mouseMoved', x - 220);
+    await waitNative('innerWidth === 652');
+    assert.equal(await frame.executeJavaScript('document.querySelector(".part.sidebar").getBoundingClientRect().width'), 0);
+    yield { name: 'dragging-live-cross-origin-editor', inspect: [handle, 'ex-code-panel iframe', 'ex-app-shell main'] };
+    await mouse('mouseReleased', x - 200);
+    await waitNative('innerWidth === 632 && document.querySelector(".part.sidebar").getBoundingClientRect().width > 0');
+    assert.equal(await capture.evaluate(() => window.resizingCodeFrame === document.querySelector('ex-code-panel iframe') &&
+      !document.querySelector('ex-app-shell.panel-resizing, ex-code-panel .reflowing, ex-code-panel .crossfading')), true);
+    assert.equal(capture.window.webContents.mainFrame.frames.find(child => child.url === frame.url), frame);
+    await capture.waitFor(() => document.activeElement?.getAttribute('aria-label') === 'Resize side panel');
+    await capture.press('Enter');
+    await waitNative('innerWidth === 432 && document.querySelector(".part.sidebar").getBoundingClientRect().width === 0');
+    const editor = await frame.executeJavaScript('document.querySelector(".monaco-editor .view-lines").getBoundingClientRect().toJSON()');
+    const iframe = await capture.rect('ex-code-panel iframe');
+    const editorPoint = { x: iframe.x + editor.x + 12, y: iframe.y + editor.y + 8 };
+    await capture.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...editorPoint });
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await capture.cdp('Input.dispatchMouseEvent', { type, ...editorPoint, button: 'left', clickCount: 1 });
+    }
+    await waitNative('document.activeElement === document.querySelector(".monaco-editor textarea.inputarea")');
     const findSelector = '.part.auxiliarybar .action-label[aria-label^="Find file"]';
     const findHitPoint = async () => {
       const button = await frame.executeJavaScript(`(() => {

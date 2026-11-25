@@ -51,7 +51,8 @@ license and authoritative tokens, not the downloadable runtime.
 
 ## UX and ownership
 
-The 440px side panel opens a genuine editor directly, alongside chat. The existing panel-tabs row
+The resizable side panel opens a genuine editor directly alongside chat, at 440px
+by default when space permits. The existing panel-tabs row
 contains icon actions for **Browse files**, **Search text** and a separate window,
 alongside expand/close. There is no additional task/branch/status/focus toolbar. File tabs,
 selection and save feedback remain native VS Code. Files auto-save after one second
@@ -98,6 +99,10 @@ The iframe fills the available panel at every size. There is no native-surface
 minimum-size gate or forced Expand placeholder. Expansion uses the existing
 shell takeover, motion and focus restoration; the separate-window action stays
 available in the panel toolbar.
+During a splitter drag the same iframe reflows live. The shell captures the
+gesture across embedded content, and Code applies any compact-mode change at
+the final width so crossing the breakpoint repeatedly keeps the editor stable.
+The splitter retains keyboard focus when Explorer changes layout during a resize.
 That task-only window has its own selected-machine lease and the existing SSH
 challenge UI; closing/changing the original window does not redirect its files.
 One live workbench per task/machine is reused within its owning window. Moving

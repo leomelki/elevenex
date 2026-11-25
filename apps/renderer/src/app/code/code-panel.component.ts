@@ -1,4 +1,5 @@
-import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, TemplateRef, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
+import { afterRenderEffect, ChangeDetectionStrategy, Component, DestroyRef, ElementRef, TemplateRef, computed, effect, inject, input, linkedSignal, output, signal, untracked, viewChild } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import type { CodeAction, CodeFileIntent, CodeSurfaceState, CodeTarget } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, KbdComponent, ProgressLineComponent } from '../ui';
@@ -24,14 +25,21 @@ export class CodePanelComponent {
   readonly frameVisible = computed(() => this.active() || this.retained());
   readonly connected = input(true);
   readonly wide = input(false);
+  readonly panelResizing = input(false);
   readonly standalone = input(false);
   readonly wideChange = output<boolean>();
   readonly file = input<CodeFileIntent | null>(null);
   readonly store = inject(CodeWorkspaceStore);
   readonly measuredWidth = signal(0);
-  readonly compact = computed(() => this.measuredWidth() < 600);
+  // Keep the editor viewport live during a drag, but defer moving Explorer
+  // between layouts until the gesture settles at one width.
+  readonly compact = linkedSignal<{ width: number; resizing: boolean }, boolean>({
+    source: () => ({ width: this.measuredWidth(), resizing: this.panelResizing() }),
+    computation: ({ width, resizing }, previous) => resizing && previous ? previous.value : width < 600,
+  });
   readonly layoutRevision = signal(0);
   private readonly acknowledgedLayout = signal(-1);
+  private lastPresentationRevision = 0;
   readonly layoutReady = computed(() => this.acknowledgedLayout() === this.layoutRevision());
   readonly viewportKey = computed(() => { const target = this.target(); return this.frameVisible() && target ? `${target.scopeId}:${target.taskId}` : ''; });
   readonly launching = computed(() => this.store.busy() || this.store.state()?.phase === 'loading' || this.showFrame() && this.frameLoading());
@@ -48,6 +56,7 @@ export class CodePanelComponent {
   readonly searchShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘F' : 'Ctrl+Shift+F');
   readonly returnShortcut = computed(() => this.bridge.platform === 'darwin' ? '⇧⌘R' : 'Ctrl+Shift+R');
   private readonly bridge = inject(ELEVENEX_BRIDGE);
+  private readonly document = inject(DOCUMENT);
   private readonly frames = inject(CodeFramePool);
   private readonly frameResource = computed(() => {
     const state = this.store.state();
@@ -98,6 +107,8 @@ export class CodePanelComponent {
       const compact = this.compact();
       const revision = this.layoutRevision();
       if (!target) return;
+      const requestedLayout = revision !== this.lastPresentationRevision;
+      this.lastPresentationRevision = revision;
       let stopped = false;
       // CSS owns layout. Inform main only about visibility and the compact-mode
       // boundary, never every pixel/frame of panel animation.
@@ -106,11 +117,28 @@ export class CodePanelComponent {
       const frame = this.frameResource();
       this.placedTarget.set(null);
       this.acknowledgedLayout.set(-1);
-      const viewportWidth = revision > 0 && visible ? untracked(() => this.measuredWidth()) : 0;
+      const viewportWidth = requestedLayout && visible && !untracked(this.panelResizing) ? untracked(this.measuredWidth) : 0;
+      // Explorer's own commands may focus the iframe after a width change.
+      // Keep keyboard resizing on the splitter unless the user moves on.
+      const focused = this.document.activeElement;
+      const splitter = visible && focused instanceof HTMLElement && focused.matches('[role="separator"][aria-controls]') ? focused : null;
+      const focusWatch = splitter ? new AbortController() : undefined;
+      let userInput = false;
+      if (focusWatch) {
+        const options = { capture: true, signal: focusWatch.signal };
+        const onInput = () => { userInput = true; };
+        this.document.addEventListener('pointerdown', onInput, options);
+        this.document.addEventListener('keydown', onInput, options);
+      }
       void this.bridge.codePresent?.(target, { visible, compact, ...(viewportWidth > 0 ? { viewportWidth } : {}) }).then(() => {
         if (stopped) return;
         this.acknowledgedLayout.set(revision);
         if (visible) { this.presentedFrame.set(frame); this.placedTarget.set(target); }
+        const activeElement = this.document.activeElement;
+        if (splitter?.isConnected && !userInput && activeElement instanceof HTMLIFrameElement &&
+            this.frameContainer()?.nativeElement.contains(activeElement) && !activeElement.matches(':hover')) {
+          splitter.focus({ preventScroll: true });
+        }
       }).catch(() => {
         if (!stopped) {
           // A failed barrier must not leave retained writing permanently hidden.
@@ -118,8 +146,8 @@ export class CodePanelComponent {
           this.acknowledgedLayout.set(revision);
           if (visible) this.presentedFrame.set(frame);
         }
-      });
-      onCleanup(() => { stopped = true; });
+      }).finally(() => focusWatch?.abort());
+      onCleanup(() => { stopped = true; focusWatch?.abort(); });
     });
     afterRenderEffect(() => {
       const wanted = this.focusRequest(), placed = this.placedTarget();
