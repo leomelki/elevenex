@@ -7,6 +7,21 @@ on:
         description: Exact commit to build
         type: string
         required: true
+      release-signing:
+        description: Require Developer ID signing and notarization for the Mac agent
+        type: boolean
+        default: false
+    secrets:
+      APPLE_CERT_BASE64:
+        required: false
+      APPLE_CERT_PASSWORD:
+        required: false
+      APPLE_ID_EMAIL:
+        required: false
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
 
 permissions:
   contents: read
@@ -77,8 +92,53 @@ jobs:
         if: runner.os == 'macOS'
         run: node scripts/test-task-app-macos.cjs
 
+      - name: Prepare Developer ID signing for the public Mac agent
+        if: runner.os == 'macOS' && inputs.release-signing
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID_EMAIL: ${{ secrets.APPLE_ID_EMAIL }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for key in APPLE_CERT_BASE64 APPLE_CERT_PASSWORD APPLE_ID_EMAIL APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!key}" || { echo "Missing required Mac runtime signing credential: $key"; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/elevenex-agent-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          certificate="$RUNNER_TEMP/elevenex-agent-signing.p12"
+          trap 'rm -f "$certificate"' EXIT
+          printf '%s' "$APPLE_CERT_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+          test -n "$identity" || { echo "Developer ID Application certificate is missing"; exit 1; }
+          [[ "$identity" == *"($APPLE_TEAM_ID)" ]] || { echo "Developer ID team does not match APPLE_TEAM_ID"; exit 1; }
+          xcrun notarytool store-credentials elevenex-agent-runtime --keychain "$keychain" \
+            --apple-id "$APPLE_ID_EMAIL" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID"
+          echo "ELEVENEX_APP_DISPLAY_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "ELEVENEX_APP_DISPLAY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "ELEVENEX_APP_DISPLAY_NOTARY_PROFILE=elevenex-agent-runtime" >> "$GITHUB_ENV"
+          echo "ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING=1" >> "$GITHUB_ENV"
+
       - name: Build backend and portable Node archive
         run: pnpm desktop:backend
+
+      - name: Verify public Mac agent after archive extraction
+        if: runner.os == 'macOS'
+        env:
+          RELEASE_SIGNING: ${{ inputs.release-signing }}
+        run: |
+          args=()
+          if [[ "$RELEASE_SIGNING" == true ]]; then args+=(--require-notarized); fi
+          node scripts/verify-task-app-macos.cjs dist-runtime/elevenex-backend-macos-arm64.tar.gz "${args[@]}"
+
+      - name: Remove temporary Mac signing keychain
+        if: always() && runner.os == 'macOS' && inputs.release-signing
+        run: security delete-keychain "$RUNNER_TEMP/elevenex-agent-signing.keychain-db" || true
 
       - name: Verify Windows private IPC, packaged app job and desktop capture
         if: runner.os == 'Windows'

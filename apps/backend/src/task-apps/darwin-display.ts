@@ -10,6 +10,7 @@ import {
   APP_VIDEO_MAX_BYTES,
   type TaskAppInput,
   type TaskAppSetupIssue,
+  type TaskAppSetupHelper,
 } from '@elevenex/shared';
 import type { AppFrameListener, AppStreamEnd } from './display-capture.js';
 import { AppSetupError } from './app-setup-error.js';
@@ -17,13 +18,17 @@ import { AppSetupError } from './app-setup-error.js';
 const exec = promisify(execFile);
 const limit = APP_VIDEO_MAX_BYTES;
 
-function helperPath(): string {
+function agentBundlePath(): string {
   const root = process.env.ELEVENEX_BACKEND_RUNTIME_ROOT;
   if (!root || !root.startsWith('/'))
     throw new AppSetupError('macos-runtime',
       'A managed macOS backend with the app display helper is required',
     );
-  return join(root, 'bin', 'task-app-macos');
+  return join(root, 'bin', 'Elevenex Agent.app');
+}
+
+function helperPath(): string {
+  return join(agentBundlePath(), 'Contents', 'MacOS', 'Elevenex Agent');
 }
 
 function errorForCode(code: unknown): string {
@@ -31,7 +36,7 @@ function errorForCode(code: unknown): string {
     case 20:
       return 'Sign in and unlock the graphical session on the task Mac.';
     case 21:
-      return 'Allow Screen Recording for Elevenex App Display on the task Mac, then retry the stream.';
+      return 'Allow Screen Recording for Elevenex Agent on the task Mac, then retry the stream.';
     case 22:
       return 'Waiting for an owned, visible app window on the task Mac. Retry when its build is ready.';
     case 23:
@@ -121,26 +126,32 @@ export class DarwinAppDisplay {
       await exec(graphical.executable, graphical.args, options);
       return 'user';
     } catch (error) {
-      // launchctl itself may fail before the graphical helper can report its status.
+      // launchctl uses exit 1 for a failed audit-session handoff. This says
+      // nothing about whether the user is signed in or the screen is locked.
       const code = exitCode(error);
-      throw preflightError(code === 1 ? 20 : code);
+      if (code === 1)
+        throw new AppSetupError('macos-desktop-connection',
+          'macOS refused the SSH engine’s connection to the signed-in desktop. Open Elevenex on the task Mac and use its local machine for app sharing.');
+      throw preflightError(code);
     }
   }
 
-  static async openSetupSettings(issue: 'macos-screen-recording' | 'macos-accessibility'): Promise<void> {
-    const command = {
-      executable: helperPath(),
-      args: [issue === 'macos-screen-recording' ? '--screen-settings' : '--accessibility-settings'],
-    };
-    const options = { timeout: 5000, maxBuffer: 1024, env: { PATH: '/usr/bin:/bin' } };
-    try {
-      await exec(command.executable, command.args, options);
-    } catch (error) {
-      const code = exitCode(error);
-      if (code !== 20 && code !== 24) throw error;
-      const graphical = darwinAppCommand(command, 'user');
-      await exec(graphical.executable, graphical.args, options);
-    }
+  static async openSetupSettings(): Promise<void> {
+    // LaunchServices creates the setup UI in the logged-in desktop. Do not
+    // run AppKit through launchctl asuser from the SSH audit session.
+    await exec('/usr/bin/open', ['-a', agentBundlePath()], {
+      timeout: 5000, maxBuffer: 1024, env: { PATH: '/usr/bin:/bin' },
+    });
+  }
+
+  static async revealSetupHelper(): Promise<TaskAppSetupHelper> {
+    const path = agentBundlePath();
+    // LaunchServices can reveal the installed file even when SSH cannot join
+    // the graphical audit session. Never accept a path or URL from the viewer.
+    const revealed = await exec('/usr/bin/open', ['-R', path], {
+      timeout: 3000, maxBuffer: 1024, env: { PATH: '/usr/bin:/bin' },
+    }).then(() => true, () => false);
+    return { path, revealed };
   }
 
   watch(listener: AppFrameListener): () => void {

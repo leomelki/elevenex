@@ -151,6 +151,23 @@ export function registerTaskApps(
       },
     ),
     handleForWindow(
+      "task-app:setup-helper",
+      trusted,
+      (windowId, scope, taskId, runId) => {
+        const path = target(windowId, scope, taskId, runId) + "/setup-helper";
+        return client.execute(windowId, scope, null, true, async (endpoint, signal) => {
+          const result = await requestBackendJson(endpoint, { path, method: "POST", limit: 32 * 1024 }, signal);
+          if (!result || typeof result !== "object" ||
+              !("path" in result) || typeof result.path !== "string" ||
+              !result.path.startsWith("/") || result.path.length > 4096 ||
+              [...result.path].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+              !("revealed" in result) || typeof result.revealed !== "boolean")
+            throw invalidResponse();
+          return { path: result.path, revealed: result.revealed };
+        });
+      },
+    ),
+    handleForWindow(
       "task-app:setup-settings",
       trusted,
       (windowId, scope, taskId, runId) => {

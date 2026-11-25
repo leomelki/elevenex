@@ -80,6 +80,16 @@ describe('task app private desktop transport', () => {
     expect(openSetupSettings).toHaveBeenCalledWith(17, runId);
   });
 
+  it('requires viewer credentials to reveal the installed helper on the host', async () => {
+    const helper = { path: '/runtime/bin/task-app-macos', revealed: true };
+    const revealSetupHelper = jest.fn().mockResolvedValue(helper);
+    const controller = new TaskAppController(tasks, { revealSetupHelper } as unknown as TaskAppHost);
+    await expect(controller.setupHelper(request(), '17', runId)).rejects.toThrow('Forbidden');
+    expect(revealSetupHelper).not.toHaveBeenCalled();
+    await expect(controller.setupHelper(request({ 'x-elevenex-code-access': access }), '17', runId)).resolves.toEqual(helper);
+    expect(revealSetupHelper).toHaveBeenCalledWith(17, runId);
+  });
+
   it('delivers scoped binary video over the shipped edge and restarts a slow subscriber on a keyframe', async () => {
     let source!: AppFrameListener;
     const release = jest.fn(async () => undefined);

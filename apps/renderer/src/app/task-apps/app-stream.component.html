@@ -3,17 +3,21 @@
   <canvas #canvas width="1" height="1" aria-hidden="true" [hidden]="state() !== 'live'"
     (pointerdown)="pointer($event, 'down')" (pointermove)="pointer($event, 'move')" (pointerup)="pointer($event, 'up')"
     (lostpointercapture)="pointerLost()" (pointercancel)="pointerLost()" (wheel)="wheel($event)" (contextmenu)="$event.preventDefault()"></canvas>
-  @if (state() !== 'live') {
+  @if (state() === 'connecting') {
+    <div class="message" role="status">Connecting to {{ name() }}'s display…</div>
+  } @else if (problem(); as problem) {
     <div class="message" role="status">
-      {{ state() === 'connecting' ? 'Connecting…' : error() }}
-      @if (state() === 'interrupted') { <button exButton size="sm" variant="secondary" (click)="start()">Reconnect</button> }
+      <strong>{{ problem.title }}</strong>
+      <span>{{ problem.body }}</span>
+      <button exButton size="sm" variant="secondary" (click)="start()">Reconnect</button>
+      @if (problem.diagnostic) { <details class="diagnostic"><summary>Technical details</summary><p>{{ problem.diagnostic }}</p></details> }
     </div>
   }
 </div>
 <span class="frame" aria-hidden="true"></span>
 @if (state() === 'live') {
   <!-- Hints sit over the surface and never take the pointer, so the app keeps its full size. -->
-  @if (error()) { <span class="hint error" role="status">{{ error() }}</span> }
+  @if (notice(); as notice) { <span class="hint error" role="status"><span>{{ notice.message }}</span>@if (notice.next) { <span class="next">{{ notice.next }}</span> }</span> }
   @else if (controlling()) { <span class="hint" aria-hidden="true"><ex-kbd>⇧ Esc</ex-kbd> to release</span> }
   @else { <span class="hint idle" aria-hidden="true"><ex-kbd>↵</ex-kbd> to control</span> }
 }

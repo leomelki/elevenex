@@ -347,6 +347,11 @@ async function main() {
   if (appDisplay) copyRequiredPath(
     path.join(backendBundleRoot, "bin", appDisplay),
     path.join(stageBackendRoot, "bin", appDisplay),
+    { verbatimSymlinks: true },
+  );
+  if (process.platform === "darwin") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),
+    path.join(stageBackendRoot, "bin", "Elevenex Agent.app"),
   );
   ensureDir(path.join(stageBackendRoot, "node_modules"));
   const stagedNativePackages = new Set();

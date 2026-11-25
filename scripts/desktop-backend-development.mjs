@@ -41,7 +41,7 @@ export async function developmentRevision(root, sharedLinuxArchitecture) {
   const paths = (await git('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--',
     'apps/backend/src', 'apps/backend/drizzle', 'apps/backend/bin', 'apps/backend/package.json', 'packages/shared/src', 'packages/browser-agent/src', 'packages/browser-agent/build-worker.mjs', 'packages/browser-agent/package.json', 'packages/browser-agent/tsconfig.json', 'packages/browser-inspection/src', 'packages/browser-inspection/package.json', 'packages/browser-inspection/tsconfig.json', 'packages/browser-network/src', 'packages/browser-network/package.json', 'packages/browser-network/tsconfig.json',
     'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/frontend/proxy.conf.json', 'scripts/bundle-electron-backend.js',
-    'scripts/stage-electron-backend.js', 'scripts/build-task-app-macos.cjs', 'scripts/build-task-app-windows.cjs', 'scripts/prepare-vscode-web-runtime.js',
+    'scripts/stage-electron-backend.js', 'scripts/build-task-app-macos.cjs', 'scripts/desktop-icons.mjs', 'elevenex-logo.svg', 'docs/design-system/project/tokens.css', 'scripts/build-task-app-windows.cjs', 'scripts/prepare-vscode-web-runtime.js',
     'scripts/desktop-backend-development.mjs', 'scripts/desktop-backend-runtime.mjs', 'scripts/desktop-backend-smoke.mjs', 'scripts/desktop-backend-compatibility.mjs',
     'scripts/desktop-backend-linux.mjs', 'scripts/desktop-backend-linux.Dockerfile', 'config/vscode-web-runtime.json',
     'apps/desktop/src/remote/runtime*.ts', 'apps/desktop/src/remote/windows-runtime.ts', 'apps/desktop/src/remote/windows-pipe.ts', 'apps/desktop/src/remote/wire.ts', 'apps/desktop/src/remote/agent-proxy.ts',

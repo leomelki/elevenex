@@ -17,18 +17,25 @@ The active conversation can reveal a newly requested app without moving keyboard
 ## Host setup
 
 Apps checks the task machine before launching. A missing prerequisite keeps
-the original command available in Apps for review and launch. On macOS,
-**Open settings on host** opens the relevant Privacy & Security pane on the
-task Mac and requests that permission. Someone signed in to the Mac must
-grant it. Remote viewers can **Copy instructions** for that person. On
-Windows, Apps explains how to prepare the desktop session or opens System →
-About on the Windows host to check its version. On Linux, it lists missing
-display tools.
+its command available for review. On macOS, **Open setup on host** launches
+**Elevenex Agent** in the signed-in desktop through LaunchServices. Its small,
+floating setup card opens the relevant System Settings pane. Drag the app icon
+from the card into the permission list, then enable **Elevenex Agent**. For
+Screen & System Audio Recording, use the upper app list. Accessibility is
+optional for watching and enables keyboard and mouse control.
 
-Use **Check and launch** after setup to recheck and launch the reviewed
-command, or **Decline** to cancel the request. Setup does not extend the
-request's expiration. If Accessibility is missing while a Mac app streams,
-the viewer stays open and offers setup for keyboard and mouse control.
+The card verifies the actual grants. A successful drop alone does not mark a
+permission enabled. **Copy app path** supports the settings file picker's
+**+ → ⌘⇧G** flow. The remote viewer can copy instructions, reveal the installed
+bundle in Finder, and copy its exact path. Permission must be granted by a
+person on the host. Setup may be closed and reopened or resumed after macOS
+asks to quit and reopen the agent.
+
+**Check and launch** rechecks and launches the reviewed command. Setup does
+not extend the request's expiration or automatically replay a launch. The
+engine must still pass its real host check, including desktop-session access.
+Windows guides sign-in and Graphics Capture checks, including opening System
+→ About. Linux lists missing display tools.
 
 | Host | Requirements and behavior |
 | --- | --- |

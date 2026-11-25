@@ -1,6 +1,6 @@
 export const APP_INPUT_GUIDANCE = {
   permission:
-    "Allow Accessibility for Elevenex App Display on the task Mac to control this window.",
+    "Allow Accessibility for Elevenex Agent on the task Mac to control this window.",
   foreground:
     "Bring the owned app window to the foreground on the task machine to control it.",
 } as const;
@@ -10,10 +10,16 @@ export const APP_VIDEO_MAX_PIXELS = 4_194_304;
 export const APP_VIDEO_MAX_BYTES = 3_000_000;
 
 export const TASK_APP_SETUP_ISSUES = [
-  "macos-screen-recording", "macos-accessibility", "macos-session", "macos-runtime",
+  "macos-screen-recording", "macos-accessibility", "macos-session", "macos-desktop-connection", "macos-runtime",
   "windows-session", "windows-capture", "windows-runtime", "linux-display-tools", "linux-session",
 ] as const;
 export type TaskAppSetupIssue = (typeof TASK_APP_SETUP_ISSUES)[number];
+
+export interface TaskAppSetupHelper {
+  readonly path: string;
+  /** Finder is on the task Mac, which may be remote from the viewer. */
+  readonly revealed: boolean;
+}
 
 /** A task owns the run. Windows subscribe independently to its presentation. */
 export interface TaskAppRun {

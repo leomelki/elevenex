@@ -3,31 +3,56 @@
     <header>
       <span class="setup-mark"><ex-icon name="hand" [size]="18" /></span>
       <div>
-        <p class="eyebrow">Setup required · {{ machine() || 'Task machine' }}</p>
+        <p class="eyebrow">Setup required · {{ machine() || 'Task machine' }}{{ remote() ? '' : ' (this computer)' }}</p>
         <h2>{{ guide().title }}</h2>
       </div>
     </header>
+    <p class="why">{{ guide().why }}</p>
     @if (issue() === 'macos-accessibility') {
-      <p>You can watch this app while keyboard and mouse control is unavailable.</p>
+      <p>You can keep watching this app while control is unavailable.</p>
+    }
+    @if (remote()) {
+      <p class="who">These steps happen at {{ host() }}. Someone there needs to complete them. Permissions can't be granted from here.</p>
     }
     <ol>
       @for (step of guide().steps; track $index) {
         <li>{{ step }}</li>
       }
     </ol>
-    @if (issue() === 'linux-display-tools' && detail()) { <p class="detail">{{ detail() }}</p> }
-    @if (remote()) {
-      <p>Someone at the task machine needs to complete these steps.</p>
-    }
+    @if (guide().caveat; as caveat) { <p class="caveat">{{ caveat }}</p> }
+    @if (missingTools()) { <p class="detail">{{ missingTools() }}</p> }
     <div class="actions">
-      @if (guide().settings && canOpenSettings()) {
-        <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="openSettings.emit()">
-          {{ remote() ? 'Open settings on host' : 'Open System Settings' }}
+      @if (guide().open) {
+        @if (canOpenSettings()) {
+          <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="openSettings.emit()">{{ openLabel() }}</button>
+        }
+      }
+      @if (guide().agentPermission && canRevealHelper()) {
+        <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="revealHelper.emit()">
+          {{ remote() ? 'Show agent in Finder on host' : 'Show agent in Finder' }}
         </button>
       }
       <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="copy()">Copy instructions</button>
     </div>
+    @if (guide().open && canOpenSettings()) { <p class="hint">{{ openHint() }}</p> }
+    @else if (guide().open) {
+      <p class="hint">This version of Elevenex can't open this for you. Open it by hand on {{ host() }}, or update Elevenex.</p>
+    }
+    @if (helperPath()) {
+      <div class="helper">
+        <p>Installed agent on {{ host() }}</p>
+        <p>To add it by hand, click + in System Settings, press ⌘⇧G and paste this path.</p>
+        <code>{{ helperPath() }}</code>
+        <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="copyHelperPath.emit()">Copy app path</button>
+      </div>
+    }
     <p role="status">{{ feedback() }}</p>
     <ng-content />
+    @if (diagnostic()) {
+      <details class="diagnostic">
+        <summary>What the machine reported</summary>
+        <p>{{ diagnostic() }}</p>
+      </details>
+    }
   </div>
 </section>

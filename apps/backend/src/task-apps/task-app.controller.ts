@@ -83,6 +83,19 @@ export class TaskAppController {
     return { opened: true };
   }
 
+  @Post(':runId/setup-helper') async setupHelper(
+    @Req() request: IncomingMessage,
+    @Param('taskId') value: string,
+    @Param('runId') runId: string,
+  ) {
+    const taskId = await this.task(request, value);
+    try {
+      return await this.apps.revealSetupHelper(taskId, runId);
+    } catch {
+      throw new BadRequestException('The installed Mac helper is unavailable for this app.');
+    }
+  }
+
   @Post(':runId/watch') async watch(
     @Req() request: IncomingMessage,
     @Param('taskId') value: string,

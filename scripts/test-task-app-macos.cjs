@@ -1,11 +1,59 @@
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { mkdtempSync, rmSync } = require('node:fs');
+const { mkdtempSync, rmSync, realpathSync, readFileSync, cpSync, mkdirSync, writeFileSync, readdirSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
 const { testMacSupervisor } = require('./test-task-app-supervisor.cjs');
+
+async function setupPreview(directory, bundle, output) {
+  mkdirSync(output, { recursive: true });
+  if (readdirSync(output).length) throw new Error('Use an empty directory for native setup captures.');
+  const fixture = join(directory, 'Setup Fixture.app');
+  cpSync(bundle, fixture, { recursive: true });
+  execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier com.elevenex.task-app-setup-fixture',
+    join(fixture, 'Contents/Info.plist')]);
+  const executable = join(fixture, 'Contents/MacOS/Elevenex Agent');
+  const source = resolve(__dirname, '../apps/backend/src/task-apps/native/macos');
+  execFileSync('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-mmacosx-version-min=14.0', '-I', source,
+    join(__dirname, 'fixtures/task-app-agent-setup.m'), join(source, 'Setup.m'), join(source, 'SetupViews.m'),
+    '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'ScreenCaptureKit',
+    '-o', executable], { stdio: 'inherit' });
+  execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', fixture], { stdio: 'inherit' });
+  const state = join(directory, 'permissions.json');
+  const captures = [];
+  for (const [name, permission, theme, action = ''] of [
+    ['screen-light', { screen: false, input: false }, 'light'],
+    ['screen-dark', { screen: false, input: false }, 'dark'],
+    ['accessibility', { screen: true, input: false }, 'light'],
+    ['enabled', { screen: true, input: true }, 'light'],
+    ['enabled-dark', { screen: true, input: true }, 'dark'],
+    ['plus-alternative', { screen: false, input: false }, 'light', 'plus'],
+    ['plus-alternative-dark', { screen: false, input: false }, 'dark', 'plus'],
+    ['escape-alternative', { screen: false, input: false }, 'light', 'escape-alternative'],
+    ['viewing-only', { screen: true, input: false }, 'light', 'viewing-only'],
+    ['viewing-only-dark', { screen: true, input: false }, 'dark', 'viewing-only'],
+    ['resume-input', { screen: true, input: false }, 'light', 'resume-input'],
+    ['permission-transition', { screen: false, input: false }, 'light', 'transition'],
+    ['reopen-after-revocation', { screen: true, input: true }, 'light', 'reopen'],
+  ]) {
+    writeFileSync(state, JSON.stringify(permission));
+    execFileSync(executable, [join(output, name + '.png'), theme, action], {
+      stdio: 'inherit', timeout: 10000,
+      env: { ...process.env, ELEVENEX_AGENT_FIXTURE_STATE: state },
+    });
+    const bytes = readFileSync(join(output, name + '.png'));
+    assert.equal(bytes.subarray(1,4).toString(), 'PNG');
+    captures.push({ name, file: name + '.png', theme, permissions: JSON.parse(readFileSync(state, 'utf8')), action,
+      width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) });
+  }
+  writeFileSync(join(output, 'report.json'), JSON.stringify({
+    verified: true, kind: 'native-setup', permissionFixtures: true,
+    captures, checks: ['native compilation', 'bundle signature', 'process cleanup', 'visible control bounds',
+      'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen'],
+  }, null, 2) + '\n');
+}
 
 async function interactive(directory, helperPath) {
   // Use the installed helper whose privacy permissions the host user actually granted.
@@ -52,7 +100,10 @@ async function main() {
       return;
     }
     const outputPath = join(dir, 'task-app-macos');
-    buildMacAppDisplay({ outputPath });
+    const { bundle, executable } = await buildMacAppDisplay({ outputPath });
+    assert.equal(realpathSync(outputPath), realpathSync(executable));
+    assert.ok(readFileSync(join(bundle, 'Contents/Resources/Agent.icns')).length > 100);
+    execFileSync('/usr/bin/codesign', ['--verify','--deep','--strict',bundle], {stdio:'inherit'});
     const frame = execFileSync(outputPath, ['--self-test'], { timeout: 10000, maxBuffer: 3_000_009 });
     assert.equal(frame.readUInt32BE(0), frame.length - 9);
     assert.equal(frame.readUInt16BE(4), 64);
@@ -65,6 +116,10 @@ async function main() {
     assert.throws(() => execFileSync(outputPath, [String(process.pid)]), error => error.status === 2,
       'A process cannot nominate an arbitrary app PID for capture');
     await testMacSupervisor(outputPath);
+    if (process.argv[2] === '--setup-preview') {
+      if (!process.argv[3]) throw new Error('Supply an output directory for setup previews');
+      await setupPreview(dir, bundle, resolve(process.argv[3]));
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

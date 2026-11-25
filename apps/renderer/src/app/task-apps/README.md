@@ -56,6 +56,11 @@ clipboard. The reviewed command remains available and **Check and launch**
 rechecks the original request. The Accessibility guide leaves video attached
 while input is unavailable.
 
+Mac permission guides offer **Show agent in Finder** on the host, followed
+by the installed helper path and **Copy app path** for the settings file
+picker. The host derives this path from its own managed runtime. Replies and
+copied-path feedback are discarded when the selected run or setup issue changes.
+
 Fresh host launch events can reveal Apps for the selected conversation in the
 focused, visible workspace. The first revision after navigating or regaining
 focus establishes a baseline and never replays earlier launch events.

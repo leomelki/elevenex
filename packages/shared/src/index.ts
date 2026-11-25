@@ -1,4 +1,4 @@
-import type { TaskAppRun, TaskAppInput, TaskAppFrame, TaskAppClosed, TaskAppWindowContext } from './task-apps';
+import type { TaskAppRun, TaskAppInput, TaskAppFrame, TaskAppClosed, TaskAppWindowContext, TaskAppSetupHelper } from './task-apps';
 export * from './task-apps';
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
@@ -63,6 +63,7 @@ export interface InvokeContracts {
   'task-app:output': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<string> };
   'task-app:approve': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
   'task-app:setup-settings': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
+  'task-app:setup-helper': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<TaskAppSetupHelper> };
   'task-app:stop': { args: [scopeId: string, taskId: number, runId: string]; result: BackendResult<void> };
   'task-app:watch': { args: [scopeId: string, taskId: number, runId: string, watchId: string]; result: BackendResult<void> };
   'task-app:unwatch': { args: [scopeId: string, watchId: string]; result: void };
@@ -241,6 +242,7 @@ export interface ElevenexBridge {
   taskAppOutput?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<string>>;
   taskAppApprove?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
   taskAppOpenSetupSettings?(...args: InvokeContracts['task-app:setup-settings']['args']): Promise<BackendResult<void>>;
+  taskAppRevealSetupHelper?(...args: InvokeContracts['task-app:setup-helper']['args']): Promise<BackendResult<TaskAppSetupHelper>>;
   taskAppStop?(scopeId: string, taskId: number, runId: string): Promise<BackendResult<void>>;
   taskAppWatch?(scopeId: string, taskId: number, runId: string, watchId: string): Promise<BackendResult<void>>;
   taskAppUnwatch?(scopeId: string, watchId: string): Promise<void>;

@@ -1,5 +1,5 @@
 import { Injectable, Optional, type OnModuleDestroy } from '@nestjs/common';
-import type { TaskAppInput, TaskAppRun } from '@elevenex/shared';
+import type { TaskAppInput, TaskAppRun, TaskAppSetupHelper } from '@elevenex/shared';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm } from 'node:fs/promises';
@@ -64,6 +64,7 @@ interface Run {
   setup?: Promise<void>;
   preflight?: Promise<AppHostReady | null>;
   setupSettings?: Promise<void>;
+  setupHelper?: Promise<TaskAppSetupHelper>;
   setupIssue?: TaskAppRun['setupIssue'];
   shutdown?: Promise<void>;
   exited?: Promise<void>;
@@ -152,14 +153,27 @@ export class TaskAppHost implements OnModuleDestroy {
       throw new Error('The app is no longer available for setup.');
     const issue = run.state.setupIssue;
     if (run.setupSettings) return run.setupSettings;
-    const open = process.platform === 'darwin' && (issue === 'macos-screen-recording' || issue === 'macos-accessibility')
-      ? DarwinAppDisplay.openSetupSettings(issue)
+    const macSetup = issue === 'macos-screen-recording' || issue === 'macos-accessibility' ||
+      issue === 'macos-desktop-connection' || issue === 'macos-session';
+    const open = process.platform === 'darwin' && macSetup
+      ? DarwinAppDisplay.openSetupSettings()
       : process.platform === 'win32' && issue === 'windows-capture'
         ? WindowsAppDisplay.openSetupSettings()
         : undefined;
     if (!open) throw new Error('No system settings are available for this run.');
     run.setupSettings = open.finally(() => { run.setupSettings = undefined; });
     return run.setupSettings;
+  }
+
+  async revealSetupHelper(taskId: number, runId: string): Promise<TaskAppSetupHelper> {
+    const run = this.owned(taskId, runId);
+    if (run.proposal) this.pending(taskId, runId);
+    if (process.platform !== 'darwin' || !run.state.setupIssue?.startsWith('macos-') ||
+        run.state.status === 'stopping' || run.state.status === 'exited')
+      throw new Error('The Mac helper is unavailable for this run.');
+    run.setupHelper ??= DarwinAppDisplay.revealSetupHelper()
+      .finally(() => { run.setupHelper = undefined; });
+    return run.setupHelper;
   }
 
   approve(

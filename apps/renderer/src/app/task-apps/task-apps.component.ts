@@ -6,10 +6,16 @@ import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, Too
 import { ViewTabsComponent, type ViewTab } from '../views';
 import { AppStreamComponent } from './app-stream.component';
 import { TaskAppSetupComponent } from './task-app-setup.component';
+import {
+  actionProblem as describeAction, clientOutdated, hostName, logsProblem as describeLogs, macName, readProblem as describeRead,
+  type ActionKind, type AppPlace, type AppProblem,
+} from './app-recovery';
 
 interface AppTarget { readonly scopeId: string; readonly taskId: number }
 interface RunLink extends AppTarget { readonly runId: string }
 interface RunSnapshot extends AppTarget { readonly runs: readonly TaskAppRun[] }
+/** A failed action stays visible only while the run is still in the state it failed in. */
+interface ActionFailure { readonly problem: AppProblem; readonly status: TaskAppRun['status'] }
 const recentTaskLimit = 4;
 const labels: Record<TaskAppRun['status'], string> = {
   requested: 'Awaiting launch', starting: 'Starting', running: 'Running', stopping: 'Stopping', exited: 'Exited', failed: 'Failed',
@@ -66,9 +72,18 @@ export class TaskAppsComponent {
       .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   });
   readonly loading = computed(() => this.monitor() && (!this.currentSnapshot() || (this.reading() && !this.run())));
-  readonly readError = signal('');
-  readonly actionError = signal('');
+  readonly place = computed<AppPlace>(() => ({ machine: this.machine(), remote: this.remote() }));
+  readonly host = computed(() => hostName(this.place()));
+  readonly readFailure = signal<AppProblem | null>(null);
+  private readonly actionFailure = signal<ActionFailure | null>(null);
+  /** The status refresh after an action can make its failure obsolete, for example a stop that did finish. */
+  readonly actionProblem = computed(() => {
+    const failure = this.actionFailure();
+    return failure && this.run()?.status === failure.status ? failure.problem : null;
+  });
+  readonly logsFailure = signal<AppProblem | null>(null);
   readonly setupFeedback = signal('');
+  readonly setupHelperPath = signal('');
   readonly actual = signal(false);
   readonly detached = signal(false);
   readonly logsOpen = signal(false);
@@ -146,13 +161,14 @@ export class TaskAppsComponent {
     this.dismissedSetup.set('');
     this.snapshot.set(cached?.snapshot ?? null);
     this.select(cached?.selected ?? '');
-    this.readError.set('');
+    this.readFailure.set(null);
+    this.actionFailure.set(null);
   }
 
   async refresh(): Promise<void> {
     const target = this.target;
     if (this.disposed || !target || !this.matches(target) || !this.monitor() || this.document.hidden) return;
-    if (!this.bridge.taskAppsRead) { this.readError.set('Update Elevenex to view apps on this machine.'); return; }
+    if (!this.bridge.taskAppsRead) { this.readFailure.set(clientOutdated(this.place())); return; }
     if (this.reading()) { this.pendingRead = true; return; }
     const generation = this.generation;
     const current = () => generation === this.generation && this.matches(target);
@@ -162,11 +178,14 @@ export class TaskAppsComponent {
     try {
       const reply = await this.bridge.taskAppsRead(target.scopeId, target.taskId);
       if (!current()) return;
-      if (!reply.ok) { this.readError.set(reply.error.message); return; }
-      this.readError.set('');
+      if (!reply.ok) { this.readFailure.set(describeRead(reply.error, this.place())); return; }
+      this.readFailure.set(null);
       const previousIssue = this.run()?.setupIssue;
       this.snapshot.set({ ...target, runs: reply.value });
-      if (previousIssue !== this.run()?.setupIssue) this.setupFeedback.set('');
+      if (previousIssue !== this.run()?.setupIssue) {
+        this.setupFeedback.set('');
+        this.setupHelperPath.set('');
+      }
       if (!this.requestedRun && !reply.value.some(run => run.runId === this.selected())) {
         const run = reply.value.find(run => run.status === 'running' || run.status === 'starting') ??
           reply.value.find(isActive) ?? reply.value[0];
@@ -175,12 +194,12 @@ export class TaskAppsComponent {
       // An older read must not dismiss a launch link that asked for a fresh read.
       if (this.monitor() && !this.hasActiveApp() && !this.pendingRead && this.link() === link) this.idle.emit();
       if (this.viewerVisible() && this.logsOpen() && this.run()) await this.readLogs();
-    } catch { if (current()) this.readError.set('Could not read apps on this machine.'); }
+    } catch { if (current()) this.readFailure.set(describeRead('interrupted', this.place())); }
     finally {
       if (current()) {
         this.reading.set(false);
         if (this.pendingRead) { this.pendingRead = false; void this.refresh(); }
-        else if (this.monitor() && !this.document.hidden && !this.readError()) this.timer = setTimeout(() => void this.refresh(), 2500);
+        else if (this.monitor() && !this.document.hidden && !this.readFailure()) this.timer = setTimeout(() => void this.refresh(), 2500);
       }
     }
   }
@@ -188,9 +207,10 @@ export class TaskAppsComponent {
   select(id: string): void {
     this.logGeneration++;
     this.selected.set(id);
-    this.busy.set(false); this.actionError.set(''); this.detached.set(false); this.actual.set(false);
+    this.busy.set(false); this.actionFailure.set(null); this.detached.set(false); this.actual.set(false);
     this.setupFeedback.set('');
-    this.logsOpen.set(false); this.logs.set(null);
+    this.setupHelperPath.set('');
+    this.logsOpen.set(false); this.logs.set(null); this.logsFailure.set(null);
   }
 
   choose(id: string): void { this.requestedRun = ''; this.dismissedSetup.set(''); this.select(id); }
@@ -216,40 +236,78 @@ export class TaskAppsComponent {
     const scope = this.scopeId(), task = this.taskId(), run = this.run();
     if (!scope || !task || !run) return;
     const generation = ++this.logGeneration;
+    const place = this.place();
+    const settle = (output: string | null, failure: AppProblem | null) => {
+      if (this.disposed || generation !== this.logGeneration) return;
+      if (output !== null) this.logs.set(output);
+      this.logsFailure.set(failure);
+    };
     try {
-      const result = await this.bridge.taskAppOutput?.(scope, task, run.runId);
-      if (!this.disposed && generation === this.logGeneration)
-        this.logs.set(result?.ok ? result.value : result?.error.message ?? 'App logs are unavailable.');
-    } catch { if (!this.disposed && generation === this.logGeneration) this.logs.set('App logs could not be read.'); }
+      if (!this.bridge.taskAppOutput) { settle(null, describeLogs('unsupported', place)); return; }
+      const result = await this.bridge.taskAppOutput(scope, task, run.runId);
+      if (result.ok) settle(result.value, null); else settle(null, describeLogs(result.error, place));
+    } catch { settle(null, describeLogs('interrupted', place)); }
   }
+
+  retryLogs(): void { if (this.logsOpen()) void this.readLogs(); }
+
+  dismissAction(): void { this.actionFailure.set(null); }
 
   async act(action: 'approve' | 'stop' | 'setup-settings'): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy()) return;
-    this.busy.set(true); this.actionError.set(''); this.setupFeedback.set('');
+    this.busy.set(true); this.actionFailure.set(null); this.setupFeedback.set('');
     const current = () => generation === this.generation && this.run()?.runId === run.runId;
+    const place = this.place();
+    const kind: ActionKind = action === 'approve' ? 'launch' : action === 'setup-settings' ? 'open-setup' : run.status === 'requested' ? 'decline' : 'stop';
+    const surface = run.setupIssue?.startsWith('macos-') ? 'Elevenex Agent setup' : 'System Settings';
+    const fail = (failure: Parameters<typeof describeAction>[1]) =>
+      this.actionFailure.set({ problem: describeAction(kind, failure, { name: run.name, place, surface }), status: run.status });
     try {
       const invoke = action === 'approve' ? this.bridge.taskAppApprove
         : action === 'stop' ? this.bridge.taskAppStop : this.bridge.taskAppOpenSetupSettings;
       if (action === 'approve' && (run.status !== 'requested' || !run.pendingLaunch)) return;
-      const result = await invoke?.call(this.bridge, scope, task, run.runId);
-      if (current() && !result?.ok) this.actionError.set(action === 'setup-settings'
-        ? 'Could not confirm settings opened. Follow the steps manually on the task machine.'
-        : result?.error.message ?? 'App action unavailable.');
-      else if (current() && action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue)
-        this.setupFeedback.set(this.remote() ? 'Settings opened on the task machine.' : 'Settings opened.');
-    } catch { if (current()) this.actionError.set('The request was interrupted. Check the run before trying again.'); }
+      if (!invoke) { fail('unsupported'); return; }
+      const result = await invoke.call(this.bridge, scope, task, run.runId);
+      if (!current()) return;
+      if (!result.ok) fail(result.error);
+      else if (action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue)
+        this.setupFeedback.set(run.setupIssue?.startsWith('macos-')
+          ? `Elevenex Agent was asked to open on ${macName(place)}. Look at that screen to continue. If nothing appears, check that someone is signed in and unlocked, then try again.`
+          : `System Settings was asked to open on ${hostName(place)}. Look at that screen to continue.`);
+    } catch { if (current()) fail('interrupted'); }
     finally { if (current()) { this.busy.set(false); void this.refresh(); } }
   }
 
-  async copySetup(text: string): Promise<void> {
+  async revealSetupHelper(): Promise<void> {
+    const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
+    if (!scope || !task || !run || this.busy() || !this.bridge.taskAppRevealSetupHelper) return;
+    this.busy.set(true); this.actionFailure.set(null); this.setupFeedback.set('');
+    const current = () => generation === this.generation && this.run()?.runId === run.runId;
+    const place = this.place(), mac = macName(place);
+    const fail = (failure: Parameters<typeof describeAction>[1]) =>
+      this.actionFailure.set({ problem: describeAction('reveal-agent', failure, { name: run.name, place }), status: run.status });
+    try {
+      const result = await this.bridge.taskAppRevealSetupHelper(scope, task, run.runId);
+      if (!current() || this.run()?.setupIssue !== run.setupIssue) return;
+      if (result.ok) {
+        this.setupHelperPath.set(result.value.path);
+        this.setupFeedback.set(result.value.revealed
+          ? `Finder was asked to select Elevenex Agent on ${mac}. Look at that screen to continue.`
+          : `Finder couldn't open on ${mac}. Copy the app path, then in System Settings click +, press ⌘⇧G and paste it.`);
+      } else fail(result.error);
+    } catch { if (current()) fail('interrupted'); }
+    finally { if (current()) this.busy.set(false); }
+  }
+
+  async copySetup(text: string, success?: string): Promise<void> {
     const generation = this.generation, run = this.run();
     if (!run) return;
     let message: string;
     try {
       await this.bridge.writeClipboardText(text);
-      message = 'Instructions copied.';
-    } catch { message = 'Could not copy the instructions.'; }
+      message = success ?? (this.remote() ? `Instructions copied. Send them to whoever is at ${this.host()}.` : 'Instructions copied.');
+    } catch { message = 'Couldn\'t copy to the clipboard. Select the text on screen and copy it by hand.'; }
     if (generation === this.generation && this.run()?.runId === run.runId && this.run()?.setupIssue === run.setupIssue)
       this.setupFeedback.set(message);
   }
@@ -257,12 +315,14 @@ export class TaskAppsComponent {
   async popOut(): Promise<void> {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy() || !this.bridge.taskAppPopOut) return;
-    this.busy.set(true); this.actionError.set('');
+    this.busy.set(true); this.actionFailure.set(null);
     const current = () => generation === this.generation && this.run()?.runId === run.runId;
     try {
       await this.bridge.taskAppPopOut(scope, task, run.runId);
       if (current()) this.detached.set(true);
-    } catch { if (current()) this.actionError.set('The app window could not open.'); }
+    } catch {
+      if (current()) this.actionFailure.set({ problem: describeAction('open-window', 'interrupted', { name: run.name, place: this.place() }), status: run.status });
+    }
     finally { if (current()) this.busy.set(false); }
   }
 }

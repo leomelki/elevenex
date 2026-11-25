@@ -1,13 +1,55 @@
 # macOS task app host
 
-The managed backend ships `bin/task-app-macos` for macOS 14 or later. Run the following from the installed backend directory **on the task Mac**, as the account signed in to its graphical session, to open the system permission prompts.
+The managed macOS 14+ runtime ships **Elevenex Agent.app** under `bin/`.
+The app bundle contains both the setup UI and the capture executable, with the
+stable bundle identifier `com.elevenex.task-app-display`. The public display
+name is **Elevenex Agent**. The legacy `bin/task-app-macos` CLI entry is a
+relative symlink to the bundle executable for existing consumers.
 
-```sh
-./bin/task-app-macos --authorize
-./bin/task-app-macos --check
-```
+Apps opens setup with LaunchServices, so the floating card can appear in the
+host's desktop even when SSH cannot join its audit session directly. The card
+opens Screen Recording or Accessibility settings and provides a draggable
+file URL for its own signed bundle. It never manipulates System Settings or
+grants permission itself. Screen Recording is required for viewing.
+Accessibility is optional and enables input. A copy-path alternative works
+with the permission pane's **+ → ⌘⇧G** file picker.
 
-Allow Screen Recording for the installed helper to stream an app. Accessibility allows input. If macOS attributes a terminal prompt to the terminal application, add the installed helper executable under **System Settings → Privacy & Security → Screen & System Audio Recording** and **Accessibility**, then retry from the connected desktop. The streamed launch checks permission in its actual graphical launch context. A viewer can watch an owned window while another application has focus. Input requires the captured app to be foreground. Locking the Mac, switching users, replacing the active window, or resizing it ends the current stream. The task app keeps running and a new attachment discovers its current window and geometry. A system-owned dialog may require a person at the task Mac. Native launches require no capture permissions.
+The draggable tile uses the DMG-installer picture: the app icon, a dashed arrow
+and a dashed System Settings drop slot, mirrored to point toward the Settings
+window. Only the icon's half is the grab handle (open-hand cursor, lifts on
+hover). Until the first drag, a faded copy of the icon periodically glides
+along the arrow; reduced motion keeps the picture static. Two numbered steps
+below the tile name the destination list and the switch to turn on, followed
+by a live checking status.
+**Use + instead** switches to the keyboard alternative with a selectable,
+middle-truncated app path. Escape returns to dragging, Command-W closes setup,
+and Return on the draggable app opens the alternative and copies its path.
+Skipping Accessibility opens a viewing-only summary with an option to resume
+input setup. Completion summarizes both grants and gives **Done** the default
+button treatment. It still asks the connected viewer to **Check and launch**.
+
+`Setup.m` owns the setup flow, permission checks, window placement and cleanup.
+`SetupViews.m` owns the draggable item, progress, themed wells and controls.
+The build derives `AgentTheme.json` from the authoritative design tokens,
+so the signed bundle carries the light/dark colors it needs without loading
+checkout files at runtime. Focus remains visible during keyboard navigation;
+mouse use does not leave a permanent outline around the draggable item.
+
+A fresh, bounded child of the app checks Screen Recording, shareable-content
+availability and Accessibility. The setup card uses those results, never drag
+completion, for its status. Polling stops on close or after ten minutes. The
+completed card discards its cached grants and checks again when reopened. The
+remote viewer's **Check and launch** still validates the real capture host.
+The UI's permission status alone does not prove an SSH engine can connect to
+the desktop. The signed-in account must match the SSH account.
+
+Both development and release archives include the app's complete resources,
+icon and executable. Public runtime CI imports the configured Developer ID
+certificate, signs with hardened runtime, notarizes and staples the app,
+then verifies the extracted archive through Gatekeeper. Missing release
+signing credentials fail the build. Unsigned development builds use an ad hoc
+signature and can require a new grant after a rebuild. Setup writes no mutable
+state into the signed bundle.
 
 The supervisor waits on stdin for the backend's durable launch receipt before creating user processes. EOF before that receipt cancels the launch. It creates a fresh process group with `posix_spawn` before the launched program can fork. It reports the new group on fd 3. The backend owns stdin and the private duplex fd 4. Both descriptors are closed in the launched app, which inherits a null stdin and normal stdout and stderr. Losing the backend closes stdin. The supervisor drains its group, including children still running after the original launcher exits. An app deliberately moving a descendant to another session or group falls outside this ownership mechanism.
 
@@ -21,6 +63,19 @@ Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode C
 node scripts/test-task-app-macos.cjs --interactive /path/to/installed/backend/bin/task-app-macos
 ```
 
-Keyboard layout, system dialogs, and multiple displays need separate graphical testing. For release signing, set `ELEVENEX_APP_DISPLAY_SIGN_IDENTITY` to an installed Developer ID Application identity before building the backend archive. Development builds use an ad hoc signature. macOS can require fresh permission after an ad hoc binary changes.
+Keyboard layout, system dialogs, and multiple displays need separate graphical testing. For local release validation, set `ELEVENEX_APP_DISPLAY_SIGN_IDENTITY`, `ELEVENEX_APP_DISPLAY_KEYCHAIN` and `ELEVENEX_APP_DISPLAY_NOTARY_PROFILE`. Set `ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING=1` to enforce both signing and notarization, as public CI does.
 
 The implementation uses [ScreenCaptureKit window filters](https://developer.apple.com/documentation/screencapturekit/sccontentfilter/init(desktopindependentwindow:)), [VideoToolbox H.264 encoding](https://developer.apple.com/documentation/videotoolbox/vtcompressionsession) and [process-targeted Quartz events](https://developer.apple.com/documentation/coregraphics/cgevent/posttopid(_:)).
+
+An SSH engine may be denied access to the signed-in desktop's audit session.
+When `launchctl asuser` fails with “Could not switch to audit session” and
+exit 1, Apps reports a desktop connection problem. It cannot infer that the
+Mac is locked or signed out from this failure. Use Elevenex's local machine
+on the task Mac for app sharing when this handoff is denied.
+
+For isolated native UI previews (with fixture permission states and no grants),
+run `node scripts/test-task-app-macos.cjs --setup-preview artifacts/task-app-agent/native-preview`.
+This exercises the production AppKit views in light, dark, Accessibility and
+enabled states. A separate LaunchServices smoke on a signed-in Mac is needed
+to verify a real host window. Neither UI previews nor an ad hoc build verify
+a public Developer ID release's notarization or the user's permission grant.

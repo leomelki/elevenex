@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import type { TaskAppFrame } from '@elevenex/shared';
+import type { BackendResult, TaskAppFrame } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { H264Decoder } from '../media/h264-decoder';
 import { AppStreamComponent } from './app-stream.component';
@@ -51,5 +51,24 @@ describe('App stream presentation', () => {
     expect(ack.mock.calls).toEqual([['machine', watchId, 1]]);
     completeReceipt();
     await vi.waitFor(() => expect(ack.mock.calls).toEqual([['machine', watchId, 1], ['machine', watchId, 3]]));
+  });
+
+  it('explains a refused display with the machine, keeps the code in details and reconnects with a new viewer', async () => {
+    const watch = vi.fn<(scope: string, task: number, run: string, watch: string) => Promise<BackendResult<void>>>()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'transport', message: 'Backend connection failed.' } })
+      .mockResolvedValue({ ok: true, value: undefined });
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppWatch: watch, taskAppUnwatch: vi.fn(async () => undefined) } }] });
+    const fixture = TestBed.createComponent(AppStreamComponent);
+    for (const [name, value] of Object.entries({ scopeId: 'machine', taskId: 1, runId: 'app', name: 'Dev app', machine: 'Studio Mac', remote: true }))
+      fixture.componentRef.setInput(name, value);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const element: HTMLElement = fixture.nativeElement;
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.message strong')?.textContent).toBe('Can\'t reach Studio Mac'); });
+    expect(element.querySelector('.message')?.textContent).toContain('Dev app isn\'t affected');
+    expect(element.querySelector('.diagnostic')?.textContent).toContain('transport');
+    element.querySelector<HTMLButtonElement>('.message button')!.click();
+    await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(2));
+    expect(watch.mock.calls[1]![3]).not.toBe(watch.mock.calls[0]![3]);
   });
 });

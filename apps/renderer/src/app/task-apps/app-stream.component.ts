@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, inject, input, signal, viewChild } from '@angular/core';
-import { APP_INPUT_GUIDANCE, APP_VIDEO_MAX_AXIS, APP_VIDEO_MAX_BYTES, APP_VIDEO_MAX_PIXELS, type TaskAppFrame } from '@elevenex/shared';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, inject, input, signal, viewChild } from '@angular/core';
+import { APP_INPUT_GUIDANCE, APP_VIDEO_MAX_AXIS, APP_VIDEO_MAX_BYTES, APP_VIDEO_MAX_PIXELS, type BackendClientError, type TaskAppFrame } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { H264Decoder } from '../media/h264-decoder';
 import { ButtonComponent, KbdComponent } from '../ui';
 import { AppInputQueue, appPoint } from './app-input';
+import { INPUT_INTERRUPTED, INPUT_TOO_LONG, inputNotice, streamProblem, type AppPlace } from './app-recovery';
 
 /** One mounted surface owns one viewer lease. The enclosing run view keys it by task and run. */
 @Component({
@@ -16,13 +17,23 @@ export class AppStreamComponent {
   readonly taskId = input.required<number>();
   readonly runId = input.required<string>();
   readonly name = input.required<string>();
+  /** Names the machine in recovery guidance. */
+  readonly machine = input('');
+  readonly remote = input(false);
   readonly actual = input(false);
   private readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly canvas = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly keyboard = viewChild.required<ElementRef<HTMLTextAreaElement>>('keyboard');
   private readonly viewport = viewChild.required<ElementRef<HTMLElement>>('viewport');
   readonly state = signal<'connecting' | 'live' | 'interrupted'>('connecting');
+  /** The host's or desktop's reason for the last interruption or input failure. */
   readonly error = signal('');
+  /** Set when the desktop refused to attach, so the failure code can shape the guidance. */
+  private readonly refusal = signal<BackendClientError | null>(null);
+  private readonly place = computed<AppPlace>(() => ({ machine: this.machine(), remote: this.remote() }));
+  readonly problem = computed(() => this.state() === 'interrupted'
+    ? streamProblem(this.refusal() ?? this.error(), this.name(), this.place()) : null);
+  readonly notice = computed(() => this.state() === 'live' && this.error() ? inputNotice(this.error(), this.place()) : null);
   readonly controlling = signal(false);
   private width = 0;
   private height = 0;
@@ -41,7 +52,7 @@ export class AppStreamComponent {
   }, reason => {
     this.release();
     const detail = reason instanceof Error ? reason.message : '';
-    this.error.set(Object.values(APP_INPUT_GUIDANCE).find(message => detail.endsWith(message)) ?? 'Input interrupted. Focus the app to resume.');
+    this.error.set(Object.values(APP_INPUT_GUIDANCE).find(message => detail.endsWith(message)) ?? INPUT_INTERRUPTED);
   });
   private composing = false;
   private readonly keys = new Set<string>();
@@ -78,9 +89,14 @@ export class AppStreamComponent {
     this.sequence = 0;
     this.state.set('connecting');
     this.error.set('');
+    this.refusal.set(null);
     try {
       const result = await this.bridge.taskAppWatch?.(this.scopeId(), this.taskId(), this.runId(), id);
-      if (this.watchId === id && !result?.ok) this.interrupt(result?.error.message ?? 'Streaming is unavailable on this machine.');
+      if (this.watchId === id && !result?.ok) {
+        const refusal = result?.error ?? null;
+        this.interrupt(refusal?.message ?? 'Streaming is unavailable on this machine.');
+        this.refusal.set(refusal);
+      }
     } catch { if (this.watchId === id) this.interrupt('The display could not connect.'); }
   }
 
@@ -263,7 +279,7 @@ export class AppStreamComponent {
     if (input.inputType === 'insertText' && input.data && input.data !== this.lastComposition) this.sendText(input.data);
   }
   private sendText(text: string): void {
-    if (text.length > 4096) { this.error.set('Text is too long to send.'); return; }
+    if (text.length > 4096) { this.error.set(INPUT_TOO_LONG); return; }
     let chunk = '';
     for (const character of text) {
       if (chunk.length + character.length > 256) { this.lane.push({ kind: 'text', text: chunk }); chunk = ''; }

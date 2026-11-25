@@ -234,7 +234,7 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
           const forwarded = lines.filter(line => !/^(?:authorization|x-elevenex-app-access):/i.test(line) && (upgrade || !/^connection:/i.test(line)));
           // Only managed app endpoints receive the instance-scoped secret.
           // In particular, never forward it to a proxied development service.
-          if (hello.appViewerAccess && /^(?:GET|POST) \/api\/(?:task-apps\/[1-9]\d*(?:\/[a-f0-9-]{36}\/(?:approve|stop|output|stream|watch|setup-settings))?|desktop-workspace\/revision(?:\?after=\d+)?) HTTP\/1\.[01]$/i.test(lines[0] ?? ''))
+          if (hello.appViewerAccess && /^(?:GET|POST) \/api\/(?:task-apps\/[1-9]\d*(?:\/[a-f0-9-]{36}\/(?:approve|stop|output|stream|watch|setup-settings|setup-helper))?|desktop-workspace\/revision(?:\?after=\d+)?) HTTP\/1\.[01]$/i.test(lines[0] ?? ''))
             forwarded.push('X-Elevenex-App-Access: ' + hello.appViewerAccess);
           if (!upgrade) forwarded.push('Connection: close');
           const request = Buffer.concat([Buffer.from(forwarded.join('\r\n') + '\r\n\r\n', 'latin1'), header.subarray(end + 4)]);

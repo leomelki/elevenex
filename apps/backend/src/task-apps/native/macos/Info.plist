@@ -2,7 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.elevenex.task-app-display</string>
-<key>CFBundleName</key><string>Elevenex App Display</string>
+<key>CFBundleName</key><string>Elevenex Agent</string>
+<key>CFBundleDisplayName</key><string>Elevenex Agent</string>
+<key>CFBundleExecutable</key><string>Elevenex Agent</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleIconFile</key><string>Agent.icns</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>LSUIElement</key><true/>
 <key>CFBundleVersion</key><string>1</string>
 <key>NSScreenCaptureUsageDescription</key><string>Show the task app window in your connected Elevenex desktop.</string>
 </dict></plist>
