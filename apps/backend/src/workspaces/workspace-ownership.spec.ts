@@ -67,6 +67,7 @@ describe('Task checkout health and session execution', () => {
       {} as never,
       {} as never,
       {
+        getInitialAgentProvider: () => 'claude',
         findOne: jest.fn().mockResolvedValue({
           defaultAgentProvider: 'claude',
           defaultClaudeSessionSurface: 'claude-ui',

@@ -174,6 +174,22 @@ conversations belong to that task. Repositories are resources within projects.
 
 ## Boundaries
 
+Task setup issues retain their existing code vocabulary and may optionally
+advertise `workspaceRecovery` (`prepare`, `restore-branch`, `new-workspace`). The
+desktop validates this hint and sends only named recovery intents. The engine
+validates each intent against the saved failure and resolves commits itself.
+Older clients retain ordinary retry; older engines omit these recovery choices.
+Workspace directory checks are limited to visible task pages, coalesce in-flight
+filesystem reads and never enumerate Git history. Recovery preserves task/session
+IDs and transcript locations while updating the assigned execution directory.
+Missing directories do not release checkout ownership: allocation considers
+durable path reservations, linked assignments and Git's missing registrations.
+Branch reservations protect setup and clear when ready; path reservations remain
+until lifecycle cleanup. Repository-scoped retries recheck locks, local edits,
+background work and explicit recovery consent. They resume the latest branch
+tip or registered detached revision, and remove only the task's own confirmed
+missing registration without pruning unrelated worktrees.
+
 ```text
 Angular feature store/controller         selection, loading, domain state
         ↓

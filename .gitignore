@@ -29,6 +29,8 @@ apps/desktop/assets/icons/
 apps/renderer/public/icons/
 apps/renderer/out-tsc/
 apps/renderer/src/design-system/tokens.css
+# Compiled test output left by the legacy VS Code filesystem provider.
+/vscode-filesystem-provider/test/out/
 
 # Windows / PowerShell machine-local generated cache (appears in the repo when
 # PowerShell resolves %LOCALAPPDATA% relative to the working directory)

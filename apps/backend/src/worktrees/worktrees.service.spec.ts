@@ -62,7 +62,7 @@ describe('WorktreesService', () => {
         );
         expect(
           (await service.listWorktrees(mainRepoPath)).find(
-            (entry) => entry.path === worktreePath,
+            (entry) => entry.path === fs.realpathSync(worktreePath),
           ),
         ).toMatchObject({
           branch: 'feature-branch',

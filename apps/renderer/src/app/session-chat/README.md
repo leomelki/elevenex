@@ -6,6 +6,11 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+`workspaceUnavailable` keeps a saved conversation readable while its task needs
+workspace recovery. The owner supplies it separately from `archived`; it blocks
+commands and the composer without suggesting the conversation was archived.
+Changing it preserves the draft and reopens live updates once setup completes.
+
 ## Agent work
 
 Session tool calls and native launches carry bounded operation metadata alongside

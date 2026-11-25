@@ -1,4 +1,6 @@
 import { resolve, basename } from 'node:path';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
@@ -23,6 +25,7 @@ describe('DesktopWorkspaceService', () => {
   let projectId: number;
   let repoId: number;
   let taskId: number;
+  let checkout: string;
   const retryTask = jest.fn();
   const candidateIds = jest.fn<readonly number[], []>();
   const liveStatuses = new Map<number, string>();
@@ -111,6 +114,7 @@ describe('DesktopWorkspaceService', () => {
   beforeEach(async () => {
     candidateIds.mockReset().mockReturnValue([]);
     liveStatuses.clear();
+    checkout = await mkdtemp(resolve(tmpdir(), 'desktop-task-health-'));
     activityStatus.mockReset();
     detachedCommands.mockReset();
     archiveSession.mockReset(); restoreSession.mockReset();
@@ -140,7 +144,7 @@ describe('DesktopWorkspaceService', () => {
         .values({
           repoId,
           name: 'Build',
-          path: '/repo/task',
+          path: checkout,
           taskBranch: 'build',
         })
         .returning()
@@ -217,7 +221,10 @@ describe('DesktopWorkspaceService', () => {
     }).compile();
     service = module.get(DesktopWorkspaceService);
   });
-  afterEach(() => database?.sqlite.close());
+  afterEach(async () => {
+    database?.sqlite.close();
+    await rm(checkout, { recursive: true, force: true });
+  });
 
   it('archives only task-owned conversations, preserves their data and marks them for task reopen', async () => {
     await database.db.update(schema.workspaces).set({taskState:'ready'}).where(eq(schema.workspaces.id,taskId));
@@ -585,6 +592,73 @@ describe('DesktopWorkspaceService', () => {
       task.setupIssue,
     );
   });
+  it('detects a missing visible checkout and recovers when the directory returns, without Git or losing history', async () => {
+    await rm(checkout, { recursive: true });
+    const missing = await service.task(taskId);
+    expect(missing).toMatchObject({
+      state: 'failed',
+      setupIssue: { code: 'other', workspaceRecovery: 'prepare' },
+    });
+    expect((await service.listTasks({})).items[0]).toMatchObject({
+      id: taskId,
+      state: 'failed',
+    });
+    await mkdir(checkout);
+    expect(await service.task(taskId)).toMatchObject({
+      id: taskId,
+      state: 'ready',
+    });
+    expect(retryTask).not.toHaveBeenCalled();
+  });
+
+  it('normalizes old missing-folder errors and permits only the advertised recovery', async () => {
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskState: 'failed',
+        linkStatus: 'unlinked',
+        taskError: JSON.stringify({
+          message:
+            'The task worktree is missing. Reopen or choose another worktree.',
+        }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupIssue).toMatchObject({
+      workspaceRecovery: 'prepare',
+    });
+    await expect(
+      service.retryTask(taskId, { recovery: 'restore-branch' }),
+    ).rejects.toThrow();
+    await expect(
+      service.retryTask(taskId, { recovery: 'new-workspace' }),
+    ).rejects.toThrow();
+    const savedCommit = 'a'.repeat(40);
+    await database.db
+      .update(schema.workspaces)
+      .set({
+        taskError: JSON.stringify({ code: 'branch_missing', savedCommit }),
+      })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupIssue).toMatchObject({
+      workspaceRecovery: 'restore-branch',
+    });
+    await service.retryTask(taskId, { recovery: 'restore-branch' });
+    expect(retryTask).toHaveBeenLastCalledWith(
+      taskId,
+      { mode: 'new', branchName: 'build', baseRef: savedCommit },
+      JSON.stringify({ code: 'branch_missing', savedCommit }),
+    );
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskError: JSON.stringify({ code: 'worktree_not_clean' }) })
+      .where(eq(schema.workspaces.id, taskId));
+    await service.retryTask(taskId, { recovery: 'new-workspace' });
+    expect(retryTask).toHaveBeenLastCalledWith(
+      taskId,
+      { environment: 'new' },
+      JSON.stringify({ code: 'worktree_not_clean' }),
+    );
+  });
   it('preserves default retries and validates explicit recovery against durable task state', async () => {
     await service.retryTask(taskId);
     expect(retryTask).toHaveBeenLastCalledWith(taskId);
@@ -601,12 +675,12 @@ describe('DesktopWorkspaceService', () => {
     await service.retryTask(taskId, { recovery: 'use-existing' });
     expect(retryTask).toHaveBeenLastCalledWith(taskId, {
       confirmExternal: true,
-    });
+    }, JSON.stringify({ code: 'external_checkout', canSnapshot: true }));
     await service.retryTask(taskId, { recovery: 'snapshot' });
     expect(retryTask).toHaveBeenLastCalledWith(taskId, {
       checkoutMode: 'snapshot',
       environment: 'automatic',
-    });
+    }, JSON.stringify({ code: 'external_checkout', canSnapshot: true }));
     await database.db
       .update(schema.workspaces)
       .set({
@@ -660,7 +734,7 @@ describe('DesktopWorkspaceService', () => {
     await service.retryTask(taskId, { recovery: 'exceed-worktree-limit' });
     expect(retryTask).toHaveBeenLastCalledWith(taskId, {
       confirmOverLimit: true,
-    });
+    }, JSON.stringify({ code: 'worktree_limit_reached', count: 23, limit: 5 }));
     retryTask.mockClear();
     await database.db
       .update(schema.workspaces)

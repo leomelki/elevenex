@@ -132,6 +132,8 @@ function setupIssue(value: unknown): WorkspaceTaskSetupIssue {
   const raw = object(value), code = raw['code'];
   if (code !== 'external-checkout' && code !== 'branch-in-use' && code !== 'environment-busy' && code !== 'other') throw invalidResponse();
   const path = raw['workspacePath'];
+  const recovery = raw['workspaceRecovery'];
+  if (recovery !== undefined && recovery !== 'prepare' && recovery !== 'restore-branch' && recovery !== 'new-workspace') throw invalidResponse();
   if (path !== undefined && /[\0\r\n]/.test(text(path, 4096))) throw invalidResponse();
   return {
     code,
@@ -139,6 +141,7 @@ function setupIssue(value: unknown): WorkspaceTaskSetupIssue {
     canUseSnapshot: boolean(raw['canUseSnapshot']),
     ...(raw['canExceedWorktreeLimit'] === undefined ? {} : { canExceedWorktreeLimit: boolean(raw['canExceedWorktreeLimit']) }),
     ...(path === undefined ? {} : { workspacePath: text(path, 4096) }),
+    ...(recovery === undefined ? {} : { workspaceRecovery: recovery }),
   };
 }
 export function parseWorkspaceTask(value: unknown): WorkspaceTask {
@@ -872,7 +875,7 @@ export function registerWorkspaceIpc(
   stops.push(handleForWindow('workspace:retry-task', trusted, (window, ...args) => {
     const [scope, taskId, recovery] = args;
     if ((args.length !== 2 && args.length !== 3) || typeof scope !== 'string' || !/^[a-f0-9-]{36}$/.test(scope)) throw new Error('A backend scope is required.');
-    if (args.length === 3 && recovery !== undefined && recovery !== 'use-existing' && recovery !== 'snapshot' && recovery !== 'exceed-worktree-limit') throw new Error('Invalid task recovery scope arguments.');
+    if (args.length === 3 && recovery !== undefined && recovery !== 'use-existing' && recovery !== 'snapshot' && recovery !== 'exceed-worktree-limit' && recovery !== 'restore-branch' && recovery !== 'new-workspace') throw new Error('Invalid task recovery scope arguments.');
     const targetId = id(taskId);
     return write(window, scope, `${base}/tasks/${targetId}/retry`, recovery === undefined ? undefined : { recovery }, value => {
       const task = parseWorkspaceTask(value);

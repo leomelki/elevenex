@@ -1,3 +1,5 @@
+import { workspaceTaskError } from '../workspaces/workspace-checkout-errors.js';
+
 /** Bounded display data; raw Git errors and setup configuration never cross the bridge. */
 export interface DesktopTaskSetupIssue {
   readonly code:
@@ -9,6 +11,7 @@ export interface DesktopTaskSetupIssue {
   readonly workspacePath?: string;
   readonly canUseSnapshot: boolean;
   readonly canExceedWorktreeLimit?: boolean;
+  readonly workspaceRecovery?: 'prepare' | 'restore-branch' | 'new-workspace';
 }
 
 export function desktopTaskSetupIssue(
@@ -18,7 +21,7 @@ export function desktopTaskSetupIssue(
   let parsed: unknown = value;
   if (typeof value === 'string') {
     try {
-      parsed = value.length <= 16384 ? JSON.parse(value) : null;
+      parsed = value.length <= 16384 ? workspaceTaskError(value) : null;
     } catch {
       parsed = null;
     }
@@ -54,7 +57,42 @@ export function desktopTaskSetupIssue(
       'branch_in_use',
       'environment_busy',
       'remote_differs',
+      'checkout_unavailable',
     ].includes(code);
+  if (code === 'environment_missing')
+    return {
+      code: 'other',
+      message:
+        'The workspace folder is missing. Prepare a workspace to continue. Your conversations are saved.',
+      canUseSnapshot: false,
+      workspaceRecovery: 'prepare',
+    };
+  if (code === 'checkout_unavailable')
+    return {
+      code: 'other',
+      message:
+        'The workspace is locked or cannot be accessed. Restore access and retry, or use a separate workspace at the committed revision.',
+      canUseSnapshot,
+    };
+  if (code === 'worktree_not_clean')
+    return {
+      code: 'other',
+      message:
+        'The workspace has local changes from interrupted setup. Keep them here and prepare a separate workspace to continue.',
+      canUseSnapshot: false,
+      workspaceRecovery: 'new-workspace',
+    };
+  if (code === 'branch_missing')
+    return {
+      code: 'other',
+      message:
+        'This task’s branch was deleted. Restore it from the saved revision to continue. Your conversations are saved.',
+      canUseSnapshot: false,
+      ...(typeof error.savedCommit === 'string' &&
+      /^[0-9a-f]{40,64}$/.test(error.savedCommit)
+        ? { workspaceRecovery: 'restore-branch' as const }
+        : {}),
+    };
   if (code === 'external_checkout') {
     const path = error.path;
     return {

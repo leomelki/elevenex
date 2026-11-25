@@ -1,10 +1,5 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Inject,
-  Injectable,
-} from '@nestjs/common';
-import { and, eq, inArray } from 'drizzle-orm';
+import { ConflictException, Inject, Injectable } from '@nestjs/common';
+import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
@@ -17,6 +12,9 @@ import { TaskSetup } from './task.types.js';
 import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { UserPtyManager } from '../user-terminal/user-pty-manager.service.js';
 import { ActionsService } from '../actions/actions.service.js';
+import { isSqliteUniqueConstraintError } from '../database/sqlite-errors.js';
+import { mapWorktrees } from '../worktrees/worktree-observation.js';
+import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
@@ -48,20 +46,42 @@ export class TaskWorktreeAllocator {
   ): Promise<Allocation> {
     const branch =
       setup.checkoutMode === 'snapshot' ? null : setup.localBranch!;
-    const listed = await this.worktrees.listWorktrees(repo.path);
-    const available = await Promise.all(
-      listed.map(async (entry) => {
-        try {
-          return { entry, realPath: await fs.realpath(entry.path) };
-        } catch {
-          return null;
-        }
-      }),
+    const listed = await this.recoverMissingRegistration(
+      repo.path,
+      task,
+      branch,
     );
+    const available = await mapWorktrees(listed, async (entry) => {
+      try {
+        return { entry, realPath: await fs.realpath(entry.path) };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (entry.branch === branch && code !== 'ENOENT' && code !== 'ENOTDIR')
+          throw new ConflictException({
+            code: 'checkout_unavailable',
+            message:
+              'This branch’s worktree cannot be accessed. Restore access or work at its committed revision.',
+            canSnapshot: true,
+          });
+        // Keep its raw registration in listed so its path cannot be reused.
+        return null;
+      }
+    });
     const checked = available.filter(
       (entry): entry is NonNullable<typeof entry> => entry !== null,
     );
     const registered = checked.map((item) => item.entry);
+    if (
+      branch &&
+      listed.some((entry) => entry.branch === branch) &&
+      !registered.some((entry) => entry.branch === branch)
+    )
+      throw new ConflictException({
+        code: 'checkout_unavailable',
+        message:
+          'This branch is still registered in a missing worktree. Restore that worktree or work at its committed revision.',
+        canSnapshot: true,
+      });
     const realRoot = await fs.realpath(repo.path);
     const paths = checked.map((item) => item.realPath);
     const owners = paths.length
@@ -81,6 +101,21 @@ export class TaskWorktreeAllocator {
           .from(schema.repoWorktrees)
           .where(inArray(schema.repoWorktrees.path, paths))
       : [];
+    // A missing directory is not a free assignment. Leases also cover setup
+    // interrupted before a Git registration or pool row could be recorded.
+    const reservations = await this.db
+      .select()
+      .from(schema.taskReservations)
+      .where(eq(schema.taskReservations.repositoryKey, key));
+    const branchOwner =
+      branch &&
+      reservations.find(
+        (lease) =>
+          lease.repositoryKey === key &&
+          lease.branchName === branch &&
+          lease.taskId !== task.id,
+      );
+    if (branchOwner) throw this.branchConflict(branchOwner.taskId);
     const ownedByOther = (candidate: string) =>
       owners.find(
         (owner) =>
@@ -163,16 +198,61 @@ export class TaskWorktreeAllocator {
     }
 
     // Reconcile a task's own interrupted assignment before selecting another slot.
-    const lease = (
-      await this.db
-        .select()
-        .from(schema.taskReservations)
-        .where(eq(schema.taskReservations.taskId, task.id))
-    )[0];
-    if (lease && registered.some((entry) => entry.path === lease.path)) {
-      const pool = pools.find((entry) => entry.path === lease.path);
-      if (pool)
-        return { path: lease.path, poolId: pool.id, managed: pool.managed };
+    const lease = reservations.find((entry) => entry.taskId === task.id);
+    const interrupted =
+      lease && checked.find((item) => item.realPath === lease.path);
+    if (interrupted) {
+      let pool = pools.find((entry) => entry.path === interrupted.realPath);
+      if (
+        setup.environment !== 'new' &&
+        (setup.environment !== 'existing' || pool?.id === setup.worktreeId) &&
+        interrupted.realPath !== realRoot &&
+        (pool?.managed || !pool || setup.confirmExternal)
+      ) {
+        const owner = ownedByOther(interrupted.realPath);
+        if (owner) throw this.branchConflict(owner.id);
+        if (interrupted.entry.isBare || interrupted.entry.isLocked)
+          throw new ConflictException(
+            'The worktree from interrupted setup is locked or unavailable.',
+          );
+        if (await this.isBusy(interrupted.realPath))
+          throw new ConflictException({
+            code: 'environment_busy',
+            message:
+              'The worktree from interrupted setup has running work. Stop it before retrying.',
+            canSnapshot: true,
+          });
+        const status = await this.git.status(interrupted.realPath, {
+          persistIndex: unassignedManaged(interrupted.realPath, pool),
+        });
+        if (!status.dirty && !status.conflicts) {
+          // Reservation + registration can precede the pool insert on crash.
+          pool ??= (
+            await this.db
+              .insert(schema.repoWorktrees)
+              .values({
+                repoRootPath: realRoot,
+                path: interrupted.realPath,
+                name: path.basename(interrupted.realPath),
+                managed: true,
+                createdFromRef: setup.resolvedCommit,
+              })
+              .returning()
+          )[0];
+          await this.reserve(task.id, key, branch, interrupted.realPath);
+          return {
+            path: interrupted.realPath,
+            poolId: pool.id,
+            managed: pool.managed,
+            status,
+          };
+        }
+        throw new ConflictException({
+          code: 'worktree_not_clean',
+          message:
+            'The worktree from interrupted setup contains local changes. Keep those changes before retrying, or choose a new worktree in Change setup.',
+        });
+      }
     }
 
     const candidates = registered
@@ -188,6 +268,9 @@ export class TaskWorktreeAllocator {
           realPath !== realRoot &&
           pool &&
           !ownedByOther(realPath) &&
+          !reservations.some(
+            (lease) => lease.path === realPath && lease.taskId !== task.id,
+          ) &&
           (setup.environment === 'existing'
             ? pool.id === setup.worktreeId
             : setup.environment !== 'new' && pool.managed),
@@ -235,10 +318,7 @@ export class TaskWorktreeAllocator {
       try {
         await this.reserve(task.id, key, branch, candidate.realPath);
       } catch (error) {
-        if (
-          error instanceof ConflictException &&
-          setup.environment !== 'existing'
-        )
+        if (this.isPathConflict(error) && setup.environment !== 'existing')
           continue;
         throw error;
       }
@@ -265,8 +345,18 @@ export class TaskWorktreeAllocator {
     const existingNames = new Set(
       poolRows.map((entry) => entry.name.trim().toLowerCase()),
     );
+    const assignments = await this.db
+      .select({ path: schema.workspaces.path })
+      .from(schema.workspaces)
+      .where(
+        and(
+          eq(schema.workspaces.repoId, repo.id),
+          eq(schema.workspaces.linkStatus, 'linked'),
+          ne(schema.workspaces.id, task.id),
+        ),
+      );
     const existingPaths = new Set(
-      [...listed, ...poolRows].map((entry) =>
+      [...listed, ...poolRows, ...reservations, ...assignments].map((entry) =>
         path.resolve(entry.path).toLowerCase(),
       ),
     );
@@ -289,43 +379,38 @@ export class TaskWorktreeAllocator {
       if (
         !existingNames.has(worktreeName.toLowerCase()) &&
         !existingPaths.has(worktreePath.toLowerCase()) &&
-        !(await fs.lstat(worktreePath).then(
-          () => true,
-          () => false,
-        ))
-      )
-        break;
+        !(await this.pathExists(worktreePath))
+      ) {
+        try {
+          await this.reserve(task.id, key, branch, worktreePath);
+          break;
+        } catch (error) {
+          // Another backend can reserve the same name after our read. Retry
+          // only path contention; branch and storage failures need attention.
+          if (!this.isPathConflict(error)) throw error;
+          existingPaths.add(worktreePath.toLowerCase());
+        }
+      }
     }
     await fs.mkdir(path.dirname(worktreePath), { recursive: true });
-    await this.reserve(task.id, key, branch, worktreePath);
     const git = worktreeSimpleGit(repo.path);
-    let status: WorktreeStatus | undefined;
-    try {
-      await git.raw([
-        'worktree',
-        'add',
-        '--quiet',
-        '--detach',
-        worktreePath,
-        setup.resolvedCommit!,
-      ]);
-      // A checkout created just now is clean at its start point. Scanning it
-      // would cost as much as the checkout itself in a large repository.
-      status = {
-        dirty: false,
-        conflicts: false,
-        branch: null,
-        head: setup.resolvedCommit!,
-      };
-    } catch (error) {
-      // Recovery may find the already-created registration after an interrupted response.
-      if (
-        !(await this.worktrees.listWorktrees(repo.path)).some(
-          (entry) => path.resolve(entry.path) === path.resolve(worktreePath),
-        )
-      )
-        throw error;
-    }
+    // A failed add may leave a registration and partial files. Keep its lease
+    // and report the failure; an explicit retry revalidates that checkout.
+    await git.raw([
+      'worktree',
+      'add',
+      '--quiet',
+      '--detach',
+      worktreePath,
+      setup.resolvedCommit!,
+    ]);
+    // A successful new checkout is clean; avoid a redundant repository scan.
+    const status: WorktreeStatus = {
+      dirty: false,
+      conflicts: false,
+      branch: null,
+      head: setup.resolvedCommit!,
+    };
     const pool = (
       await this.db
         .insert(schema.repoWorktrees)
@@ -348,6 +433,113 @@ export class TaskWorktreeAllocator {
     return { path: worktreePath, poolId: pool.id, managed: true, status };
   }
 
+  /** Git retains the last attached branch/HEAD after a folder is deleted. */
+  async previousCheckout(repo: Repo, task: Task) {
+    if (!task.path) return undefined;
+    const listed = await this.worktrees.listWorktrees(repo.path, { includeMissing: true });
+    return listed.find(entry => path.resolve(entry.path) === path.resolve(task.path));
+  }
+
+  private async recoverMissingRegistration(
+    repoPath: string,
+    task: Task,
+    branch: string | null,
+  ) {
+    let listed = await this.worktrees.listWorktrees(repoPath, {
+      includeMissing: true,
+    });
+    const previous =
+      task.path && listed.find((entry) => entry.path === task.path);
+    if (branch && previous && (await isMissingWorktreePath(previous.path))) {
+      if (previous.isLocked || previous.isBare)
+        throw new ConflictException({
+          code: 'checkout_unavailable',
+          message:
+            'The missing worktree is locked. Restore or unlock it, or work at its committed revision.',
+          canSnapshot: true,
+        });
+      await this.assertRecoveryIdle(task.id);
+      const [owner] = await this.db
+        .select()
+        .from(schema.taskReservations)
+        .where(
+          and(
+            eq(schema.taskReservations.path, previous.path),
+            ne(schema.taskReservations.taskId, task.id),
+          ),
+        );
+      if (owner) throw this.branchConflict(owner.taskId);
+      const [workspaceOwner] = await this.db
+        .select()
+        .from(schema.workspaces)
+        .where(
+          and(
+            eq(schema.workspaces.path, previous.path),
+            eq(schema.workspaces.linkStatus, 'linked'),
+            eq(schema.workspaces.isDefault, false),
+            ne(schema.workspaces.id, task.id),
+          ),
+        )
+        .limit(1);
+      if (workspaceOwner) throw this.branchConflict(workspaceOwner.id);
+      // Only remove this task's missing registration, never prune unrelated
+      // worktrees. Without --force Git protects restored edits and locks.
+      await this.worktrees.removeWorktree(repoPath, previous.path);
+      listed = listed.filter((entry) => entry !== previous);
+    }
+    return listed;
+  }
+
+  private sessionIsIdle(sessionId: number): boolean {
+    const activity = this.hooks.getActivity(sessionId);
+    return activity.activityStatus === 'idle' && !activity.backgroundActive;
+  }
+
+  async assertRecoveryIdle(taskId: number): Promise<void> {
+    const [lease] = await this.db
+      .select()
+      .from(schema.taskReservations)
+      .where(eq(schema.taskReservations.taskId, taskId));
+    const sessions = await this.db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.workspaceId, taskId));
+    const terminals = await this.db
+      .select()
+      .from(schema.userTerminals)
+      .where(eq(schema.userTerminals.workspaceId, taskId));
+    const actions = await this.db
+      .select({ id: schema.actions.id })
+      .from(schema.actions)
+      .where(
+        and(
+          eq(schema.actions.workspaceId, taskId),
+          eq(schema.actions.status, 'running'),
+        ),
+      )
+      .limit(1);
+    const liveTerminals = await mapWorktrees(
+      terminals,
+      async (terminal) =>
+        this.terminals.isAlive(terminal.id) ||
+        (await this.terminals.hasTmuxSessionForTerminal(terminal.id)),
+    );
+    if (
+      sessions.some(
+        (session) =>
+          session.status !== 'archived' && !this.sessionIsIdle(session.id),
+      ) ||
+      liveTerminals.some(Boolean) ||
+      actions.length ||
+      (lease && (await this.isBusy(lease.path)))
+    )
+      throw new ConflictException({
+        code: 'environment_busy',
+        message:
+          'This task still has running work in its previous worktree. Stop it before preparing another worktree.',
+      });
+  }
+
   private async isBusy(worktreePath: string): Promise<boolean> {
     const sessions = await this.db
       .select()
@@ -356,8 +548,7 @@ export class TaskWorktreeAllocator {
     if (
       sessions.some(
         (session) =>
-          session.status !== 'archived' &&
-          this.hooks.getStatus(session.id) !== 'idle',
+          session.status !== 'archived' && !this.sessionIsIdle(session.id),
       )
     )
       return true;
@@ -365,12 +556,11 @@ export class TaskWorktreeAllocator {
       .select()
       .from(schema.userTerminals)
       .where(eq(schema.userTerminals.worktreePath, worktreePath));
-    const runningTerminals = await Promise.all(
-      terminals.map(
-        async (terminal) =>
-          this.terminals.isAlive(terminal.id) ||
-          (await this.terminals.hasTmuxSessionForTerminal(terminal.id)),
-      ),
+    const runningTerminals = await mapWorktrees(
+      terminals,
+      async (terminal) =>
+        this.terminals.isAlive(terminal.id) ||
+        (await this.terminals.hasTmuxSessionForTerminal(terminal.id)),
     );
     return (
       runningTerminals.some(Boolean) ||
@@ -392,13 +582,75 @@ export class TaskWorktreeAllocator {
           target: schema.taskReservations.taskId,
           set: { repositoryKey, branchName, path: worktreePath },
         });
-    } catch {
+    } catch (error) {
+      if (!isSqliteUniqueConstraintError(error)) throw error;
+      const conflicts = await this.db
+        .select()
+        .from(schema.taskReservations)
+        .where(
+          and(
+            ne(schema.taskReservations.taskId, taskId),
+            or(
+              eq(schema.taskReservations.path, worktreePath),
+              branchName === null
+                ? undefined
+                : and(
+                    eq(schema.taskReservations.repositoryKey, repositoryKey),
+                    eq(schema.taskReservations.branchName, branchName),
+                  ),
+            ),
+          ),
+        );
+      const branchOwner =
+        branchName &&
+        conflicts.find(
+          (lease) =>
+            lease.repositoryKey === repositoryKey &&
+            lease.branchName === branchName,
+        );
+      if (branchOwner) throw this.branchConflict(branchOwner.taskId);
+      const pathOwner = conflicts.find((lease) => lease.path === worktreePath);
+      // Do not turn unrelated constraints into a misleading reservation error.
+      if (!pathOwner) throw error;
       throw new ConflictException({
         code: 'environment_reserved',
+        resource: 'path',
+        existingTaskId: pathOwner.taskId,
         message:
-          'This branch or worktree was just reserved by another task. Choose another worktree or start at its revision.',
+          'This worktree is reserved by another task. Choose another worktree.',
         canSnapshot: true,
       });
+    }
+  }
+
+  private branchConflict(taskId: number) {
+    return new ConflictException({
+      code: 'branch_in_use',
+      existingTaskId: taskId,
+      message:
+        'This branch is reserved by another task. Open that task or work at its committed revision.',
+      canSnapshot: true,
+    });
+  }
+
+  private isPathConflict(error: unknown): boolean {
+    if (!(error instanceof ConflictException)) return false;
+    const detail = error.getResponse();
+    return (
+      typeof detail === 'object' &&
+      'resource' in detail &&
+      detail.resource === 'path'
+    );
+  }
+
+  private async pathExists(value: string): Promise<boolean> {
+    try {
+      await fs.lstat(value);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      throw error;
     }
   }
 }

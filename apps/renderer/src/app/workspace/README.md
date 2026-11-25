@@ -19,6 +19,16 @@ choice retries the same task above the limit without changing the configured
 limit. Ordinary retry remains available after freeing a workspace. Busy and
 uncertain setup writes retain the existing disabled/reconciliation behavior.
 
+Missing workspace folders retain their task and conversation identities. Visible
+task pages check directory availability without scanning Git or transcripts.
+The saved conversation remains readable, with a **Review setup** action and a
+disabled composer until the workspace is ready. **Prepare workspace** resumes
+the current branch; it does not reset it to the task's initial commit. A deleted
+branch can be restored from its saved revision, and interrupted setup with local
+changes offers a separate workspace. These choices appear only when advertised
+by the engine. Locks, edits, active agents and background processes remain
+protected; reconnects never start recovery automatically.
+
 `MachineWorkspaceComponent` provides one `WorkspaceStore` for its connected
 machine and calls `connect(machine, active || preparing)`. Preparation permits
 bounded reads for the selected candidate behind inert Home; interaction remains

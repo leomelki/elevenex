@@ -425,6 +425,11 @@ test('workspace response mapping strips unknown fields and rejects malformed or 
   assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue }).setupIssue, { code: setupIssue.code, message: setupIssue.message, workspacePath: setupIssue.workspacePath, canUseSnapshot: true });
   const quotaIssue = { code: 'other', message: 'Workspace limit reached.', canUseSnapshot: false, canExceedWorktreeLimit: true };
   assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue: quotaIssue }).setupIssue, quotaIssue);
+  for (const workspaceRecovery of ['prepare', 'restore-branch', 'new-workspace']) {
+    const recoveryIssue = { code: 'other', message: 'Your conversations are saved.', canUseSnapshot: false, workspaceRecovery };
+    assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue: recoveryIssue }).setupIssue, recoveryIssue);
+  }
+  for (const workspaceRecovery of [null, 'arbitrary', 1]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...quotaIssue, workspaceRecovery } }));
   for (const canExceedWorktreeLimit of [null, 'yes', 1]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: { ...quotaIssue, canExceedWorktreeLimit } }));
   for (const value of [{ ...setupIssue, code: 'arbitrary' }, { ...setupIssue, canUseSnapshot: 'yes' }, { ...setupIssue, message: 'x'.repeat(501) }, { ...setupIssue, workspacePath: 'bad\npath' }]) assert.throws(() => parseWorkspaceTask({ ...task, setupIssue: value }));
   assert.throws(() => parseWorkspacePage({ items: Array(101).fill(task), nextCursor: null }, parseWorkspaceTask));
