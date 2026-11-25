@@ -8,6 +8,7 @@ import {
 } from "@angular/core";
 import { AutoHeightDirective, IconComponent } from "../ui";
 import { formatAgo, type EventRowView } from "./session-activity-model";
+import { AgentMarkComponent, type AgentWorkIntent } from '../conversation';
 
 /**
  * One noteworthy runtime event under Recent. Presentational: it owns only the
@@ -15,7 +16,7 @@ import { formatAgo, type EventRowView } from "./session-activity-model";
  */
 @Component({
   selector: "ex-session-event-row",
-  imports: [AutoHeightDirective, IconComponent],
+  imports: [AutoHeightDirective, IconComponent, AgentMarkComponent],
   templateUrl: "./session-event-row.component.html",
   styleUrls: [
     "./session-activity-row.css",
@@ -25,7 +26,7 @@ import { formatAgo, type EventRowView } from "./session-activity-model";
   host: {
     class: "event",
     role: "listitem",
-    "[class.inspectable]": "!!view().event.agentId",
+    "[class.inspectable]": "!!view().event.agentId || !!view().session",
     "[attr.data-tone]": "view().event.tone",
     "[attr.data-kind]": "view().event.kind",
   },
@@ -35,6 +36,9 @@ export class SessionEventRowComponent {
   /** Wall-clock time from the panel's shared ticker. */
   readonly now = input.required<number>();
   readonly inspectRequested = output<string>();
+  readonly sessionRequested = output<AgentWorkIntent>();
+  readonly sessionsDisabled = input(false);
+  readonly harness = input<string>();
 
   protected readonly outputId = `session-event-output-${crypto.randomUUID()}`;
   protected readonly expanded = signal(false);
@@ -43,7 +47,12 @@ export class SessionEventRowComponent {
     return at === null ? "" : formatAgo(this.now() - at);
   });
 
-  protected inspect(): void {
+  protected inspect(origin: HTMLElement): void {
+    const session = this.view().session;
+    if (session) {
+      this.sessionRequested.emit({ target: { kind: 'session', session }, action: 'open', origin });
+      return;
+    }
     const id = this.view().event.agentId;
     if (id) this.inspectRequested.emit(id);
   }

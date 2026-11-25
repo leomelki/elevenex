@@ -1,8 +1,11 @@
 import type {
+  DelegatedSessionWork,
+  SessionAgentReference,
   SessionChatBackgroundWork,
   SessionChatWork,
   SessionChatWorkEvent,
 } from "@elevenex/shared";
+import { agentIdentity, agentWorkLive, sessionAgentTitle } from '../conversation';
 import type { Status } from "../ui";
 import { sessionWorkStatus } from "./session-work-status";
 
@@ -34,6 +37,7 @@ export interface WorkRowView {
   readonly startedAt: number | null;
   readonly inspectable: boolean;
   readonly hasControls: boolean;
+  readonly session?: SessionAgentReference;
 }
 
 export interface ActivitySections {
@@ -50,6 +54,7 @@ export interface EventRowView {
   readonly output: boolean;
   /** Output long enough to clamp behind Show more. */
   readonly long: boolean;
+  readonly session?: SessionAgentReference;
 }
 
 const LEFT_BEHIND: ActivityTag = {
@@ -86,7 +91,7 @@ export function formatAgo(ms: number): string {
 }
 
 /** Reported consumption, such as “18.4k tokens · 9 tools”; empty when unreported. */
-export function formatUsage(item: SessionChatBackgroundWork): string {
+export function formatUsage(item: Pick<SessionChatBackgroundWork, 'tokens' | 'toolUses'>): string {
   return [
     item.tokens === undefined
       ? ""
@@ -129,11 +134,46 @@ export function workRowView(item: SessionChatBackgroundWork): WorkRowView {
 }
 
 export function activitySections(work: SessionChatWork): ActivitySections {
-  const rows = work.running.map(workRowView);
+  const native = work.running.map(workRowView);
+  const separate = (work.sessions ?? []).filter(item => agentWorkLive(item.status)).map(sessionWorkRow);
+  const rows = [...native, ...separate];
+  const needsYou = rows.filter(row => row.item.status === 'waiting').slice(0, 16);
   return {
-    needsYou: rows.filter((row) => row.item.status === "waiting"),
-    running: rows.filter((row) => row.item.status !== "waiting"),
+    needsYou,
+    running: rows.filter(row => row.item.status !== 'waiting').slice(0, 16 - needsYou.length),
   };
+}
+
+function sessionWorkRow(work: DelegatedSessionWork): WorkRowView {
+  const title = sessionAgentTitle(work.session);
+  return {
+    ...workRowView({
+      id: 'session:' + work.session.sessionId, kind: 'agent', title, label: title,
+      detail: work.detail, status: work.status, startedAt: work.startedAt,
+      stoppable: false, orphaned: false,
+    }),
+    inspectable: true,
+    session: work.session,
+    identity: agentIdentity(work.session.selection),
+  };
+}
+
+export function recentActivity(work: SessionChatWork): readonly EventRowView[] {
+  const recent = work.recent.map(eventRowView);
+  for (const agent of work.sessions ?? []) {
+    if (agentWorkLive(agent.status)) continue;
+    const status = sessionWorkStatus(agent.status);
+    const event: SessionChatWorkEvent = {
+      id: 'session:' + agent.session.sessionId,
+      kind: 'finished',
+      tone: status.tone === 'failed' ? 'danger' : agent.status === 'completed' ? 'success' : 'info',
+      title: sessionAgentTitle(agent.session),
+      detail: agent.detail,
+      at: agent.endedAt,
+    };
+    recent.push({ ...eventRowView(event), session: agent.session, output: false });
+  }
+  return recent.sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 12);
 }
 
 export function eventIcon(event: SessionChatWorkEvent): string {

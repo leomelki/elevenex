@@ -51,6 +51,7 @@
   font-size: var(--text-mono-meta-size);
   font-variant-numeric: tabular-nums;
 }
+.trigger-time::before { content: '·'; margin-inline-end: var(--space-1); }
 
 .panel {
   display: flex;

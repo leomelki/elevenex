@@ -16,7 +16,11 @@ import {
   viewChild,
   untracked,
 } from "@angular/core";
-import { ButtonComponent, FoldComponent, IconComponent } from "../../ui";
+import { ButtonComponent, FoldComponent, IconComponent, StatusGlyphComponent, TooltipDirective } from "../../ui";
+import type { SessionAgentReturn } from '@elevenex/shared';
+import { AgentMarkComponent } from '../composer/agent-mark.component';
+import { DatePipe } from '@angular/common';
+import { agentControl, agentWorkState, sessionAgentTitle, type AgentWorkCard, type AgentWorkIntent } from '../agents/agent-work.models';
 import type {
   ChangedFile,
   DeferredTurnWork,
@@ -45,6 +49,10 @@ export const WORK_PENDING_CUE_MS = 120;
 @Component({
   selector: "ex-turn",
   imports: [
+    AgentMarkComponent,
+    DatePipe,
+    StatusGlyphComponent,
+    TooltipDirective,
     ButtonComponent,
     FoldComponent,
     IconComponent,
@@ -102,6 +110,19 @@ export class TurnComponent implements OnChanges {
   readonly openPage = output<string>();
   readonly copyCode = output<string>();
   readonly contentRequested = output<ToolContentRequest>();
+  readonly agentCards = input<readonly AgentWorkCard[]>([]);
+  readonly returnedTo = input<readonly SessionAgentReturn[]>([]);
+  readonly agentNavigationDisabled = input(false);
+  readonly agentRequested = output<AgentWorkIntent>();
+  protected readonly agentState = agentWorkState;
+  protected readonly agentTitle = sessionAgentTitle;
+  protected openAgent(card: AgentWorkCard, event: Event): void {
+    if (card.target)
+      this.agentRequested.emit({ target: card.target, action: card.status === 'waiting' && card.target.kind === 'session' ? 'answer' : 'open', origin: agentControl(event) });
+  }
+  protected followHandoff(receipt: SessionAgentReturn, event: Event): void {
+    this.agentRequested.emit({ target: { kind: 'session', session: receipt.recipient }, action: 'return', origin: agentControl(event) });
+  }
   protected readonly inspecting = signal(false);
   readonly duration = input(0);
   readonly elapsed = input(0);
@@ -211,6 +232,7 @@ export class TurnComponent implements OnChanges {
           this.deferredWork(),
           this.sharedChanges(),
           this.filesDiff(),
+          this.agentCards().length,
         ),
   );
   private readonly factsElement =

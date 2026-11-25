@@ -337,3 +337,19 @@ footer {
     padding-inline: var(--space-3);
   }
 }
+
+.mark ex-agent-mark { --agent-mark-size: 28px; }
+.pinned-result {
+  margin: var(--space-2) var(--space-4); border: 1px solid var(--line);
+  border-inline-start: 2px solid var(--accent); border-radius: var(--radius-md);
+  background: var(--surface-raised); min-width: 0;
+}
+.result-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); font-size: var(--text-ui-size); }
+.result-copy { margin-inline-start: auto; }
+.result-preview, .result-body { padding: var(--space-2) var(--space-3); overflow-wrap: anywhere; }
+.result-preview {
+  margin: 0; padding-block: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; line-height: var(--text-ui-line); font-size: var(--text-ui-size);
+}
+.result-body { max-height: 32vh; overflow: auto; }
+.result-more { margin: var(--space-1) var(--space-2); }

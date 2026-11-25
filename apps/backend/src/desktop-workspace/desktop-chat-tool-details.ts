@@ -65,7 +65,15 @@ export class ChatToolDetails {
         if (!row || !peer) return row;
         if (raw.kind === 'tool_use') {
           const result = project(peer, raw);
-          return result ? { ...row, receipt: { id: result.id, error: result.error, toolDetails: result.toolDetails } } : row;
+          if (!result) return row;
+          const entry = result.agent;
+          const { reply, ...outcome } = entry?.result ?? {};
+          return {
+            ...row,
+            ...(entry ? { agent: { ...entry, result: { ...outcome,
+              ...(reply ? { detail: reply.text.replace(/\s+/g, ' ').slice(0, 360) } : {}) } } } : {}),
+            receipt: { id: result.id, error: result.error, toolDetails: result.toolDetails },
+          };
         }
         const call = project(peer);
         return call?.toolDetails ? { ...row, invocation: { id: call.id, toolKind: call.toolKind, toolDetails: call.toolDetails } } : row;

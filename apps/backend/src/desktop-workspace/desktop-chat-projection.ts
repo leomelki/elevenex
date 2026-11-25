@@ -4,6 +4,8 @@ import { chatMentionText, projectChatMentions } from './desktop-chat-mentions.js
 import { changeSummary, toolChanges } from './desktop-chat-changes.js';
 import type { AgentTranscriptItem } from '../agent-runtime/agent-runtime.types.js';
 import { chatItemFailed, commandExecution, record } from './desktop-chat-tool-outcome.js';
+import { splitSessionAgentPrompt } from '../sessions/session-agent-message.js';
+import { chatAgentEntry } from './desktop-chat-agent-tools.js';
 
 export { record } from './desktop-chat-tool-outcome.js';
 export function display(value: unknown, limit = 16000): string {
@@ -23,7 +25,7 @@ const nullable = (value: unknown) =>
   typeof value === 'string' ? display(value, 1000) : null;
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-type ChatDisplayContent = Pick<SessionChatRecord, 'text' | 'truncated' | 'mentions' | 'media'>;
+type ChatDisplayContent = Pick<SessionChatRecord, 'text' | 'truncated' | 'mentions' | 'media' | 'sender'>;
 export type ChatMediaCache = WeakMap<AgentTranscriptItem, ChatDisplayContent>;
 export type ChatChangesCache = WeakMap<AgentTranscriptItem, { readonly result: AgentTranscriptItem; readonly fingerprint: string; readonly changes: ReturnType<typeof changeSummary> }>;
 
@@ -42,30 +44,34 @@ export function chatDisplayContent(item: AgentTranscriptItem, cache?: ChatMediaC
   const cached = cache?.get(item);
   if (cached) return cached;
   const original = item.content ?? item.providerToolResult ?? item.agentMessage?.body;
-  const context = item.kind === 'user' && typeof original === 'string' ? projectChatMentions(original) : null;
+  const prompt = item.kind === 'user' && typeof original === 'string' ? splitSessionAgentPrompt(original) : undefined;
+  const context = prompt ? projectChatMentions(prompt.text) : null;
   const content = chatMedia(context ? { ...item, content: context.text } : item);
   const text = display(content.text, item.kind === 'user' ? 64000 : 16000);
   const projected = {
     text,
     truncated: content.shortened || text.endsWith('… [display shortened]'),
     ...(context?.mentions.length ? { mentions: context.mentions } : {}),
+    ...(prompt?.sender ? { sender: prompt.sender } : {}),
     ...(content.media.length ? { media: content.media.map(media => ({ id: media.id, path: media.path, caption: media.caption, inline: media.inline, ...(media.kind ? { kind: media.kind } : {}) })) } : {}),
   };
   cache?.set(item, projected);
   return projected;
 }
 
-export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache) {
+export function chatItem(item: AgentTranscriptItem, call?: AgentTranscriptItem, cache?: ChatChangesCache, mediaCache?: ChatMediaCache): SessionChatRecord {
   const execution = commandExecution(item, call);
   const input = display(item.toolInput);
   // Keep only bounded display data. Original text and media sources can be
   // reconstructed from the transcript when their dedicated readers need them.
   const projected = chatDisplayContent(item, mediaCache);
   const changes = chatItemChanges(item, call, cache);
+  const agent = chatAgentEntry(item, call);
   return {
     ...projected,
     ...(execution ? { execution } : {}),
     ...(changes ? { changes } : {}),
+    ...(agent ? { agent } : {}),
     id: item.id,
     kind: item.kind,
     ...(item.kind === 'assistant' && item.assistantPhase ? { assistantPhase: item.assistantPhase } : {}),
@@ -185,18 +191,20 @@ export function chatState(
       .slice(0, 50)
       .map((value) => {
         const p = record(value);
-        return { id: display(p.id, 1000), text: display(chatMentionText(typeof p.prompt === 'string' ? p.prompt : ''), 64000) };
+        const prompt = splitSessionAgentPrompt(typeof p.prompt === 'string' ? p.prompt : '');
+        return { id: display(p.id, 1000), text: display(chatMentionText(prompt.text), 64000),
+          ...(prompt.sender ? { sender: prompt.sender } : {}) };
       }),
     queuePaused: raw.queuePaused === true,
     ...(Array.isArray(raw.dispatchingPrompts) ? {
       dispatchingPrompts: raw.dispatchingPrompts.slice(0, 8).map(value => {
         const prompt = record(value);
         const id = display(prompt.id, 1000), timestamp = display(prompt.timestamp, 100);
-        const { text, mentions, media } = chatDisplayContent({
+        const { text, mentions, media, sender } = chatDisplayContent({
           id, timestamp, kind: 'user', content: typeof prompt.prompt === 'string' ? prompt.prompt : '',
         });
         return {
-          id, timestamp, text, ...(mentions?.length ? { mentions } : {}),
+          id, timestamp, text, ...(mentions?.length ? { mentions } : {}), ...(sender ? { sender } : {}),
           // A pending prompt can reference uploaded files. Native inline media
           // is read using the eventual transcript item ID.
           ...(media?.some(ref => !ref.inline) ? { media: media.filter(ref => !ref.inline) } : {}),

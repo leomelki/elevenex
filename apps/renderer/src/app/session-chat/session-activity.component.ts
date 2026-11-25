@@ -13,6 +13,7 @@ import {
   signal,
 } from "@angular/core";
 import type { SessionChatWork } from "@elevenex/shared";
+import { agentWorkLive, type AgentWorkIntent } from '../conversation';
 import {
   IconButtonComponent,
   IconComponent,
@@ -22,7 +23,7 @@ import {
 } from "../ui";
 import {
   activitySections,
-  eventRowView,
+  recentActivity,
   formatElapsed,
   parseTime,
   type WorkRowView,
@@ -59,6 +60,7 @@ const ISSUE_WINDOW_MS = 30 * 60_000;
 export class SessionActivityComponent {
   readonly work = input.required<SessionChatWork>();
   readonly provider = input("");
+  readonly harness = input<string>();
   /** Controls need a writable, reachable conversation. */
   readonly stopDisabled = input(false);
   /** Explains why controls are unavailable; shown at the top of the panel. */
@@ -69,12 +71,14 @@ export class SessionActivityComponent {
   readonly backgrounding = input(false);
   /** The conversation holds an approval or question that Answer can focus. */
   readonly decisionPending = input(false);
+  readonly sessionsDisabled = input(false);
 
   readonly stopRequested = output<string>();
   readonly inspectRequested = output<string>();
   readonly backgroundRequested = output<string>();
   /** Emitted after the panel has closed, so focus can move to the decision. */
   readonly answerRequested = output<void>();
+  readonly sessionRequested = output<AgentWorkIntent>();
 
   readonly open = signal(false);
   protected readonly now = signal(Date.now());
@@ -87,11 +91,12 @@ export class SessionActivityComponent {
 
   protected readonly sections = computed(() => activitySections(this.work()));
   protected readonly recent = computed(() =>
-    this.work().recent.map(eventRowView),
+    recentActivity(this.work()),
   );
-  private readonly live = computed(() => this.work().running);
+  private readonly delegates = computed(() => this.work().sessions?.filter(item => agentWorkLive(item.status)) ?? []);
+  private readonly live = computed(() => [...this.work().running, ...this.delegates()]);
   protected readonly total = computed(
-    () => this.work().totalRunning ?? this.live().length,
+    () => (this.work().totalRunning ?? this.work().running.length) + (this.work().totalSessionsRunning ?? this.delegates().length),
   );
   protected readonly waiting = computed(
     () => this.sections().needsYou.length,
@@ -142,8 +147,10 @@ export class SessionActivityComponent {
   protected readonly triggerText = computed(() => {
     if (this.waiting()) return `${this.waiting()} needs you`;
     const count = this.total();
+    if (count && this.delegates().length && this.work().running.every(item => item.kind === 'agent'))
+      return count + (count === 1 ? ' agent' : ' agents');
     if (count)
-      return `${count} ${this.live().some((item) => item.background === false) ? "active" : "in background"}`;
+      return `${count} ${this.work().running.some((item) => item.background === false) || this.delegates().length ? "active" : "in background"}`;
     const issues = this.issues().length;
     return issues ? `${issues} ${issues === 1 ? "issue" : "issues"}` : "";
   });
@@ -191,6 +198,10 @@ export class SessionActivityComponent {
   }
   inspect(agentId: string): void {
     this.inspectRequested.emit(agentId);
+  }
+  protected openSession(intent: AgentWorkIntent): void {
+    this.close();
+    this.sessionRequested.emit(intent);
   }
   background(row: WorkRowView): void {
     const id = row.item.agentId;

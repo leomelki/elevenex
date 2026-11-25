@@ -1,5 +1,7 @@
+const { createRequire } = require('node:module');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const requireWorkspace = createRequire(require.resolve('../dist/backend-client/workspace'));
 const { createServer } = require('node:http');
 const { BackendClient } = require('../dist/backend-client/client');
 const { createBackendClient } = require('../dist/backend-client/application');
@@ -465,7 +467,7 @@ test('project deletion explains cleanup failures using bounded known codes witho
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -510,7 +512,7 @@ test('workspace branch IPC preserves exact refs and accepts legacy branch replie
   context.after(() => client.dispose()); client.attach(42);
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
   const search = handlers.get('workspace:branches');
@@ -547,7 +549,7 @@ test('project name availability IPC validates names, replies, scope and sender',
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
   const check = handlers.get('workspace:project-name-availability');
@@ -584,7 +586,7 @@ test('task recovery IPC preserves default retries and sends only named consent t
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -629,7 +631,7 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
   const scope = client.state(42).scope.id;
   const handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   context.after(workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender));
   const selection = { includeUnstaged: true, excluded: [file.path], includedSecrets: [] };
@@ -696,7 +698,7 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   context.after(() => client.dispose()); client.attach(42);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender);
   context.after(stop);
@@ -721,19 +723,27 @@ test('session archive and Undo validate task ownership, consent, trusted input a
   assert.equal(history.ok,true); assert.equal(history.value.items[0].status,'archived');
   assert.match(requests[4].path,/state=archived/);
   assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1,state:'normal'})).ok,false);
-  reply = {revision:1,version:1,sessionArchive:true,sessionArchiveHistory:true};
-  assert.equal((await handlers.get('workspace:revision')(event,scope)).value.sessionArchiveHistory,true);
+  reply = {revision:1,version:1,sessionArchive:true,sessionArchiveHistory:true,sessionArchiveChildren:true};
+  const capabilities = (await handlers.get('workspace:revision')(event,scope)).value;
+  assert.equal(capabilities.sessionArchiveHistory,true);
+  assert.equal(capabilities.sessionArchiveChildren,true);
   const remove = input => handlers.get('workspace:delete-session')(event,scope,input);
   for (const input of [null, {taskId:1,sessionId:0}, {taskId:'1',sessionId:2}]) assert.throws(() => remove(input));
   assert.throws(() => handlers.get('workspace:delete-session')({senderFrame:{},sender},scope,{taskId:1,sessionId:2}));
   reply = {accepted:true};
   assert.equal((await remove({taskId:1,sessionId:2})).ok,true);
   assert.deepEqual(requests.at(-1),{path:'/api/desktop-workspace/tasks/1/sessions/2/delete',body:null});
+  for (const stopAgents of [[], [2], [3, 3], [0], ['3'], Array.from({ length: 33 }, (_, index) => index + 3)])
+    assert.throws(() => archive(scope, { taskId: 1, sessionId: 2, confirmStop: true, stopAgents }));
+  assert.throws(() => archive(scope, { taskId: 1, sessionId: 2, confirmStop: true, includeChildren: 'yes' }));
+  assert.equal((await archive(scope, { taskId: 1, sessionId: 2, confirmStop: true, stopAgents: [3, 4], includeChildren: true })).ok, true);
+  assert.deepEqual(requests.at(-1).body, { confirmStop: true, stopAgents: [3, 4], includeChildren: true });
   reply = {accepted:false};
   assert.equal((await remove({taskId:1,sessionId:2})).error.code,'outcome-unknown');
-  reply = {items:[{id:2,taskId:1,repoId:3,name:'Busy',status:'running',turnStatus:'review',commandCount:2,provider:'codex',updatedAt:''}],nextCursor:null};
+  reply = {items:[{id:2,taskId:1,repoId:3,name:'Busy',status:'running',turnStatus:'review',commandCount:2,childStopRequired:true,provider:'codex',updatedAt:''}],nextCursor:null};
   const busy = await handlers.get('workspace:sessions')(event,scope,{taskId:1});
   assert.equal(busy.ok,true); assert.equal(busy.value.items[0].turnStatus,'review'); assert.equal(busy.value.items[0].commandCount,2);
+  assert.equal(busy.value.items[0].childStopRequired,true);
   for (const invalid of [{commandCount:-1},{commandCount:1.5},{commandCount:'2'},{turnStatus:7}]) {
     reply = {items:[{id:2,taskId:1,repoId:3,name:'Busy',status:'running',provider:'codex',updatedAt:'',...invalid}],nextCursor:null};
     assert.equal((await handlers.get('workspace:sessions')(event,scope,{taskId:1})).ok,false);
@@ -806,6 +816,32 @@ test('chat accepts bounded queued handoffs from engines using the capability', (
   }).dispatchingPrompts, [prompt]);
   for (const dispatchingPrompts of [[{ ...prompt, timestamp: 'bad' }], [{ ...prompt, text: 'x'.repeat(64001) }], Array(9).fill(prompt)])
     assert.throws(() => parseChatState({ ...chatState, dispatchingPrompts }));
+});
+
+test('delegation metadata validates identities, tool receipts and view bounds', () => {
+  const { parseChatPage, parseChatState } = require('../dist/backend-client/session-chat-validation');
+  const at = '2026-11-14T12:00:00.000Z';
+  const child = { sessionId: 3, taskId: 1, title: 'Review', selection: { provider: 'codex', model: 'worker' } };
+  const live = { session: child, status: 'waiting', detail: 'Choose a timeout', startedAt: at, endedAt: null };
+  const state = { ...chatState, work: { running: [], recent: [], sessions: [live], totalSessionsRunning: 1 } };
+  assert.equal(parseChatState(state, 2, 1).work.sessions[0].session.sessionId, 3);
+  for (const sessions of [[live, live], [{ ...live, session: { ...child, taskId: 2 } }],
+    [{ ...live, session: { ...child, sessionId: 2 } }], Array(29).fill(live)])
+    assert.throws(() => parseChatState({ ...state, work: { ...state.work, sessions } }, 2, 1));
+
+  const page = { taskId: 1, sessionId: 2, cursor: 'delegation', before: null, reset: true, items: [], events: [], state };
+  const user = { id: 'prompt', kind: 'user', text: 'Review', timestamp: at, toolId: null, toolName: null, toolKind: null, input: '', error: false, truncated: false };
+  const sender = { session: child, purpose: 'message' };
+  assert.equal(parseChatPage({ ...page, items: [{ ...user, sender }] }, 1, 2).items[0].sender.purpose, 'message');
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...user, sender, editable: true }] }, 1, 2));
+  const call = { ...user, kind: 'tool_use', agent: { id: user.id, at, operation: { type: 'wait', sessions: [3] } } };
+  assert.equal(parseChatPage({ ...page, items: [call] }, 1, 2).items[0].agent.operation.type, 'wait');
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...call, agent: { ...call.agent, id: 'different' } }] }, 1, 2));
+  const notice = { ...user, id: 'notice', kind: 'system', agent: { id: 'notice', at, endedAt: at,
+    operation: { type: 'native-wait', agents: ['ses_review'] },
+    result: { agents: [{ agentId: 'ses_review', status: 'completed' }] } } };
+  assert.equal(parseChatPage({ ...page, items: [notice] }, 1, 2).items[0].agent.result.agents[0].status, 'completed');
+  assert.throws(() => parseChatPage({ ...page, items: [{ ...notice, kind: 'assistant' }] }, 1, 2));
 });
 
 test('harness selection requires a known action shape and an expected current provider', () => {
@@ -1107,7 +1143,7 @@ test('task request reconciliation is scoped, read-only and validates repository 
   context.after(() => client.dispose()); client.attach(42);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = { id: 42 }, event = { senderFrame: frame, sender };
   const stop = workspace.registerWorkspaceIpc(client, (candidate, contents) => candidate === frame && contents === sender); context.after(stop);
   const read = input => handlers.get('workspace:task-request')(event, scope, input);
@@ -1239,7 +1275,7 @@ test('navigation waits bound and validate replies, coalesce per request and canc
   context.after(() => client.dispose()); client.attach(42); client.attach(43);
   const scope = client.state(42).scope.id, handlers = new Map(), ipc = {}, workspace = {};
   vm.runInNewContext(await readFile(require.resolve('../dist/ipc'), 'utf8'), { exports: ipc, require: () => ({ ipcMain: { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) } }) });
-  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : name === './transport' ? require('../dist/backend-client/transport') : require(name) });
+  vm.runInNewContext(await readFile(require.resolve('../dist/backend-client/workspace'), 'utf8'), { exports: workspace, URLSearchParams, require: name => name === '../ipc' ? ipc : requireWorkspace(name) });
   const frame = {}, sender = {id:42}, event = {senderFrame:frame,sender};
   const stop = workspace.registerWorkspaceIpc(client, candidate => candidate === frame); context.after(stop);
   const input = { after: 3, requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };

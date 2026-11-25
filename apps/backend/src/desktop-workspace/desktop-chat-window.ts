@@ -6,6 +6,7 @@ import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-detai
 import { ChatToolLinks, type ChatToolPositions } from './desktop-chat-tool-links.js';
 import { endOfChatTurn, type ChatCompletedTurns } from './desktop-chat-turns.js';
 import { editableChatPrompt } from './desktop-chat-edit.js';
+import { chatAgentEntry } from './desktop-chat-agent-tools.js';
 import { mergeTranscriptRows } from '../agent-runtime/transcript-order.js';
 import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js';
 
@@ -220,6 +221,10 @@ export function chatWindow(
     const peer = links.peer(raw);
     const call = raw.kind === 'tool_result' ? peer : undefined;
     let item: SessionChatItem = summary ?? toolPage?.activity(raw, peer) ?? chatItem(raw, call, changesCache, mediaCache);
+    if (raw.kind === 'tool_use' && peer && !toolPage) {
+      const agent = chatAgentEntry(raw, peer);
+      if (agent) item = { ...item, agent };
+    }
     if (options.linkToolReceipts && raw.kind === 'tool_use' && peer)
       item = { ...item, receipt: { id: peer.id, error: chatItemFailed(peer, commandExecution(peer, raw)) } };
     if (!summary && raw.kind === 'user') {

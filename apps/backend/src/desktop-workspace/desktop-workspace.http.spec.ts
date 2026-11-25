@@ -183,6 +183,7 @@ describe('desktop workspace HTTP resource slice', () => {
     expect(initial.chatStream).toBe(true);
     expect(initial.sessionNesting).toBe(true);
     expect(initial.sessionNestingOrder).toBe(true);
+    expect(initial.sessionArchiveChildren).toBe(true);
     const navigation = app.get(NavigationEventsService);
     const entered = new Promise<void>(resolve => {
       const wait = navigation.wait.bind(navigation);

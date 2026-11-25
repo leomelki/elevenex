@@ -50,8 +50,14 @@ button:focus-visible {
 .chevron.closed {
   transform: rotate(-90deg);
 }
-.title {
+.task-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   flex: 1;
+  min-width: 0;
+}
+.title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -60,6 +66,11 @@ button:focus-visible {
   font-weight: 600;
   line-height: 18px;
   letter-spacing: -0.005em;
+}
+.temporary {
+  display: inline-flex;
+  flex: none;
+  color: var(--ink-muted);
 }
 .tree {
   margin-left: 13px;
@@ -113,7 +124,7 @@ button:focus-visible {
   min-width: 30px;
   flex-shrink: 6;
 }
-.toggle:has(ex-repo-tag) .title {
+.toggle:has(ex-repo-tag) .task-name {
   flex: 1 1 auto;
 }
 .merged {

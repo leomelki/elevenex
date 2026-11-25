@@ -27,9 +27,11 @@ export interface ChatBackgroundWork {
   status?: ReturnType<typeof agentStatus>;
   background?: boolean;
   agentId?: string;
+  parentToolUseId?: string;
   inspectable?: boolean;
   canBackground?: boolean;
   model?: string;
+  effort?: string;
   context?: ReturnType<typeof agentContext>;
 }
 export interface ChatWorkEvent {
@@ -47,6 +49,8 @@ export interface ChatWorkEvent {
   detail: string;
   at: string | null;
   agentId?: string;
+  agentStatus?: ReturnType<typeof agentStatus>;
+  parentToolUseId?: string;
 }
 export interface ChatWork {
   running: ChatBackgroundWork[];
@@ -254,6 +258,7 @@ function running(
           ...(agent
             ? {
                 agentId: text(agent.agentId),
+                ...(text(agent.parentToolUseId) ? { parentToolUseId: clip(text(agent.parentToolUseId), 1000) } : {}),
                 inspectable: controls.inspectAgent === true,
                 canBackground:
                   controls.backgroundAgent === true &&
@@ -261,6 +266,7 @@ function running(
               }
             : {}),
           ...(text(agent?.model) ? { model: line(agent?.model, 160) } : {}),
+          ...(text(agent?.reasoningEffort) ? { effort: line(agent?.reasoningEffort, 80) } : {}),
           ...(context ? { context } : {}),
           ...(count(usage.totalTokens) !== undefined
             ? { tokens: count(usage.totalTokens) }
@@ -317,7 +323,8 @@ function finished(
       id: clip(`finished:task:${id}`, 400),
       kind: 'finished',
       ...(controls.inspectAgent && agent
-        ? { agentId: text(agent.agentId) }
+        ? { agentId: text(agent.agentId), agentStatus: agentStatus(agent),
+            ...(text(agent.parentToolUseId ?? task.toolUseId) ? { parentToolUseId: clip(text(agent.parentToolUseId ?? task.toolUseId), 1000) } : {}) }
         : {}),
       tone: failed
         ? 'danger'
@@ -357,7 +364,8 @@ function finished(
     events.push({
       id: clip(`finished:subagent:${id}`, 400),
       kind: 'finished',
-      ...(controls.inspectAgent ? { agentId: id } : {}),
+      ...(controls.inspectAgent ? { agentId: id, agentStatus: status,
+        ...(text(agent.parentToolUseId) ? { parentToolUseId: clip(text(agent.parentToolUseId), 1000) } : {}) } : {}),
       tone: failed
         ? 'danger'
         : ended

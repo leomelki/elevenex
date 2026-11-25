@@ -1,3 +1,4 @@
+<ng-content select="[chatHeader]" />
 <div class="conversation">
   <ex-chat-scroll (activeExchange)="active.set($event)"
     [historyBefore]="historyBefore()" [historyAfter]="historyAfter()"
@@ -7,23 +8,9 @@
     (latestRequested)="latestRequested.emit()">
     <ng-content select="[chatHistory]" />
     @for (exchange of exchanges(); track exchange.renderId ?? exchange.id) {
-      @if (
-        exchange.prompt ||
-        exchange.attachments?.length ||
-        exchange.mentions?.length
-      ) {
-        <ex-message
-          [attr.data-chat-anchor]="exchange.id + ':prompt'"
-          role="user"
-          [messageId]="exchange.id"
-          [isNew]="exchange.isNew || false"
-          [revealOnArrival]="exchange.revealOnArrival ?? true"
-          [sendOrigin]="exchange.sendOrigin"
-          [time]="exchange.time || ''"
-          [editable]="promptEditing() && !!exchange.promptEditable"
-          [editDisabledReason]="promptEditDisabledReason()"
-          (editRequested)="promptEditRequested.emit(exchange.id)"
-          ><ex-element-prose [text]="exchange.prompt" [resolve]="resolve()" [attachments]="exchange.attachments ?? []" />
+      @if (exchange.prompt || exchange.attachments?.length || exchange.mentions?.length) {
+        <ng-template #promptBody>
+          <ex-element-prose [text]="exchange.prompt" [resolve]="resolve()" [attachments]="exchange.attachments ?? []" />
           @if (exchange.mentions?.length) {
             <div
               class="message-mentions"
@@ -46,7 +33,30 @@
               (copyPath)="copyCode.emit($event)"
             />
           }
-        </ex-message>
+
+        </ng-template>
+        @if (exchange.sender?.purpose === 'assignment') {
+          <ex-agent-assignment [attr.data-chat-anchor]="exchange.id + ':prompt'" [sender]="exchange.sender!"
+            [text]="exchange.prompt" [time]="exchange.time || ''"
+            [controlsDisabled]="agentNavigationDisabled()" (requested)="agentRequested.emit($event)">
+            <ng-container [ngTemplateOutlet]="promptBody" />
+          </ex-agent-assignment>
+        } @else {
+          <ex-message [attr.data-chat-anchor]="exchange.id + ':prompt'" role="user"
+            [messageId]="exchange.id" [isNew]="exchange.isNew || false"
+            [revealOnArrival]="exchange.revealOnArrival ?? true" [sendOrigin]="exchange.sendOrigin"
+            [time]="exchange.time || ''" [editable]="promptEditing() && !!exchange.promptEditable"
+            [editDisabledReason]="promptEditDisabledReason()" (editRequested)="promptEditRequested.emit(exchange.id)">
+            @if (exchange.sender; as sender) {
+              <button exButton variant="ghost" size="sm" type="button" class="message-sender"
+                [disabled]="agentNavigationDisabled()" (click)="openSender(sender.session, $event)">
+                <ex-agent-mark [harness]="sender.session.selection?.provider" mark="A" />
+                <span>Message from {{ agentTitle(sender.session) }}</span>
+              </button>
+            }
+            <ng-container [ngTemplateOutlet]="promptBody" />
+          </ex-message>
+        }
       }
       <ex-turn
         [attr.data-chat-anchor]="exchange.id + ':reply'"
@@ -58,6 +68,10 @@
         [stoppable]="stoppable()"
         [retryable]="retryable()"
         [steps]="exchange.steps"
+        [agentCards]="exchange.agentCards ?? []"
+        [returnedTo]="exchange.returnedTo ?? []"
+        [agentNavigationDisabled]="agentNavigationDisabled()"
+        (agentRequested)="agentRequested.emit($event)"
         [deferredWork]="exchange.deferredWork"
         [answer]="exchange.answer"
         [answerId]="exchange.answerId"

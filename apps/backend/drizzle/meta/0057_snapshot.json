@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0eba438d-fd27-4ff0-a302-c53635219e02",
-  "prevId": "29f50fce-65ad-4d73-9f78-2474c02f75b9",
+  "id": "6b199ec9-6301-411d-be6a-bbccd9d544d0",
+  "prevId": "55bd37ee-01f3-4511-a64a-2187a54a83d0",
   "tables": {
     "projects": {
       "name": "projects",
@@ -627,6 +627,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "delegated_by_session_id": {
+          "name": "delegated_by_session_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "nesting_order": {
           "name": "nesting_order",
           "type": "integer",
@@ -747,6 +754,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "agent_selection": {
+          "name": "agent_selection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "codex_session_id": {
           "name": "codex_session_id",
           "type": "text",
@@ -770,20 +784,6 @@
           "notNull": false,
           "autoincrement": false,
           "default": "'-1'"
-        },
-        "antigravity_session_id": {
-          "name": "antigravity_session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "antigravity_selection": {
-          "name": "antigravity_selection",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "has_injected_worktree_context": {
           "name": "has_injected_worktree_context",
@@ -838,6 +838,13 @@
         }
       },
       "indexes": {
+        "sessions_delegated_by_idx": {
+          "name": "sessions_delegated_by_idx",
+          "columns": [
+            "delegated_by_session_id"
+          ],
+          "isUnique": false
+        },
         "sessions_nesting_order_idx": {
           "name": "sessions_nesting_order_idx",
           "columns": [
@@ -867,15 +874,6 @@
             "id"
           ],
           "isUnique": false
-        },
-        "sessions_workspace_unseen_idx": {
-          "name": "sessions_workspace_unseen_idx",
-          "columns": [
-            "workspace_id",
-            "id"
-          ],
-          "isUnique": false,
-          "where": "has_unreviewed_completion = 1 and last_completion_at is not null"
         },
         "sessions_workspace_activity_idx": {
           "name": "sessions_workspace_activity_idx",
@@ -956,6 +954,79 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "sessions_delegated_by_session_id_sessions_id_fk": {
+          "name": "sessions_delegated_by_session_id_sessions_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "delegated_by_session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "session_launches": {
+      "name": "session_launches",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "delivery": {
+          "name": "delivery",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "session_launches_session_id_unique": {
+          "name": "session_launches_session_id_unique",
+          "columns": [
+            "session_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "session_launches_session_id_sessions_id_fk": {
+          "name": "session_launches_session_id_sessions_id_fk",
+          "tableFrom": "session_launches",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -2505,60 +2576,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "antigravity_turns": {
-      "name": "antigravity_turns",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "items": {
-          "name": "items",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "antigravity_turns_session_idx": {
-          "name": "antigravity_turns_session_idx",
-          "columns": [
-            "session_id",
-            "id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "antigravity_turns_session_id_sessions_id_fk": {
-          "name": "antigravity_turns_session_id_sessions_id_fk",
-          "tableFrom": "antigravity_turns",
-          "tableTo": "sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "desktop_workspace_metadata": {
       "name": "desktop_workspace_metadata",
       "columns": {
@@ -2593,6 +2610,96 @@
             "resource_id"
           ],
           "name": "desktop_workspace_metadata_kind_resource_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "session_reply_returns": {
+      "name": "session_reply_returns",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recipient_id": {
+          "name": "recipient_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "at": {
+          "name": "at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "session_reply_returns_recent_idx": {
+          "name": "session_reply_returns_recent_idx",
+          "columns": [
+            "session_id",
+            "at"
+          ],
+          "isUnique": false
+        },
+        "session_reply_returns_recipient_idx": {
+          "name": "session_reply_returns_recipient_idx",
+          "columns": [
+            "recipient_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "session_reply_returns_session_id_sessions_id_fk": {
+          "name": "session_reply_returns_session_id_sessions_id_fk",
+          "tableFrom": "session_reply_returns",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "session_reply_returns_recipient_id_sessions_id_fk": {
+          "name": "session_reply_returns_recipient_id_sessions_id_fk",
+          "tableFrom": "session_reply_returns",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "recipient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "session_reply_returns_session_id_item_id_recipient_id_pk": {
+          "columns": [
+            "session_id",
+            "item_id",
+            "recipient_id"
+          ],
+          "name": "session_reply_returns_session_id_item_id_recipient_id_pk"
         }
       },
       "uniqueConstraints": {},

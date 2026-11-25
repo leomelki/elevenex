@@ -1,264 +1,218 @@
-import type { EventEmitter } from 'node:events';
 import { z } from 'zod';
+import { latestConversationReply } from '../../../agent-runtime/conversation-export.service.js';
+import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
+import { changeSummary } from '../../../desktop-workspace/desktop-chat-changes.js';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
+import { resolveSessionProvider } from '../drive/provider.util.js';
+import { untilSessionDeadline } from '../session-deadline.js';
 import {
   describeQueuedWork,
   describePausedQueue,
   hasPausedQueue,
-  getSessionAttentionStatus,
   hasQueuedWork,
-  isSessionSettled,
   summarizeBackgroundWork,
-  type SessionRuntimeSnapshot,
 } from '../session-runtime-state.util.js';
+import { waitForSessionEvent } from './session-event-wait.js';
 
 const DEFAULT_EVENTS = ['completed', 'requires_action', 'failed'];
-// Cap at ~3 min to stay inside Claude Code's 5-min tool-call timeout.
-const DEFAULT_TIMEOUT_MS = 170_000;
-const MAX_TIMEOUT_MS = 170_000;
-// DB statuses that indicate the session was killed externally.
-const TERMINAL_DB_STATUSES = new Set(['archived', 'stopped']);
+const WAIT_TIMEOUT_MS = 170_000;
+const REPLY_LIMIT = 8_000;
 
-/**
- * await_session_event — block (event-driven, NOT a poll loop) until a session
- * reaches one of the given statuses or the timeout elapses. 🔴 One efficient
- * wait replaces a polling storm: resolves the instant the status changes.
- */
 export const awaitSessionEventTool = defineTool({
   name: 'await_session_event',
   title: 'Await session event',
   costClass: 'heavy',
   description:
-    "Block until a session reaches one of `events` (default completed/requires_action/failed) or `timeoutMs` elapses — event-driven, not polling. 🔴 Use instead of looping session_status. `completed` only fires once the session is truly settled: a live background task or a prompt queued behind one keeps it running even though the visible turn already ended, so this correctly keeps waiting through that instead of returning early. On resolve: read_session for the delta, or get_pending_action when requires_action. A paused queue always wakes the waiter with resume_pending_prompts guidance, even when omitted from events; current requires_action/failed states take priority over paused. On timeout: re-call immediately — no sleep needed.",
+    'Wait for the first result or blocking decision across up to 16 other sessions. Returns the final reply by default. Use session_status for a snapshot. Completion includes queued and background work.',
   annotations: { readOnlyHint: true },
   inputShape: {
     sessionId: z
       .number()
       .int()
       .positive()
-      .describe('Session id to watch.'),
+      .optional()
+      .describe('One session to watch.'),
+    sessionIds: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(16)
+      .optional()
+      .describe(
+        'Watch these sessions until one matches. Remove handled sessions before waiting again.',
+      ),
     events: z
       .array(z.string().min(1))
       .optional()
       .describe(
-        "Statuses to wake on. Default ['completed','requires_action','failed']. A paused queue always wakes; current permission/error states take priority over paused.",
+        "Statuses to wake on. Default ['completed','requires_action','failed']. Paused queues always wake.",
       ),
     timeoutMs: z
       .number()
       .int()
       .min(1)
-      .max(MAX_TIMEOUT_MS)
-      .default(DEFAULT_TIMEOUT_MS)
-      .describe('Max time to wait in ms (1-170000). Default 170000. Resolves with event:"timeout" on expiry — re-call immediately, no sleep needed.'),
+      .max(WAIT_TIMEOUT_MS)
+      .default(WAIT_TIMEOUT_MS)
+      .describe(
+        'Max wait in ms, default 170000. On timeout, continue work or call again.',
+      ),
+    includeReply: z
+      .boolean()
+      .optional()
+      .describe(
+        'Defaults to true. Set false for status only. Replies include up to 8000 characters and the transcript item ID.',
+      ),
   },
   handler: async (args, ctx) => {
-    const { sessions, agentRuntime } = ctx.services;
-
-    // Validate the session exists up front so a bad id fails fast.
-    const session = await sessions.findOne(args.sessionId).catch(() => null);
-    if (!session) {
+    if ((args.sessionId === undefined) === (args.sessionIds === undefined))
       throw new ToolError({
-        code: 'session_not_found',
-        message: `No session with id ${args.sessionId}.`,
-        remediation: 'List valid ids with find_sessions or project_overview.',
+        code: 'invalid_session_targets',
+        message: 'Pass one of sessionId or sessionIds.',
       });
-    }
-    if (session.surface === 'agent') {
+    const ids =
+      args.sessionId === undefined
+        ? [...new Set(args.sessionIds)]
+        : [args.sessionId];
+    if (ctx.agentSessionId !== null && ids.includes(ctx.agentSessionId))
       throw new ToolError({
-        code: 'agent_session_inaccessible',
-        message: `Session ${args.sessionId} is an agent session and cannot be accessed via MCP tools.`,
-        remediation: 'Use find_sessions to list accessible sessions.',
+        code: 'cannot_wait_for_current_session',
+        message: 'Wait on other sessions. This tool call keeps the current session active.',
       });
-    }
-
-    const wanted = new Set(
-      args.events && args.events.length > 0 ? args.events : DEFAULT_EVENTS,
+    const targets = await Promise.all(
+      ids.map(async (id) => {
+        const { session, provider } = await resolveSessionProvider(ctx, id);
+        return {
+          id,
+          provider,
+          status: session.status,
+          session: sessionAgentReference(session),
+          runtime: ctx.services.agentRuntime.getProvider(provider),
+        };
+      }),
     );
+    const wanted = new Set(args.events?.length ? args.events : DEFAULT_EVENTS);
+    const callerId = ctx.agentSessionId;
+    const handoffs = ctx.services.sessions.delegationHandoffs;
+    const release =
+      callerId === null ? undefined : handoffs?.observe(callerId, ids);
+    try {
+      const { event, target, state, actionKey } = await waitForSessionEvent(
+        targets,
+        wanted,
+        args.timeoutMs,
+        ctx,
+      );
+      if (!target)
+        return {
+          data: { sessionIds: ids, event, status: event },
+          nextStep:
+            'Continue independent work or wait again on the remaining sessions.',
+        };
 
-    // A deliberate queue pause requires action even when waiting only for completion.
-    wanted.add('paused');
-
-    const makeResult = (
-      event: string,
-      status: string,
-      state?: SessionRuntimeSnapshot | null,
-    ) => {
-      // On timeout, say what the wait is blocked on (see poll_session_status).
       const backgroundWork = summarizeBackgroundWork(state);
+      const paused = hasPausedQueue(state);
+      const pending = state?.pendingPrompts?.length ?? 0;
       const turnEnded =
         state?.sessionState === 'idle' && state.runPhase === 'idle';
-      const pausedGuidance = hasPausedQueue(state) && status !== 'paused'
-        ? ` ${describePausedQueue(session.id, state!.pendingPrompts!.length)}`
-        : '';
-      const nextStep =
-        status === 'paused'
-          ? describePausedQueue(session.id, state?.pendingPrompts?.length ?? 0)
-          : event === 'timeout'
-            ? `Still waiting — re-call await_session_event immediately with the same arguments, no sleep needed.${
-                turnEnded && hasQueuedWork(state)
-                  ? ` Its turn has ended. ${describeQueuedWork(backgroundWork, state.pendingPrompts?.length ?? 0)}`
-                  : ''
-              }`
-            : status === 'requires_action'
-              ? 'get_pending_action to inspect the block, then resolve it.'
-              : 'read_session for the delta.';
+      const outcome =
+        event === 'completed' && args.includeReply !== false
+          ? await untilSessionDeadline(
+              target.runtime
+                .getHistory(target.id, { changeDetails: 'summary' })
+                .then((history) => {
+                  const item = latestConversationReply(history);
+                  const boundary = history.findLastIndex(
+                    (row) => row.kind === 'user',
+                  );
+                  let changes;
+                  for (let at = history.length - 1; at > boundary; at--) {
+                    if (history[at].turnChanges) {
+                      changes = changeSummary(history[at].turnChanges, 3);
+                      break;
+                    }
+                  }
+                  return { item, changes };
+                })
+                .catch(() => undefined),
+              1_500,
+              ctx.signal,
+            )
+          : undefined;
+      const item = outcome?.item;
+      const text = item?.content?.trim();
+      const session = targets.find((row) => row.id === target.id)?.session;
+      const changes = outcome?.changes;
+      const reply =
+        item && text
+          ? {
+              id: item.id,
+              text: text.slice(0, REPLY_LIMIT),
+              truncated: text.length > REPLY_LIMIT,
+              ...(changes?.files.length ? { changes } : {}),
+            }
+          : undefined;
+
+      let nextStep: string;
+      switch (event) {
+        case 'paused':
+          nextStep = describePausedQueue(target.id, pending);
+          break;
+        case 'requires_action':
+          nextStep =
+            'Use get_pending_action to inspect what the session needs, then resolve_action when authorized.';
+          break;
+        case 'timeout':
+          nextStep =
+            'Still waiting. Call await_session_event again or continue independent work.';
+          if (
+            turnEnded &&
+            hasQueuedWork(state) &&
+            (pending || backgroundWork.length)
+          )
+            nextStep += ` Its turn has ended. ${describeQueuedWork(backgroundWork, pending)}`;
+          break;
+        case 'provider_changed':
+          nextStep =
+            'The target harness changed. Inspect the session or wait again on its new harness.';
+          break;
+        case 'aborted':
+          nextStep =
+            'Use session_status or begin another wait to continue observing.';
+          break;
+        default:
+          nextStep =
+            reply && !reply.truncated
+              ? 'Use prompt_session for a focused follow-up or read_session for more context.'
+              : 'Use read_session to inspect the transcript.';
+      }
+
+      if (callerId !== null && !ctx.signal.aborted) {
+        if (reply) handoffs?.returned(target.id, reply.id, callerId);
+        if (event === 'requires_action' && actionKey)
+          handoffs?.acknowledgedAction(target.id, callerId, actionKey);
+        if (reply || event === 'failed')
+          handoffs?.collected(target.id, callerId);
+      }
+
       return {
         data: {
-          sessionId: session.id,
+          sessionId: target.id,
+          ...(session ? { session } : {}),
           event,
-          status,
+          status: event,
+          ...(reply && { reply }),
           ...(backgroundWork.length ? { backgroundWork } : {}),
-          ...(hasPausedQueue(state)
-            ? { queuePaused: true, pendingPromptCount: state!.pendingPrompts!.length }
-            : {}),
+          ...(paused ? { queuePaused: true, pendingPromptCount: pending } : {}),
         },
-        deepLink: ctx.deepLink.session(session.id),
-        nextStep: nextStep + pausedGuidance,
+        deepLink: ctx.deepLink.session(target.id),
+        nextStep:
+          nextStep +
+          (paused && event !== 'paused'
+            ? ` ${describePausedQueue(target.id, pending)}`
+            : ''),
+        truncated: reply?.truncated,
       };
-    };
-
-    // Map runtime state to a logical event name the caller cares about.
-    // idle+idle alone is NOT "completed": a live background task or a prompt
-    // unpaused queued prompt can resume the session. Paused prompts instead
-    // require action — they cannot be treated as completed or waited on forever.
-    const runtimeEventFor = (s: SessionRuntimeSnapshot): string | null => {
-      const attention = getSessionAttentionStatus(s);
-      if (attention) return attention;
-      if (isSessionSettled(s)) return 'completed';
-      return null;
-    };
-
-    // Already in a terminal DB state (killed externally) — treat as failed.
-    if (TERMINAL_DB_STATUSES.has(session.status) && wanted.has('failed')) {
-      return makeResult('failed', 'failed');
+    } finally {
+      release?.();
     }
-
-    const runtime = agentRuntime.getProvider(session.activeAgentProvider);
-
-    // Check live runtime state before subscribing to close any already-done race.
-    const initialState = await runtime.getRuntimeState(session.id).catch(() => null);
-    if (initialState) {
-      const logicalEvent = runtimeEventFor(initialState as SessionRuntimeSnapshot);
-      if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(initialState as SessionRuntimeSnapshot))) {
-        return makeResult(logicalEvent, logicalEvent, initialState as SessionRuntimeSnapshot);
-      }
-    }
-
-    const sessionEmitter = sessions as unknown as EventEmitter;
-    const runtimeEmitter = runtime as unknown as EventEmitter;
-
-    return new Promise((resolve) => {
-      let settled = false;
-      let timer: NodeJS.Timeout | undefined;
-
-      const cleanup = () => {
-        sessionEmitter.off('session-status-changed', onSessionStatus);
-        runtimeEmitter.off('event', onRuntimeEvent);
-        ctx.signal.removeEventListener('abort', onAbort);
-        if (timer) clearTimeout(timer);
-      };
-
-      const finish = (
-        event: string,
-        status: string,
-        state?: SessionRuntimeSnapshot,
-      ) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (event !== 'timeout') {
-          resolve(makeResult(event, status, state));
-          return;
-        }
-        void runtime
-          .getRuntimeState(session.id)
-          .catch(() => null)
-          .then((s) => {
-            const state = s as SessionRuntimeSnapshot | null;
-            const primary = hasPausedQueue(state) ? getSessionAttentionStatus(state) : null;
-            resolve(primary
-              ? makeResult(primary, primary, state)
-              : makeResult(event, status, state));
-          });
-      };
-
-      // DB status listener: handles external kills (archived/stopped).
-      const onSessionStatus = (payload: { sessionId: number; status: string }) => {
-        if (payload.sessionId !== session.id) return;
-        if (TERMINAL_DB_STATUSES.has(payload.status) && wanted.has('failed')) {
-          finish('failed', 'failed');
-        }
-      };
-
-      // Runtime event listener: the actual source of truth for run completion.
-      // `run_state` payloads already carry backgroundWork/pendingPrompts (see
-      // emitRunState), so they can be judged directly. `complete` and
-      // `background_work` payloads don't carry the full snapshot — a `complete`
-      // can fire while a background task is still live, and a `background_work`
-      // clear can fire with nothing queued behind it — so re-check the live
-      // state before deciding either one means the session is truly settled.
-      const onRuntimeEvent = (event: {
-        type: string;
-        payload: { sessionId: number } & SessionRuntimeSnapshot;
-      }) => {
-        if (event.payload.sessionId !== session.id) return;
-        if (event.type === 'error') {
-          if (wanted.has('failed') || hasPausedQueue(event.payload)) finish('failed', 'failed', event.payload);
-          return;
-        }
-        if (event.type === 'run_state') {
-          const logicalEvent = runtimeEventFor(event.payload);
-          if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(event.payload))) {
-            finish(logicalEvent, logicalEvent, event.payload);
-          }
-          return;
-        }
-        if (event.type !== 'complete' && event.type !== 'background_work') return;
-        void runtime
-          .getRuntimeState(session.id)
-          .then((s) => {
-            const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-            if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(s as SessionRuntimeSnapshot))) {
-              finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
-            }
-          })
-          .catch(() => {});
-      };
-
-      const onAbort = () => finish('aborted', 'aborted');
-
-      sessionEmitter.on('session-status-changed', onSessionStatus);
-      runtimeEmitter.on('event', onRuntimeEvent);
-      ctx.signal.addEventListener('abort', onAbort, { once: true });
-      timer = setTimeout(() => finish('timeout', 'timeout'), args.timeoutMs);
-
-      // Honour an already-aborted signal.
-      if (ctx.signal.aborted) {
-        onAbort();
-        return;
-      }
-
-      // Archive/stop can happen while the initial runtime read is in flight.
-      // A disposed runtime cannot replay that DB event, so re-read after both
-      // listeners are installed as well as rechecking the runtime below.
-      if (wanted.has('failed')) {
-        void sessions
-          .findOne(session.id)
-          .then((current) => {
-            if (TERMINAL_DB_STATUSES.has(current.status))
-              finish('failed', 'failed');
-          })
-          .catch(() => {});
-      }
-
-      // Re-check runtime state after subscribing to close the race between our
-      // initial check above and listener registration.
-      runtime.getRuntimeState(session.id).then((s) => {
-        const logicalEvent = runtimeEventFor(s as SessionRuntimeSnapshot);
-        if (logicalEvent && (wanted.has(logicalEvent) || hasPausedQueue(s as SessionRuntimeSnapshot))) {
-          finish(logicalEvent, logicalEvent, s as SessionRuntimeSnapshot);
-        }
-      }).catch(() => {});
-    });
   },
 });

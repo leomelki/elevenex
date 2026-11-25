@@ -56,8 +56,9 @@ export class WorkspaceNavigationComponent {
         this.restoreFocusFrame = undefined;
         const document = this.root.ownerDocument;
         if (this.destroy.destroyed || this.store.scopeId() !== scope || (document.activeElement !== origin && document.activeElement !== document.body)) return;
-        const row = this.root.querySelector<HTMLButtonElement>(`[data-task-id="${Number(intent.taskId)}"] .tree > ex-fold [data-session-id="${Number(intent.session.id)}"] .select`);
-        if (row && !row.closest('[inert]')) { row.focus({ preventScroll: true }); return; }
+        const rows = this.root.querySelectorAll<HTMLButtonElement>(`[data-task-id="${Number(intent.taskId)}"] ex-working-sessions [data-session-id="${Number(intent.session.id)}"] .select`);
+        const row = [...rows].find(row => !row.closest('[inert]'));
+        if (row) { row.focus({ preventScroll: true }); return; }
         // ListPresence establishes the new row closed before opening it on the next paint.
         if (remainingFrames-- > 0) this.restoreFocusFrame = requestAnimationFrame(focus);
       };

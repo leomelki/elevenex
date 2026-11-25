@@ -9,16 +9,19 @@ import {
   input,
   output,
   signal,
+  untracked,
   viewChild,
 } from "@angular/core";
 import type {
   SessionChatAgentPage,
   SessionChatBackgroundWork,
   SessionChatItem,
+  SessionChatWorkStatus,
 } from "@elevenex/shared";
 import { SessionChatClient } from "../backend/session-chat-client.service";
 import {
   ChatScrollComponent,
+  AgentMarkComponent,
   MarkdownComponent,
   ToolStepComponent,
   stepIcon,
@@ -63,6 +66,7 @@ const LIVE = new Set(["pending", "running", "waiting"]);
   selector: "ex-session-agent",
   imports: [
     ChatScrollComponent,
+    AgentMarkComponent,
     MarkdownComponent,
     ToolStepComponent,
     ButtonComponent,
@@ -82,6 +86,9 @@ const LIVE = new Set(["pending", "running", "waiting"]);
 export class SessionAgentComponent {
   readonly selection = input.required<ChatSelection>();
   readonly agentId = input.required<string>();
+  readonly origin = input<HTMLElement | null>(null);
+  readonly provider = input<string>();
+  readonly statusHint = input<SessionChatWorkStatus>();
   readonly unreachable = input(false);
   /** The live Activity record, when the agent is still listed; supplies usage. */
   readonly work = input<SessionChatBackgroundWork | null>(null);
@@ -120,7 +127,12 @@ export class SessionAgentComponent {
     const work = this.work();
     return work ? formatUsage(work) : "";
   });
-  protected readonly status = computed(() => this.work()?.status ?? this.page()?.status);
+  protected readonly status = computed(() => this.work()?.status ?? this.statusHint() ?? this.page()?.status);
+  private readonly latestResult = signal<SessionChatItem | undefined>(undefined);
+  protected readonly result = computed(() => LIVE.has(this.status() ?? '') ? undefined : this.latestResult());
+  protected readonly resultOpen = signal(false);
+  protected readonly resultLong = computed(() => (this.result()?.text.length ?? 0) > 420 ||
+    (this.result()?.text.split('\n', 7).length ?? 0) > 6);
   readonly state = computed(() => sessionWorkStatus(this.status()));
   protected readonly titleId = `session-agent-${crypto.randomUUID()}`;
   protected readonly pageNotice =
@@ -150,6 +162,7 @@ export class SessionAgentComponent {
         // The pinned assignment already shows the opening prompt.
         .filter(
           (item, index) => !(index === 0 && page?.before === null && item.kind === "user" && item.text.trim() === prompt) &&
+            item.id !== this.result()?.id &&
             !(item.kind === "assistant" && !item.text.trim()),
         )
         .filter(
@@ -206,6 +219,13 @@ export class SessionAgentComponent {
         undefined,
         this.unreachable(),
       );
+    });
+    let priorStatus: SessionChatWorkStatus | undefined;
+    effect(() => {
+      const status = this.statusHint();
+      if (priorStatus !== status && status && !LIVE.has(status))
+        untracked(() => { if (this.open() && this.page() && !this.busy() && !this.hasNewer()) this.refresh(); });
+      priorStatus = status;
     });
     afterRenderEffect(() => {
       this.page();
@@ -275,6 +295,8 @@ export class SessionAgentComponent {
       this.pages = [];
       this.newer.set([]);
       this.reasoningOpen.set(new Set());
+      this.latestResult.set(undefined);
+      this.resultOpen.set(false);
       this.assignmentTouched = false;
       this.assignmentOpen.set(false);
       this.loadedAt.set("");
@@ -307,6 +329,13 @@ export class SessionAgentComponent {
       }
       const newer = this.newer().at(-1);
       const movedTail = direction === "following" && !newer?.cursor && newer?.first !== result.value.items[0]?.id;
+      if (!before) {
+        const rows = result.value.items;
+        const boundary = rows.map(item => item.kind).lastIndexOf('user');
+        const assistant = rows.slice(boundary + 1).filter(item => item.kind === 'assistant' && item.text.trim());
+        this.latestResult.set(assistant.filter(item => item.assistantPhase === 'final').at(-1) ??
+          assistant.filter(item => item.assistantPhase !== 'commentary').at(-1));
+      }
       if (!direction || movedTail) {
         this.pages = [{ cursor: before, page: result.value }];
         this.newer.set([]);
@@ -332,7 +361,7 @@ export class SessionAgentComponent {
       this.loadedAt.set(clock.format(Date.now()));
       // Short assignments read at a glance; long ones stay folded behind their preview.
       if (before === undefined && !this.assignmentTouched)
-        this.assignmentOpen.set(result.value.prompt.length <= 160);
+        this.assignmentOpen.set(!this.result() && result.value.prompt.length <= 480);
     } else this.error.set(result.error.message);
   }
 }

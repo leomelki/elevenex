@@ -30,14 +30,16 @@ export function reconcileQueuedDeliveries(
   for (const [id, prompt] of dispatched) {
     if (queued.has(id)) continue;
     const prior = deliveries.get(id);
-    if (prior?.local) deliveries.set(id, { ...prior, text: prompt.text, media: prompt.media, mentions: prompt.mentions, local: false });
+    if (prior?.local) deliveries.set(id, { ...prior, text: prompt.text, media: prompt.media, mentions: prompt.mentions, sender: prompt.sender, local: false });
     else if (!prior) deliveries.set(id, queuedDelivery(prompt, previous.length ? previous : records, false));
   }
   for (const [id, delivery] of deliveries) {
     const start = pendingPromptStart(records, delivery);
     const index = queued.has(id) || dispatched.has(id) ? -1 : records.findIndex((item, index) =>
       index >= start && item.kind === 'user' && !delivery.knownIds.has(item.id) &&
-      !arrivals.has(item.id) && !claimedReceipts.has(item.id) && item.text === delivery.text);
+      !arrivals.has(item.id) && !claimedReceipts.has(item.id) && item.text === delivery.text &&
+      item.sender?.session.sessionId === delivery.sender?.session.sessionId &&
+      item.sender?.messageId === delivery.sender?.messageId);
     const receipt = records[index];
     if (receipt) {
       arrivals.set(receipt.id, delivery.id);

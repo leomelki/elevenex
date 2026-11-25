@@ -11,6 +11,7 @@ import {
   StatusGlyphComponent,
   TooltipDirective,
 } from "../ui";
+import { agentControl, AgentMarkComponent, type AgentWorkIntent } from '../conversation';
 import { formatElapsed, type WorkRowView } from "./session-activity-model";
 
 /**
@@ -22,6 +23,7 @@ import { formatElapsed, type WorkRowView } from "./session-activity-model";
 @Component({
   selector: "ex-session-work-row",
   imports: [
+    AgentMarkComponent,
     ButtonComponent,
     IconButtonComponent,
     StatusGlyphComponent,
@@ -49,11 +51,14 @@ export class SessionWorkRowComponent {
   readonly backgrounding = input(false);
   /** The main conversation holds an approval or question that can be answered now. */
   readonly decisionPending = input(false);
+  readonly sessionsDisabled = input(false);
+  readonly harness = input<string>();
 
   readonly inspectRequested = output<string>();
   readonly stopRequested = output<void>();
   readonly backgroundRequested = output<void>();
   readonly answerRequested = output<void>();
+  readonly sessionRequested = output<AgentWorkIntent>();
 
   protected readonly elapsed = computed(() => {
     const start = this.view().startedAt;
@@ -67,11 +72,20 @@ export class SessionWorkRowComponent {
         : "",
   );
   protected readonly answerable = computed(
-    () => this.view().item.status === "waiting" && this.decisionPending(),
+    () => this.view().item.status === "waiting" && (!!this.view().session || this.decisionPending()),
   );
 
-  protected inspect(): void {
+  protected inspect(origin?: HTMLElement): void {
+    const session = this.view().session;
+    if (session) {
+      this.sessionRequested.emit({ target: { kind: 'session', session }, action: this.answerable() ? 'answer' : 'open', origin });
+      return;
+    }
     const id = this.view().item.agentId;
     if (this.view().inspectable && id) this.inspectRequested.emit(id);
+  }
+  protected answer(event: Event): void {
+    if (this.view().session) this.inspect(agentControl(event));
+    else this.answerRequested.emit();
   }
 }

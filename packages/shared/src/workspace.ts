@@ -27,6 +27,8 @@ export interface WorkspaceProjectDetail {
   readonly repositories: WorkspacePage<WorkspaceRepository>;
 }
 export interface WorkspaceTask {
+  /** The creating agent may close this task after collecting its result. */
+  readonly temporary?: true;
   /** Optional for older runtimes; counts repositories in this task's project. */
   readonly projectRepositoryCount?: number;
   readonly projectName?: string;
@@ -62,6 +64,14 @@ export interface WorkspaceSession {
   readonly canDelete?: boolean;
   readonly parentSessionId?: number | null;
   readonly childCount?: number;
+  readonly delegatedBy?: import('./session-agents').SessionAgentReference;
+  readonly agentSelection?: import('./session-agents').SessionAgentSelection;
+  readonly childSummary?: import('./session-agents').SessionChildSummary;
+  readonly delegationDetail?: string;
+  readonly parentWaiting?: true;
+  readonly activeChildAgents?: readonly number[];
+  /** Archiving this group requires stopping live subsession work. */
+  readonly childStopRequired?: boolean;
   readonly id: number;
   readonly taskId: number;
   readonly repoId: number;
@@ -218,7 +228,12 @@ export interface WorkspaceArchiveSession {
   readonly taskId: number;
   readonly sessionId: number;
   readonly confirmStop: boolean;
+  /** Archive the session's nested conversations. Requires sessionArchiveChildren. */
+  readonly includeChildren?: boolean;
+  /** Explicitly approved currently running delegated children, verified again by the engine. */
+  readonly stopAgents?: readonly number[];
 }
+export const WORKSPACE_ARCHIVE_AGENT_LIMIT = 32;
 export interface WorkspaceDeleteSession {
   readonly taskId: number;
   readonly sessionId: number;
@@ -244,6 +259,7 @@ export interface WorkspaceRevision {
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;
+  readonly sessionArchiveChildren?: true;
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;
   readonly commitPanel?: true;

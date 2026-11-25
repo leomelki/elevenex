@@ -683,7 +683,7 @@ export class SessionChatStore {
     const records = [...next.values()];
     const receiptIndex = (submission: PendingSubmission | null, start: number) =>
       submission && !older && (!direction || !page.next || start > 0)
-        ? records.findIndex((item, index) => index >= start && item.kind === "user" && item.text === submission.text)
+        ? records.findIndex((item, index) => index >= start && item.kind === "user" && !item.sender && item.text === submission.text)
         : -1;
     const start = pending ? pendingPromptStart(records, pending) : records.length;
     const deliveredIndex = receiptIndex(pending, start);
@@ -798,7 +798,7 @@ export class SessionChatStore {
 
   private reconcileDelivery(state: SessionChatState, delivered?: SessionChatItem, deliveredQueued?: SessionChatItem): void {
     const dispatched = (submission: PendingSubmission) => state.dispatchingPrompts?.some(
-      item => !submission.knownQueueIds.has(item.id) && item.text === submission.text,
+      item => !item.sender && !submission.knownQueueIds.has(item.id) && item.text === submission.text,
     );
     const pending = this.pending();
     if (
@@ -806,7 +806,7 @@ export class SessionChatStore {
       (delivered || dispatched(pending) ||
         state.queue.some(
           (item) =>
-            !pending.knownQueueIds.has(item.id) && item.text === pending.text,
+            !item.sender && !pending.knownQueueIds.has(item.id) && item.text === pending.text,
         ))
     ) {
       pending.confirmed = true;
@@ -814,7 +814,7 @@ export class SessionChatStore {
     }
     const queued = this.pendingQueue();
     const queueReceipt = queued && state.queue.find(
-      item => !queued.knownQueueIds.has(item.id) && item.text === queued.text,
+      item => !item.sender && !queued.knownQueueIds.has(item.id) && item.text === queued.text,
     );
     if (queueReceipt || this.queueRenderIds().size) {
       // Keep the optimistic row mounted: an exit plus a new entry would briefly

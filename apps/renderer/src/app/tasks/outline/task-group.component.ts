@@ -22,6 +22,7 @@ import {
 } from "../../ui";
 import {
   matchesSessionFilter,
+  unloadedChildCounts,
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
@@ -186,23 +187,25 @@ export class TaskGroupComponent implements OnChanges {
       : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
   protected readonly working = computed(() => {
-    const sessions = this.task().sessions;
-    const filter = this.filter();
-    if (!filter) return sessions;
-    const matches = sessions.filter(session => matchesSessionFilter(session.status, filter));
-    const included = new Set(matches.flatMap(session => session.parentId ? [session.id, session.parentId] : [session.id]));
-    return sessions.filter(session => included.has(session.id));
+    const rows = this.task().sessions, filter = this.filter();
+    if (!filter) return rows;
+    const parents = new Set(rows.flatMap(child => child.parentId && matchesSessionFilter(child.status, filter) ? [child.parentId] : []));
+    return rows.filter(row => parents.has(row.id) || matchesSessionFilter(row.status, filter) ||
+      (!!row.childSummary && matchesSessionFilter(row.childSummary.status, filter)));
   });
+  private readonly hiddenChildren = computed(() => unloadedChildCounts(this.everyone()));
   protected readonly attention = computed(
     () =>
       this.everyone().filter(
         (session) =>
           session.status === "attention" || session.status === "failed",
-      ).length,
+      ).length + this.everyone().reduce((total, row) => total +
+        (row.childSummary && matchesSessionFilter(row.childSummary.status, 'attention') ? this.hiddenChildren().get(row.id) ?? 0 : 0), 0),
   );
   protected readonly running = computed(
     () =>
-      this.everyone().filter((session) => session.status === "running").length,
+      this.everyone().filter((session) => session.status === "running").length +
+        this.everyone().reduce((total, row) => total + (row.childSummary?.status === 'running' ? this.hiddenChildren().get(row.id) ?? 0 : 0), 0),
   );
   protected readonly leadLink = computed(
     () =>

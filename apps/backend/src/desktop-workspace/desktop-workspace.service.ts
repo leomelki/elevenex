@@ -2,10 +2,12 @@ import {
   prepareProjectRepositories,
   type ProjectRepositorySetup,
 } from './desktop-project-repositories.js';
-import { sidebarPriorityPage } from './sidebar-priority-page.js';
-import { moveSession, sessionChildCount } from './session-hierarchy.js';
+import { moveSession, sessionChildCount } from '../sessions/session-hierarchy.js';
+import { sidebarPriorityPage, type SidebarSessionRow } from './sidebar-priority-page.js';
 import { desktopTaskSetupIssue } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
+import { sessionAgentReference } from '../sessions/session-agent-message.js';
 import { inactiveSessionStatus } from './desktop-session-status.js';
 import { sessionAgentProvider } from '../sessions/session-provider.js';
 import {
@@ -42,6 +44,7 @@ import {
   isWorkspaceProjectImage,
   WORKSPACE_BRANCH_NAME_LIMIT,
   WORKSPACE_BRANCH_REF_LIMIT,
+  WORKSPACE_ARCHIVE_AGENT_LIMIT,
   type WorkspaceAppearance,
   type WorkspaceSessionPage,
 } from '@elevenex/shared';
@@ -128,6 +131,7 @@ export class DesktopWorkspaceService {
     private readonly branches: BranchesService,
     private readonly taskGit: TaskGitService,
     @Optional() private readonly activity?: DesktopWorkspaceActivityService,
+    @Optional() private readonly delegates?: DesktopSessionDelegates,
   ) {}
 
   private async metadata(
@@ -210,6 +214,7 @@ export class DesktopWorkspaceService {
       name: row.name,
       branchName: row.taskBranch ?? row.createdFromRef ?? '',
       state: row.archivedAt ? 'finished' : row.taskState,
+      ...(row.taskTemporary && !row.archivedAt ? { temporary: true as const } : {}),
       stage,
       archivedAt: row.archivedAt,
       updatedAt: row.updatedAt,
@@ -235,6 +240,7 @@ export class DesktopWorkspaceService {
       // Additive: older desktops keep the legacy status above.
       ...(commandCount ? { turnStatus, commandCount } : {}),
       provider: sessionAgentProvider(row),
+      ...(row.delegatedBySessionId ? { agentSelection: sessionAgentReference(row).selection } : {}),
       updatedAt: row.updatedAt,
       parentSessionId: row.parentSessionId,
     };
@@ -367,7 +373,7 @@ export class DesktopWorkspaceService {
       return sidebarPriorityPage(
         this.db, taskId, limit, cursor || null,
         this.activity?.priorityCandidateIds() ?? [],
-        (row) => this.sessionView(row, taskId),
+        (rows) => this.sidebarSessionViews(rows, taskId),
       );
     }
     if (query.state !== undefined && query.state !== 'normal' && query.state !== 'archived') throw new BadRequestException('Invalid session state.');
@@ -405,9 +411,20 @@ export class DesktopWorkspaceService {
       )
       .orderBy(...(nested ? [latest ? desc(schema.sessions.nestingOrder) : asc(schema.sessions.nestingOrder)] : []), latest ? desc(schema.sessions.id) : asc(schema.sessions.id))
       .limit(limit + 1);
-    const result = page(rows.map(row => ({ ...this.sessionView(row.session, taskId), childCount: row.childCount })), limit);
+    const result = page(this.sidebarSessionViews(rows, taskId, !!task.archivedAt), limit);
     if (nested && rows.length > limit) result.nextCursor = `${rows[limit - 1].session.nestingOrder}:${rows[limit - 1].session.id}`;
     return latest ? { ...result, items: result.items.reverse() } : result;
+  }
+  private sidebarSessionViews(rows: readonly SidebarSessionRow[], taskId: number, archived = false) {
+    const parentRefs = this.delegates?.parentReferences(rows.map(row => row.session), taskId);
+    const summaries = archived ? undefined : this.delegates?.childSummaries(taskId,
+      rows.filter(row => row.childCount > 0).map(row => row.session.id));
+    return rows.map(({ session, childCount }) => {
+      const delegatedBy = parentRefs?.get(session.id);
+      return { ...this.sessionView(session, taskId), childCount,
+        ...(delegatedBy ? { delegatedBy, ...this.delegates?.sidebarDetail(session, delegatedBy) } : {}),
+        ...summaries?.get(session.id) };
+    });
   }
   async projectNameAvailability(value: unknown) {
     const name = text(value, 100);
@@ -616,7 +633,8 @@ export class DesktopWorkspaceService {
   async moveSession(taskId: number, sessionId: number, parentSessionId: unknown) {
     await this.activeTaskSession(taskId, sessionId);
     const moved = moveSession(this.db, taskId, sessionId, parentSessionId === null ? null : resourceId(parentSessionId));
-    return this.sessionView(moved, taskId);
+    const delegatedBy = this.delegates?.parentReferences([moved], taskId).get(moved.id);
+    return { ...this.sessionView(moved, taskId), ...(delegatedBy ? { delegatedBy } : {}) };
   }
   async deleteSession(taskId: number, sessionId: number) {
     await this.activeTaskSession(taskId, sessionId);
@@ -625,13 +643,35 @@ export class DesktopWorkspaceService {
     );
     return { accepted: true as const };
   }
-  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown) {
+  async archiveSession(taskId: number, sessionId: number, confirmStop: unknown, stopAgents?: unknown, includeChildren?: unknown) {
     if (typeof confirmStop !== 'boolean') throw new BadRequestException('A stop confirmation is required.');
+    if (includeChildren !== undefined && typeof includeChildren !== 'boolean')
+      throw new BadRequestException('Invalid subsession archive option.');
     const session = await this.activeTaskSession(taskId, sessionId);
     if (this.sessionView(session, taskId).status === 'running' && !confirmStop)
       throw new BadRequestException('This session is running. Stop and archive to confirm.');
+    let approved: readonly number[] | undefined;
+    if (stopAgents !== undefined) {
+      if (!Array.isArray(stopAgents) || !stopAgents.length || stopAgents.length > WORKSPACE_ARCHIVE_AGENT_LIMIT ||
+          new Set(stopAgents).size !== stopAgents.length || stopAgents.some(id => !Number.isSafeInteger(id) || id <= 0 || id === sessionId))
+        throw new BadRequestException('Invalid agent stop confirmation.');
+      approved = stopAgents;
+      if (!includeChildren && !await this.delegates?.stopChildren(taskId, sessionId, approved))
+        throw new ConflictException('The running agents changed. Review them before archiving.');
+    }
+    if (includeChildren) {
+      await this.sessions.archiveTaskSessionGroup(taskId, sessionId, rows => {
+        if (approved && !this.delegates?.confirmedChildren(taskId, sessionId, approved))
+          throw new ConflictException('The running agents changed. Review them before archiving.');
+        if (!confirmStop && rows.some(row => {
+          const { status, commandCount } = this.sessionView(row, taskId);
+          return status === 'running' || !!commandCount || (row.id !== sessionId && status === 'attention');
+        })) throw new BadRequestException('A conversation in this group is running or needs attention. Stop and archive to confirm.');
+      });
+      return { accepted: true as const };
+    }
     await this.sessions.archiveAndStop(sessionId, true);
-    // Grouping never makes archive recursive; children remain visible at task level.
+    // Older desktops expect children to return to task level after a single-session archive.
     await this.db.update(schema.sessions).set({ parentSessionId: null }).where(eq(schema.sessions.parentSessionId, sessionId));
     // Desktop row archives return on task reopen, just like archives made at close.
     // This does not change the legacy standalone session-archive semantics.

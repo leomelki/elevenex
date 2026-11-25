@@ -1,3 +1,4 @@
+import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { transcriptWindow } from './transcript-window.js';
@@ -114,6 +115,7 @@ export const readSessionTool = defineTool({
     return {
       data: {
         sessionId: session.id,
+        session: sessionAgentReference(session),
         running,
         ...page.data,
         cursor: page.cursor,

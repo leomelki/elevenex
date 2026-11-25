@@ -118,7 +118,7 @@ describe('interactive Antigravity through ACP stdio', () => {
       INSERT INTO sessions VALUES (7, 'active', 'session', 'antigravity', NULL, 'Named by user');`);
     db.exec(
       readFileSync(
-        join(__dirname, '../../drizzle/0057_antigravity.sql'),
+        join(__dirname, '../../drizzle/0062_antigravity.sql'),
         'utf8',
       ),
     );

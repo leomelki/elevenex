@@ -432,6 +432,19 @@ export class ChatScrollComponent {
       (message) => message.dataset["userMessage"] === id,
     );
     if (!target) return;
+    this.revealAnchor(target);
+  }
+
+  revealAgentAnchor(target: HTMLElement): void {
+    this.disclosure = undefined;
+    this.interruptSendReveal();
+    this.historyScroll?.finish();
+    if (target.tabIndex < 0 && !target.hasAttribute('tabindex')) target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+    this.revealAnchor(target);
+  }
+
+  private revealAnchor(target: HTMLElement): void {
     const viewport = this.viewport().nativeElement;
     const top = Math.max(0,
       target.getBoundingClientRect().top -

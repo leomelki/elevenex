@@ -9,6 +9,8 @@ import {
   Injectable,
   inject,
   input,
+  type ComponentRef,
+  type OnChanges,
 } from "@angular/core";
 import type { Subscription } from "rxjs";
 import { TooltipComponent } from "./tooltip.component";
@@ -64,7 +66,7 @@ export class TooltipTiming {
     "(click)": "hide()",
   },
 })
-export class TooltipDirective {
+export class TooltipDirective implements OnChanges {
   readonly exTooltip = input.required<string>();
   readonly tooltipShortcut = input("");
   /** `end` suits vertical stacks such as a rail, where above would cover a neighbour. */
@@ -74,6 +76,7 @@ export class TooltipDirective {
   private readonly describer = inject(AriaDescriber);
   private readonly timing = inject(TooltipTiming);
   private popup?: OverlayRef;
+  private content?: ComponentRef<TooltipComponent>;
   private detachment?: Subscription;
   private timer?: ReturnType<typeof setTimeout>;
   private frame = 0;
@@ -82,6 +85,12 @@ export class TooltipDirective {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.hide());
+  }
+
+  ngOnChanges(): void {
+    if (!this.content) return;
+    if (this.exTooltip()) this.updateContent();
+    else this.hide();
   }
 
   protected schedule(focused: boolean): void {
@@ -141,14 +150,21 @@ export class TooltipDirective {
       scrollStrategy: this.overlay.scrollStrategies.close(),
     });
     this.detachment = this.popup.detachments().subscribe(() => this.hide());
-    const component = this.popup.attach(new ComponentPortal(TooltipComponent));
+    this.content = this.popup.attach(new ComponentPortal(TooltipComponent));
     // Attach resets the pane's pointer events; the entire overlay must pass input through.
     this.popup.overlayElement.style.pointerEvents = "none";
-    component.setInput("label", this.exTooltip());
-    component.setInput("kbd", this.tooltipShortcut());
-    this.described = this.exTooltip();
-    this.describer.describe(this.element.nativeElement, this.described);
+    this.updateContent();
     this.follow();
+  }
+
+  private updateContent(): void {
+    const label = this.exTooltip();
+    this.content?.setInput('label', label);
+    this.content?.setInput('kbd', this.tooltipShortcut());
+    if (label === this.described) return;
+    if (this.described) this.describer.removeDescription(this.element.nativeElement, this.described);
+    this.described = label;
+    this.describer.describe(this.element.nativeElement, label);
   }
 
   /**
@@ -180,6 +196,7 @@ export class TooltipDirective {
     this.timing.release(this.closeActive);
     const popup = this.popup;
     this.popup = undefined;
+    this.content = undefined;
     if (popup) {
       popup.dispose();
       this.timing.lastClosed = Date.now();

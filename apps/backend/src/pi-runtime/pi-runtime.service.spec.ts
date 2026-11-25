@@ -84,7 +84,11 @@ function emitPiEvent(
 
 function createPiProcess(
   sessionFile: string,
-  options?: { entries?: Record<string, unknown>[] },
+  options?: {
+    entries?: Record<string, unknown>[];
+    holdPrompts?: boolean;
+    onSteer?: () => void;
+  },
 ): MockPiProcess {
   const child = new EventEmitter() as MockPiProcess;
   child.stdin = new MockWritable();
@@ -112,7 +116,7 @@ function createPiProcess(
       );
   });
   child.stdin.onWrite((chunk) => {
-    const command = JSON.parse(chunk.trim()) as { id: string; type: string };
+    const command = JSON.parse(chunk.trim()) as { id: string; type: string; streamingBehavior?: string };
     if (command.type === 'get_state') {
       child.stdout.emit(
         'data',
@@ -162,6 +166,7 @@ function createPiProcess(
       return;
     }
     if (command.type === 'prompt') {
+      if (command.streamingBehavior === 'steer') options?.onSteer?.();
       child.stdout.emit(
         'data',
         Buffer.from(
@@ -173,7 +178,7 @@ function createPiProcess(
           }) + '\n',
         ),
       );
-      child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
+      if (!options?.holdPrompts) child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
       return;
     }
     child.stdout.emit(
@@ -253,6 +258,31 @@ function createService(options?: {
 }
 
 describe('PiRuntimeService lifecycle', () => {
+  it('applies the saved delegation model and effort before delivering the first prompt', async () => {
+    const { service, sessions } = createService();
+    const selection = {
+      ...await sessions.findOne(1),
+      agentSelection: { provider: 'pi', model: 'anthropic/claude-sonnet', reasoningEffort: 'high' },
+    };
+    sessions.findOne.mockResolvedValue(selection);
+    const child = createPiProcess('/tmp/pi-delegated-selection.jsonl');
+    mockSpawn.mockReturnValue(child as never);
+    try {
+      const receipt = jest.fn();
+      await service.submitPrompt(1, 'Review', undefined, undefined, {
+        waitForCompletion: false, onAccepted: receipt,
+      });
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(child.stdin.writes.map(line => JSON.parse(line)).filter(command =>
+        ['set_model', 'set_thinking_level', 'prompt'].includes(command.type),
+      )).toMatchObject([
+        { type: 'set_model', provider: 'anthropic', modelId: 'claude-sonnet' },
+        { type: 'set_thinking_level', level: 'high' },
+        { type: 'prompt', message: 'Review' },
+      ]);
+    } finally { await service.onModuleDestroy(); }
+  });
+
   it('passes the socket-mode MCP endpoint to the Pi extension environment', async () => {
     const environment = jest.replaceProperty(process, 'env', {
       ...process.env,
@@ -1061,6 +1091,64 @@ describe('PiRuntimeService lifecycle', () => {
       pendingPrompts: [expect.objectContaining({ prompt: 'second' })],
     });
     await service.onModuleDestroy();
+  });
+
+  it('steers accepted Pi turns over native RPC without restarting or draining the local queue', async () => {
+    const child = createPiProcess('/tmp/pi-session-1.jsonl', { holdPrompts: true });
+    mockSpawn.mockReturnValue(child as never);
+    const { service } = createService({ idleMs: '60000' });
+    try {
+      await service.submitPrompt(1, 'Original', undefined, undefined, { waitForCompletion: false });
+      await service.submitPrompt(1, 'Later', undefined, undefined, { queue: true });
+      const accepted = jest.fn();
+      await service.submitPrompt(1, 'Redirect', undefined, undefined, {
+        requireSteering: true, onAccepted: accepted,
+      });
+      expect(accepted).toHaveBeenCalledWith('steered');
+      expect(await service.getRuntimeState(1)).toMatchObject({
+        runPhase: 'running', pendingPrompts: [expect.objectContaining({ prompt: 'Later' })],
+      });
+      const [pending] = (await service.getRuntimeState(1)).pendingPrompts;
+      await service.steerPendingPrompt(1, pending.id);
+      const commands = child.stdin.writes.map(write => JSON.parse(write));
+      expect(commands.filter(command => command.type === 'prompt')).toEqual([
+        expect.objectContaining({ message: 'Original' }),
+        expect.objectContaining({ message: 'Redirect', streamingBehavior: 'steer' }),
+        expect.objectContaining({ message: 'Later', streamingBehavior: 'steer' }),
+      ]);
+      expect(commands.some(command => command.type === 'abort')).toBe(false);
+      expect((await service.getRuntimeState(1)).pendingPrompts).toEqual([]);
+      child.stdout.emit('data', Buffer.from('{"type":"agent_end"}\n'));
+    } finally {
+      await service.onModuleDestroy();
+    }
+  });
+
+  it('holds Pi completion across a native end and start racing steering admission', async () => {
+    const nativeEvent = (type: string) => child.stdout.emit('data', Buffer.from(JSON.stringify({ type }) + '\n'));
+    const child = createPiProcess('/tmp/pi-session-1.jsonl', {
+      holdPrompts: true,
+      onSteer: () => {
+        nativeEvent('agent_end');
+        nativeEvent('agent_start');
+      },
+    });
+    mockSpawn.mockReturnValue(child as never);
+    const { service, sessions } = createService({ idleMs: '60000' });
+    try {
+      const accepted = createDeferred<void>();
+      const original = service.submitPrompt(1, 'Original', undefined, undefined, {
+        waitForCompletion: false, onAccepted: () => accepted.resolve(),
+      });
+      await accepted.promise;
+      await original;
+      await service.submitPrompt(1, 'Redirect', undefined, undefined, { preferSteering: true });
+      expect((await service.getRuntimeState(1)).runPhase).toBe('running');
+      expect(sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      nativeEvent('agent_end');
+    } finally {
+      await service.onModuleDestroy();
+    }
   });
 
   it('queues prompts submitted while the Pi run is still initializing', async () => {

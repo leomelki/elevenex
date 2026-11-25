@@ -1,3 +1,4 @@
+import { sessionAgentReference } from '../../../sessions/session-agent-message.js';
 import { z } from 'zod';
 import { defineTool, ToolError } from '../../tool-registry/tool.types.js';
 import { type ConversationExportOptions } from '../../../agent-runtime/conversation-export.service.js';
@@ -100,6 +101,7 @@ export const grepSessionTool = defineTool({
     return {
       data: {
         sessionId: session.id,
+        session: sessionAgentReference(session),
         precision: args.precision,
         ...result,
       },

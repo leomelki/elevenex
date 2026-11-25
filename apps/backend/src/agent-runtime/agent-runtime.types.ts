@@ -18,6 +18,8 @@ export interface AgentRuntimeProviderCapabilities {
   multimodalPrompts: boolean;
   terminalFallback: boolean;
   rewindConversation: boolean;
+  /** Automatic text input can join a live turn without interrupting its work. */
+  nonInterruptingSteering?: boolean;
 }
 
 export interface AgentRuntimeProviderInfo {
@@ -67,8 +69,20 @@ export interface AgentProviderModelCatalog extends AgentProviderModelCatalogPayl
   displayName: string;
 }
 
-export interface AgentRuntimeStatePayload {
+export interface AgentRunLifecycle {
+  sessionState?: string | null;
+  runPhase?: string | null;
+  backgroundWork?: readonly unknown[] | null;
+  pendingPrompts?: readonly unknown[] | null;
+  dispatchingPrompts?: readonly unknown[] | null;
+  queuePaused?: boolean | null;
+  /** Provider task history, used to describe live work. */
+  tasks?: readonly unknown[] | null;
+}
+
+export interface AgentRuntimeStatePayload extends AgentRunLifecycle {
   sessionId: number;
+  planMode?: boolean | null;
   reasoningEffort?: AgentReasoningEffort | null;
   fastMode?: boolean;
 }
@@ -148,6 +162,21 @@ export interface AgentImageInput {
   data: string;
 }
 
+export type AgentPromptDisposition = 'running' | 'queued' | 'steered';
+
+export interface AgentPromptOptions {
+  human?: boolean;
+  origin?: InteractivePromptOrigin;
+  queue?: boolean;
+  /** Prefer same-turn delivery for a text follow-up, when the harness can do so. */
+  preferSteering?: boolean;
+  /** Reject before dispatch if no active turn can accept live input. */
+  requireSteering?: boolean;
+  /** Pass false to return once the harness owns this specific prompt. */
+  waitForCompletion?: boolean;
+  onAccepted?: (disposition: AgentPromptDisposition) => void;
+}
+
 /** Set by desktop chat handlers, never copied from prompt request bodies. */
 export type InteractivePromptOrigin = 'desktop-chat';
 
@@ -172,13 +201,7 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: {
-      human?: boolean;
-      origin?: InteractivePromptOrigin;
-      queue?: boolean;
-      /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
-      waitForCompletion?: boolean;
-    },
+    options?: AgentPromptOptions,
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { createTestDb } from '../database/testing/create-test-db.js';
 import * as schema from '../database/schema/index.js';
-import { moveSession } from './session-hierarchy.js';
+import { moveSession } from '../sessions/session-hierarchy.js';
 
 describe('session hierarchy', () => {
   let database: ReturnType<typeof createTestDb>;

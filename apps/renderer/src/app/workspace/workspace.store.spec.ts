@@ -40,11 +40,12 @@ function setup(history = false) {
     workspaceRestoreSession: vi.fn(async (): Promise<BackendResult<WorkspaceSession>> => ok({...session, status:'stopped'})),
     workspaceCreateSession: vi.fn(async (): Promise<BackendResult<WorkspaceSession>> => ok({ ...session, id: 6 })),
     workspaceSetStage: vi.fn(async () => ok(task)),
+    workspaceKeepTaskOpen: vi.fn<ElevenexBridge['workspaceKeepTaskOpen']>(async () => ok(task)),
     workspaceFinishTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok({ ...task, state: 'finished', archivedAt: 'now' })),
     workspaceReopenTask: vi.fn(async (): Promise<BackendResult<WorkspaceTask>> => ok(task)),
     workspaceDeleteProject: vi.fn(async (): Promise<BackendResult<{readonly accepted: true}>> => ok({ accepted: true })),
     workspaceRevision: vi.fn(async () => ok({ revision: 1, version: 1 as const, sessionArchive: true as const, ...(history ? { sessionArchiveHistory: true as const } : {}) })),
-  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceDeleteSession' | 'workspaceArchiveSession' | 'workspaceMoveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
+  } satisfies Pick<ElevenexBridge, 'environmentStatus' | 'saveEnvironmentContext' | 'workspaceProjectNameAvailability' | 'backendClientState' | 'onBackendClientChanged' | 'workspaceProjects' | 'workspaceTasks' | 'workspaceSessions' | 'workspaceProject' | 'workspaceCreateProject' | 'workspaceBranches' | 'workspaceCreateTask' | 'workspaceTask' | 'workspaceCreateSession' | 'workspaceDeleteSession' | 'workspaceArchiveSession' | 'workspaceMoveSession' | 'workspaceRestoreSession' | 'workspaceSetStage' | 'workspaceRevision' | 'workspaceFolders' | 'workspaceRetryTask' | 'workspaceKeepTaskOpen' | 'workspaceFinishTask' | 'workspaceReopenTask' | 'workspaceDeleteProject'>;
   TestBed.configureTestingModule({ providers: [WorkspaceStore, SessionChatDrafts, { provide: ELEVENEX_BRIDGE, useValue: bridge }] });
   const store = TestBed.inject(WorkspaceStore);
   store.connect({ id: 'local', name: 'This Mac', kind: 'local', conn: 'live' }, true);
@@ -279,6 +280,26 @@ describe('WorkspaceStore', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['8', '23', '30']);
     expect(store.counts().review).toBe(0);
+  });
+
+  it('opens an agent link outside the loaded session window and ignores a stale link', async () => {
+    const { store, bridge, start } = setup();
+    await start();
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    const source = store.selected()!;
+    const reviewer = { ...session, id: 8, name: 'Reviewer', parentSessionId: 5, status: 'attention' };
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.cursor === '7' ? [reviewer] : [session])));
+    expect(await store.openLinkedSession(source, { sessionId: 8 })).toMatchObject({ taskId: 3, sessionId: 8 });
+    expect(store.selectedSession()).toMatchObject({ id: 8, status: 'attention' });
+    expect(bridge.workspaceSessions).toHaveBeenCalledWith('scope', expect.objectContaining({ taskId: 3, limit: 1, cursor: '7' }));
+
+    let release: (result: BackendResult<WorkspacePage<WorkspaceSession>>) => void = () => undefined;
+    bridge.workspaceSessions.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const pending = store.openLinkedSession(store.selected()!, { sessionId: 9 });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    release(ok(page([{ ...reviewer, id: 9 }])));
+    expect(await pending).toBeNull();
+    expect(store.selectedSession()?.id).toBe(5);
   });
 
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {
@@ -869,6 +890,22 @@ describe('WorkspaceStore', () => {
   });
 });
 
+it('keeps a temporary task open without changing the selected session', async () => {
+  const { store, bridge, start } = setup();
+  bridge.workspaceTasks.mockResolvedValue(ok(page([{ ...task, temporary: true }])));
+  await start();
+  await store.selectSession({ taskId: '3', sessionId: '5' });
+  expect(store.selectedTask()?.temporary).toBe(true);
+  expect(store.tasks()[0]?.temporary).toBe(true);
+  await store.keepTaskOpen();
+  expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledExactlyOnceWith('scope', 3);
+  expect(store.selectedTask()?.temporary).toBeUndefined();
+  expect(store.tasks()[0]?.temporary).toBeUndefined();
+  expect(store.selectedSession()?.id).toBe(5);
+  await store.keepTaskOpen();
+  expect(bridge.workspaceKeepTaskOpen).toHaveBeenCalledTimes(1);
+});
+
 it('retains a scope-bound task Undo after close, and never reuses it in another backend', async () => {
   const {store, bridge, start, emit} = setup(); await start();
   await store.selectSession({taskId: '3', sessionId: '5'});
@@ -1120,6 +1157,32 @@ describe('Workspace outages', () => {
 });
 
 describe('session organization', () => {
+  it('archives the group and moves selection out of a removed child', async () => {
+    const { store, bridge, start } = setup();
+    const parent = { ...session, childCount: 25, childStopRequired: true, activeChildAgents: [6] };
+    const child = { ...session, id: 6, status: 'running', parentSessionId: parent.id };
+    const other = { ...session, id: 7 };
+    bridge.workspaceRevision.mockImplementation(async () => ok({
+      revision: 1, version: 1 as const, sessionArchive: true as const,
+      sessionArchiveChildren: true as const, sessionNesting: true as const, sessionPriority: true as const,
+    }));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => {
+      if (query.state === 'priority') return ok({ ...page([child]), parentSessions: [parent] });
+      return ok(page(query.parentSessionId === parent.id ? [child] : [other]));
+    });
+    await start();
+    await store.loadSessionChildren({ taskId: '3', sessionId: '5' });
+    store.selectSession({ taskId: '3', sessionId: '6' });
+    const parentRow = store.tasks()[0]!.sessions.find(row => row.id === '5')!;
+    expect(parentRow.childStopRequired).toBe(true);
+    await store.archiveSession({ taskId: '3', session: parentRow });
+    expect(bridge.workspaceArchiveSession).toHaveBeenCalledWith('scope', {
+      taskId: 3, sessionId: 5, includeChildren: true, confirmStop: true, stopAgents: [6],
+    });
+    expect(store.tasks()[0]?.sessions.map(row => row.id)).toEqual(['7']);
+    expect(store.hierarchy.windows().has(parent.id)).toBe(false);
+    expect(store.selected()?.sessionId).toBe(other.id);
+  });
   it('uses bounded root and child pages, then keeps the selected child through a confirmed move', async () => {
     const {store,bridge,start} = setup();
     let parentSessionId: number | null = null;

@@ -69,7 +69,7 @@ export const resolveActionTool = defineTool({
     return {
       data: { sessionId: args.sessionId, resolved: true, decision: args.decision },
       deepLink: ctx.deepLink.session(args.sessionId),
-      nextStep: 'Resume polling with session_status / await_session_event.',
+      nextStep: 'Inspect session_status or use await_session_event if you need the outcome.',
     };
   },
 });

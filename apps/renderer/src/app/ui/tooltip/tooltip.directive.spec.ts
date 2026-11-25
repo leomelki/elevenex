@@ -1,17 +1,36 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipDirective, TooltipTiming } from './tooltip.directive';
 
 @Component({
   imports: [TooltipDirective],
-  template: '<button exTooltip="First title">First</button><button exTooltip="Second title">Second</button>',
+  template: '<button [exTooltip]="label()">First</button><button exTooltip="Second title">Second</button>',
 })
-class TooltipHostComponent {}
+class TooltipHostComponent {
+  readonly label = signal('First title');
+}
 
 afterEach(() => { TestBed.resetTestingModule(); vi.useRealTimers(); });
 
 describe('tooltip ownership', () => {
+  it('updates the visible and accessible label without replacing the focused control', () => {
+    vi.useFakeTimers();
+    const fixture = TestBed.createComponent(TooltipHostComponent);
+    fixture.detectChanges();
+    const button = fixture.nativeElement.querySelector('button') as HTMLButtonElement;
+    button.focus();
+    vi.runOnlyPendingTimers();
+    fixture.detectChanges();
+    fixture.componentInstance.label.set('Updated title');
+    fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')?.textContent).toContain('Updated title');
+    expect(document.activeElement).toBe(button);
+    fixture.componentInstance.label.set('');
+    fixture.detectChanges();
+    expect(document.querySelector('ex-tooltip')).toBeNull();
+    expect(button.hasAttribute('aria-describedby')).toBe(false);
+  });
   it('replaces a focused tooltip on hover and releases the overlay on Escape or destruction', async () => {
     vi.useFakeTimers();
     await TestBed.configureTestingModule({ imports: [TooltipHostComponent] }).compileComponents();

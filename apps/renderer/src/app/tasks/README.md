@@ -19,6 +19,17 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
+The task row shows an agent icon beside the title when its creating agent can
+close it, keeping the row on one line. The row's tooltip explains the badge and
+the icon has the accessible name "Temporary task".
+The badge clears when the user chooses **Keep open** in the task header.
+
+The connected sidebar shows same-task MCP delegates in their coding session's
+child disclosure. When an already nested conversation delegates, its new child
+appears alongside it to keep the outline two levels deep. Sidebar moves change
+placement, and the backend retains the original delegator for agent handoffs.
+See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harness-delegation).
+
 `SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
 
 | Component | Main inputs | Intent outputs |
@@ -88,6 +99,7 @@ continues to work without these optional inputs. `canLink` and
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
 `TaskHeader.closed` hides stage/close controls for archived history.
+Project task-specific buttons with `[taskActions]` alongside **Close task**.
 The optional `[gitStatus]` projection sits beside Git actions inside the reserved
 metadata row. Owners can show bounded loading, retry or Sync controls there;
 asynchronous status must not add rows below the header and displace a conversation.
@@ -239,7 +251,9 @@ slots with the newest ordinary sessions. Priority rows can overflow the cap.
 Selected and fresh rows also stay visible. All rows keep their supplied
 chronological order. Older inserts each reveal around the rows already visible. A nested priority
 session reserves a slot for its parent, with the priority child visible while
-the group is folded. Expanding the group reveals its ordinary children.
+the group is folded. Expanding the group reveals its recent ordinary children
+and keeps priority rows visible. Show more reveals the remaining loaded
+children, and Earlier child sessions loads the next bounded page.
 Each Older click reveals at most `capStep` more hidden sessions. Show fewer
 resets that disclosure; filters and cap 0 show every supplied match.
 The disclosure snapshots the remaining hidden IDs, so adding, removing or
@@ -308,6 +322,21 @@ owner's local waiting drafts above the form. Platform dispatch and exact request
 identity reconciliation belong to the workspace owner.
 
 ## Session grouping
+
+Delegated rows carry the caller's identity independently of their outline parent.
+Use the supplied agent selection for the harness mark and the caller, current
+activity and wait metadata for the hover and focus tooltip. Collapsed groups use
+the most urgent child state, in needs-you, failed, running and finished order.
+Opening a child group shows the last two sessions in the supplied order, reserving
+a slot for the selected child when needed. Show more reveals every child in the
+current page, including running sessions. Children keep their place when their
+status changes. Dragging a session into a group reveals the full page so the
+dropped row has a visible destination.
+
+When a parent has running delegated children, the archive confirmation names
+the number of affected agents. The engine verifies the exact approved child IDs
+before stopping those turns. For group archives the owner also supplies
+`childStopRequired` for live subsession work, including detached commands.
 
 The connected desktop uses two sidebar levels: root sessions and child sessions.
 `TaskSession.parentId` describes organization; fork `kind` still describes transcript

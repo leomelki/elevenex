@@ -14,6 +14,7 @@ import {
 import { FlipDirective, FoldComponent, TickerComponent } from "../../ui";
 import {
   matchesSessionFilter,
+  unloadedChildCounts,
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
@@ -131,14 +132,17 @@ export class TaskListComponent {
         ]
           .filter(Boolean)
           .join(" · ");
+        const hidden = unloadedChildCounts(task.sessions);
         const visit = (session: TaskSession, sessionContext: string): void => {
-          if (matchesSessionFilter(session.status, "attention"))
+          const childNeedsYou = session.childSummary && matchesSessionFilter(session.childSummary.status, 'attention') &&
+            (hidden.get(session.id) ?? 0) > 0;
+          if (matchesSessionFilter(session.status, "attention") || childNeedsYou)
             rows.push({
               kind: "attention",
               key: `attention:${task.id}:${session.id}`,
               taskId: task.id,
               session,
-              context: sessionContext,
+              context: childNeedsYou ? sessionContext + ' · Agent needs you' : sessionContext,
               visible: true,
             });
         };
@@ -185,7 +189,7 @@ export class TaskListComponent {
       const visible =
         !filter ||
         task.sessions.some((session) =>
-          matchesSessionFilter(session.status, filter),
+          matchesSessionFilter(session.status, filter) || (!!session.childSummary && matchesSessionFilter(session.childSummary.status, filter)),
         ) ||
         (task.subtasks ?? []).some(
           (subtask) =>

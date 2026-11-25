@@ -52,6 +52,13 @@ export type AppServerRequestListener = (
   request: CodexAppServerRequest,
 ) => boolean | Promise<boolean>;
 
+/** An explicit server rejection, distinct from a transport failure or timeout. */
+export class CodexAppServerResponseError extends Error {
+  constructor(message: string, readonly code: number | undefined) {
+    super(message);
+  }
+}
+
 /**
  * Manages a single long-lived `codex app-server` process that serves all
  * codex turns for this backend. The process is spawned lazily on first use,
@@ -394,7 +401,10 @@ export class CodexAppServerClient implements OnModuleDestroy {
         if (message.error) {
           const errMessage =
             (message.error?.message as string | undefined) ?? 'Unknown error';
-          pending.reject(new Error(errMessage));
+          pending.reject(new CodexAppServerResponseError(
+            errMessage,
+            typeof message.error.code === 'number' ? message.error.code : undefined,
+          ));
         } else {
           pending.resolve(message.result);
         }

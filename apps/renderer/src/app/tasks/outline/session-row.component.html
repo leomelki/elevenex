@@ -9,7 +9,7 @@
   [attr.aria-description]="session().local ? 'Local draft. Session creation is not yet confirmed.' : 'Drag onto another session to move under it, or into a message to mention it. Use Move session for keyboard moves.'"
   (dragstart)="startDrag($event)"
   (dragend)="dragging.set(false)"
-  [exTooltip]="session().title"
+  [exTooltip]="tooltip()"
   [class.attention]="session().status === 'attention' && !selected()"
   [class.failed]="session().status === 'failed' && !selected()"
   [class.with-context]="!!context()"
@@ -21,7 +21,9 @@
   (click)="activated.emit(session().id)"
 >
   @if (archived()) { <ex-icon name="archive" [size]="14" /> } @else { <ex-status-glyph [status]="session().status" [size]="14" [exTooltip]="session().status === 'review' ? 'New reply · open chat to view' : ''" /> }
-  @if (kindIcon(); as icon) {
+  @if (session().kind === 'delegated') {
+    <ex-agent-mark class="kind" [harness]="session().agentSelection?.provider" mark="A" />
+  } @else if (kindIcon(); as icon) {
     <span
       class="kind"
       [class.auto]="session().kind === 'auto'"
@@ -75,11 +77,11 @@
 
 @if (allowArchive() && !archived() && !session().local) {
   <button class="archive" type="button"
-    [attr.aria-label]="confirming() ? 'Stop and archive ' + session().title + ': press again to confirm' : (session().canDelete ? 'Delete ' : 'Archive ') + session().title"
+    [attr.aria-label]="confirming() ? archiveLabel() + ' ' + session().title + ', press again to confirm' : (session().canDelete ? 'Delete ' : 'Archive ') + session().title"
     [exTooltip]="confirming() ? '' : session().canDelete ? 'Delete session' : 'Archive session'"
     (click)="archive($event)" (blur)="cancelArchive()" (keydown.escape)="cancelArchive($event)">
     <span class="archive-icon"><ex-icon [name]="session().canDelete ? 'trash' : 'archive'" [size]="14" /></span>
-    <span class="archive-label" aria-hidden="true"><span>Stop and archive</span></span>
+    <span class="archive-label" aria-hidden="true"><span>{{ archiveLabel() }}</span></span>
   </button>
 }
 @if (archived() && allowRestore()) {

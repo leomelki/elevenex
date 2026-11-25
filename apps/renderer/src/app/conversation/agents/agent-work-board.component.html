@@ -1,0 +1,127 @@
+<div class="board" [class.grouped]="grouped()" exAutoHeight [exFlip]="structure()">
+  <div class="board-content">
+    @if (grouped()) {
+      <header class="board-head" animate.enter="board-head-in">
+        <span class="av-stack" aria-hidden="true">
+          @for (agent of board().agents.slice(0, 4); track agent.id) {
+            <ex-agent-mark [harness]="agent.selection?.provider" mark="A" appearance="tinted" />
+          }
+        </span>
+        <strong>@if (live()) {Working with }<ex-ticker [value]="board().agents.length" /> agents</strong>
+        <span class="tally">
+          @for (fact of tally(); track fact.status) {
+            <span [attr.aria-label]="fact.count + ' ' + fact.label" [exTooltip]="fact.count + ' ' + fact.label">
+              <ex-status-glyph [status]="fact.status" [size]="12" /><ex-ticker [value]="fact.count" />
+            </span>
+          }
+        </span>
+      </header>
+    }
+    <ul [attr.aria-label]="grouped() ? 'Agent work' : null">
+      @for (agent of board().agents; track agent.id) {
+        @let presentation = state(agent.status);
+        @let detailed = !grouped() || expanded() === agent.id;
+        @let time = elapsed(agent);
+        @let destination = agent.target;
+        @let sessionId = destination?.kind === 'session' ? destination.session.sessionId : null;
+        <li class="agent" [attr.data-state]="agent.status"
+          [attr.data-agent-source]="sessionId" [class.detailed]="detailed">
+          <div class="agent-head">
+            <span class="avatar" [attr.data-flip]="agent.id" data-agent-mark>
+              <ex-agent-mark [harness]="agent.selection?.provider" mark="A" appearance="tinted" />
+              <span class="pip"><ex-status-glyph [status]="presentation.glyph" [size]="12" /></span>
+            </span>
+            <button #cardTitle type="button" class="agent-title" [disabled]="!grouped() || !active()"
+              [exTooltip]="agent.title"
+              [attr.aria-expanded]="grouped() ? detailed : null"
+              (click)="toggle(agent.id, cardTitle)">
+              <span class="title">{{ agent.title }}</span>
+              <ex-icon class="chevron" name="chevron-right" [size]="12" />
+            </button>
+            @if (grouped() && !detailed && agent.detail) {
+              <span class="mini-detail" [title]="agent.detail">{{ agent.detail }}</span>
+            }
+            <span class="status" [class.danger]="agent.status === 'error'" [class.attention]="agent.status === 'waiting'">
+              <span>{{ presentation.label }}</span>
+              @if (time; as clock) {
+                <time class="elapsed">
+                  {{ clock.major }}@if (!clock.major.endsWith('m')) {<ex-ticker [value]="clock.seconds" />s}
+                </time>
+              }
+            </span>
+            @if (agent.target && (grouped() || !detailed)) {
+              @let primary = sessionId && (agent.status === 'waiting' || agent.status === 'error');
+              <button exButton size="sm" [variant]="agent.status === 'waiting' ? 'secondary' : 'ghost'" type="button" class="quick-open"
+                [class.labelled]="primary"
+                [attr.data-agent-session]="sessionId" [disabled]="controlsDisabled() && !!sessionId"
+                [attr.aria-label]="(agent.status === 'waiting' && sessionId ? 'Open to answer ' : agent.status === 'error' && sessionId ? 'Open to retry ' : 'Open ') + agent.title"
+                [exTooltip]="agent.status === 'waiting' && sessionId ? 'Open to answer' : agent.status === 'error' && sessionId ? 'Open to retry' : 'Open ' + agent.title"
+                (click)="request(agent, agent.status === 'waiting' && sessionId ? 'answer' : agent.status === 'error' && sessionId ? 'message' : 'open', $event)">
+                @if (primary) { <span class="quick-label">{{ agent.status === 'waiting' ? 'Open to answer' : 'Open to retry' }}</span> }
+                <ex-icon [name]="agent.status === 'waiting' && sessionId ? 'hand' : 'forward'" [size]="13" />
+              </button>
+            }
+          </div>
+          <ex-fold [open]="detailed && active()">
+            <div class="details">
+              @if (identity(agent.selection) || agent.role || agent.ownSession) {
+                <div class="identity">
+                  @if (agent.role) { <span>{{ agent.role }}</span> }
+                  @if (identity(agent.selection); as identity) { <span>{{ identity }}</span> }
+                  @if (agent.ownSession) { <span class="own"><ex-icon name="subtask" [size]="12" />Own session</span> }
+                </div>
+              }
+              @for (message of agent.messages ?? []; track message.id) {
+                <div class="sent" animate.enter="message-in">
+                  <ex-icon name="chat" [size]="13" />
+                  <q [title]="message.text">{{ message.text }}</q>
+                  <ex-ease-swap [value]="message.status" />
+                </div>
+              }
+              @if (agent.detail; as detail) {
+                <div class="detail" [attr.data-tone]="presentation.glyph">
+                  @if (agent.status === 'running' || agent.status === 'pending') {
+                    <ex-ease-swap [value]="detail" />
+                  } @else { <span>{{ detail }}</span> }
+                </div>
+              } @else if (agent.status === 'pending') {
+                <div class="detail">Preparing the agent…</div>
+              }
+              @if (agent.target || agent.usage) {
+                <div class="card-foot">
+                  @if (agent.usage) { <span class="usage">{{ agent.usage }}</span> }
+                  <span class="grow"></span>
+                  @if (agent.target) {
+                    @if (sessionId && agent.status !== 'waiting' && agent.status !== 'error') {
+                      <button exButton size="sm" variant="ghost" type="button" class="icon-button"
+                        [disabled]="controlsDisabled()" [attr.aria-label]="'Message ' + agent.title" exTooltip="Message in session"
+                        (click)="request(agent, 'message', $event)"><ex-icon name="chat" [size]="14" /></button>
+                    }
+                    @if (agent.stoppable && sessionId) {
+                      <button exButton size="sm" variant="ghost" type="button" class="icon-button"
+                        [disabled]="controlsDisabled()" [attr.aria-label]="'Stop ' + agent.title" exTooltip="Stop agent"
+                        (click)="request(agent, 'stop', $event)"><ex-icon name="stop" [size]="14" /></button>
+                    }
+                    <button exButton size="sm" [variant]="agent.status === 'waiting' ? 'secondary' : 'ghost'" type="button"
+                      [attr.data-agent-session]="!grouped() ? sessionId : null"
+                      [disabled]="controlsDisabled() && !!sessionId"
+                      (click)="request(agent, agent.status === 'waiting' && sessionId ? 'answer' : agent.status === 'error' && sessionId ? 'message' : 'open', $event)">
+                      {{ sessionId ? (agent.status === 'waiting' ? 'Open to answer' : agent.status === 'error' ? 'Open to retry' : 'Open session') : 'Inspect' }}
+                      <ex-icon name="forward" [size]="12" />
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+          </ex-fold>
+        </li>
+      }
+    </ul>
+    <ex-fold [open]="!!board().wait && active()">
+      <div class="wait-line" [class.waiting]="board().waiting">
+        <ex-icon [name]="board().waiting ? 'clock' : 'check'" [size]="13" />
+        <ex-ease-swap [value]="board().wait || ''" />
+      </div>
+    </ex-fold>
+  </div>
+</div>

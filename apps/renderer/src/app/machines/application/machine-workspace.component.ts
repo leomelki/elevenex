@@ -1,7 +1,7 @@
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
 import type { TaskBrowserWindowContext } from '@elevenex/shared';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterRenderEffect, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { TaskBrowserComponent, type BrowserComposerIntent } from '../../task-browser';
 import { TaskTerminalComponent, type TerminalQuestion, type TerminalBrowserState } from '../../task-terminal';
 import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -13,7 +13,10 @@ import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.compo
 import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
 import { OpensWhenBackComponent, type Machine } from '../index';
 import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
-import { SessionChatComponent } from '../../session-chat/session-chat.component';
+import { SessionChatComponent, type AgentChatFocus } from '../../session-chat/session-chat.component';
+import type { AgentWorkIntent } from '../../conversation';
+import type { SessionAgentReference } from '@elevenex/shared';
+import type { ChatSelection } from '../../session-chat/session-chat.store';
 import { WorkspaceWritingJournal } from '../../workspace/workspace-writing-journal';
 import { SessionChatOutbox } from '../../session-chat/session-chat-outbox';
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
@@ -58,6 +61,11 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  readonly agentFocus = signal<AgentChatFocus | null>(null);
+  readonly agentNavigationBusy = signal(false);
+  readonly agentNavigationError = signal('');
+  private readonly returnOrigins = new Map<number, { readonly parent: number; readonly itemId?: string }>();
+  private agentScope: string | null = null;
   readonly codeFile = signal<CodeFileIntent | null>(null);
   readonly codeTarget = computed<CodeTarget | null>(() => { const selected = this.store.taskSelection(); return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null; }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   readonly reviewTarget = signal<ChatReviewTarget | null>(null);
@@ -165,6 +173,17 @@ export class MachineWorkspaceComponent {
 
   constructor() {
     effect(() => {
+      const scope = this.store.scopeId(), selection = this.store.selected();
+      if (scope !== this.agentScope) {
+        this.agentScope = scope;
+        this.returnOrigins.clear();
+      }
+      untracked(() => {
+        if (this.agentFocus()?.selection !== selection) this.agentFocus.set(null);
+        this.agentNavigationError.set('');
+      });
+    });
+    effect(() => {
       const file = this.codeFile(), target = this.codeTarget();
       if (file && (file.scopeId !== target?.scopeId || file.taskId !== target.taskId)) this.codeFile.set(null);
     });
@@ -266,6 +285,45 @@ export class MachineWorkspaceComponent {
     void this.taskBrowser()?.beginElementPick(request.tabId);
   }
   private readonly chat = viewChild(SessionChatComponent);
+
+  async openAgentSession(event: { readonly source: ChatSelection; readonly intent: AgentWorkIntent & {
+    readonly target: { readonly kind: 'session'; readonly session: SessionAgentReference };
+  } }): Promise<void> {
+    const { source, intent } = event;
+    const session = intent.target.session;
+    const anchor = intent.origin?.closest<HTMLElement>('[data-work-step]')?.dataset['workStep'];
+    if (this.store.selected() !== source || this.agentNavigationBusy()) return;
+    this.agentNavigationBusy.set(true);
+    this.agentNavigationError.set('');
+    const previousError = this.store.error();
+    try {
+      const selected = await this.store.openLinkedSession(source, session);
+      if (!selected) {
+        if (this.store.selected() === source) {
+          this.agentNavigationError.set(this.store.error() !== previousError ? this.store.error() || 'Could not open this session.' : 'Could not open this session.');
+        }
+        return;
+      }
+      if (selected !== this.store.selected() || !this.active()) return;
+      const prior = this.returnOrigins.get(source.sessionId);
+      if (selected !== source && intent.action !== 'return') {
+        this.returnOrigins.delete(selected.sessionId);
+        this.returnOrigins.set(selected.sessionId, { parent: source.sessionId, itemId: anchor });
+        if (this.returnOrigins.size > 32) {
+          const oldest = this.returnOrigins.keys().next().value;
+          if (oldest !== undefined) this.returnOrigins.delete(oldest);
+        }
+      }
+      this.wideReview.set(false);
+      if (matchMedia('(max-width: 700px)').matches && this.panelOpen()) this.panelOpen.set(false);
+      this.agentFocus.set({
+        selection: selected, action: intent.action, from: source.sessionId,
+        itemId: intent.itemId ?? (intent.action === 'return' && prior?.parent === selected.sessionId ? prior.itemId : undefined),
+      });
+    } finally {
+      this.agentNavigationBusy.set(false);
+    }
+  }
   browserAttention(): void { this.store.selectPanel('browser'); this.panelOpen.set(true); }
   browserContext(intent: BrowserComposerIntent): void {
     const selected = this.store.selected();

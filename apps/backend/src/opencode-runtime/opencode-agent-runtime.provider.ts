@@ -2,7 +2,8 @@ import {
   elevenexMcpUrl,
   SESSION_TOOL_INSTRUCTIONS,
 } from '../mcp/session-tool-context.js';
-import type { OpenCodeClient } from './opencode-client.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { OpenCodeClient, OpenCodeSteerReceipt, OpenCodeTurnSelection } from './opencode-client.js';
 import { OpenCodeTranscriptStore } from './opencode-transcript-store.js';
 import { OpenCodeSessionTree } from './opencode-session-tree.js';
 import { canonicalizeAgentTool } from '../agent-runtime/agent-tool-normalization.js';
@@ -30,6 +31,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderInfo,
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentLoginMode,
 } from '../agent-runtime/agent-runtime.types.js';
@@ -74,6 +76,9 @@ interface RuntimeEntry {
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
   run: Promise<void> | null;
+  turnSelection?: OpenCodeTurnSelection;
+  steering: Set<Promise<void>>;
+  steerReceipts: Set<OpenCodeSteerReceipt>;
   restoring: Promise<void> | null;
   idleTimer: NodeJS.Timeout | null;
   lastUsedAt: number;
@@ -168,8 +173,11 @@ export class OpenCodeAgentRuntimeProvider
     return this.catalog.continueLogin(options);
   }
 
-  private async state(sessionId: number): Promise<ClaudeRuntimeStatePayload> {
-    const session = await this.sessions.findOne(sessionId);
+  private async state(
+    sessionId: number,
+    session?: Awaited<ReturnType<SessionsService['findOne']>>,
+  ): Promise<ClaudeRuntimeStatePayload> {
+    session ??= await this.sessions.findOne(sessionId);
     let state = this.states.get(sessionId);
     if (!state) {
       const catalog = await this.catalog.getModelCatalog();
@@ -177,6 +185,7 @@ export class OpenCodeAgentRuntimeProvider
         this.settings.getAgentProviderDefaults('opencode'),
         catalog.models,
         catalog.providerDefaultModelId,
+        session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined,
       );
       state = {
         sessionId,
@@ -326,6 +335,8 @@ export class OpenCodeAgentRuntimeProvider
       permissions: [],
       questions: [],
       run: null,
+      steering: new Set(),
+      steerReceipts: new Set(),
       restoring: null,
       idleTimer: null,
       lastUsedAt: Date.now(),
@@ -355,6 +366,7 @@ export class OpenCodeAgentRuntimeProvider
       entry.resources = resources;
       entry.agent = resources?.defaultAgent;
       state.availableModels = loaded.catalog.models;
+      const selection = session.agentSelection?.provider === 'opencode' ? session.agentSelection : undefined;
       if (!state.claudeSessionId && !this.selectionChanged.has(sessionId))
         Object.assign(
           state,
@@ -362,6 +374,7 @@ export class OpenCodeAgentRuntimeProvider
             this.settings.getAgentProviderDefaults('opencode'),
             loaded.catalog.models,
             loaded.catalog.providerDefaultModelId,
+            selection,
           ),
         );
       if (
@@ -370,8 +383,12 @@ export class OpenCodeAgentRuntimeProvider
         !this.selectionChanged.has(sessionId)
       ) {
         const selected = await entry.client.selection(state.claudeSessionId);
-        state.selectedModel = selected.model;
-        state.reasoningEffort = selected.variant;
+        if (!this.selectionChanged.has(sessionId)) {
+          state.selectedModel = selection?.model === undefined ? selected.model : selection.model;
+          state.reasoningEffort = selection?.reasoningEffort === undefined
+            ? selected.variant
+            : selection.reasoningEffort;
+        }
         entry.agent = selected.agent ?? entry.agent;
       }
       state.sessionMetadata = {
@@ -845,6 +862,7 @@ export class OpenCodeAgentRuntimeProvider
     }
   }
   private emitPart(entry: RuntimeEntry, part: Part): void {
+    let settled = false;
     for (const item of entry.transcript.partItems(part)) {
       const index = entry.state.liveItems.findIndex(
         (existing) => existing.id === item.id,
@@ -866,7 +884,19 @@ export class OpenCodeAgentRuntimeProvider
                 : 'message_start',
         payload: { sessionId: entry.state.sessionId, item },
       });
+      const result = item.kind === 'system' ? item.nativeTask : undefined;
+      if (result?.status !== 'completed' && result?.status !== 'error') continue;
+      const agent = entry.state.subagents.find(child => child.agentId === result.agentId);
+      if (!agent || (agent.status === 'stopped' && agent.executionStatus === result.status &&
+          (!result.detail || agent.lastAssistantMessage === result.detail))) continue;
+      agent.status = 'stopped';
+      agent.executionStatus = result.status;
+      agent.lastAssistantMessage = result.detail ?? agent.lastAssistantMessage;
+      agent.completedAt = item.timestamp;
+      agent.canStop = false;
+      settled = true;
     }
+    if (settled) this.emitState(entry);
   }
   private syncRequests(entry: RuntimeEntry): void {
     entry.state.pendingPermissionRequest = entry.permissions[0]
@@ -916,7 +946,11 @@ export class OpenCodeAgentRuntimeProvider
     }, { authoritative: true, provider: 'opencode' });
     this.emit('event', {
       type: 'runtime_snapshot',
-      payload: { ...state, liveItems: [...state.liveItems] },
+      payload: {
+        ...state,
+        liveItems: [...state.liveItems],
+        dispatchingPrompts: this.queuedDispatches.current(state),
+      },
     });
   }
   private fail(entry: RuntimeEntry, error: unknown): void {
@@ -940,6 +974,7 @@ export class OpenCodeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
+    options?: AgentPromptOptions,
   ): Promise<void> {
     this.assertNotRewinding(sessionId);
     if (!prompt.trim() && !images?.length)
@@ -953,11 +988,32 @@ export class OpenCodeAgentRuntimeProvider
       throw new ConflictException(
         'OpenCode has not confirmed that the previous turn stopped. Retry stopping it before continuing.',
       );
+    const active = this.entries.get(sessionId);
+    if (
+      options?.preferSteering &&
+      !options.queue &&
+      !images?.length &&
+      active?.run &&
+      active.client?.steerPrompt &&
+      active.turnSelection &&
+      state.claudeSessionId &&
+      !active.interruptRequested &&
+      !active.controller.signal.aborted &&
+      !state.queuePaused &&
+      (options.requireSteering || !state.pendingPrompts.length) &&
+      !this.interrupts.has(sessionId)
+    ) {
+      await this.steerActivePrompt(active, state.claudeSessionId, prompt);
+      options.onAccepted?.('steered');
+      return;
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       state.canInterrupt ||
       state.queuePaused ||
       this.interrupts.has(sessionId) ||
-      this.entries.get(sessionId)?.run
+      active?.run
     ) {
       state.pendingPrompts = [
         ...state.pendingPrompts,
@@ -975,6 +1031,7 @@ export class OpenCodeAgentRuntimeProvider
       )
         state.queuePaused = true;
       this.emit('event', { type: 'run_state', payload: state });
+      options?.onAccepted?.('queued');
       return;
     }
     state.canInterrupt = true;
@@ -1016,6 +1073,8 @@ export class OpenCodeAgentRuntimeProvider
       () => {
         this.queuedDispatches.clear(state);
         entry.run = null;
+        entry.turnSelection = undefined;
+        entry.steerReceipts.clear();
         if (entry.turnController === turnController)
           entry.turnController = null;
         if (entry.controller.signal.aborted) return;
@@ -1037,7 +1096,69 @@ export class OpenCodeAgentRuntimeProvider
     void entry.run.catch((error) => {
       if (!entry.controller.signal.aborted) this.fail(entry, error);
     });
+    options?.onAccepted?.('running');
   }
+  private async steerActivePrompt(entry: RuntimeEntry, nativeId: string, prompt: string): Promise<void> {
+    const { client, turnController, turnSelection } = entry;
+    if (!client?.steerPrompt || !turnController || !turnSelection)
+      throw new ConflictException('No active OpenCode turn can accept live steering.');
+    // Preserve the active prompt's model, variant and mode, even if the user
+    // has already selected new settings for the next turn.
+    const signal = AbortSignal.any([entry.controller.signal, turnController.signal]);
+    const send = client.steerPrompt(nativeId, prompt, turnSelection, { signal })
+      .then(receipt => {
+        if (receipt && entry.turnController === turnController && !signal.aborted)
+          entry.steerReceipts.add(receipt);
+      });
+    entry.steering.add(send);
+    try {
+      await send;
+    } finally {
+      entry.steering.delete(send);
+    }
+  }
+
+  private async settleSteers(entry: RuntimeEntry, nativeId: string, signal: AbortSignal): Promise<void> {
+    // V1's blocking prompt can return while the separately admitted input is
+    // still generating. Keep one owner for the transcript and local queue.
+    let deadline = Date.now() + 5_000;
+    let observedReceipt = false;
+    for (;;) {
+      if (entry.steering.size) {
+        await Promise.allSettled(entry.steering);
+        deadline = Date.now() + 5_000;
+      }
+      if (signal.aborted || (!observedReceipt && !entry.steerReceipts.size && !entry.steering.size)) {
+        entry.turnSelection = undefined;
+        return;
+      }
+      if (entry.steering.size) continue;
+      const status = await entry.client!.session.status({}, { signal });
+      if (entry.steering.size) continue;
+      const phase = status.data?.[nativeId]?.type;
+      if (!phase || phase === 'idle') {
+        for (const receipt of entry.steerReceipts) {
+          if (await receipt(signal)) {
+            entry.steerReceipts.delete(receipt);
+            observedReceipt = true;
+          }
+        }
+        if (!entry.steerReceipts.size) {
+          // A receipt can appear between the status read and lookup.
+          const confirmed = await entry.client!.session.status({}, { signal });
+          const currentPhase = confirmed.data?.[nativeId]?.type;
+          if ((!currentPhase || currentPhase === 'idle') && !entry.steering.size && !entry.steerReceipts.size) {
+            entry.turnSelection = undefined;
+            return;
+          }
+        } else if (Date.now() >= deadline) {
+          throw new ConflictException('OpenCode did not confirm delivery of the steered prompt.');
+        }
+      }
+      await delay(500, undefined, { signal });
+    }
+  }
+
   private async run(
     entry: RuntimeEntry,
     signal: AbortSignal,
@@ -1126,6 +1247,7 @@ export class OpenCodeAgentRuntimeProvider
         command &&
         entry.resources?.skills.find((skill) => skill.name === command[1]);
       const selection = { ...common, model, system: entry.system };
+      entry.turnSelection = selection;
       const result =
         command?.[1] === 'compact' && client.compact
           ? (await client.compact(state.claudeSessionId, selection, { signal }),
@@ -1172,6 +1294,8 @@ export class OpenCodeAgentRuntimeProvider
         )
           throw new Error(JSON.stringify(result.data.info.error.data));
       }
+      await this.settleSteers(entry, state.claudeSessionId, signal);
+      if (signal.aborted) return;
       // An earlier reconnect snapshot may have started before this turn finished.
       // Wait for it before fetching the authoritative completed transcript.
       await entry.restoring;
@@ -1282,30 +1406,36 @@ export class OpenCodeAgentRuntimeProvider
     const state = await this.state(sessionId);
     state.pendingPrompts = [];
     state.queuePaused = false;
+    this.queuedDispatches.clear(state);
     this.emit('event', { type: 'run_state', payload: state });
   }
   async steerPendingPrompt(sessionId: number, id: string) {
     const state = await this.state(sessionId);
     const prompt = state.pendingPrompts.find((item) => item.id === id);
     if (!prompt) throw new BadRequestException('Queued prompt was not found.');
-    // V2 has native steering; V1 resumes the selected prompt after a clean abort.
+    // Promote text into a ready native turn without interrupting it.
     const entry = this.entries.get(sessionId);
-    if (entry?.client?.steerPrompt && entry.run && !prompt.images?.length) {
+    if (
+      entry?.client?.steerPrompt && entry.run && entry.turnSelection &&
+      !entry.interruptRequested && state.claudeSessionId && !prompt.images?.length
+    ) {
       const finishDispatch = this.queuedDispatches.begin(state, prompt);
+      state.pendingPrompts = state.pendingPrompts.filter(item => item !== prompt);
       try {
-        await entry.client.steerPrompt(state.claudeSessionId!, prompt.prompt);
+        await this.steerActivePrompt(entry, state.claudeSessionId, prompt.prompt);
       } catch (error) {
-        finishDispatch();
+        if (finishDispatch() && this.states.get(sessionId) === state) {
+          state.pendingPrompts = [prompt, ...state.pendingPrompts];
+          state.queuePaused = true;
+          this.emitState(entry);
+        }
         throw error;
       }
       await this.cancelPendingPrompt(sessionId, id);
       return;
     }
-    await this.interrupt(sessionId);
-    if (this.states.get(sessionId) !== state || !state.pendingPrompts.includes(prompt)) return;
-    state.pendingPrompts = state.pendingPrompts.filter(item => item.id !== id);
-    state.queuePaused = false;
-    await this.sendQueuedPrompt(sessionId, state, prompt);
+    state.pendingPrompts = [prompt, ...state.pendingPrompts.filter(item => item !== prompt)];
+    await this.resumePendingPrompts(sessionId);
   }
   async resumePendingPrompts(sessionId: number) {
     const state = await this.state(sessionId);
@@ -1338,20 +1468,23 @@ export class OpenCodeAgentRuntimeProvider
   }
 
   async setSelectedModel(sessionId: number, model: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
     if (model) openCodeModel(model);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
+    this.selectionChanged.add(sessionId);
     state.selectedModel = model;
     if (!model) state.reasoningEffort = null;
     const known = state.availableModels.find((item) => item.id === model);
     if (known && !known.reasoningEfforts?.includes(state.reasoningEffort ?? ''))
       state.reasoningEffort = null;
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { model, reasoningEffort: state.reasoningEffort ?? null });
     this.emit('event', { type: 'run_state', payload: state });
     return state;
   }
   async setReasoningEffort(sessionId: number, effort: string | null) {
-    const state = await this.state(sessionId);
-    this.selectionChanged.add(sessionId);
+    const session = await this.sessions.findOne(sessionId);
+    const state = await this.state(sessionId, session);
     const known = state.availableModels.find(
       (item) => item.id === state.selectedModel,
     );
@@ -1359,6 +1492,9 @@ export class OpenCodeAgentRuntimeProvider
       throw new BadRequestException(
         'This model does not support that OpenCode variant.',
       );
+    this.selectionChanged.add(sessionId);
+    if (session.agentSelection?.provider === 'opencode')
+      this.sessions.updateSessionAgentSelection(sessionId, 'opencode', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.emit('event', { type: 'run_state', payload: state });
     return state;

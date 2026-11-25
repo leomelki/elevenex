@@ -93,6 +93,7 @@
               [backgrounding]="backgrounding()"
               [decisionPending]="decisionPending()"
               (inspectRequested)="inspect($event)"
+              [harness]="harness()" [sessionsDisabled]="sessionsDisabled()" (sessionRequested)="openSession($event)"
               (stopRequested)="stop(row)"
               (backgroundRequested)="background(row)"
               (answerRequested)="answer()"
@@ -113,6 +114,7 @@
               [stopping]="stopping() && requested() === row.item.id"
               [backgrounding]="backgrounding()"
               (inspectRequested)="inspect($event)"
+              [harness]="harness()" [sessionsDisabled]="sessionsDisabled()" (sessionRequested)="openSession($event)"
               (stopRequested)="stop(row)"
               (backgroundRequested)="background(row)"
             />
@@ -133,6 +135,7 @@
               [view]="row"
               [now]="now()"
               (inspectRequested)="inspect($event)"
+              [harness]="harness()" [sessionsDisabled]="sessionsDisabled()" (sessionRequested)="openSession($event)"
             />
           }
         </div>

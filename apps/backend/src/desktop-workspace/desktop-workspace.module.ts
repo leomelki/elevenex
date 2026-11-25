@@ -6,6 +6,7 @@ import { DesktopChatController } from './desktop-chat.controller.js';
 import { DesktopChatService } from './desktop-chat.service.js';
 import { ClaudeHooksModule } from '../claude-hooks/claude-hooks.module.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
 import { NavigationEventsModule } from '../navigation/navigation-events.module.js';
 import { GitModule } from '../git/git.module.js';
 import { DesktopWorkspaceGitService } from './desktop-workspace-git.service.js';
@@ -39,6 +40,7 @@ import { DesktopProjectDeletionService } from './desktop-project-deletion.servic
     DesktopWorkspaceService,
     DesktopWorkspaceGitService,
     DesktopWorkspaceActivityService,
+    DesktopSessionDelegates,
     DesktopProjectDeletionService,
   ],
 })

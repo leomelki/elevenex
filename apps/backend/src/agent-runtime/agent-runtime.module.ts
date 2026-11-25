@@ -17,6 +17,7 @@ import { AgentRuntimeCleanupService } from './agent-runtime-cleanup.service.js';
 import { AgentRuntimeGateway } from './agent-runtime.gateway.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import { AgentRunTimeLimitService } from './agent-run-time-limit.service.js';
+import { SessionCompletionNoticesService } from './session-completion-notices.service.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { ConversationExportService } from './conversation-export.service.js';
 import { ClaudeAgentRuntimeProvider } from './claude-agent-runtime.provider.js';
@@ -58,6 +59,7 @@ import {
     },
     AgentRuntimeRegistryService,
     AgentRunTimeLimitService,
+    SessionCompletionNoticesService,
     McpManagementService,
     McpConfigFileService,
     ConversationExportService,

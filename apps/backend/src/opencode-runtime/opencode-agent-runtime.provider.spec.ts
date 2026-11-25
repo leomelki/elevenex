@@ -150,6 +150,24 @@ function fixture(nativeSessionId = '-1', changes?: Pick<TurnChangesService, 'beg
 
 describe('OpenCode runtime lifecycle', () => {
   afterEach(() => jest.clearAllMocks());
+  it('keeps a delegated model and variant through project catalog initialization', async () => {
+    const f = fixture();
+    const selection = {
+      ...await f.sessions.findOne(1),
+      agentSelection: { provider: 'opencode', model: 'local/reviewer', reasoningEffort: 'thorough' },
+    };
+    f.sessions.findOne.mockResolvedValue(selection);
+    try {
+      const receipt = jest.fn();
+      await f.provider.submitPrompt(1, 'Review', undefined, undefined, { onAccepted: receipt });
+      await tick();
+      expect(receipt).toHaveBeenCalledWith('running');
+      expect(f.client.session.prompt).toHaveBeenCalledWith(expect.objectContaining({
+        model: { providerID: 'local', modelID: 'reviewer' }, variant: 'thorough',
+      }), expect.anything());
+    } finally { f.provider.onModuleDestroy(); }
+  });
+
   it('lists owned child activity and stops only that child after native confirmation', async () => {
     const f = fixture('s');
     f.catalog.getAuthStatus.mockImplementation(async () => ({ authenticated: true, installed: true }));
@@ -970,6 +988,65 @@ describe('OpenCode runtime lifecycle', () => {
       f.provider.onModuleDestroy();
     }
   });
+  it.each(['legacy without steering', 'v1', 'v2'] as const)(
+    'uses the available follow-up delivery on OpenCode %s',
+    async (version) => {
+      const f = fixture();
+      const steerPrompt = jest.fn().mockResolvedValue(undefined);
+      if (version !== 'legacy without steering')
+        Object.assign(f.client, { steerPrompt });
+      try {
+        await f.provider.submitPrompt(1, 'Initial assignment');
+        await tick();
+        const accepted = jest.fn();
+        await f.provider.submitPrompt(1, 'Focus on the failing test', undefined, undefined, {
+          preferSteering: true,
+          onAccepted: accepted,
+        });
+        if (version !== 'legacy without steering') {
+          expect(steerPrompt).toHaveBeenCalledWith(
+            's', 'Focus on the failing test', expect.any(Object), { signal: expect.any(AbortSignal) },
+          );
+          expect(accepted).toHaveBeenCalledWith('steered');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts).toEqual([]);
+        } else {
+          expect(accepted).toHaveBeenCalledWith('queued');
+          expect((await f.provider.getRuntimeState(1)).pendingPrompts)
+            .toMatchObject([{ prompt: 'Focus on the failing test' }]);
+        }
+        expect(f.client.session.prompt).toHaveBeenCalledTimes(1);
+        expect(f.client.session.abort).not.toHaveBeenCalled();
+      } finally {
+        f.provider.onModuleDestroy();
+      }
+    },
+  );
+
+  it('keeps the OpenCode v1 turn active until the async steer reaches native history', async () => {
+    const f = fixture();
+    let recorded = false;
+    const receipt = jest.fn(async () => recorded);
+    Object.assign(f.client, { steerPrompt: jest.fn(async () => receipt) });
+    try {
+      await f.provider.submitPrompt(1, 'Initial assignment');
+      await tick();
+      await f.provider.submitPrompt(1, 'Redirect', undefined, undefined, { preferSteering: true });
+      f.turn.resolve({ data: undefined });
+      await tick();
+      expect(receipt).toHaveBeenCalled();
+      expect(f.sessions.markCompletionUnreviewed).not.toHaveBeenCalled();
+      expect((await f.provider.getRuntimeState(1)).runPhase).toBe('running');
+
+      recorded = true;
+      const completed = deferred<void>();
+      f.sessions.markCompletionUnreviewed.mockImplementationOnce(async () => completed.resolve());
+      await completed.promise;
+      expect(f.client.session.abort).not.toHaveBeenCalled();
+    } finally {
+      f.provider.onModuleDestroy();
+    }
+  });
+
   it('queues prompts, pauses on interruption, and preserves the pending queue', async () => {
     const f = fixture();
     try {
