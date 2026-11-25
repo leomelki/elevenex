@@ -111,7 +111,7 @@ export default async function* (capture) {
     await capture.reducedMotion(true); await capture.viewport(480, 780);
     await capture.component('ex-reconnect-demo', component => component.platform.recover());
     await capture.waitFor(() => document.querySelector('.workspace-frame.ex-offline'));
-    await capture.component('ex-machine-workspace', component => { component.store.panel.set('browser'); component.store.panelOpen.set(true); });
+    await capture.component('ex-machine-workspace', component => { component.store.selectPanel('browser'); component.store.panelOpen.set(true); });
     await capture.waitFor(() => document.querySelector('ex-opens-when-back'));
     await settleMotion();
     yield { name: `${theme}-narrow-reduced-never-loaded`, inspect: ['ex-opens-when-back', 'ex-workspace-panels', 'ex-composer'] };

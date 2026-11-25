@@ -1,11 +1,15 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import type { TaskAppRun } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../ui';
 import { ViewTabsComponent, type ViewTab } from '../views';
 import { AppStreamComponent } from './app-stream.component';
 
-interface RunLink { readonly scopeId: string; readonly taskId: number; readonly runId: string }
+interface AppTarget { readonly scopeId: string; readonly taskId: number }
+interface RunLink extends AppTarget { readonly runId: string }
+interface RunSnapshot extends AppTarget { readonly runs: readonly TaskAppRun[] }
+const recentTaskLimit = 4;
 const labels: Record<TaskAppRun['status'], string> = {
   requested: 'Awaiting launch', starting: 'Starting', running: 'Running', stopping: 'Stopping', exited: 'Exited', failed: 'Failed',
 };
@@ -27,17 +31,19 @@ export class TaskAppsComponent {
   readonly taskId = input<number | null>(null);
   readonly machine = input('');
   readonly available = input(true);
+  readonly monitor = input(true);
   readonly viewerVisible = input(true);
   readonly link = input<RunLink | null>(null);
   readonly standalone = input(false);
   readonly idle = output<void>();
   readonly labels = labels;
-  readonly runs = signal<readonly TaskAppRun[]>([]);
-  private readonly readTarget = signal<{ readonly scopeId: string; readonly taskId: number } | null>(null);
-  readonly hasActiveApp = computed(() => {
-    const read = this.readTarget();
-    return this.available() && !!read && read.scopeId === this.scopeId() && read.taskId === this.taskId() && this.runs().some(isActive);
+  private readonly snapshot = signal<RunSnapshot | null>(null);
+  private readonly currentSnapshot = computed(() => {
+    const snapshot = this.snapshot();
+    return snapshot && this.matches(snapshot) ? snapshot : null;
   });
+  readonly runs = computed(() => this.currentSnapshot()?.runs ?? []);
+  readonly hasActiveApp = computed(() => this.runs().some(isActive));
   readonly selected = signal('');
   readonly run = computed(() => this.runs().find(item => item.runId === this.selected()));
   readonly tabs = computed<readonly ViewTab[]>(() => {
@@ -55,7 +61,7 @@ export class TaskAppsComponent {
     return JSON.stringify([proposal.executable, ...proposal.args], null, 2)
       .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   });
-  readonly loading = signal(false);
+  readonly loading = computed(() => this.monitor() && (!this.currentSnapshot() || (this.reading() && !this.run())));
   readonly readError = signal('');
   readonly actionError = signal('');
   readonly actual = signal(false);
@@ -64,81 +70,109 @@ export class TaskAppsComponent {
   readonly logs = signal<string | null>(null);
   readonly busy = signal(false);
   readonly bridge = inject(ELEVENEX_BRIDGE);
+  private readonly document = inject(DOCUMENT);
+  private readonly recentTasks = new Map<number, { readonly snapshot: RunSnapshot; readonly selected: string }>();
+  private cacheScope: string | null = null;
+  private target: AppTarget | null = null;
+  private lastLink: RunLink | null = null;
   private generation = 0;
   private timer?: ReturnType<typeof setTimeout>;
-  private reading = false;
-  private readOnce = false;
+  private readonly reading = signal(false);
   private pendingRead = false;
   private logGeneration = 0;
   private disposed = false;
   private requestedRun = '';
 
   constructor() {
+    let wasMonitoring = false;
     effect(() => {
-      const scope = this.scopeId(), task = this.taskId(), available = this.available();
+      const scopeId = this.scopeId(), taskId = this.taskId(), available = this.available();
+      const monitor = this.monitor(), link = this.link();
+      const resumed = monitor && !wasMonitoring;
+      wasMonitoring = monitor;
+      const target = scopeId && taskId && available ? { scopeId, taskId } : null;
       untracked(() => {
-        this.generation++;
-        this.readOnce = false;
-        clearTimeout(this.timer);
-        this.reading = this.pendingRead = false;
-        this.readTarget.set(null);
-        this.runs.set([]);
-        this.select('');
-        this.readError.set('');
-        this.loading.set(false);
-        if (scope && task && available) void this.refresh();
+        const changed = this.target?.scopeId !== target?.scopeId || this.target?.taskId !== target?.taskId;
+        if (scopeId !== this.cacheScope) {
+          this.cacheScope = scopeId;
+          this.recentTasks.clear();
+        }
+        if (changed) this.switchTask(target);
+        const linkChanged = this.lastLink !== link;
+        if (changed || linkChanged) {
+          this.lastLink = link;
+          const selected = this.selected();
+          this.requestedRun = link && this.matches(link) && (linkChanged || !selected || selected === link.runId) ? link.runId : '';
+          if (this.requestedRun && (linkChanged || this.requestedRun !== selected)) this.select(this.requestedRun);
+        }
+        if (!monitor) clearTimeout(this.timer);
+        else if (resumed || changed || (linkChanged && this.requestedRun)) void this.refresh();
       });
-    });
-    effect(() => {
-      const link = this.link(), scope = this.scopeId(), task = this.taskId();
-      this.requestedRun = link && link.scopeId === scope && link.taskId === task ? link.runId : '';
-      if (this.requestedRun) untracked(() => { this.select(this.requestedRun); void this.refresh(); });
     });
     const visibility = () => {
       clearTimeout(this.timer);
-      if (!document.hidden) void this.refresh();
+      if (!this.document.hidden) void this.refresh();
     };
-    document.addEventListener('visibilitychange', visibility);
+    this.document.addEventListener('visibilitychange', visibility);
     inject(DestroyRef).onDestroy(() => {
       this.disposed = true; this.generation++;
       clearTimeout(this.timer);
-      document.removeEventListener('visibilitychange', visibility);
+      this.document.removeEventListener('visibilitychange', visibility);
     });
   }
 
-  async refresh(): Promise<void> {
-    const scope = this.scopeId(), task = this.taskId();
-    if (this.disposed || !scope || !task || !this.available() || document.hidden) return;
-    if (!this.bridge.taskAppsRead) { this.readError.set('Update Elevenex to view apps on this machine.'); return; }
-    if (this.reading) { this.pendingRead = true; return; }
-    const generation = this.generation;
-    const link = this.link();
-    this.reading = true;
+  private matches(target: AppTarget): boolean {
+    return target.scopeId === this.scopeId() && target.taskId === this.taskId() && this.available();
+  }
+
+  private switchTask(target: AppTarget | null): void {
+    this.generation++;
     clearTimeout(this.timer);
-    if (!this.readOnce && !this.readError()) this.loading.set(true);
+    this.reading.set(false);
+    this.pendingRead = false;
+    const previous = this.snapshot();
+    if (previous && previous.scopeId === this.cacheScope && previous.runs.some(isActive)) {
+      this.recentTasks.set(previous.taskId, { snapshot: previous, selected: this.selected() });
+      if (this.recentTasks.size > recentTaskLimit) this.recentTasks.delete(this.recentTasks.keys().next().value!);
+    }
+    const cached = target && this.recentTasks.get(target.taskId);
+    if (target) this.recentTasks.delete(target.taskId);
+    this.target = target;
+    this.snapshot.set(cached?.snapshot ?? null);
+    this.select(cached?.selected ?? '');
+    this.readError.set('');
+  }
+
+  async refresh(): Promise<void> {
+    const target = this.target;
+    if (this.disposed || !target || !this.matches(target) || !this.monitor() || this.document.hidden) return;
+    if (!this.bridge.taskAppsRead) { this.readError.set('Update Elevenex to view apps on this machine.'); return; }
+    if (this.reading()) { this.pendingRead = true; return; }
+    const generation = this.generation;
+    const current = () => generation === this.generation && this.matches(target);
+    const link = this.link();
+    this.reading.set(true);
+    clearTimeout(this.timer);
     try {
-      const reply = await this.bridge.taskAppsRead(scope, task);
-      if (generation !== this.generation) return;
+      const reply = await this.bridge.taskAppsRead(target.scopeId, target.taskId);
+      if (!current()) return;
       if (!reply.ok) { this.readError.set(reply.error.message); return; }
-      this.readOnce = true;
       this.readError.set('');
-      this.runs.set(reply.value);
-      this.readTarget.set({ scopeId: scope, taskId: task });
+      this.snapshot.set({ ...target, runs: reply.value });
       if (!this.requestedRun && !reply.value.some(run => run.runId === this.selected())) {
         const run = reply.value.find(run => run.status === 'running' || run.status === 'starting') ??
           reply.value.find(isActive) ?? reply.value[0];
         this.select(run?.runId ?? '');
       }
       // An older read must not dismiss a launch link that asked for a fresh read.
-      if (!this.hasActiveApp() && !this.pendingRead && this.link() === link) this.idle.emit();
+      if (this.monitor() && !this.hasActiveApp() && !this.pendingRead && this.link() === link) this.idle.emit();
       if (this.viewerVisible() && this.logsOpen() && this.run()) await this.readLogs();
-    } catch { if (generation === this.generation) this.readError.set('Could not read apps on this machine.'); }
+    } catch { if (current()) this.readError.set('Could not read apps on this machine.'); }
     finally {
-      if (generation === this.generation) {
-        this.reading = false;
-        this.loading.set(false);
+      if (current()) {
+        this.reading.set(false);
         if (this.pendingRead) { this.pendingRead = false; void this.refresh(); }
-        else if (!document.hidden && !this.readError()) this.timer = setTimeout(() => void this.refresh(), 2500);
+        else if (this.monitor() && !this.document.hidden && !this.readError()) this.timer = setTimeout(() => void this.refresh(), 2500);
       }
     }
   }
@@ -173,7 +207,7 @@ export class TaskAppsComponent {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy()) return;
     this.busy.set(true); this.actionError.set('');
-    const current = () => generation === this.generation && run.runId === this.selected();
+    const current = () => generation === this.generation && this.run()?.runId === run.runId;
     try {
       const result = action === 'approve'
         ? run.status === 'requested' && run.pendingLaunch ? await this.bridge.taskAppApprove?.(scope, task, run.runId) : undefined
@@ -187,7 +221,7 @@ export class TaskAppsComponent {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy() || !this.bridge.taskAppPopOut) return;
     this.busy.set(true); this.actionError.set('');
-    const current = () => generation === this.generation && run.runId === this.selected();
+    const current = () => generation === this.generation && this.run()?.runId === run.runId;
     try {
       await this.bridge.taskAppPopOut(scope, task, run.runId);
       if (current()) this.detached.set(true);

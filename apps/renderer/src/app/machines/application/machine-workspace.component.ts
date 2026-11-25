@@ -364,7 +364,7 @@ export class MachineWorkspaceComponent {
     } else if (key === 'n' && !event.shiftKey && !event.altKey && this.store.projects().length) {
       event.preventDefault(); void this.store.openNewTask();
     } else if (event.shiftKey && key === 'r' && this.store.selected()) {
-      event.preventDefault(); this.panel.set('changes');
+      event.preventDefault(); this.store.selectPanel('changes');
       const wide = !this.wideReview(); this.panelOpen.set(true); this.wideReview.set(wide);
     } else if (/^[0-9]$/.test(key) && !event.shiftKey && !event.altKey && !this.store.busy()) {
       const projectId = key === '0' ? 'all' : this.store.projects()[Number(key) - 1]?.id;

@@ -28,8 +28,10 @@ describe('Task apps panel ownership', () => {
     expect(view.componentInstance.run()?.runId).toBe('fresh');
     view.componentRef.setInput('link', { scopeId: 'machine', taskId: 2, runId: 'missing' });
     view.detectChanges();
-    await view.whenStable();
-    expect(view.nativeElement.textContent).toContain('This run is unavailable');
+    await vi.waitFor(() => {
+      view.detectChanges();
+      expect(view.nativeElement.textContent).toContain('This run is unavailable');
+    });
     expect(view.nativeElement.querySelector('button[aria-label="Stop app"]')).toBeNull();
   });
   it('keeps run actions in one toolbar and folds logs in under the app on request', async () => {

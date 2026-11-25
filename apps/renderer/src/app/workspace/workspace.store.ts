@@ -28,6 +28,8 @@ interface SessionRemovalIntent {
   readonly session: Pick<TaskSession, 'id' | 'status' | 'activeChildAgents' | 'childStopRequired'>;
 }
 
+const rememberedAppsPanelLimit = 16;
+
 /** A workspace owns bounded visible pages. Resource IDs never outlive their scope. */
 @Injectable()
 export class WorkspaceStore {
@@ -61,7 +63,12 @@ export class WorkspaceStore {
   readonly resumeError = this.resume.error.asReadonly();
   readonly restoring = signal(false);
   readonly panelOpen = signal(false);
-  readonly panel = signal<WorkspaceViewState['panel']>('changes');
+  private readonly workspacePanel = signal<Exclude<WorkspaceViewState['panel'], 'apps'>>('changes');
+  private readonly appsPanels = signal<readonly number[]>([]);
+  readonly panel = computed<WorkspaceViewState['panel']>(() => {
+    const taskId = this.taskSelection()?.taskId;
+    return taskId && this.appsPanels().includes(taskId) ? 'apps' : this.workspacePanel();
+  });
   readonly wideReview = signal(false);
   private resumeContext: EnvironmentContext | null = null;
   private resumeLoaded = false;
@@ -331,7 +338,17 @@ export class WorkspaceStore {
     this.panelOpen.set(true);
   }
   selectPanel(panel: string): void {
-    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser' || panel === 'apps') this.panel.set(panel);
+    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser' || panel === 'apps') {
+      this.setPanel(panel, this.taskSelection()?.taskId);
+    }
+  }
+
+  private setPanel(panel: WorkspaceViewState['panel'], taskId?: number): void {
+    if (taskId) {
+      if (panel === 'apps') this.appsPanels.update(tasks => [...tasks.filter(id => id !== taskId).slice(1 - rememberedAppsPanelLimit), taskId]);
+      else if (this.appsPanels().includes(taskId)) this.appsPanels.update(tasks => tasks.filter(id => id !== taskId));
+    }
+    if (panel !== 'apps') this.workspacePanel.set(panel);
   }
 
   async refresh(): Promise<void> {
@@ -384,7 +401,8 @@ export class WorkspaceStore {
     this.activeProject.set(context.projectId === null ? 'all' : String(context.projectId));
     const view = context.workspace;
     if (!view) return;
-    this.panel.set(view.panel); this.panelOpen.set(view.panelOpen); this.wideReview.set(view.panelOpen && view.wideReview);
+    this.setPanel(view.panel, context.taskId ?? undefined);
+    this.panelOpen.set(view.panelOpen); this.wideReview.set(view.panelOpen && view.wideReview);
     this.closed.set(view.closed); this.focused.set(view.focused); this.filter.set(view.filter);
     this.currentProjectCursor = view.projectCursor ?? undefined; this.currentTaskCursor = view.taskCursor ?? undefined;
   }
@@ -1399,7 +1417,7 @@ export class WorkspaceStore {
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;
     this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
     this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.restoring.set(scope !== null);
-    this.panelOpen.set(false); this.panel.set('changes'); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
+    this.panelOpen.set(false); this.workspacePanel.set('changes'); this.appsPanels.set([]); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
     this.sessionDisclosures.set(new Map());
     this.capable = false; this.archives.reset(); this.sessionArchiveHistoryAvailable.set(false); this.taskRequestsAvailable.set(false); this.commitPanelAvailable.set(false); this.sessionArchiveAvailable.set(false); this.sessionArchiveUndo.set(null); this.closeUndo.set(null);

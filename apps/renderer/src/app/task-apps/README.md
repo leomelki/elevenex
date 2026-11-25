@@ -1,9 +1,12 @@
 # Task apps
 
 The workspace shows the Apps tab when the selected task has a launch request
-or a starting, running, or stopping app. When the last active run ends, an open
-Apps panel returns to Changes. The backend owns each launch and its output.
-Closing the panel or its companion detaches the viewer.
+or a starting, running, or stopping app. Apps selection follows the task across
+conversation switches. The workspace remembers recent tasks' Apps selections and
+reuses recent run metadata from the same backend scope while a new read is pending.
+A selected Apps tab stays visible during that read. When the current read confirms
+there are no active runs, Apps returns to Changes. The backend owns each launch
+and its output. Closing the panel or its companion detaches the viewer.
 
 The panel has one header row. Each run is a tab in the shared side-view strip
 (`ViewTabs` without New or close): a steady dot marks a running app, a spinner

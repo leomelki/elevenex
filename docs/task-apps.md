@@ -2,7 +2,7 @@
 
 Ask the agent to start a dev app in the current task, or to open an installed Android virtual device by name. An Apps panel shows the machine's live window. A local graphical task opens its native window by default. A remote task opens a stream. A caller can also select a private stream on a local Linux host.
 
-The **Apps** tab appears while the selected task has a pending launch approval or an app that is starting, running, or stopping. When the last active run ends, the tab disappears and an open Apps panel switches to **Changes**.
+The **Apps** tab appears while the selected task has a pending launch approval or an app that is starting, running, or stopping. The workspace remembers the **Apps** selection for recently visited tasks, so switching conversations in a task or returning to it restores the panel while app status refreshes. When the last active run ends, the tab disappears and an open Apps panel switches to **Changes**.
 
 The active conversation can reveal a newly requested app without moving keyboard focus. Its **Open app** link is scoped to the selected task. Click inside the picture, or Tab to it and press Enter, to interact. **Shift + Escape** returns the keyboard to Elevenex. Each run has a tab, like Browser tabs, and the same row offers actual size, a separate window, logs and stop for the selected run. Closing or detaching a viewer leaves the app running. **Reconnect** establishes a fresh viewer.
 
