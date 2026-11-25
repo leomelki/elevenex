@@ -18,6 +18,8 @@ export interface AgentRuntimeProviderCapabilities {
   multimodalPrompts: boolean;
   terminalFallback: boolean;
   rewindConversation: boolean;
+  /** Automatic text input can join a live turn without interrupting its work. */
+  nonInterruptingSteering?: boolean;
 }
 
 export interface AgentRuntimeProviderInfo {
@@ -55,6 +57,7 @@ export interface AgentProviderModelCatalogPayload {
   reasoningEfforts: string[];
   /** What the provider falls back to when nothing is pinned, if known. */
   providerDefaultModelId: string | null;
+  providerDefaultReasoningEffort?: string | null;
   /** False when a model cannot be chosen ahead of a session. */
   supportsModelSelection: boolean;
   /** Set when the list is empty for a knowable reason (e.g. signed out). */
@@ -66,8 +69,20 @@ export interface AgentProviderModelCatalog extends AgentProviderModelCatalogPayl
   displayName: string;
 }
 
-export interface AgentRuntimeStatePayload {
+export interface AgentRunLifecycle {
+  sessionState?: string | null;
+  runPhase?: string | null;
+  backgroundWork?: readonly unknown[] | null;
+  pendingPrompts?: readonly unknown[] | null;
+  dispatchingPrompts?: readonly unknown[] | null;
+  queuePaused?: boolean | null;
+  /** Provider task history, used to describe live work. */
+  tasks?: readonly unknown[] | null;
+}
+
+export interface AgentRuntimeStatePayload extends AgentRunLifecycle {
   sessionId: number;
+  planMode?: boolean | null;
   reasoningEffort?: AgentReasoningEffort | null;
   fastMode?: boolean;
 }
@@ -148,6 +163,23 @@ export interface AgentImageInput {
 }
 
 export type NativeAppLaunchPolicy = 'launch' | 'request' | 'plan';
+export type AgentPromptDisposition = 'running' | 'queued' | 'steered';
+
+export interface AgentPromptOptions {
+  human?: boolean;
+  origin?: InteractivePromptOrigin;
+  queue?: boolean;
+  /** Prefer same-turn delivery for a text follow-up, when the harness can do so. */
+  preferSteering?: boolean;
+  /** Reject before dispatch if no active turn can accept live input. */
+  requireSteering?: boolean;
+  /** Pass false to return once the harness owns this specific prompt. */
+  waitForCompletion?: boolean;
+  onAccepted?: (disposition: AgentPromptDisposition) => void;
+}
+
+/** Set by desktop chat handlers, never copied from prompt request bodies. */
+export type InteractivePromptOrigin = 'desktop-chat';
 
 export interface AgentRuntimeProviderBase extends EventEmitter {
   readonly info: AgentRuntimeProviderInfo;
@@ -172,17 +204,12 @@ export interface AgentRuntimeProviderBase extends EventEmitter {
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: {
-      human?: boolean;
-      queue?: boolean;
-      /** Codex can acknowledge runtime ownership before the turn completes. Defaults to waiting. */
-      waitForCompletion?: boolean;
-    },
+    options?: AgentPromptOptions,
   ): Promise<void>;
   interrupt(sessionId: number): Promise<void>;
   cancelPendingPrompt(sessionId: number, id: string): Promise<void>;
-  steerPendingPrompt(sessionId: number, id: string): Promise<void>;
-  resumePendingPrompts(sessionId: number): Promise<void>;
+  steerPendingPrompt(sessionId: number, id: string, origin?: InteractivePromptOrigin): Promise<void>;
+  resumePendingPrompts(sessionId: number, origin?: InteractivePromptOrigin): Promise<void>;
   clearPendingPrompts(sessionId: number): Promise<void>;
   cleanupSession(sessionId: number): Promise<void>;
   reactivateSession?(sessionId: number): Promise<void> | void;
@@ -244,6 +271,7 @@ export interface AgentRuntimeProviderFeatures {
   setPermissionMode(
     sessionId: number,
     mode: AgentPermissionMode | null,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentRuntimeStatePayload>;
   setPlanMode(
     sessionId: number,
@@ -265,6 +293,7 @@ export interface AgentRuntimeProviderFeatures {
   rewindConversation(
     sessionId: number,
     messageId: string,
+    origin?: InteractivePromptOrigin,
   ): Promise<AgentTranscriptItem[]>;
   approvePermission(
     sessionId: number,

@@ -1,4 +1,5 @@
-import type { BrowserElementReference, SessionChatToolCategory, SessionChatToolSource } from '@elevenex/shared';
+import type { BrowserElementReference, SessionAgentReturn, SessionAgentSender, SessionAgentTurnEntry, SessionChatToolCategory, SessionChatToolSource } from '@elevenex/shared';
+import type { AgentWorkAction, AgentWorkBoard, AgentWorkCard, AgentWorkReply } from './agents/agent-work.models';
 import type { ToolContentSource, ToolImage, ToolPresentation } from './tool-presentation';
 import type { MarkdownEmbed } from './markdown/markdown-parser';
 
@@ -43,6 +44,8 @@ export interface AgentPlanUsage {
   /** Actual provider windows take precedence over the legacy two-window shorthand. */
   readonly windows?: readonly AgentPlanLimit[];
   readonly exhausted?: boolean;
+  /** Model quota covers only the selected model; other models may still be usable. */
+  readonly scope?: "account" | "model";
 }
 export interface AgentPlanLimit {
   readonly id: string;
@@ -57,6 +60,8 @@ export interface AgentModel {
   readonly label: string;
   readonly thinking: readonly string[];
   readonly supportsFastMode?: boolean;
+  /** Reported per-model quota; absent when the provider has not reported one. */
+  readonly limit?: AgentPlanLimit;
 }
 export interface PermissionChoice {
   readonly id: string;
@@ -177,6 +182,10 @@ export interface WorkStep {
   readonly title?: string;
   readonly progress?: number;
   readonly elapsed?: number;
+  readonly agentEntry?: SessionAgentTurnEntry;
+  readonly agentBoard?: AgentWorkBoard;
+  readonly agentReply?: AgentWorkReply;
+  readonly agentAction?: AgentWorkAction;
 }
 export interface WorkGroup {
   readonly id: string;
@@ -255,6 +264,11 @@ export interface ChatExchange {
   readonly id: string;
   readonly prompt: string;
   readonly promptEditable?: boolean;
+  readonly sender?: SessionAgentSender;
+  readonly agentIndex?: readonly SessionAgentTurnEntry[];
+  readonly agentCards?: readonly AgentWorkCard[];
+  readonly replyIds?: readonly string[];
+  readonly returnedTo?: readonly SessionAgentReturn[];
   readonly mentions?: readonly ConversationMention[];
   readonly attachments?: readonly ConversationAttachment[];
   readonly time?: string;

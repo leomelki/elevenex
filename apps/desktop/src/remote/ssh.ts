@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { access, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RemoteHost } from '@elevenex/shared';
 import { createAskpass, type Ask } from './askpass';
 import { signalBackendTree } from '../backend/process-tree';
@@ -36,8 +36,14 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     if (host.configFile) {
       const config = join(directory, 'config');
       // ProxyJump embeds -F in a shell command without quoting its pathname on
-      // some clients. Include-only indirection preserves literal chosen paths.
-      await writeFile(config, `Include ${includePath(host.configFile)}\n`, { mode: 0o600 });
+      // some clients. A symlink preserves the selected file without depending
+      // on how the client's Include directive expands percent tokens.
+      if (process.platform === 'win32') {
+        // Creating symlinks on Windows may require elevated privileges.
+        await writeFile(config, `Include ${includePath(host.configFile)}\n`, { mode: 0o600 });
+      } else {
+        await symlink(resolve(host.configFile), config);
+      }
       args.push('-F', config);
     }
     const wrapper = process.platform === 'win32' && interactive ? await windowsAskpass(directory, signal) : join(directory, 'askpass');

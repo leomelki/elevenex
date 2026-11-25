@@ -1,4 +1,5 @@
-import { isWorkspaceProjectImage, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT, WORKSPACE_PROJECT_IMAGE_LIMIT } from '@elevenex/shared';
+import { isWorkspacePriorityStatus, isWorkspaceProjectImage, WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT, WORKSPACE_PROJECT_IMAGE_LIMIT } from '@elevenex/shared';
+import { parseAgentReference, parseAgentSelection, parseChildSummary } from './session-agent-values';
 import type {
   BackendResult,
   InvokeContracts,
@@ -97,7 +98,7 @@ function parseRevision(value: unknown): WorkspaceRevision {
       throw invalidResponse();
     return { runId, revision: eventRevision, taskId: id(row['taskId']), sessionId: id(row['sessionId']) };
   }) : undefined;
-  for (const capability of ['revisionWait', 'chatStream', 'taskApps', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'taskRequests', 'commitPanel', 'projectImages']) {
+  for (const capability of ['revisionWait', 'chatStream', 'taskApps', 'sessionPriority', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel', 'projectImages']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
@@ -106,10 +107,12 @@ function parseRevision(value: unknown): WorkspaceRevision {
     ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
     ...(response['taskApps'] === true ? { taskApps: true } : {}),
     ...(response['chatStream'] === true ? { chatStream: true } : {}),
+    ...(response['sessionPriority'] === true ? { sessionPriority: true } : {}),
     ...(response['sessionNesting'] === true ? { sessionNesting: true } : {}),
     ...(response['sessionNestingOrder'] === true ? { sessionNestingOrder: true } : {}),
     ...(response['sessionArchiveHistory'] === true ? { sessionArchiveHistory: true } : {}),
     ...(response['sessionArchive'] === true ? { sessionArchive: true } : {}),
+    ...(response['sessionArchiveChildren'] === true ? { sessionArchiveChildren: true } : {}),
     ...(response['taskRequests'] === true ? { taskRequests: true } : {}),
     ...(response['commitPanel'] === true ? { commitPanel: true } : {}),
     ...(response['projectImages'] === true ? { projectImages: true } : {}),
@@ -163,7 +166,9 @@ export function parseWorkspaceTask(value: unknown): WorkspaceTask {
     state !== 'finished'
   )
     throw invalidResponse();
+  if (raw['temporary'] !== undefined && raw['temporary'] !== true) throw invalidResponse();
   return {
+    ...(raw['temporary'] === true ? { temporary: true as const } : {}),
     ...(raw['projectName'] === undefined
       ? {}
       : { projectName: text(raw['projectName'], 100) }),
@@ -239,9 +244,13 @@ function commitPhase(value: unknown): 'writing' | 'committing' | 'pushing' {
 }
 function session(value: unknown): WorkspaceSession {
   const raw = object(value);
+  const sessionId = id(raw['id']), taskId = id(raw['taskId']);
+  const delegatedBy = raw['delegatedBy'] === undefined ? undefined : parseAgentReference(raw['delegatedBy']);
+  if (delegatedBy && (delegatedBy.sessionId === sessionId || delegatedBy.taskId !== taskId)) throw invalidResponse();
+  if (raw['parentWaiting'] !== undefined && (raw['parentWaiting'] !== true || !delegatedBy)) throw invalidResponse();
   return {
-    id: id(raw['id']),
-    taskId: id(raw['taskId']),
+    id: sessionId,
+    taskId,
     repoId: id(raw['repoId']),
     name: text(raw['name'], 160),
     status: text(raw['status'], 64),
@@ -252,7 +261,20 @@ function session(value: unknown): WorkspaceSession {
     ...(raw['canDelete'] === undefined ? {} : { canDelete: boolean(raw['canDelete']) }),
     ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? null : id(raw['parentSessionId']) }),
     ...(raw['childCount'] === undefined ? {} : { childCount: nonnegativeCount(raw['childCount']) }),
+    ...(delegatedBy ? { delegatedBy } : {}),
+    ...(raw['agentSelection'] === undefined ? {} : { agentSelection: parseAgentSelection(raw['agentSelection']) }),
+    ...(raw['childSummary'] === undefined ? {} : { childSummary: parseChildSummary(raw['childSummary']) }),
+    ...(raw['delegationDetail'] === undefined ? {} : { delegationDetail: text(raw['delegationDetail'], 300) }),
+    ...(raw['parentWaiting'] === true ? { parentWaiting: true } : {}),
+    ...(raw['activeChildAgents'] === undefined ? {} : { activeChildAgents: archiveAgents(raw['activeChildAgents'], sessionId) }),
+    ...(raw['childStopRequired'] === undefined ? {} : { childStopRequired: boolean(raw['childStopRequired']) }),
   };
+}
+function archiveAgents(value: unknown, sessionId: number): readonly number[] {
+  if (!Array.isArray(value) || !value.length || value.length > WORKSPACE_ARCHIVE_AGENT_LIMIT) throw invalidResponse();
+  const ids = value.map(id);
+  if (ids.includes(sessionId) || new Set(ids).size !== ids.length) throw invalidResponse();
+  return ids;
 }
 function nonnegativeCount(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw invalidResponse();
@@ -606,18 +628,40 @@ export function registerWorkspaceIpc(
     const raw = object(input),
       taskId = id(raw['taskId']);
     if (raw['order'] !== undefined && raw['order'] !== 'latest') throw invalidResponse();
-    if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived') throw invalidResponse();
+    const priority = raw['state'] === 'priority';
+    if (raw['state'] !== undefined && raw['state'] !== 'normal' && raw['state'] !== 'archived' && !priority) throw invalidResponse();
+    if (priority && (raw['parentSessionId'] !== undefined || raw['childOrder'] !== undefined)) throw invalidResponse();
     if (raw['childOrder'] !== undefined && (raw['childOrder'] !== 'nested' || typeof raw['parentSessionId'] !== 'number')) throw invalidResponse();
     const nested = raw['childOrder'] === 'nested';
+    const pageQuery = query(raw, nested);
+    const before = priority && pageQuery.cursor ? id(Number(pageQuery.cursor)) : Infinity;
     return read(
       window,
       scope,
-      `${base}/tasks/${taskId}/sessions?${queryString({ ...query(raw, nested), ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
+      `${base}/tasks/${taskId}/sessions?${queryString({ ...pageQuery, ...(nested ? { childOrder: 'nested' } : {}), ...(raw['parentSessionId'] === undefined ? {} : { parentSessionId: raw['parentSessionId'] === null ? 'root' : String(id(raw['parentSessionId'])) }), ...(raw['order'] === 'latest' ? { order: 'latest' } : {}), ...(raw['state'] === undefined ? {} : { state: raw['state'] }) })}`,
       (value) => {
         const result = parseWorkspacePage(value, session, nested);
         if (result.items.some((session) => session.taskId !== taskId || (typeof raw['parentSessionId'] === 'number' && session.parentSessionId !== raw['parentSessionId']) || (raw['state'] === 'archived' && session.status !== 'archived') || (raw['state'] === 'normal' && session.status === 'archived')))
           throw invalidResponse();
-        return result;
+        if (!priority) return result;
+        const { parentSessions } = object(value);
+        if (!Array.isArray(parentSessions) || parentSessions.length > result.items.length || result.items.length > pageQuery.limit)
+          throw invalidResponse();
+        const next = result.nextCursor === null ? 0 : id(Number(result.nextCursor));
+        if (next >= before || result.items.some(item => item.id >= before || item.id < next))
+          throw invalidResponse();
+        const ids = new Set(result.items.map(item => item.id));
+        const referencedParents = new Set(result.items.map(item => item.parentSessionId));
+        if (ids.size !== result.items.length || result.items.some(item =>
+          !isWorkspacePriorityStatus(item.turnStatus ?? item.status) || item.status === 'archived'))
+          throw invalidResponse();
+        const parents = parentSessions.map(session);
+        for (const parent of parents) {
+          if (parent.taskId !== taskId || parent.status === 'archived' || ids.has(parent.id) || !referencedParents.has(parent.id))
+            throw invalidResponse();
+          ids.add(parent.id);
+        }
+        return { ...result, parentSessions: parents };
       },
     );
   });
@@ -755,7 +799,9 @@ export function registerWorkspaceIpc(
   });
   register('workspace:archive-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
-    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']) }, accepted);
+    return write(window, scope, `${base}/tasks/${taskId}/sessions/${sessionId}/archive`, { confirmStop: boolean(raw['confirmStop']),
+      ...(raw['includeChildren'] === undefined ? {} : { includeChildren: boolean(raw['includeChildren']) }),
+      ...(raw['stopAgents'] === undefined ? {} : { stopAgents: archiveAgents(raw['stopAgents'], sessionId) }) }, accepted);
   });
   register('workspace:move-session', (window, scope, input) => {
     const raw = object(input), taskId = id(raw['taskId']), sessionId = id(raw['sessionId']);
@@ -811,6 +857,14 @@ export function registerWorkspaceIpc(
       parseWorkspaceTask,
       'PATCH',
     );
+  });
+  register('workspace:keep-task-open', (window, scope, input) => {
+    const taskId = id(input);
+    return write(window, scope, `${base}/tasks/${taskId}/keep-open`, undefined, value => {
+      const task = parseWorkspaceTask(value);
+      if (task.id !== taskId || task.temporary || task.state === 'finishing' || task.state === 'finished') throw invalidResponse();
+      return task;
+    });
   });
   register('workspace:finish-task', (window, scope, input) => {
     const raw = object(input);

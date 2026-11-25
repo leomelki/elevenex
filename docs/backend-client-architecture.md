@@ -51,6 +51,20 @@ cache ownership. The backend feed reuses emitted cursor offsets and prompt spans
 within a history revision, and skips transcript projection on idle heartbeats.
 The provider still supplies the complete source snapshot for history reads.
 
+### Sidebar priority sessions
+
+Engines advertising `sessionPriority` accept `state=priority` on the existing
+task session read. This returns bounded descending-ID cursor pages in
+chronological display order, with a `parentSessions` list for referenced roots
+outside the page. The engine selects candidates from live activity IDs and an
+index of unseen completions, then applies the same activity projection used by
+ordinary navigation, including delegation and child archive confirmation fields
+on both priority rows and their parent context. The cursor advances over candidates even when one no longer
+qualifies. Main validates statuses, scope, context and cursor progress. The
+workspace reconciles priority data alongside each visible task's history, and
+existing session events invalidate both reads. Legacy history and archive
+requests keep their existing pagination and shapes.
+
 ### Selected chat stream
 
 Engines advertising `chatStream: true` in `workspaceRevision` serve
@@ -125,6 +139,27 @@ User transcript items may also contain bounded `mentions` (session ID/title
 only) derived from saved prompt headers. Main validates these optional fields;
 older engines omit them. Snapshot contents and export paths remain outside this
 metadata. Saved history and incremental item events use the same projection.
+
+### Agent delegation in the selected chat
+
+Session pages can include the caller, harness selection, a child state summary
+and the bounded identities behind a combined stop-and-archive confirmation.
+The existing session archive operation verifies those identities against current
+work. Clients that omit them retain the original archive behavior.
+
+The chat projection translates known native and Elevenex tool calls into
+structured display metadata before deferring their evidence. Completed turns
+carry a small launch index, and replies retain their position in saved activity.
+Sender metadata is retained with prompts in harness history. The backend also
+projects legacy delegation headers so the renderer consumes the same fields.
+Reply handoffs are stored by exact transcript item and recipient.
+
+`state.work.sessions` carries at most 16 live delegated sessions and 12 recent
+outcomes alongside native work. A scalar activity cache, an indexed selection
+and the selected chat's existing stream provide updates without hydrating child
+transcripts. Decision changes wake the feed immediately. Tool activity is
+coalesced across sessions and does not invalidate navigation pages. Main
+validates the optional records, bounds and scoped session identities.
 
 Engines advertising `presetEditing` accept saved preset update, reorder,
 delete and restore actions through `sessionChatCommand`. The desktop

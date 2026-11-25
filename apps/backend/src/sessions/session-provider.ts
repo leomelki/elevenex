@@ -6,9 +6,11 @@ export interface SessionProviderColumns {
   readonly codexSessionId?: string | null;
   readonly piSessionPath?: string | null;
   readonly opencodeSessionId?: string | null;
+  readonly antigravitySessionId?: string | null;
 }
 
 const providerColumns = [
+  ['antigravity', 'antigravitySessionId'],
   ['opencode', 'opencodeSessionId'],
   ['pi', 'piSessionPath'],
   ['codex', 'codexSessionId'],

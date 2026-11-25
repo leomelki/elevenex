@@ -9,7 +9,7 @@ export default async function* (capture) {
     await capture.waitFor(() => document.getAnimations().every(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime) || animation.playState !== 'running'));
     await capture.settle();
   };
-  const normal = '[data-task-id="11"] .tree > ex-fold [data-session-id="102"]';
+  const normal = '[data-task-id="11"] .tree ex-working-sessions [data-session-id="102"]';
   const archived = '[data-task-id="11"] ex-archived-sessions [data-session-id="102"]';
   const toggle = '[data-task-id="11"] ex-archived-sessions > .toggle';
   const inspect = ['[data-task-id="11"]', 'ex-archived-sessions', 'ex-archived-sessions .select', 'ex-toast'];

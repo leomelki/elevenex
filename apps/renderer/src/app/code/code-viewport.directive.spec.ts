@@ -29,9 +29,10 @@ describe('Code viewport transition ownership', () => {
     fixture.detectChanges(); await fixture.whenStable();
     const section: HTMLElement = fixture.nativeElement.querySelector('section');
     const frame: HTMLElement = section.querySelector('[exCodeViewport]')!;
-    function transition(type: string, propertyName = 'width', target = section) {
+    function transition(type: string, propertyName = 'width', target = section, pseudoElement = '') {
       const event = new Event(type, { bubbles: true });
       Object.defineProperty(event, 'propertyName', { value: propertyName });
+      Object.defineProperty(event, 'pseudoElement', { value: pseudoElement });
       target.dispatchEvent(event);
     }
     return { fixture, frame, section, transition };
@@ -301,10 +302,15 @@ describe('Code viewport transition ownership', () => {
   });
 
   it('ignores unrelated effects and settles immediately if reduced motion changes mid-flight', async () => {
-    const { fixture, frame, transition } = await setup();
+    const { fixture, frame, section, transition } = await setup();
     const unrelated = document.createElement('aside'); document.body.append(unrelated);
     transition('transitionrun', 'opacity'); transition('transitionrun', 'width', unrelated);
-    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`); unrelated.remove();
+    // A shell decoration (e.g. a shadow ::after) is reported on the panel's ancestor.
+    transition('transitionrun', 'width', section, '::after');
+    expect(frame.style.getPropertyValue('--code-viewport-width')).toBe(`${width}px`);
+    expect(frame.classList.contains('reflowing')).toBe(false);
+    expect(frame.classList.contains('resizing')).toBe(false);
+    transition('transitionend', 'width', section, '::after'); unrelated.remove();
     transition('transitionrun'); width = 1000; resize();
     reduced = true; mediaChanged();
     await fixture.whenStable(); await nextFrame();

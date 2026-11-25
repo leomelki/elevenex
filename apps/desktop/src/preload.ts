@@ -142,6 +142,7 @@ const bridge = Object.freeze<ElevenexBridge>({
   workspaceRestoreSession: (scopeId, input) => invoke('workspace:restore-session', scopeId, input),
   workspaceCreateSession: (scopeId, input) => invoke('workspace:create-session', scopeId, input),
   workspaceRenameTask: (scopeId, input) => invoke('workspace:rename-task', scopeId, input),
+  workspaceKeepTaskOpen: (scopeId, taskId) => invoke('workspace:keep-task-open', scopeId, taskId),
   workspaceFinishTask: (scopeId, input) => invoke('workspace:finish-task', scopeId, input),
   workspaceRetryTask: (scopeId, taskId, recovery) => recovery === undefined ? invoke('workspace:retry-task', scopeId, taskId) : invoke('workspace:retry-task', scopeId, taskId, recovery),
   workspaceReopenTask: (scopeId, input) => invoke('workspace:reopen-task', scopeId, input),

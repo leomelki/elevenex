@@ -38,7 +38,10 @@ module.exports = async function browserCodeNative() {
     assert.equal(result.images.length, 1);
     assert.ok(result.value.trusted.some(([type, trusted]) => type === 'mousedown' && trusted));
     assert.ok(result.value.trusted.some(([type, trusted]) => type === 'input' && trusted));
+    // Native observation exposes navigation and network events, and leaves console events disabled.
+    assert.ok(result.value.events.items.some(event => event.method === 'Page.frameNavigated'));
     assert.ok(result.value.events.items.some(event => event.method === 'Network.responseReceived' && event.params.response?.url?.endsWith('/event-smoke')));
+    assert.ok(!result.value.events.items.some(event => event.method === 'Runtime.consoleAPICalled'));
     assert.equal(task.pages.size, 1);
     const page = [...task.pages.values()][0];
     assert.equal(page.independent, true);

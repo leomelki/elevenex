@@ -38,8 +38,14 @@ export function resolveAgentStartupSelection(
   defaults: AgentConfiguredDefaults,
   availableModels: readonly AgentCatalogModel[] = [],
   providerDefaultModel: string | null = null,
+  selection?: Partial<AgentConfiguredDefaults> | null,
 ): AgentStartupSelection {
-  const selectedModel = defaults.model ?? providerDefaultModel ?? null;
+  const model = selection?.model === undefined ? defaults.model : selection.model;
+  const selectedModel = model ?? providerDefaultModel;
+  // Explicit per-session effort goes to the harness unchanged. Catalogs can
+  // be stale or omit project-local models and variants.
+  if (selection?.reasoningEffort !== undefined)
+    return { selectedModel, reasoningEffort: selection.reasoningEffort };
   const known = selectedModel
     ? availableModels.find((model) => model.id === selectedModel)
     : undefined;

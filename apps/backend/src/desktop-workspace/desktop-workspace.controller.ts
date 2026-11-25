@@ -66,12 +66,14 @@ export class DesktopWorkspaceController {
       revisionWait: true,
       chatStream: true,
       taskApps: true,
+      sessionPriority: true,
       sessionNesting: true,
       sessionNestingOrder: true,
       taskRequests: true,
       commitPanel: true,
       projectImages: true,
       sessionArchive: true,
+      sessionArchiveChildren: true,
       sessionArchiveHistory: true,
     };
   }
@@ -198,6 +200,11 @@ export class DesktopWorkspaceController {
     await this.tasks.finish(resourceId(id), body.confirmStop, undefined, { confirmedApps });
     return this.workspace.task(resourceId(id));
   }
+  @Post('tasks/:id/keep-open') async keepTaskOpen(@Param('id') id: string) {
+    const taskId = resourceId(id);
+    await this.tasks.keepOpen(taskId);
+    return this.workspace.task(taskId);
+  }
   @Post('tasks/:id/retry') retryTask(
     @Param('id') id: string,
     @Body() input: unknown,
@@ -230,11 +237,14 @@ export class DesktopWorkspaceController {
     @Param('sessionId') sessionId: string,
     @Body() input: unknown,
   ) {
+    const options = workspaceBody(input);
     return this.changed(
       this.workspace.archiveSession(
         resourceId(taskId),
         resourceId(sessionId),
-        workspaceBody(input).confirmStop,
+        options.confirmStop,
+        options.stopAgents,
+        options.includeChildren,
       ),
     );
   }

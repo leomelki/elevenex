@@ -6,6 +6,34 @@ components; those components remain independent of the bridge and providers.
 `MachineWorkspace` provides the chat client and drafts at workspace lifetime,
 so nested/preview backend scopes resolve consistently.
 
+## Agent work
+
+Session tool calls and native launches carry bounded operation metadata alongside
+their ordinary evidence references. The transcript adapter preserves launch
+identity across retries, places quoted replies at their receipt positions and
+projects one board for the agents started during a turn. Collapsed completed
+turns use a compact agent index for their outcome chips. Opening saved activity
+still uses the existing bounded timeline reader.
+
+The selected feed supplies live status, recent outcomes, and pending decisions.
+Agent surfaces share the same data, so a parent shows a child's request above
+the composer and in Activity. Opening the request navigates to the child and
+focuses the decision in its transcript. An assignment or returned reply links
+back to the caller. The workspace resolves links outside the current outline by
+scoped session identity and restores the origin when it is present in the
+retained parent window. Native Inspect opens the existing focus-managed modal
+from its card and pins a finished reply above the paged transcript.
+
+Claude Code, Codex, Pi and OpenCode share the delegation presentation. The
+backend projects the harness's actual receipt format and uses native
+inspection only where the harness supports it. OpenCode tasks can become
+inspectable from their running metadata and retain their identity when resumed.
+Its background result notification updates the agent outcome without appearing
+as a human prompt.
+
+The preview's connected workspace fixture exercises this flow through
+`scripts/desktop-capture/scenarios/session-delegation.mjs`.
+
 The pencil on a saved prompt opens an editor with the original text, the
 impact on later turns, and an indication of any retained context. Escape
 cancels the edit. Control or Command plus Enter resends the revision.
@@ -168,16 +196,31 @@ Older engines omit the capability and retain their original send contract.
 - Claude tool calls share the same message/tool ID in live events and saved
   history. Split thoughts and text use the API block index when the saved
   record supplies it. Legacy split blocks that share an index retain separate
-  identities. Pi uses the native message timestamp and occurrence for prompt
-  and prose identities and the native call ID for all tool events. OpenCode
+  identities. The Claude provider omits its synthetic image-source notes from
+  live and saved chat. Saved attachments come from the original prompt.
+  Pi uses the native message timestamp and occurrence for prompt and prose
+  identities and the native call ID for all tool events. OpenCode
   waits for message metadata before publishing its parts and retains active
   parts and completed tools when a reconnect snapshot lags the socket.
 - `SessionChatContent` reads original long messages, tool input and output in
   16,000-character pages. Its modal owns focus and cancellation. Content is
   rendered as text, including HTML returned by tools.
 
-The backend adapter supports the registry's Claude, Codex, Pi and OpenCode
-providers, with its existing prompt/queue/steer/stop semantics. Codex
+The backend adapter supports Claude, Codex, Pi, OpenCode and Antigravity.
+Antigravity connects to the official CLI over ACP in the task workspace.
+The picker reads the model catalog before the first message. The same read
+discovers Antigravity's native planning and approval capabilities. The
+Plan/Code switch is separate from the permissions menu, which includes Full
+access and shows Auto when the CLI offers it. Changes apply to subsequent
+turns and are disabled during a turn.
+Task turns start
+on direct desktop chat submission. The runtime restores saved transcripts
+without launching the CLI, and resumes the native conversation when it
+receives the next message. Its runtime advertises `canSteer: false` so the
+composer queues follow-ups and disables steering on queued rows. See
+[Antigravity setup](../../../../desktop/README.md#antigravity).
+
+Codex
 projects native user-message receipts into the live transcript, including prompts
 dispatched from the queue or steered into an active turn. Live and saved native
 receipts share the provider item ID; rewind/fork retain their saved record anchors.
@@ -584,6 +627,17 @@ this display integration does not promise or simulate them.
 The menu’s snapshot stays mounted through
 its inert exit. The dedicated `/agent-picker` preview and `agent-picker.mjs`
 verify the full reference component independently of transcript motion.
+
+Antigravity meters quota per model, so it reports the optional
+`SessionChatState.modelQuota` (tier plus per-model state) instead of `planUsage`.
+`sessionModelLimits` maps the reported models; an exhaustion-only report ends at
+its reported reset because there is no fraction to go stale. The selected
+model's limit becomes a model-scoped `plan` (`scope: "model"`) for the ring, the
+hover card and the notice, which names the model and points to another one. The
+other models' limits are rendered beside their rows in the model menu. Antigravity
+context comes from ACP `usage_update` reports through the existing `context` field.
+`session-antigravity-quota.mjs` covers context, the exhausted selected model,
+choosing another model and narrow reduced-motion layouts in both themes.
 
 `session-quota.mjs` exercises connected quota updates, the tighter weekly/model
 window, hover and keyboard disclosure, low/exhausted states, dismissal focus,

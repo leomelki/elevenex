@@ -133,3 +133,6 @@
     transition: none;
   }
 }
+
+.inspect ex-agent-mark { --agent-mark-size: 14px; flex: none; }
+.inspect:disabled { cursor: default; color: var(--ink-muted); }

@@ -56,6 +56,8 @@ export const getCurrentSessionTool = defineTool({
         checkoutMode: task?.checkoutMode ?? null,
         linkStatus: task?.linkStatus ?? null,
         folderId: session.folderId,
+        parentSessionId: session.parentSessionId ?? null,
+        delegatedBySessionId: session.delegatedBySessionId ?? null,
         worktreePath: session.worktreePath,
         branchName: session.branchName,
         isTemporary: session.isTemporary,

@@ -49,7 +49,11 @@ if (devUrl) {
 app.setName('Elevenex Desktop');
 const taskRunDirectory = app.isPackaged ? undefined : process.env['ELEVENEX_TASK_APP_RUNTIME_DIR'];
 if (taskRunDirectory && !isAbsolute(taskRunDirectory)) throw new Error('Expected an absolute task app runtime directory');
-app.setPath('userData', taskRunDirectory ?? join(app.getPath('appData'), 'Elevenex Desktop'));
+if (taskRunDirectory) {
+  app.setPath('userData', taskRunDirectory);
+} else if (!app.commandLine.getSwitchValue('user-data-dir')) {
+  app.setPath('userData', join(app.getPath('appData'), 'Elevenex Desktop'));
+}
 const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
 // Plain Node cannot read Electron's ASAR format. Only the tiny supervisor and

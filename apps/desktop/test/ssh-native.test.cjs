@@ -73,7 +73,9 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
       async challenge => { challenges.push(challenge); return answer(challenge); }, interactive, AbortSignal.timeout(10000), require.resolve('../dist/remote/askpass-helper.js'));
     sessions.push(session); let output = ''; session.child.stdout.on('data', bytes => { output += bytes; }); await session.exited; await session.stop(); return { output, diagnostics: session.diagnostics(), code: session.child.exitCode, signal: session.child.signalCode };
   }
-  assert.equal((await connect('printf SSH_FIXTURE_OK')).output, 'SSH_FIXTURE_OK');
+  const initialConnection = await connect('printf SSH_FIXTURE_OK');
+  assert.equal(initialConnection.code, 0, `${initialConnection.diagnostics}\n${serverLog}`);
+  assert.equal(initialConnection.output, 'SSH_FIXTURE_OK');
   assert.equal(challenges.filter(value => value.kind === 'trust').length, 1); assert.ok(challenges[0].prompt.includes('MD5:'));
   assert.equal(challenges.filter(value => value.kind === 'credential').length, 2); assert.ok((await readFile(knownHosts, 'utf8')).length > 0);
   await writeFile(config, (await readFile(config, 'utf8')).replace('StrictHostKeyChecking ask', 'StrictHostKeyChecking no').replace(knownHosts, join(root, 'native-trust-policy')));

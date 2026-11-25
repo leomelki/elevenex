@@ -207,7 +207,7 @@
           ? 'Queue message (Enter), or Alt Enter to steer'
           : 'Send message (Enter)'
       "
-      [title]="running() ? 'Queue · ↵, Steer · ⌥↵' : 'Send · ↵'"
+      [title]="running() ? steeringEnabled() ? 'Queue · ↵, Steer · ⌥↵' : 'Queue · ↵' : 'Send · ↵'"
       (click)="send()"
     >
       <ex-icon [name]="running() ? 'layers' : 'arrow-up'" [size]="16" />

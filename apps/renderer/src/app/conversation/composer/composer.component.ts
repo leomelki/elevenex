@@ -283,6 +283,7 @@ export class ComposerComponent implements OnChanges {
     }
   }
   readonly running = input(false);
+  readonly steeringEnabled = input(true);
   readonly disabled = input(false);
   readonly sending = input(false);
   readonly clearOnSubmit = input(true);
@@ -344,7 +345,7 @@ export class ComposerComponent implements OnChanges {
       return;
     const textarea = this.elementEditor()?.surface()?.nativeElement ?? this.textarea()?.nativeElement;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const intent = this.waitingFor() ? "queue" : this.running() ? (steer ? "steer" : "queue") : "send";
+    const intent = this.waitingFor() ? "queue" : this.running() ? (steer && this.steeringEnabled() ? "steer" : "queue") : "send";
     // Both editor surfaces share a padded content origin. Scrolled drafts use
     // the message rise rather than claiming a visible text origin.
     const rect = textarea?.getBoundingClientRect();

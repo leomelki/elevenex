@@ -12,7 +12,7 @@ export const TASK_LIFECYCLE_TOOLS = [
     currentSessionScope: 'repo',
     annotations: { idempotentHint: true },
     description:
-      'Create a task and asynchronously allocate its worktree and initial conversation through the Tasks workflow. Automatically refreshes refs and protects occupied/dirty/external checkouts. Reuse requestId on retries; poll get_task before prompting.',
+      'Create a task and asynchronously allocate its worktree and initial conversation through the Tasks workflow. Use temporary:true for disposable work you initiate, such as an isolated review. Automatically refreshes refs and protects occupied/dirty/external checkouts. Reuse requestId on retries; poll get_task before prompting.',
     inputShape: {
       repoId,
       requestId: z
@@ -24,10 +24,16 @@ export const TASK_LIFECYCLE_TOOLS = [
           'Stable caller-generated request key (UUID recommended). Reuse for retries of this operation; use a new key for a different task.',
         ),
       ...setupShape,
+      temporary: z.boolean().optional().describe('Allow the creating session to close this task after collecting its result. Use only for temporary work you initiate.'),
     },
     handler: async (args, ctx) => {
+      if (args.temporary && ctx.agentSessionId === null)
+        throw new ToolError({ code: 'temporary_task_requires_session', message: 'Temporary tasks require an authenticated creating session.' });
+      const { temporary, ...setup } = args;
       const task = await taskOperation(() =>
-        ctx.services.tasks.create(args.repoId, args),
+        temporary && ctx.agentSessionId !== null
+          ? ctx.services.tasks.create(args.repoId, setup, ctx.agentSessionId)
+          : ctx.services.tasks.create(args.repoId, setup),
       );
       return {
         data: taskHandle(task, ctx),
@@ -143,14 +149,14 @@ export const TASK_LIFECYCLE_TOOLS = [
     mutates: true,
     destructive: true,
     description:
-      'Finish the whole task: archive all conversations, stop agents/terminals/actions/apps, preserve branch/history, and release clean managed checkouts (dirty/external stay reserved). Does not commit, merge, or push. Use preview_finish_task first. Self-finish requires userRequested:true and queues cleanup until your final reply and background work end; cancel_finish_task can cancel it before cleanup starts. Other tasks finish immediately.',
+      'Finish the whole task: archive all conversations, stop agents/terminals/actions/apps, preserve branch/history, and release clean managed checkouts (dirty/external stay reserved). Does not commit, merge, or push. Use preview_finish_task first. Self-finish requires userRequested:true and queues cleanup until your final reply and background work end; cancel_finish_task can cancel it before cleanup starts. For a temporary task you created, collect the result first, then finish it once idle with a clean managed checkout. Keep open revokes this permission. Other eligible tasks finish immediately.',
     inputShape: {
       taskId,
       userRequested: z
         .boolean()
         .default(false)
         .describe(
-          'True only when the user explicitly asked to finish this task. Required for finishing your own task; never infer consent from completing the coding work. Default false.',
+          'True only when the user explicitly asked to finish this task. Required for finishing your own task, or a temporary task whose cleanup permission you lack. Default false.',
         ),
       confirmStop: z
         .boolean()
@@ -190,7 +196,11 @@ export const TASK_LIFECYCLE_TOOLS = [
         };
       }
       const task = await taskOperation(() =>
-        ctx.services.tasks.finish(args.taskId, args.confirmStop),
+        caller
+          ? ctx.services.tasks.finish(args.taskId, args.confirmStop, undefined, {
+              agent: { sessionId: caller.id, userRequested: args.userRequested },
+            })
+          : ctx.services.tasks.finish(args.taskId, args.confirmStop),
       );
       return {
         data: taskHandle(task, ctx),

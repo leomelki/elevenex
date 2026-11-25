@@ -1,6 +1,7 @@
 import type { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { SettingsService } from '../settings/settings.service.js';
 import { chatCatalog } from './desktop-chat-catalog.js';
+import { ANTIGRAVITY_CATALOG_SIGN_IN } from '../antigravity-runtime/antigravity-acp.js';
 
 describe('preset harness catalog', () => {
   it('never substitutes the provider union for missing or empty model efforts', async () => {
@@ -139,5 +140,27 @@ describe('preset harness catalog', () => {
       reasoning: null,
       fast: false,
     });
+  });
+
+  it('surfaces the known Antigravity sign-in action in the picker', async () => {
+    const registry = {
+      getProvider: () => ({}),
+      listModelCatalogs: jest.fn().mockResolvedValue([
+        {
+          models: [],
+          displayName: 'Antigravity',
+          unavailableReason: ANTIGRAVITY_CATALOG_SIGN_IN,
+        },
+      ]),
+    };
+    const settings = {
+      getAgentProviderDefaults: () => ({ model: null, reasoningEffort: null }),
+    };
+    const catalog = await chatCatalog(
+      registry as unknown as AgentRuntimeRegistryService,
+      settings as unknown as SettingsService,
+      'antigravity',
+    );
+    expect(catalog.error).toBe(ANTIGRAVITY_CATALOG_SIGN_IN);
   });
 });

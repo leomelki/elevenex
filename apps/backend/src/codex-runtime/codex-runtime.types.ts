@@ -106,6 +106,7 @@ export interface CodexActiveRunState {
 }
 
 export interface CodexRuntimeState {
+  persistedSelectionLoaded?: boolean;
   latestApiRetry?: import('../claude-runtime/claude-runtime.types.js').ClaudeApiRetry | null;
   activityNotifications?: import('../claude-runtime/claude-runtime.types.js').ClaudeNotification[];
   codexSessionId: string | null;

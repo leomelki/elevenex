@@ -2,13 +2,15 @@
   <ex-icon [name]="view().icon" [size]="14" />
 </span>
 <div class="title-line">
-  @if (view().event.agentId) {
+  @if (view().event.agentId || view().session) {
     <button
+      #eventTitle
       type="button"
       class="inspect"
-      [attr.aria-label]="'Inspect ' + view().event.title"
-      (click)="inspect()"
+      [attr.aria-label]="(view().session ? 'Open ' : 'Inspect ') + view().event.title"
+      [disabled]="!!view().session && sessionsDisabled()" (click)="inspect(eventTitle)"
     >
+      <ex-agent-mark [harness]="view().session?.selection?.provider ?? harness()" mark="A" />
       <span class="title">{{ view().event.title }}</span>
     </button>
   } @else {

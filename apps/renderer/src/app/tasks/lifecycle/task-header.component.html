@@ -24,6 +24,7 @@
       /> }
     </div>
     <span class="grow"></span>
+    <ng-content select="[taskActions]" />
     @if (!closed()) {
       <button type="button" class="close-task" [class.suggested]="closeSuggested()" [disabled]="disabled()" (click)="closeRequested.emit()">
         <ex-icon name="close-task" [size]="14" />Close task

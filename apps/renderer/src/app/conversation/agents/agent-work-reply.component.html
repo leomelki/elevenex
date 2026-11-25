@@ -1,0 +1,44 @@
+<article class="quote" [attr.aria-label]="'Reply from ' + title()">
+  <header>
+    <span #mark class="mark"><ex-agent-mark [harness]="reply().session.selection?.provider" mark="A" appearance="tinted" /></span>
+    <span class="from">Reply from <strong>{{ title() }}</strong></span>
+    @if (identity()) { <span class="identity">{{ identity() }}</span> }
+  </header>
+  @if (long() && !expanded()) {
+    <div class="preview" inert><ex-markdown [source]="preview()" [active]="false" /></div>
+    <p class="accessible-preview">{{ preview() }}</p>
+  }
+  <ex-fold [open]="(!long() || expanded()) && active()">
+    <div class="body" [id]="contentId">
+      @if (!long() || initialized()) {
+        <ex-markdown [source]="reply().text" [active]="active() && (!long() || expanded())" [copiedCode]="copiedCode()"
+          (copyCode)="copyCode.emit($event)" (openLink)="openLink.emit($event)" />
+      }
+    </div>
+  </ex-fold>
+  <footer>
+    @if (reply().files?.length) {
+      <div class="files" [attr.aria-label]="reply().sharedChanges ? 'Changes in the shared workspace' : 'Changed files'">
+        @if (reply().sharedChanges) { <span>Workspace changes</span> }
+        @for (file of reply().files; track file.path) {
+          <ex-file-chip [file]="file" (selected)="openFile.emit($event)" />
+        }
+        @if ((reply().totalFiles ?? 0) > (reply().files?.length ?? 0)) {
+          <span>+{{ reply().totalFiles! - reply().files!.length }} more</span>
+        }
+      </div>
+    }
+    @if (reply().truncated) { <span class="excerpt">Excerpt</span> }
+    <span class="grow"></span>
+    @if (long()) {
+      <button exButton variant="ghost" size="sm" type="button"
+        [attr.aria-expanded]="expanded()" [attr.aria-controls]="contentId" (click)="toggle($event)">
+        {{ expanded() ? 'Show less' : 'Show reply' }}
+      </button>
+    }
+    <button exButton variant="ghost" size="sm" type="button"
+      [attr.data-agent-session]="reply().session.sessionId" [disabled]="controlsDisabled()" (click)="open($event)">
+      Open transcript <ex-icon name="forward" [size]="12" />
+    </button>
+  </footer>
+</article>

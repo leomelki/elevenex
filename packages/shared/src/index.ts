@@ -28,9 +28,9 @@ export type * from './session-chat-draft';
 import type { ChatAttachmentUpload, ChatAttachmentReceipt } from './chat-attachments';
 export type * from './chat-attachments';
 import type { WorkspaceCommitPreview, WorkspaceCommitQuery } from './workspace-commit';
-import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
+import type { WorkspaceRevision, WorkspaceRevisionWait, WorkspaceMoveSession, WorkspaceArchiveSession, WorkspaceDeleteSession, WorkspaceRestoreSession, WorkspaceClosePreview, WorkspaceGitSummary, WorkspaceGitAction, WorkspaceAddRepository, WorkspaceBranch, WorkspaceBranchQuery, WorkspaceCreateProject, WorkspaceCreateSession, WorkspaceCreateTask, WorkspaceFinishTask, WorkspaceFolder, WorkspaceFolderQuery, WorkspacePage, WorkspacePageQuery, WorkspaceProject, WorkspaceProjectDetail, WorkspaceRenameTask, WorkspaceSession, WorkspaceSessionPage, WorkspaceSessionQuery, WorkspaceSetStage, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceTaskQuery, WorkspaceUpdateProject } from './workspace';
 export type * from './workspace';
-export { WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from './workspace';
+export { isWorkspacePriorityStatus, WORKSPACE_ARCHIVE_AGENT_LIMIT, WORKSPACE_BRANCH_NAME_LIMIT, WORKSPACE_BRANCH_REF_LIMIT } from './workspace';
 export * from './workspace-project-image';
 /** Serializable contracts only. Node and Electron APIs never enter the renderer. */
 import type { EnvironmentContext, EnvironmentSelection, EnvironmentSnapshot, RemoteDiagnostic, RemoteForwardInput, RemoteHost, RemoteHostInput } from './remote';
@@ -167,7 +167,7 @@ export interface InvokeContracts {
   'workspace:tasks': { args: [scopeId: string, input: WorkspaceTaskQuery]; result: BackendResult<WorkspacePage<WorkspaceTask>> };
   'workspace:task-request': { args: [scopeId: string, input: { readonly repoId: number; readonly requestId: string }]; result: BackendResult<{ readonly task: WorkspaceTask | null }> };
   'workspace:task': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceTask> };
-  'workspace:sessions': { args: [scopeId: string, input: WorkspaceSessionQuery]; result: BackendResult<WorkspacePage<WorkspaceSession>> };
+  'workspace:sessions': { args: [scopeId: string, input: WorkspaceSessionQuery]; result: BackendResult<WorkspaceSessionPage> };
   'workspace:create-project': { args: [scopeId: string, input: WorkspaceCreateProject]; result: BackendResult<WorkspaceProjectDetail> };
   'workspace:create-task': { args: [scopeId: string, input: WorkspaceCreateTask]; result: BackendResult<WorkspaceTask> };
   'workspace:delete-session': { args: [scopeId: string, input: WorkspaceDeleteSession]; result: BackendResult<{ readonly accepted: true }> };
@@ -176,6 +176,7 @@ export interface InvokeContracts {
   'workspace:restore-session': { args: [scopeId: string, input: WorkspaceRestoreSession]; result: BackendResult<WorkspaceSession> };
   'workspace:create-session': { args: [scopeId: string, input: WorkspaceCreateSession]; result: BackendResult<WorkspaceSession> };
   'workspace:rename-task': { args: [scopeId: string, input: WorkspaceRenameTask]; result: BackendResult<WorkspaceTask> };
+  'workspace:keep-task-open': { args: [scopeId: string, taskId: number]; result: BackendResult<WorkspaceTask> };
   'workspace:finish-task': { args: [scopeId: string, input: WorkspaceFinishTask]; result: BackendResult<WorkspaceTask> };
   'workspace:retry-task': { args: [scopeId: string, taskId: number, recovery?: WorkspaceTaskRecovery]; result: BackendResult<WorkspaceTask> };
   'workspace:reopen-task': { args: [scopeId: string, input: number]; result: BackendResult<WorkspaceTask> };
@@ -357,7 +358,7 @@ export interface ElevenexBridge {
   workspaceTasks(scopeId: string, input: WorkspaceTaskQuery): Promise<BackendResult<WorkspacePage<WorkspaceTask>>>;
   workspaceTaskRequest(scopeId: string, input: { readonly repoId: number; readonly requestId: string }): Promise<BackendResult<{ readonly task: WorkspaceTask | null }>>;
   workspaceTask(scopeId: string, input: number): Promise<BackendResult<WorkspaceTask>>;
-  workspaceSessions(scopeId: string, input: WorkspaceSessionQuery): Promise<BackendResult<WorkspacePage<WorkspaceSession>>>;
+  workspaceSessions(scopeId: string, input: WorkspaceSessionQuery): Promise<BackendResult<WorkspaceSessionPage>>;
   workspaceCreateProject(scopeId: string, input: WorkspaceCreateProject): Promise<BackendResult<WorkspaceProjectDetail>>;
   workspaceCreateTask(scopeId: string, input: WorkspaceCreateTask): Promise<BackendResult<WorkspaceTask>>;
   workspaceDeleteSession(scopeId: string, input: WorkspaceDeleteSession): Promise<BackendResult<{ readonly accepted: true }>>;
@@ -366,6 +367,7 @@ export interface ElevenexBridge {
   workspaceRestoreSession(scopeId: string, input: WorkspaceRestoreSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceCreateSession(scopeId: string, input: WorkspaceCreateSession): Promise<BackendResult<WorkspaceSession>>;
   workspaceRenameTask(scopeId: string, input: WorkspaceRenameTask): Promise<BackendResult<WorkspaceTask>>;
+  workspaceKeepTaskOpen(scopeId: string, taskId: number): Promise<BackendResult<WorkspaceTask>>;
   workspaceFinishTask(scopeId: string, input: WorkspaceFinishTask): Promise<BackendResult<WorkspaceTask>>;
   workspaceRetryTask(scopeId: string, taskId: number, recovery?: WorkspaceTaskRecovery): Promise<BackendResult<WorkspaceTask>>;
   workspaceReopenTask(scopeId: string, input: number): Promise<BackendResult<WorkspaceTask>>;
@@ -400,3 +402,4 @@ export type { BrowserCodeCommand, BrowserCodeResult, BrowserCodeImage } from './
 export type { BrowserHumanCommand, BrowserHumanRequest, BrowserHumanElement } from './browser-human.js';
 export * from './browser-element-reference.js';
 export * from './browser-presentation.js';
+export * from "./session-agents";

@@ -889,10 +889,12 @@ export class CodexHistoryService {
         stringValue(item.name) ?? stringValue(item.call_id) ?? type;
       const toolName = this.normalizeToolName(rawToolName);
       const toolUseId = stringValue(item.call_id) ?? id;
-      const providerToolInput = this.normalizeToolInput(
+      const args = this.normalizeToolInput(
         rawToolName,
         item.arguments ?? item.input,
       );
+      const providerToolInput = item.namespace === 'elevenex'
+        ? { server: 'elevenex', arguments: args } : args;
       const canonicalTool = canonicalizeAgentTool(
         collaborationTool(rawToolName) ? rawToolName : toolName,
         providerToolInput,

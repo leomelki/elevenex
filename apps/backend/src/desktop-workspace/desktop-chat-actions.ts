@@ -75,9 +75,14 @@ export async function executeChatAction(
       await provider.submitPrompt(
         sessionId,
         prompt,
-        undefined,
+        provider.info.id === 'antigravity' ? input : undefined,
         images,
-        { human: true, queue: action.queue, waitForCompletion: false },
+        {
+          human: true,
+          ...(provider.info.id === 'antigravity' ? { origin: 'desktop-chat' } : {}),
+          queue: action.queue,
+          waitForCompletion: false,
+        },
       );
       break;
     }
@@ -121,10 +126,12 @@ export async function executeChatAction(
       await provider.cancelPendingPrompt(sessionId, text(action.id));
       break;
     case 'steer-queued':
-      await provider.steerPendingPrompt(sessionId, text(action.id));
+      if (provider.info.id === 'antigravity') await provider.steerPendingPrompt(sessionId, text(action.id), 'desktop-chat');
+      else await provider.steerPendingPrompt(sessionId, text(action.id));
       break;
     case 'resume-queue':
-      await provider.resumePendingPrompts(sessionId);
+      if (provider.info.id === 'antigravity') await provider.resumePendingPrompts(sessionId, 'desktop-chat');
+      else await provider.resumePendingPrompts(sessionId);
       break;
     case 'permission': {
       const raw = record(await provider.getRuntimeState(sessionId)),
@@ -257,9 +264,16 @@ export async function executeChatAction(
     }
     case 'permission-mode': {
       const mode = text(action.mode);
-      if (!provider.info.permissionModes?.includes(mode))
+      const available = provider.info.permissionModes ?? record(
+        await provider.getRuntimeState(sessionId, { initialize: false }),
+      ).permissionModes;
+      if (!Array.isArray(available) || !available.includes(mode))
         throw new BadRequestException('Unsupported permission mode.');
-      await feature('setPermissionMode').setPermissionMode(sessionId, mode);
+      const runtime = feature('setPermissionMode');
+      if (provider.info.id === 'antigravity')
+        await runtime.setPermissionMode(sessionId, mode, 'desktop-chat');
+      else
+        await runtime.setPermissionMode(sessionId, mode);
       break;
     }
     default:

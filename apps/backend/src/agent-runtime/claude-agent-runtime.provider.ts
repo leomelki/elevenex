@@ -4,6 +4,7 @@ import { ClaudeMcpService } from '../claude-runtime/claude-mcp.service.js';
 import { ClaudeRuntimeService } from '../claude-runtime/claude-runtime.service.js';
 import type {
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentPermissionMode,
   AgentRuntimeEvent,
@@ -35,6 +36,7 @@ export class ClaudeAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: true,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 
@@ -163,7 +165,7 @@ export class ClaudeAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { human?: boolean; queue?: boolean },
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,

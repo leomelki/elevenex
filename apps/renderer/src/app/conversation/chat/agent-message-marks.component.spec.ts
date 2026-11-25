@@ -38,10 +38,17 @@ describe("agent reply marks", () => {
       expect(gradient?.id).toBeTruthy();
       expect(mark?.querySelector("path")?.getAttribute("fill")).toBe(`url(#${gradient?.id})`);
 
+      fixture.componentRef.setInput("harness", "antigravity");
+      fixture.componentRef.setInput("author", "Antigravity");
+      fixture.detectChanges();
+      expect(mark?.getAttribute("aria-label")).toBe("Antigravity");
+      expect(mark?.querySelector("img")?.getAttribute("src")).toBe("harnesses/antigravity.svg");
+      expect(mark?.querySelector("img")?.getAttribute("alt")).toBe("");
+
       fixture.componentRef.setInput("harness", "custom-agent");
       fixture.componentRef.setInput("mark", "CA");
       fixture.detectChanges();
-      expect(mark?.querySelector("svg")).toBeNull();
+      expect(mark?.querySelector("svg, img")).toBeNull();
       expect(mark?.textContent?.trim()).toBe("CA");
       expect(mark?.querySelector("ex-agent-mark")?.getAttribute("data-harness")).toBeNull();
       fixture.destroy();

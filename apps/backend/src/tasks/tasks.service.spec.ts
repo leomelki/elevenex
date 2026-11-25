@@ -253,14 +253,14 @@ describe('Task lifecycle with real Git and migrations', () => {
     }
     throw new Error('Task preparation did not settle');
   }
-  async function create(branchName: string, patch: Partial<TaskSetup> = {}) {
+  async function create(branchName: string, patch: Partial<TaskSetup> = {}, creatorId?: number) {
     const task = await service.create(repo.id, {
       requestId: randomUUID(),
       mode: 'new',
       branchName,
       baseRef: 'main',
       ...patch,
-    });
+    }, creatorId);
     return settled(task.id);
   }
 
@@ -274,6 +274,61 @@ describe('Task lifecycle with real Git and migrations', () => {
     await expect(service.releaseWorktree(task.id, true)).rejects.toThrow();
     expect((await service.record(task.id)).linkStatus).toBe('linked');
     expect(apps.stopAll).toHaveBeenCalledWith(task.id);
+  });
+
+  it('lets the creating session finish a clean temporary task and preserves conversation history', async () => {
+    const owner = (await create('temporary-task-owner')).sessions[0]!;
+    const task = await create('temporary-review', {}, owner.id);
+    expect(task).toMatchObject({ taskCreatedBySessionId: owner.id, taskTemporary: true });
+
+    await expect(service.finish(task.id, false, undefined, {
+      agent: { sessionId: task.sessions[0]!.id, userRequested: false },
+    })).rejects.toMatchObject({ response: { code: 'task_finish_requires_user' } });
+
+    const finished = await service.finish(task.id, false, undefined, {
+      agent: { sessionId: owner.id, userRequested: false },
+    });
+    expect(finished).toMatchObject({ taskTemporary: false, linkStatus: 'unlinked' });
+    expect(finished.archivedAt).toBeTruthy();
+    expect(finished.sessions[0]).toMatchObject({ id: task.sessions[0]!.id, status: 'archived' });
+    expect((await service.get(owner.workspaceId!)).archivedAt).toBeNull();
+  });
+
+  it('keeps temporary work open when dirty, running or kept open during the finish check', async () => {
+    const owner = (await create('temporary-task-owner')).sessions[0]!;
+    const task = await create('temporary-review', {}, owner.id);
+    const options = { agent: { sessionId: owner.id, userRequested: false } };
+    const localFile = join(task.path, 'uncommitted.txt');
+    await writeFile(localFile, 'preserve these edits');
+    await expect(service.finish(task.id, false, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'temporary_checkout_dirty' } });
+    expect(await readFile(localFile, 'utf8')).toBe('preserve these edits');
+    await rm(localFile);
+
+    hooks.getActivity.mockReturnValueOnce({ activityStatus: 'running', backgroundActive: false });
+    await expect(service.finish(task.id, true, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'running_work' } });
+
+    apps.count.mockReturnValueOnce(1);
+    await expect(service.finish(task.id, true, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'running_work', apps: 1 } });
+    expect(apps.stopAll).not.toHaveBeenCalled();
+
+    const finishPreview = service.finishPreview.bind(service);
+    const preview = jest.spyOn(service, 'finishPreview').mockImplementationOnce(async id => {
+      await service.keepOpen(id);
+      return finishPreview(id);
+    });
+    try {
+      await expect(service.finish(task.id, false, undefined, options))
+        .rejects.toThrow('This task changed while checking whether it could close.');
+    } finally {
+      preview.mockRestore();
+    }
+    await expect(service.finish(task.id, false, undefined, options))
+      .rejects.toMatchObject({ response: { code: 'task_finish_requires_user' } });
+    expect(await service.record(task.id)).toMatchObject({ archivedAt: null, taskTemporary: false });
+    expect(stopSession).not.toHaveBeenCalled();
   });
 
   it('previews release without changing ownership or stopping processes, and reports actual local edits', async () => {

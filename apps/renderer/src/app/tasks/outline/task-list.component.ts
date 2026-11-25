@@ -14,10 +14,12 @@ import {
 import { FlipDirective, FoldComponent, TickerComponent } from "../../ui";
 import {
   matchesSessionFilter,
+  unloadedChildCounts,
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
   type TaskSessionDisclosure,
+  type TaskSessionHistoryRequest,
 } from "../task.models";
 import { TaskGroupComponent } from "./task-group.component";
 import { SessionRowComponent } from "./session-row.component";
@@ -104,7 +106,7 @@ export class TaskListComponent {
     readonly sessionId: string;
   }>();
   readonly addSession = output<string>();
-  readonly moreSessionsRequested = output<string>();
+  readonly moreSessionsRequested = output<TaskSessionHistoryRequest>();
   readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<{
     readonly taskId: string;
@@ -130,14 +132,17 @@ export class TaskListComponent {
         ]
           .filter(Boolean)
           .join(" · ");
+        const hidden = unloadedChildCounts(task.sessions);
         const visit = (session: TaskSession, sessionContext: string): void => {
-          if (matchesSessionFilter(session.status, "attention"))
+          const childNeedsYou = session.childSummary && matchesSessionFilter(session.childSummary.status, 'attention') &&
+            (hidden.get(session.id) ?? 0) > 0;
+          if (matchesSessionFilter(session.status, "attention") || childNeedsYou)
             rows.push({
               kind: "attention",
               key: `attention:${task.id}:${session.id}`,
               taskId: task.id,
               session,
-              context: sessionContext,
+              context: childNeedsYou ? sessionContext + ' · Agent needs you' : sessionContext,
               visible: true,
             });
         };
@@ -184,7 +189,7 @@ export class TaskListComponent {
       const visible =
         !filter ||
         task.sessions.some((session) =>
-          matchesSessionFilter(session.status, filter),
+          matchesSessionFilter(session.status, filter) || (!!session.childSummary && matchesSessionFilter(session.childSummary.status, filter)),
         ) ||
         (task.subtasks ?? []).some(
           (subtask) =>

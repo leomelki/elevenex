@@ -56,6 +56,37 @@ describe("Desktop region ownership", () => {
     fixture.nativeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(closed).toHaveBeenCalledOnce(); fixture.destroy(); expect(remove).toHaveBeenCalledOnce();
   });
+  it('keeps the receded chat as a press target that returns from a takeover', () => {
+    const fixture = TestBed.createComponent(AppShellComponent), exited = vi.fn(), closed = vi.fn();
+    fixture.componentInstance.reviewExited.subscribe(exited);
+    fixture.componentInstance.panelCloseRequested.subscribe(closed);
+    fixture.componentRef.setInput('panelOpen', true); fixture.detectChanges();
+    const peek: HTMLButtonElement = fixture.nativeElement.querySelector('button.peek');
+    expect(peek.getAttribute('aria-label')).toBe('Return to chat');
+    // Inert alone hides it: aria-hidden would land on a still-focused peek as it is pressed.
+    expect(peek.hasAttribute('inert')).toBe(true);
+    fixture.componentRef.setInput('wideReview', true); fixture.detectChanges();
+    expect(peek.hasAttribute('inert')).toBe(false);
+    peek.click();
+    expect(exited).toHaveBeenCalledOnce(); expect(closed).not.toHaveBeenCalled();
+  });
+  it('closes a compact takeover from the peek and returns focus to the chat', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const fixture = TestBed.createComponent(AppShellComponent), closed = vi.fn();
+    fixture.componentInstance.panelCloseRequested.subscribe(closed);
+    const chatControl = document.createElement('button');
+    chatControl.setAttribute('shellMain', '');
+    fixture.nativeElement.querySelector('main').append(chatControl);
+    document.body.append(fixture.nativeElement);
+    chatControl.focus();
+    fixture.componentRef.setInput('panelOpen', true); fixture.detectChanges(); await fixture.whenStable();
+    const peek: HTMLButtonElement = fixture.nativeElement.querySelector('button.peek');
+    peek.focus(); peek.click();
+    expect(closed).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput('panelOpen', false); fixture.detectChanges(); await fixture.whenStable();
+    expect(document.activeElement).toBe(chatControl);
+    fixture.nativeElement.remove();
+  });
   it("uses the enclosing machine's title bar when embedded", () => {
     const fixture = TestBed.createComponent(AppShellComponent);
     fixture.componentRef.setInput("titleBar", false);

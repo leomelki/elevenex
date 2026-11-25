@@ -4,6 +4,7 @@ import type {
   AgentAuthStatus,
   AgentForkConversationRequest,
   AgentImageInput,
+  AgentPromptOptions,
   AgentLoginMode,
   AgentLoginStartResult,
   AgentRuntimeEvent,
@@ -125,7 +126,7 @@ export class PiAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { waitForCompletion?: boolean },
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,

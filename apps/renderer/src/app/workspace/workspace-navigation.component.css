@@ -27,3 +27,31 @@ footer { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: v
 .waiting-tasks small { flex: none; color: var(--attention); }
 
 .last-seen { margin: 0; padding-inline: var(--space-2); color: var(--ink-muted); font-size: var(--text-caption-size); }
+
+/* Slim overlay-style scrollbar: a 6px track narrows the reserved gutter, the thumb is a 2px pill that
+   fades in with the list and thickens under the pointer. Forced-colors keeps the system scrollbar. */
+@media (forced-colors: none) {
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+    background: transparent;
+  }
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar-button,
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar-corner {
+    display: none;
+  }
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: var(--radius-full);
+    background-color: color-mix(in srgb, var(--line-strong) 40%, transparent);
+    background-clip: padding-box;
+  }
+  :is(ex-task-list, .closed-tasks, .waiting-tasks):is(:hover, :focus-within)::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--line-strong) 80%, transparent);
+  }
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar-thumb:hover,
+  :is(ex-task-list, .closed-tasks, .waiting-tasks)::-webkit-scrollbar-thumb:active {
+    border-width: 1px;
+    background-color: var(--ink-muted);
+  }
+}

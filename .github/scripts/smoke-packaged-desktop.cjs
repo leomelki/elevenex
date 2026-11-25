@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { mkdtemp, readFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
@@ -17,7 +17,9 @@ async function smoke(executable) {
   let logs = '';
   try {
     // Run on a disposable runner with an ephemeral loopback debugging port.
-    child = spawn(resolve(executable), ['--remote-debugging-port=0', '--enable-logging=stderr'], {
+    child = spawn(resolve(executable), [
+      `--user-data-dir=${profile}`, '--remote-debugging-port=0', '--enable-logging=stderr',
+    ], {
       env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
     exited = once(child, 'close');
@@ -27,7 +29,7 @@ async function smoke(executable) {
     for (const stream of [child.stdout, child.stderr]) {
       stream.on('data', chunk => { logs = (logs + chunk).slice(-16384); });
     }
-    await Promise.race([closed, checkWindow(() => logs, signal)]);
+    await Promise.race([closed, checkWindow(profile, signal)]);
     console.log('Packaged desktop rendered Machine Home over app:// and answered preload IPC.');
   } catch (error) {
     throw new Error(`${error.message}\n${logs}`, { cause: error });
@@ -39,11 +41,20 @@ async function smoke(executable) {
   }
 }
 
-async function checkWindow(readLogs, signal) {
-  let port;
+async function checkWindow(profile, signal) {
+  const portFile = join(profile, 'DevToolsActivePort');
+  let port = 0;
   while (!port) {
-    await delay(100, undefined, { signal });
-    port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\//.exec(readLogs())?.[1];
+    // The port file may be absent or locked while Chromium writes it on Windows.
+    const contents = await readFile(portFile, { encoding: 'utf8', signal }).catch(error => {
+      if (error.code === 'ENOENT' || error.code === 'EBUSY') return '';
+      throw error;
+    });
+    const match = /^(\d+)\r?\n\/devtools\/browser\//.exec(contents);
+    if (match) port = Number(match[1]);
+    if (!port) await delay(100, undefined, { signal }).catch(error => {
+      throw new Error('Timed out waiting for the packaged app to write DevToolsActivePort', { cause: error });
+    });
   }
   let page;
   while (!page) {
@@ -55,27 +66,32 @@ async function checkWindow(readLogs, signal) {
   const socket = new WebSocket(page.webSocketDebuggerUrl);
   try {
     await once(socket, 'open', { signal });
-    socket.send(JSON.stringify({
-      id: 1, method: 'Runtime.evaluate', params: {
-        expression: `(async () => {
-          while (!document.querySelector('ex-machine-home h1')) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          return {
-            platform: window.elevenex.platform,
-            version: await window.elevenex.appVersion(),
-            backendVersion: (await window.elevenex.backendStatus()).version,
-            requireType: typeof window.require,
-          };
-        })()`,
-        awaitPromise: true, returnByValue: true,
-      },
-    }));
-    const [message] = await once(socket, 'message', { signal });
-    const reply = JSON.parse(message.data);
-    assert.equal(reply.id, 1);
-    assert.ok(!reply.error && !reply.result.exceptionDetails, JSON.stringify(reply));
-    const bridge = reply.result.result.value;
+    let bridge;
+    for (let id = 1; !bridge; id++) {
+      const response = once(socket, 'message', { signal });
+      socket.send(JSON.stringify({
+        id, method: 'Runtime.evaluate', params: {
+          expression: `(async () => document.querySelector('ex-machine-home h1') ? {
+              platform: window.elevenex.platform,
+              version: await window.elevenex.appVersion(),
+              backendVersion: (await window.elevenex.backendStatus()).version,
+              requireType: typeof window.require,
+            } : null)()`,
+          awaitPromise: true, returnByValue: true,
+        },
+      }));
+      const [message] = await response;
+      const reply = JSON.parse(message.data);
+      assert.equal(reply.id, id);
+      // Target discovery can find app:// before Electron commits the document.
+      const navigating = reply.error?.code === -32000 &&
+        /Execution context was destroyed|Cannot find (?:default )?execution context/i.test(reply.error.message);
+      if (!navigating) {
+        assert.ok(!reply.error && !reply.result.exceptionDetails, JSON.stringify(reply));
+        bridge = reply.result.result.value;
+      }
+      if (!bridge) await delay(100, undefined, { signal });
+    }
     assert.equal(bridge.platform, process.platform);
     assert.match(bridge.version, /^\d+\.\d+\.\d+/);
     assert.equal(bridge.requireType, 'undefined');

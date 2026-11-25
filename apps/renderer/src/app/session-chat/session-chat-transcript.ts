@@ -25,6 +25,7 @@ export interface PendingChatPrompt {
   readonly knownIds: ReadonlySet<string>;
   readonly media?: SessionChatItem["media"];
   readonly mentions?: SessionChatItem['mentions'];
+  readonly sender?: SessionChatItem['sender'];
   readonly attachments?: ChatExchange["attachments"];
 }
 
@@ -91,6 +92,7 @@ export function withPendingPrompt(
     text: pending.text,
     media: pending.media,
     mentions: pending.mentions,
+    sender: pending.sender,
     timestamp: pending.timestamp,
     toolId: null,
     toolName: null,
@@ -263,7 +265,7 @@ function projectExchanges(
     const isPairedResult = (item: SessionChatItem): boolean =>
       item.kind === 'tool_result' && !!item.toolId && links.calls.has(item.toolId);
     const isTextReceipt = (item: SessionChatItem): boolean =>
-      isPairedResult(item) && (item.error || !item.media?.some(inlineToolPreview));
+      isPairedResult(item) && !item.agent?.result?.reply && (item.error || !item.media?.some(inlineToolPreview));
     const isEmptyAssistant = (item: SessionChatItem): boolean =>
       item.kind === 'assistant' && !item.text.trim() && !item.media?.some(media => media.inline);
     // Keep the latest text visible, with work on either side in source order.
@@ -331,6 +333,7 @@ function projectExchanges(
               {
                 id: item.id,
                 kind: sessionToolKind(item),
+                agentEntry: item.agent ?? result?.agent,
                 detail: item.toolDetails?.summary ?? evidence?.presentation.summary ?? item.toolName ?? 'Tool',
                 verb: sessionToolVerb(item, status === 'running', status === 'failed' || status === 'unknown' ? status : undefined),
                 meta:
@@ -351,12 +354,14 @@ function projectExchanges(
               : undefined;
             // Text receipts update the call. Previews stay at the result's
             // position, including when it arrives after another message.
+            if (item.agent?.result?.reply) return [{ id, kind: 'note', agentEntry: item.agent }];
             if (pairedResult) return media?.length ? [{ id, kind: 'media', media }] : [];
             const invocation = item.invocation;
             const deferredTool = sessionToolDetailsSource(item, undefined, turnId);
             return [{
               id,
               kind: invocation ? sessionToolKind(invocation) : "tool",
+              agentEntry: item.agent,
               detail: invocation?.toolDetails.summary ?? item.toolName ?? "Tool result",
               media,
               images: viewedResult ? viewedImages(item) : undefined,
@@ -380,6 +385,7 @@ function projectExchanges(
                       ? "tool"
                       : "note",
               text: messageText(item),
+              agentEntry: item.agent,
               detail: item.kind === "error" ? item.text : undefined,
               status:
                 item.error || item.kind === "error"
@@ -430,6 +436,8 @@ function projectExchanges(
       id: group.id,
       prompt: group.prompt,
       promptEditable: group.promptItem?.editable,
+      sender: group.promptItem?.sender,
+      agentIndex: completed?.agents,
       mentions: group.mentions,
       attachments: group.id === pending?.id ? pending.attachments : group.attachments,
       time: group.time,
@@ -468,6 +476,7 @@ function projectExchanges(
           ? steps.find((step) => followingIds.has(step.id))?.id
           : undefined,
       answerId: finalEnd > finalStart ? renderId(records[finalStart]!) : undefined,
+      replyIds: records.slice(finalStart, finalEnd).filter(item => item.kind === 'assistant').map(item => item.id),
       answer,
       // Name the harness as the picker does ("Claude Code", not "claude").
       author,

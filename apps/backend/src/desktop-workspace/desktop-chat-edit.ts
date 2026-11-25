@@ -5,10 +5,12 @@ import type { AgentRuntimeProvider, AgentTranscriptItem } from '../agent-runtime
 import { uploadedAttachment } from './desktop-chat-media.js';
 import { splitChatMentions } from './desktop-chat-mentions.js';
 import { record } from './desktop-chat-projection.js';
+import { splitSessionAgentPrompt } from '../sessions/session-agent-message.js';
 
 export function editableChatPrompt(item: AgentTranscriptItem): boolean {
   return item.kind === 'user' && !!item.sourceMessageId && !!item.content?.trim() &&
-    !item.isSynthetic && !item.parentToolUseId && !item.editUnsupported;
+    !item.isSynthetic && !item.parentToolUseId && !item.editUnsupported &&
+    !splitSessionAgentPrompt(item.content ?? '').sender;
 }
 
 export function validateChatEditId(itemId: unknown): string {

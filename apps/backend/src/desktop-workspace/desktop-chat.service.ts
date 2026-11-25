@@ -30,8 +30,11 @@ import type {
 } from '../agent-runtime/agent-runtime.types.js';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
-import { chatPlanUsage } from './desktop-chat-usage.js';
+import { splitSessionAgentPrompt } from '../sessions/session-agent-message.js';
+import { chatMentionText } from './desktop-chat-mentions.js';
+import { chatModelQuota, chatPlanUsage } from './desktop-chat-usage.js';
 import { chatWork, legacyActivity } from './desktop-chat-work.js';
+import { DesktopSessionDelegates } from './desktop-session-delegates.js';
 import {
   type ChatChangesCache,
   type ChatMediaCache,
@@ -67,6 +70,8 @@ interface ChatFeed {
   readonly mediaCache: ChatMediaCache;
   readonly handoff: ChatHistoryHandoff;
   readonly latestBounds: Map<ChatReadView, { readonly revision: string; readonly before: string | null }>;
+  delegation?: ReturnType<DesktopSessionDelegates['read']>;
+  delegatedBy?: number | null;
   historyIndex?: { readonly revision: number; readonly index: ChatHistoryIndex };
   completedTurns?: { readonly revision: number; readonly projector: ChatCompletedTurns };
   toolDetails?: { readonly revision: number; readonly projector: ChatToolDetails };
@@ -121,8 +126,20 @@ export class DesktopChatService implements OnModuleDestroy {
     // New completions may persist final output after the runtime's last event.
     // Viewing it only changes the marker, so it must not reload history.
     this.invalidate(event.sessionId, event.hasUnreviewedCompletion);
+    this.relatedSessionChanged(event);
   };
-  private readonly sessionChanged = (event: { sessionId: number }) => this.invalidate(event.sessionId);
+  private readonly sessionChanged = (event: { sessionId: number }) => {
+    this.relatedSessionChanged(event);
+    this.invalidateDelegation(event.sessionId);
+  };
+  private readonly relatedSessionChanged = (event: { sessionId: number }) => {
+    const parent = this.delegates?.parentOf(event.sessionId);
+    if (parent) this.invalidateDelegation(parent);
+    for (const [id, feed] of this.feeds)
+      if (feed.delegatedBy === event.sessionId) this.invalidateDelegation(id);
+  };
+  private readonly ownDelegationChanged = (event: { sessionId: number }) => this.invalidateDelegation(event.sessionId);
+  private readonly stopWatchingDelegates?: () => void;
   private readonly expiry = setInterval(() => {
     for (const [id, feed] of this.feeds) {
       if (feed.review && feed.review.expires < Date.now())
@@ -137,16 +154,29 @@ export class DesktopChatService implements OnModuleDestroy {
     private readonly settings: SettingsService,
     private readonly conversationExports: ConversationExportService,
     @Optional() private readonly turnCaptures?: TurnChangesService,
+    @Optional() private readonly delegates?: DesktopSessionDelegates,
   ) {
     this.sessions.on('session-completion-changed', this.completionChanged);
     this.sessions.on('session-status-changed', this.sessionChanged);
     this.sessions.on('session-provider-changed', this.sessionChanged);
+    this.sessions.on('session-title-changed', this.sessionChanged);
+    this.sessions.on('session-configuration-changed', this.sessionChanged);
+    this.sessions.on('session-launch-delivery', this.relatedSessionChanged);
+    this.sessions.on('session-delegate-created', this.ownDelegationChanged);
+    this.sessions.on('session-handoff-changed', this.ownDelegationChanged);
+    this.stopWatchingDelegates = this.delegates?.onUpdate(id => this.invalidateDelegation(id));
   }
 
   onModuleDestroy(): void {
     this.sessions.off('session-completion-changed', this.completionChanged);
     this.sessions.off('session-status-changed', this.sessionChanged);
     this.sessions.off('session-provider-changed', this.sessionChanged);
+    this.sessions.off('session-title-changed', this.sessionChanged);
+    this.sessions.off('session-configuration-changed', this.sessionChanged);
+    this.sessions.off('session-launch-delivery', this.relatedSessionChanged);
+    this.sessions.off('session-delegate-created', this.ownDelegationChanged);
+    this.sessions.off('session-handoff-changed', this.ownDelegationChanged);
+    this.stopWatchingDelegates?.();
     this.lifetime.abort();
     clearInterval(this.expiry);
     for (const id of this.feeds.keys()) this.release(id);
@@ -166,6 +196,13 @@ export class DesktopChatService implements OnModuleDestroy {
     feed.revision++;
     if (history) feed.historyRevision++;
     for (const wake of feed.waiters) wake();
+  }
+
+  private invalidateDelegation(sessionId: number): void {
+    const feed = this.feeds.get(sessionId);
+    if (!feed) return;
+    feed.delegation = undefined;
+    this.invalidate(sessionId);
   }
 
   private retainProvider(provider: AgentRuntimeProvider): () => void {
@@ -216,6 +253,11 @@ export class DesktopChatService implements OnModuleDestroy {
       inspectAgent: typeof provider.getSubagentHistory === 'function',
       backgroundAgent: typeof provider.backgroundSubagent === 'function',
     });
+    const feed = this.feeds.get(session.id);
+    const archived = session.status === 'archived' || !!session.workspaceArchivedAt;
+    if (feed) feed.delegatedBy = session.delegatedBySessionId;
+    const delegates = feed?.delegation ?? this.delegates?.read(session, archived);
+    if (feed) feed.delegation = delegates;
     return {
       ...(historyRewrite ? { historyRewrite } : {}),
       unseenCompletionAt: session.hasUnreviewedCompletion ? session.lastCompletionAt : null,
@@ -227,18 +269,21 @@ export class DesktopChatService implements OnModuleDestroy {
       presets: chatPresets(this.settings, this.registry),
       presetDefault: this.settings.getAgentPresetDefault(),
       controls: {
-        plan: typeof provider.setPlanMode === 'function',
+        plan: typeof provider.setPlanMode === 'function' && raw.planAvailable !== false,
         reasoning: typeof provider.setReasoningEffort === 'function',
         fast: typeof provider.setFastMode === 'function',
       },
       ...chatState(
         raw,
         session.activeAgentProvider,
-        provider.info.permissionModes ?? [],
+        provider.info.permissionModes,
       ),
-      work,
+      work: delegates?.sessions ? { ...work, sessions: delegates.sessions, totalSessionsRunning: delegates.totalSessionsRunning } : work,
+      ...(typeof provider.getSubagentHistory === 'function' ? { nativeAgentInspection: true } : {}),
+      ...(delegates?.delegation ? { delegation: delegates.delegation } : {}),
       activity: legacyActivity(work),
       planUsage: chatPlanUsage(raw, session.activeAgentProvider),
+      modelQuota: chatModelQuota(raw, session.activeAgentProvider),
       providers: this.registry
         .listProviders()
         .slice(0, 32)
@@ -738,7 +783,11 @@ export class DesktopChatService implements OnModuleDestroy {
 
   async catalog(taskId: number, sessionId: number, providerId: string, refresh = false) {
     await this.target(taskId, sessionId);
-    return chatCatalog(this.registry, this.settings, providerId, refresh);
+    const catalog = await chatCatalog(this.registry, this.settings, providerId, refresh);
+    // Antigravity discovers mode choices along with models on the same ACP probe.
+    if (providerId === 'antigravity' && this.feeds.get(sessionId)?.provider.info.id === providerId)
+      this.invalidate(sessionId);
+    return catalog;
   }
 
   private async rememberConfiguration(sessionId: number): Promise<void> {
@@ -777,6 +826,7 @@ export class DesktopChatService implements OnModuleDestroy {
     const history = await provider.getHistory(sessionId);
     return savedChatPrompt(history, itemId, [
       taskId, sessionId, provider.info.id, session.claudeSessionId, session.codexSessionId, session.piSessionPath, session.opencodeSessionId,
+      ...(provider.info.id === 'antigravity' ? [session.antigravitySessionId] : []),
     ]);
   }
 
@@ -815,7 +865,9 @@ export class DesktopChatService implements OnModuleDestroy {
     assertChatEditIdle(record(await provider.getRuntimeState(sessionId, { initialize: false })));
     if (session.status === 'stopped') await this.sessions.reactivateRuntime(sessionId);
     const previousRewrite = this.feeds.get(sessionId)?.historyRewrite;
-    await rewind(sessionId, saved.sourceId);
+    const interactive = provider.info.id === 'antigravity' ? 'desktop-chat' : undefined;
+    if (interactive) await rewind(sessionId, saved.sourceId, interactive);
+    else await rewind(sessionId, saved.sourceId);
     const feed = this.feeds.get(sessionId);
     if (feed && previousRewrite === feed.historyRewrite) {
       feed.historyRewrite = randomUUID();
@@ -824,7 +876,7 @@ export class DesktopChatService implements OnModuleDestroy {
       this.invalidate(sessionId, true);
     }
     try {
-      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false });
+      await provider.submitPrompt(sessionId, prompt, text, images, { human: true, queue: false, waitForCompletion: false, ...(interactive ? { origin: interactive } : {}) });
     } catch {
       // History has already changed. The caller must read before sending again.
       throw new ServiceUnavailableException('Could not confirm the edited message after updating the conversation.');
@@ -875,6 +927,7 @@ export class DesktopChatService implements OnModuleDestroy {
             action,
             this.conversationExports,
           );
+      if (action.type === 'stop') this.sessions.emit('session-turn-interrupted', { sessionId });
       if ([
         'provider', 'model', 'reasoning', 'fast', 'preset', 'save-preset',
         'preset-default', 'send',
@@ -1010,12 +1063,14 @@ export class DesktopChatService implements OnModuleDestroy {
     )
       throw new BadRequestException('Invalid content window.');
     const { item } = await this.transcriptItem(taskId, sessionId, itemId);
-    const full = display(
+    const original = display(
       part === 'input'
         ? item.toolInput
         : (item.content ?? item.providerToolResult ?? item.agentMessage?.body),
       Number.MAX_SAFE_INTEGER,
     );
+    const sender = item.kind === 'user' && part === 'text' ? splitSessionAgentPrompt(original) : undefined;
+    const full = sender?.sender ? chatMentionText(sender.text) : original;
     if (offset > full.length)
       throw new BadRequestException(
         'This content window has changed. Reopen it.',

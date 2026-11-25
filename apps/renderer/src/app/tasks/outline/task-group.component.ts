@@ -22,10 +22,12 @@ import {
 } from "../../ui";
 import {
   matchesSessionFilter,
+  unloadedChildCounts,
   type SessionStatus,
   type TaskOutline,
   type TaskSession,
   type TaskSessionDisclosure,
+  type TaskSessionHistoryRequest,
   type SubTask,
 } from "../task.models";
 import { ListPresence } from "../../ui/motion/list-presence";
@@ -116,7 +118,7 @@ export class TaskGroupComponent implements OnChanges {
   readonly allowAddSubtask = input(true);
   readonly selectSession = output<string>();
   readonly addSession = output<string>();
-  readonly moreSessionsRequested = output<string>();
+  readonly moreSessionsRequested = output<TaskSessionHistoryRequest>();
   readonly emptyTaskRequested = output<string>();
   readonly addSubtaskSession = output<string>();
   protected readonly collapsedValue = signal<boolean | null>(null);
@@ -184,17 +186,26 @@ export class TaskGroupComponent implements OnChanges {
       ? false
       : (this.collapsedValue() ?? this.task().collapsed ?? false),
   );
-  protected readonly working = computed(() => this.task().sessions.filter(session => matchesSessionFilter(session.status, this.filter()) || this.task().sessions.some(child => child.parentId === session.id && matchesSessionFilter(child.status, this.filter()))));
+  protected readonly working = computed(() => {
+    const rows = this.task().sessions, filter = this.filter();
+    if (!filter) return rows;
+    const parents = new Set(rows.flatMap(child => child.parentId && matchesSessionFilter(child.status, filter) ? [child.parentId] : []));
+    return rows.filter(row => parents.has(row.id) || matchesSessionFilter(row.status, filter) ||
+      (!!row.childSummary && matchesSessionFilter(row.childSummary.status, filter)));
+  });
+  private readonly hiddenChildren = computed(() => unloadedChildCounts(this.everyone()));
   protected readonly attention = computed(
     () =>
       this.everyone().filter(
         (session) =>
           session.status === "attention" || session.status === "failed",
-      ).length,
+      ).length + this.everyone().reduce((total, row) => total +
+        (row.childSummary && matchesSessionFilter(row.childSummary.status, 'attention') ? this.hiddenChildren().get(row.id) ?? 0 : 0), 0),
   );
   protected readonly running = computed(
     () =>
-      this.everyone().filter((session) => session.status === "running").length,
+      this.everyone().filter((session) => session.status === "running").length +
+        this.everyone().reduce((total, row) => total + (row.childSummary?.status === 'running' ? this.hiddenChildren().get(row.id) ?? 0 : 0), 0),
   );
   protected readonly leadLink = computed(
     () =>

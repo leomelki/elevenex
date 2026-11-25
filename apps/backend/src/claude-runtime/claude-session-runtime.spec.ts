@@ -472,6 +472,10 @@ describe('ClaudeSessionRuntime', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'Guidance' },
     });
+    const prompt = (query as jest.Mock).mock.calls[0][0].prompt as AsyncIterable<unknown>;
+    const inputs = prompt[Symbol.asyncIterator]();
+    await inputs.next();
+    await expect(inputs.next()).resolves.toMatchObject({ value: { uuid: 'guide', priority: 'next' } });
     expect(queries[0].interrupt).not.toHaveBeenCalled();
     queries[0].emit({ type: 'result', user_message_uuid: 'first' });
     await flushAsync();

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 export default async function* (capture) {
   await capture.evaluate(() => { location.href = '/connected-workspace'; });
   await capture.waitFor(() => document.querySelector('ex-workspace-navigation ex-task-list'));
+  await capture.cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
   const fixture = (fn, value) => capture.component('ex-connected-workspace-demo', fn, value);
   const finish = async () => {
     await capture.settle();
@@ -20,7 +21,7 @@ export default async function* (capture) {
     assert.equal(await capture.evaluate(() => !!document.querySelector('[role="listbox"]')), false);
     yield { name: `${theme}-repositories`, inspect: ['.dialog', 'ex-new-project'] };
     await capture.press('Escape'); await finish();
-    assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Add project');
+    await capture.waitFor(() => document.activeElement?.getAttribute('aria-label') === 'Add project');
     await capture.click('ex-project-rail [aria-label="Add project"]');
     await capture.waitFor(() => document.querySelector('[role="option"]'));
 

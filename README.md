@@ -69,12 +69,6 @@ From the repository root:
 pnpm install
 ```
 
-The root `postinstall` does real setup work:
-
-- builds the custom VS Code integration packages
-- syncs bundled VS Code Web extension assets when available
-- generates favicon assets from the project logo
-
 ### Run In Development
 
 Start Electron, the Angular dev server, and the checkout's local backend from
@@ -91,8 +85,8 @@ open `http://127.0.0.1:4310`.
 pnpm desktop:preview
 ```
 
-The root `pnpm dev`, `pnpm dev:tmux`, `pnpm frontend:*`, and `pnpm electron:*`
-commands target the legacy app.
+The legacy development commands include `pnpm dev`, `pnpm dev:tmux` and
+`pnpm frontend:dev`. Run `pnpm assets:icons` to regenerate legacy icons.
 
 ### Build And Package
 

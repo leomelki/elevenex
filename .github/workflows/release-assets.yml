@@ -134,6 +134,15 @@ jobs:
           RELEASE_PR: ${{ needs.prepare.outputs.pr }}
         run: node .github/scripts/write-release-manifest.cjs artifacts
 
+      - name: Write release notes
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_PR: ${{ needs.prepare.outputs.pr }}
+        # Written outside artifacts/ so it is not uploaded as a release asset.
+        run: node .github/scripts/write-release-notes.cjs artifacts "$RUNNER_TEMP/release-notes.md"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
@@ -143,12 +152,7 @@ jobs:
           prerelease: true
           files: artifacts/*
           fail_on_unmatched_files: true
-          body: |
-            Auto-built release assets for commit `${{ needs.prepare.outputs.sha }}`.
-            Includes a signed and notarized macOS Apple Silicon DMG, Linux x64
-            and ARM64 AppImage and DEB packages, and a Windows x64 NSIS installer.
-            Matching standalone Node backends and SSH runtimes are included
-            with SHA-256 checksums.
+          body_path: ${{ runner.temp }}/release-notes.md
 
       - name: Link release in workflow summary
         env:

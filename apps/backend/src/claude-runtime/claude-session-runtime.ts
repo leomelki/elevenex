@@ -106,7 +106,7 @@ export class ClaudeSessionRuntime {
     this.clearIdleTimer();
     if (input.uuid)
       (this.activeTurn?.messageIds ?? this.independentInputs).add(input.uuid);
-    this.inputQueue.push({ ...input, priority: 'now' });
+    this.inputQueue.push({ ...input, priority: 'next' });
     this.wakeInput();
   }
 

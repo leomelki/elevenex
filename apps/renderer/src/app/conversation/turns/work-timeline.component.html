@@ -60,7 +60,17 @@
           [open]="rowVisible"
           [animateOpenOnMount]="revealWork() && groupOpen(row) && !hydrated().has(step.id)"
         >
-          @if (prose(step)) {
+          @if (step.agentBoard; as board) {
+            <ex-agent-work-board class="agent-step" [board]="board" [active]="rowVisible"
+              [controlsDisabled]="agentNavigationDisabled()" (requested)="agentRequested.emit($event)"
+              (layoutChanging)="layoutChanging.emit($event)" />
+          } @else if (step.agentReply; as reply) {
+            <ex-agent-work-reply class="agent-step" [reply]="reply" [active]="rowVisible"
+              [handoff]="arrivals().has(step.id)" [controlsDisabled]="agentNavigationDisabled()" [copiedCode]="copiedCode()"
+              (requested)="agentRequested.emit($event)" (openLink)="openLink.emit($event)"
+              (openFile)="openFile.emit($event)" (copyCode)="copyCode.emit($event)"
+              (layoutChanging)="layoutChanging.emit($event)" />
+          } @else if (prose(step)) {
             <div
               [class.answer]="step.id === replyId()"
               [class.has-text]="!!step.text?.trim()"
@@ -102,10 +112,11 @@
                   <ex-now-line [step]="step" />
                 </div>
               } @else if (step.kind !== 'media') {
+                <div [class.agent-tool]="!!step.agentAction">
                 <ex-tool-step
                   [icon]="icon(step)"
-                  [verb]="verb(step)"
-                  [detail]="step.title || step.detail || ''"
+                  [verb]="step.agentAction?.label || verb(step)"
+                  [detail]="step.agentAction ? step.agentAction.detail || '' : step.title || step.detail || ''"
                   [detailTruncation]="step.kind === 'read' ? 'start' : 'end'"
                   [status]="
                     step.recovered || step.expected
@@ -117,7 +128,7 @@
                       ? 'fixed'
                       : step.expected
                         ? 'reproduced'
-                        : step.result ||
+                        : step.agentAction?.status || step.result ||
                           step.meta ||
                           (step.duration && step.duration > 1
                             ? duration(step.duration)
@@ -143,6 +154,13 @@
                   (contentRequested)="contentRequested.emit($event)"
                   (layoutChanging)="layoutChanging.emit($event)"
                 />
+                @if (step.agentAction?.target; as target) {
+                  <span #action class="agent-tool-action">
+                    <ex-icon-button icon="forward" size="sm" [label]="'Open session for ' + step.agentAction!.label"
+                      [disabled]="agentNavigationDisabled()" (pressed)="openAgent(target, action)" />
+                  </span>
+                }
+                </div>
               }
               @if (step.media?.length) {
                 <div exAutoHeight><div>

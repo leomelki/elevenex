@@ -1,3 +1,4 @@
+import { SessionDelegationHandoffs } from './session-delegation-handoffs.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { hasStartedAgentConversation, sessionAgentProvider, type SessionProviderColumns } from './session-provider.js';
 import {
@@ -40,6 +41,12 @@ import {
   querySessionHandles,
   type SessionHandleQuery,
 } from './session-handle-query.js';
+import {
+  insertTaskSession,
+  readSessionLaunch,
+  type SessionLaunchDelivery,
+  type SessionLaunchRequest,
+} from './session-creation.js';
 
 const VALID_STATUSES = ['created', 'active', 'archived', 'stopped'] as const;
 type SessionStatus = (typeof VALID_STATUSES)[number];
@@ -70,6 +77,7 @@ interface SessionListOptions {
 @Injectable()
 export class SessionsService extends EventEmitter {
   private readonly logger = new Logger(SessionsService.name);
+  private readonly archivingGroup = new Set<number>();
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -82,7 +90,10 @@ export class SessionsService extends EventEmitter {
     @Optional() private readonly navigationEvents?: NavigationEventsService,
   ) {
     super();
+    this.delegationHandoffs = new SessionDelegationHandoffs(this.db, sessionId =>
+      this.emit('session-handoff-changed', { sessionId }));
   }
+  readonly delegationHandoffs: SessionDelegationHandoffs;
 
   async create(dto: {
     repoId: number;
@@ -94,7 +105,13 @@ export class SessionsService extends EventEmitter {
     isTemporary?: boolean;
     surface?: SessionSurface;
     activeAgentProvider?: AgentProviderId;
+    agentSelection?: schema.SessionAgentSelection;
+    delegatingSessionId?: number;
+    launch?: SessionLaunchRequest;
+    signal?: AbortSignal;
   }) {
+    const prior = dto.launch && this.getSessionLaunch(dto.launch);
+    if (prior) return this.findOne(prior.sessionId);
     const resolved = await this.resolveSessionWorkspace(dto);
     let sessionName = dto.name;
     const surface = this.normalizeSurface(dto.surface);
@@ -118,31 +135,106 @@ export class SessionsService extends EventEmitter {
         : `Session ${sessionCount + 1}`;
     }
 
-    const rows = await this.db
-      .insert(schema.sessions)
-      .values({
-        repoId: dto.repoId,
-        workspaceId: resolved.workspaceId,
-        folderId: dto.folderId ?? null,
-        branchName: resolved.branchName,
-        worktreePath: resolved.worktreePath,
-        transcriptWorktreePath: resolved.worktreePath,
-        name: sessionName,
-        surface,
-        isTemporary: dto.isTemporary ?? false,
-        status: 'created',
-        activeAgentProvider,
-        claudeSessionId: '-1',
-        codexSessionId: '-1',
-        piSessionPath: '-1',
-        hasInjectedWorktreeContext: false,
-      })
-      .returning();
+    const values: typeof schema.sessions.$inferInsert = {
+      repoId: dto.repoId,
+      workspaceId: resolved.workspaceId,
+      folderId: dto.folderId ?? null,
+      branchName: resolved.branchName,
+      worktreePath: resolved.worktreePath,
+      transcriptWorktreePath: resolved.worktreePath,
+      name: sessionName,
+      surface,
+      isTemporary: dto.isTemporary ?? false,
+      status: 'created',
+      activeAgentProvider,
+      claudeSessionId: '-1',
+      codexSessionId: '-1',
+      piSessionPath: '-1',
+      hasInjectedWorktreeContext: false,
+      ...(dto.agentSelection && {
+        agentSelection: dto.agentSelection,
+        ...(activeAgentProvider === 'claude' && dto.agentSelection.model !== undefined
+          ? { claudeModelSelection: { model: dto.agentSelection.model } }
+          : {}),
+      }),
+    };
+    dto.signal?.throwIfAborted();
+    if (dto.launch || dto.delegatingSessionId !== undefined) {
+      if (!resolved.workspaceId || surface !== 'session' || dto.isTemporary ||
+          (dto.delegatingSessionId !== undefined && dto.folderId !== undefined))
+        throw new BadRequestException('Delegation requires a durable task session.');
+      const result = insertTaskSession(this.db, { ...values, workspaceId: resolved.workspaceId }, dto.delegatingSessionId, dto.launch);
+      if (result.created) this.navigationEvents?.invalidate();
+      const created = await this.findOne(result.sessionId);
+      if (result.created && created.delegatedBySessionId)
+        this.emit('session-delegate-created', { sessionId: created.delegatedBySessionId });
+      return created;
+    }
+
+    const rows = await this.db.insert(schema.sessions).values(values).returning();
 
     // Return the same navigation metadata as GET /sessions/:id so the client
     // can open this newly created session without another round trip.
     this.navigationEvents?.invalidate();
     return this.findOne(rows[0].id);
+  }
+
+  getSessionLaunch(request: SessionLaunchRequest) {
+    return readSessionLaunch(this.db, request);
+  }
+
+  getSessionLaunchDelivery(sessionId: number): SessionLaunchDelivery {
+    return this.db.select({ delivery: schema.sessionLaunches.delivery })
+      .from(schema.sessionLaunches).where(eq(schema.sessionLaunches.sessionId, sessionId))
+      .get()?.delivery ?? null;
+  }
+
+  claimSessionLaunch(sessionId: number): boolean {
+    return !!this.db.update(schema.sessionLaunches).set({ delivery: 'dispatching' })
+      .where(and(
+        eq(schema.sessionLaunches.sessionId, sessionId),
+        eq(schema.sessionLaunches.delivery, 'ready'),
+      )).returning({ sessionId: schema.sessionLaunches.sessionId }).get();
+  }
+
+  cancelReadySessionLaunch(sessionId: number): void {
+    const result = this.db.update(schema.sessionLaunches).set({ delivery: 'failed' })
+      .where(and(
+        eq(schema.sessionLaunches.sessionId, sessionId),
+        eq(schema.sessionLaunches.delivery, 'ready'),
+      )).run();
+    if (result.changes) this.emit('session-launch-delivery', { sessionId, delivery: 'failed' });
+  }
+
+  recordSessionLaunchDelivery(sessionId: number, delivery: 'ready' | 'accepted' | 'failed'): void {
+    const result = this.db.update(schema.sessionLaunches).set({ delivery }).where(and(
+      eq(schema.sessionLaunches.sessionId, sessionId),
+      eq(schema.sessionLaunches.delivery, 'dispatching'),
+    )).run();
+    if (result.changes) this.emit('session-launch-delivery', { sessionId, delivery });
+  }
+
+  /** Keep edits to an opted-in session's selection durable across cold starts. */
+  updateSessionAgentSelection(
+    id: number,
+    provider: AgentProviderId,
+    patch: Omit<schema.SessionAgentSelection, 'provider'>,
+  ): void {
+    const changed = this.db.transaction(tx => {
+      const session = tx.select({ selection: schema.sessions.agentSelection })
+        .from(schema.sessions).where(eq(schema.sessions.id, id)).get();
+      if (session?.selection?.provider !== provider) return;
+      const { model, reasoningEffort } = session.selection;
+      if (('model' in patch ? patch.model === model : true) &&
+          ('reasoningEffort' in patch ? patch.reasoningEffort === reasoningEffort : true)) return;
+      tx.update(schema.sessions).set({ agentSelection: { ...session.selection, ...patch } })
+        .where(eq(schema.sessions.id, id)).run();
+      return true;
+    }, { behavior: 'immediate' });
+    if (changed) {
+      this.navigationEvents?.invalidate();
+      this.emit('session-configuration-changed', { sessionId: id });
+    }
   }
 
   private async resolveSessionWorkspace(dto: {
@@ -307,6 +399,7 @@ export class SessionsService extends EventEmitter {
       throw new NotFoundException(`Session with id ${id} not found`);
     }
 
+    this.emit('session-configuration-changed', { sessionId: id });
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
@@ -527,7 +620,11 @@ export class SessionsService extends EventEmitter {
     return this.withInferredActiveAgentProvider(rows[0]);
   }
 
-  async renameFromGeneratedTitle(id: number, name: string) {
+  async renameFromGeneratedTitle(
+    id: number,
+    name: string,
+    options?: { expectedName: string; signal: AbortSignal },
+  ) {
     const nextName = name.trim();
     this.logger.log(
       `Generated session title rename requested session=${id} candidate=${JSON.stringify(nextName)}`,
@@ -540,25 +637,31 @@ export class SessionsService extends EventEmitter {
     }
 
     const current = await this.findOne(id);
-    if (!isAutoGeneratedSessionName(current.name)) {
+    if (current.name === null || !isAutoGeneratedSessionName(current.name)) {
       this.logger.log(
         `Generated session title rename skipped session=${id} reason=current_name_not_auto currentName=${JSON.stringify(current.name)} candidate=${JSON.stringify(nextName)}`,
       );
       return this.withInferredActiveAgentProvider(current);
     }
+    if (
+      options &&
+      (options.signal.aborted || current.name !== options.expectedName)
+    )
+      return current;
 
-    const rows = await this.db
+    const rows = this.db
       .update(schema.sessions)
       .set({
         name: nextName,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(schema.sessions.id, id))
-      .returning();
+      .where(
+        and(eq(schema.sessions.id, id), eq(schema.sessions.name, current.name)),
+      )
+      .returning()
+      .all();
 
-    if (rows.length === 0) {
-      throw new NotFoundException(`Session with id ${id} not found`);
-    }
+    if (rows.length === 0) return this.findOne(id);
 
     const session = rows[0];
     this.logger.log(
@@ -723,11 +826,11 @@ export class SessionsService extends EventEmitter {
         activeAgentProvider: normalized,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(schema.sessions.id, id))
+      .where(and(eq(schema.sessions.id, id), isNull(schema.sessions.antigravitySessionId)))
       .returning();
 
     if (rows.length === 0) {
-      throw new NotFoundException(`Session with id ${id} not found`);
+      throw new ConflictException('The session changed while choosing a provider.');
     }
 
     this.emit('session-provider-changed', { sessionId: id });
@@ -775,14 +878,19 @@ export class SessionsService extends EventEmitter {
       );
     }
 
-    const rows = await this.db
+    // A turn admitted just before a group archive may still try to mark
+    // itself active while its runtime is shutting down.
+    if (status !== 'archived' && this.archivingGroup.has(id))
+      throw new ConflictException('Session archive is already in progress.');
+    const rows = this.db
       .update(schema.sessions)
       .set({
         status,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.sessions.id, id))
-      .returning();
+      .returning()
+      .all();
 
     if (rows.length === 0) {
       throw new NotFoundException(`Session with id ${id} not found`);
@@ -1081,6 +1189,52 @@ export class SessionsService extends EventEmitter {
     return archived;
   }
 
+  async archiveTaskSessionGroup(
+    taskId: number,
+    id: number,
+    confirm: (rows: readonly (typeof schema.sessions.$inferSelect)[]) => void,
+  ): Promise<void> {
+    const { sessions, workspaces } = schema;
+    // Claim the group together so moves and new prompts cannot split the
+    // operation while process cleanup awaits.
+    const { archived, cleanup } = this.db.transaction(tx => {
+      const task = tx.select().from(workspaces).where(eq(workspaces.id, taskId)).get();
+      if (!task || task.archivedAt || task.taskState !== 'ready')
+        throw new BadRequestException('Task is not ready for session changes.');
+      const scope = and(
+        eq(sessions.workspaceId, taskId),
+        eq(sessions.repoId, task.repoId),
+        eq(sessions.surface, 'session'),
+      );
+      const targetScope = and(eq(sessions.id, id), scope);
+      const target = tx.select().from(sessions).where(targetScope).get();
+      if (!target) throw new BadRequestException('Session does not belong to this task.');
+      const childScope = and(eq(sessions.parentSessionId, id), eq(sessions.isTemporary, false), scope);
+      const rows = [target, ...tx.select().from(sessions).where(childScope).all()];
+      const active = rows.filter(row => row.status !== 'archived');
+      // A retry can finish cleanup after the group was already marked archived.
+      const cleanup = rows.filter(row => row.id === id || row.status !== 'archived' ||
+        (target.status === 'archived' && row.archivedByTask));
+      if (cleanup.some(row => this.archivingGroup.has(row.id)))
+        throw new ConflictException('Session archive is already in progress.');
+      confirm(active);
+      const archived = tx.update(sessions)
+        .set({ status: 'archived', archivedByTask: true, updatedAt: new Date().toISOString() })
+        .where(and(or(targetScope, childScope), ne(sessions.status, 'archived')))
+        .returning({ id: sessions.id }).all();
+      return { archived, cleanup };
+    });
+    for (const row of cleanup) this.archivingGroup.add(row.id);
+    try {
+      if (archived.length) this.navigationEvents?.invalidate();
+      for (const row of archived)
+        this.emit('session-status-changed', { sessionId: row.id, status: 'archived' });
+      await this.runArchiveCleanup(cleanup, sessionId => this.cleanupArchivedSessionProcesses(sessionId, true));
+    } finally {
+      for (const row of cleanup) this.archivingGroup.delete(row.id);
+    }
+  }
+
   /** Retire processes while preserving the conversation in the active task. */
   async stopForWorktreeRelease(id: number) {
     await this.cleanupArchivedSessionProcesses(id, true);
@@ -1143,6 +1297,13 @@ export class SessionsService extends EventEmitter {
     rows: { id: number }[],
     requireCleanup: boolean,
   ) {
+    await this.runArchiveCleanup(rows, id => this.archiveAndStop(id, requireCleanup));
+  }
+
+  private async runArchiveCleanup(
+    rows: readonly { id: number }[],
+    cleanup: (id: number) => Promise<unknown>,
+  ) {
     // Bound subprocess concurrency and await every cleanup, including failures,
     // before a caller can remove a repository with thousands of conversations.
     const pending = rows.values();
@@ -1151,7 +1312,7 @@ export class SessionsService extends EventEmitter {
       Array.from({ length: Math.min(8, rows.length) }, async () => {
         for (const session of pending) {
           try {
-            await this.archiveAndStop(session.id, requireCleanup);
+            await cleanup(session.id);
           } catch (error) {
             errors.push(error);
           }
@@ -1183,6 +1344,8 @@ export class SessionsService extends EventEmitter {
   async unarchive(id: number) {
     const session = await this.findOne(id);
 
+    if (this.archivingGroup.has(id))
+      throw new ConflictException('Session archive is already in progress.');
     if (session.status !== 'archived') {
       throw new BadRequestException('Only archived sessions can be unarchived');
     }
@@ -1347,7 +1510,7 @@ export class SessionsService extends EventEmitter {
     );
   }
 
-  private async resolveInitialAgentProvider(
+  async resolveInitialAgentProvider(
     provider: AgentProviderId | undefined,
   ): Promise<AgentProviderId> {
     const explicit = typeof provider === 'string' ? provider.trim() : '';

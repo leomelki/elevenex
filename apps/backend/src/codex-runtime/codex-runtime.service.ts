@@ -30,12 +30,12 @@ import { TurnChangesService, type TurnChangeCapture } from '../agent-runtime/tur
 import { randomUUID } from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
-import { claudeToolInteractions } from '../database/schema/index.js';
+import { claudeToolInteractions, type SessionAgentSelection } from '../database/schema/index.js';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SessionsService } from '../sessions/sessions.service.js';
-import type { AgentImageInput } from '../agent-runtime/agent-runtime.types.js';
+import type { AgentImageInput, AgentPromptOptions } from '../agent-runtime/agent-runtime.types.js';
 import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
 import type {
   AgentForkConversationRequest,
@@ -71,6 +71,7 @@ import {
   CodexAppServerClient,
   CodexAppServerNotification,
   CodexAppServerRequest,
+  CodexAppServerResponseError,
 } from './codex-app-server.js';
 import {
   CodexModelCatalogRetry,
@@ -463,6 +464,7 @@ export class CodexRuntimeService
       sessionId,
       session.codexSessionId,
       persistedPlanMode,
+      session.agentSelection,
     );
     state.cachedWorktreePath = session.worktreePath;
     await this.restoreSubagents(sessionId, state);
@@ -688,7 +690,7 @@ export class CodexRuntimeService
     agentId: string,
   ): Promise<ClaudeSubagentHistoryPayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     const tracker = this.tracker(sessionId);
     if (!tracker.agents.has(agentId))
       await this.restoreSubagents(sessionId, state);
@@ -1516,7 +1518,7 @@ export class CodexRuntimeService
     }
     const promise = (async () => {
       const session = await this.sessionsService.findOne(sessionId);
-      const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
       state.cachedWorktreePath = session.worktreePath;
       await this.refreshAuthStatusFast(state, sessionId);
       await this.appServer.prewarm();
@@ -1544,7 +1546,9 @@ export class CodexRuntimeService
     model: string | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
+    if (session.agentSelection?.provider === 'codex')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'codex', { model });
     state.selectedModel = model;
     state.modelExplicitlySelected = Boolean(model);
     state.pendingFastModeDefault = false;
@@ -1566,7 +1570,7 @@ export class CodexRuntimeService
     mode: CodexPermissionMode | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     const normalized = this.normalizePermissionModeSelection(
       mode,
       state.selectedPermissionMode,
@@ -1604,6 +1608,7 @@ export class CodexRuntimeService
       sessionId,
       session.codexSessionId,
       session.planMode ?? undefined,
+      session.agentSelection,
     );
     await this.sessionsService.updatePlanMode(sessionId, enabled);
     state.planMode = enabled;
@@ -1638,7 +1643,9 @@ export class CodexRuntimeService
     effort: string | null,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
+    if (session.agentSelection?.provider === 'codex')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'codex', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
@@ -1649,7 +1656,7 @@ export class CodexRuntimeService
     enabled: boolean,
   ): Promise<CodexRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.codexSessionId);
+    const state = this.ensureRuntimeState(sessionId, session.codexSessionId, undefined, session.agentSelection);
     state.fastMode = enabled;
     state.pendingFastModeDefault = false;
     if (state.sessionMetadata) {
@@ -1667,17 +1674,21 @@ export class CodexRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options: { waitForCompletion?: boolean } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     if (options.waitForCompletion !== false)
-      return this.runPrompt(sessionId, prompt, titlePrompt, images);
+      return this.runPrompt(sessionId, prompt, titlePrompt, images, options);
     let owned = false;
     const generation = this.sessionGenerations.get(sessionId) ?? 0;
     let accepted!: () => void;
     const receipt = new Promise<void>((resolve) => { accepted = resolve; });
-    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, () => {
-      owned = true;
-      accepted();
+    const completion = this.runPrompt(sessionId, prompt, titlePrompt, images, {
+      ...options,
+      onAccepted: (disposition) => {
+        owned = true;
+        options.onAccepted?.(disposition);
+        accepted();
+      },
     });
     // Keep runtime ownership and stop/cleanup intact after HTTP acknowledges the send.
     // In particular a late turn-change cleanup failure must still reach the live UI.
@@ -1697,20 +1708,9 @@ export class CodexRuntimeService
     await Promise.race([receipt, completion]);
   }
 
-  private async runPrompt(
-    sessionId: number,
-    prompt: string,
-    titlePrompt?: string,
-    images?: AgentImageInput[],
-    onAccepted?: () => void,
-  ): Promise<void> {
-    const generation = this.sessionGenerations.get(sessionId) ?? 0;
-    this.assertNotRewinding(sessionId);
-    const trimmedPrompt = prompt.trim();
-    const validatedImages = this.validateImageInputs(images);
-    if (!trimmedPrompt && !validatedImages.length) {
-      return;
-    }
+  private queuePromptIfBusy(
+    sessionId: number, prompt: string, images: AgentImageInput[],
+  ): boolean {
     if (this.unconfirmedStops.has(sessionId)) {
       this.emitRunState(sessionId);
       throw new ConflictException(CODEX_STOP_UNCONFIRMED_MESSAGE);
@@ -1724,15 +1724,57 @@ export class CodexRuntimeService
         ...state.pendingPrompts,
         {
           id: randomUUID(),
-          prompt: trimmedPrompt,
+          prompt,
           queuedAt: new Date().toISOString(),
-          ...(validatedImages.length ? { images: validatedImages } : {}),
+          ...(images.length ? { images } : {}),
         },
       ];
       if (this.activeRuns.get(sessionId)?.interruptRequested) {
         state.queuePaused = true;
       }
       this.emitRunState(sessionId);
+      return true;
+    }
+    return false;
+  }
+
+  private async runPrompt(
+    sessionId: number,
+    prompt: string,
+    titlePrompt?: string,
+    images?: AgentImageInput[],
+    options: AgentPromptOptions = {},
+  ): Promise<void> {
+    const { onAccepted } = options;
+    const generation = this.sessionGenerations.get(sessionId) ?? 0;
+    this.assertNotRewinding(sessionId);
+    const trimmedPrompt = prompt.trim();
+    const validatedImages = this.validateImageInputs(images);
+    if (!trimmedPrompt && !validatedImages.length) return;
+    if (
+      options.preferSteering &&
+      !options.queue &&
+      !validatedImages.length &&
+      this.activeRuns.has(sessionId)
+    ) {
+      if (await this.trySteerFollowUp(sessionId, trimmedPrompt, options.requireSteering === true)) {
+        onAccepted?.('steered');
+        return;
+      }
+      this.assertNotRewinding(sessionId);
+      if (
+        this.invalidatedSessions.has(sessionId) ||
+        generation !== (this.sessionGenerations.get(sessionId) ?? 0)
+      ) {
+        throw new ConflictException(
+          'This session was closed. Reopen its task before continuing.',
+        );
+      }
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
+      onAccepted?.('queued');
       return;
     }
 
@@ -1759,7 +1801,9 @@ export class CodexRuntimeService
       isNewSession =
         (!session.codexSessionId || session.codexSessionId === '-1') &&
         this.titleService.isAutoGeneratedName(session.name);
-      cachedState = this.ensureRuntimeState(sessionId, session.codexSessionId);
+      cachedState = this.ensureRuntimeState(
+        sessionId, session.codexSessionId, session.planMode ?? undefined, session.agentSelection,
+      );
       cachedState.cachedWorktreePath = worktreePath;
       this.logger.log(
         `Codex session title eligibility checked session=${sessionId} source=${hadCachedWorktreePath ? 'cached_state_refresh' : 'session_load'} hasCodexSessionId=${Boolean(session.codexSessionId && session.codexSessionId !== '-1')} currentName=${JSON.stringify(session.name)} shouldGenerate=${isNewSession}`,
@@ -1784,6 +1828,11 @@ export class CodexRuntimeService
     }
     const resolvedWorktreePath = worktreePath;
     this.assertNotRewinding(sessionId);
+    // A concurrent cold send can claim the turn while we load its session.
+    if (this.queuePromptIfBusy(sessionId, trimmedPrompt, validatedImages)) {
+      onAccepted?.('queued');
+      return;
+    }
     const state = cachedState ?? this.ensureRuntimeState(sessionId);
     state.runPhase = 'running';
     state.sessionState = 'running';
@@ -1850,7 +1899,7 @@ export class CodexRuntimeService
     const ownsSession = () => !this.invalidatedSessions.has(sessionId) &&
       generation === (this.sessionGenerations.get(sessionId) ?? 0) && this.runtimeStates.get(sessionId) === state;
 
-    onAccepted?.();
+    onAccepted?.('running');
     let stagedImageDir: string | null = null;
     let changeCapture: TurnChangeCapture | undefined;
     let completed = false;
@@ -1955,6 +2004,42 @@ export class CodexRuntimeService
           this.dispatchQueuedPrompt(sessionId, state);
         }
       }
+    }
+  }
+
+  private async trySteerFollowUp(
+    sessionId: number,
+    text: string,
+    explicit: boolean,
+  ): Promise<boolean> {
+    const run = this.activeRuns.get(sessionId);
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      !run?.threadId ||
+      !run.turnId ||
+      run.interruptRequested ||
+      run.abortController.signal.aborted ||
+      this.unconfirmedStops.has(sessionId) ||
+      state?.queuePaused ||
+      (!explicit && state?.pendingPrompts.length)
+    ) return false;
+
+    try {
+      await this.appServer.request('turn/steer', {
+        threadId: run.threadId,
+        expectedTurnId: run.turnId,
+        input: [{ type: 'text', text }],
+      });
+      return true;
+    } catch (error) {
+      // Invalid requests include a turn that settled before the steer arrived.
+      // A transport failure has an unknown outcome and must never replay input.
+      if (
+        error instanceof CodexAppServerResponseError &&
+        (error.code === -32600 || error.code === -32601 || error.code === -32602)
+      )
+        return false;
+      throw error;
     }
   }
 
@@ -3074,7 +3159,9 @@ export class CodexRuntimeService
     sessionId: number,
     codexSessionId?: string | null,
     persistedPlanMode?: boolean,
+    agentSelection?: SessionAgentSelection | null,
   ): CodexRuntimeState {
+    const selection = agentSelection?.provider === 'codex' ? agentSelection : undefined;
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (codexSessionId && codexSessionId !== '-1') {
@@ -3091,16 +3178,11 @@ export class CodexRuntimeService
       if (persistedPlanMode !== undefined) {
         existing.planMode = persistedPlanMode;
       }
+      if (selection && !existing.persistedSelectionLoaded)
+        Object.assign(existing, this.startupModelSettings(selection));
       return existing;
     }
     const availableModels = [...this.codexModels];
-    const defaults = this.settingsService.getAgentProviderDefaults('codex');
-    const startup = resolveAgentStartupSelection(
-      defaults,
-      availableModels,
-      this.codexDefaultModel,
-    );
-
     const state: CodexRuntimeState = {
       codexSessionId:
         codexSessionId && codexSessionId !== '-1' ? codexSessionId : null,
@@ -3116,15 +3198,7 @@ export class CodexRuntimeService
       asyncUserInputRequests: new Map(),
       asyncAnswerPrompts: new Set(),
       lastError: null,
-      selectedModel: startup.selectedModel,
-      modelExplicitlySelected: Boolean(defaults.model),
-      reasoningEffort: startup.reasoningEffort,
-      pendingFastModeDefault:
-        availableModels.length === 0 && defaults.fastMode === true,
-      fastMode:
-        defaults.fastMode === true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(selection),
       selectedPermissionMode: 'auto',
       planMode: persistedPlanMode ?? false,
       availableModels,
@@ -3136,6 +3210,29 @@ export class CodexRuntimeService
     this.runtimeStates.set(sessionId, state);
     this.tracker(sessionId);
     return state;
+  }
+
+  private startupModelSettings(selection?: SessionAgentSelection) {
+    const availableModels = this.codexModels;
+    const defaults = this.settingsService.getAgentProviderDefaults('codex');
+    const startup = resolveAgentStartupSelection(
+      defaults,
+      availableModels,
+      this.codexDefaultModel,
+      selection,
+    );
+
+    return {
+      ...startup,
+      persistedSelectionLoaded: selection !== undefined,
+      modelExplicitlySelected: Boolean(selection?.model === undefined ? defaults.model : selection.model),
+      pendingFastModeDefault:
+        availableModels.length === 0 && defaults.fastMode === true,
+      fastMode:
+        defaults.fastMode === true &&
+        availableModels.find((model) => model.id === startup.selectedModel)
+          ?.supportsFastMode === true,
+    };
   }
 
   private applyUnconfirmedStopState(
@@ -3180,6 +3277,7 @@ export class CodexRuntimeService
         pendingPermissionRequest: state.pendingPermissionRequest,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
         backgroundWork: this.backgroundWork(sessionId),
       },

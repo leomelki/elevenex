@@ -1,3 +1,5 @@
+import type { DelegatedSessionWork, SessionAgentContext, SessionAgentSender, SessionAgentTurnEntry } from './session-agents';
+
 /** Bounded, provider-neutral conversation contracts. Raw provider payloads stay in main/backend. */
 export interface SessionChatTarget {
   readonly taskId: number;
@@ -69,6 +71,9 @@ export interface SessionChatRecord {
   /** Attachment references only; bytes are fetched separately for the selected chat. */
   readonly media?: readonly SessionChatMediaReference[];
   readonly mentions?: readonly SessionChatMention[];
+  readonly sender?: SessionAgentSender;
+  /** Structured orchestration from recognized tools, retained when evidence is deferred. */
+  readonly agent?: SessionAgentTurnEntry;
   readonly text: string;
   readonly timestamp: string;
   readonly toolId: string | null;
@@ -136,6 +141,8 @@ export interface SessionChatCompletedTurn {
   /** Last source item, used as the exclusive cursor when paging forward. */
   readonly endId: string;
   readonly reply: readonly SessionChatRecord[];
+  /** Bounded index for agent chips before the saved activity is opened. */
+  readonly agents?: readonly SessionAgentTurnEntry[];
   /** Number of hidden records before the visible reply, for chronological playback. */
   readonly beforeReply: number;
   readonly total: number;
@@ -165,6 +172,7 @@ export interface SessionChatTurnWorkPage extends SessionChatTarget {
 }
 
 export interface SessionChatTurnToolRow {
+  readonly agent?: SessionAgentTurnEntry;
   readonly kind: 'call' | 'result';
   readonly id: string;
   readonly toolKind: string | null;
@@ -256,6 +264,27 @@ export interface SessionChatPlanUsage {
   }[];
   readonly updatedAt: string;
 }
+/**
+ * Provider-reported allowance metered per model, such as Antigravity's.
+ * Separate from `planUsage` so desktops that validate that field strictly
+ * ignore it; a model absent from `models` has no reported quota state.
+ */
+export interface SessionChatModelQuota {
+  readonly provider: string;
+  /** The provider's name for the account's quota tier. */
+  readonly tier: string | null;
+  readonly models: readonly {
+    /** Matches a `SessionChatState.models` ID. */
+    readonly id: string;
+    readonly label: string;
+    /** 0–100 when reported; null when the provider reports only exhaustion. */
+    readonly remainingPercentage: number | null;
+    readonly exhausted: boolean;
+    /** Unix seconds, never a renderer-local countdown. */
+    readonly resetsAt: number | null;
+  }[];
+  readonly updatedAt: string;
+}
 export interface SessionChatState {
   /** Changes after the engine replaces saved history in this conversation. */
   readonly historyRewrite?: string;
@@ -288,6 +317,7 @@ export interface SessionChatState {
   readonly fast?: boolean;
   readonly phase: "idle" | "running" | "waiting" | "error";
   readonly canInterrupt: boolean;
+  readonly canSteer?: boolean;
   readonly error: string | null;
   readonly model: string | null;
   readonly models: readonly {
@@ -307,10 +337,12 @@ export interface SessionChatState {
   } | null;
   /** Optional for compatibility with engines predating subscription usage. */
   readonly planUsage?: SessionChatPlanUsage | null;
-  readonly queue: readonly { readonly id: string; readonly text: string }[];
+  /** Optional; omitted by engines and providers without per-model quota. */
+  readonly modelQuota?: SessionChatModelQuota | null;
+  readonly queue: readonly { readonly id: string; readonly text: string; readonly sender?: SessionAgentSender }[];
   readonly queuePaused: boolean;
   /** Queue entries handed off to the harness, awaiting native transcript items. */
-  readonly dispatchingPrompts?: readonly Pick<SessionChatItem, "id" | "text" | "timestamp" | "media" | "mentions">[];
+  readonly dispatchingPrompts?: readonly Pick<SessionChatItem, "id" | "text" | "timestamp" | "media" | "mentions" | "sender">[];
   readonly permission: {
     readonly id: string;
     readonly title: string;
@@ -335,6 +367,8 @@ export interface SessionChatState {
   }[];
   /** Background work and noteworthy runtime events. Omitted by older engines. */
   readonly work?: SessionChatWork;
+  readonly nativeAgentInspection?: boolean;
+  readonly delegation?: SessionAgentContext;
 }
 /** Live delegated agents and authoritative background tasks. */
 export interface SessionChatBackgroundWork {
@@ -363,9 +397,11 @@ export interface SessionChatBackgroundWork {
   /** False for foreground delegated agents. Omitted by older engines. */
   readonly background?: boolean;
   readonly agentId?: string;
+  readonly parentToolUseId?: string;
   readonly inspectable?: boolean;
   readonly canBackground?: boolean;
   readonly model?: string;
+  readonly effort?: string;
   readonly context?: SessionChatAgentContext;
 }
 export type SessionChatWorkStatus = "pending" | "running" | "waiting" | "paused" | "completed" | "interrupted" | "stopped" | "error" | "closed" | "unavailable";
@@ -411,6 +447,8 @@ export interface SessionChatWorkEvent {
   /** ISO time; null when unreported. */
   readonly at: string | null;
   readonly agentId?: string;
+  readonly agentStatus?: SessionChatWorkStatus;
+  readonly parentToolUseId?: string;
 }
 export interface SessionChatWork {
   /** At most 16 live items; waiting work first, then oldest first. */
@@ -418,6 +456,9 @@ export interface SessionChatWork {
   /** At most 12 events, newest first. Routine successes are never included. */
   readonly recent: readonly SessionChatWorkEvent[];
   readonly totalRunning?: number;
+  /** Separate from legacy native work so older IPC validators remain compatible. */
+  readonly sessions?: readonly DelegatedSessionWork[];
+  readonly totalSessionsRunning?: number;
 }
 export type SessionChatEvent =
   | { readonly type: "item"; readonly item: SessionChatItem }

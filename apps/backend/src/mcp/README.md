@@ -21,7 +21,8 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   `app.init()` so mission startup and workspace configuration see the actual address.
   `McpAgentEndpointService` owns the listener and publishes its address as application
   process configuration in `ELEVENEX_MCP_URL`; the shared `elevenexMcpUrl()` resolver
-  supplies Claude, Codex (including forks), OpenCode, Pi, and mission workspace config.
+  supplies Antigravity, Claude, Codex (including forks), OpenCode, Pi, and mission
+  workspace config.
   An explicit nonblank `ELEVENEX_MCP_URL` takes precedence in either transport mode.
   Socket mode fails explicitly if a runtime requests the URL before endpoint startup.
   The extra listener accepts only `/api/mcp`, validates Host/Origin, and requires a
@@ -32,7 +33,8 @@ commands, coordinate other sessions, and reach the human. It is the integration 
   ports. Existing provider processes retain their loaded tools/configuration; after
   deploying backend changes, reconnect idle runtimes to adopt the new endpoint.
 - **Identity**: every coding session and mission lazily receives a stable `mcpAgentToken`.
-  Claude, Codex, and OpenCode receive the authenticated HTTP server through runtime configuration;
+  Antigravity, Claude, Codex, and OpenCode receive the authenticated HTTP server
+  through runtime configuration.
   Pi receives `ELEVENEX_AGENT_TOKEN` and `ELEVENEX_MCP_URL` through its extension environment.
   Credentials are never written to the coding repository or included in the model prompt.
   Tokens resolve to the calling session, independently of UI focus, and cached identities are
@@ -65,6 +67,7 @@ human-channel/                    notify/show/approval sink (panel consumes its 
 deep-link/                        /projects/:id, /tasks/:id, /sessions/:id (+ panel/diff)
 tool-registry/                    ToolDefinition contract, registry (caps+guards+envelope), cursors
 server-instructions.ts            the elevenex object-model primer (sent once)
+session-event-subscriptions.ts    keyed lifecycle subscriptions and shared state reads
 tools/{observe,setup,folders,drive,ask}/  tool primitives, grouped + barrelled
 __tests__/                        per-group unit specs (mock the service bag)
 ```
@@ -147,7 +150,7 @@ guarantees so individual tools can't regress them:
   `move_session_to_folder`, `archive_session_folder`, `unarchive_session_folder`,
   `delete_session_folder`.
 - **Drive**: `prompt_session`, `interrupt_session`, `stop_background_task`, `fork_session`, `archive_session`,
-  `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
+  `cancel_session_delegation`, `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
   `prompt_session` accepts optional `mentionSessionIds` (up to 10; deduplicated), attaching the same
   compact snapshots and transcript exports as chat mentions without returning transcript bodies to
@@ -162,6 +165,126 @@ guarantees so individual tools can't regress them:
   `request_approval`, `escalate_to_user` (BLOCK on the human via the panel). Backed by
   `AgentHumanChannelService`; `AgentChannelGateway` (`/agent-channel` WS) streams these to the panel
   and accepts the human's decision to unblock the waiting tool call.
+
+An authenticated session can pass `temporary:true` to `create_task` for
+disposable work it initiates. The creating session can finish that task with
+`finish_task` after it collects the result. The engine requires a clean managed
+checkout, an idle task, and no Git operation in progress. **Keep open** revokes
+that permission. Explicit user-requested closes follow the normal rules. Closing
+preserves the branch and transcripts. Reopened tasks require user consent to
+close again.
+
+## Cross-harness delegation
+
+| Goal | Tool |
+| --- | --- |
+| Reuse the latest conversation in a ready task | `open_task_session` |
+| Create another conversation or launch a delegate | `create_session` |
+| Follow up, steer, or queue a prompt in an existing conversation | `prompt_session` |
+| Inspect current activity | `session_status` |
+| Block for a result or decision | `await_session_event` |
+| Read work already recorded | `read_session`, `grep_session`, `read_session_range` |
+| Stop one turn and pause its queue | `interrupt_session` |
+| Drop a delegated assignment and its descendants | `cancel_session_delegation` |
+
+Coding sessions use native subagents for work in their own harness when available.
+Use `list_agent_harnesses` for the other harness IDs and native subagent support.
+Passing `provider` pages that harness’s models and reasoning efforts before a
+conversation exists. Explicit model and effort selections are saved with the
+session before the first turn runs. Known capability mismatches fail before
+creation. Project-local and newly available models may be accepted by the
+harness before they appear in the discovery catalog.
+
+```json
+{
+  "provider": "codex",
+  "name": "Review concurrent sends",
+  "prompt": "Review the prompt queue for lost sends. Report findings with file references. Leave the shared files untouched.",
+  "requestId": "review-concurrent-sends",
+  "role": "review"
+}
+```
+
+Pass these arguments to `create_session`. It defaults to the authenticated
+coding session’s task and places the child in the parent’s sidebar group.
+Delegation from a nested session adds a sibling in the same two-level group and
+records the actual delegator. `get_current_session` identifies both the sidebar
+parent and the delegator. Sidebar moves preserve the delegator identity.
+Use `create_session` with `mode:"standalone"` or an explicit folder for a
+standalone conversation. Mission and external calls supply a task ID and
+create at task level with `create_session`.
+
+Give each child a self-contained brief and clear file ownership. Use
+`mentionSessionIds` on the first prompt or a follow-up to attach relevant
+prior conversation snapshots. Sessions in a task share its checkout. Separate
+tasks provide checkout isolation. Coding
+sessions in plan mode can compose a brief and begin delegation after approval
+to leave plan mode. Each child uses its harness’s own runtime permission policy.
+
+The first prompt requires a `requestId`. If the response is lost, reuse the
+same request ID and inputs. The session row and receipt are committed together,
+and the backend claims the first delivery once. A pending receipt means the
+harness may still accept the original instruction. After an interruption or
+backend restart, use the existing handle to reconcile the transcript before
+sending more work. A blank `create_session` still supports a later `prompt_session`.
+
+Start independent work before waiting. `await_session_event` accepts one
+`sessionId` or up to 16 `sessionIds`. It returns the first completion, pending
+decision, failure or paused queue. Work still held by a harness’s background
+jobs or prompt queue keeps the session active. A completion includes the latest
+final reply by default when available, capped at 8,000 characters, with its
+transcript item ID. Remove handled IDs before waiting
+again. Use `read_session` or `read_session_range` for detailed evidence.
+
+A first prompt in your own task defaults to `mode:"async"`. Continue independent
+work and end the turn when none remains. When the child asks for a blocking decision or
+finishes, Elevenex delivers the child session ID, outcome, and an excerpt when
+available. Reply excerpts share an 8,000-character budget per notice. Codex
+and Claude can receive the notice during a running turn through native
+steering. Earlier prompts and a paused queue take precedence. When the current
+turn cannot accept the notice, it is queued for a later turn or held until the
+parent is idle. Ready siblings can share one notice. A parent already waiting on
+the child receives the event through the wait. The notice asks the parent to
+inspect pending decisions through `get_pending_action` and involve the user
+when authorization is required.
+
+Use `mode:"wait"` to launch and wait for one child in the same call. The wait
+lasts up to 45 seconds. When it times out, the child continues and retains its
+parent wakeup. An optional `role` adds a responsibility to the initial brief.
+For an independent re-check, launch a fresh delegate with the current brief,
+prior findings, and changes.
+
+The backend recovers outstanding notices from its database. If the harness
+may have accepted a notice before a crash, Elevenex leaves it unconfirmed
+and avoids starting a second turn. The delegating session can see
+`completionNotice` in `session_status` and inspect the child directly.
+Plan mode and pending task finish requests prevent automatic continuation.
+An explicit stop of the parent clears its outstanding notices. Antigravity
+parents can launch and wait for delegates. If work outlasts the wait or is
+launched asynchronously, collect it with `await_session_event`. Starting a new
+Antigravity turn requires a desktop chat send.
+
+Use `prompt_session` for a focused follow-up. Authenticated sends carry the
+sender’s session ID. The tool starts an idle session and prefers live input
+for an active turn on Codex, Claude, Pi, and OpenCode v1 or v2 when the harness
+can accept it. Claude schedules priority input for its next native boundary,
+and Pi delivers steering before its next model call.
+Busy harnesses without live steering queue the follow-up. An existing queue
+takes precedence over automatic steering. `mode:"queue"` requests
+a separate turn. `mode:"steer"` requires a live turn that can accept steering.
+`mode:"restart"` explicitly interrupts active work before submitting and requires
+an empty prompt queue. The send reports `running`, `steered`
+or `queued` as its acceptance disposition. If acceptance is pending or
+transport failed during delivery, inspect the session before resending.
+Session messages and results provide
+agent context and evidence. User decisions still go through the existing
+approval tools. A child can return findings, changed files, checks and blockers
+in its final reply for its parent to collect.
+
+Use `cancel_session_delegation` for a direct delegate you no longer need. It
+interrupts active work and clears queued prompts in the delegate and its
+Elevenex descendants while retaining their conversations. For a single
+interruption with the queue preserved, use `interrupt_session`.
 
 ## Testing
 

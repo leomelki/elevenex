@@ -7,11 +7,11 @@ import type {
 export interface WorkFact {
   readonly kind:
     | "failure" | "files" | "tests" | "commands" | "reads"
-    | "edits" | "searches" | "lists" | "web" | "tools" | "questions";
+    | "edits" | "searches" | "lists" | "web" | "tools" | "questions" | "agents";
   readonly label: string;
   readonly icon:
     | "x" | "changes" | "check" | "terminal"
-    | "file" | "search" | "globe" | "plug" | "chat";
+    | "file" | "search" | "globe" | "plug" | "chat" | "subtask";
   readonly tone?: "ok" | "danger";
   readonly diff?: { readonly add: number; readonly del: number };
 }
@@ -23,6 +23,7 @@ export function summarizeWork(
   saved?: Pick<DeferredTurnWork, 'counts' | 'failures'>,
   sharedChanges = false,
   totals?: WorkFact['diff'],
+  agents = 0,
 ): readonly WorkFact[] {
   let failures = saved?.failures ?? 0;
   const counts: Partial<Record<WorkStep['kind'], number>> = { ...saved?.counts };
@@ -31,7 +32,7 @@ export function summarizeWork(
   for (const step of saved ? [] : steps) {
     if (step.status === "failed" && !step.recovered && !step.expected)
       failures++;
-    counts[step.kind] = (counts[step.kind] ?? 0) + 1;
+    if (!step.agentBoard) counts[step.kind] = (counts[step.kind] ?? 0) + 1;
     if (
       step.kind === "test" &&
       step.result &&
@@ -53,6 +54,8 @@ export function summarizeWork(
       icon: "x",
       tone: "danger",
     });
+  if (agents)
+    facts.push({ kind: 'agents', label: agents + (agents === 1 ? ' agent' : ' agents'), icon: 'subtask' });
   if (files.length) {
     const diff = totals ?? (fileCount === files.length ? {
       add: files.reduce((sum, file) => sum + (file.add ?? 0), 0),

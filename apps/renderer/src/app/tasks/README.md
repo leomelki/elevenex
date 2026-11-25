@@ -19,6 +19,17 @@ the cue; the existing summary counter filters it. Viewing/clearing belongs to
 the connected chat owner, never SessionRow. It fades quietly with no burst and
 settles immediately under reduced motion.
 
+The task row shows an agent icon beside the title when its creating agent can
+close it, keeping the row on one line. The row's tooltip explains the badge and
+the icon has the accessible name "Temporary task".
+The badge clears when the user chooses **Keep open** in the task header.
+
+The connected sidebar shows same-task MCP delegates in their coding session's
+child disclosure. When an already nested conversation delegates, its new child
+appears alongside it to keep the outline two levels deep. Sidebar moves change
+placement, and the backend retains the original delegator for agent handoffs.
+See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harness-delegation).
+
 `SessionRow` supports copying a session reference into a composer through native drag and drop, including archived/history and attention rows. Its select button alone is draggable; archive/restore controls retain their normal behavior. Dragging never activates the session. Connected owners set `TaskSession.mentionScope` to the backend scope; `SESSION_DRAG_TYPE`, `writeSessionDrag` and `readSessionDrag` are the public renderer-only transfer contract. Payloads contain a bounded ID/title/scope, with no transcript or path. The receiving composer validates scope and shape; the connected backend re-resolves identity on send. The @ picker provides the keyboard alternative. Nesting owners pass drag feedback through `emphasis` (accent title for a drop destination or a row previewing task level) and `receded` (glyph, title and metadata recede for a group that cannot accept the dragged session).
 
 | Component | Main inputs | Intent outputs |
@@ -50,7 +61,7 @@ The `Component` suffix and `ex-` selector prefix apply to the names above. `bran
 ## Ownership and interaction
 
 - NewTask accepts an owner-supplied `projectMenu` template composed with the shared dropdown menu/radio controls. It opens directly from the header button without changing card layout; without a template the button still emits `projectRequested`. Bind `active=false` when a retained dialog closes or becomes busy to dispose its portaled menu. The connected-workspace preview demonstrates this composition.
-- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Completed and stopped sessions remain normal rows in the supplied order, with the same earlier-session cap as other sessions. Activity status never archives or groups a session; the owner excludes explicitly archived sessions from the normal task list.
+- Use stable task, session, project and tab IDs. TaskList renders a single keyed outline in supplied order, independent of stage; stage changes preserve task positions and local folds. Tasks default to expanded. A compact Needs you area offers three contextual shortcuts for attention/failed sessions (including unmerged sub-tasks), with a reveal control for the rest. Closed tasks never contribute. Shortcuts emit the same selection intent as canonical sessions; a new selection opens its containing task and sub-task. TaskList also supplies a fresh `reveal` request on every shortcut activation so reselecting the current session reopens its manually folded task/sub-task. Filtering hides shortcuts and keeps hidden task components mounted and inert. Sessions keep their original order; a question changes its signal rather than moving its row. Seen completions and stopped sessions remain ordinary rows in the supplied order. Activity status never archives or groups a session; the owner excludes explicitly archived sessions from the normal task list.
 - Task and session controls expose their full titles through the shared hover/focus tooltip. Attention, failure and selected rows retain their semantic surfaces with distinct hover feedback. Supply `TaskOutline.repo` only when the project's repository context needs disambiguation; single-repository projects omit it. The containing feature owns the task-list scroll region so its header and pagination remain available.
 - Task headers share one full-row surface on hover or focus within; the New session icon retains its stronger local hover and focus ring. Hovering a session does not highlight its parent task header.
 - Feed a bounded task/session window into the outline and request pagination in the owning feature. BranchPicker shows at most seven results. It matches every query word, recognizes fully qualified refs and promotes exact/default matches. Branch lists held branches with their task name and disables them. From lets the user pick those branches as the source for a separate new branch. Use `BranchInfo.ref` to preserve Git identity when local and remote branches share a display name.
@@ -68,9 +79,10 @@ The isolated showcase is `apps/renderer/preview/tasks-demo.component.*`. Its sam
 ## Production workspace adapters
 
 The connected [workspace feature](../workspace/README.md) supplies bounded backend
-windows to these components. `TaskOutline.moreSessions` enables the Next sessions
-intent (`TaskGroup` and `TaskList.moreSessionsRequested(taskId)`); advancing a
-window belongs to the owner. `TaskOutline.canAddSession=false` suppresses creation
+windows to these components. `TaskOutline.moreSessions` keeps Older available
+after all loaded rows are visible. `TaskGroup` and `TaskList` emit
+`moreSessionsRequested(TaskSessionHistoryRequest)` to let the owner append a
+bounded batch and update the controlled disclosure. `TaskOutline.canAddSession=false` suppresses creation
 while a workspace is preparing. An empty task header emits
 `emptyTaskRequested(taskId)` alongside its local disclosure, so the owner can
 show task preparation/recovery. `TaskList.disabled` disables session addition
@@ -87,6 +99,7 @@ continues to work without these optional inputs. `canLink` and
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
 `TaskHeader.closed` hides stage/close controls for archived history.
+Project task-specific buttons with `[taskActions]` alongside **Close task**.
 The optional `[gitStatus]` projection sits beside Git actions inside the reserved
 metadata row. Owners can show bounded loading, retry or Sync controls there;
 asynchronous status must not add rows below the header and displace a conversation.
@@ -232,8 +245,15 @@ mounted across project reads so its outgoing rows can fold away and returning
 identities can reverse their exit. The workspace mounts initial history after
 the first read, then retains the outline through subsequent active-project reads.
 
-`TaskGroup.cap` / `TaskList.sessionCap` show the newest five normal sessions in
-supplied chronological order, plus attention/failed, selected and fresh rows.
+`TaskGroup.cap` / `TaskList.sessionCap` reserve the five default root slots for
+running, attention, failed and unseen-reply sessions, then fill any remaining
+slots with the newest ordinary sessions. Priority rows can overflow the cap.
+Selected and fresh rows also stay visible. All rows keep their supplied
+chronological order. Older inserts each reveal around the rows already visible. A nested priority
+session reserves a slot for its parent, with the priority child visible while
+the group is folded. Expanding the group reveals its recent ordinary children
+and keeps priority rows visible. Show more reveals the remaining loaded
+children, and Earlier child sessions loads the next bounded page.
 Each Older click reveals at most `capStep` more hidden sessions. Show fewer
 resets that disclosure; filters and cap 0 show every supplied match.
 The disclosure snapshots the remaining hidden IDs, so adding, removing or
@@ -250,7 +270,8 @@ retain their own disclosure until their task identity or cap no longer matches.
 Hidden sessions keep their activity and contribute to task counts; their DOM is
 created on reveal. A quiet 26px “› N older” button replaces the ghost pill, with
 an accurate next-batch accessible label and `aria-expanded`. Partial reveals
-show a separate Show fewer button; fully revealed lists use “⌄ Show fewer”.
+show a separate Show fewer button. After the last loaded row, Older loads the
+next batch in place while history remains. Fully revealed lists use “⌄ Show fewer”.
 Only the first title below a remaining cap is muted with `ink-muted`; selected,
 attention/failed and fresh rows retain their normal color. Titles ease color.
 
@@ -258,7 +279,8 @@ The internal `WorkingSessionsComponent` owns placement and disclosure;
 `SessionBatchComponent` owns one pixel-height scroll and its cleanup. Revealed
 batches snapshot identities, so selecting or changing a revealed row's status
 keeps its component and position. Archive gaps draw from the next older rows
-across batches, preserving chronology. New arrivals stay in the main list.
+across batches. A reveal splits into multiple animated runs when it crosses an
+already-visible row. New arrivals stay in their chronological position.
 Show fewer retains closing batches until they settle and keeps the selected row
 in the main list. Rapid reveals reverse from the painted height. A batch pins
 its rows to the bottom and masks its top 18px only while moving. Open batches
@@ -270,10 +292,11 @@ so the list closes as one surface. Rows inside a batch retain the existing
 ListPresence/Fold archive behavior. Reduced motion is instant, including when
 its preference changes during a scroll. No per-row unroll delays remain.
 
-The cap works within the owner's bounded page, independently of backend paging.
-`moreSessions` and `sessionsDirection` expose older/next page requests rather than
-fetching unbounded history. Production opens a newest-first 20-session page;
-older pages replace that window. Project settings → Tasks stores the device-local
+The cap applies to the supplied history and priority rows. Priority data from
+outside the current history page is supplied by the owner.
+Production opens with the newest 20 sessions. Each Older request beyond that
+window adds a bounded batch. Show fewer restores the cap over the loaded rows.
+Project settings → Tasks stores the device-local
 user cap (5, 10, 20 or all loaded sessions), shared across project views/windows.
 The Tasks preview includes A busy task; `/connected-workspace` exercises the full
 backend-backed owner using an isolated fixture.
@@ -299,6 +322,21 @@ owner's local waiting drafts above the form. Platform dispatch and exact request
 identity reconciliation belong to the workspace owner.
 
 ## Session grouping
+
+Delegated rows carry the caller's identity independently of their outline parent.
+Use the supplied agent selection for the harness mark and the caller, current
+activity and wait metadata for the hover and focus tooltip. Collapsed groups use
+the most urgent child state, in needs-you, failed, running and finished order.
+Opening a child group shows the last two sessions in the supplied order, reserving
+a slot for the selected child when needed. Show more reveals every child in the
+current page, including running sessions. Children keep their place when their
+status changes. Dragging a session into a group reveals the full page so the
+dropped row has a visible destination.
+
+When a parent has running delegated children, the archive confirmation names
+the number of affected agents. The engine verifies the exact approved child IDs
+before stopping those turns. For group archives the owner also supplies
+`childStopRequired` for live subsession work, including detached commands.
 
 The connected desktop uses two sidebar levels: root sessions and child sessions.
 `TaskSession.parentId` describes organization; fork `kind` still describes transcript

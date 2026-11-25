@@ -107,6 +107,6 @@ export function parseChatStreamPage(frame: ChatEventFrame, watch: SessionChatWat
     if (ids.has(id)) throw invalidResponse();
     ids.add(id);
   }
-  const state = first || page.reset || data['state'] !== undefined ? parseChatState(data['state']) : undefined;
+  const state = first || page.reset || data['state'] !== undefined ? parseChatState(data['state'], page.sessionId, page.taskId) : undefined;
   return { ...page, ...(state ? { state } : {}) };
 }

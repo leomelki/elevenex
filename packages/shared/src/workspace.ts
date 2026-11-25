@@ -27,6 +27,8 @@ export interface WorkspaceProjectDetail {
   readonly repositories: WorkspacePage<WorkspaceRepository>;
 }
 export interface WorkspaceTask {
+  /** The creating agent may close this task after collecting its result. */
+  readonly temporary?: true;
   /** Optional for older runtimes; counts repositories in this task's project. */
   readonly projectRepositoryCount?: number;
   readonly projectName?: string;
@@ -62,6 +64,14 @@ export interface WorkspaceSession {
   readonly canDelete?: boolean;
   readonly parentSessionId?: number | null;
   readonly childCount?: number;
+  readonly delegatedBy?: import('./session-agents').SessionAgentReference;
+  readonly agentSelection?: import('./session-agents').SessionAgentSelection;
+  readonly childSummary?: import('./session-agents').SessionChildSummary;
+  readonly delegationDetail?: string;
+  readonly parentWaiting?: true;
+  readonly activeChildAgents?: readonly number[];
+  /** Archiving this group requires stopping live subsession work. */
+  readonly childStopRequired?: boolean;
   readonly id: number;
   readonly taskId: number;
   readonly repoId: number;
@@ -79,13 +89,20 @@ export interface WorkspaceTaskQuery extends WorkspacePageQuery {
   readonly projectId: number | null;
   readonly state?: 'active' | 'finished';
 }
+/** Priority pages can supply the root context for their nested sessions. */
+export interface WorkspaceSessionPage extends WorkspacePage<WorkspaceSession> {
+  readonly parentSessions?: readonly WorkspaceSession[];
+}
+export function isWorkspacePriorityStatus(status: string): boolean {
+  return status === 'running' || status === 'attention' || status === 'review' || status === 'failed';
+}
 export interface WorkspaceSessionQuery extends WorkspacePageQuery {
   /** Omit for legacy flat pages; null selects roots, an ID selects children. */
   readonly parentSessionId?: number | null;
   /** Opt-in append order for child pages. Requires sessionNestingOrder. */
   readonly childOrder?: 'nested';
   /** Explicit lifecycle window; omission preserves older callers, including closed-task history. */
-  readonly state?: 'normal' | 'archived';
+  readonly state?: 'normal' | 'archived' | 'priority';
   /** Newest bounded page, still returned in chronological display order. Omission preserves oldest-first callers. */
   readonly order?: 'latest';
   readonly taskId: number;
@@ -213,7 +230,12 @@ export interface WorkspaceArchiveSession {
   readonly taskId: number;
   readonly sessionId: number;
   readonly confirmStop: boolean;
+  /** Archive the session's nested conversations. Requires sessionArchiveChildren. */
+  readonly includeChildren?: boolean;
+  /** Explicitly approved currently running delegated children, verified again by the engine. */
+  readonly stopAgents?: readonly number[];
 }
+export const WORKSPACE_ARCHIVE_AGENT_LIMIT = 32;
 export interface WorkspaceDeleteSession {
   readonly taskId: number;
   readonly sessionId: number;
@@ -237,9 +259,11 @@ export interface WorkspaceRevision {
   readonly chatStream?: true;
   readonly taskApps?: true;
   readonly appOpens?: readonly { readonly revision: number; readonly runId: string; readonly taskId: number; readonly sessionId: number }[];
+  readonly sessionPriority?: true;
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;
   readonly sessionArchive?: true;
+  readonly sessionArchiveChildren?: true;
   readonly sessionArchiveHistory?: true;
   readonly taskRequests?: true;
   readonly commitPanel?: true;

@@ -1,4 +1,5 @@
 export * from "./conversation.models";
+export * from './agents';
 export * from "./markdown/markdown-parser";
 export * from "./markdown/markdown.component";
 export * from "./markdown/markdown-inline.component";

@@ -84,7 +84,11 @@ frame and a typed serving-port handoff.
 `shellSidebar`, `shellMain`, `shellPanel`. Its `panelOpen`, `wideReview`, and
 `panelLabel` inputs control layout without changing feature data. The side panel
 remains mounted and inert while closed; wider review makes the covered main
-region inert and restores focus when it exits. The shell's readonly `panelPresent`
+region inert and restores focus when it exits. A takeover stops short of the
+chat: the main region recedes (scaled and faded towards its left edge, without
+reflow) and a `Return to chat` peek button over its visible edge emits
+`reviewExited`, or `panelCloseRequested` for a compact takeover, exactly like
+Escape. The peek is inert whenever nothing takes over. The shell's readonly `panelPresent`
 signal includes the closing slide; `panelWide` retains the outgoing compact/wide
 feature layout during that exit. Use a template reference (`#shell`) and this
 signal to retain expensive projected content through exit, while `panelOpen`

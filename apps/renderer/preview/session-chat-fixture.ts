@@ -367,6 +367,7 @@ export class SessionChatFixture {
       | "permission"
       | "question"
       | "running"
+      | "antigravity-running"
       | "failed"
       | "history"
       | "panel-reflow"
@@ -450,13 +451,24 @@ export class SessionChatFixture {
         phase: "waiting",
         question: retryQuestion,
       };
-    if (mode === "running") {
+    if (mode === "running" || mode === "antigravity-running") {
       session.items = session.items.slice(0, 6);
       session.state = {
         ...session.state,
         phase: "running",
         canInterrupt: true,
         work: previewChatWork(),
+      };
+    }
+    if (mode === "antigravity-running") {
+      const harness = { id: 'antigravity', label: 'Antigravity' };
+      const model = { id: 'gemini', label: 'Gemini' };
+      session.state = {
+        ...session.state, provider: harness.id,
+        providers: [...(session.state.providers ?? []), harness],
+        model: model.id, models: [model], canSteer: false, providerLocked: true,
+        reasoning: null, fast: false, permissionMode: null, permissionModes: [],
+        controls: { plan: false, reasoning: false, fast: false },
       };
     }
     if (mode === "failed")
@@ -587,6 +599,38 @@ export class SessionChatFixture {
   usage(planUsage: SessionChatState["planUsage"], id = 101): void {
     const session = this.session(id);
     session.state = { ...session.state, provider: planUsage?.provider ?? session.state.provider, planUsage };
+    this.changed();
+  }
+  /** Antigravity meters quota per model, so the preview switches the session to that provider. */
+  antigravityUsage(
+    modelQuota: SessionChatState["modelQuota"],
+    context: SessionChatState["context"],
+    model = "claude-opus-4-6-thinking",
+    id = 101,
+  ): void {
+    const session = this.session(id);
+    const harness = { id: "antigravity", label: "Antigravity" };
+    session.state = {
+      ...session.state,
+      provider: harness.id,
+      providers: [...(session.state.providers ?? []).filter((provider) => provider.id !== harness.id), harness],
+      providerLocked: true,
+      model,
+      models: [
+        { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", reasoningEfforts: ["low", "medium", "high"] },
+        { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)", reasoningEfforts: [] },
+        { id: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)", reasoningEfforts: [] },
+        { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)", reasoningEfforts: [] },
+      ],
+      reasoning: null,
+      fast: false,
+      permissionMode: "default",
+      permissionModes: ["default", "accept-edits", "auto", "bypassPermissions"],
+      controls: { plan: true, reasoning: true, fast: false },
+      planUsage: null,
+      context,
+      modelQuota,
+    };
     this.changed();
   }
   cancel(id: string): void {

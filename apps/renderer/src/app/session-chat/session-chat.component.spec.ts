@@ -1151,7 +1151,7 @@ describe("connected composer controls", () => {
     expect(document.querySelectorAll('.agent-settings [role="option"]')).toHaveLength(0);
     expect(document.querySelector(".agent-settings")?.textContent).toContain("No models reported yet");
   });
-  for (const provider of ['codex', 'claude', 'pi', 'opencode']) {
+  for (const provider of ['codex', 'claude', 'pi', 'opencode', 'antigravity']) {
     it(`loads ${provider} models before its first conversation and refreshes without sending`, async () => {
       const { fixture, root, bridge } = setup([], { ...state, provider, presetCatalogs: true });
       await settle(fixture);
@@ -1160,6 +1160,10 @@ describe("connected composer controls", () => {
       root.querySelector<HTMLButtonElement>('ex-agent-picker > button')!.click();
       await settle(fixture);
       expect(document.querySelector('.agent-settings [role="option"]')?.textContent).toContain('Sonnet');
+      if (provider === 'antigravity') {
+        expect(document.querySelector('.agent-settings [role="option"]')?.getAttribute('aria-selected')).toBe('true');
+        expect(fixture.componentInstance.agent()).toMatchObject({ model: 'sonnet', thinking: 'high' });
+      }
       expect(document.querySelector('.agent-settings')?.textContent).not.toContain('No models reported yet');
       const refresh = Array.from(document.querySelectorAll<HTMLButtonElement>('.agent-settings button')).find(button => button.textContent?.includes('Refresh models'))!;
       refresh.click();
@@ -1316,6 +1320,110 @@ describe("connected subscription quota", () => {
     expect(root.querySelector("ex-agent-plan-meter")).toBeNull();
     expect(root.querySelector("ex-agent-usage-notice .notice")).toBeNull();
     expect(root.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this draft");
+  });
+  it("scopes per-model quota to the selected model and shows live context", async () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    const quotaState = {
+      ...state,
+      provider: "antigravity",
+      providers: [{ id: "antigravity", label: "Antigravity" }],
+      providerLocked: true,
+      model: "opus",
+      models: [{ id: "opus", label: "Claude Opus" }, { id: "flash", label: "Gemini Flash" }],
+      context: { tokens: 262144, limit: 1048576, percentage: 25 },
+      modelQuota: {
+        provider: "antigravity",
+        tier: "Antigravity Starter Quota",
+        updatedAt: new Date().toISOString(),
+        models: [{ id: "opus", label: "Claude Opus", remainingPercentage: null, exhausted: true, resetsAt }],
+      },
+    };
+    const { fixture, root, publish } = setup([], quotaState);
+    await settle(fixture);
+    expect(fixture.componentInstance.agent()).toMatchObject({
+      context: 0.25,
+      plan: { name: "Antigravity", tier: "Starter Quota", scope: "model", exhausted: true },
+    });
+    expect(fixture.componentInstance.models().find((model) => model.id === "opus")?.limit?.left).toBe(0);
+    expect(fixture.componentInstance.models().find((model) => model.id === "flash")?.limit).toBeUndefined();
+    expect(root.querySelector("ex-agent-plan-meter")?.getAttribute("aria-label")).toContain("Claude Opus quota used up");
+    expect(root.querySelector("ex-agent-usage-notice")?.textContent).toContain("Choose another model");
+    publish({ taskId: 1, sessionId: 2, cursor: "new", reset: false, items: [], events: [], before: null, state: { ...quotaState, model: "flash" } });
+    fixture.componentInstance.store.refresh();
+    await settle(fixture);
+    expect(fixture.componentInstance.agent()?.plan).toBeUndefined();
+    expect(root.querySelector("ex-agent-plan-meter")).toBeNull();
+    expect(root.querySelector("ex-agent-usage-notice .notice")).toBeNull();
+  });
+  it("offers the reported Antigravity modes and disables changes during a turn", async () => {
+    const antigravity = {
+      ...state,
+      provider: "antigravity",
+      controls: { plan: true, reasoning: true, fast: false },
+      permissionMode: "default",
+      permissionModes: ["default", "accept-edits", "auto", "bypassPermissions"],
+    };
+    const { fixture, root, bridge, publish, complete } = setup([], antigravity);
+    await settle(fixture);
+    expect(root.querySelector('ex-mode-toggle')?.textContent).toContain('Plan');
+    const trigger = root.querySelector<HTMLButtonElement>("ex-permission-picker > button")!;
+    expect(trigger.textContent).toContain("Ask first");
+    trigger.click();
+    await settle(fixture);
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Agent permissions"] .choice')];
+    expect(choices.map(choice => choice.querySelector("strong")?.textContent)).toEqual([
+      "Ask first", "Accept edits", "Auto", "Full access",
+    ]);
+    choices[2]!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenCalledWith("scope", expect.objectContaining({
+      action: { type: "permission-mode", mode: "auto" },
+    }));
+    publish({
+      taskId: 1, sessionId: 2, cursor: "running", reset: false, items: [], events: [], before: null,
+      state: { ...antigravity, permissionMode: "auto", phase: "running", canInterrupt: true },
+    });
+    complete();
+    await settle(fixture);
+    expect(trigger.textContent).toContain("Auto");
+    expect(trigger.disabled).toBe(true);
+  });
+  it("uses Plan/Code independently of Antigravity Full access when Auto is unavailable", async () => {
+    const antigravity: SessionChatState = {
+      ...state,
+      provider: "antigravity",
+      controls: { plan: true, reasoning: true, fast: false },
+      permissionMode: "default",
+      permissionModes: ["default", "accept-edits", "bypassPermissions"],
+    };
+    const { fixture, root, bridge, publish, complete } = setup([], antigravity);
+    await settle(fixture);
+    const trigger = root.querySelector<HTMLButtonElement>("ex-permission-picker > button")!;
+    trigger.click();
+    await settle(fixture);
+    const choices = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Agent permissions"] .choice')];
+    expect(choices.map(choice => choice.querySelector("strong")?.textContent)).toEqual([
+      "Ask first", "Accept edits", "Full access",
+    ]);
+    choices[2]!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({
+      action: { type: "permission-mode", mode: "bypassPermissions" },
+    }));
+    publish({
+      taskId: 1, sessionId: 2, cursor: "full-access", reset: false, items: [], events: [], before: null,
+      state: { ...antigravity, permissionMode: "bypassPermissions" },
+    });
+    complete();
+    await settle(fixture);
+    expect(trigger.textContent).toContain("Full access");
+    const plan = [...root.querySelectorAll<HTMLButtonElement>("ex-mode-toggle button")]
+      .find(button => button.textContent?.includes("Plan"));
+    expect(plan).toBeDefined();
+    plan!.click();
+    expect(bridge.sessionChatCommand).toHaveBeenLastCalledWith("scope", expect.objectContaining({
+      action: { type: "plan", enabled: true },
+    }));
+    complete();
+    await settle(fixture);
   });
 });
 

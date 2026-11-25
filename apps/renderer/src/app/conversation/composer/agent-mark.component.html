@@ -1,5 +1,8 @@
-@if (logo(); as logo) {
-  <svg [attr.viewBox]="logo.viewBox" fill="currentColor" fill-rule="evenodd" focusable="false">
+@let brand = logo();
+@if (tintedImage(); as image) {
+  <img [src]="image" alt="" />
+} @else if (brand) {
+  <svg [attr.viewBox]="brand.viewBox" fill="currentColor" fill-rule="evenodd" focusable="false">
     @if (gradient()) {
       <defs>
         <linearGradient [id]="gradientId" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -9,7 +12,7 @@
         </linearGradient>
       </defs>
     }
-    @for (path of logo.paths; track $index) {
+    @for (path of brand.paths; track $index) {
       <path [attr.d]="path" [attr.fill]="gradient() ? 'url(#' + gradientId + ')' : null" />
     }
   </svg>

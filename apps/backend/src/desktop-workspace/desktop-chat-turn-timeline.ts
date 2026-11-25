@@ -6,6 +6,7 @@ import { chatMedia } from './desktop-chat-media.js';
 import { chatDisplayContent, chatItem, type ChatChangesCache, type ChatMediaCache } from './desktop-chat-projection.js';
 import { transcriptToolHeading } from './desktop-chat-tool-details.js';
 import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js';
+import { chatAgentEntry } from './desktop-chat-agent-tools.js';
 
 function inlineResultMedia(raw: AgentTranscriptItem, cache?: ChatMediaCache) {
   const cached = cache?.get(raw);
@@ -33,7 +34,8 @@ export function savedTimelineRow(raw: AgentTranscriptItem, peer: AgentTranscript
   const resultFailed = result && chatItemFailed(result, execution);
   const failed = resultFailed || (isCall && chatItemFailed(raw));
   const media = !isCall && !failed ? inlineResultMedia(raw, mediaCache) : [];
-  if (!isCall && call)
+  const agent = chatAgentEntry(raw, peer);
+  if (!isCall && call && !agent?.result?.reply)
     return media.length ? { kind: 'media', id: raw.id, callId: call.id, media } : null;
 
   const toolKind = raw.toolKind ?? null;
@@ -48,6 +50,7 @@ export function savedTimelineRow(raw: AgentTranscriptItem, peer: AgentTranscript
   const shortMeta = meta?.slice(0, SESSION_CHAT_TURN_TOOL_META_LIMIT);
   return {
     kind: isCall ? 'call' : 'result',
+    ...(agent ? { agent } : {}),
     id: raw.id, toolKind, label,
     ...(title === label ? {} : { fullLabel: title }),
     ...(isCall && result ? { resultId: result.id } : {}),

@@ -24,6 +24,7 @@ import { AgentRuntimeRegistryService } from '../../agent-runtime/agent-runtime-r
 import { ConversationExportService } from '../../agent-runtime/conversation-export.service.js';
 import { AgentFocusService } from '../../agent-focus/agent-focus.service.js';
 import { DesktopPortForwardingGateway } from '../port-forwarding/desktop-port-forwarding.gateway.js';
+import { SessionEventSubscriptions } from '../session-event-subscriptions.js';
 
 /**
  * Injectable bag of the existing domain services the MCP tools reuse
@@ -32,6 +33,8 @@ import { DesktopPortForwardingGateway } from '../port-forwarding/desktop-port-fo
  */
 @Injectable()
 export class McpToolServices {
+  readonly sessionEvents = new SessionEventSubscriptions();
+
   constructor(
     readonly projects: ProjectsService,
     readonly repos: ReposService,

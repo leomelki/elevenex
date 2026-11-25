@@ -1,5 +1,5 @@
 import type { WorkspaceSession, WorkspaceTask } from '@elevenex/shared';
-import type { SessionStatus, TaskStage } from '../tasks';
+import type { SessionStatus, TaskSession, TaskStage } from '../tasks';
 
 export interface WorkspaceSelection {
   readonly scopeId: string;
@@ -27,4 +27,13 @@ export function workspaceSessionStatus(session: WorkspaceSession): SessionStatus
     case 'idle': case 'active': return 'done';
     default: return 'queued';
   }
+}
+
+export function workspaceAgentRow(session: WorkspaceSession): Partial<TaskSession> {
+  return {
+    ...(session.delegatedBy ? { kind: 'delegated', delegatedBy: session.delegatedBy, agentSelection: session.agentSelection,
+      delegationDetail: session.delegationDetail, parentWaiting: session.parentWaiting } : {}),
+    ...(session.childSummary ? { childSummary: session.childSummary } : {}),
+    ...(session.activeChildAgents?.length ? { activeChildAgents: session.activeChildAgents } : {}),
+  };
 }

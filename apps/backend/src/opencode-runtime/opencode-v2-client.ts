@@ -709,8 +709,8 @@ export function createOpenCodeV2Client(
         throw error;
       }
     },
-    steerPrompt: async (sessionID, text) => {
-      await native.session.prompt({ sessionID, text, delivery: 'steer' });
+    steerPrompt: async (sessionID, text, _selection, options) => {
+      await native.session.prompt({ sessionID, text, delivery: 'steer' }, options);
     },
     answerForm: async (requestID, answer) => {
       const form = forms.get(requestID);

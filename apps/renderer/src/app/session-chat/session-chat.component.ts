@@ -1,5 +1,5 @@
 import { taskAppLinkId } from '../conversation';
-import { elementMarkersIn, type BrowserElementSnapshot } from '@elevenex/shared';
+import { elementMarkersIn, type BrowserElementSnapshot, type DelegatedSessionWork, type SessionAgentReference } from '@elevenex/shared';
 import { OpensWhenBackComponent } from '../machines';
 import { DOCUMENT } from '@angular/common';
 import { SessionChatAttachments } from './session-chat-attachments';
@@ -17,6 +17,7 @@ import {
   effect,
   inject,
   input,
+  linkedSignal,
   output,
   signal,
   untracked,
@@ -25,6 +26,7 @@ import {
 import {
   ApprovalCardComponent,
   AgentUsageNoticeComponent,
+  AgentMarkComponent,
   ChatComponent,
   ChatLoadingComponent,
   ComposerComponent,
@@ -32,6 +34,10 @@ import {
   PresetPickerComponent,
   PresetCreatorComponent,
   ToolContentComponent,
+  agentIdentity,
+  agentControl,
+  sessionAgentTitle,
+  type AgentWorkIntent,
   type AgentQuestion,
   type ComposerSubmission,
   type QuestionAnswers,
@@ -39,6 +45,7 @@ import {
   type AgentConfig,
   type AgentHarness,
   type AgentModel,
+  type AgentPlanLimit,
   type PermissionChoice,
   type ConversationMention,
   type ToolContentRequest,
@@ -51,6 +58,8 @@ import {
   FoldComponent,
   PresenceComponent,
   ToastComponent,
+  StatusGlyphComponent,
+  TickerComponent,
 } from "../ui";
 import type { StartingSession } from './session-chat-drafts';
 import { SessionChatStore, type ChatSelection } from "./session-chat.store";
@@ -60,9 +69,17 @@ import { SessionAgentComponent } from './session-agent.component';
 import { SessionActivityComponent } from "./session-activity.component";
 import { SessionChatPresets } from "./session-chat-presets";
 import { SessionChatClient } from "../backend/session-chat-client.service";
-import { sessionPlanUsage } from "./session-chat-usage";
+import { sessionModelLimits, sessionModelPlan, sessionPlanUsage } from "./session-chat-usage";
 import { presentSessionTool } from './session-chat-tools';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
+import { SessionAgentTurnProjection } from './session-agent-turns';
+
+export interface AgentChatFocus {
+  readonly selection: ChatSelection;
+  readonly action: AgentWorkIntent['action'];
+  readonly from: number;
+  readonly itemId?: string;
+}
 
 const copyFailureMessage = 'Could not copy. Select the text and copy it manually.';
 
@@ -70,6 +87,10 @@ const copyFailureMessage = 'Could not copy. Select the text and copy it manually
 // Activity/token updates must not invalidate unchanged composer configuration.
 function equalViewData<T>(left: T, right: T): boolean {
   return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+function limitFor(limits: readonly AgentPlanLimit[], model: string): { limit?: AgentPlanLimit } {
+  const limit = limits.find((item) => item.id === model);
+  return limit ? { limit } : {};
 }
 
 @Component({
@@ -86,6 +107,7 @@ function equalViewData<T>(left: T, right: T): boolean {
     ComposerComponent,
     ApprovalCardComponent,
     AgentUsageNoticeComponent,
+    AgentMarkComponent,
     QuestionCardComponent,
     PresetPickerComponent,
     PresetCreatorComponent,
@@ -96,6 +118,8 @@ function equalViewData<T>(left: T, right: T): boolean {
     FoldComponent,
     PresenceComponent,
     ToastComponent,
+    StatusGlyphComponent,
+    TickerComponent,
   ],
   templateUrl: "./session-chat.component.html",
   styleUrl: "./session-chat.component.css",
@@ -140,6 +164,11 @@ export class SessionChatComponent {
   readonly outageSince = input<number | null>(null);
   readonly reconnectRequested = output<void>();
   readonly mentionItems = input<readonly ConversationMention[]>([]);
+  readonly sessionTitle = input('');
+  readonly agentFocus = input<AgentChatFocus | null>(null);
+  readonly agentNavigationBusy = input(false);
+  readonly agentNavigationError = input('');
+  readonly agentSessionRequested = output<{ readonly source: ChatSelection; readonly intent: AgentWorkIntent & { readonly target: { readonly kind: 'session'; readonly session: SessionAgentReference } } }>();
   /** Without a tab, the browser picks on its current page. */
   readonly browserPickRequested = output<ChatSelection & { readonly tabId?: string }>();
   pickBrowserElement(tabId?: string): void {
@@ -150,6 +179,26 @@ export class SessionChatComponent {
   readonly fileLinkRequested = output<ChatSelection & { readonly path: string }>();
   readonly reviewRequested = output<ChatSelection & { readonly turnId: string; readonly path?: string }>();
   readonly store = inject(SessionChatStore);
+  private readonly agentTurns = new SessionAgentTurnProjection();
+  protected readonly exchanges = computed(() => this.agentTurns.project(this.store.exchanges(), this.store.state(), this.selection()?.taskId),
+    { equal: (left, right) => left.length === right.length && left.every((exchange, index) => exchange === right[index]) });
+  protected readonly delegated = computed(() => this.store.state()?.delegation);
+  protected readonly agentNavigationDisabled = computed(() => this.store.offline() || this.agentNavigationBusy());
+  protected readonly agentTitle = sessionAgentTitle;
+  protected readonly agentIdentity = agentIdentity;
+  protected readonly decisionAgents = computed(() => this.archived() ? [] :
+    this.store.state()?.work?.sessions?.filter(agent => agent.status === 'waiting') ?? []);
+  protected readonly retainedDecisions = linkedSignal<
+    { readonly identity: string; readonly agents: readonly DelegatedSessionWork[] },
+    readonly DelegatedSessionWork[]
+  >({
+    source: () => ({ identity: this.identity(), agents: this.decisionAgents() }),
+    computation: ({ identity, agents }, previous) =>
+      agents.length || previous?.source.identity !== identity ? agents : previous.value,
+  });
+  protected readonly moreDecisions = signal(false);
+  private readonly agentClient = inject(SessionChatClient);
+  private readonly stoppingAgents = new Set<number>();
   /** One scroll/editor lifetime per selected session, retained through recovery. */
   readonly chatViews = computed(() => [{ revision: this.store.viewRevision() }]);
   readonly modelCatalog = new SessionChatModels(inject(SessionChatClient));
@@ -214,6 +263,8 @@ export class SessionChatComponent {
     !this.store.state() && !this.store.starting() && !this.store.offline() && !this.message());
   readonly copiedCode = signal<string | null>(null);
   readonly agentId = signal<string | null>(null);
+  readonly agentOrigin = signal<HTMLElement | null>(null);
+  readonly inspectedStatus = computed(() => this.store.state()?.work?.recent.find(item => item.agentId === this.agentId())?.agentStatus);
   /** The inspected agent's live Activity record, while it is still listed. */
   readonly agentWork = computed(() => {
     const id = this.agentId();
@@ -244,14 +295,24 @@ export class SessionChatComponent {
     : this.store.offline() ? 'Reconnect to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
+  private readonly modelLimits = computed(
+    () => sessionModelLimits(this.store.state()?.modelQuota, this.usageTime()),
+    { equal: equalViewData },
+  );
   readonly models = computed<readonly AgentModel[]>(() => {
     const state = this.store.state();
-    const models = state?.models.length ? state.models : this.modelCatalog.value()?.models ?? [];
+    const limits = this.modelLimits();
+    const catalog = this.modelCatalog.value();
+    const catalogModels = state && catalog?.provider === state.provider ? catalog.models : [];
+    const models = state?.provider === 'antigravity' && !state.providerLocked && catalogModels.length
+      ? catalogModels
+      : state?.models.length ? state.models : catalogModels;
     return models.map((model) => ({
       id: model.id,
       label: model.label,
       thinking: model.reasoningEfforts ?? [],
       supportsFastMode: model.supportsFastMode,
+      ...limitFor(limits, model.id),
     }));
   }, { equal: equalViewData });
   readonly providers = computed(() => this.store.state()?.providers ?? [], { equal: equalViewData });
@@ -342,6 +403,10 @@ export class SessionChatComponent {
   readonly agent = computed<AgentConfig | undefined>(() => {
     const state = this.store.state();
     if (!state) return undefined;
+    const catalog = this.modelCatalog.value();
+    const discovered = state.provider === 'antigravity' && !state.providerLocked && catalog?.provider === state.provider
+      ? catalog : null;
+    const model = state.model ?? discovered?.model ?? '';
     return {
       preset: this.presetFlow.selectedPreset()?.preset,
       presetEdited: this.showWelcome() && !!this.presetFlow.drift(),
@@ -350,17 +415,18 @@ export class SessionChatComponent {
       mark:
         this.harnesses().find((harness) => harness.id === state.provider)
           ?.mark ?? "Ag",
-      model: state.model ?? "",
-      // The closed control uses the first page's display data. A secondary
-      // model catalog may enrich the menu without resizing the toolbar.
-      modelLabel: state.models.find(model => model.id === state.model)?.label ?? state.model ?? '',
-      thinking: state.reasoning ?? undefined,
+      model,
+      modelLabel: state.models.find(option => option.id === model)?.label ??
+        discovered?.models.find(option => option.id === model)?.label ?? model,
+      thinking: state.reasoning ?? (model === discovered?.model ? discovered?.reasoning ?? undefined : undefined),
       fast: state.fast,
       context: state.context ? state.context.percentage / 100 : undefined,
       tokens: state.context
         ? `${this.tokenNumber.format(state.context.tokens).toLowerCase()} of ${this.tokenNumber.format(state.context.limit).toLowerCase()}`
         : undefined,
-      plan: sessionPlanUsage(state.planUsage, this.usageTime()),
+      plan:
+        sessionPlanUsage(state.planUsage, this.usageTime()) ??
+        sessionModelPlan(state.modelQuota, this.modelLimits().find((limit) => limit.id === model), this.providerLabel()),
     };
   }, { equal: equalViewData });
   readonly editedPreset = computed<AgentConfig | undefined>(() => {
@@ -423,16 +489,22 @@ export class SessionChatComponent {
       });
     }
   }
-  readonly permissions = computed<readonly PermissionChoice[]>(() =>
-    (this.store.state()?.permissionModes ?? []).map((id) => ({
+  readonly permissions = computed<readonly PermissionChoice[]>(() => {
+    const state = this.store.state();
+    return (state?.permissionModes ?? []).map((id) => ({
       id,
       detail:
         (
           {
             default: "Ask before the agent takes protected actions",
             acceptEdits: "Apply edits; ask before commands",
-            bypassPermissions: "Allow actions without permission prompts",
-            auto: "Use the harness’s automatic permission policy",
+            "accept-edits": "Approve workspace edits automatically",
+            bypassPermissions: state?.provider === "antigravity"
+              ? "Automatically approve Antigravity tool requests"
+              : "Allow actions without permission prompts",
+            auto: state?.provider === "antigravity"
+              ? "Approve edits and run routine commands automatically"
+              : "Use the harness’s automatic permission policy",
             plan: "Read and propose before making changes",
             dontAsk: "Deny actions that need permission",
           } as Readonly<Record<string, string>>
@@ -442,15 +514,15 @@ export class SessionChatComponent {
           {
             default: "Ask first",
             acceptEdits: "Auto-edit",
-            bypassPermissions: "Full auto",
+            "accept-edits": "Accept edits",
+            bypassPermissions: state?.provider === "antigravity" ? "Full access" : "Full auto",
             auto: "Auto",
             plan: "Plan",
             dontAsk: "Do not ask",
           } as Readonly<Record<string, string>>
         )[id] ?? id,
-    })),
-    { equal: equalViewData },
-  );
+    }));
+  }, { equal: equalViewData });
   readonly questions = computed<readonly AgentQuestion[]>(() =>
     (this.store.state()?.question?.questions ?? []).map((q) => ({
       id: q.id,
@@ -523,7 +595,14 @@ export class SessionChatComponent {
       clearTimeout(this.copyTimer);
       this.copiedCode.set(null);
     });
-    effect(() => { this.store.viewRevision(); this.contentId.set(null); this.agentId.set(null); });
+    effect(() => {
+      this.store.viewRevision();
+      this.contentId.set(null);
+      this.agentId.set(null);
+      this.agentOrigin.set(null);
+      this.moreDecisions.set(false);
+      this.stoppingAgents.clear();
+    });
     let focusedDraft: string | null = null;
     afterRenderEffect(() => {
       const key = this.creationKey() ?? this.creation()?.id;
@@ -550,6 +629,23 @@ export class SessionChatComponent {
       // Hydrated history must be positioned before paint, without scroll animation.
       untracked(() => scroll.scrollToEnd("instant"));
     });
+    let focusedAgent: AgentChatFocus | null = null;
+    afterRenderEffect(() => {
+      const intent = this.agentFocus(), selection = this.selection();
+      const chat = this.chat(), request = this.requestElement()?.nativeElement;
+      if (!intent || intent === focusedAgent || intent.selection !== selection || !chat ||
+          !this.store.state() || this.store.loading() || !this.active()) return;
+      focusedAgent = intent;
+      untracked(() => {
+        if (intent.action === 'message' && !this.archived()) this.focusComposer();
+        else if (intent.action === 'answer' && request) chat.scroll()?.revealAgentAnchor(request);
+        else if (!chat.focusAgent(intent.from, intent.itemId)) {
+          const breadcrumb = this.element.querySelector<HTMLElement>('.delegation-breadcrumb');
+          if (breadcrumb) breadcrumb.focus({ preventScroll: true });
+          else chat.scroll()?.viewport().nativeElement.focus({ preventScroll: true });
+        }
+      });
+    });
     afterRenderEffect(() => {
       this.visibilityRevision();
       const at = this.store.state()?.unseenCompletionAt;
@@ -559,7 +655,8 @@ export class SessionChatComponent {
         untracked(() => { void this.store.markSeen(); });
     });
     effect((cleanup) => {
-      if (!this.store.state()?.planUsage) return;
+      const state = this.store.state();
+      if (!state?.planUsage && !state?.modelQuota?.models.length) return;
       this.usageTime.set(Date.now());
       const timer = setInterval(() => this.usageTime.set(Date.now()), 30_000);
       cleanup(() => clearInterval(timer));
@@ -580,6 +677,38 @@ export class SessionChatComponent {
   focusDecision(): void {
     this.chat()?.scroll()?.scrollToEnd();
     this.requestElement()?.nativeElement.focus({ preventScroll: true });
+  }
+  protected openParent(session: SessionAgentReference, event: Event): void {
+    this.agentIntent({ target: { kind: 'session', session }, action: 'return', origin: agentControl(event) });
+  }
+  protected openDecision(session: SessionAgentReference, event: Event): void {
+    this.agentIntent({ target: { kind: 'session', session }, action: 'answer', origin: agentControl(event) });
+  }
+  protected agentIntent(intent: AgentWorkIntent): void {
+    if (intent.target.kind === 'native') {
+      this.agentOrigin.set(intent.origin ?? null);
+      this.agentId.set(intent.target.agentId);
+      return;
+    }
+    const source = this.selection();
+    if (!source || this.agentNavigationDisabled()) return;
+    if (intent.action === 'stop') {
+      void this.stopDelegate(source, intent.target.session);
+      return;
+    }
+    this.agentSessionRequested.emit({ source, intent: { ...intent, target: intent.target } });
+  }
+  private async stopDelegate(source: ChatSelection, session: SessionAgentReference): Promise<void> {
+    const id = session.sessionId;
+    const active = this.store.state()?.work?.sessions?.find(row => row.session.sessionId === id);
+    if (this.archived() || !active || (active.status !== 'running' && active.status !== 'waiting') ||
+        active.session.taskId !== source.taskId || this.stoppingAgents.has(id)) return;
+    this.stoppingAgents.add(id);
+    const result = await this.agentClient.command(source.scopeId, { taskId: source.taskId, sessionId: id, action: { type: 'stop' } });
+    if (source !== this.selection()) return;
+    if (result.ok || result.error.code !== 'outcome-unknown') this.stoppingAgents.delete(id);
+    if (!result.ok) this.store.error.set(result.error.message);
+    else this.store.notice.set('Stop requested for ' + sessionAgentTitle(session));
   }
   focusComposer(): void {
     this.composer()?.focusEditor();

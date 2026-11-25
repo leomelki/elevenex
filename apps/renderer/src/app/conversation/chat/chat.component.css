@@ -43,3 +43,10 @@ ex-turn-nav {
   min-height: 0;
   margin: auto;
 }
+
+.message-sender {
+  display: flex; min-width: 0; max-width: 100%; color: var(--ink-muted);
+  margin-block-end: var(--space-1); padding-inline: var(--space-1);
+}
+.message-sender span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-sender ex-agent-mark { --agent-mark-size: 14px; }

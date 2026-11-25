@@ -70,9 +70,15 @@ export default async function* (capture) {
   yield {name:'children-failed',inspect:['.children']};
   await capture.component('ex-connected-workspace-demo',component=>component.fixture.setChildReads('ready'));
   await capture.click('.children [role="alert"] button');
+  await capture.waitFor(()=>document.querySelector('.children .child-cap')?.textContent.includes('Show 18 more'));
+  await finish();
+  assert.equal(await capture.evaluate(()=>document.querySelectorAll('.children [data-session-id]').length),2);
+  yield {name:'children-compact',inspect:['.children','.child-cap']};
+  await capture.evaluate(()=>document.querySelector('.children .child-cap').focus());
+  await capture.press('Enter');
   await capture.waitFor(()=>document.querySelectorAll('.children [data-session-id]').length===20);
   await finish();
-  assert.equal(await capture.evaluate(()=>document.querySelectorAll('.children [data-session-id]').length),20);
+  assert.equal(await capture.evaluate(()=>document.activeElement?.matches('.child-cap[aria-expanded="true"]')),true);
   await capture.evaluate(()=>document.querySelector('.children button.earlier').scrollIntoView({block:'center'}));
   await capture.settle();
   await capture.click('.children button.earlier');
@@ -81,10 +87,33 @@ export default async function* (capture) {
   await capture.evaluate(()=>{ const button=[...document.querySelectorAll('.children button')].find(button=>button.textContent==='Latest child sessions'); button.focus(); });
   await capture.press('Enter');
   await capture.waitFor(()=>document.querySelector('.children [data-session-id="444"]'));
-  await owner(component=>component.store.archiveSession({taskId:'11',session:{id:'101',status:'running'}}));
   await finish();
-  assert.equal(await capture.evaluate(()=>!!document.querySelector('[data-session-id="444"]')),true);
-  assert.equal(await capture.evaluate(()=>!!document.querySelector('.children [data-session-id="444"]')),false);
-  yield {name:'parent-archived-children-retained',inspect:['ex-workspace-navigation']};
-
+  const child = '.children [data-session-id="444"] .select';
+  const archiveParent = '[data-task-id="11"] [data-session-id="101"] .archive';
+  await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), child);
+  await capture.settle();
+  await capture.click(child);
+  await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), archiveParent);
+  await capture.settle();
+  await capture.click(archiveParent);
+  await capture.waitFor(selector => document.querySelector(selector)?.getAttribute('aria-label')?.includes('press again to confirm'), archiveParent);
+  await capture.press('Enter');
+  await capture.waitFor(() => !document.querySelector('ex-session-branch [data-session-id="101"]'));
+  await finish();
+  assert.equal(await capture.evaluate(()=>!!document.querySelector('ex-session-branch [data-session-id="444"]')),false);
+  assert.notEqual(await owner(component=>component.store.selectedSessionId()),'444');
+  const archived = '[data-task-id="11"] ex-archived-sessions .toggle';
+  await capture.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), archived);
+  await capture.settle();
+  await capture.click(archived);
+  await capture.waitFor(() => {
+    const row = document.querySelector('ex-archived-sessions [data-session-id="444"]');
+    return row && !row.closest('[inert]');
+  });
+  await finish();
+  yield {name:'parent-and-subsessions-archived',inspect:['ex-workspace-navigation','ex-toast']};
+  await capture.theme('light');
+  await capture.viewport(940,640);
+  await capture.reducedMotion(true);
+  yield {name:'parent-and-subsessions-archived-narrow',inspect:['ex-workspace-navigation','ex-toast']};
 }

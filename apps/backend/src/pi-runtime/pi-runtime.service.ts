@@ -25,10 +25,12 @@ import { savedPromptImage } from '../agent-runtime/prompt-image.js';
 import { buildMetaAgentPrompt } from '../elevenex-agent/meta-agent-prompt.js';
 import { McpAgentTokenService } from '../mcp/identity/mcp-agent-token.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
+import type { SessionAgentSelection } from '../database/schema/index.js';
 import type {
   AgentForkConversationRequest,
   AgentForkConversationResult,
   AgentImageInput,
+  AgentPromptOptions,
 } from '../agent-runtime/agent-runtime.types.js';
 import type { AgentProviderModelCatalogPayload } from '../agent-runtime/agent-runtime.types.js';
 import { QueuedPromptDispatches } from '../agent-runtime/queued-prompt-dispatches.js';
@@ -70,6 +72,10 @@ interface PiActiveRun {
   completionPromise: Promise<void>;
   resolveCompletion: () => void;
   interruptRequested: boolean;
+  promptAccepted: boolean;
+  agentEnded: boolean;
+  agentEventVersion: number;
+  steeringSends: number;
   userInputRequests: Map<
     string,
     {
@@ -246,7 +252,7 @@ export class PiRuntimeService
 
   private async loadProviderHistory(sessionId: number): Promise<ClaudeTranscriptItem[]> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
 
     if (state.piSessionPath) {
       try {
@@ -271,7 +277,7 @@ export class PiRuntimeService
 
   async getRuntimeState(sessionId: number): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     state.authStatus = await this.authService.getStatus();
 
@@ -481,8 +487,7 @@ export class PiRuntimeService
     model: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
-    state.selectedModel = model;
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     const parsed = this.parseModelRef(model);
     if (parsed) {
       const runtime = await this.ensureRuntime(sessionId);
@@ -493,6 +498,9 @@ export class PiRuntimeService
       });
       await this.refreshStateFromRpc(sessionId);
     }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { model });
+    state.selectedModel = model;
     this.emitRunState(sessionId);
     return this.toRuntimeStatePayload(sessionId, state);
   }
@@ -502,13 +510,15 @@ export class PiRuntimeService
     effort: string | null,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     const entry = this.runtimes.get(sessionId);
     if (effort !== null && entry) {
       await entry.runtime.send({ type: 'set_thinking_level', level: effort });
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
     }
+    if (session.agentSelection?.provider === 'pi')
+      this.sessionsService.updateSessionAgentSelection(sessionId, 'pi', { reasoningEffort: effort });
     state.reasoningEffort = effort;
     if (entry) await this.refreshStateFromRpc(sessionId);
     this.emitRunState(sessionId);
@@ -536,7 +546,7 @@ export class PiRuntimeService
     enabled: boolean,
   ): Promise<PiRuntimeStatePayload> {
     const session = await this.sessionsService.findOne(sessionId);
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.fastMode = enabled;
     if (state.sessionMetadata) {
       state.sessionMetadata = {
@@ -553,29 +563,51 @@ export class PiRuntimeService
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options: { waitForCompletion?: boolean } = {},
+    options: AgentPromptOptions = {},
   ): Promise<void> {
     this.assertNotRewinding(sessionId);
     const trimmedPrompt = prompt.trim();
     const normalizedImages = this.normalizeImages(images);
     if (!trimmedPrompt && normalizedImages.length === 0) return;
-    this.assertSessionOwner(sessionId, this.sessionGeneration(sessionId));
+    const generation = this.sessionGeneration(sessionId);
+    this.assertSessionOwner(sessionId, generation);
 
+    const state = this.runtimeStates.get(sessionId);
+    if (
+      (options.preferSteering || options.requireSteering) && !options.queue &&
+      this.activeRuns.has(sessionId) && !state?.queuePaused && (options.requireSteering || !state?.pendingPrompts.length)
+    ) {
+      const disposition = await this.steerActivePrompt(sessionId, trimmedPrompt, normalizedImages);
+      if (disposition) {
+        options.onAccepted?.(disposition);
+        return;
+      }
+      this.assertSessionOwner(sessionId, generation);
+    }
+    if (options?.requireSteering)
+      throw new ConflictException('No active turn can accept live steering.');
     if (
       this.activeRuns.has(sessionId) ||
       this.initializingRuns.has(sessionId) ||
       this.runtimeStates.get(sessionId)?.queuePaused
     ) {
       this.queuePendingPrompt(sessionId, trimmedPrompt, images);
+      options.onAccepted?.('queued');
       return;
     }
 
     this.initializingRuns.add(sessionId);
-    const generation = this.sessionGeneration(sessionId);
     let owned = false;
     let onAccepted: (() => void) | undefined;
     const receipt = options.waitForCompletion === false
-      ? new Promise<void>(resolve => { onAccepted = () => { owned = true; resolve(); }; }) : undefined;
+      ? new Promise<void>(resolve => {
+          onAccepted = () => {
+            owned = true;
+            options.onAccepted?.('running');
+            resolve();
+          };
+        })
+      : undefined;
     const task = this.runPrompt(
       sessionId,
       trimmedPrompt,
@@ -591,6 +623,38 @@ export class PiRuntimeService
     return receipt ? Promise.race([receipt, task.then(() => {
       if (!owned) throw new ConflictException('Pi stopped before accepting the message.');
     })]) : task;
+  }
+
+  private async steerActivePrompt(
+    sessionId: number,
+    message: string,
+    images: Array<Record<string, string>>,
+  ): Promise<'steered' | 'running' | undefined> {
+    const run = this.activeRuns.get(sessionId);
+    const runtime = this.runtimes.get(sessionId)?.runtime;
+    if (!runtime || !run?.promptAccepted || run.agentEnded || run.interruptRequested)
+      return;
+    run.steeringSends++;
+    try {
+      const receipt = await runtime.send<{ disposition?: string } | undefined>({
+        type: 'prompt',
+        message,
+        streamingBehavior: 'steer',
+        ...(images.length ? { images } : {}),
+      });
+      return receipt?.disposition === 'started' ? 'running' : 'steered';
+    } finally {
+      // Pi may start a new native run if the old one ends during admission.
+      // Keep ownership until the receipt can be reconciled with the stream.
+      if (run.agentEnded && !run.interruptRequested && this.activeRuns.get(sessionId) === run) {
+        const version = run.agentEventVersion;
+        const state = await runtime.send<{ isStreaming?: boolean }>({ type: 'get_state' })
+          .catch(() => undefined);
+        if (state?.isStreaming && run.agentEventVersion === version) run.agentEnded = false;
+      }
+      run.steeringSends--;
+      if (run.agentEnded && !run.steeringSends) run.resolveCompletion();
+    }
   }
 
   private async runPrompt(
@@ -616,7 +680,7 @@ export class PiRuntimeService
         `Pi session title eligibility checked session=${sessionId} hasPiSessionPath=${Boolean(session.piSessionPath && session.piSessionPath !== '-1')} currentName=${JSON.stringify(session.name)} shouldGenerate=${isNewSession}`,
       );
 
-      state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+      state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
       state.cachedWorktreePath = session.worktreePath;
       state.runPhase = 'running';
       state.sessionState = 'running';
@@ -667,6 +731,10 @@ export class PiRuntimeService
         completionPromise,
         resolveCompletion,
         interruptRequested: false,
+        promptAccepted: false,
+        agentEnded: false,
+        agentEventVersion: 0,
+        steeringSends: 0,
         userInputRequests: new Map(),
       };
       this.activeRuns.set(sessionId, run);
@@ -702,6 +770,7 @@ export class PiRuntimeService
           ...(normalizedImages.length ? { images: normalizedImages } : {}),
         });
         accepted = true;
+        run.promptAccepted = true;
         onAccepted?.();
         await completionPromise;
         if (!ownsSession() || this.activeRuns.get(sessionId) !== run) return;
@@ -835,21 +904,32 @@ export class PiRuntimeService
   async steerPendingPrompt(sessionId: number, id: string): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
     const selected = state.pendingPrompts.find((prompt) => prompt.id === id);
-    if (!selected) return;
+    if (!selected || this.queuedDispatches.current(state).some(prompt => prompt.id === id)) return;
 
+    if (this.activeRuns.has(sessionId)) {
+      const finishDispatch = this.queuedDispatches.begin(state, selected);
+      state.pendingPrompts = state.pendingPrompts.filter(prompt => prompt !== selected);
+      try {
+        const disposition = await this.steerActivePrompt(
+          sessionId, selected.prompt, this.normalizeImages(selected.images),
+        );
+        if (!disposition)
+          throw new ConflictException('No active Pi turn can accept live steering.');
+        await this.cancelPendingPrompt(sessionId, id);
+      } catch (error) {
+        if (finishDispatch() && this.runtimeStates.get(sessionId) === state) {
+          state.pendingPrompts = [selected, ...state.pendingPrompts];
+          state.queuePaused = true;
+          this.emitRunState(sessionId);
+        }
+        throw error;
+      }
+      return;
+    }
     state.pendingPrompts = [
       selected,
       ...state.pendingPrompts.filter((prompt) => prompt.id !== id),
     ];
-    state.queuePaused = true;
-    state.lastError = null;
-    this.emitRunState(sessionId);
-
-    const completion = this.activeRuns.get(sessionId)?.completionPromise;
-    await this.interrupt(sessionId);
-    await completion?.catch(() => undefined);
-    state.queuePaused = false;
-    this.emitRunState(sessionId);
     await this.resumePendingPrompts(sessionId);
   }
 
@@ -896,8 +976,9 @@ export class PiRuntimeService
 
   clearPendingPrompts(sessionId: number): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (!state.pendingPrompts.length && !state.queuePaused)
+    if (!state.pendingPrompts.length && !state.queuePaused && !this.queuedDispatches.current(state).length)
       return Promise.resolve();
+    this.queuedDispatches.clear(state);
     state.pendingPrompts = [];
     state.queuePaused = false;
     this.emitRunState(sessionId);
@@ -1064,7 +1145,7 @@ export class PiRuntimeService
     this.assertSessionOwner(sessionId, generation);
     if (session.status === 'archived')
       throw new ConflictException('Pi session is closed.');
-    const state = this.ensureRuntimeState(sessionId, session.piSessionPath);
+    const state = this.ensureRuntimeState(sessionId, session.piSessionPath, session.agentSelection);
     state.cachedWorktreePath = session.worktreePath;
     let agentConfigDir: string | undefined;
     let entry: PiRuntimeEntry | undefined;
@@ -1127,7 +1208,7 @@ export class PiRuntimeService
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
-      await this.applyConfiguredDefaultModel(sessionId, runtime);
+      await this.applyConfiguredDefaultModel(sessionId, runtime, session.agentSelection);
       this.assertSessionOwner(sessionId, generation);
       if (this.runtimes.get(sessionId) !== entry)
         throw new Error('Pi runtime was replaced.');
@@ -1164,14 +1245,17 @@ export class PiRuntimeService
   private async applyConfiguredDefaultModel(
     sessionId: number,
     runtime: PiSessionRuntime,
+    agentSelection?: SessionAgentSelection | null,
   ): Promise<void> {
     const state = this.ensureRuntimeState(sessionId);
-    if (state.piSessionPath) {
+    const pinned = agentSelection?.provider === 'pi' ? agentSelection.model : undefined;
+    if (state.piSessionPath && pinned === undefined) {
       return;
     }
 
-    const configured =
-      this.settingsService.getAgentProviderDefaults('pi').model;
+    const configured = pinned === undefined
+      ? this.settingsService.getAgentProviderDefaults('pi').model
+      : pinned;
     const parsed = this.parseModelRef(configured);
     if (!parsed) {
       return;
@@ -1184,6 +1268,7 @@ export class PiRuntimeService
         modelId: parsed.modelId,
       });
     } catch (error) {
+      if (pinned !== undefined) throw error;
       // A default that Pi rejects (renamed/unavailable model) must not stop the
       // session from starting; it just falls back to Pi's own choice.
       this.logger.warn(
@@ -1418,9 +1503,15 @@ export class PiRuntimeService
     state.activity ??= { retry: null, compact: null, notifications: [] };
     if (applyPiActivity(state.activity, event)) { this.emitRunState(sessionId); return; }
     switch (event.type) {
-      case 'agent_start':
+      case 'agent_start': {
+        const run = this.activeRuns.get(sessionId);
+        if (run) {
+          run.agentEnded = false;
+          run.agentEventVersion++;
+        }
         state.activity.retry = null;
         return;
+      }
       case 'agent_end':
         if (event.willRetry === true) return;
         this.resolveActiveRun(sessionId);
@@ -1482,6 +1573,7 @@ export class PiRuntimeService
             toolUseId: String(event.toolCallId ?? ''),
             toolName: String(event.toolName ?? 'Tool'),
             content: this.stringifyToolResult(event.result),
+            ...(String(event.toolName ?? '').startsWith('mcp__elevenex__') ? { providerToolResult: event.result } : {}),
             isError: Boolean(event.isError),
             timestamp: new Date().toISOString(),
             authoredAt: new Date().toISOString(),
@@ -1748,7 +1840,10 @@ export class PiRuntimeService
   private resolveActiveRun(sessionId: number): void {
     this.refreshStateFromRpc(sessionId).catch(() => undefined);
     const run = this.activeRuns.get(sessionId);
-    run?.resolveCompletion();
+    if (!run) return;
+    run.agentEnded = true;
+    run.agentEventVersion++;
+    if (!run.steeringSends || run.interruptRequested) run.resolveCompletion();
   }
 
   private finishRun(sessionId: number): void {
@@ -1860,19 +1955,18 @@ export class PiRuntimeService
   private ensureRuntimeState(
     sessionId: number,
     piSessionPath?: string | null,
+    agentSelection?: SessionAgentSelection | null,
   ): PiRuntimeState {
+    const selection = agentSelection?.provider === 'pi' ? agentSelection : undefined;
     const existing = this.runtimeStates.get(sessionId);
     if (existing) {
       if (piSessionPath && piSessionPath !== '-1')
         existing.piSessionPath = piSessionPath;
+      if (selection && !existing.persistedSelectionLoaded)
+        Object.assign(existing, this.startupModelSettings(existing.availableModels, selection));
       return existing;
     }
     const availableModels = this.modelsCache ? [...this.modelsCache] : [];
-    const startup = resolveAgentStartupSelection(
-      this.settingsService.getAgentProviderDefaults('pi'),
-      availableModels,
-    );
-
     const state: PiRuntimeState = {
       piSessionPath:
         piSessionPath && piSessionPath !== '-1' ? piSessionPath : null,
@@ -1887,12 +1981,7 @@ export class PiRuntimeService
       streamingAssistantMessageId: null,
       pendingUserInputRequest: null,
       lastError: null,
-      selectedModel: startup.selectedModel,
-      reasoningEffort: startup.reasoningEffort,
-      fastMode:
-        this.settingsService.getAgentProviderDefaults('pi').fastMode === true &&
-        availableModels.find((model) => model.id === startup.selectedModel)
-          ?.supportsFastMode === true,
+      ...this.startupModelSettings(availableModels, selection),
       availableModels,
       contextUsage: null,
       sessionMetadata: null,
@@ -1900,6 +1989,20 @@ export class PiRuntimeService
     };
     this.runtimeStates.set(sessionId, state);
     return state;
+  }
+
+  private startupModelSettings(
+    availableModels: readonly PiRuntimeState['availableModels'][number][],
+    selection?: SessionAgentSelection,
+  ) {
+    const defaults = this.settingsService.getAgentProviderDefaults('pi');
+    const startup = resolveAgentStartupSelection(defaults, availableModels, null, selection);
+    return {
+      ...startup,
+      persistedSelectionLoaded: selection !== undefined,
+      fastMode: defaults.fastMode === true &&
+        availableModels.find(model => model.id === startup.selectedModel)?.supportsFastMode === true,
+    };
   }
 
   private emitSessionMetadata(sessionId: number): void {
@@ -1951,6 +2054,7 @@ export class PiRuntimeService
         pendingPermissionRequest: null,
         pendingUserInputRequest: state.pendingUserInputRequest,
         pendingPrompts: state.pendingPrompts,
+        dispatchingPrompts: this.queuedDispatches.current(state),
         queuePaused: state.queuePaused,
       },
     });
@@ -2346,6 +2450,7 @@ export class PiRuntimeService
           toolName:
             typeof message.toolName === 'string' ? message.toolName : undefined,
           content: this.contentToText(message.content),
+          ...(typeof message.toolName === 'string' && message.toolName.startsWith('mcp__elevenex__') ? { providerToolResult: { details: message.details } } : {}),
           isError: Boolean(message.isError),
           sourceMessageId: id,
           transcriptMessageId,

@@ -31,7 +31,6 @@ permissions:
   contents: read
 
 env:
-  ELEVENEX_SKIP_LEGACY_ICONS: '1'
   ELEVENEX_BACKEND_VERSION: ${{ inputs.source-sha }}
   ELEVENEX_RELEASE_TAG: ${{ inputs.release-tag || format('runtime-{0}', inputs.source-sha) }}
 

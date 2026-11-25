@@ -579,7 +579,7 @@ export class TasksService
     return { task, timedOut: timedOut && task.taskState === 'preparing' };
   }
 
-  async create(repoId: number, input: TaskSetup) {
+  async create(repoId: number, input: TaskSetup, temporaryCreatorId?: number) {
     const repo = await this.repo(repoId);
     await this.projects.assertProjectIsActive(repo.projectId);
     const existing = (
@@ -588,11 +588,12 @@ export class TasksService
         .from(schema.workspaces)
         .where(eq(schema.workspaces.taskRequestId, input.requestId))
     )[0];
+    const creatorId = temporaryCreatorId ?? null;
     if (existing) {
       if (existing.repoId !== repoId)
-        throw new ConflictException(
-          'This request belongs to another repository.',
-        );
+        throw new ConflictException('This request belongs to another repository.');
+      if (existing.taskCreatedBySessionId !== creatorId)
+        throw new ConflictException('This request belongs to another task creation.');
       return this.get(existing.id);
     }
     if (!input.branchName.trim())
@@ -614,6 +615,8 @@ export class TasksService
         linkStatus: 'unlinked',
         taskState: 'preparing',
         taskRequestId: input.requestId,
+        taskCreatedBySessionId: creatorId,
+        taskTemporary: creatorId !== null,
         taskConfig: JSON.stringify(setup),
         sourceRef: setup.branchName,
         checkoutMode: setup.checkoutMode,
@@ -628,7 +631,7 @@ export class TasksService
           .from(schema.workspaces)
           .where(eq(schema.workspaces.taskRequestId, input.requestId))
       )[0];
-    if (!task || task.repoId !== repoId)
+    if (!task || task.repoId !== repoId || task.taskCreatedBySessionId !== creatorId)
       throw new ConflictException('Could not reserve the task request.');
     this.schedule(task.id);
     this.navigationEvents?.invalidate();
@@ -1327,11 +1330,71 @@ export class TasksService
     return { taskId: id, cancelled: true, finishScheduled: false };
   }
 
+  async keepOpen(id: number): Promise<void> {
+    const kept = await this.db
+      .update(schema.workspaces)
+      .set({ taskTemporary: false, updatedAt: new Date().toISOString() })
+      .where(
+        and(
+          eq(schema.workspaces.id, id),
+          eq(schema.workspaces.isDefault, false),
+          eq(schema.workspaces.taskTemporary, true),
+          isNull(schema.workspaces.archivedAt),
+          ne(schema.workspaces.taskState, 'finishing'),
+        ),
+      )
+      .returning({ id: schema.workspaces.id });
+    if (kept.length) {
+      this.navigationEvents?.invalidate();
+      return;
+    }
+    const task = await this.record(id);
+    if (task.archivedAt || task.taskState === 'finishing')
+      throw new ConflictException('This task is closing or already closed.');
+  }
+
+  private async assertTemporaryCheckoutClean(
+    current: Task,
+    repo: Repo,
+    key: string,
+  ) {
+    const pool = current.poolWorktreeId
+      ? await this.db.query.repoWorktrees.findFirst({
+          where: eq(schema.repoWorktrees.id, current.poolWorktreeId),
+        })
+      : undefined;
+    if (
+      current.taskState !== 'ready' ||
+      current.linkStatus !== 'linked' ||
+      !current.path ||
+      !pool?.managed
+    )
+      throw new ConflictException({
+        code: 'temporary_checkout_unavailable',
+        message: 'Closing a temporary task requires a ready, managed checkout.',
+      });
+    await this.assertCheckoutIdentity(current, repo, key, pool);
+    const status = await this.git.status(current.path);
+    if (
+      status.dirty ||
+      status.conflicts ||
+      (await this.git.hasOperationInProgress(current.path))
+    )
+      throw new ConflictException({
+        code: 'temporary_checkout_dirty',
+        message: 'This task has uncommitted changes or a Git operation in progress. Leave it open for review.',
+      });
+  }
+
   async finish(
     id: number,
     confirmStop = false,
     afterTurn?: FinishRequest,
-    options: { readonly allowArchivedProject?: boolean; readonly confirmedApps?: number } = {},
+    options: {
+      readonly allowArchivedProject?: boolean;
+      readonly confirmedApps?: number;
+      readonly agent?: { readonly sessionId: number; readonly userRequested: boolean };
+    } = {},
   ) {
     const afterSessionId = afterTurn?.sessionId;
     const task = await this.record(id);
@@ -1360,6 +1423,18 @@ export class TasksService
         }
         if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
       }
+      const agent = options.agent;
+      const agentCleanup = agent && !agent.userRequested && current.taskCreatedBySessionId !== null;
+      if (agentCleanup) {
+        if (!current.taskTemporary || current.taskCreatedBySessionId !== agent.sessionId)
+          throw new ConflictException({
+            code: 'task_finish_requires_user',
+            message: 'Only the creating session can close an open temporary task without a user request.',
+          });
+        if (current.taskFinishRequest)
+          throw new ConflictException('This task already has a scheduled finish.');
+        await this.assertTemporaryCheckoutClean(current, repo, key);
+      }
       const running = await this.finishPreview(id);
       if (options.confirmedApps !== undefined && (running.apps ?? 0) > options.confirmedApps)
         throw new ConflictException('Running apps have changed. Check the close preview in an Apps-capable desktop before closing the task.');
@@ -1386,7 +1461,7 @@ export class TasksService
         if (!this.sessionIsIdle(afterSessionId)) return this.get(id);
       }
       if (
-        !confirmStop &&
+        (agentCleanup || !confirmStop) &&
         (running.agents || running.terminals || running.actions || running.apps)
       )
         throw new ConflictException({
@@ -1407,6 +1482,15 @@ export class TasksService
         .where(
           and(
             eq(schema.workspaces.id, id),
+            // Keep open can revoke permission while Git and process checks run.
+            agentCleanup
+              ? and(
+                  eq(schema.workspaces.taskTemporary, true),
+                  eq(schema.workspaces.taskState, 'ready'),
+                  isNull(schema.workspaces.taskFinishRequest),
+                  isNull(schema.workspaces.archivedAt),
+                )
+              : undefined,
             afterTurn
               ? and(
                   eq(schema.workspaces.taskFinishRequest, afterTurn),
@@ -1418,6 +1502,8 @@ export class TasksService
         )
         .returning({ id: schema.workspaces.id });
       if (!claimed.length) {
+        if (agentCleanup)
+          throw new ConflictException('This task changed while checking whether it could close.');
         if (afterTurn) this.forgetFinishRequest(id, afterTurn);
         return this.get(id);
       }
@@ -1527,6 +1613,7 @@ export class TasksService
         await this.update(id, {
           archivedAt: new Date().toISOString(),
           taskState: 'ready',
+          taskTemporary: false,
           finalCommit,
           taskBranch,
           checkoutMode,

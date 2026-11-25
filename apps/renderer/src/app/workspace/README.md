@@ -102,12 +102,26 @@ inference for old rows that retain a default Claude choice after using another
 harness. Recovery uses bounded metadata pages, without reading transcript files,
 starting runtimes or scanning all sessions at startup.
 
+The selected task header shows **Temporary task** and **Keep open** when the
+engine marks an agent-created task as temporary. Keep open persists the user's
+decision under the selected backend scope and revokes the creating session's
+permission to close it independently. Older engines omit the temporary flag.
+
 ## Bounds and invalidation
 
 - Project pages contain at most 50 projects; task pages contain at most 20 tasks.
   Each task initially loads at most 20 sessions, with four concurrent reads.
-  Advancing a page replaces its window. Controls return to the first page;
-  a selected older session is retained during refresh without exceeding 20.
+  Older reveals loaded rows first, then appends another bounded history batch
+  without changing the selection. The workspace remembers how much history the
+  user loaded for each task and revalidates that amount on refresh. Show fewer
+  restores the cap. A selected older session and its parent can supplement the
+  history window during refresh. Engines advertising
+  `sessionPriority` supply running, needs-action, failed and unseen-reply
+  sessions on separate metadata pages of up to 100, with root context for nested
+  rows. The workspace merges and deduplicates those pages independently of the
+  history cursor for each task in the current task window. A failed continuation
+  keeps the previous priority snapshot. Older engines prioritize sessions within
+  their loaded history and child windows.
 - The initial `workspaceRevision` probe verifies protocol version 1 before
   dispatching a workspace snapshot. Unsupported older runtimes receive an update
   message. `WorkspaceNavigationObserver` owns a five-second revision probe; only
@@ -411,9 +425,12 @@ errors and stale-result rejection. WorkspaceStore owns confirmed moves through
 `workspaceMoveSession`, task/scope validation and uncertain-outcome reconciliation.
 Moves do not restart agents or change tasks, workspaces or fork provenance.
 
-Archiving a parent affects that conversation only and returns its children to task
-level. Deleting a parent preserves children through `ON DELETE SET NULL`. Closing a
-task retains its organizational relationships for reopening. The automatic migration
+With `sessionArchiveChildren`, archiving a parent also archives its subsessions,
+including children outside the loaded page. The engine preserves their grouping and
+confirms before stopping live work. Each conversation can be restored from Archived.
+Older engines promote children to task level when their parent is archived. Deleting
+a parent preserves children through `ON DELETE SET NULL`. Closing a task retains its
+organizational relationships for reopening. The automatic migration
 maps each old nonempty folder to its earliest active durable session (or earliest
 archived member), preserving names and archive states. Legacy folder tables and
 endpoints remain available for older clients; the new desktop does not create folders.

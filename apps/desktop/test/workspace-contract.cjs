@@ -25,6 +25,7 @@ const calls = [
   ['workspaceRestoreSession', 'workspace:restore-session', [scope, {taskId:1,sessionId:2}]],
   ['workspaceCreateSession', 'workspace:create-session', [scope, { taskId: 1 }]],
   ['workspaceRenameTask', 'workspace:rename-task', [scope, { taskId: 1, name: 'Renamed' }]],
+  ['workspaceKeepTaskOpen', 'workspace:keep-task-open', [scope, 1]],
   ['workspaceFinishTask', 'workspace:finish-task', [scope, { taskId: 1, confirmStop: false }]],
   ['workspaceReopenTask', 'workspace:reopen-task', [scope, 1]],
   ['workspaceUpdateProject', 'workspace:update-project', [scope, { projectId: 1, name: 'Changed' }]],

@@ -28,6 +28,45 @@ The app uses the backend's `desktop-workspace` routes. A versioned capability
 probe identifies engines that lack workspace support. The backend applies the
 metadata migration automatically.
 
+## Antigravity
+
+Install the [official Antigravity CLI](https://antigravity.google/docs/getting-started#download-and-install)
+on the machine that runs the Elevenex engine. For an SSH machine, install it
+under the same remote account that runs the engine. Confirm that `agy --version`
+works, then sign in with `agy acp --login` from a terminal on that machine.
+Choose **Antigravity** in the harness picker of a new session and send a message.
+
+Elevenex uses [Google’s interactive ACP workflow](https://antigravity.google/docs/ide/extensions/acp/).
+Antigravity owns authentication, tool execution and its native helpers. Elevenex
+relays messages you submit in desktop chat, renders decisions, and restores
+the conversation after reconnecting. Follow-ups wait in the queue and can
+steer an open prompt on agy 1.5 or later. Activity shows background commands,
+scheduled wakeups and read-only subagent batches when native records are
+available. Tool completions and replies from background work are saved in chat.
+The model picker discovers available models and their advertised thinking levels before
+the first message. Use the composer’s **Plan / Code** switch to set native
+planning mode. In Code, choose **Ask first**, **Accept edits**, **Auto**, or
+**Full access**. Auto appears when the installed CLI advertises it for the
+account and terminal sandbox on the machine running the engine. Full access
+approves tool requests once as they arrive. Antigravity’s own restrictions
+and questions still apply. Elevenex saves both choices per conversation and
+applies them before the next turn.
+See [Antigravity execution modes](https://antigravity.google/docs/cli/modes).
+
+Elevenex names new Antigravity sessions in the background from their first
+message and keeps any name you choose. If a dedicated title request is
+unavailable, the sidebar uses Antigravity's reported title or a short excerpt
+of your first message.
+
+Antigravity sessions get the same Elevenex MCP tools and session identity as
+other harnesses. The installed `agy` must advertise HTTP MCP support in ACP
+worker mode (`--process-per-session`) to connect these tools.
+
+Google’s
+[interactive-use guidance](https://discuss.ai.google.dev/t/tos-clarification-is-human-supervised-codex-to-antigravity-acp-delegation-permitted/200697/2)
+distinguishes this workflow from third-party agent delegation. Antigravity turns
+in Elevenex require a desktop chat submission, including when using an API key.
+
 ## Run
 
 Use Node **22.22.3+**, **24.15.0+**, or **26+**. Node 24.12 is too old for this

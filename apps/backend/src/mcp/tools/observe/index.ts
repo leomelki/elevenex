@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../../tool-registry/tool.types.js';
 import { getCurrentSessionTool } from './get-current-session.tool.js';
 import { getSessionConfigTool } from './get-session-config.tool.js';
+import { listAgentHarnessesTool } from './list-agent-harnesses.tool.js';
 import { PROJECT_NOTES_TOOLS } from './project-notes.tools.js';
 import { findBranchesTool } from './find-branches.tool.js';
 import { projectOverviewTool } from './project-overview.tool.js';
@@ -16,22 +17,21 @@ import { changeReviewTool } from './change-review.tool.js';
 import { getWorktreeContextTool } from './get-worktree-context.tool.js';
 import { getFocusedSessionTool } from './get-focused-session.tool.js';
 import { awaitSessionEventTool } from './await-session-event.tool.js';
-import { pollSessionStatusTool } from './poll-session-status.tool.js';
 
 /**
- * The Observe tool group: read-only primitives for orienting, polling, reading
+ * The Observe tool group: read-only primitives for orienting, reading
  * transcripts/files/diffs, and waiting on session events — all token-economical
  * (compact handles, deltas, counts; hard caps with narrow-scope nextSteps).
  */
 export const OBSERVE_TOOLS: ToolDefinition[] = [
   getCurrentSessionTool,
   getSessionConfigTool,
+  listAgentHarnessesTool,
   projectOverviewTool,
   findSessionsTool,
   findBranchesTool,
   ...PROJECT_NOTES_TOOLS,
   sessionStatusTool,
-  pollSessionStatusTool,
   readSessionTool,
   grepSessionTool,
   readSessionRangeTool,

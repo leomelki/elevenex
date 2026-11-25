@@ -23,6 +23,7 @@ import { chatItemFailed, commandExecution } from './desktop-chat-tool-outcome.js
 import type { ChatToolDetails, ProjectChatTool } from './desktop-chat-tool-details.js';
 import { ChatToolLinks } from './desktop-chat-tool-links.js';
 import { savedTimelineRow } from './desktop-chat-turn-timeline.js';
+import { chatAgentEntry } from './desktop-chat-agent-tools.js';
 
 const RECENT_RECORDS = 32;
 const INLINE_RECORDS = 8;
@@ -53,7 +54,7 @@ export class ChatCompletedTurns {
     for (const value of [
       item.id, item.kind, item.assistantPhase, item.timestamp, item.toolUseId, item.toolKind,
       item.toolDisplayName, item.providerToolName, item.toolName, item.isError,
-      item.content, item.toolInput, item.providerToolResult, item.agentMessage?.body,
+      item.content, item.toolInput, item.providerToolResult, item.nativeTask, item.agentMessage?.body,
       changeSummary(item.turnChanges),
     ]) {
       const encoded = typeof value === 'string' ? value : JSON.stringify(value ?? null);
@@ -146,6 +147,7 @@ export class ChatCompletedTurns {
       if (bytes <= INLINE_BYTES) return undefined;
     }
     const counts: Partial<Record<SessionChatToolCategory, number>> = {};
+    const agents: NonNullable<SessionChatCompletedTurn['agents']>[number][] = [];
     let failures = 0;
     let ended = -Infinity;
     let beforeReply = 0;
@@ -157,6 +159,10 @@ export class ChatCompletedTurns {
       if (index < reply.start) beforeReply++;
       const peer = links.peer(item);
       if (item.kind === 'tool_result' && peer) continue;
+      if (agents.length < 16 && (item.kind === 'tool_use' || item.nativeTask)) {
+        const entry = chatAgentEntry(item, peer);
+        if (entry && ['launch', 'native', 'wait', 'native-wait', 'message', 'stop'].includes(entry.operation.type)) agents.push(entry);
+      }
       const error = item.kind === 'error' || chatItemFailed(item);
       const category = item.kind === 'tool_use' ? sessionChatToolCategory(item.toolKind)
         : item.kind === 'tool_result' || item.kind === 'error' ? 'tool' : undefined;
@@ -173,6 +179,7 @@ export class ChatCompletedTurns {
         revision: this.revision(rows),
         endId: items.at(-1)!.id,
         reply: reply.records,
+        ...(agents.length ? { agents } : {}),
         beforeReply,
         total: hidden.length,
         counts,
@@ -196,8 +203,10 @@ export class ChatCompletedTurns {
       const peer = links.peer(raw);
       const call = raw.kind === 'tool_result' ? peer : undefined;
       const result = raw.kind === 'tool_use' ? peer : undefined;
+      const agent = result && !toolPage ? chatAgentEntry(raw, result) : undefined;
       const item = toolPage?.activity(raw, peer) ?? {
         ...this.project(raw, call),
+        ...(agent ? { agent } : {}),
         ...(result ? { receipt: { id: result.id, error: chatItemFailed(result, commandExecution(result, raw)) } } : {}),
       };
       bytes += Buffer.byteLength(JSON.stringify(item));

@@ -1,23 +1,29 @@
+import type { AgentRunLifecycle } from '../../agent-runtime/agent-runtime.types.js';
+
 /**
  * Shared "is this session really done" check for the observe/drive tools that
  * wait on session completion (`session_status`, `prompt_session`,
- * `poll_session_status`, `await_session_event`).
+ * `await_session_event`).
  *
  * `sessionState`/`runPhase` go idle as soon as the *visible* turn ends, while
  * background work or queued prompts can remain unfinished. Background work
- * resumes autonomously; paused prompts require an explicit queue resume — see
- * `claude-runtime.service.ts`'s "Background work registry" section. Only
- * `pendingPrompts` is populated for every provider; `backgroundWork` is a
- * Claude-only signal and absent elsewhere, so both are optional here.
+ * resumes autonomously, and paused prompts require an explicit queue resume.
+ * Providers also report the handoff from queued to running.
  */
-export interface SessionRuntimeSnapshot {
-  sessionState?: string | null;
-  runPhase?: string | null;
-  backgroundWork?: unknown[] | null;
-  pendingPrompts?: unknown[] | null;
-  queuePaused?: boolean | null;
-  /** Claude task history; used to explain background work, never to gate it. */
-  tasks?: unknown[] | null;
+export type SessionRuntimeSnapshot = AgentRunLifecycle;
+
+type ActionState = SessionRuntimeSnapshot & {
+  pendingPermissionRequest?: { requestId: string };
+  pendingUserInputRequest?: { requestId: string; isBlocking?: boolean };
+};
+
+export function pendingActionKey(state: ActionState): string | null {
+  const permission = state.pendingPermissionRequest?.requestId;
+  if (permission) return `permission:${permission}`;
+  const input = state.pendingUserInputRequest;
+  return input?.requestId && input.isBlocking !== false
+    ? `input:${input.requestId}`
+    : null;
 }
 
 /** What a waiting agent needs to know about one live background item. */
@@ -134,7 +140,8 @@ export function hasQueuedWork(
   if (!state) return false;
   return (
     (state.backgroundWork?.length ?? 0) > 0 ||
-    (state.pendingPrompts?.length ?? 0) > 0
+    (state.pendingPrompts?.length ?? 0) > 0 ||
+    (state.dispatchingPrompts?.length ?? 0) > 0
   );
 }
 

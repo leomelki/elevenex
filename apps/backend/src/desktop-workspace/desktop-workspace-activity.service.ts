@@ -1,3 +1,4 @@
+import { isWorkspacePriorityStatus } from '@elevenex/shared';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AgentRuntimeRegistryService } from '../agent-runtime/agent-runtime-registry.service.js';
 import type { AgentRuntimeEvent } from '../agent-runtime/agent-runtime.types.js';
@@ -5,6 +6,7 @@ import { ClaudeHooksService } from '../claude-hooks/claude-hooks.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import { SessionsService } from '../sessions/sessions.service.js';
 import { sessionAgentProvider } from '../sessions/session-provider.js';
+import { DesktopDelegationActivity } from './desktop-delegation-activity.js';
 import {
   inactiveSessionStatus,
   type WorkspaceSessionActivity,
@@ -70,6 +72,7 @@ export interface WorkspaceSessionView {
   readonly commandCount?: number;
 }
 interface ObservedActivity {
+  readonly sessionId: number;
   readonly activity: Activity;
   readonly turn: Activity;
   readonly commands: number;
@@ -82,6 +85,8 @@ export class DesktopWorkspaceActivityService
 {
   private readonly runtime = new Map<string, ObservedActivity>();
   private readonly hookSignatures = new Map<number, string>();
+  private readonly hookActive = new Set<number>();
+  readonly delegation = new DesktopDelegationActivity();
   private readonly stop: (() => void)[] = [];
   constructor(
     private readonly registry: AgentRuntimeRegistryService,
@@ -93,20 +98,23 @@ export class DesktopWorkspaceActivityService
     for (const info of this.registry.listProviders()) {
       const provider = this.registry.getProvider(info.id);
       const listener = (event: AgentRuntimeEvent) => {
+        const key = `${info.id}:${event.payload.sessionId}`;
+        const previous = this.runtime.get(key);
         if (
           event.type !== 'run_state' &&
           event.type !== 'runtime_snapshot' &&
           event.type !== 'session_snapshot'
-        )
+        ) {
+          if (previous || event.type === 'message_start') this.delegation.update(event, previous?.turn, undefined, false);
           return;
-        const key = `${info.id}:${event.payload.sessionId}`,
-          activity = stateActivity(event.payload),
+        }
+        const activity = stateActivity(event.payload),
           next: ObservedActivity = {
+            sessionId: event.payload.sessionId,
             activity,
             turn: stateActivity(event.payload, false),
             commands: commandCount(event.payload),
-          },
-          previous = this.runtime.get(key);
+          };
         this.runtime.delete(key);
         // Idle is recoverable from persisted session metadata. Keeping idle
         // snapshots would let many quiet sessions evict genuinely live work.
@@ -117,12 +125,13 @@ export class DesktopWorkspaceActivityService
           this.runtime.delete(oldest);
         }
         // Token and tool updates often repeat snapshots; only semantic status changes invalidate visible pages.
-        if (
+        const changed = (
           next.activity !== (previous?.activity ?? 'idle') ||
           next.turn !== (previous?.turn ?? 'idle') ||
           next.commands !== (previous?.commands ?? 0)
-        )
-          this.navigation.invalidate();
+        );
+        if (changed) this.navigation.invalidate();
+        this.delegation.update(event, previous?.turn, next.turn, changed);
       };
       provider.on('event', listener);
       this.stop.push(() => provider.off('event', listener));
@@ -143,12 +152,17 @@ export class DesktopWorkspaceActivityService
         return;
       this.hookSignatures.delete(event.sessionId);
       this.hookSignatures.set(event.sessionId, signature);
+      if (snapshot.activityStatus !== 'idle' || snapshot.backgroundActive || snapshot.failed)
+        this.hookActive.add(event.sessionId);
+      else this.hookActive.delete(event.sessionId);
       while (this.hookSignatures.size > capacity) {
         const [oldest] = this.hookSignatures.keys();
         if (oldest === undefined) break;
         this.hookSignatures.delete(oldest);
+        this.hookActive.delete(oldest);
       }
       this.navigation.invalidate();
+      this.delegation.change(event.sessionId);
     };
     this.hooks.on('status-changed', activity);
     this.stop.push(() => this.hooks.off('status-changed', activity));
@@ -157,17 +171,40 @@ export class DesktopWorkspaceActivityService
       for (const info of this.registry.listProviders())
         this.runtime.delete(`${info.id}:${event.sessionId}`);
       this.hookSignatures.delete(event.sessionId);
+      this.hookActive.delete(event.sessionId);
+      if (event.status === 'archived') this.delegation.forget(event.sessionId);
     };
     this.sessions.on('session-status-changed', lifecycle);
     this.stop.push(() =>
       this.sessions.off('session-status-changed', lifecycle),
     );
+    const interrupted = (event: { sessionId: number }) => this.delegation.interrupted(event.sessionId);
+    this.sessions.on('session-turn-interrupted', interrupted);
+    this.stop.push(() => this.sessions.off('session-turn-interrupted', interrupted));
   }
   onModuleDestroy(): void {
     for (const stop of this.stop) stop();
     this.stop.length = 0;
     this.runtime.clear();
     this.hookSignatures.clear();
+    this.hookActive.clear();
+    this.delegation.dispose();
+  }
+  transientIds(): readonly number[] {
+    return [...new Set([...this.hookActive, ...[...this.runtime.values()].map(entry => entry.sessionId)])];
+  }
+
+  /** Candidate IDs only. The persisted row and provider determine the final status. */
+  priorityCandidateIds(): readonly number[] {
+    const ids = new Set(this.hookActive);
+    for (const entry of this.runtime.values()) {
+      if (isWorkspacePriorityStatus(entry.turn)) ids.add(entry.sessionId);
+    }
+    return [...ids];
+  }
+
+  turnStatus(session: WorkspaceSessionActivity): string {
+    return this.resolve(session, false);
   }
   status(session: WorkspaceSessionActivity): string {
     return this.resolve(session, true);

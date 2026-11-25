@@ -11,6 +11,7 @@ import type {
 import type {
   AgentPermissionMode,
   AgentImageInput,
+  AgentPromptOptions,
   AgentForkConversationRequest,
   AgentRuntimeEvent,
   AgentRuntimeProvider,
@@ -40,6 +41,7 @@ export class CodexAgentRuntimeProvider
       multimodalPrompts: true,
       terminalFallback: false,
       rewindConversation: true,
+      nonInterruptingSteering: true,
     },
   };
 
@@ -168,7 +170,7 @@ export class CodexAgentRuntimeProvider
     prompt: string,
     titlePrompt?: string,
     images?: AgentImageInput[],
-    options?: { waitForCompletion?: boolean },
+    options?: AgentPromptOptions,
   ) {
     return this.runtimeService.submitPrompt(
       sessionId,
