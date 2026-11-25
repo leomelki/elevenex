@@ -184,6 +184,27 @@ test('saved host migration discards old forwarding toggles and retains SSH setti
   assert.equal((await readFile(path, 'utf8')).includes('forwardAgent'), false);
 });
 
+test('a layout saved by another desktop build resets that layout without hiding saved machines', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ex-foreign-layout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'settings.json');
+  const host = { id: 'host-1', name: 'Build box', host: 'build-box' };
+  const workspace = { panel: 'changes', panelOpen: true, wideReview: false, closed: false, focused: false, filter: null, projectCursor: null, taskCursor: null };
+  const context = { ...emptyContext(), projectId: 4 };
+  const window = { selection: { kind: 'remote', hostId: host.id }, connect: false, forwards: {}, contexts: {
+    local: { ...context, workspace },
+    [host.id]: { ...context, workspace: { ...workspace, panel: 'future-panel', addedLater: true } },
+  } };
+  await writeFile(path, JSON.stringify({ version: 1, hosts: [host], windows: [window] }));
+  const settings = await new RemoteSettingsStore(path).load();
+  assert.deepEqual(settings.hosts, [host]);
+  assert.deepEqual(settings.windows[0].contexts, { local: { ...context, workspace }, [host.id]: context });
+  // Domain identifiers are not layout; a damaged one still preserves the file for repair.
+  window.contexts.local.projectId = 'four';
+  await writeFile(path, JSON.stringify({ version: 1, hosts: [host], windows: [window] }));
+  await assert.rejects(new RemoteSettingsStore(path).load(), /could not be read/);
+});
+
 test('daemon discovery uses an available TCP port and never discloses its token to a stale endpoint', async t => {
   const root = await mkdtemp(join(tmpdir(), 'ex-control-proof-')); const token = 'b'.repeat(64); const instance = 'fixture-instance';
   const received = [];

@@ -43,7 +43,7 @@ export class RemoteSettingsStore {
         const contexts = validate.object(window['contexts'], ['local', ...hosts.map(host => host.id)]);
         const forwards = validate.object(window['forwards'], hosts.map(host => host.id));
         const saved: SavedWindow = { selection, contexts: {}, forwards: {}, connect: window['connect'] };
-        for (const [key, value] of Object.entries(contexts)) saved.contexts[key] = validate.context(value);
+        for (const [key, value] of Object.entries(contexts)) saved.contexts[key] = validate.savedContext(value);
         for (const [key, value] of Object.entries(forwards)) {
           if (!Array.isArray(value) || value.length > 32) throw new Error('Invalid saved forwards');
           saved.forwards[key] = value.map((entry: unknown) => {
