@@ -29,6 +29,8 @@ async function setupPreview(directory, bundle, output) {
     ['accessibility', { screen: true, input: false }, 'light'],
     ['enabled', { screen: true, input: true }, 'light'],
     ['enabled-dark', { screen: true, input: true }, 'dark'],
+    ['missed-drop', { screen: false, input: false }, 'light', 'missed-drop'],
+    ['missed-drop-dark', { screen: false, input: false }, 'dark', 'missed-drop'],
     ['plus-alternative', { screen: false, input: false }, 'light', 'plus'],
     ['plus-alternative-dark', { screen: false, input: false }, 'dark', 'plus'],
     ['escape-alternative', { screen: false, input: false }, 'light', 'escape-alternative'],
@@ -51,7 +53,7 @@ async function setupPreview(directory, bundle, output) {
   writeFileSync(join(output, 'report.json'), JSON.stringify({
     verified: true, kind: 'native-setup', permissionFixtures: true,
     captures, checks: ['native compilation', 'bundle signature', 'process cleanup', 'visible control bounds',
-      'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen'],
+      'missed drop feedback', 'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen'],
   }, null, 2) + '\n');
 }
 

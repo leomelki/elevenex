@@ -3,7 +3,7 @@
     <header>
       <span class="setup-mark"><ex-icon name="hand" [size]="18" /></span>
       <div>
-        <p class="eyebrow">Setup required · {{ machine() || 'Task machine' }}{{ remote() ? '' : ' (this computer)' }}</p>
+        <p class="eyebrow">Setup required · {{ machine() || (remote() ? 'Task machine' : 'This computer') }}</p>
         <h2>{{ guide().title }}</h2>
       </div>
     </header>
@@ -12,7 +12,7 @@
       <p>You can keep watching this app while control is unavailable.</p>
     }
     @if (remote()) {
-      <p class="who">These steps happen at {{ host() }}. Someone there needs to complete them. Permissions can't be granted from here.</p>
+      <p class="who">Someone at {{ host() }} needs to do these steps. Permissions can't be granted from here.</p>
     }
     <ol>
       @for (step of guide().steps; track $index) {

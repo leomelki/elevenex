@@ -69,7 +69,7 @@
           <summary>Requested command</summary>
           <pre tabindex="0" aria-label="Requested executable and arguments">{{ requestedCommand() }}</pre>
         </details>
-        <p class="setup-next">Setup alone never launches this. After it is done, <strong>Check and launch</strong> asks {{ host() }} to check again and starts the command only if the check passes. <strong>Decline</strong> drops the request.</p>
+        <p class="setup-next">Setup never launches this on its own. <strong>Check and launch</strong> asks {{ host() }} to check again, then starts the command only if the check passes.</p>
         <div class="actions setup-actions">
           <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Decline</button>
           <button exButton size="sm" variant="primary" [disabled]="busy() || !bridge.taskAppApprove" (click)="act('approve')">Check and launch</button>

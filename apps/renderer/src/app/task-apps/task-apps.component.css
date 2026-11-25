@@ -16,6 +16,7 @@ h2, p { margin: 0; }
 .error-text { display: grid; flex: 1; gap: var(--space-1); min-width: 0; padding-block: 2px; }
 .error strong { color: var(--danger); font-weight: var(--text-title-weight); }
 .error ex-icon-button { flex: none; margin-block: -2px; }
+.diagnostic { font-size: var(--text-caption-size); }
 .diagnostic summary { color: var(--ink-muted); cursor: pointer; }
 .diagnostic summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 .diagnostic p { margin-top: var(--space-1); color: var(--ink-muted); font-family: var(--font-mono); }

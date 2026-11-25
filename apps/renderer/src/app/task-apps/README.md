@@ -69,6 +69,42 @@ A chat link in the form `[Open app](elevenex-app:<run UUID>)` opens a run from
 the selected task while it has active apps. This link is handled as a local UI
 intent and carries no URL, credential or launch command. Unknown run IDs show
 an unavailable state if the task has active apps.
+## Errors, alerts and recovery
+
+`app-recovery.ts` words every failure the panel can show. It only describes a
+situation and never decides what happens. Each message says what happened,
+names the machine for a remote host (`this computer` for the local one), and
+ends in the next step that really is available. Primary copy never repeats
+internal text. The adapter's code, HTTP status and message sit behind a
+**Technical details** disclosure. A run's own `detail` is shown as what the
+machine reported.
+
+- **Reads** (run list, logs) are safe to repeat, so failures offer **Try again**.
+  A failed run read stops polling until then. A missing named operation says
+  that this version of Elevenex needs an update instead of failing silently.
+- **Mutations** (launch, decline, stop, open setup, show agent in Finder) can
+  come back as an unknown outcome. The wording says the host may have acted,
+  that status is being refreshed, and when repeating is reasonable. Nothing
+  replays on its own. The alert is tied to the run's status at failure time and
+  disappears once the refresh shows that status has moved on.
+- **Open setup** and **Show agent in Finder** claim only that the host was
+  asked. The panel cannot see the host's screen, so the copy says to look there.
+- **Setup cards** begin with what the host found, then steps phrased for the
+  host (`this Mac` locally, the machine's name remotely). A remote card says that
+  someone at the machine must do the steps, because permissions cannot be
+  granted from the viewer. `macos-desktop-connection` states that granting
+  permissions does not repair the SSH desktop connection by itself and points
+  to running Elevenex directly on that Mac for now.
+- **Displays** map the host's known ending reasons and the desktop's refusal
+  codes to a title, a cause and **Reconnect**. An unknown host reason is shown
+  verbatim. Input failures keep `APP_INPUT_GUIDANCE` text exact, matched by
+  suffix because Electron prefixes IPC errors, and add what still works and what
+  to do next.
+
+Preview and capture the states with `/task-apps` and the fixture's failure
+fields (`readFailure`, `logsFailure`, `watchRefusal`, `actionFailure`,
+`inputGuidance`).
+
 Preview the production renderer on `/task-apps`. The native capture scenario
 `scripts/desktop-capture/scenarios/task-apps.mjs` supplies encoded video and
 checks focus, pointer, keyboard, release, retry, stale-view rejection and logs.

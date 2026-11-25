@@ -63,6 +63,7 @@ int printAgentPermissions(void) {
 @property(nonatomic, strong) NSTask *check;
 @property(nonatomic, strong) NSDate *started;
 @property(nonatomic, strong) NSDate *hintUntil;
+@property(nonatomic, strong) NSDate *missedUntil;
 @property(nonatomic) BOOL screen;
 @property(nonatomic) BOOL input;
 @property(nonatomic) BOOL skippedInput;
@@ -160,8 +161,6 @@ int printAgentPermissions(void) {
     self.dragItem.style = self.style;
     self.dragItem.appURL = NSBundle.mainBundle.bundleURL;
     self.dragItem.icon = [NSWorkspace.sharedWorkspace iconForFile:self.dragItem.appURL.path];
-    NSURL *settingsApp = [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.apple.systempreferences"];
-    if (settingsApp) self.dragItem.settingsIcon = [NSWorkspace.sharedWorkspace iconForFile:settingsApp.path];
     self.dragItem.accessibilityElement = YES;
     self.dragItem.accessibilityRole = NSAccessibilityButtonRole;
     self.dragItem.accessibilityLabel = @"Elevenex Agent";
@@ -176,9 +175,10 @@ int printAgentPermissions(void) {
         [owner copyPath:nil];
         [owner.panel makeFirstResponder:owner.pathCopyButton];
     };
-    self.dragItem.dragEnded = ^(BOOL accepted) {
+    self.dragItem.dragEnded = ^(BOOL accepted, BOOL missed) {
         AgentSetup *owner = weakSelf;
         if (accepted) owner.hintUntil = [NSDate dateWithTimeIntervalSinceNow:8];
+        owner.missedUntil = missed ? [NSDate dateWithTimeIntervalSinceNow:6] : nil;
         [owner updateStatus];
         [owner refresh];
     };
@@ -373,9 +373,11 @@ int printAgentPermissions(void) {
 - (void)updateStatus {
     if ([self complete]) return;
     NSString *message;
-    BOOL link;
+    BOOL link, missed = NO;
     if (self.checkFailed) { message = @"Couldn’t check permissions."; link = YES; }
     else if (self.paused) { message = @"Still off. Turn it on, then check again."; link = YES; }
+    // Transient feedback for a drag released somewhere that did not accept it.
+    else if ((missed = self.missedUntil.timeIntervalSinceNow > 0)) { message = @"Release it over the list in System Settings."; link = !self.settingsVisible; }
     else if (!self.settingsVisible) { message = @"System Settings is closed."; link = YES; }
     else if (self.hintUntil.timeIntervalSinceNow > 0) { message = @"If macOS asks, confirm with Touch ID or your password. Checking…"; link = NO; }
     else { message = self.hasPermissionResult ? (self.screen ? @"Waiting for Accessibility…" : @"Waiting for Screen Recording…") : @"Checking permissions…"; link = NO; }
@@ -383,8 +385,9 @@ int printAgentPermissions(void) {
     self.status.stringValue = message;
     self.settings.hidden = !link;
     self.settings.title = self.checkFailed || self.paused ? @"Check again" : @"Open it";
-    self.spinner.hidden = link;
-    if (link || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) [self.spinner stopAnimation:nil];
+    self.status.textColor = [self.style color:missed ? @"ink" : @"ink-muted"];
+    self.spinner.hidden = link || missed;
+    if (link || missed || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) [self.spinner stopAnimation:nil];
     else [self.spinner startAnimation:nil];
     if (changed) NSAccessibilityPostNotificationWithUserInfo(self.status,NSAccessibilityAnnouncementRequestedNotification,
         @{NSAccessibilityAnnouncementKey:message,NSAccessibilityPriorityKey:@(NSAccessibilityPriorityMedium)});

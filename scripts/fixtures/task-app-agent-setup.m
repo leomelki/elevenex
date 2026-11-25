@@ -1,6 +1,7 @@
 // Isolated AppKit UI fixture. Production never reads these test state files.
 #import <AppKit/AppKit.h>
 #import "Setup.h"
+#import "SetupViews.h"
 
 static NSButton *buttonNamed(NSView *view, NSString *title) {
     if (view.hidden) return nil;
@@ -87,7 +88,14 @@ int main(int argc, char **argv) {
                 fprintf(stderr,"The drag source must work from the inactive panel without moving the window\n");
                 exit(1);
             }
-            if ([action isEqualToString:@"plus"] || [action isEqualToString:@"escape-alternative"]) {
+            if ([action isEqualToString:@"missed-drop"]) {
+                AgentDragItem *drag = (AgentDragItem *)item;
+                if (![drag isKindOfClass:AgentDragItem.class] || !drag.dragEnded) exit(1);
+                drag.dragEnded(NO, NO);
+                if (containsText(window.contentView,@"Release it over the list in System Settings.")) exit(1);
+                drag.dragEnded(NO, YES);
+                if (!containsText(window.contentView,@"Release it over the list in System Settings.")) exit(1);
+            } else if ([action isEqualToString:@"plus"] || [action isEqualToString:@"escape-alternative"]) {
                 NSButton *alternative = buttonNamed(window.contentView,@"Use + instead");
                 if (!alternative) exit(1);
                 [alternative performClick:nil];

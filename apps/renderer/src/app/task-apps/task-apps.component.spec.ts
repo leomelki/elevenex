@@ -39,7 +39,7 @@ describe('Task apps panel ownership', () => {
     expect(fixture.componentInstance.hasActiveApp()).toBe(true);
     button('Open setup on host')!.click();
     await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Elevenex Agent was asked to open on Studio Mac. Look at that screen to continue.');
-    expect(element.textContent).toContain('Someone there needs to complete them'); });
+    expect(element.textContent).toContain('needs to do these steps'); });
     expect(taskAppOpenSetupSettings).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
     expect(taskAppApprove).not.toHaveBeenCalled();
     button('Show agent in Finder on host')!.click();
@@ -202,13 +202,13 @@ describe('Task apps panel ownership', () => {
       const remote = mount({ taskAppsRead, taskAppOpenSetupSettings: vi.fn() });
       await vi.waitFor(() => { remote.fixture.detectChanges(); expect(remote.element.querySelector('ex-task-app-setup')).not.toBeNull(); });
       expect(remote.element.textContent).toContain('does not repair the SSH desktop connection by itself');
-      expect(remote.element.textContent).toContain('Someone there needs to complete them');
+      expect(remote.element.textContent).toContain('needs to do these steps');
       expect(remote.element.querySelector('.diagnostic')?.textContent).toContain('macOS refused the desktop connection.');
       TestBed.resetTestingModule();
       const local = mount({ taskAppsRead, taskAppOpenSetupSettings: vi.fn() }, false);
       await vi.waitFor(() => { local.fixture.detectChanges(); expect(local.element.querySelector('ex-task-app-setup')).not.toBeNull(); });
       expect(local.element.textContent).toContain('this Mac');
-      expect(local.element.textContent).not.toContain('Someone there needs to complete them');
+      expect(local.element.textContent).not.toContain('needs to do these steps');
       expect(local.element.textContent).toContain('Open setup');
     });
 

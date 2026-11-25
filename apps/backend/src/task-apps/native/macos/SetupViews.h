@@ -14,12 +14,11 @@
 @property(nonatomic, strong) AgentSetupStyle *style;
 @property(nonatomic, strong) NSURL *appURL;
 @property(nonatomic, strong) NSImage *icon;
-// Drawn in the drop slot so the tile reads like a DMG installer: app → destination.
-@property(nonatomic, strong) NSImage *settingsIcon;
 // YES when System Settings sits left of the panel; the tile mirrors to point at it.
 @property(nonatomic) BOOL pointsLeft;
 @property(nonatomic, copy) void (^useAlternative)(void);
-@property(nonatomic, copy) void (^dragEnded)(BOOL accepted);
+// missed: the pointer moved but nothing accepted the drop (for example, released inside this panel).
+@property(nonatomic, copy) void (^dragEnded)(BOOL accepted, BOOL missed);
 @end
 
 @interface AgentSetupProgress : NSView

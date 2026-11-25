@@ -14,13 +14,15 @@ grants permission itself. Screen Recording is required for viewing.
 Accessibility is optional and enables input. A copy-path alternative works
 with the permission pane's **+ → ⌘⇧G** file picker.
 
-The draggable tile uses the DMG-installer picture: the app icon, a dashed arrow
-and a dashed System Settings drop slot, mirrored to point toward the Settings
-window. Only the icon's half is the grab handle (open-hand cursor, lifts on
-hover). Until the first drag, a faded copy of the icon periodically glides
-along the arrow; reduced motion keeps the picture static. Two numbered steps
-below the tile name the destination list and the switch to turn on, followed
-by a live checking status.
+The draggable tile shows only the app icon and a dashed arrow running off the
+tile edge toward the System Settings window, which the panel docks beside. It
+deliberately draws no destination: a drop zone inside the panel would invite
+drops that cannot work. Only the icon's half is the grab handle (open-hand
+cursor, lifts on hover). Until the first drag, a faded copy of the icon
+periodically glides out along the arrow; reduced motion keeps it static. Two
+numbered steps below the tile name the destination list and the switch to turn
+on, followed by a live checking status. A drag that moves but is accepted
+nowhere briefly replaces the status with where to release it.
 **Use + instead** switches to the keyboard alternative with a selectable,
 middle-truncated app path. Escape returns to dragging, Command-W closes setup,
 and Return on the draggable app opens the alternative and copies its path.

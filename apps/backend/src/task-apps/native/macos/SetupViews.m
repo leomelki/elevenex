@@ -103,10 +103,12 @@
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; [self setNeedsDisplay:YES]; }
 @end
 
-// The tile borrows the DMG-installer picture every Mac user knows: the app on
-// one side, a dashed arrow, and the destination (System Settings) on the other.
-// Until the first drag, a faded copy of the icon periodically glides along the
-// arrow to demonstrate the gesture. Reduced motion shows the static picture.
+// The tile shows only the thing to pick up: the app icon, with a dashed arrow
+// running off the tile edge toward the real System Settings window (the panel
+// docks beside it). No destination is drawn in the tile, because anything that
+// looks like a drop zone here would invite drops that cannot work. Until the
+// first drag, a faded copy of the icon periodically glides out along the arrow
+// and leaves the tile. Reduced motion shows the static picture.
 static const NSTimeInterval AgentDemoInterval = 3.2;
 static const NSTimeInterval AgentDemoDuration = 1.1;
 
@@ -119,6 +121,7 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
 @property(nonatomic, strong) NSTimer *demoTimer;
 @property(nonatomic, strong) NSTimer *frameTimer;
 @property(nonatomic, strong) NSTrackingArea *hoverArea;
+@property(nonatomic) NSPoint dragOrigin;
 @end
 @implementation AgentDragItem
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -127,16 +130,13 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
 - (BOOL)isOpaque { return NO; }
 - (void)dealloc { [_demoTimer invalidate]; [_frameTimer invalidate]; }
 - (CGFloat)iconSize { return self.bounds.size.width < 240 ? 56 : 64; }
-- (CGFloat)columnX:(BOOL)source {
-    BOOL left = source != self.pointsLeft;
-    return self.bounds.size.width * (left ? 0.24 : 0.76);
-}
 - (NSRect)iconRectAt:(CGFloat)centerX size:(CGFloat)size {
     CGFloat top = 40, available = self.bounds.size.height-16-top;
     return NSMakeRect(round(centerX-size/2), round(top+(available-size)/2), size, size);
 }
-- (NSRect)sourceRect { return [self iconRectAt:[self columnX:YES] size:self.iconSize]; }
-- (NSRect)slotRect { return [self iconRectAt:[self columnX:NO] size:self.iconSize]; }
+- (NSRect)sourceRect {
+    return [self iconRectAt:self.bounds.size.width * (self.pointsLeft ? 0.72 : 0.28) size:self.iconSize];
+}
 - (void)drawLabel:(NSString *)text centerX:(CGFloat)x attributes:(NSDictionary *)attributes {
     CGFloat width = MIN([text sizeWithAttributes:attributes].width, self.bounds.size.width/2-8);
     [text drawWithRect:NSMakeRect(round(x-width/2), 16, width, 16)
@@ -158,26 +158,13 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
     [[self.style color:contrast ? @"line-strong" : @"line"] setStroke];
     [shape stroke];
 
-    NSRect source = self.sourceRect, slot = self.slotRect;
+    NSRect source = self.sourceRect;
     NSColor *accent = [self.style color:@"accent"];
 
-    // Destination: a dashed drop slot holding the System Settings icon.
-    NSBezierPath *slotShape = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(slot,0.5,0.5) xRadius:14 yRadius:14];
-    CGFloat dash[] = {4, 3};
-    [slotShape setLineDash:dash count:2 phase:0];
-    slotShape.lineWidth = self.dragging ? 1.5 : 1;
-    [(self.dragging ? accent : [self.style color:contrast ? @"ink-muted" : @"line-strong"]) setStroke];
-    [slotShape stroke];
-    if (self.settingsIcon) {
-        CGFloat inner = round(slot.size.width*0.62);
-        [self.settingsIcon drawInRect:NSMakeRect(NSMidX(slot)-inner/2, NSMidY(slot)-inner/2, inner, inner)
-            fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:0.9];
-    }
-
-    // Path between them, ending in a chevron at the slot.
+    // Exit path: from the icon to the tile edge nearest System Settings.
     CGFloat direction = self.pointsLeft ? -1 : 1, y = NSMidY(source);
-    CGFloat start = (self.pointsLeft ? NSMinX(source) : NSMaxX(source)) + direction*10;
-    CGFloat end = (self.pointsLeft ? NSMaxX(slot) : NSMinX(slot)) - direction*10;
+    CGFloat start = (self.pointsLeft ? NSMinX(source) : NSMaxX(source)) + direction*12;
+    CGFloat end = (self.pointsLeft ? NSMinX(tile) : NSMaxX(tile)) - direction*18;
     NSBezierPath *path = [NSBezierPath bezierPath];
     [path moveToPoint:NSMakePoint(start, y)];
     [path lineToPoint:NSMakePoint(end, y)];
@@ -208,15 +195,20 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
     [NSGraphicsContext restoreGraphicsState];
 
     if (self.ghost > 0) {
+        // Glide past the edge and fade, clipped by the tile: the icon leaves this window.
         CGFloat t = self.ghost, eased = t < 0.5 ? 2*t*t : 1-pow(-2*t+2, 2)/2;
-        NSRect moving = NSOffsetRect(source, (NSMidX(slot)-NSMidX(source))*eased, 0);
-        [self.icon drawInRect:moving fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:0.55*sin(M_PI*t)];
+        CGFloat travel = (self.pointsLeft ? NSMinX(tile)-NSMinX(source) : NSMaxX(tile)-NSMaxX(source)) + direction*source.size.width/2;
+        [NSGraphicsContext saveGraphicsState];
+        [shape addClip];
+        // Stay invisible while overlapping the real icon so it never reads as a doubled image.
+        CGFloat cleared = MAX(0, MIN(1, (fabs(travel*eased) - source.size.width*0.45) / (source.size.width*0.4)));
+        [self.icon drawInRect:NSOffsetRect(source, travel*eased, 0) fromRect:NSZeroRect
+            operation:NSCompositingOperationSourceOver fraction:0.6*cleared*(1-0.6*eased)];
+        [NSGraphicsContext restoreGraphicsState];
     }
 
     NSDictionary *nameStyle = @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[self.style color:@"ink"]};
-    NSDictionary *placeStyle = @{NSFontAttributeName:[NSFont systemFontOfSize:12], NSForegroundColorAttributeName:[self.style color:@"ink-muted"]};
     [self drawLabel:@"Elevenex Agent" centerX:NSMidX(source) attributes:nameStyle];
-    [self drawLabel:@"System Settings" centerX:NSMidX(slot) attributes:placeStyle];
 
     // A focus ring is for keyboard navigation. Mouse interaction should make
     // this look like an object to pick up, not a highlighted drop target.
@@ -232,7 +224,7 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
     [self.window invalidateCursorRectsForView:self];
     [self setNeedsDisplay:YES];
 }
-// Only the app icon's column is the grab handle; the destination is a picture.
+// The icon's half of the tile is the grab handle, so the drag image stays under the pointer.
 - (NSRect)grabRect {
     NSRect source = self.sourceRect;
     return NSMakeRect(NSMidX(source)-self.bounds.size.width/4, 0, self.bounds.size.width/2, self.bounds.size.height);
@@ -255,7 +247,7 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
     BOOL run = self.window && !self.hiddenOrHasHiddenAncestor && !self.demonstrated;
     if (run && !self.demoTimer) {
         __weak AgentDragItem *weakSelf = self;
-        self.demoTimer = [[NSTimer alloc] initWithFireDate:[NSDate dateWithTimeIntervalSinceNow:0.8]
+        self.demoTimer = [[NSTimer alloc] initWithFireDate:[NSDate dateWithTimeIntervalSinceNow:2]
             interval:AgentDemoInterval repeats:YES block:^(NSTimer *timer) {
                 AgentDragItem *item = weakSelf;
                 if (!item) { [timer invalidate]; return; }
@@ -288,6 +280,7 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
 - (void)mouseDown:(NSEvent *)event {
     if (!NSPointInRect([self convertPoint:event.locationInWindow fromView:nil], self.grabRect)) return;
     [self.window makeFirstResponder:nil];
+    self.dragOrigin = [self.window convertPointToScreen:event.locationInWindow];
     self.demonstrated = YES;
     [self updateDemo];
     NSDraggingItem *item = [[NSDraggingItem alloc] initWithPasteboardWriter:self.appURL];
@@ -300,7 +293,9 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
 - (void)draggingSession:(NSDraggingSession *)session endedAtPoint:(NSPoint)point operation:(NSDragOperation)operation {
     self.dragging = NO;
     [self setNeedsDisplay:YES];
-    if (self.dragEnded) self.dragEnded(operation != NSDragOperationNone);
+    // A click also starts and ends a session; only a real move counts as a missed drop.
+    BOOL moved = hypot(point.x-self.dragOrigin.x, point.y-self.dragOrigin.y) > 24;
+    if (self.dragEnded) self.dragEnded(operation != NSDragOperationNone, operation == NSDragOperationNone && moved);
 }
 - (BOOL)accessibilityPerformPress { if (self.useAlternative) self.useAlternative(); return YES; }
 - (void)keyDown:(NSEvent *)event {
