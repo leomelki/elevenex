@@ -129,9 +129,11 @@
   height: calc(var(--space-8) + var(--space-2));
   max-height: 100%;
   border-radius: var(--radius-full);
-  background: var(--line-strong);
 }
-.panel-resize:is(:hover, :focus-visible)::before,
+.panel-resize:hover::before {
+  background: color-mix(in srgb, var(--line-strong) 28%, transparent);
+}
+.panel-resize:focus-visible::before,
 :host(.panel-resizing) .panel-resize::before {
   background: var(--accent);
 }
