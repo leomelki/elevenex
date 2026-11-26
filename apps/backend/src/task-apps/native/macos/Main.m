@@ -32,7 +32,7 @@ static int runAgentCommand(int argc, char *argv[], BOOL desktop, int displayDesc
             if (width < 16 || height < 16 || width > 1920 || height > 1440 || (width & 1) || (height & 1)) return 2;
             setDisplayOutput(stdout);
             AppEncoder *encoder = [AppEncoder new];
-            encoder.failed = ^{};
+            encoder.failed = ^(NSError *error) {};
             return [encoder configureWidth:width height:height] && [encoder encodeTestFrame] ? 0 : 24;
         }
         if (argc == 2 && !strcmp(argv[1], "--authorize")) {

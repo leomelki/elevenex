@@ -1,10 +1,16 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, inject, input, signal, viewChild } from '@angular/core';
-import { APP_INPUT_GUIDANCE, APP_VIDEO_MAX_AXIS, APP_VIDEO_MAX_BYTES, APP_VIDEO_MAX_PIXELS, type BackendClientError, type TaskAppFrame } from '@elevenex/shared';
+import { APP_INPUT_GUIDANCE, APP_SHARING_STOPPED, APP_VIDEO_MAX_AXIS, APP_VIDEO_MAX_BYTES, APP_VIDEO_MAX_PIXELS, type BackendClientError, type TaskAppFrame } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { H264Decoder } from '../media/h264-decoder';
 import { ButtonComponent, KbdComponent } from '../ui';
 import { AppInputQueue, appPoint } from './app-input';
 import { INPUT_INTERRUPTED, INPUT_TOO_LONG, inputNotice, streamProblem, type AppPlace } from './app-recovery';
+
+const RETRY_DELAYS = [250, 750, 1500] as const;
+const RETRYABLE_INTERRUPTION = new Set([
+  'App window changed. Reopen the stream.', 'App stream disconnected',
+  'The video stream lost a frame.', 'The display could not keep up with the stream.',
+]);
 
 /** One mounted surface owns one viewer lease. The enclosing run view keys it by task and run. */
 @Component({
@@ -26,6 +32,7 @@ export class AppStreamComponent {
   private readonly keyboard = viewChild.required<ElementRef<HTMLTextAreaElement>>('keyboard');
   private readonly viewport = viewChild.required<ElementRef<HTMLElement>>('viewport');
   readonly state = signal<'connecting' | 'live' | 'interrupted'>('connecting');
+  readonly recovering = signal(false);
   /** The host's or desktop's reason for the last interruption or input failure. */
   readonly error = signal('');
   /** Set when the desktop refused to attach, so the failure code can shape the guidance. */
@@ -40,6 +47,9 @@ export class AppStreamComponent {
   private watchId?: string;
   private sequence = 0;
   private disposed = false;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private retryAttempt = 0;
+  private liveSince?: number;
   private inFlight = 0;
   private queuedBytes = 0;
   private receipt?: { sequence: number };
@@ -55,7 +65,7 @@ export class AppStreamComponent {
   private readonly lane = new AppInputQueue(async event => {
     if (this.watchId && this.controlling()) await this.bridge.taskAppInput?.(this.scopeId(), this.watchId, event);
   }, reason => {
-    this.release();
+    this.release(this.controlling() && this.keyboard().nativeElement === document.activeElement);
     const detail = reason instanceof Error ? reason.message : '';
     this.error.set(Object.values(APP_INPUT_GUIDANCE).find(message => detail.endsWith(message)) ?? INPUT_INTERRUPTED);
   });
@@ -67,10 +77,10 @@ export class AppStreamComponent {
     const frames = this.bridge.onTaskAppFrame?.(frame => this.receive(frame));
     const closed = this.bridge.onTaskAppClosed?.(event => {
       if (this.watchId !== event.watchId || this.scopeId() !== event.scopeId) return;
-      this.interrupt(event.reason);
-      if (event.reason === 'App window changed. Reopen the stream.') void this.start();
+      this.interrupt(event.reason, RETRYABLE_INTERRUPTION.has(event.reason));
     });
     const visibility = () => {
+      if (this.error() === APP_SHARING_STOPPED) return;
       if (document.hidden) this.disconnect();
       else void this.start();
     };
@@ -89,6 +99,13 @@ export class AppStreamComponent {
 
   async start(): Promise<void> {
     if (this.disposed || document.hidden || this.watchId) return;
+    this.cancelRetry();
+    this.retryAttempt = 0;
+    await this.connect();
+  }
+
+  private async connect(): Promise<void> {
+    if (this.disposed || document.hidden || this.watchId) return;
     const id = crypto.randomUUID();
     this.watchId = id;
     this.sequence = 0;
@@ -99,18 +116,18 @@ export class AppStreamComponent {
       const result = await this.bridge.taskAppWatch?.(this.scopeId(), this.taskId(), this.runId(), id);
       if (this.watchId === id && !result?.ok) {
         const refusal = result?.error ?? null;
-        this.interrupt(refusal?.message ?? 'Streaming is unavailable on this machine.');
+        this.interrupt(refusal?.message ?? 'Streaming is unavailable on this machine.', refusal?.code === 'transport');
         this.refusal.set(refusal);
       }
-    } catch { if (this.watchId === id) this.interrupt('The display could not connect.'); }
+    } catch { if (this.watchId === id) this.interrupt('The display could not connect.', true); }
   }
 
   private receive(frame: TaskAppFrame): void {
     if (this.disposed || frame.watchId !== this.watchId || frame.scopeId !== this.scopeId() ||
       frame.taskId !== this.taskId() || frame.runId !== this.runId()) return;
-    if (frame.sequence !== this.sequence + 1) { this.interrupt('The video stream lost a frame.'); return; }
+    if (frame.sequence !== this.sequence + 1) { this.interrupt('The video stream lost a frame.', true); return; }
     if (this.inFlight >= 8 || this.queuedBytes + frame.data.byteLength > APP_VIDEO_MAX_BYTES) {
-      this.interrupt('The display could not keep up with the stream.'); return;
+      this.interrupt('The display could not keep up with the stream.', true); return;
     }
     this.sequence = frame.sequence;
     this.inFlight++;
@@ -137,6 +154,8 @@ export class AppStreamComponent {
       context.drawImage(bitmap, 0, 0);
       this.width = frame.width;
       this.height = frame.height;
+      this.liveSince ??= performance.now();
+      this.recovering.set(false);
       this.state.set('live');
       this.acknowledge(frame);
     } catch { if (frame.watchId === this.watchId) this.interrupt('The app display was interrupted.'); }
@@ -163,21 +182,48 @@ export class AppStreamComponent {
         if (sequence === receipt.sequence) break;
       }
     } catch {
-      if (this.receipt === receipt) this.interrupt('App stream disconnected');
+      if (this.receipt === receipt) this.interrupt('App stream disconnected', true);
     } finally {
       if (this.receipt === receipt) this.receipt = undefined;
     }
   }
 
-  private interrupt(message: string): void { this.disconnect(); this.error.set(message); this.state.set('interrupted'); }
+  private interrupt(message: string, retry = false): void {
+    const wasLive = this.liveSince !== undefined;
+    if (this.liveSince !== undefined && performance.now() - this.liveSince >= 5000) this.retryAttempt = 0;
+    this.disconnect();
+    this.error.set(message);
+    // Initial attach failures stay visible. Follow a window change or a
+    // previously working stream with bounded fresh, read-only attachments.
+    const delay = RETRY_DELAYS[this.retryAttempt];
+    if (retry && delay !== undefined && (wasLive || this.retryAttempt > 0 ||
+        message === 'App window changed. Reopen the stream.') && !this.disposed && !document.hidden) {
+      this.retryAttempt++;
+      this.recovering.set(true);
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined;
+        void this.connect();
+      }, delay);
+    } else {
+      this.state.set('interrupted');
+    }
+  }
+
+  private cancelRetry(): void {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.recovering.set(false);
+  }
 
   private disconnect(): void {
-    this.release();
+    this.cancelRetry();
+    this.release(!this.disposed && !document.hidden && this.controlling() && this.keyboard().nativeElement === document.activeElement);
     const id = this.watchId;
     this.watchId = undefined;
     this.receipt = undefined;
     this.inFlight = 0; this.queuedBytes = 0;
     this.width = this.height = 0;
+    this.liveSince = undefined;
     this.decoder.reset();
     const canvas = this.canvas()?.nativeElement;
     if (canvas) canvas.width = canvas.height = 1;

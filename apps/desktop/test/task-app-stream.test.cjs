@@ -59,15 +59,19 @@ test('app stream waits for a painted frame before control, rejects interrupted i
   }
 });
 
-test('reports host encoding failure separately from a lost stream connection', async () => {
+test('reports host encoding failure and intentional sharing stop separately from a lost connection', async () => {
   const server = new WebSocketServer({host:'127.0.0.1',port:0}); await once(server,'listening');
-  const connected = once(server,'connection'), ended = Promise.withResolvers();
-  const stream = new TaskAppStream({url:'http://127.0.0.1:'+server.address().port,headers:{}},randomUUID(),
-    {taskId:4,runId:randomUUID(),scopeId:randomUUID(),watchId:randomUUID()},new AbortController().signal,()=>{},ended.resolve);
-  const [peer] = await connected;
   try {
-    peer.send(JSON.stringify({ready:true})); await stream.ready;
-    peer.close(4004);
-    assert.equal(await ended.promise,'The host could not capture or encode the app window.');
-  } finally { stream.close(); peer.terminate(); await new Promise(resolve=>server.close(resolve)); }
+    for (const [code, message] of [[4004, 'The host could not capture or encode the app window.'], [4005, 'App sharing was stopped on the host.']]) {
+      const connected = once(server,'connection'), ended = Promise.withResolvers();
+      const stream = new TaskAppStream({url:'http://127.0.0.1:'+server.address().port,headers:{}},randomUUID(),
+        {taskId:4,runId:randomUUID(),scopeId:randomUUID(),watchId:randomUUID()},new AbortController().signal,()=>{},ended.resolve);
+      const [peer] = await connected;
+      try {
+        peer.send(JSON.stringify({ready:true})); await stream.ready;
+        peer.close(code);
+        assert.equal(await ended.promise,message);
+      } finally { stream.close(); peer.terminate(); }
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
 });

@@ -119,7 +119,7 @@ static void deliver(void *context, void *frame, OSStatus status, VTEncodeInfoFla
     if (_last && CFAbsoluteTimeGetCurrent() - _lastSent >= 1.0) [self encode:_last key:YES];
 }
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
-    dispatch_async(dispatch_get_main_queue(), ^{ if (self.failed) self.failed(); });
+    dispatch_async(dispatch_get_main_queue(), ^{ if (self.failed) self.failed(error); });
 }
 - (void)disable { @synchronized(self) { self.failed = nil; } }
 - (void)finish {

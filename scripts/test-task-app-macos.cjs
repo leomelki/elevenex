@@ -237,7 +237,30 @@ async function interactive(directory, helperPath, control = true) {
         competingApp.kill();
         await competingExit;
       }
-      console.log('Native live input: click, drag, scroll, key, Unicode text, dialog rejection and click-to-focus recovery verified');
+
+      await display.input({ kind: 'key', code: 'KeyC', down: true });
+      await waitForMarker('shareable-dialog-open');
+      assert.match((await Promise.race([interrupted.promise, timedOut])).message, /geometry changed/);
+      const dialogImage = Promise.withResolvers();
+      const dialogEnded = Promise.withResolvers();
+      const closeDialogView = display.watch({ frame: dialogImage.resolve, end: (reason, disposition) => {
+        dialogImage.reject(new Error(reason));
+        dialogEnded.resolve(disposition);
+      } });
+      try {
+        const dialogFrame = await Promise.race([dialogImage.promise, timedOut]);
+        assert.ok(dialogFrame.key && dialogFrame.width < frame.width, 'The shareable dialog must supply the new picture');
+        await display.input({ kind: 'key', code: 'Escape', down: true });
+        await waitForMarker('shareable-dialog-closed');
+        assert.equal(await Promise.race([dialogEnded.promise, timedOut]), 'window-changed');
+      } finally { closeDialogView(); }
+      const returned = Promise.withResolvers();
+      const closeMainView = display.watch({ frame: returned.resolve, end: reason => returned.reject(new Error(reason)) });
+      try {
+        const main = await Promise.race([returned.promise, timedOut]);
+        assert.equal(main.width, frame.width, 'Closing the dialog must return to the main window');
+      } finally { closeMainView(); }
+      console.log('Native live input: gestures, Unicode, protected dialog rejection, click-to-focus and shareable dialog handoff verified');
     } finally { stop(); }
   } finally {
     app.stdin.end();

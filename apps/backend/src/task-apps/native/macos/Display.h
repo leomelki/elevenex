@@ -4,6 +4,7 @@
 
 BOOL AppSessionActive(void);
 BOOL ownsAppProcess(pid_t group, pid_t owner);
+BOOL appWindowShareable(NSDictionary *row);
 pid_t launchOwnedGroup(char **command);
 void stopOwnedGroup(void);
 void setSupervisorDesktopDirectory(const char *path);
@@ -32,6 +33,8 @@ typedef NS_ENUM(uint8_t, AppInputResult) {
 @property(nonatomic) size_t height;
 // Visible owned windows are candidates for initial capture selection.
 - (NSDictionary *)firstOwnedWindow;
+// The foreground, shareable window must match one unambiguous WindowServer row.
+- (NSDictionary *)focusedOwnedWindow;
 // Revalidate the selected capture window and its original WindowServer size.
 - (BOOL)currentBounds:(CGRect *)bounds;
 // Validate the selected target and distinguish a competing owned window from lost foreground.
@@ -48,6 +51,6 @@ typedef NS_ENUM(uint8_t, AppInputResult) {
 - (void)refresh;
 - (void)disable;
 - (void)finish;
-@property(nonatomic, copy) void (^failed)(void);
+@property(nonatomic, copy) void (^failed)(NSError *error);
 - (BOOL)encodeTestFrame;
 @end

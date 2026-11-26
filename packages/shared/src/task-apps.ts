@@ -7,6 +7,8 @@ export const APP_INPUT_GUIDANCE = {
     "A dialog or another window from the shared app is blocking control. Dismiss it on the task Mac, then click the preview again.",
 } as const;
 
+export const APP_SHARING_STOPPED = 'App sharing was stopped on the host.';
+
 export const APP_VIDEO_MAX_AXIS = 4096;
 export const APP_VIDEO_MAX_PIXELS = 4_194_304;
 export const APP_VIDEO_MAX_BYTES = 3_000_000;

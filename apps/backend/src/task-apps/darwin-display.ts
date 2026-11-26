@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { promisify } from 'node:util';
 import {
-  APP_INPUT_GUIDANCE,
+  APP_INPUT_GUIDANCE, APP_SHARING_STOPPED,
   APP_VIDEO_MAX_AXIS,
   APP_VIDEO_MAX_PIXELS,
   APP_VIDEO_MAX_BYTES,
@@ -45,6 +45,8 @@ function errorForCode(code: unknown): string {
       return 'The Mac could not capture or encode the app window. Resize the app or update its engine, then reconnect.';
     case 25:
       return 'Elevenex Agent could not connect to the task Mac’s desktop. Sign in and unlock the same account, then retry.';
+    case 26:
+      return APP_SHARING_STOPPED;
     default:
       return 'The macOS display helper is unavailable. Verify the host runtime and screen recording permission.';
   }
@@ -249,7 +251,9 @@ export class DarwinAppDisplay {
                       ? 'window-changed'
                       : flag === 24
                         ? 'capture-failed'
-                        : undefined;
+                        : flag === 26
+                          ? 'capture-stopped'
+                          : undefined;
               const setupIssue = flag === 20 ? 'macos-session' : flag === 21 ? 'macos-screen-recording' : flag === 25 ? 'macos-desktop-connection' : undefined;
               this.end(errorForCode(flag), disposition, setupIssue);
             } else {

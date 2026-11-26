@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
 import {
   APP_INPUT_GUIDANCE,
+  APP_SHARING_STOPPED,
   APP_VIDEO_MAX_AXIS,
   APP_VIDEO_MAX_PIXELS,
   APP_VIDEO_MAX_BYTES,
@@ -73,7 +74,9 @@ export class TaskAppStream {
                 ? "No owned app window is visible on the host."
                 : code === 4004
                   ? "The host could not capture or encode the app window."
-                  : "App stream disconnected";
+                  : code === 4005
+                    ? APP_SHARING_STOPPED
+                    : "App stream disconnected";
         ended(reason);
       });
       this.ws.on("error", abort);

@@ -6,7 +6,9 @@ The **Apps** tab appears while the selected task has a pending launch approval o
 
 The active conversation can reveal a newly requested app without moving keyboard focus. Its **Open app** link is scoped to the selected task. Click inside the picture, or Tab to it and press Enter, to interact. **Shift + Escape** returns the keyboard to Elevenex. Each run has a tab, like Browser tabs, and the same row offers actual size, a separate window, logs and stop for the selected run. Closing or detaching a viewer leaves the app running. **Reconnect** establishes a fresh viewer.
 
-If another app is in front on the task Mac, click the picture to request focus for the shared app, then click again to interact. If macOS still requires manual focus, bring the shared window to the front on the task Mac and try again.
+If another app is in front on the task Mac, click the picture to request focus for the shared app, then click again to interact. When a shareable window such as an app dialog takes focus, the viewer follows it and returns to the main window when the dialog closes. The viewer tries to reconnect after a window change or a brief connection loss. Resume control after the fresh picture appears. If someone stops sharing from the task Mac’s system controls, select **Reconnect** to request a new stream.
+
+macOS permission prompts, the login screen and protected windows stay outside the stream. A protected dialog may require someone at the task Mac to dismiss it. A minimized app with no visible shareable window can also require attention on the task Mac.
 
 ## Agent operations and permissions
 

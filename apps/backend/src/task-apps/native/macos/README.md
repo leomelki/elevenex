@@ -96,9 +96,12 @@ ends the helper; losing the helper drains the original supervisor's group.
 Window change detection compares WindowServer frames with their original
 WindowServer measurement. ScreenCaptureKit can omit the window border, so its
 picture bounds are kept separately for capture sizing and input coordinates.
-Moving a window preserves that inset; resizing still requires a fresh stream.
-Capture initially selects the largest visible owned layer-zero window, then
-validates that specific window's visibility, ownership and size. A separate
+Moving a window preserves that inset. A resize retires the old input target
+and the viewer requests a fresh stream. Capture prefers a visible, shareable
+window with verified Accessibility focus and otherwise selects the largest
+eligible owned layer-zero window. A candidate for automatic handoff must match
+one WindowServer row and a ScreenCaptureKit window with the same ID and owner.
+The viewer paints the new target before forwarding input. A separate
 native control window (including AppKit's 66×20 title-bar controls) or another
 overlapping window must not continually restart the stream. Desktop-independent
 capture does not require moving unrelated apps out of the way. Input requires
@@ -111,8 +114,8 @@ that same owner's captured window. Other same-process title-bar controls and
 separate same-process windows allow input when the Accessibility focused
 window matches the captured WindowServer frame. Pointer input excludes the
 actual title-bar overlap. An owned dialog over the content or a different
-focused window blocks control with its own viewer message while the picture
-stays visible. Dismiss the dialog on the host to resume control. Clicks, drags
+focused window blocks control until the viewer can switch to it. A protected
+dialog stays outside the stream and can require dismissal on the host. Clicks, drags
 and scrolls carry the verified window number and a position in that window so
 AppKit can dispatch them.
 The supervisor registers the private rendezvous before starting its monitor,
@@ -127,6 +130,8 @@ windows. Native codec regression checks encode real keyframes at production
 sizes, including a 1440×959 window, portrait windows and 4K source geometry.
 Capture/encoding failure has its own stream close code (4004), so the viewer
 shows a picture preparation error rather than reporting a network disconnect.
+An intentional ScreenCaptureKit stop has close code 4005. The active viewer
+waits for **Reconnect** before requesting another stream.
 
 Both development and release archives include the app's complete resources,
 icon and executable. Public runtime CI imports the configured Developer ID
@@ -198,7 +203,7 @@ Desktop main obtains a short-lived ticket before attaching to the scope-bound Ap
 
 Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens disposable AppKit windows on the task Mac and receives real ScreenCaptureKit frames. It checks clicks, drags, scrolling, keys, Unicode text, dialog blocking, and click-to-focus recovery after the second app takes focus. Leave focus switching to the fixtures during the check.
 
-On a signed-in Mac, `node scripts/test-task-app-macos.cjs --window-geometry`
+On a signed-in, unlocked Mac, `node scripts/test-task-app-macos.cjs --window-geometry`
 also checks real WindowServer selection with a simulated picture inset, window
 movement, resizing, title-bar control geometry, separate and covering windows,
 and ownership rejection. The fixture reads its own Accessibility focus without

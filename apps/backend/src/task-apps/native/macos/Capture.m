@@ -17,9 +17,31 @@ CGSize appCaptureSize(CGSize window, CGFloat pixelScale) {
     return CGSizeMake(MAX(16,(int)(scale*window.width)&~1),MAX(16,(int)(scale*window.height)&~1));
 }
 
-static uint8_t captureFailure(NSError *error) {
-    BOOL denied = [error.domain isEqualToString:SCStreamErrorDomain] && error.code == SCStreamErrorUserDeclined;
-    return denied || !CGPreflightScreenCaptureAccess() ? 21 : 24;
+static uint8_t captureFailure(NSError *error, uint8_t fallback) {
+    if ([error.domain isEqualToString:SCStreamErrorDomain]) {
+        if (error.code == SCStreamErrorUserStopped) return 26;
+        if (error.code == SCStreamErrorUserDeclined) return 21;
+    }
+    return CGPreflightScreenCaptureAccess() ? fallback : 21;
+}
+
+static SCWindow *matchShareableWindow(SCShareableContent *content, NSDictionary *row) {
+    pid_t owner = [row[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+    CGWindowID number = [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+    if (!number) return nil;
+    for (SCWindow *window in content.windows) {
+        if (window.windowID == number && window.owningApplication.processID == owner && window.windowLayer == 0) return window;
+    }
+    return nil;
+}
+
+static BOOL shareableWindowBounds(SCWindow *window, CGRect *bounds) {
+    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, window.windowID));
+    NSDictionary *row = rows.firstObject;
+    return [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == window.windowID &&
+        [row[(__bridge NSString *)kCGWindowOwnerPID] intValue] == window.owningApplication.processID &&
+        appWindowShareable(row) && [row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] &&
+        CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], bounds);
 }
 
 @interface AppDisplay : NSObject
@@ -31,6 +53,7 @@ static uint8_t captureFailure(NSError *error) {
 @property(nonatomic) BOOL active;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) CFTimeInterval deadline;
+@property(nonatomic) CFTimeInterval nextWindowProbe;
 @end
 
 @implementation AppDisplay
@@ -61,9 +84,13 @@ static uint8_t captureFailure(NSError *error) {
     if (kill(-self.target.group, 0) != 0) { [self end:23]; return; }
     if (self.stream) {
         CGRect bounds;
-        if (![self.target currentBounds:&bounds]) { [self end:23]; return; }
-        if (self.target.hasHeldInput && (!self.target.frontmost ||
-            [self.target inputWindowBounds:&bounds excluding:nil verifyFocus:YES] != AppInputAccepted)) [self.target releaseInput];
+        BOOL frontmost = self.target.frontmost;
+        AppInputResult input = [self.target inputWindowBounds:&bounds excluding:nil verifyFocus:frontmost && AXIsProcessTrusted()];
+        if (input == AppInputUnavailable && ![self.target currentBounds:&bounds]) { [self end:23]; return; }
+        if (!frontmost || input != AppInputAccepted) {
+            if (self.target.hasHeldInput) [self.target releaseInput];
+            [self lookForWindowSwitch];
+        }
         // Capture the owner on the main queue. A queued refresh can run after
         // the view has been closed or a replacement encoder has been created.
         AppEncoder *currentEncoder = self.encoder;
@@ -79,22 +106,25 @@ static uint8_t captureFailure(NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!self.active || generation != self.generation) return;
             self.selecting = NO;
-            if (!content) { [self end:captureFailure(error)]; return; }
-            // Prefer the primary owned picture over small AppKit control windows.
-            // Retain that choice until it closes, hides or changes size.
-            SCWindow *primary = nil;
+            if (!content) { [self end:captureFailure(error, 24)]; return; }
+            // A verified key window takes priority over the largest window.
+            // This lets a new watch follow a normal, shareable dialog.
+            NSDictionary *focused = AXIsProcessTrusted() ? self.target.focusedOwnedWindow : nil;
+            SCWindow *preferred = matchShareableWindow(content, focused);
+            SCWindow *window = nil;
+            CGRect windowBounds;
             for (SCWindow *candidate in content.windows) {
                 if (candidate.frame.size.width < 16 || candidate.frame.size.height < 16 || candidate.windowLayer != 0 || !ownsAppProcess(self.target.group, candidate.owningApplication.processID)) continue;
-                if (!primary || candidate.frame.size.width * candidate.frame.size.height > primary.frame.size.width * primary.frame.size.height) primary = candidate;
+                if (candidate != preferred && window && candidate.frame.size.width * candidate.frame.size.height <= window.frame.size.width * window.frame.size.height) continue;
+                CGRect bounds;
+                if (!shareableWindowBounds(candidate, &bounds)) continue;
+                window = candidate;
+                windowBounds = bounds;
+                if (window == preferred) break;
             }
-            if (primary) {
-                SCWindow *window = primary;
+            if (window) {
                 pid_t owner = window.owningApplication.processID;
                 CGWindowID selected = window.windowID;
-                NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, selected));
-                NSDictionary *row = rows.firstObject;
-                CGRect windowBounds;
-                if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], &windowBounds)) { [self end:23]; return; }
                 self.target.window = selected;
                 self.target.owner = owner;
                 self.target.windowBounds = windowBounds;
@@ -114,19 +144,45 @@ static uint8_t captureFailure(NSError *error) {
                 config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
                 self.encoder = [AppEncoder new];
                 __weak AppDisplay *weakSelf = self;
-                self.encoder.failed = ^{ if (generation == weakSelf.generation) [weakSelf end:23]; };
+                self.encoder.failed = ^(NSError *error) {
+                    if (generation == weakSelf.generation) [weakSelf end:captureFailure(error, 23)];
+                };
                 if (![self.encoder configureWidth:(int)config.width height:(int)config.height]) { [self end:24]; return; }
                 self.stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self.encoder];
                 NSError *streamError = nil;
                 if (![self.stream addStreamOutput:self.encoder type:SCStreamOutputTypeScreen sampleHandlerQueue:self.frames error:&streamError]) { [self end:24]; return; }
                 [self.stream startCaptureWithCompletionHandler:^(NSError *failure) {
                     if (failure) dispatch_async(dispatch_get_main_queue(), ^{
-                        if (generation == self.generation) [self end:captureFailure(failure)];
+                        if (generation == self.generation) [self end:captureFailure(failure, 24)];
                     });
                 }];
                 return;
             }
             if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22];
+        });
+    }];
+}
+- (void)lookForWindowSwitch {
+    CFTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (self.selecting || now < self.nextWindowProbe || !AXIsProcessTrusted()) return;
+    self.nextWindowProbe = now + 1;
+    NSDictionary *focused = self.target.focusedOwnedWindow;
+    CGWindowID window = [focused[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
+    if (!window || window == self.target.window) return;
+    self.selecting = YES;
+    NSUInteger generation = self.generation;
+    [SCShareableContent getShareableContentExcludingDesktopWindows:YES onScreenWindowsOnly:YES completionHandler:^(SCShareableContent *content, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!self.active || generation != self.generation) return;
+            self.selecting = NO;
+            if (!matchShareableWindow(content, focused) || !AXIsProcessTrusted() || !AppSessionActive()) return;
+            NSDictionary *current = self.target.focusedOwnedWindow;
+            if ([current[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == window &&
+                [current[(__bridge NSString *)kCGWindowOwnerPID] isEqual:focused[(__bridge NSString *)kCGWindowOwnerPID]]) {
+                // Retire the old input lease. A fresh watch selects this
+                // window and the viewer must paint its frame before control.
+                [self end:23];
+            }
         });
     }];
 }

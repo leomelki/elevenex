@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import type { BackendResult, TaskAppFrame } from '@elevenex/shared';
+import { APP_SHARING_STOPPED, type BackendResult, type TaskAppFrame } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { H264Decoder } from '../media/h264-decoder';
 import { AppStreamComponent } from './app-stream.component';
@@ -7,6 +7,7 @@ import { AppStreamComponent } from './app-stream.component';
 describe('App stream presentation', () => {
   afterEach(() => {
     TestBed.resetTestingModule();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -77,5 +78,65 @@ describe('App stream presentation', () => {
     element.querySelector<HTMLButtonElement>('.message button')!.click();
     await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(2));
     expect(watch.mock.calls[1]![3]).not.toBe(watch.mock.calls[0]![3]);
+  });
+
+  it.each(['App window changed. Reopen the stream.', 'App stream disconnected'])('recovers a bounded set of fresh views after %s', async reason => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let deliver!: (frame: TaskAppFrame) => void;
+    let closed!: (event: { scopeId: string; watchId: string; reason: string }) => void;
+    const watch = vi.fn<(scope: string, task: number, run: string, watch: string) => Promise<BackendResult<void>>>()
+      .mockResolvedValue({ ok: true, value: undefined });
+    const unwatch = vi.fn(async () => undefined);
+    const input = vi.fn(async () => undefined);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(H264Decoder.prototype, 'decode').mockResolvedValue({ displayWidth: 640, displayHeight: 480, close: vi.fn() } as unknown as VideoFrame);
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: {
+      taskAppWatch: watch, taskAppUnwatch: unwatch, taskAppInput: input,
+      onTaskAppFrame: (fn: typeof deliver) => { deliver = fn; },
+      onTaskAppClosed: (fn: typeof closed) => { closed = fn; },
+    } }] });
+    const fixture = TestBed.createComponent(AppStreamComponent);
+    for (const [name, value] of Object.entries({ scopeId: 'machine', taskId: 1, runId: 'app', name: 'Dev app' }))
+      fixture.componentRef.setInput(name, value);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const stream = fixture.componentInstance;
+    const paint = async (watchId: string) => {
+      deliver({ scopeId: 'machine', taskId: 1, runId: 'app', watchId, sequence: 1, width: 640, height: 480,
+        timestamp: 0, codec: 'avc1.42E02A', data: Uint8Array.of(1), key: true });
+      await Promise.resolve();
+    };
+
+    const watchId = () => watch.mock.lastCall![3];
+    await paint(watchId());
+    expect(stream.state()).toBe('live');
+    stream.focus();
+    for (const delay of [250, 750, 1500]) {
+      const stale = watchId();
+      closed({ scopeId: 'machine', watchId: stale, reason });
+      await paint(stale);
+      expect(stream.recovering()).toBe(true);
+      expect(stream.controlling()).toBe(false);
+      await vi.advanceTimersByTimeAsync(delay);
+      expect(watchId()).not.toBe(stale);
+      expect(unwatch).toHaveBeenCalledWith('machine', stale);
+      await paint(watchId());
+      expect(stream.state()).toBe('live');
+    }
+    closed({ scopeId: 'machine', watchId: watchId(), reason });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(watch).toHaveBeenCalledTimes(4);
+    expect(stream.state()).toBe('interrupted');
+    expect(input).not.toHaveBeenCalled();
+
+    await stream.start();
+    await paint(watchId());
+    closed({ scopeId: 'machine', watchId: watchId(), reason: APP_SHARING_STOPPED });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(watch).toHaveBeenCalledTimes(5);
+    expect(stream.problem()?.title).toBe('App sharing stopped');
+    await stream.start();
+    expect(watch).toHaveBeenCalledTimes(6);
   });
 });

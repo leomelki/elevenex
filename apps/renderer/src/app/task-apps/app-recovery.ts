@@ -1,4 +1,4 @@
-import { APP_INPUT_GUIDANCE, type BackendClientError } from '@elevenex/shared';
+import { APP_INPUT_GUIDANCE, APP_SHARING_STOPPED, type BackendClientError } from '@elevenex/shared';
 
 /**
  * Plain-language problems for the Apps panel: what happened, which machine is
@@ -173,6 +173,8 @@ export function streamProblem(reason: BackendClientError | string, name: string,
       return { title: 'No window to show yet', body: `${name} hasn't opened a visible window on ${host}. It may still be starting, or its window is minimized or closed. Check the logs, then reconnect.` };
     case 'App stream disconnected':
       return { title: 'The display disconnected', body: `The connection to ${name} on ${host} ended. The app may still be running. Reconnect to resume.` };
+    case APP_SHARING_STOPPED:
+      return { title: 'App sharing stopped', body: `${host} stopped sharing ${name}. Select Reconnect to request a new stream.` };
     case 'The host could not capture or encode the app window.':
       return { title: `${host} couldn't prepare the picture`, body: `${name} is still running. Resize its window on ${host}, then reconnect. If this repeats, update the engine on ${host}.` };
     case 'The video stream lost a frame.':
@@ -207,8 +209,8 @@ export function inputNotice(detail: string, place: AppPlace): InputNotice {
     next: 'You can keep watching. After you allow it, click the app to try again.',
   };
   if (detail.endsWith(APP_INPUT_GUIDANCE.foreground)) return {
-    message: APP_INPUT_GUIDANCE.foreground,
-    next: `Bring it to the front on ${host}, then click the app here again.`,
+    message: 'The shared app needs focus.',
+    next: `Click the preview to try again. If the app stays in the background, it may need to be brought forward on ${host}.`,
   };
   return { message: detail, next: '' };
 }

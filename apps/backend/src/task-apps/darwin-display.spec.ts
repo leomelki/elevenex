@@ -5,6 +5,7 @@ it.each([
   { flag: 20, issue: 'macos-session', disposition: 'permission' },
   { flag: 25, issue: 'macos-desktop-connection', disposition: 'permission' },
   { flag: 24, issue: undefined, disposition: 'capture-failed' },
+  { flag: 26, issue: undefined, disposition: 'capture-stopped' },
 ])('keeps coalesced frames and input receipts, and reports native failure $flag', async ({ flag, issue, disposition }) => {
   const commands: { id: number; kind: string }[] = [];
   const channel = new Duplex({

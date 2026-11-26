@@ -46,6 +46,11 @@ static BOOL windowRect(NSDictionary *row, CGRect *bounds) {
     return CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], bounds);
 }
 
+BOOL appWindowShareable(NSDictionary *row) {
+    NSInteger sharing = [row[(__bridge NSString *)kCGWindowSharingState] integerValue];
+    return sharing == kCGWindowSharingReadOnly || sharing == kCGWindowSharingReadWrite;
+}
+
 static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
     // macOS 26 places a 66×20 sharing control six points inside the
     // captured window's upper-left corner. WindowServer can report it as
@@ -56,7 +61,7 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
         fabs(surface.size.width - 66) <= 1 && fabs(surface.size.height - 20) <= 1;
 }
 
-static BOOL focusedWindowHasBounds(pid_t owner, CGRect bounds) {
+static BOOL readFocusedWindowBounds(pid_t owner, CGRect *bounds) {
     AXUIElementRef application = AXUIElementCreateApplication(owner);
     if (!application) return NO;
     CFTypeRef rawWindow = NULL;
@@ -74,13 +79,11 @@ static BOOL focusedWindowHasBounds(pid_t owner, CGRect bounds) {
     if (result == kAXErrorSuccess) result = AXUIElementCopyMultipleAttributeValues(window,
         (__bridge CFArrayRef)attributes, kAXCopyMultipleAttributeOptionStopOnError, &rawValues);
     NSArray *values = CFBridgingRelease(rawValues);
-    CGRect focused;
     return result == kAXErrorSuccess && values.count == 2 &&
         CFGetTypeID((__bridge CFTypeRef)values[0]) == AXValueGetTypeID() &&
         CFGetTypeID((__bridge CFTypeRef)values[1]) == AXValueGetTypeID() &&
-        AXValueGetValue((__bridge AXValueRef)values[0], kAXValueCGPointType, &focused.origin) &&
-        AXValueGetValue((__bridge AXValueRef)values[1], kAXValueCGSizeType, &focused.size) &&
-        CGRectEqualToRect(focused, bounds);
+        AXValueGetValue((__bridge AXValueRef)values[0], kAXValueCGPointType, &bounds->origin) &&
+        AXValueGetValue((__bridge AXValueRef)values[1], kAXValueCGSizeType, &bounds->size);
 }
 
 static CGMouseButton appMouseButton(NSInteger button) {
@@ -107,10 +110,29 @@ static CGMouseButton appMouseButton(NSInteger button) {
     }
     return nil;
 }
+- (NSDictionary *)focusedOwnedWindow {
+    pid_t owner = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+    CGRect focus;
+    if (!ownsAppProcess(self.group, owner) || !readFocusedWindowBounds(owner, &focus)) return nil;
+    if (focus.size.width < 16 || focus.size.height < 16) return nil;
+    CGWindowListOption options = kCGWindowListExcludeDesktopElements | kCGWindowListOptionOnScreenOnly;
+    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, kCGNullWindowID));
+    NSDictionary *match = nil;
+    for (NSDictionary *row in rows) {
+        if ([row[(__bridge NSString *)kCGWindowOwnerPID] intValue] != owner ||
+            [row[(__bridge NSString *)kCGWindowLayer] integerValue] != 0) continue;
+        CGRect bounds;
+        if (!windowRect(row, &bounds) || !CGRectEqualToRect(bounds, focus)) continue;
+        if (match) return nil;
+        match = row;
+    }
+    return appWindowShareable(match) ? match : nil;
+}
 - (BOOL)validateWindow:(NSDictionary *)row bounds:(CGRect *)bounds {
     return [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
         [row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] &&
         [row[(__bridge NSString *)kCGWindowOwnerPID] intValue] == self.owner &&
+        appWindowShareable(row) &&
         ownsAppProcess(self.group, self.owner) && windowRect(row, bounds) &&
         CGSizeEqualToSize(bounds->size, self.windowBounds.size);
 }
@@ -158,8 +180,10 @@ static CGMouseButton appMouseButton(NSInteger button) {
         }
         [occlusions addObject:[NSValue valueWithRect:NSRectFromCGRect(overlap)]];
     }
-    return verifyFocus && ambiguousFocus && !focusedWindowHasBounds(self.owner, *bounds)
-        ? AppInputWindowBlocked : AppInputAccepted;
+    CGRect focus;
+    if (verifyFocus && ambiguousFocus && (!readFocusedWindowBounds(self.owner, &focus) || !CGRectEqualToRect(focus, *bounds)))
+        return AppInputWindowBlocked;
+    return AppInputAccepted;
 }
 - (BOOL)isFrontmost {
     return self.owner > 1 && NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == self.owner;
@@ -273,6 +297,8 @@ static CGMouseButton appMouseButton(NSInteger button) {
     if (target != AppInputAccepted) { [self releaseInput]; return target; }
     if (!wasFrontmost || !self.frontmost) {
         [self releaseInput];
+        pid_t foreground = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+        if (foreground != self.owner && ownsAppProcess(self.group, foreground)) return AppInputWindowBlocked;
         if (![kind isEqual:@"down"] || button != 0) return AppInputNeedsForeground;
         if (![self inputPoint:NULL forInput:input bounds:bounds chrome:occlusions]) return AppInputUnavailable;
         // Activation can take until the next run-loop turn. Use this click

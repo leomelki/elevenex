@@ -36,8 +36,29 @@
     }
 }
 - (void)keyDown:(NSEvent *)event {
+    NSWindow *window = self.window;
+    if (event.keyCode == 53 && window.parentWindow) {
+        NSWindow *parent = window.parentWindow;
+        [parent removeChildWindow:window];
+        [window orderOut:nil];
+        [parent makeKeyAndOrderFront:nil];
+        puts("shareable-dialog-closed"); fflush(stdout);
+    }
     if ([event.characters isEqual:@"é"]) { puts("text-received"); fflush(stdout); }
     if ([event.charactersIgnoringModifiers isEqual:@"a"]) { puts("typed"); fflush(stdout); }
+    if ([event.charactersIgnoringModifiers isEqual:@"c"]) {
+        NSRect frame = window.frame;
+        NSWindow *dialog = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(frame)+50, NSMinY(frame)+60, 240, 160)
+            styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        dialog.title = @"Shareable task app test dialog";
+        dialog.sharingType = NSWindowSharingReadOnly;
+        dialog.animationBehavior = NSWindowAnimationBehaviorNone;
+        dialog.contentView = [[TaskAppTestView alloc] initWithFrame:dialog.contentView.frame];
+        [window addChildWindow:dialog ordered:NSWindowAbove];
+        [dialog makeKeyAndOrderFront:nil];
+        [dialog makeFirstResponder:dialog.contentView];
+        puts("shareable-dialog-open"); fflush(stdout);
+    }
     if ([event.charactersIgnoringModifiers isEqual:@"b"]) {
         NSWindow *parent = self.window;
         NSWindow *dialog = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 280, 150)

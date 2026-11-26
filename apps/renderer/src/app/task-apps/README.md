@@ -123,9 +123,12 @@ machine reported.
   offers a retry after reconnecting/updating the engine.
 - **Displays** map the host's known ending reasons and the desktop's refusal
   codes to a title, a cause and **Reconnect**. An unknown host reason is shown
-  verbatim. Input failures keep `APP_INPUT_GUIDANCE` text exact, matched by
-  suffix because Electron prefixes IPC errors, and add what still works and what
-  to do next.
+  verbatim. Input failures match `APP_INPUT_GUIDANCE` by suffix because Electron
+  prefixes IPC errors. A focus failure offers a retry in the preview first.
+  Window changes and transient interruptions of a previously working viewer
+  get up to three fresh attachments. Input stays released until the viewer has
+  painted a new frame and the user takes control again. An intentional sharing
+  stop leaves **Reconnect** as the explicit action.
 
   Host capture/encoding failure (stream close code 4004) keeps the app running
   and explains that the picture could not be prepared, with resize/reconnect

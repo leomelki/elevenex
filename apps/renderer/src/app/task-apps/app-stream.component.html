@@ -4,7 +4,7 @@
     (pointerdown)="pointer($event, 'down')" (pointermove)="pointer($event, 'move')" (pointerup)="pointer($event, 'up')"
     (lostpointercapture)="pointerLost()" (pointercancel)="pointerLost()" (wheel)="wheel($event)" (contextmenu)="$event.preventDefault()"></canvas>
   @if (state() === 'connecting') {
-    <div class="message" role="status">Connecting to {{ name() }}'s display…</div>
+    <div class="message" role="status">{{ recovering() ? 'Reconnecting to' : 'Connecting to' }} {{ name() }}'s display…</div>
   } @else if (problem(); as problem) {
     <div class="message" role="status">
       <strong>{{ problem.title }}</strong>
