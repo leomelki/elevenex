@@ -662,6 +662,7 @@ test('commit preview is scoped, bounded and validated; optional-message commits 
     ['commit-changes-moved', 'Refresh files'],
     ['commit-saved-push-failed', 'commit was saved'],
     ['commit-index-locked', 'Another Git operation'],
+    ['commit-no-changes', 'selected files have no changes Git can commit'],
     ['commit-rejected', 'commit hooks'],
     ['untrusted-server-code', 'conflicts with the current workspace'],
   ]) {

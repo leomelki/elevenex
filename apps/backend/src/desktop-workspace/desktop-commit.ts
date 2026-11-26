@@ -15,7 +15,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { worktreeSimpleGit } from '../config/system-paths.js';
-import type { GitService, GitStatusSummary } from '../git/git.service.js';
+import {
+  NoStagedChangesException,
+  type GitService,
+  type GitStatusSummary,
+} from '../git/git.service.js';
+import { chunkedVerbatimPathspecs } from '../git/git-pathspec.js';
 import type { AgentProviderId } from '../agent-runtime/agent-runtime.types.js';
 import {
   selectedPaths,
@@ -75,17 +80,12 @@ export async function commitSnapshot(
     const included = status.files
       .filter((file) => selectedSet.has(file.path))
       .flatMap((file) => [file.path, ...(file.oldPath ? [file.oldPath] : [])]);
-    for (let at = 0; at < excluded.length; at += 100)
-      await snapshot.raw([
-        'reset',
-        '--quiet',
-        head,
-        '--',
-        ...excluded.slice(at, at + 100),
-      ]);
+    // Bound both the Git command line and concurrent filesystem lookups.
+    const includedBatches = chunkedVerbatimPathspecs(included, 100);
+    for (const batch of chunkedVerbatimPathspecs(excluded, 100))
+      await snapshot.raw(['reset', '--quiet', head, '--', ...batch]);
     if (selection.includeUnstaged) {
-      for (let at = 0; at < included.length; at += 100) {
-        const batch = included.slice(at, at + 100);
+      for (const batch of includedBatches) {
         const tracked = new Set(
           (
             await snapshot.raw(['ls-files', '--cached', '-z', '--', ...batch])
@@ -160,14 +160,8 @@ export async function commitSnapshot(
     const keep = worktreeSimpleGit(path)
       .env('GIT_INDEX_FILE', preserved)
       .env('GIT_LITERAL_PATHSPECS', '1');
-    for (let at = 0; at < included.length; at += 100)
-      await keep.raw([
-        'reset',
-        '--quiet',
-        'HEAD',
-        '--',
-        ...included.slice(at, at + 100),
-      ]);
+    for (const batch of includedBatches)
+      await keep.raw(['reset', '--quiet', 'HEAD', '--', ...batch]);
     await lock!.writeFile(await readFile(preserved));
     await lock!.close();
     lock = undefined;
@@ -182,6 +176,11 @@ export async function commitSnapshot(
         'The commit was saved but index reconciliation failed. Refresh status before continuing.',
       );
     if (guardError) throw guardError;
+    if (error instanceof NoStagedChangesException)
+      throw new ConflictException({
+        code: 'commit-no-changes',
+        message: 'The selected files have no changes Git can commit.',
+      });
     // The legacy commit service wraps pre-publication exceptions. Preserve our
     // classified guards, and keep raw hook/provider output private to the backend.
     if (

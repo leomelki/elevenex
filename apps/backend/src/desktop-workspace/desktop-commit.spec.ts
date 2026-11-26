@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Test } from '@nestjs/testing';
@@ -157,6 +157,62 @@ describe('desktop commit snapshot', () => {
     expect(await git('show', 'HEAD:work.txt')).toBe('staged\n');
     expect(await readFile(join(path, 'work.txt'), 'utf8')).toBe('unstaged\n');
     expect(await git('diff', '--cached')).toBe('');
+  });
+
+  it.each([true, false])(
+    'commits long paths that exceed one Windows command line (includeUnstaged=%s)',
+    async (includeUnstaged) => {
+      await git('config', 'core.longpaths', 'true');
+      const folder = ['a'.repeat(115), 'b'.repeat(115), 'c'.repeat(115)].join(
+        '/',
+      );
+      await mkdir(join(path, folder), { recursive: true });
+      const files = Array.from(
+        { length: 100 },
+        (_, index) => `${folder}/file [${index}].txt`,
+      );
+      await Promise.all(
+        files.map((file) => writeFile(join(path, file), 'chosen\n')),
+      );
+      if (!includeUnstaged) await git('add', '--all');
+
+      await commitSnapshot(
+        path,
+        service,
+        await service.getStatusSummary(path),
+        { ...selection, includeUnstaged },
+        'Save long paths',
+        () => {},
+      );
+
+      const changed = await git(
+        'diff-tree',
+        '--no-commit-id',
+        '--name-only',
+        '-r',
+        '-z',
+        'HEAD',
+      );
+      expect(changed.split('\0').filter(Boolean).sort()).toEqual(files.sort());
+      expect(await git('status', '--porcelain')).toBe('');
+    },
+  );
+
+  it('reports that Git normalization left no selected changes to commit', async () => {
+    await git('config', 'core.autocrlf', 'true');
+    await writeFile(join(path, 'work.txt'), 'original\r\n');
+    const status = await service.getStatusSummary(path);
+    expect(status.files).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: 'work.txt' })]),
+    );
+    const head = await git('rev-parse', 'HEAD');
+
+    await expect(
+      commitSnapshot(path, service, status, selection, 'Save', () => {}),
+    ).rejects.toMatchObject({ response: { code: 'commit-no-changes' } });
+    expect(await git('rev-parse', 'HEAD')).toBe(head);
+    expect(await git('diff', '--cached')).toBe('');
+    expect(await readFile(join(path, 'work.txt'), 'utf8')).toBe('original\r\n');
   });
 
   it('commits unstaged changes while the live index status cache is warm', async () => {

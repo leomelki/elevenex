@@ -150,6 +150,16 @@ export interface CommitResult {
   generatedMessage: boolean;
 }
 
+export class NoStagedChangesException extends BadRequestException {
+  constructor(includeUnstaged: boolean) {
+    super(
+      includeUnstaged
+        ? 'No changes are available to commit.'
+        : 'No staged changes are available to commit.',
+    );
+  }
+}
+
 @Injectable()
 export class GitService {
   private readonly unregisterCache = registerWorktreeCache(this);
@@ -499,11 +509,7 @@ export class GitService {
         this.logger.warn(
           `[commit:${requestId}] aborting: no commit candidates after status check includeUnstaged=${Boolean(options.includeUnstaged)}`,
         );
-        throw new BadRequestException(
-          options.includeUnstaged
-            ? 'No changes are available to commit.'
-            : 'No staged changes are available to commit.',
-        );
+        throw new NoStagedChangesException(Boolean(options.includeUnstaged));
       }
 
       let message = options.message?.trim() ?? '';

@@ -537,6 +537,7 @@ export function registerWorkspaceIpc(
         'commit-conflicts': 'Resolve the merge conflicts before committing.',
         'commit-index-locked': 'Another Git operation is using this workspace. Wait for it to finish, then try again.',
         'commit-message-failed': 'Elevenex could not write a commit message. Enter a message above and try again.',
+        'commit-no-changes': 'The selected files have no changes Git can commit. Refresh the file list and review your selection.',
         'commit-rejected': 'Git rejected the commit. Check your Git name/email, commit hooks and signing setup, then try again.',
         'commit-saved-push-failed': 'Your commit was saved, but the push failed. Refresh status, then use Push to try again.',
         'git-push-authentication': 'Push failed because Git could not authenticate. Check Git credentials on this machine. For an SSH machine, unlock your local SSH key and reconnect with agent forwarding available. Your commits are still saved locally.',

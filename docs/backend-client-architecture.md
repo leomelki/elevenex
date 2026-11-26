@@ -567,11 +567,13 @@ inside the same task retains its pending Git operation and panel provider.
 This token is a cache validator,
 not a replacement for commit authorization or the frozen-index revision.
 Known commit conflicts carry allowlisted codes for moved selections, unresolved
-conflicts, index contention, message-generation failure, Git rejection and a saved
-commit whose push failed. Main maps these to fixed recovery instructions; raw
-provider/hook output stays private. Saved-commit reconciliation failures retain
-the unknown-outcome policy. Snapshot Git operations preserve the augmented
-workspace environment so hooks use the configured tools.
+conflicts, index contention, message-generation failure, selections that leave no
+staged changes, Git rejection and a saved commit whose push failed. Main maps
+these to fixed recovery instructions. Raw provider and hook output stays private.
+Saved-commit reconciliation failures retain the unknown-outcome policy.
+Snapshot Git operations preserve the augmented workspace environment so hooks
+use the configured tools. Snapshot staging and reconciliation batch paths
+within the Git command-line budget, including on Windows.
 The existing git status operation may carry an optional commit phase; the feature
 polls it only during its pending commit, with selection/epoch/cleanup guards.
 

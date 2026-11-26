@@ -58,8 +58,8 @@ describe('withDefaultPathspecParsing', () => {
   beforeEach(() => {
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pathspec-'));
     execFileSync('git', ['init', '-q'], { cwd: repo });
-    fs.writeFileSync(path.join(repo, 'a*b.txt'), 'x\n');
-    fs.writeFileSync(path.join(repo, 'aXb.txt'), 'x\n');
+    fs.writeFileSync(path.join(repo, 'a[xy]b.txt'), 'x\n');
+    fs.writeFileSync(path.join(repo, 'axb.txt'), 'x\n');
   });
 
   afterEach(() => {
@@ -74,9 +74,9 @@ describe('withDefaultPathspecParsing', () => {
     const output = await git.raw([
       'ls-files',
       '--others',
-      ...literalPathspecArgs(['a*b.txt'])!,
+      ...literalPathspecArgs(['a[xy]b.txt'])!,
     ]);
-    expect(output.trim().split('\n')).toEqual(['a*b.txt']);
+    expect(output.trim().split('\n')).toEqual(['a[xy]b.txt']);
   });
 });
 

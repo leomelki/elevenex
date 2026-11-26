@@ -60,22 +60,44 @@ function boundedPathspecArgs(
 export function chunkedLiteralPathspecArgs(
   paths: Iterable<string>,
 ): string[][] {
+  return chunkedPathspecs(paths, ':(top,literal)').map((chunk) => [
+    '--',
+    ...chunk,
+  ]);
+}
+
+/** Batches raw paths for callers using GIT_LITERAL_PATHSPECS=1. */
+export function chunkedVerbatimPathspecs(
+  paths: Iterable<string>,
+  maxPaths: number,
+): string[][] {
+  return chunkedPathspecs(paths, '', maxPaths);
+}
+
+function chunkedPathspecs(
+  paths: Iterable<string>,
+  prefix: string,
+  maxPaths = Infinity,
+): string[][] {
   const chunks: string[][] = [];
   let current: string[] = [];
   let bytes = 0;
   for (const filePath of new Set(paths)) {
     if (!filePath) continue;
-    const arg = `:(top,literal)${filePath}`;
+    const arg = `${prefix}${filePath}`;
     const size = Buffer.byteLength(arg) + 1;
-    if (current.length > 0 && bytes + size > MAX_PATHSPEC_BYTES) {
-      chunks.push(['--', ...current]);
+    if (
+      current.length >= maxPaths ||
+      (current.length > 0 && bytes + size > MAX_PATHSPEC_BYTES)
+    ) {
+      chunks.push(current);
       current = [];
       bytes = 0;
     }
     current.push(arg);
     bytes += size;
   }
-  if (current.length > 0) chunks.push(['--', ...current]);
+  if (current.length > 0) chunks.push(current);
   return chunks;
 }
 
