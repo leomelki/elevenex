@@ -85,7 +85,11 @@ $box.BackColor = [System.Drawing.Color]::FromArgb(15,45,200)
 $form.Controls.Add($box)
 $resize = New-Object System.Windows.Forms.Timer
 $resize.Interval = 150
-$resize.Add_Tick({ $resize.Stop(); $form.Width += 120 })
+$resize.Add_Tick({
+  $resize.Stop()
+  $form.Width += 120
+  [Console]::WriteLine("resized")
+})
 $box.Add_TextChanged({
   [Console]::WriteLine("Text="+$box.Text)
   if ($box.Text -eq 'stream-ok!') { $resize.Start() }
@@ -116,7 +120,10 @@ $form.Add_Shown({ $box.Focus(); [Console]::WriteLine("mapped") })
       if(sample.status===0 && sample.stdout.length===3 && sample.stdout[2] > sample.stdout[0] + 35) frame=f;
     },end:(reason, ended)=>{failure=reason;disposition=ended;}});
     try {
-      await until(()=>{if(failure)throw new Error(failure);return !!frame;});
+      await until(() => {
+        if (failure) throw new Error(`Capture ended before the first decoded WinForms frame (${disposition ?? 'unknown'}): ${failure}`);
+        return !!frame;
+      });
       app.acquireInput(1,state.runId,'fixture');
       const point={x:Math.floor(frame.width/2),y:Math.floor(frame.height/2),button:0};
       await app.input(1,state.runId,'fixture',{kind:'down',...point});
@@ -128,14 +135,18 @@ $form.Add_Shown({ $box.Focus(); [Console]::WriteLine("mapped") })
       await app.input(1,state.runId,'fixture',{kind:'text',text:'!'});
       await until(()=>!!failure);
       assert.equal(disposition, 'window-changed', 'Resizing retires the old geometry and input lease.');
+      await until(() => app.output(1, state.runId).includes('resized'));
     } finally {stop();}
-    let replacement;
+    let replacement, replacementFailure;
     const detach=app.watch(1,state.runId,{
       frame: value => { if(value.key) replacement=value; },
-      end: () => {},
+      end: (reason, ended) => { replacementFailure = `Capture ended after reattachment (${ended ?? 'unknown'}): ${reason}`; },
     });
     try {
-      await until(()=>!!replacement);
+      await until(() => {
+        if (replacementFailure) throw new Error(replacementFailure);
+        return !!replacement;
+      });
       assert.ok(replacement.width > frame.width, 'Reattachment starts at the resized surface.');
     } finally { detach(); }
   } finally {await app.onModuleDestroy();}

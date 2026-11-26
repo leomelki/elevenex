@@ -120,9 +120,18 @@ jobs:
           security unlock-keychain -p "$password" "$keychain"
           security import "$certificate" -k "$keychain" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign > /dev/null
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
-          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
-          test -n "$identity" || { echo "Developer ID Application certificate is missing"; exit 1; }
-          [[ "$identity" == *"($APPLE_TEAM_ID)" ]] || { echo "Developer ID team does not match APPLE_TEAM_ID"; exit 1; }
+          # codesign uses the user search list to resolve the certificate chain,
+          # even when the signing keychain is supplied explicitly.
+          keychain_paths="$(security list-keychains -d user)"
+          existing_keychains=()
+          while IFS='"' read -r _ existing _; do
+            [[ -z "$existing" || "$existing" == "$keychain" ]] || existing_keychains+=("$existing")
+          done <<< "$keychain_paths"
+          security list-keychains -d user -s "$keychain" "${existing_keychains[@]}"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -v team="$APPLE_TEAM_ID" '
+            /"Developer ID Application:/ && index($0, "(" team ")\"") && !found { print $2; found=1 }
+          ')"
+          [[ "$identity" =~ ^[0-9A-F]{40}$ ]] || { echo "Missing valid Developer ID Application certificate for APPLE_TEAM_ID"; exit 1; }
           xcrun notarytool store-credentials elevenex-agent-runtime --keychain "$keychain" \
             --apple-id "$APPLE_ID_EMAIL" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID"
           echo "ELEVENEX_APP_DISPLAY_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"

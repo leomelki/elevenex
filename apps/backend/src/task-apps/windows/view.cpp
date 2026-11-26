@@ -11,19 +11,72 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
 namespace apphost {
 using namespace winrt;
 using namespace winrt::Windows::Graphics::Capture;
 using namespace winrt::Windows::Graphics::DirectX;
+using winrt::Windows::Graphics::SizeInt32;
 using winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 using DeviceAccess = ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess;
 
-static RECT windowBounds(HWND window) {
+struct WindowGeometry { RECT bounds; UINT dpi; };
+
+static WindowGeometry windowGeometry(HWND window) {
     RECT bounds{};
     require(SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))),
             "App geometry unavailable");
-    return bounds;
+    return {bounds, GetDpiForWindow(window)};
+}
+
+static bool sameExtent(const WindowGeometry& a, const WindowGeometry& b) {
+    return a.bounds.right - a.bounds.left == b.bounds.right - b.bounds.left &&
+           a.bounds.bottom - a.bounds.top == b.bounds.bottom - b.bounds.top && a.dpi == b.dpi;
+}
+
+static bool sameSize(SizeInt32 left, SizeInt32 right) {
+    return left.Width == right.Width && left.Height == right.Height;
+}
+
+static void requireCaptureSize(SizeInt32 size) {
+    require(size.Width > 1 && size.Height > 1 && size.Width <= 8192 && size.Height <= 8192 &&
+        static_cast<long long>(size.Width) * size.Height <= 16777216, "App window exceeds capture limits");
+}
+
+static Direct3D11CaptureFrame latestCaptureFrame(const Direct3D11CaptureFramePool& pool) {
+    auto frame = pool.TryGetNextFrame();
+    // The pool holds two frames. Discard a superseded surface before readback.
+    if (frame) {
+        if (auto latest = pool.TryGetNextFrame()) return latest;
+    }
+    return frame;
+}
+
+static Direct3D11CaptureFrame firstCaptureFrame(const Direct3D11CaptureFramePool& pool,
+    const IDirect3DDevice& device, HANDLE job, HWND window, SizeInt32& size, WindowGeometry& geometry) {
+    const auto deadline = GetTickCount64() + 10'000;
+    while (GetTickCount64() < deadline) {
+        if (!interactive()) throw DisplayError(20, "Sign in and unlock the intended Windows session");
+        if (!owned(job, window) || !IsWindowVisible(window) || !IsWindowEnabled(window) || IsIconic(window))
+            throw DisplayError(22, "Waiting for an owned app window; retry when the app is visible");
+        if (auto frame = latestCaptureFrame(pool)) {
+            const auto currentGeometry = windowGeometry(window);
+            const auto measured = frame.ContentSize();
+            if (measured.Width > 1 && measured.Height > 1) {
+                if (sameSize(measured, size) && sameExtent(geometry, currentGeometry)) return frame;
+                // The window can settle at a different size while the capture
+                // session starts. Configure the encoder from a complete frame.
+                requireCaptureSize(measured);
+                frame.Close();
+                pool.Recreate(device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, measured);
+                size = measured;
+                geometry = currentGeometry;
+            }
+        }
+        Sleep(5);
+    }
+    throw std::runtime_error("Windows Graphics Capture did not produce an initial app frame");
 }
 
 bool captureSupported() {
@@ -88,13 +141,13 @@ int view(const std::wstring& id, const std::wstring& pipeId) {
     GraphicsCaptureItem item{nullptr};
     check_hresult(interop->CreateForWindow(target.window,winrt::guid_of<GraphicsCaptureItem>(),winrt::put_abi(item)));
     auto size=item.Size();
-    const RECT initialBounds = windowBounds(target.window);
-    const UINT initialDpi = GetDpiForWindow(target.window);
-    require(size.Width>1 && size.Height>1 && size.Width<=8192 && size.Height<=8192 &&
-        static_cast<long long>(size.Width)*size.Height<=16777216,"App window exceeds capture limits");
-    auto pool=Direct3D11CaptureFramePool::CreateFreeThreaded(surfaceDevice.as<IDirect3DDevice>(),
-        DirectXPixelFormat::B8G8R8A8UIntNormalized,2,size);
+    requireCaptureSize(size);
+    const auto device = surfaceDevice.as<IDirect3DDevice>();
+    auto pool=Direct3D11CaptureFramePool::CreateFreeThreaded(device, DirectXPixelFormat::B8G8R8A8UIntNormalized,2,size);
     auto session=pool.CreateCaptureSession(item);
+    auto initialGeometry = windowGeometry(target.window);
+    session.StartCapture();
+    auto firstFrame = firstCaptureFrame(pool, device, job.get(), target.window, size, initialGeometry);
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width=size.Width; desc.Height=size.Height; desc.MipLevels=1; desc.ArraySize=1;
     desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM; desc.SampleDesc.Count=1;
@@ -113,7 +166,6 @@ int view(const std::wstring& id, const std::wstring& pipeId) {
     require(video.get()!=INVALID_HANDLE_VALUE, "Could not open private encoder pipe");
     std::cout<<"ready "<<size.Width<<" "<<size.Height<<std::endl;
     require(ConnectNamedPipe(video.get(),nullptr) || GetLastError()==ERROR_PIPE_CONNECTED, "Could not connect the app encoder");
-    session.StartCapture();
     WindowInput input(job.get(),target.window,size.Width,size.Height);
     std::string controls;
     std::vector<BYTE> pixels(static_cast<size_t>(size.Width)*size.Height*4);
@@ -125,23 +177,18 @@ int view(const std::wstring& id, const std::wstring& pipeId) {
         if (foreground && foreground != target.window && IsWindowVisible(foreground)
             && IsWindowEnabled(foreground) && owned(job.get(), foreground))
             throw DisplayError(23,"Another owned app window became active");
-        const RECT bounds = windowBounds(target.window);
+        const auto geometry = windowGeometry(target.window);
         // Geometry changes before FrameArrived. An input event from the last
         // painted frame must never be scaled to the newly resized window.
-        if (bounds.right - bounds.left != initialBounds.right - initialBounds.left ||
-            bounds.bottom - bounds.top != initialBounds.bottom - initialBounds.top ||
-            GetDpiForWindow(target.window) != initialDpi)
+        if (!sameExtent(geometry, initialGeometry))
             throw DisplayError(23, "App window resized");
-        if (!readControls(controls,input,bounds)) break;
+        if (haveFrame && !readControls(controls,input,geometry.bounds)) break;
         const auto now=GetTickCount64();
         if (now-last < 33) { Sleep(5); continue; }
-        auto frame=pool.TryGetNextFrame();
+        auto frame=firstFrame ? std::exchange(firstFrame, nullptr) : latestCaptureFrame(pool);
         if (!frame && (!haveFrame || now - last < 1000)) {Sleep(5); continue;}
         if (frame) {
-            // Discard a superseded surface before copying it to host memory.
-            if (auto latest=pool.TryGetNextFrame()) frame=latest;
-            auto dimensions=frame.ContentSize();
-            if (dimensions.Width!=size.Width || dimensions.Height!=size.Height) throw DisplayError(23,"App window resized");
+            if (!sameSize(frame.ContentSize(), size)) throw DisplayError(23,"App capture frame size changed");
             auto access=frame.Surface().as<DeviceAccess>();
             com_ptr<ID3D11Texture2D> texture;
             check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D),texture.put_void()));
