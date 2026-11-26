@@ -62,7 +62,9 @@ static uint8_t captureFailure(NSError *error) {
     if (self.stream) {
         CGRect bounds;
         if (![self.target currentBounds:&bounds]) { [self end:23]; return; }
-        if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner) [self.target releaseInput];
+        CGRect inputBounds;
+        if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner ||
+            ![self.target currentInputBounds:&inputBounds]) [self.target releaseInput];
         // Capture the owner on the main queue. A queued refresh can run after
         // the view has been closed or a replacement encoder has been created.
         AppEncoder *currentEncoder = self.encoder;
@@ -71,7 +73,6 @@ static uint8_t captureFailure(NSError *error) {
     }
     NSDictionary *row = self.target.firstOwnedWindow;
     if (!row) { if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22]; return; }
-    CGWindowID selected = [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
     if (self.selecting) return;
     self.selecting = YES;
     NSUInteger generation = self.generation;
@@ -80,9 +81,19 @@ static uint8_t captureFailure(NSError *error) {
             if (!self.active || generation != self.generation) return;
             self.selecting = NO;
             if (!content) { [self end:captureFailure(error)]; return; }
-            for (SCWindow *window in content.windows) {
+            // Prefer the primary owned picture over small AppKit control windows.
+            // Retain that choice until it closes, hides or changes size.
+            SCWindow *primary = nil;
+            for (SCWindow *candidate in content.windows) {
+                if (candidate.frame.size.width < 16 || candidate.frame.size.height < 16 || candidate.windowLayer != 0 || !ownsAppProcess(self.target.group, candidate.owningApplication.processID)) continue;
+                if (!primary || candidate.frame.size.width * candidate.frame.size.height > primary.frame.size.width * primary.frame.size.height) primary = candidate;
+            }
+            if (primary) {
+                SCWindow *window = primary;
                 pid_t owner = window.owningApplication.processID;
-                if (window.windowID != selected || !ownsAppProcess(self.target.group, owner)) continue;
+                CGWindowID selected = window.windowID;
+                NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, selected));
+                NSDictionary *row = rows.firstObject;
                 CGRect windowBounds;
                 if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], &windowBounds)) { [self end:23]; return; }
                 self.target.window = selected;

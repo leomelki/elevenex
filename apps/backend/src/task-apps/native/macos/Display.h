@@ -22,8 +22,10 @@ void displayReceipt(uint32_t id, uint8_t flag);
 @property(nonatomic) size_t height;
 // WindowServer ordering is consulted for selection and each input boundary.
 - (NSDictionary *)firstOwnedWindow;
-// Revalidate the selected foreground window and its original WindowServer size.
+// Revalidate the selected capture window and its original WindowServer size.
 - (BOOL)currentBounds:(CGRect *)bounds;
+// Input additionally requires the selected window to lead the owned window order.
+- (BOOL)currentInputBounds:(CGRect *)bounds;
 - (BOOL)input:(NSDictionary *)input;
 - (void)releaseInput;
 @end

@@ -124,7 +124,7 @@ async function setupPreview(directory, bundle, output) {
   }, null, 2) + '\n');
 }
 
-async function interactive(directory, helperPath) {
+async function interactive(directory, helperPath, control = true) {
   // Use the installed helper whose privacy permissions the host user actually granted.
   const { DarwinAppDisplay } = require('../apps/backend/dist/task-apps/darwin-display.js');
   execFileSync(helperPath, ['--check'], { timeout: 3000 });
@@ -164,6 +164,10 @@ async function interactive(directory, helperPath) {
       ]);
       if (failure) throw failure;
       assert.ok(frames >= 2, 'A static app must keep producing refresh frames');
+      if (!control) {
+        console.log(`Native live capture: ${frames} frames across multiple window-monitor ticks`);
+        return;
+      }
       const point = { x: Math.floor(frame.width / 2), y: Math.floor(frame.height / 2), button: 0 };
       for (const event of [{ kind: 'down', ...point }, { kind: 'up', ...point },
         { kind: 'key', code: 'KeyA', down: true }, { kind: 'key', code: 'KeyA', down: false }]) await display.input(event);
@@ -178,9 +182,9 @@ async function interactive(directory, helperPath) {
 async function main() {
   const dir = mkdtempSync(join(tmpdir(), 'elevenex-app-display-test-'));
   try {
-    if (process.argv[2] === '--interactive') {
+    if (process.argv[2] === '--interactive' || process.argv[2] === '--capture-only') {
       if (!process.argv[3]) throw new Error('Specify the installed Elevenex Agent.app/Contents/MacOS/Elevenex Agent executable');
-      await interactive(dir, resolve(process.argv[3]));
+      await interactive(dir, resolve(process.argv[3]), process.argv[2] === '--interactive');
       return;
     }
     const { bundle, executable } = await buildMacAppDisplay({ binDirectory: dir });

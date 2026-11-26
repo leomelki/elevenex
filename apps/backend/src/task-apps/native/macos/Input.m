@@ -66,10 +66,22 @@ static NSDictionary *physicalKeys(void) {
     return nil;
 }
 - (BOOL)currentBounds:(CGRect *)bounds {
-    NSDictionary *current = self.firstOwnedWindow;
-    return current && [current[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
-        CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)current[(__bridge NSString *)kCGWindowBounds], bounds) &&
-        CGSizeEqualToSize(bounds->size, self.windowBounds.size);
+    // Capture is tied to its selected window, independently of occluding app
+    // windows or AppKit's separate title-bar control windows.
+    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow | kCGWindowListExcludeDesktopElements, self.window));
+    for (NSDictionary *row in rows) {
+        if ([row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != self.window ||
+            ![row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] ||
+            !ownsAppProcess(self.group, [row[(__bridge NSString *)kCGWindowOwnerPID] intValue])) continue;
+        return CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], bounds) &&
+            CGSizeEqualToSize(bounds->size, self.windowBounds.size);
+    }
+    return NO;
+}
+- (BOOL)currentInputBounds:(CGRect *)bounds {
+    NSDictionary *front = self.firstOwnedWindow;
+    return front && [front[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
+        [self currentBounds:bounds];
 }
 - (CGEventFlags)flags {
     CGEventFlags flags = 0;
@@ -114,7 +126,7 @@ static NSDictionary *physicalKeys(void) {
     if (!AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess() || !AppSessionActive() ||
         NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.owner) { [self releaseInput]; return NO; }
     CGRect bounds;
-    if (![self currentBounds:&bounds]) { [self releaseInput]; return NO; }
+    if (![self currentInputBounds:&bounds]) { [self releaseInput]; return NO; }
     if ([kind isEqual:@"key"]) {
         NSNumber *key = physicalKeys()[input[@"code"]];
         if (!key) return NO;

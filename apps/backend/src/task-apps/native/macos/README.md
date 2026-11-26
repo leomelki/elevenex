@@ -97,6 +97,15 @@ Window change detection compares WindowServer frames with their original
 WindowServer measurement. ScreenCaptureKit can omit the window border, so its
 picture bounds are kept separately for capture sizing and input coordinates.
 Moving a window preserves that inset; resizing still requires a fresh stream.
+Capture initially selects the largest visible owned layer-zero window, then
+validates that specific window's visibility, ownership and size. A separate
+native control window (including AppKit's 66×20 title-bar controls) or another
+overlapping window must not continually restart the stream. Desktop-independent
+capture does not require moving unrelated apps out of the way. Input has a
+separate, stricter boundary: the selected window must still lead owned window
+ordering and its process must be foreground. An owned dialog can therefore
+block control while the primary picture stays visible; dismiss it on the host
+before controlling the primary window again.
 The supervisor registers the private rendezvous before starting its monitor,
 so even a fast-exiting app cleans it up. No persistent launch agent, additional
 OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
@@ -190,6 +199,10 @@ testing input; receiving just its first keyframe does not establish stability.
 ```sh
 node scripts/test-task-app-macos.cjs --interactive "/path/to/installed/backend/bin/Elevenex Agent.app/Contents/MacOS/Elevenex Agent"
 ```
+
+Use `--capture-only` with the same installed helper path to verify sustained
+real ScreenCaptureKit video without an Accessibility grant or input injection.
+It still requires Screen Recording and a signed-in, unlocked graphical session.
 
 Keyboard layout, system dialogs, and multiple displays need separate graphical testing. For local release validation, set `ELEVENEX_APP_DISPLAY_SIGN_IDENTITY`, `ELEVENEX_APP_DISPLAY_KEYCHAIN` and `ELEVENEX_APP_DISPLAY_NOTARY_PROFILE`. Set `ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING=1` to enforce both signing and notarization, as public CI does.
 

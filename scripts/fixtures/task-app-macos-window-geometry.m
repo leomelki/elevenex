@@ -47,7 +47,8 @@ int main(void) {
             styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         sheet.animationBehavior = NSWindowAnimationBehaviorNone;
         [sheet orderFrontRegardless];
-        waitFor(^BOOL{ return ![target currentBounds:&current]; }, @"A new owned window above the selection must invalidate input");
+        waitFor(^BOOL{ return ![target currentInputBounds:&current]; }, @"A new owned window above the selection must invalidate input");
+        check([target currentBounds:&current], @"A covering owned window must not interrupt capture");
         [sheet orderOut:nil];
         waitFor(^BOOL{ return [target currentBounds:&current]; }, @"Closing the covering window must restore selection");
         target.group = 1;
