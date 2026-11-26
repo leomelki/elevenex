@@ -79,6 +79,20 @@ test('development never transfers another target, a stale build or modified byte
   await assert.rejects(options.archive(root, release, controller.signal, () => {}), /abort/i);
 });
 
+test('an archive the installer rejects stops recovery with rebuild guidance', async t => {
+  const { root, directory, release, options } = await setup(t);
+  const bytes = archive([{ name: 'backend/bin/helper', type: '2' }]);
+  await writeFile(join(directory, release.archiveName), bytes);
+  await writeFile(join(directory, 'remote-archive.json'), JSON.stringify({ version, target: release.target, digest: createHash('sha256').update(bytes).digest('hex') }));
+  await assert.rejects(options.archive(root, release, new AbortController().signal, () => {}), error => {
+    assert.equal(error.failure.transient, false);
+    assert.equal(error.failure.stage, 'installation');
+    assert.match(error.failure.message, /links or special files.*restart pnpm desktop:dev/);
+    return true;
+  });
+  assert.deepEqual(await readdir(root), ['build']);
+});
+
 test('a Mac development launcher can provide a Linux ARM64 archive using the detected server target', async t => {
   const { root, directory, options } = await setup(t);
   const release = backendRelease({ version, tag: `runtime-${version}` }, 'linux', 'arm64');

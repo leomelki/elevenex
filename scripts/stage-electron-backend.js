@@ -342,12 +342,10 @@ async function main() {
   );
   // Portable Linux archives can be assembled from a Mac/Windows checkout.
   // Copy only the native helper built for the target that owns this stage.
-  const appDisplay = process.platform === "darwin" ? "task-app-macos"
-    : process.platform === "win32" ? "task-app-windows.exe" : undefined;
-  if (appDisplay) copyRequiredPath(
-    path.join(backendBundleRoot, "bin", appDisplay),
-    path.join(stageBackendRoot, "bin", appDisplay),
-    { verbatimSymlinks: true },
+  // The Mac helper is its signed app bundle; runtime archives cannot carry links.
+  if (process.platform === "win32") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "task-app-windows.exe"),
+    path.join(stageBackendRoot, "bin", "task-app-windows.exe"),
   );
   if (process.platform === "darwin") copyRequiredPath(
     path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),

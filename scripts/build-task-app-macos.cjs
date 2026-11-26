@@ -1,15 +1,19 @@
 const { execFileSync } = require('node:child_process');
-const { mkdirSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, mkdtempSync } = require('node:fs');
-const { dirname, join, resolve } = require('node:path');
+const { mkdirSync, copyFileSync, rmSync, readFileSync, writeFileSync, mkdtempSync } = require('node:fs');
+const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 
-/** Build-time only. Never compile or change host permissions during viewer attachment. */
-async function buildMacAppDisplay({ outputPath }) {
+/** Build-time only. Never compile or change host permissions during viewer attachment.
+ * Writes `Elevenex Agent.app` into `binDirectory`. Runtime archives contain only
+ * regular files and directories, so the bundle executable is the sole entry point. */
+async function buildMacAppDisplay({ binDirectory }) {
   if (process.platform !== 'darwin') throw new Error('The macOS task app helper requires the Apple SDK');
   const source = resolve(__dirname, '../apps/backend/src/task-apps/native/macos');
-  mkdirSync(dirname(outputPath), { recursive: true });
-  const bundle = join(dirname(outputPath), 'Elevenex Agent.app');
+  mkdirSync(binDirectory, { recursive: true });
+  const bundle = join(binDirectory, 'Elevenex Agent.app');
   rmSync(bundle, { recursive: true, force: true });
+  // Remove the former bin/task-app-macos alias left by earlier builds.
+  rmSync(join(binDirectory, 'task-app-macos'), { force: true });
   const contents = join(bundle, 'Contents');
   const resources = join(contents, 'Resources');
   mkdirSync(join(contents, 'MacOS'), { recursive: true });
@@ -65,15 +69,11 @@ async function buildMacAppDisplay({ outputPath }) {
       execFileSync('/usr/sbin/spctl',['--assess','--type','execute',bundle],{stdio:'inherit'});
     } finally { rmSync(directory,{recursive:true,force:true}); }
   }
-  // Preserve the shipped CLI entry point for supported clients. Keep it
-  // relative so archives can be extracted into any managed runtime directory.
-  rmSync(outputPath,{force:true});
-  symlinkSync('Elevenex Agent.app/Contents/MacOS/Elevenex Agent',outputPath);
   return { bundle, executable };
 }
 
 module.exports = { buildMacAppDisplay };
 if (require.main === module) {
-  if (!process.argv[2]) throw new Error('Specify the output executable path');
-  buildMacAppDisplay({ outputPath: resolve(process.argv[2]) }).catch(error => { console.error(error); process.exitCode = 1; });
+  if (!process.argv[2]) throw new Error('Specify the output bin directory');
+  buildMacAppDisplay({ binDirectory: resolve(process.argv[2]) }).catch(error => { console.error(error); process.exitCode = 1; });
 }

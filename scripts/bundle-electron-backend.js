@@ -117,7 +117,7 @@ async function main() {
   cpSync(path.join(backendRoot, 'bin'), bin, { recursive: true });
   if (process.platform === 'darwin') {
     const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
-    await buildMacAppDisplay({ outputPath: path.join(bin, 'task-app-macos') });
+    await buildMacAppDisplay({ binDirectory: bin });
   } else if (process.platform === 'win32') {
     const { buildWindowsAppDisplay } = require('./build-task-app-windows.cjs');
     await buildWindowsAppDisplay({ outputPath: path.join(bin, 'task-app-windows.exe') });

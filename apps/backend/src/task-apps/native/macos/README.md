@@ -3,8 +3,9 @@
 The managed macOS 14+ runtime ships **Elevenex Agent.app** under `bin/`.
 The app bundle contains both the setup UI and the capture executable, with the
 stable bundle identifier `com.elevenex.task-app-display`. The public display
-name is **Elevenex Agent**. The legacy `bin/task-app-macos` CLI entry is a
-relative symlink to the bundle executable for existing consumers.
+name is **Elevenex Agent**. Runtime archives contain only regular files and
+directories, so callers launch `Contents/MacOS/Elevenex Agent` inside the bundle;
+there is no `bin/task-app-macos` alias.
 
 Apps opens setup with LaunchServices, so the floating card can appear in the
 host's desktop even when SSH cannot join its audit session directly. The card
@@ -103,7 +104,7 @@ Desktop main obtains a short-lived ticket before attaching to the scope-bound Ap
 Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens a disposable AppKit window on the task Mac, receives its actual ScreenCaptureKit keyframe, and verifies the app received a mouse click and a key press. Leave the fixture in the foreground during the check.
 
 ```sh
-node scripts/test-task-app-macos.cjs --interactive /path/to/installed/backend/bin/task-app-macos
+node scripts/test-task-app-macos.cjs --interactive "/path/to/installed/backend/bin/Elevenex Agent.app/Contents/MacOS/Elevenex Agent"
 ```
 
 Keyboard layout, system dialogs, and multiple displays need separate graphical testing. For local release validation, set `ELEVENEX_APP_DISPLAY_SIGN_IDENTITY`, `ELEVENEX_APP_DISPLAY_KEYCHAIN` and `ELEVENEX_APP_DISPLAY_NOTARY_PROFILE`. Set `ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING=1` to enforce both signing and notarization, as public CI does.

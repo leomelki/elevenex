@@ -1,19 +1,19 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, realpathSync, rmSync } = require('node:fs');
+const { mkdtempSync, rmSync, statSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 
 // Verify the public artifact after copying and archiving, not only the bundle
-// in the build checkout. A missing resource or broken alias invalidates setup.
+// in the build checkout. A missing resource or signature invalidates setup.
 function verifyMacAgentArchive(archive, { notarized = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'elevenex-agent-archive-'));
   try {
     execFileSync('/usr/bin/tar', ['-xzf', resolve(archive), '-C', directory,
-      'backend/bin/Elevenex Agent.app', 'backend/bin/task-app-macos'], { stdio: 'inherit' });
+      'backend/bin/Elevenex Agent.app'], { stdio: 'inherit' });
     const bundle = join(directory, 'backend/bin/Elevenex Agent.app');
     const executable = join(bundle, 'Contents/MacOS/Elevenex Agent');
-    assert.equal(realpathSync(join(directory, 'backend/bin/task-app-macos')), realpathSync(executable));
+    assert.ok(statSync(executable).isFile() && (statSync(executable).mode & 0o111) !== 0, 'Elevenex Agent executable is missing');
     execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle], { stdio: 'inherit' });
     const displayName = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleDisplayName', join(bundle, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
     assert.equal(displayName, 'Elevenex Agent');
@@ -21,7 +21,7 @@ function verifyMacAgentArchive(archive, { notarized = false } = {}) {
       execFileSync('/usr/bin/xcrun', ['stapler', 'validate', bundle], { stdio: 'inherit' });
       execFileSync('/usr/sbin/spctl', ['--assess', '--type', 'execute', bundle], { stdio: 'inherit' });
     }
-    console.log('Archived Elevenex Agent bundle, signature and portable CLI alias verified');
+    console.log('Archived Elevenex Agent bundle and signature verified');
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 module.exports = { verifyMacAgentArchive };

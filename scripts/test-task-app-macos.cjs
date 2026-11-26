@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { mkdtempSync, rmSync, realpathSync, readFileSync, cpSync, mkdirSync, writeFileSync, readdirSync } = require('node:fs');
+const { mkdtempSync, rmSync, readFileSync, existsSync, cpSync, mkdirSync, writeFileSync, readdirSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
@@ -128,16 +128,15 @@ async function main() {
   const dir = mkdtempSync(join(tmpdir(), 'elevenex-app-display-test-'));
   try {
     if (process.argv[2] === '--interactive') {
-      if (!process.argv[3]) throw new Error('Specify the installed task-app-macos executable');
+      if (!process.argv[3]) throw new Error('Specify the installed Elevenex Agent.app/Contents/MacOS/Elevenex Agent executable');
       await interactive(dir, resolve(process.argv[3]));
       return;
     }
-    const outputPath = join(dir, 'task-app-macos');
-    const { bundle, executable } = await buildMacAppDisplay({ outputPath });
-    assert.equal(realpathSync(outputPath), realpathSync(executable));
+    const { bundle, executable } = await buildMacAppDisplay({ binDirectory: dir });
+    assert.equal(existsSync(join(dir, 'task-app-macos')), false, 'Runtime archives cannot carry a CLI alias link');
     assert.ok(readFileSync(join(bundle, 'Contents/Resources/Agent.icns')).length > 100);
     execFileSync('/usr/bin/codesign', ['--verify','--deep','--strict',bundle], {stdio:'inherit'});
-    const frame = execFileSync(outputPath, ['--self-test'], { timeout: 10000, maxBuffer: 3_000_009 });
+    const frame = execFileSync(executable, ['--self-test'], { timeout: 10000, maxBuffer: 3_000_009 });
     assert.equal(frame.readUInt32BE(0), frame.length - 9);
     assert.equal(frame.readUInt16BE(4), 64);
     assert.equal(frame.readUInt16BE(6), 64);
@@ -146,9 +145,9 @@ async function main() {
     const nals = [];
     for (let i = annexB.indexOf(start); i >= 0; i = annexB.indexOf(start, i + 4)) nals.push(annexB[i + 4] & 31);
     assert.ok([7, 8, 5].every(type => nals.includes(type)), 'A fresh viewer needs SPS, PPS and IDR');
-    assert.throws(() => execFileSync(outputPath, [String(process.pid)]), error => error.status === 2,
+    assert.throws(() => execFileSync(executable, [String(process.pid)]), error => error.status === 2,
       'A process cannot nominate an arbitrary app PID for capture');
-    await testMacSupervisor(outputPath);
+    await testMacSupervisor(executable);
     if (process.argv[2] === '--desktop-connection') {
       const fixture = join(dir, 'Desktop Connection Fixture.app');
       cpSync(bundle, fixture, { recursive: true });

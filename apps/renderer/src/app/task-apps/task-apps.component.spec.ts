@@ -17,7 +17,7 @@ describe('Task apps panel ownership', () => {
     const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [state] }));
     const taskAppOpenSetupSettings = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const writeClipboardText = vi.fn(async () => undefined);
-    const helperPath = '/Users/test/.elevenex/runtime/backend/bin/task-app-macos';
+    const helperPath = '/Users/test/.elevenex/runtime/backend/bin/Elevenex Agent.app';
     const taskAppRevealSetupHelper = vi.fn(async () => ({ ok: true as const, value: { path: helperPath, revealed: true } }));
     const taskAppApprove = vi.fn(async () => {
       state = { ...run(2, 'request'), status: 'starting' };

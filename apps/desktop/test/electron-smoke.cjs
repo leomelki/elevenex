@@ -101,7 +101,7 @@ require('../dist/backend/application').createApplicationBackend = () => new Back
         assert.equal(request.method, 'POST');
         helperReveals++;
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ path: '/runtime/bin/task-app-macos', revealed: true }));
+        response.end(JSON.stringify({ path: '/runtime/bin/Elevenex Agent.app', revealed: true }));
         return;
       }
       if (pathname === '/api/task-apps/1/' + testAppRun.runId + '/approve') {
@@ -423,7 +423,7 @@ void (async () => {
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppRevealSetupHelper('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');
   assert.equal(helperReveals, 0);
   assert.deepEqual(await window.webContents.executeJavaScript(`window.elevenex.taskAppRevealSetupHelper('${firstScope.scope.id}',1,'${testAppRun.runId}').then(r => r.value)`),
-    { path: '/runtime/bin/task-app-macos', revealed: true });
+    { path: '/runtime/bin/Elevenex Agent.app', revealed: true });
   assert.equal(helperReveals, 1);
   assert.equal(approvedApps, 0);
   assert.equal(await window.webContents.executeJavaScript(`window.elevenex.taskAppApprove('stale',1,'${testAppRun.runId}').then(r => r.error.code)`), 'stale-scope');

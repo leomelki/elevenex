@@ -798,8 +798,6 @@ async function stageTarget(target, commitSha, nodeVersion) {
   if (target.platform === "darwin" && process.platform === "darwin") {
     copyRequiredPath(path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),
       path.join(targetRoot, "bin", "Elevenex Agent.app"));
-    copyRequiredPath(path.join(backendBundleRoot, "bin", "task-app-macos"),
-      path.join(targetRoot, "bin", "task-app-macos"), { verbatimSymlinks: true });
   }
   copyRequiredPath(
     path.join(repoRoot, "apps", "frontend", "proxy.conf.json"),

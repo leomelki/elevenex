@@ -81,7 +81,7 @@ describe('task app private desktop transport', () => {
   });
 
   it('requires viewer credentials to reveal the installed helper on the host', async () => {
-    const helper = { path: '/runtime/bin/task-app-macos', revealed: true };
+    const helper = { path: '/runtime/bin/Elevenex Agent.app', revealed: true };
     const revealSetupHelper = jest.fn().mockResolvedValue(helper);
     const controller = new TaskAppController(tasks, { revealSetupHelper } as unknown as TaskAppHost);
     await expect(controller.setupHelper(request(), '17', runId)).rejects.toThrow('Forbidden');
