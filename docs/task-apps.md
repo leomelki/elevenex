@@ -63,6 +63,14 @@ The SSH installer requires a published archive matching the desktop revision, ho
 
 ## Ownership and transport
 
+On macOS, public releases use the stable **Elevenex Agent** Developer ID identity
+across updates. Ad hoc development builds appear as **Elevenex Dev <short hash>**
+in setup and System Settings. An unchanged native helper keeps its identity
+across backend updates; a changed helper requires permission for its new entry.
+Add the app from the current setup card rather than another similarly named
+copy. Development and public-release permissions are separate. See the
+[Mac identity and update contract](../apps/backend/src/task-apps/native/macos/README.md).
+
 The backend app host owns admission, launcher processes, display helpers, bounded output, input leases, and cleanup. Native helpers receive only the launch and presentation capabilities they need. Linux supervises orphaned descendants through a subreaper. macOS uses a process group and Windows uses a Job Object. Applications that delegate to an independently running instance may exit without producing an owned window. Launch them with a separate app profile when supported.
 
 A viewer obtains a one-use, short-lived attachment ticket. The host authenticates both its issue and the WebSocket upgrade. The desktop keeps credentials in main and exposes named, scoped operations through preload. Windows authenticates the private named-pipe transport with TLS-PSK. SSH app operations carry an additional per-engine credential. Application processes receive a filtered environment. The viewer never receives an arbitrary network, OS-input or process-execution bridge.

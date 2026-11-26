@@ -94,6 +94,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           node --test scripts/task-app-macos-signing.test.cjs
+          node --test scripts/task-app-macos-update.test.cjs
           node scripts/test-task-app-macos.cjs
 
       - name: Prepare Developer ID signing for the public Mac agent

@@ -9,15 +9,17 @@
 
 static int runAgentCommand(int argc, char *argv[], BOOL desktop, int displayDescriptor, int owner) {
     @autoreleasepool {
-        if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--setup"))) return runAgentSetup(^{
-            NSTask *task = [NSTask new];
-            task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tccutil"];
-            // Never reset All, Screen Recording or another application's grants.
-            // A stale ad hoc build's Accessibility entry must be removed before
-            // the user can grant the current build access in System Settings.
-            task.arguments = @[@"reset", @"Accessibility", @"com.elevenex.task-app-display"];
-            return task;
-        });
+        if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--setup"))) {
+            NSString *identifier = NSBundle.mainBundle.bundleIdentifier;
+            if (!identifier) return 2;
+            return runAgentSetup(^{
+                NSTask *task = [NSTask new];
+                task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tccutil"];
+                // Never reset All, Screen Recording or another build's grants.
+                task.arguments = @[@"reset", @"Accessibility", identifier];
+                return task;
+            });
+        }
         if (argc == 3 && !strcmp(argv[1], "--write-iconset")) return writeAgentIconset(@(argv[2]));
         if (argc == 2 && !strcmp(argv[1], "--permission-status")) return printAgentPermissions();
         if (((argc == 2 || argc == 4) && !strcmp(argv[1], "--self-test")) ||

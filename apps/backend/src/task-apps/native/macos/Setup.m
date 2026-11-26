@@ -151,7 +151,8 @@ int printAgentPermissions(void) {
     self.panel = [[AgentPanel alloc] initWithContentRect:NSMakeRect(0,0,344,430)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskNonactivatingPanel
         backing:NSBackingStoreBuffered defer:NO];
-    self.panel.title = @"Elevenex Agent Setup";
+    NSString *appName = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: @"Elevenex Agent";
+    self.panel.title = [appName stringByAppendingString:@" Setup"];
     self.panel.titleVisibility = NSWindowTitleHidden;
     self.panel.titlebarAppearsTransparent = YES;
     self.panel.delegate = self;
@@ -194,7 +195,7 @@ int printAgentPermissions(void) {
     self.dragItem.icon = [NSWorkspace.sharedWorkspace iconForFile:self.dragItem.appURL.path];
     self.dragItem.accessibilityElement = YES;
     self.dragItem.accessibilityRole = NSAccessibilityButtonRole;
-    self.dragItem.accessibilityLabel = @"Elevenex Agent";
+    self.dragItem.accessibilityLabel = appName;
     self.dragItem.accessibilityHelp = @"Drag into the permission list in System Settings. Press Return to use the keyboard alternative and copy the app path.";
     [self.dragItem.heightAnchor constraintEqualToConstant:128].active = YES;
     __weak AgentSetup *weakSelf = self;
@@ -218,7 +219,7 @@ int printAgentPermissions(void) {
         if (owner.manual) [owner toggleAlternative:nil];
     };
     self.dragSteps = [self numberedSteps:@[@"", @"Turn on its switch."]];
-    self.manualSteps = [self numberedSteps:@[@"", @"Press ⇧⌘G, paste, and press Return.", @"Click Open, then turn on Elevenex Agent."]];
+    self.manualSteps = [self numberedSteps:@[@"", @"Press ⇧⌘G, paste, and press Return.", [NSString stringWithFormat:@"Click Open, then turn on %@.", appName]]];
     self.pathLabel = [self.style label:NSBundle.mainBundle.bundlePath size:11.5 weight:NSFontWeightRegular];
     self.pathLabel.font = [NSFont monospacedSystemFontOfSize:11.5 weight:NSFontWeightRegular];
     self.pathLabel.usesSingleLineMode = YES;

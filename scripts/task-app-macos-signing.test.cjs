@@ -62,7 +62,7 @@ test('profile contributes only capture and identity claims to the signed bundle'
   mkdirSync(join(options.contents, 'MacOS'));
   copyFileSync('/usr/bin/true', join(options.contents, 'MacOS/Elevenex Agent'));
   copyFileSync(resolve(__dirname, '../apps/backend/src/task-apps/native/macos/Info.plist'), join(options.contents, 'Info.plist'));
-  execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', ...args, options.bundle], { stdio: 'pipe' });
+  execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.elevenex.task-app-display', ...args, options.bundle], { stdio: 'pipe' });
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', options.bundle], { stdio: 'pipe' });
   const signed = execFileSync('/usr/bin/codesign', ['--display', '--entitlements', '-', '--xml', options.bundle]);
   const signedClaims = JSON.parse(execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], { input: signed, encoding: 'utf8' }));

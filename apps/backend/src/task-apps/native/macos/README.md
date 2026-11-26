@@ -1,9 +1,9 @@
 # macOS task app host
 
 The managed macOS 14+ runtime ships **Elevenex Agent.app** under `bin/`.
-The app bundle contains both the setup UI and the capture executable, with the
-stable bundle identifier `com.elevenex.task-app-display`. The public display
-name is **Elevenex Agent**. Runtime archives contain only regular files and
+The app bundle contains both the setup UI and the capture executable. Public
+Developer ID builds retain the bundle identifier `com.elevenex.task-app-display`
+and display name **Elevenex Agent**. Runtime archives contain only regular files and
 directories, so callers launch `Contents/MacOS/Elevenex Agent` inside the bundle;
 there is no `bin/task-app-macos` alias.
 
@@ -22,6 +22,17 @@ against the current build's grant. The new setup closes previous regular setup
 applications for the same identifier and user. Capture, supervisor and probe
 instances remain accessory/background applications and are preserved. The
 Accessibility step says that viewing is already ready and offers Skip.
+
+Ad hoc development builds use `com.elevenex.task-app-display.development.<hash>`
+and the visible name **Elevenex Dev <short hash>**. The hash covers the built
+native executable and bundled resources, before applying the development name.
+Identical helpers in different backend revisions retain the same bundle ID and
+code signing requirement. A changed helper gets a new identity and requires a
+new grant. This separates incompatible ad hoc code identities so System Settings
+cannot reopen an older, differently granted helper through a shared bundle ID.
+It also keeps development grants separate from public releases. The setup tile,
+manual instructions, Accessibility reset and capture all use that build's identity.
+There is no automatic grant migration or privacy database modification.
 
 The draggable tile shows only the app icon and a dashed arrow running off the
 tile edge toward the System Settings window, which the panel docks beside. It
@@ -103,9 +114,15 @@ Both development and release archives include the app's complete resources,
 icon and executable. Public runtime CI imports the configured Developer ID
 certificate, signs with hardened runtime, notarizes and staples the app,
 then verifies the extracted archive through Gatekeeper. Missing release
-signing credentials fail the build. Unsigned development builds use an ad hoc
-signature and can require a new grant after a rebuild. Setup writes no mutable
-state into the signed bundle.
+signing credentials fail the build. Verification checks that the plist and signed
+identifiers agree; public builds additionally require an Apple Developer ID
+certificate and reject a hash-pinned designated requirement. Keep the same
+Developer ID team and public bundle ID across updates so macOS can recognize
+the new version's privacy identity. See Apple's
+[code signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+Setup writes no mutable state into the signed bundle.
+Local certificate signing also requires Developer ID Application; Apple
+Development or self-signed code cannot share the public permission identity.
 
 Persistent content capture is opt-in and disabled by default. Apple's
 [Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)
@@ -146,6 +163,14 @@ supports this case without a shell. Keep the same Developer ID signing identity
 and bundle identifier across public releases; do not weaken the [designated code
 requirement](https://developer.apple.com/documentation/security/applying-code-requirements)
 to make ad hoc builds inherit another binary’s permission.
+
+Run `node --test scripts/task-app-macos-update.test.cjs` for real native rebuild
+and signing requirement checks across unrelated backend updates and changed
+helper code. On a signed-in Mac, set `ELEVENEX_TEST_MAC_AGENT_REOPEN=1` for the
+additional LaunchServices reopen test with isolated fixture apps. It alternates
+old/new bundle-ID launches without granting privacy permissions. This checks
+routing, not System Settings automation or preservation of a real user's grant.
+The latter requires two Developer ID releases and a manually granted test account.
 
 The supervisor waits on stdin for the backend's durable launch receipt before creating user processes. EOF before that receipt cancels the launch. It creates a fresh process group with `posix_spawn` before the launched program can fork. It reports the new group on fd 3. The backend owns stdin and the private duplex fd 4. Both descriptors are closed in the launched app, which inherits a null stdin and normal stdout and stderr. Losing the backend closes stdin. The supervisor drains its group, including children still running after the original launcher exits. An app deliberately moving a descendant to another session or group falls outside this ownership mechanism.
 

@@ -208,7 +208,7 @@ static const NSTimeInterval AgentDemoDuration = 1.1;
     }
 
     NSDictionary *nameStyle = @{NSFontAttributeName:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSForegroundColorAttributeName:[self.style color:@"ink"]};
-    [self drawLabel:@"Elevenex Agent" centerX:NSMidX(source) attributes:nameStyle];
+    [self drawLabel:self.accessibilityLabel ?: @"Elevenex Agent" centerX:NSMidX(source) attributes:nameStyle];
 
     // A focus ring is for keyboard navigation. Mouse interaction should make
     // this look like an object to pick up, not a highlighted drop target.

@@ -32,7 +32,7 @@ static BOOL controlsFit(NSView *view, NSView *content) {
 
 static NSView *dragItem(NSView *view) {
     if (view.hidden) return nil;
-    if ([view.accessibilityLabel isEqualToString:@"Elevenex Agent"]) return view;
+    if ([view isKindOfClass:AgentDragItem.class]) return view;
     for (NSView *child in view.subviews) {
         NSView *item = dragItem(child);
         if (item) return item;

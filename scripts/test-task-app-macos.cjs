@@ -15,6 +15,7 @@ async function setupPreview(directory, bundle, output) {
   cpSync(bundle, fixture, { recursive: true });
   execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier com.elevenex.task-app-setup-fixture',
     join(fixture, 'Contents/Info.plist')]);
+  execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName Elevenex Agent', join(fixture, 'Contents/Info.plist')]);
   const executable = join(fixture, 'Contents/MacOS/Elevenex Agent');
   const source = resolve(__dirname, '../apps/backend/src/task-apps/native/macos');
   execFileSync('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-mmacosx-version-min=14.0', '-I', source,
@@ -51,7 +52,8 @@ async function setupPreview(directory, bundle, output) {
   } finally {
     for (const pid of heldPIDs) if (alive(pid)) process.kill(pid,'SIGTERM');
   }
-  for (const [name, permission, theme, action = ''] of [
+  let displayName = 'Elevenex Agent';
+  for (const [name, permission, theme, action = '', appName = 'Elevenex Agent'] of [
     ['screen-light', { screen: false, input: false }, 'light'],
     ['screen-dark', { screen: false, input: false }, 'dark'],
     ['accessibility', { screen: true, input: false }, 'light'],
@@ -82,7 +84,14 @@ async function setupPreview(directory, bundle, output) {
     ['accessibility-repair-reopen', { screen: true, input: false }, 'light', 'reset-reopen'],
     ['accessibility-repair-compact', { screen: true, input: false }, 'light', 'reset-success-compact'],
     ['accessibility-repair-failure-compact-dark', { screen: true, input: false }, 'dark', 'reset-failure-compact'],
+    ['development-identity-light', { screen: false, input: false }, 'light', 'plus', 'Elevenex Dev abc123'],
+    ['development-identity-dark', { screen: false, input: false }, 'dark', 'plus', 'Elevenex Dev abc123'],
   ]) {
+    if (appName !== displayName) {
+      execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName ' + appName, join(fixture, 'Contents/Info.plist')]);
+      execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', fixture], { stdio: 'inherit' });
+      displayName = appName;
+    }
     writeFileSync(state, JSON.stringify(permission));
     const stdout = execFileSync(executable, [join(output, name + '.png'), theme, action], {
       stdio: ['ignore', 'pipe', 'inherit'], timeout: 10000,
