@@ -5,6 +5,7 @@ const lastCommonTimestamp = 1795466243083;
 const branchedMigrations = [
   { name: 'sidebar priority', previous: 1795525146427, merged: 1795535000000 },
   { name: 'task app journal', previous: 1795529450427, merged: 1795567035965 },
+  { name: 'session assignment messages', previous: 1795649670347, merged: 1795713664585 },
 ];
 
 /** Drizzle skips migrations older than the latest ledger entry. A branch may

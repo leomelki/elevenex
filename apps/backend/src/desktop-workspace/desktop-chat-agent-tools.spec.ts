@@ -9,6 +9,17 @@ const row = (id: string, kind: AgentTranscriptItem['kind'], extra: Partial<Agent
   ({ id, kind, timestamp: at, ...extra });
 
 describe('projecting delegation into chat', () => {
+  it('projects a parent-directed message through the existing agent message operation', () => {
+    const call = row('message', 'tool_use', { toolKind: 'mcp', providerToolName: 'mcp__elevenex__send_session_message',
+      toolInput: { to: 'parent', message: 'Need a decision', requestId: 'question' } });
+    const receipt = row('receipt', 'tool_result', { providerToolResult: { data: {
+      sessionId: 7, messageId: '11111111-1111-4111-8111-111111111111', disposition: 'queued', status: 'running',
+    } } });
+    expect(chatAgentEntry(call, receipt)).toMatchObject({
+      operation: { type: 'message', message: 'Need a decision', requestId: 'question' },
+      result: { session: { sessionId: 7 }, messageId: '11111111-1111-4111-8111-111111111111' },
+    });
+  });
   it.each([
     ['Claude Code', 'mcp__elevenex__create_session', { name: 'Review' }, [{ type: 'text', text: '{"data":{"sessionId":8,"provider":"claude"}}' }]],
     ['Codex', 'create_session', { server: 'elevenex', arguments: { name: 'Review' } }, { structured_content: { data: { sessionId: 8, provider: 'codex' } } }],

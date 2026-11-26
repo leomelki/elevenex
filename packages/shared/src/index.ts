@@ -2,6 +2,7 @@ import type { TaskAppRun, TaskAppInput, TaskAppFrame, TaskAppClosed, TaskAppWind
 export * from './task-apps';
 import type { CodeTarget, CodeAction, CodeBounds, CodePresentation, CodeSurfaceState, CodeOpenFile, CodeWindowContext } from './code-workspace';
 export type * from './code-workspace';
+export { CODE_EDITOR_MAX_FILE_BYTES } from './code-workspace';
 import type { TaskBrowserPlacement, TaskBrowserWindowInfo, TaskBrowserWindowContext, TaskBrowserState, TaskBrowserCommand, TaskBrowserLayout, TaskBrowserSurface, TaskBrowserFrame, TaskBrowserStreamInput } from './task-browser';
 export type * from './task-browser';
 export type * from './browser-webauthn';

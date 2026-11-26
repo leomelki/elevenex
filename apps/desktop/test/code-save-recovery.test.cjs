@@ -9,6 +9,7 @@ const digest = text => createHash('sha256').update(text).digest('hex');
 // Only the upstream host, durable memento and unreliable transport are controlled.
 async function mount(persisted, disk, options = {}) {
   let provider, document, writes = 0;
+  const imports = [];
   const commands = new Map(), choices = [], comparisons = [], disposables = [], opened = [], themes = [];
   class Uri {
     constructor(value) { Object.assign(this, { scheme: 'elevenex-task', authority: 'task', path: '/', query: '', fragment: '' }, value); }
@@ -48,7 +49,14 @@ async function mount(persisted, disk, options = {}) {
   const generation = disk.generation ?? 'a'.repeat(64);
   const json = value => globalThis.Response.json({ generation, transportRevision: options.transportRevision ?? 0, ...(options.dark === undefined ? {} : { dark: options.dark }), ...value });
   const fetch = async (url, request) => {
-    const operation = new URL(url).pathname.split('/').at(-1), body = JSON.parse(request.body);
+    const address = new URL(url), operation = address.pathname.split('/').at(-1);
+    if (operation === 'import-file') {
+      imports.push({ path: address.searchParams.get('path'), content: Buffer.from(request.body) });
+      if (options.importFailure) return globalThis.Response.json({ error: 'Upload ended before all bytes arrived.' }, { status: 422 });
+      disk.exists = true;
+      return json({ accepted: true });
+    }
+    const body = JSON.parse(request.body);
     if (operation === 'presentation') return json({accepted:true});
     if (operation === 'ready') return json({ accepted: true });
     if (operation === 'changes') return json({ sequence: 0, reset: false, paths: [], paused: options.pausedChanges ?? true });
@@ -64,6 +72,8 @@ async function mount(persisted, disk, options = {}) {
     if (operation === 'write') {
       writes++;
       if (options.dropWrite) return new globalThis.Response(null, { status: 503 });
+      if (options.rejectWrite === 503) return globalThis.Response.json({ error: 'unavailable' }, { status: 503 });
+      if (options.rejectWrite) return new globalThis.Response(null, { status: options.rejectWrite });
       if (body.revision !== (disk.exists === false ? null : digest(disk.text))) return globalThis.Response.json({ error: 'file-conflict' }, { status: 409 });
       disk.exists = true;
       disk.text = Buffer.from(body.content, 'base64').toString();
@@ -73,14 +83,21 @@ async function mount(persisted, disk, options = {}) {
     if (operation === 'rename') return json({ accepted: true });
     throw new Error('Unexpected provider operation ' + operation);
   };
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => { assert.equal(name, 'vscode'); return vscode; }, fetch, URL, Uint8Array, TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder, AbortController, AbortSignal, crypto: webcrypto, atob: globalThis.atob, btoa: globalThis.btoa, setTimeout, clearTimeout, console });
-  const workspaceState = { get: (_key, fallback) => globalThis.structuredClone(persisted.value ?? fallback), update: async (_key, value) => { if (options.barrier) await options.barrier; persisted.value = globalThis.structuredClone(value); } };
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => { assert.equal(name, 'vscode'); return vscode; }, fetch, URL, URLSearchParams: globalThis.URLSearchParams, ArrayBuffer, Uint8Array, TextEncoder: globalThis.TextEncoder, TextDecoder: globalThis.TextDecoder, AbortController, AbortSignal, crypto: webcrypto, atob: globalThis.atob, btoa: globalThis.btoa, setTimeout, clearTimeout, console });
+  const workspaceState = {
+    get: (_key, fallback) => globalThis.structuredClone(persisted.value ?? fallback),
+    update: async (_key, value) => {
+      if (options.barrier) await options.barrier;
+      if (options.rejectStorage) throw new Error('Storage unavailable');
+      persisted.value = globalThis.structuredClone(value);
+    },
+  };
   await module.exports.activate({ extensionUri: new Uri({ scheme: 'https', authority: 'code.example.invalid', path: '/extension' }), workspaceState, subscriptions });
   disposables.push(...subscriptions);
   const uri = root.with({ path: '/file.ts' });
   document = { uri, isDirty: false, getText: () => document.text, text: disk.text, save: async () => { await provider.writeFile(uri, Buffer.from(document.text), { create: true, overwrite: true }); document.isDirty = false; return true; } };
   documents.push(document); vscode.window.activeTextEditor = { document };
-  return { provider, uri, document, commands, choices, comparisons, opened, themes, writes: () => writes, close: () => { for (const disposable of disposables.reverse()) disposable.dispose(); } };
+  return { provider, uri, document, commands, choices, comparisons, opened, themes, imports, writes: () => writes, close: () => { for (const disposable of disposables.reverse()) disposable.dispose(); } };
 }
 
 test('the native Find file action opens upstream Quick Open without a platform request', async () => {
@@ -153,6 +170,88 @@ test('a save cannot leave the workbench before its durable sending claim is conf
     await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(editor.writes(), 0);
     release(); await saving;
     assert.equal(editor.writes(), 1); assert.equal(disk.text, 'new version');
+    assert.equal(persisted.value[0].pending, null);
+  } finally { editor.close(); }
+});
+
+test('confirmed editor rejections preserve the baseline and allow an explicit retry', async () => {
+  for (const rejectWrite of [400, 403, 404, 413, 429, 503]) {
+    const persisted = {}, disk = { text: 'original' }, options = { rejectWrite };
+    const editor = await mount(persisted, disk, options);
+    try {
+      await editor.provider.readFile(editor.uri);
+      await assert.rejects(editor.provider.writeFile(editor.uri, Buffer.from('retained edits'), { create: true, overwrite: true }), { name: 'Error' });
+      assert.equal(persisted.value[0].pending, null);
+      assert.equal(persisted.value[0].revision, digest('original'));
+      assert.equal(disk.text, 'original');
+      options.rejectWrite = undefined;
+      await editor.provider.writeFile(editor.uri, Buffer.from('retained edits'), { create: true, overwrite: true });
+      assert.equal(disk.text, 'retained edits');
+    } finally { editor.close(); }
+  }
+});
+
+test('a journal failure before dispatch can be retried after storage recovers', async () => {
+  const persisted = {}, disk = { text: 'original' }, options = {};
+  const editor = await mount(persisted, disk, options);
+  try {
+    await editor.provider.readFile(editor.uri);
+    options.rejectStorage = true;
+    const save = () => editor.provider.writeFile(editor.uri, Buffer.from('retained edits'), { create: true, overwrite: true });
+    await assert.rejects(save(), /Storage unavailable/);
+    assert.equal(editor.writes(), 0);
+    assert.equal(persisted.value[0].pending, null);
+    options.rejectStorage = false;
+    await save();
+    assert.equal(disk.text, 'retained edits');
+  } finally { editor.close(); }
+});
+
+test('a large binary import can retry after both a legacy size failure and an interrupted transfer', async () => {
+  const path = '/trace elevenex desktop.gz', generation = 'a'.repeat(64);
+  const persisted = { value: [{ path, generation, revision: null, pending: digest('rejected archive'), dirty: false }] };
+  const disk = { text: '', exists: false }, options = { importFailure: true };
+  const editor = await mount(persisted, disk, options);
+  try {
+    const uri = editor.uri.with({ path }), content = Buffer.alloc(8 * 1024 * 1024 + 1, 219);
+    const flags = { create: true, overwrite: true };
+    await assert.rejects(editor.provider.writeFile(uri, content, flags), /before all bytes/);
+    assert.deepEqual(persisted.value, []);
+    assert.equal(disk.exists, false);
+    options.importFailure = false;
+    await editor.provider.writeFile(uri, content, flags);
+    assert.equal(editor.imports.length, 2);
+    assert.equal(editor.imports[1].path, path);
+    assert.deepEqual(editor.imports[1].content, content);
+    assert.equal(editor.writes(), 0);
+    await assert.rejects(editor.provider.writeFile(uri, content, flags), { code: 'FileExists' });
+    assert.equal(editor.imports.length, 2);
+  } finally { editor.close(); }
+});
+
+test('an oversized text save retains its baseline and sends no bytes', async () => {
+  const persisted = {}, editor = await mount(persisted, { text: 'original' });
+  try {
+    await editor.provider.readFile(editor.uri);
+    editor.document.isDirty = true;
+    await assert.rejects(editor.provider.writeFile(editor.uri, Buffer.alloc(8 * 1024 * 1024 + 1), { create: true, overwrite: true }), /8 MiB editor limit/);
+    assert.equal(persisted.value[0].pending, null);
+    assert.equal(persisted.value[0].revision, digest('original'));
+    assert.equal(editor.writes(), 0);
+    assert.equal(editor.imports.length, 0);
+  } finally { editor.close(); }
+});
+
+test('a genuinely unconfirmed creation can be reviewed and saved against an absent disk file', async () => {
+  const persisted = { value: [{ path: '/file.ts', generation: 'a'.repeat(64), revision: null, pending: digest('new file'), dirty: true }] };
+  const disk = { text: '', exists: false }, editor = await mount(persisted, disk);
+  try {
+    editor.document.text = 'new file';
+    editor.document.isDirty = true;
+    editor.choices.push('Compare with disk', 'Save my version');
+    await editor.commands.get('elevenex.code.reconcile-save')();
+    assert.equal(editor.comparisons[0][0], 'vscode.diff');
+    assert.equal(disk.text, 'new file');
     assert.equal(persisted.value[0].pending, null);
   } finally { editor.close(); }
 });

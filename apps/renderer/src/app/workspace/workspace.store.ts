@@ -720,7 +720,7 @@ export class WorkspaceStore {
     this.leaveResume();
     if (task.state === 'ready') { void this.createSession(id); return; }
     this.stopPreparation(); this.localSessionId.set(null); this.chosen.set(null); this.pendingTask.set(task);
-    if (task.state !== 'failed') void this.prepareTask(scope, task.id, this.preparationRevision, Date.now(), 0);
+    if (task.state !== 'failed' && task.state !== 'released') void this.prepareTask(scope, task.id, this.preparationRevision, Date.now(), 0);
   }
 
   async createSession(id: string): Promise<void> {
@@ -1231,6 +1231,7 @@ export class WorkspaceStore {
     if (recovery === 'use-existing' && task.setupIssue?.code !== 'external-checkout') return;
     if (recovery === 'snapshot' && !task.setupIssue?.canUseSnapshot) return;
     if (recovery === 'exceed-worktree-limit' && !task.setupIssue?.canExceedWorktreeLimit) return;
+    if ((recovery === 'restore-branch' || recovery === 'new-workspace') && task.setupIssue?.workspaceRecovery !== recovery) return;
     const revision = this.preparationRevision;
     this.busy.set(true);
     const result = await this.mutate(scope, () => recovery === undefined ? this.bridge.workspaceRetryTask(scope, task.id) : this.bridge.workspaceRetryTask(scope, task.id, recovery));
@@ -1343,6 +1344,7 @@ export class WorkspaceStore {
     if (!task) { this.preparationPaused.set(true); return; }
     this.pendingTask.set(task); this.taskRecords.update(tasks => tasks.map(item => item.id === taskId ? task : item));
     if (task.state === 'finished') { this.error.set('This task has been closed. Select another task to continue.'); return; }
+    if (task.state === 'released') return;
     if (task.state === 'failed') { this.error.set(task.setupIssue?.message ?? 'The task workspace could not be prepared. Check the task before creating another.'); return; }
     if (task.state === 'ready') {
       const sessions = await this.read(scope, () => this.bridge.workspaceSessions(scope, { taskId, limit: 20, order: 'latest', ...(this.sessionNestingAvailable() && !this.closed() ? { parentSessionId: null } : {}) }));

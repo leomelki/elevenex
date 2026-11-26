@@ -449,6 +449,13 @@
       "when": 1795567035965,
       "tag": "0063_task_app_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1795713664585,
+      "tag": "0064_session_assignment_messages",
+      "breakpoints": true
     }
   ]
 }

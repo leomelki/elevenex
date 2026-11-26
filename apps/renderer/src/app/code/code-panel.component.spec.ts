@@ -100,6 +100,45 @@ describe('Code panel launch and iframe focus handoff', () => {
     expect(fixture.nativeElement.querySelector('.frame-container.loading')).toBeNull();
     expect(fixture.componentInstance.launching()).toBe(false);
   });
+  it('applies only the final compact-mode change after a live panel drag', async () => {
+    const { fixture, bridge, publish, layouts } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    layouts.shift()?.(); await settle(fixture);
+    bridge.codePresent.mockClear();
+    fixture.componentRef.setInput('panelResizing', true); await settle(fixture);
+    for (const width of [590, 610, 480]) {
+      fixture.componentInstance.measuredWidth.set(width); await settle(fixture);
+    }
+    expect(bridge.codePresent).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('panelResizing', false); await settle(fixture);
+    expect(bridge.codePresent).toHaveBeenCalledExactlyOnceWith(target, { visible: true, compact: true });
+    expect(TestBed.inject(CodeFramePool).mount).toHaveBeenCalledOnce();
+  });
+  it('restores splitter focus after a passive editor layout unless the user continues interacting', async () => {
+    const { fixture, publish, layouts } = setup(); await settle(fixture);
+    publish(ready); await settle(fixture);
+    layouts.shift()?.(); await settle(fixture);
+    const root: HTMLElement = fixture.nativeElement;
+    const splitter = document.createElement('div');
+    splitter.tabIndex = 0;
+    splitter.setAttribute('role', 'separator');
+    splitter.setAttribute('aria-controls', 'side-panel');
+    root.prepend(splitter);
+    const iframe = document.createElement('iframe');
+    root.querySelector('.frame-container')?.append(iframe);
+    splitter.focus();
+    fixture.componentInstance.measuredWidth.set(440); await settle(fixture);
+    iframe.focus();
+    expect(document.activeElement).toBe(iframe);
+    layouts.shift()?.(); await settle(fixture);
+    expect(document.activeElement).toBe(splitter);
+
+    fixture.componentInstance.measuredWidth.set(640); await settle(fixture);
+    splitter.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    iframe.focus();
+    layouts.shift()?.(); await settle(fixture);
+    expect(document.activeElement).toBe(iframe);
+  });
   it('keeps the mounted frame and its focus when status or open replies change without changing the resource', async () => {
     const { fixture, publish } = setup(); await settle(fixture);
     const pool = TestBed.inject(CodeFramePool);

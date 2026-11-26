@@ -3,6 +3,10 @@ import { object, string, number, reply } from './validation';
 export const TRANSFER_CHUNK = 256 * 1024;
 export const TRANSFER_MAX_FILE = 2 * 1024 * 1024 * 1024;
 export type TransferOperation = 'transfer-stat' | 'transfer-read' | 'upload-begin' | 'upload-chunk' | 'upload-commit' | 'upload-abort' | 'directory' | 'mkdir';
+export type TransferCall = (operation: TransferOperation, input: object, signal: AbortSignal) => Promise<unknown>;
+export class TransferError extends Error {
+  constructor(message: string, readonly outcomeUnknown = false) { super(message); }
+}
 export interface TransferStat { readonly exists: boolean; readonly type: number; readonly size: number; readonly revision: string | null }
 export interface TransferDialogs {
   upload(folder: boolean): Promise<readonly string[]>;

@@ -911,16 +911,21 @@ export class SessionsService extends EventEmitter {
       );
     }
 
-    const rows = await this.db
-      .update(schema.sessions)
+    const rows = this.db.transaction(tx => {
+      const previous = tx.select({ at: schema.sessions.lastCompletionAt }).from(schema.sessions)
+        .where(eq(schema.sessions.id, id)).get()?.at;
+      // Completion versions must remain distinct even when two fast turns finish in one millisecond.
+      const completedAt = new Date(Math.max(Date.now(), previous ? Date.parse(previous) + 1 : 0)).toISOString();
+      return tx.update(schema.sessions)
       .set({
         hasUnreviewedCompletion: true,
-        lastCompletionAt: new Date().toISOString(),
+        lastCompletionAt: completedAt,
         lastCompletionKind: completionKind,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.sessions.id, id))
-      .returning();
+      .returning().all();
+    }, { behavior: 'immediate' });
 
     if (rows.length === 0) {
       throw new NotFoundException(`Session with id ${id} not found`);

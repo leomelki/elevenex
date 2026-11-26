@@ -86,6 +86,7 @@ export class SessionEventSubscriptions {
     'session-provider-changed',
     (event) => event.sessionId,
   );
+  readonly handoff = new SessionEventIndex<SessionEvent>('session-handoff-changed', event => event.sessionId);
 
   watchRuntime(
     runtime: AgentRuntimeProvider,

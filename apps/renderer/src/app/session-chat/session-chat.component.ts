@@ -158,6 +158,7 @@ export class SessionChatComponent {
   readonly creationCheck = output<void>();
   readonly creationDiscard = output<void>();
   readonly archived = input(false);
+  readonly workspaceUnavailable = input(false);
   readonly active = input(true);
   readonly machineName = input('the machine');
   readonly reconnectAction = input('Try now');
@@ -289,9 +290,10 @@ export class SessionChatComponent {
       !!this.store.busy() ||
       !!this.store.uncertain() ||
       this.archived() ||
+      this.workspaceUnavailable() ||
       !this.store.state(),
   );
-  readonly activityDisabledReason = computed(() => this.archived() ? 'This session is archived. Activity is read only.'
+  readonly activityDisabledReason = computed(() => this.workspaceUnavailable() ? 'Prepare the workspace to continue.' : this.archived() ? 'This session is archived. Activity is read only.'
     : this.store.offline() ? 'Reconnect to control this work.'
     : this.store.uncertain() ? 'Check the previous action’s outcome before another action.'
     : this.store.busy() ? 'An action is in progress.' : '');
@@ -574,7 +576,7 @@ export class SessionChatComponent {
     effect(() => {
       const selection = this.selection();
       const creation = this.creation();
-      const active = this.active(), archived = this.archived(), streamAvailable = this.streamAvailable();
+      const active = this.active(), archived = this.archived() || this.workspaceUnavailable(), streamAvailable = this.streamAvailable();
       untracked(() => {
         this.store.setActive(active);
         if (creation) this.store.openDraft(creation);

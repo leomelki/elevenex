@@ -99,7 +99,9 @@ describe('Terminal accessibility selection', () => {
       surface.attach(host, true);
       await surface.write('terminal output');
       const firstRow = surface.terminal.element!.querySelector('.xterm-accessibility-tree [role="listitem"]')!;
-      await vi.waitFor(() => expect(firstRow.textContent).toContain('terminal output'));
+      // xterm throttles accessibility rows to one refresh per second. Allow
+      // that refresh plus a render frame before testing the DOM selection.
+      await vi.waitFor(() => expect(firstRow.textContent).toContain('terminal output'), { timeout: 3000 });
       surface.detach();
 
       selection.setBaseAndExtent(before, 0, after, after.length);

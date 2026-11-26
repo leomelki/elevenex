@@ -47,7 +47,7 @@
       <main class="loading" aria-label="Machines"><p role="status">{{ connection.error() || 'Loading machines…' }}</p>@if (connection.error()) { <button exButton (click)="connection.refresh()">Try again</button> }</main>
     }
   </div>
-  @if (launcher.error()) { <ex-toast class="error-toast" title="Machine needs attention" [detail]="launcher.error()" tone="danger" glyph="failed" [duration]="0" (dismissed)="launcher.error.set('')" /> }
+  @if (launcher.error()) { <ex-toast class="error-toast" title="Machine needs attention" [detail]="launcher.error()" tone="danger" glyph="failed" (dismissed)="launcher.error.set('')" /> }
  </div>
 <ex-machine-menu-popup [request]="actions.menu()" (closed)="actions.menu.set(null)" (action)="actions.act($event)" />
 <ex-modal-layer [open]="actions.detailsOpen()" [from]="actions.details()?.from ?? null" (closeRequested)="actions.detailsOpen.set(false)">

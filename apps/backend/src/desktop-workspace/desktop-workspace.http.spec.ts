@@ -404,7 +404,7 @@ describe('desktop workspace HTTP resource slice', () => {
     });
     expect(retryTask).toHaveBeenLastCalledWith(task.id, {
       confirmExternal: true,
-    });
+    }, error);
     await database.db
       .update(schema.workspaces)
       .set({ taskState: 'failed', taskError: error })
@@ -419,7 +419,7 @@ describe('desktop workspace HTTP resource slice', () => {
     expect(retryTask).toHaveBeenLastCalledWith(task.id, {
       checkoutMode: 'snapshot',
       environment: 'automatic',
-    });
+    }, error);
     expect((await request(`/tasks/${task.id}/retry`, 'POST')).status).toBe(201);
     expect(retryTask).toHaveBeenLastCalledWith(task.id);
     await database.db
@@ -449,7 +449,7 @@ describe('desktop workspace HTTP resource slice', () => {
     ).toBe(201);
     expect(retryTask).toHaveBeenLastCalledWith(task.id, {
       confirmOverLimit: true,
-    });
+    }, JSON.stringify({ code: 'worktree_limit_reached', count: 23, limit: 5 }));
   });
   it('rejects malformed resource/page arguments and project appearance through the real HTTP boundary', async () => {
     expect((await request('/projects?limit=101')).status).toBe(400);

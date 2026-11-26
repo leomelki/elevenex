@@ -161,6 +161,24 @@ function setup(items: readonly SessionChatItem[] = [], chatState = state, initia
   };
 }
 
+describe('workspace recovery in a saved conversation', () => {
+  it('keeps history and the draft while blocking commands until the workspace returns', async () => {
+    const { fixture, root, bridge } = setup([item('reply', 'assistant', 'Saved conversation')]);
+    await settle(fixture);
+    fixture.componentInstance.store.setDraft('Keep this draft');
+    fixture.componentRef.setInput('workspaceUnavailable', true); await settle(fixture);
+    expect(root.textContent).toContain('Saved conversation');
+    expect(root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.disabled).toBe(true);
+    expect(fixture.componentInstance.store.readOnly()).toBe(true);
+    expect(fixture.componentInstance.store.draft()).toBe('Keep this draft');
+    expect(bridge.sessionChatCommand).not.toHaveBeenCalled();
+    fixture.componentRef.setInput('workspaceUnavailable', false); await settle(fixture);
+    expect(fixture.componentInstance.store.readOnly()).toBe(false);
+    expect(root.querySelector<HTMLTextAreaElement>('ex-composer textarea')?.disabled).toBe(false);
+    expect(fixture.componentInstance.store.draft()).toBe('Keep this draft');
+  });
+});
+
 describe("connected chat preset editing", () => {
   const editable = () => {
     const presets: NonNullable<SessionChatState["presets"]> = [0, 1].map(index => ({

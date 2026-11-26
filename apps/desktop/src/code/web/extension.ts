@@ -2,6 +2,7 @@ import { registerTransfers } from './transfers';
 import { registerHtmlPreview } from './html-preview';
 import { CompactLayout } from './compact-layout';
 import { openEditorResource, registerLinkedFiles } from './linked-files';
+import { CODE_EDITOR_MAX_FILE_BYTES } from '@elevenex/shared';
 import * as vscode from 'vscode';
 import type { Changes, DirectoryPage, FileRead, SearchPage } from './contracts';
 
@@ -28,8 +29,12 @@ class SaveLedger {
   baseline(path: string): string | null | undefined { return this.entries.get(path)?.revision; }
   pending(path: string): boolean { return this.entries.get(path)?.pending !== null && this.entries.has(path); }
   pendingPaths(): string[] { return [...this.entries.values()].filter(entry => entry.pending !== null).map(entry => entry.path); }
-  async remember(path: string, revision: string, generation: string, preservePending = false): Promise<void> {
+  async remember(path: string, revision: string | null, generation: string, preservePending = false): Promise<void> {
     await this.save({ path, generation, revision, dirty: this.entries.get(path)?.dirty ?? false, pending: preservePending ? this.entries.get(path)?.pending ?? null : null });
+  }
+  isUnconfirmedCreate(path: string, generation: string): boolean {
+    const entry = this.entries.get(path);
+    return !!entry && entry.revision === null && entry.pending !== null && !entry.dirty && entry.generation === generation;
   }
   async begin(path: string, revision: string | null, generation: string, content: Uint8Array): Promise<void> {
     const bytes = new Uint8Array(content.length); bytes.set(content);
@@ -78,6 +83,8 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
   private readonly comparing = new Set<string>();
   private readonly diskCopies = new Map<string, string>();
   private readonly requests = new Set<AbortController>();
+  private importQueue = Promise.resolve();
+  private queuedImports = 0;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private sequence = 0;
   private timer?: ReturnType<typeof setTimeout>;
@@ -113,16 +120,28 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
     try {
       const response = await fetch(vscode.Uri.joinPath(this.base, 'api', operation).toString(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generation: this.generation, transportRevision: this.transportRevision, ...input }), signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal, credentials: 'omit', redirect: 'error' });
       if (!response.ok) {
-        if (response.status === 403) throw Object.assign(vscode.FileSystemError.NoPermissions('This file is read-only. Your unsaved copy is retained.'), { readonlyFile: true });
-        if (response.status === 404) throw vscode.FileSystemError.FileNotFound();
+        if (response.status === 403) throw Object.assign(vscode.FileSystemError.NoPermissions('This file is read-only. Your unsaved copy is retained.'), { writeRejected: true, readonlyFile: true });
+        if (response.status === 404) throw Object.assign(vscode.FileSystemError.FileNotFound(), { writeRejected: true });
+        if (response.status === 413) throw Object.assign(vscode.FileSystemError.Unavailable('File exceeds the editor size limit. Use Upload Files… or Download… in Explorer to transfer large files.'), { writeRejected: true });
+        if (response.status === 400 || response.status === 429) throw Object.assign(vscode.FileSystemError.Unavailable(operation === 'read'
+          ? 'This file cannot be opened. The editor supports files up to 8 MiB. Use Download… in Explorer to transfer large files.'
+          : response.status === 429 ? 'The task is busy. Try the operation again.' : 'The task rejected this file operation. Check the path and try again.'), { writeRejected: true });
+        if (operation === 'write' && response.status === 503) {
+          const value: unknown = await response.json().catch(() => undefined);
+          // The private host reports unavailable only when dispatch was refused.
+          if (value && typeof value === 'object' && 'error' in value && value.error === 'unavailable')
+            throw Object.assign(vscode.FileSystemError.Unavailable('The task is unavailable. Reconnect before saving again.'), { writeRejected: true });
+        }
         if (response.status === 409) {
           const value: unknown = await response.json();
-          if (value && typeof value === 'object' && 'error' in value && value.error === 'file-changing') throw vscode.FileSystemError.Unavailable('File is changing. Try again when the current write finishes.');
-          if (value && typeof value === 'object' && 'error' in value && value.error === 'target-exists') throw vscode.FileSystemError.FileExists();
+          if (value && typeof value === 'object' && 'error' in value && value.error === 'file-changing') throw Object.assign(vscode.FileSystemError.Unavailable('File is changing. Try again when the current write finishes.'), { writeRejected: true });
+          if (value && typeof value === 'object' && 'error' in value && value.error === 'target-exists') throw Object.assign(vscode.FileSystemError.FileExists(), { writeRejected: true });
           const fileConflict = !!value && typeof value === 'object' && 'error' in value && value.error === 'file-conflict';
           throw Object.assign(vscode.FileSystemError.NoPermissions(fileConflict ? 'File changed on disk. Compare your unsaved copy before saving.' : 'Task workspace changed. Reopen Code and recover retained edits.'), { fileConflict });
         }
-        throw vscode.FileSystemError.Unavailable('Machine disconnected or operation failed. Your unsaved edits remain here. Reconnect, then explicitly save again.');
+        throw vscode.FileSystemError.Unavailable(operation === 'write'
+          ? 'Could not confirm the save. Your unsaved edits are retained.'
+          : 'Could not complete the task file operation. Check the connection and try again.');
       }
       // The isolated main-process protocol validates these domain replies.
       const value: unknown = await response.json();
@@ -194,6 +213,7 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
 
   async writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): Promise<void> {
     const path = this.path(uri), revision = this.revisions.get(path) ?? this.ledger.baseline(path) ?? undefined;
+    if (content.byteLength > CODE_EDITOR_MAX_FILE_BYTES) return this.importFile(uri, path, content, options.create);
     if (this.blockedSaves.has(path)) throw vscode.FileSystemError.Unavailable('Inspect the unconfirmed save before retrying. Click the editor status to compare with disk.');
     const generation = this.resourceGeneration(path), transportRevision = this.transportRevision;
     if (generation !== this.generation) { this.blockedSaves.add(path); this.unknownSave = true; this.status.command = 'elevenex.code.reconcile-save'; this.state('$(warning) Workspace changed · inspect retained edits'); throw vscode.FileSystemError.NoPermissions('Workspace changed. Compare the retained file with disk before saving.'); }
@@ -214,23 +234,94 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
     if (this.pendingWrites.has(path)) throw vscode.FileSystemError.Unavailable('A save is already in progress for this file.');
     this.pendingWrites.add(path);
     this.state('$(sync~spin) Saving…');
-    let binary = ''; for (let at = 0; at < content.length; at += 8192) binary += String.fromCharCode(...content.subarray(at, at + 8192));
+    let sentContent: string | undefined;
     try {
+      let binary = ''; for (let at = 0; at < content.length; at += 8192) binary += String.fromCharCode(...content.subarray(at, at + 8192));
+      const encoded = btoa(binary);
       await this.ledger.begin(path, revision ?? null, generation, content);
-      const result = await this.call<{ revision: string }>('write', { path, content: btoa(binary), revision: revision ?? null, generation, transportRevision });
+      sentContent = encoded;
+      const result = await this.call<{ revision: string }>('write', { path, content: encoded, revision: revision ?? null, generation, transportRevision });
       await this.ledger.remember(path, result.revision, this.generation); this.remember(path, result.revision); this.unknownSave = this.blockedSaves.size > 0; this.status.command = this.unknownSave ? 'elevenex.code.reconcile-save' : 'elevenex.code.reconnect'; this.state(this.unknownSave ? '$(warning) Another save needs inspection' : '$(check) Saved');
       this.changed.fire([{ type: vscode.FileChangeType.Changed, uri }]);
     } catch (error) {
-      if (error instanceof vscode.FileSystemError && error.code === 'NoPermissions') { this.unknownSave = true; this.blockedSaves.add(path); this.status.command = 'elevenex.code.reconcile-save'; this.state('readonlyFile' in error && error.readonlyFile ? '$(lock) Read-only · edits retained' : '$(warning) Save blocked · inspect retained edits'); if ('fileConflict' in error && error.fileConflict) void this.compareSave(uri); throw error; }
+      if (sentContent === undefined) {
+        if (this.ledger.pending(path)) await this.ledger.remember(path, revision ?? null, generation).catch(() => undefined);
+        if (!this.unknownSave) this.state('$(warning) Save could not start · edits retained');
+        throw error;
+      }
+      if (error instanceof vscode.FileSystemError && 'writeRejected' in error && error.writeRejected) {
+        await this.ledger.remember(path, revision ?? null, generation);
+        if (!this.unknownSave) this.state('readonlyFile' in error ? '$(lock) Read-only · edits retained' : '$(warning) Save rejected');
+        throw error;
+      }
+      if (error instanceof vscode.FileSystemError && error.code === 'NoPermissions') { this.unknownSave = true; this.blockedSaves.add(path); this.status.command = 'elevenex.code.reconcile-save'; this.state('$(warning) Save blocked · inspect retained edits'); if ('fileConflict' in error && error.fileConflict) void this.compareSave(uri); throw error; }
       this.unknownSave = true; this.state('$(warning) Save unconfirmed · edits retained');
       // Read-only reconciliation; never replay a mutation after transport loss.
       try {
         const saved = await this.call<FileRead>('read', { path });
-        if (saved.content === btoa(binary)) { await this.ledger.remember(path, saved.revision, saved.generation); this.remember(path, saved.revision); this.unknownSave = this.blockedSaves.size > 0; this.status.command = this.unknownSave ? 'elevenex.code.reconcile-save' : 'elevenex.code.reconnect'; this.state(this.unknownSave ? '$(warning) Another save needs inspection' : '$(check) Save confirmed'); return; }
+        if (saved.generation === generation && saved.content === sentContent) { await this.ledger.remember(path, saved.revision, saved.generation); this.remember(path, saved.revision); this.unknownSave = this.blockedSaves.size > 0; this.status.command = this.unknownSave ? 'elevenex.code.reconcile-save' : 'elevenex.code.reconnect'; this.state(this.unknownSave ? '$(warning) Another save needs inspection' : '$(check) Save confirmed'); return; }
       } catch { /* The dirty buffer remains the recovery copy. */ }
       this.blockedSaves.add(path); this.status.command = 'elevenex.code.reconcile-save';
       throw error;
     } finally { this.pendingWrites.delete(path); }
+  }
+  private async importFile(uri: vscode.Uri, path: string, content: Uint8Array, create: boolean): Promise<void> {
+    // The VS Code browser importer and clipboard use the same provider method
+    // as editor saves. Large imports can only create files. Replacements use
+    // the native picker and its explicit confirmation and revision checks.
+    const hasEditor = () => vscode.workspace.textDocuments.some(document => document.uri.toString() === uri.toString());
+    if (!create || hasEditor()) throw vscode.FileSystemError.Unavailable('File exceeds the 8 MiB editor limit. Use Upload Files… in Explorer to transfer large files.');
+    if (this.pendingWrites.has(path)) throw vscode.FileSystemError.Unavailable('A write is already in progress for this file.');
+    if (this.queuedImports >= 32) throw vscode.FileSystemError.Unavailable('Too many imports are queued. Wait for current uploads or use Upload Files… in Explorer.');
+    const generation = this.resourceGeneration(path), transportRevision = this.transportRevision;
+    this.pendingWrites.add(path);
+    this.queuedImports++;
+    const imported = this.importQueue.then(async () => {
+      const assertCurrent = () => {
+        if (this.stopped || generation !== this.generation || transportRevision !== this.transportRevision) throw vscode.FileSystemError.Unavailable('Task connection changed. Start a new upload after reconnecting.');
+      };
+      assertCurrent();
+      const exists = await this.stat(uri).then(() => true, error => {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') return false;
+        throw error;
+      });
+      assertCurrent();
+      if (exists) throw vscode.FileSystemError.FileExists('Use Upload Files… in Explorer to replace an existing large file.');
+      if (hasEditor() || this.ledger.baseline(path)) throw vscode.FileSystemError.NoPermissions('This file has an editor version. Use Upload Files… in Explorer after reviewing it.');
+      if (this.blockedSaves.has(path)) {
+        if (!this.ledger.isUnconfirmedCreate(path, generation)) throw vscode.FileSystemError.Unavailable('Inspect the unconfirmed save before retrying.');
+        // Older workbenches journaled rejected binary imports as saves. With
+        // no editor buffer and a missing destination, retrying creation is safe.
+        await this.ledger.forget(path);
+        this.blockedSaves.delete(path);
+        this.unknownSave = this.blockedSaves.size > 0;
+        if (!this.unknownSave) this.status.command = 'elevenex.code.reconnect';
+      }
+      assertCurrent();
+      const url = new URL(vscode.Uri.joinPath(this.base, 'api', 'import-file').toString());
+      url.search = new URLSearchParams({ path, size: String(content.byteLength), generation, transportRevision: String(transportRevision) }).toString();
+      const controller = new AbortController();
+      this.requests.add(controller);
+      try {
+        const body = content.buffer instanceof ArrayBuffer ? new Uint8Array(content.buffer, content.byteOffset, content.byteLength) : new Uint8Array(content);
+        const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body, signal: controller.signal, credentials: 'omit', redirect: 'error' });
+        if (response.status === 413) throw vscode.FileSystemError.Unavailable('This file exceeds the transfer limit. Transfers support up to 2 GiB per file.');
+        if (response.status === 422) {
+          const value: { error: string } = await response.json();
+          throw vscode.FileSystemError.Unavailable(value.error);
+        }
+        if (!response.ok) throw vscode.FileSystemError.Unavailable('Upload unavailable. Refresh the Explorer and use Upload Files… to try again.');
+        const receipt: unknown = await response.json();
+        if (!receipt || typeof receipt !== 'object' || !('accepted' in receipt) || receipt.accepted !== true) throw new Error('Missing upload receipt.');
+        assertCurrent();
+        this.changed.fire([{ type: vscode.FileChangeType.Created, uri }]);
+      } catch (error) {
+        if (error instanceof vscode.FileSystemError) throw error;
+        throw vscode.FileSystemError.Unavailable('Upload interrupted. Refresh the Explorer and review the destination before retrying.');
+      } finally { this.requests.delete(controller); }
+    });
+    this.importQueue = imported.catch(() => undefined);
+    try { await imported; } finally { this.pendingWrites.delete(path); this.queuedImports--; }
   }
   diskCopy(uri: vscode.Uri): string { return this.diskCopies.get(uri.toString()) ?? 'This comparison has expired. Compare with disk again.'; }
   async reconcileSave(): Promise<void> {
@@ -243,7 +334,12 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
     this.comparing.add(path);
     try {
       if (await vscode.window.showWarningMessage('Your unsaved copy is retained. Inspect the current file before saving again.', 'Compare with disk') !== 'Compare with disk' || this.stopped) return;
-      const current = await this.call<FileRead>('read', { path });
+      await this.stat(this.root);
+      const generation = this.generation, transportRevision = this.transportRevision;
+      const current = await this.call<FileRead>('read', { path }).catch(error => {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') return { content: '', revision: null, generation };
+        throw error;
+      });
       const bytes = Uint8Array.from(atob(current.content), c => c.charCodeAt(0));
       const encoding = bytes[0] === 255 && bytes[1] === 254 ? 'utf-16le' : bytes[0] === 254 && bytes[1] === 255 ? 'utf-16be' : 'utf-8';
       const disk = vscode.Uri.from({ scheme: 'elevenex-disk', authority: this.root.authority, path: '/' + crypto.randomUUID() + path });
@@ -252,8 +348,10 @@ class TaskFiles implements vscode.FileSystemProvider, vscode.Disposable {
       await vscode.commands.executeCommand('vscode.diff', disk, uri, 'Disk ↔ your unsaved copy', { preview: false });
       if (await vscode.window.showWarningMessage('Save your version over the disk revision shown in this comparison?', 'Save my version', 'Keep editing') !== 'Save my version' || this.stopped) return;
       const document = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri.toString());
-      if (!document?.isDirty) return;
-      await this.ledger.remember(path, current.revision, current.generation); this.remember(path, current.revision); this.blockedSaves.delete(path); this.unknownSave = this.blockedSaves.size > 0;
+      if (!document?.isDirty || current.generation !== this.generation || transportRevision !== this.transportRevision) return;
+      await this.ledger.remember(path, current.revision, current.generation);
+      if (current.revision === null) this.revisions.delete(path); else this.remember(path, current.revision);
+      this.blockedSaves.delete(path); this.unknownSave = this.blockedSaves.size > 0;
       this.status.command = this.unknownSave ? 'elevenex.code.reconcile-save' : 'elevenex.code.reconnect';
       await document.save();
     } catch { this.state('$(warning) Comparison unavailable · edits retained'); }

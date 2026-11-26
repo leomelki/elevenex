@@ -15,15 +15,29 @@ async function settle(): Promise<void> { for (let index = 0; index < 8; index++)
 
 function setup() {
   const selected = signal<WorkspaceSelection | null>({ scopeId: 'scope', taskId: 1, sessionId: 2 });
-  const store = { taskSelection: selected, offline: signal(false), selected, selectedTask: () => ({ state: 'ready', archivedAt: null }), commitPanelAvailable: signal(true), reconcileTaskBranch: vi.fn() };
+  const task = signal({ state: 'ready', archivedAt: null });
+  const store = { taskSelection: selected, offline: signal(false), selected, selectedTask: task, commitPanelAvailable: signal(true), reconcileTaskBranch: vi.fn() };
   const bridge = { workspaceGit: vi.fn(async () => ok(summary)), workspaceGitAction: vi.fn(async () => ok(summary)), workspaceCommitPreview: vi.fn(async (): Promise<BackendResult<WorkspaceCommitPreview>> => ({ ok: true, value: preview })) } satisfies Pick<ElevenexBridge, 'workspaceGit' | 'workspaceGitAction' | 'workspaceCommitPreview'>;
   TestBed.configureTestingModule({ providers: [WorkspaceTaskGitService, { provide: WorkspaceStore, useValue: store }, { provide: ELEVENEX_BRIDGE, useValue: bridge }, { provide: BackendClientService, useValue: { state: signal({ revision: 1, scope: { id: 'scope', environment: { kind: 'local' } } }) } }] });
   const git = TestBed.inject(WorkspaceTaskGitService); TestBed.tick();
-  return { git, bridge, store, selected };
+  return { git, bridge, store, selected, task };
 }
 afterEach(() => { TestBed.resetTestingModule(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('WorkspaceTaskGitService', () => {
+  it('stops Git reads and writes while the workspace needs recovery, then resumes after preparation', async () => {
+    const { git, bridge, task } = setup(); await settle();
+    expect(git.summary()).toEqual(summary);
+    task.set({ state: 'failed', archivedAt: null }); TestBed.tick(); await settle();
+    const reads = bridge.workspaceGit.mock.calls.length;
+    expect(git.summary()).toBeNull(); expect(git.state()).toBeUndefined();
+    await git.refresh(); expect(await git.perform({ type: 'push' })).toBe(false);
+    expect(bridge.workspaceGit).toHaveBeenCalledTimes(reads);
+    expect(bridge.workspaceGitAction).not.toHaveBeenCalled();
+    task.set({ state: 'ready', archivedAt: null }); TestBed.tick(); await settle();
+    expect(git.summary()).toEqual(summary);
+  });
+
   it('keeps background status checks quiet and coalesced through failure and recovery', async () => {
     vi.useFakeTimers(); vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     const { git, bridge } = setup(); await settle();

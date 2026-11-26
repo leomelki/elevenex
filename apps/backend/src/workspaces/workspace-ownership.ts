@@ -3,6 +3,10 @@ import { BadRequestException } from '@nestjs/common';
 import { promises as fs } from 'node:fs';
 import type { DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import {
+  MISSING_WORKTREE_ERROR,
+  workspaceTaskError,
+} from './workspace-checkout-errors.js';
 
 type Workspace = typeof schema.workspaces.$inferSelect;
 const checkoutReads = new Map<string, Promise<boolean>>();
@@ -10,14 +14,10 @@ const checkoutReads = new Map<string, Promise<boolean>>();
 function savedTaskError(
   workspace: Workspace,
 ): { code?: string; message?: string } | null {
-  try {
-    return workspace.taskError ? JSON.parse(workspace.taskError) : null;
-  } catch {
-    return null;
-  }
+  return workspaceTaskError(workspace.taskError);
 }
 
-function isCheckoutFailure(workspace: Workspace) {
+export function isWorkspaceCheckoutFailure(workspace: Workspace) {
   if (workspace.taskState !== 'failed') return false;
   const code = savedTaskError(workspace)?.code;
   if (code !== 'branch_changed' && code !== 'environment_missing') return false;
@@ -37,7 +37,7 @@ export async function workspaceCheckoutError(workspace: Workspace) {
   if (
     workspace.archivedAt ||
     workspace.linkStatus !== 'linked' ||
-    (workspace.taskState !== 'ready' && !isCheckoutFailure(workspace))
+    (workspace.taskState !== 'ready' && !isWorkspaceCheckoutFailure(workspace))
   )
     return null;
   let pending = checkoutReads.get(workspace.path);
@@ -58,11 +58,7 @@ export async function workspaceCheckoutError(workspace: Workspace) {
     if (checkoutReads.get(workspace.path) === pending)
       checkoutReads.delete(workspace.path);
   }
-  return {
-    code: 'environment_missing',
-    message:
-      'This task’s checkout is unavailable. Choose another worktree before continuing.',
-  };
+  return MISSING_WORKTREE_ERROR;
 }
 
 /** Revalidate checkout failures on demand, without moving branches or touching files. */
@@ -126,7 +122,7 @@ export async function refreshWorkspaceCheckout(
         !error &&
         latest.linkStatus === 'linked' &&
         !latest.archivedAt &&
-        isCheckoutFailure(latest)
+        isWorkspaceCheckoutFailure(latest)
       ) {
         tx.update(schema.taskReservations)
           .set({ branchName: null })

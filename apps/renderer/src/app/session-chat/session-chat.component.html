@@ -10,7 +10,7 @@
   [exchanges]="exchanges()"
   [agentNavigationDisabled]="agentNavigationDisabled()"
   (agentRequested)="agentIntent($event)"
-  [promptEditing]="!archived()"
+  [promptEditing]="!archived() && !workspaceUnavailable()"
   [promptEditDisabledReason]="store.promptEditDisabledReason()"
   (promptEditRequested)="openPromptEditor($event)"
   [centerComposer]="showWelcome()"
@@ -364,7 +364,7 @@
       (draftChange)="store.setDraft($event)"
       [running]="store.running()"
       [steeringEnabled]="store.state()?.canSteer !== false"
-      [disabled]="archived()"
+      [disabled]="archived() || workspaceUnavailable()"
       [sending]="!!creation() || store.loading() || store.draftRestoring() || !!store.busy() || !!store.uncertain() || store.waitingUncertain() || (!store.offline() && store.waitingPending()) || !!store.outbox?.restoring() || (!store.state() && !store.offline())"
       [waitingAction]="reconnectAction()"
       [waitingFor]="store.offline() && !creation() ? machineName() : undefined"
@@ -425,7 +425,7 @@
       [queueReorderable]="false"
       [queue]="store.queue()"
       [placeholder]="
-        archived()
+        workspaceUnavailable() ? 'Prepare the workspace to continue' : archived()
           ? 'Restore this session to send messages'
           : store.running()
             ? (store.state()?.canSteer === false ? 'Add a follow-up…' : 'Add a follow-up · Alt Enter to steer')

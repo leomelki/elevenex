@@ -49,6 +49,12 @@ import {
   type WorkspaceSessionPage,
 } from '@elevenex/shared';
 import { taskBranchWindow, type TaskBranchChoice } from './desktop-task-branches.js';
+import { refreshWorkspaceCheckout } from '../workspaces/workspace-ownership.js';
+import {
+  workspaceTaskError,
+  MISSING_WORKTREE_ERROR,
+} from '../workspaces/workspace-checkout-errors.js';
+import { mapWorktrees } from '../worktrees/worktree-observation.js';
 
 type Appearance = { -readonly [Key in keyof WorkspaceAppearance]: WorkspaceAppearance[Key] };
 type Stage = 'planned' | 'active' | 'waiting';
@@ -203,6 +209,12 @@ export class DesktopWorkspaceService {
     row: typeof schema.workspaces.$inferSelect,
     projectId: number,
   ) {
+    // Only stat the visible page's directories. Git/history scans stay on demand.
+    row = (await refreshWorkspaceCheckout(this.db, row)).workspace ?? row;
+    const needsWorkspace =
+      !row.archivedAt &&
+      row.taskState === 'ready' &&
+      row.linkStatus === 'unlinked';
     const meta = await this.metadata('task', row.id);
     const stage = ['planned', 'active', 'waiting'].includes(String(meta.stage))
       ? (meta.stage as Stage)
@@ -213,13 +225,21 @@ export class DesktopWorkspaceService {
       repoId: row.repoId,
       name: row.name,
       branchName: row.taskBranch ?? row.createdFromRef ?? '',
-      state: row.archivedAt ? 'finished' : row.taskState,
+      state: row.archivedAt
+        ? 'finished'
+        : needsWorkspace
+          ? 'failed'
+          : row.taskState,
       ...(row.taskTemporary && !row.archivedAt ? { temporary: true as const } : {}),
       stage,
       archivedAt: row.archivedAt,
       updatedAt: row.updatedAt,
-      ...(row.taskState === 'failed' && !row.archivedAt && row.taskError
-        ? { setupIssue: desktopTaskSetupIssue(row.taskError) }
+      ...((row.taskState === 'failed' || needsWorkspace) && !row.archivedAt
+        ? {
+            setupIssue: desktopTaskSetupIssue(
+              needsWorkspace ? MISSING_WORKTREE_ERROR : row.taskError,
+            ),
+          }
         : {}),
     };
   }
@@ -330,13 +350,14 @@ export class DesktopWorkspaceService {
       .orderBy(desc(schema.workspaces.id))
       .limit(limit + 1);
     return page(
-      await Promise.all(
-        rows.map(async (row) => ({
+      await mapWorktrees(
+        rows,
+        async (row) => ({
           ...(await this.taskView(row.task, row.projectId)),
           projectName: row.projectName,
           repoName: row.repoName,
           projectRepositoryCount: row.projectRepositoryCount,
-        })),
+        }),
       ),
       limit,
     );
@@ -511,7 +532,9 @@ export class DesktopWorkspaceService {
       if (
         recovery !== 'use-existing' &&
         recovery !== 'snapshot' &&
-        recovery !== 'exceed-worktree-limit'
+        recovery !== 'exceed-worktree-limit' &&
+        recovery !== 'restore-branch' &&
+        recovery !== 'new-workspace'
       )
         throw new BadRequestException('Invalid task recovery.');
       const task = await this.tasks.record(id);
@@ -521,18 +544,41 @@ export class DesktopWorkspaceService {
         );
       const issue = desktopTaskSetupIssue(task.taskError);
       if (recovery === 'use-existing' && issue?.code === 'external-checkout')
-        await this.tasks.retry(id, { confirmExternal: true });
+        await this.tasks.retry(id, { confirmExternal: true }, task.taskError);
       else if (recovery === 'snapshot' && issue?.canUseSnapshot)
-        await this.tasks.retry(id, {
-          checkoutMode: 'snapshot',
-          environment: 'automatic',
-        });
+        await this.tasks.retry(
+          id,
+          {
+            checkoutMode: 'snapshot',
+            environment: 'automatic',
+          },
+          task.taskError,
+        );
       else if (
         recovery === 'exceed-worktree-limit' &&
         issue?.canExceedWorktreeLimit
       )
-        await this.tasks.retry(id, { confirmOverLimit: true });
-      else
+        await this.tasks.retry(id, { confirmOverLimit: true }, task.taskError);
+      else if (
+        recovery === 'new-workspace' &&
+        issue?.workspaceRecovery === 'new-workspace'
+      )
+        await this.tasks.retry(id, { environment: 'new' }, task.taskError);
+      else if (
+        recovery === 'restore-branch' &&
+        issue?.workspaceRecovery === 'restore-branch'
+      ) {
+        const error = workspaceTaskError(task.taskError);
+        await this.tasks.retry(
+          id,
+          {
+            mode: 'new',
+            baseRef: String(error?.savedCommit),
+            branchName: task.taskBranch ?? '',
+          },
+          task.taskError,
+        );
+      } else
         throw new BadRequestException(
           'This recovery is not available for the task. Refresh its setup state.',
         );

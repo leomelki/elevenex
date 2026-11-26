@@ -149,7 +149,7 @@ guarantees so individual tools can't regress them:
 - **Folders**: `list_session_folders`, `create_session_folder`, `rename_session_folder`,
   `move_session_to_folder`, `archive_session_folder`, `unarchive_session_folder`,
   `delete_session_folder`.
-- **Drive**: `prompt_session`, `interrupt_session`, `stop_background_task`, `fork_session`, `archive_session`,
+- **Drive**: `prompt_session`, `send_session_message`, `interrupt_session`, `stop_background_task`, `fork_session`, `archive_session`,
   `cancel_session_delegation`, `reset_session`, `rename_session`, `unarchive_session`, `get_pending_action`, `resolve_action`, `set_provider`, `set_model`,
   `set_permission_mode`.
   `prompt_session` accepts optional `mentionSessionIds` (up to 10; deduplicated), attaching the same
@@ -180,7 +180,8 @@ close again.
 | --- | --- |
 | Reuse the latest conversation in a ready task | `open_task_session` |
 | Create another conversation or launch a delegate | `create_session` |
-| Follow up, steer, or queue a prompt in an existing conversation | `prompt_session` |
+| Follow up, steer, or queue an assignment in an existing conversation | `prompt_session` |
+| Send a finding, question, or answer to a parent or peer | `send_session_message` |
 | Inspect current activity | `session_status` |
 | Block for a result or decision | `await_session_event` |
 | Read work already recorded | `read_session`, `grep_session`, `read_session_range` |
@@ -264,8 +265,35 @@ parents can launch and wait for delegates. If work outlasts the wait or is
 launched asynchronously, collect it with `await_session_event`. Starting a new
 Antigravity turn requires a desktop chat send.
 
-Use `prompt_session` for a focused follow-up. Authenticated sends carry the
-sender’s session ID. The tool starts an idle session and prefers live input
+Use `prompt_session` for a focused follow-up. Each send to your own delegate
+requests a new completion by default, including after an earlier result was
+collected. A conversation can therefore handle several assignments without
+losing the parent wakeup. Set `notifyOnCompletion:false` for context that does
+not request a completion. Steering corrections share the running work's final
+answer; queued assignments retain separate results. Replies are matched to the
+assignment's authenticated message ID, not to an earlier final in the transcript.
+Completion waits for the session's queued and finite background work to settle.
+
+Pass a stable `requestId` on follow-ups. The send's receipt and completion
+ownership are durable. Repeating identical inputs returns the original receipt;
+conflicting reuse fails. An accepted receipt means the provider owns that send,
+not that its work is complete. A disconnected or interrupted dispatch may be
+unconfirmed: inspect the recipient before starting a different request. Recovery
+does not replay an instruction that may already have reached the provider.
+
+Use `send_session_message` for important findings, questions, blockers and answers
+during an assignment. It requires a stable `requestId`, accepts up to 32,000
+characters, and uses the same steering/queue transport and sender attribution.
+A child can pass `to:"parent"`; the backend resolves its actual delegator rather
+than the sidebar's visual parent. Explicit numeric Elevenex session IDs address
+other recipients. Native subagent handles belong to the provider's native tools.
+Messages do not create another completion subscription or an automatic reply loop.
+Continue independent work while waiting for an answer, and avoid routine progress
+chatter or unnecessary acknowledgements. The final assignment result is still
+delivered automatically. The existing chat message operations display the sender,
+recipient and delivery identity for these sends.
+
+Authenticated sends carry the sender’s session ID. The tool starts an idle session and prefers live input
 for an active turn on Codex, Claude, Pi, and OpenCode v1 or v2 when the harness
 can accept it. Claude schedules priority input for its next native boundary,
 and Pi delivers steering before its next model call.

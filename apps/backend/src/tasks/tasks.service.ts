@@ -44,9 +44,16 @@ import { AppSetupError } from '../task-apps/app-setup-error.js';
 import { TaskSetup } from './task.types.js';
 import { WorktreeContextService } from '../worktree-context/worktree-context.service.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
-import { refreshWorkspaceCheckout } from '../workspaces/workspace-ownership.js';
+import {
+  isWorkspaceCheckoutFailure,
+  refreshWorkspaceCheckout,
+} from '../workspaces/workspace-ownership.js';
 import { compareWorkspaceOrder } from '../workspaces/workspace-order.js';
 import { isMissingWorktreePath } from '../worktrees/worktree-path.js';
+import {
+  MISSING_WORKTREE_ERROR,
+  workspaceTaskError,
+} from '../workspaces/workspace-checkout-errors.js';
 
 type Task = typeof schema.workspaces.$inferSelect;
 type Repo = typeof schema.repos.$inferSelect;
@@ -84,6 +91,19 @@ export function conciseFailureMessage(message: string): string {
     : text || message.slice(-MAX_FAILURE_MESSAGE_LENGTH);
 }
 
+function preparationFailureMessage(error: unknown): string {
+  const seen = new Set<object>();
+  let message = 'Could not prepare the task.';
+  // Drizzle wraps SQLite errors with the query. Surface the underlying cause.
+  while (error && typeof error === 'object' && !seen.has(error)) {
+    seen.add(error);
+    const detail = error as { message?: unknown; cause?: unknown };
+    if (typeof detail.message === 'string') message = detail.message;
+    error = detail.cause;
+  }
+  return conciseFailureMessage(message);
+}
+
 @Injectable()
 export class TasksService
   implements OnApplicationBootstrap, OnModuleInit, OnModuleDestroy
@@ -95,6 +115,7 @@ export class TasksService
     ReturnType<TasksService['checkReleasePreview']>
   >();
   private readonly operations = new Map<number, Promise<void>>();
+  private readonly queuedPreparations = new Set<number>();
   private readonly finishRequests = new Map<
     number,
     NonNullable<Task['taskFinishRequest']>
@@ -136,6 +157,7 @@ export class TasksService
     this.hooks.off('status-changed', this.finishOnIdle);
     this.finishRequests.clear();
     this.idleFinishRequests.clear();
+    this.queuedPreparations.clear();
   }
 
   onFinishing(listener: (taskId: number) => Promise<void>): () => void {
@@ -235,6 +257,18 @@ export class TasksService
       .from(schema.workspaces)
       .where(isNull(schema.workspaces.archivedAt));
     for (const task of tasks) {
+      if (task.taskState === 'failed' && task.taskError) {
+        const detail = workspaceTaskError(task.taskError);
+        if (
+          detail?.code === 'environment_missing' &&
+          task.taskError !== JSON.stringify(detail)
+        )
+          await this.update(
+            task.id,
+            { taskError: JSON.stringify(detail) },
+            'failed',
+          );
+      }
       if (task.taskFinishRequest && task.taskState === 'ready') {
         this.finishRequests.set(task.id, task.taskFinishRequest);
         if (this.sessionIsIdle(task.taskFinishRequest.sessionId)) {
@@ -368,11 +402,7 @@ export class TasksService
             .update(schema.workspaces)
             .set({
               taskState: 'failed',
-              taskError: JSON.stringify({
-                code: 'environment_missing',
-                message:
-                  'This task’s checkout is unavailable. Choose a branch and retry setup.',
-              }),
+              taskError: JSON.stringify(MISSING_WORKTREE_ERROR),
             })
             .where(
               and(
@@ -413,7 +443,7 @@ export class TasksService
       checked.error ?? observationError;
     if (task.taskError && !error) {
       try {
-        error = JSON.parse(task.taskError);
+        error = workspaceTaskError(task.taskError);
       } catch {
         error = { message: task.taskError };
       }
@@ -425,15 +455,7 @@ export class TasksService
     return {
       ...task,
       taskState: needsEnvironment ? 'failed' : task.taskState,
-      error:
-        error ??
-        (needsEnvironment
-          ? {
-              code: 'environment_missing',
-              message:
-                'This task needs a worktree. Choose a branch and retry setup.',
-            }
-          : null),
+      error: error ?? (needsEnvironment ? MISSING_WORKTREE_ERROR : null),
       preparationStage: task.taskConfig
         ? (JSON.parse(task.taskConfig).preparationStage ?? null)
         : null,
@@ -639,58 +661,77 @@ export class TasksService
     return this.get(task.id);
   }
 
-  async retry(id: number, patch: Partial<TaskSetup> = {}) {
+  async retry(
+    id: number,
+    patch: Partial<TaskSetup> = {},
+    expectedFailure?: string | null,
+  ) {
+    const task = await this.record(id);
+    const repo = await this.repo(task.repoId);
+    const key = await this.git.repositoryKey(repo.path);
+    return this.git.exclusive(key, () =>
+      this.retryLocked(id, patch, expectedFailure),
+    );
+  }
+
+  private async retryLocked(
+    id: number,
+    patch: Partial<TaskSetup>,
+    expectedFailure?: string | null,
+  ) {
     // Validation creates own undefined DTO fields; @IsOptional also accepts
     // null. Neither represents a setup change, so preserve the saved values.
     patch = Object.fromEntries(
       Object.entries(patch).filter(([, value]) => value != null),
     );
     const task = await this.record(id);
+    if (
+      expectedFailure !== undefined &&
+      (task.taskState !== 'failed' || task.taskError !== expectedFailure)
+    )
+      throw new ConflictException(
+        'The task setup changed. Refresh before choosing a recovery.',
+      );
     if (task.archivedAt)
       throw new ConflictException(
         'Reopen this task before preparing its worktree.',
       );
+    const repo = await this.repo(task.repoId);
+    await this.projects.assertProjectIsActive(repo.projectId);
     if (task.taskState === 'released') {
-      const repo = await this.repo(task.repoId);
-      const key = await this.git.repositoryKey(repo.path);
-      return this.git.exclusive(key, async () => {
-        const current = await this.record(id);
-        if (current.taskState !== 'released' || current.archivedAt)
-          return this.get(id);
-        await this.projects.assertProjectIsActive(repo.projectId);
-        const saved = this.resumeSetup(current);
-        const setup = { ...saved, ...patch };
-        if (
-          (patch.branchName && patch.branchName !== saved.branchName) ||
-          (patch.checkoutMode && patch.checkoutMode !== saved.checkoutMode) ||
-          (patch.mode && patch.mode !== saved.mode) ||
-          (patch.baseRef && patch.baseRef !== saved.baseRef)
-        ) {
-          setup.resolvedCommit = undefined;
-          setup.branchPrepared = undefined;
-          setup.localBranch = undefined;
-        }
-        await this.update(id, {
-          name: patch.name?.trim() || current.name,
-          taskState: 'preparing',
-          taskError: null,
-          taskConfig: JSON.stringify(setup),
-          checkoutMode: setup.checkoutMode,
-        });
-        this.schedule(id);
-        return this.get(id);
+      const saved = this.resumeSetup(task);
+      const setup = { ...saved, ...patch };
+      if (
+        (patch.branchName && patch.branchName !== saved.branchName) ||
+        (patch.checkoutMode && patch.checkoutMode !== saved.checkoutMode) ||
+        (patch.mode && patch.mode !== saved.mode) ||
+        (patch.baseRef && patch.baseRef !== saved.baseRef)
+      ) {
+        setup.resolvedCommit = undefined;
+        setup.branchPrepared = undefined;
+        setup.localBranch = undefined;
+      }
+      await this.update(id, {
+        name: patch.name?.trim() || task.name,
+        taskState: 'preparing',
+        taskError: null,
+        taskConfig: JSON.stringify(setup),
+        checkoutMode: setup.checkoutMode,
       });
+      this.schedule(id);
+      return this.get(id);
     }
     if (
       task.taskState !== 'failed' &&
       !(task.taskState === 'ready' && task.linkStatus === 'unlinked')
     )
       return this.get(id);
-    if (task.taskError && JSON.parse(task.taskError).code === 'finish_failed')
+    const failure = workspaceTaskError(task.taskError);
+    if (failure?.code === 'finish_failed')
       throw new ConflictException(
         'Finish this task again to complete process cleanup.',
       );
-    if (task.taskError && JSON.parse(task.taskError).code === 'release_failed')
+    if (failure?.code === 'release_failed')
       throw new ConflictException(
         'Release this worktree again to complete process cleanup.',
       );
@@ -701,14 +742,33 @@ export class TasksService
       checked.workspace.linkStatus === 'linked'
     )
       return this.get(id);
-    const saved: TaskSetup = task.taskConfig
-      ? JSON.parse(task.taskConfig)
-      : {
-          requestId: randomUUID(),
-          mode: 'existing',
-          branchName:
-            task.taskBranch || task.desiredBranch || task.createdFromRef || '',
-        };
+    const missingCheckout =
+      (failure?.code === 'environment_missing' &&
+        isWorkspaceCheckoutFailure(task)) ||
+      (task.taskState === 'ready' && task.linkStatus === 'unlinked');
+    await this.allocator.assertRecoveryIdle(id);
+    const saved: TaskSetup = missingCheckout
+      ? { ...this.resumeSetup(task), confirmExternal: false }
+      : task.taskConfig
+        ? JSON.parse(task.taskConfig)
+        : {
+            requestId: randomUUID(),
+            mode: 'existing',
+            branchName:
+              task.taskBranch ||
+              task.desiredBranch ||
+              task.createdFromRef ||
+              '',
+          };
+    if (missingCheckout) {
+      const previous = await this.allocator.previousCheckout(repo, task);
+      if (saved.checkoutMode === 'branch' && previous?.branch) {
+        saved.branchName = `refs/heads/${previous.branch}`;
+        saved.localBranch = previous.branch;
+      } else if (saved.checkoutMode === 'snapshot' && previous?.head) {
+        saved.resolvedCommit = await this.git.resolve(repo.path, previous.head);
+      }
+    }
     const setup = { ...saved, ...patch };
     if (
       (patch.branchName && patch.branchName !== saved.branchName) ||
@@ -723,7 +783,7 @@ export class TasksService
         .delete(schema.taskReservations)
         .where(eq(schema.taskReservations.taskId, id));
     }
-    if (patch.environment === 'new' || patch.worktreeId)
+    if (patch.environment === 'new' || patch.worktreeId || missingCheckout)
       await this.db
         .delete(schema.taskReservations)
         .where(eq(schema.taskReservations.taskId, id));
@@ -864,7 +924,10 @@ export class TasksService
   }
 
   private schedule(id: number) {
-    if (this.operations.has(id)) return;
+    if (this.operations.has(id)) {
+      this.queuedPreparations.add(id);
+      return;
+    }
     const pending = this.prepare(id)
       .catch(async (error: unknown) => {
         const [current] = await this.db
@@ -873,19 +936,13 @@ export class TasksService
           .where(eq(schema.workspaces.id, id));
         // Confirmed project deletion can remove a finished task while its
         // coalesced remote-ref refresh is still returning. Never revive it.
-        if (
-          !current ||
-          current.archivedAt ||
-          current.taskState !== 'preparing'
-        ) return;
+        if (!current || current.archivedAt || current.taskState !== 'preparing')
+          return;
         const detail =
           error instanceof HttpException
             ? error.getResponse()
             : {
-                message:
-                  error instanceof Error
-                    ? conciseFailureMessage(error.message)
-                    : 'Could not prepare the task.',
+                message: preparationFailureMessage(error),
               };
         await this.update(id, {
           taskState: 'failed',
@@ -894,8 +951,21 @@ export class TasksService
           ),
         });
       })
-      .finally(() => this.operations.delete(id));
+      .finally(async () => {
+        this.operations.delete(id);
+        // A retry can be accepted after failure is saved but before this
+        // operation settles. Do not leave that accepted retry preparing forever.
+        if (!this.queuedPreparations.delete(id)) return;
+        const latest = await this.db
+          .select()
+          .from(schema.workspaces)
+          .where(eq(schema.workspaces.id, id))
+          .then((rows) => rows[0]);
+        if (latest && !latest.archivedAt && latest.taskState === 'preparing')
+          this.schedule(id);
+      });
     this.operations.set(id, pending);
+    void pending.catch((error: unknown) => this.logger.error('Could not complete task setup bookkeeping', error));
   }
 
   private async prepare(id: number) {
@@ -939,7 +1009,7 @@ export class TasksService
           );
         if (
           setup.mode === 'existing' &&
-          current.finalCommit &&
+          (current.finalCommit || current.startingCommit) &&
           !(await this.git.remoteRef(repo.path, base)) &&
           !(await this.git.hasLocalBranch(
             repo.path,
@@ -950,6 +1020,7 @@ export class TasksService
             code: 'branch_missing',
             message:
               'This task’s branch was deleted. Restore it from the saved commit or choose another branch.',
+            savedCommit: current.finalCommit || current.startingCommit,
           });
         setup.resolvedCommit = await this.git.resolve(repo.path, base);
         const remote =
@@ -980,14 +1051,12 @@ export class TasksService
             });
         }
         if (setup.mode === 'existing' && !remote) {
-          if (
-            current.finalCommit &&
-            !(await this.git.hasLocalBranch(repo.path, setup.localBranch))
-          )
+          if (!(await this.git.hasLocalBranch(repo.path, setup.localBranch)))
             throw new ConflictException({
               code: 'branch_missing',
               message:
                 'This task’s branch was deleted. Restore it from the saved commit or choose another branch.',
+              savedCommit: current.finalCommit || current.startingCommit,
             });
           setup.resolvedCommit = await this.git.resolve(
             repo.path,
@@ -2176,21 +2245,35 @@ export class TasksService
     values: Partial<typeof schema.workspaces.$inferInsert>,
     expectedState?: string,
   ) {
-    await this.db
-      .update(schema.workspaces)
-      .set({ ...values, updatedAt: new Date().toISOString() })
-      .where(
-        and(
-          eq(schema.workspaces.id, id),
-          expectedState
-            ? and(
-                eq(schema.workspaces.taskState, expectedState),
-                isNull(schema.workspaces.archivedAt),
-              )
-            : undefined,
-        ),
-      );
-    if (values.taskState || 'archivedAt' in values || 'name' in values)
+    const changed = this.db.transaction((tx) => {
+      const result = tx
+        .update(schema.workspaces)
+        .set({ ...values, updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(schema.workspaces.id, id),
+            expectedState
+              ? and(
+                  eq(schema.workspaces.taskState, expectedState),
+                  isNull(schema.workspaces.archivedAt),
+                )
+              : undefined,
+          ),
+        )
+        .run();
+      // A branch lease protects setup only. Once ready, users can switch
+      // branches freely; the path lease continues to protect their files.
+      if (result.changes && values.taskState === 'ready')
+        tx.update(schema.taskReservations)
+          .set({ branchName: null })
+          .where(eq(schema.taskReservations.taskId, id))
+          .run();
+      return result.changes;
+    });
+    if (
+      changed &&
+      (values.taskState || 'archivedAt' in values || 'name' in values)
+    )
       this.navigationEvents?.invalidate();
   }
 }

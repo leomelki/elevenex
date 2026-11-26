@@ -235,10 +235,19 @@ export class ConnectedWorkspaceFixture extends MachineStartupFixture {
     });
   };
   workspaceTask = async (_scope: string, id: number) => success(this.navigationTask(this.taskRows.find(task => task.id === id)!));
+  setWorkspaceRecovery(workspaceRecovery: 'prepare' | 'restore-branch' | 'new-workspace' | 'released'): void {
+    if (workspaceRecovery === 'released') { this.taskRows = this.taskRows.map(task => task.id === 11 ? { ...task, state: 'released', setupIssue: undefined } : task); return; }
+    const message = workspaceRecovery === 'prepare'
+      ? 'The workspace folder is missing. Prepare a workspace to continue. Your conversations are saved.'
+      : workspaceRecovery === 'restore-branch'
+        ? 'This task’s branch was deleted. Restore it from the saved revision to continue. Your conversations are saved.'
+        : 'The workspace has local changes from interrupted setup. Keep them here and prepare a separate workspace to continue.';
+    this.taskRows = this.taskRows.map(task => task.id === 11 ? { ...task, state: 'failed', setupIssue: { code: 'other', message, canUseSnapshot: false, workspaceRecovery } } : task);
+  }
   workspaceRetryTask = async (scope: string, id: number, recovery?: WorkspaceTaskRecovery) => {
     this.taskRecoveries.push({ taskId: id, recovery });
     if (this.taskRecoveries.length > 20) this.taskRecoveries.shift();
-    if (recovery) {
+    if (recovery || this.taskRows.find(task => task.id === id)?.state === 'released' || this.taskRows.find(task => task.id === id)?.setupIssue?.workspaceRecovery === 'prepare') {
       this.taskRows = this.taskRows.map(task => task.id === id ? { ...task, state: 'ready', setupIssue: undefined } : task);
       if (!this.sessionRows.some(session => session.taskId === id)) await this.workspaceCreateSession(scope, { taskId: id });
     }

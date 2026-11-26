@@ -51,13 +51,15 @@ export interface WorkspaceTask {
   readonly archivedAt: string | null;
   readonly updatedAt: string;
 }
-export type WorkspaceTaskRecovery = 'use-existing' | 'snapshot' | 'exceed-worktree-limit';
+export type WorkspaceTaskRecovery = 'use-existing' | 'snapshot' | 'exceed-worktree-limit' | 'restore-branch' | 'new-workspace';
 export interface WorkspaceTaskSetupIssue {
   readonly code: 'external-checkout' | 'branch-in-use' | 'environment-busy' | 'other';
   readonly message: string;
   readonly workspacePath?: string;
   readonly canUseSnapshot: boolean;
   readonly canExceedWorktreeLimit?: boolean;
+  /** Optional capability; older clients retain ordinary retry. */
+  readonly workspaceRecovery?: 'prepare' | 'restore-branch' | 'new-workspace';
 }
 export interface WorkspaceSession {
   /** Engine permits permanent removal only before any conversation starts. */

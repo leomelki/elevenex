@@ -52,7 +52,16 @@ export function selection(value: unknown): EnvironmentSelection {
   if (input['kind'] === 'remote') return { kind: 'remote', hostId: id(input['hostId']) };
   throw new Error('Invalid environment');
 }
-export function context(value: unknown): EnvironmentContext {
+export function context(value: unknown): EnvironmentContext { return environmentContext(value, workspaceView); }
+/**
+ * Saved layouts can come from another desktop build sharing this profile, such
+ * as one with a panel this build lacks. Layout is device-local and has renderer
+ * defaults, so an unreadable one resets instead of blocking every saved machine.
+ */
+export function savedContext(value: unknown): EnvironmentContext {
+  return environmentContext(value, view => { try { return workspaceView(view); } catch { return undefined; } });
+}
+function environmentContext(value: unknown, workspace: (value: unknown) => WorkspaceViewState | undefined): EnvironmentContext {
   const input = object(value, ['projectId', 'taskId', 'sessionId', 'draft', 'cursor', 'workspace']);
   const domainId = (value: unknown): number | null => {
     if (value === null) return null;
@@ -61,9 +70,10 @@ export function context(value: unknown): EnvironmentContext {
   };
   const draft = input['draft'];
   if (typeof draft !== 'string' || draft.length > 100_000 || draft.includes('\0')) throw new Error('Draft exceeds its limit');
+  const view = input['workspace'] === undefined ? undefined : workspace(input['workspace']);
   return { projectId: domainId(input['projectId']), taskId: domainId(input['taskId']), sessionId: domainId(input['sessionId']), draft,
     cursor: input['cursor'] === null ? null : text(input['cursor'], 1024, true),
-    ...(input['workspace'] === undefined ? {} : { workspace: workspaceView(input['workspace']) }) };
+    ...(view === undefined ? {} : { workspace: view }) };
 }
 function workspaceView(value: unknown): WorkspaceViewState {
   const input = object(value, ['panel', 'panelOpen', 'wideReview', 'closed', 'focused', 'filter', 'projectCursor', 'taskCursor']);

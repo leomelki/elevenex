@@ -23,10 +23,10 @@ export class WorkspaceTaskGitService {
   private readonly phase = signal<'writing' | 'committing' | 'pushing' | null>(null);
   private phaseTimer?: ReturnType<typeof setTimeout>;
   readonly state = computed<GitState | undefined>(() => {
-    const git = this.summary();
+    const git = this.key() ? this.summary() : null;
     return git ? { files: git.files, add: git.additions, del: git.deletions, ahead: git.ahead, ...(this.busy() === 'commit' ? { busy: this.phase() === 'pushing' ? 'push' as const : 'commit' as const, busyLabel: this.phase() === 'writing' ? 'Writing the message…' : undefined } : this.busy() === 'push' ? { busy: 'push' as const } : {}) } : undefined;
   });
-  private readonly key = computed(() => { const selected = this.store.taskSelection(), task = this.store.selectedTask(); return selected && task?.state !== 'finished' && !task?.archivedAt ? `${selected.scopeId}/${selected.taskId}` : ''; });
+  private readonly key = computed(() => { const selected = this.store.taskSelection(), task = this.store.selectedTask(); return selected && task?.state === 'ready' && !task.archivedAt ? `${selected.scopeId}/${selected.taskId}` : ''; });
   private revision = 0;
   private disposed = false;
   private selectionEpoch = 0;
@@ -39,7 +39,7 @@ export class WorkspaceTaskGitService {
 
   constructor() {
     let previousTask: number | undefined;
-    effect(() => { const key = this.key(); untracked(() => { const task = this.store.taskSelection()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
+    effect(() => { const key = this.key(); untracked(() => { const task = this.store.taskSelection()?.taskId; this.selectionEpoch++; this.revision++; clearTimeout(this.pollTimer); clearTimeout(this.phaseTimer); this.phase.set(null); if (previousTask !== task || !key) this.summary.set(null); previousTask = task; this.clearCommitPreview(); this.reading = false; this.loading.set(false); this.busy.set(null); this.error.set(null); this.uncertain.set(false); if (key) void this.refresh(); }); });
     effect(() => {
       const selected = this.store.taskSelection(), scope = this.backend.state().scope?.id;
       if (selected && selected.scopeId !== scope) untracked(() => {

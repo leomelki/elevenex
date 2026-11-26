@@ -28,7 +28,7 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly pushAfter = signal(false);
   private readonly commitTask = computed(() => {
     const selected = this.store.taskSelection();
-    return selected ? { scopeId: selected.scopeId, taskId: selected.taskId } : null;
+    return selected && this.store.selectedTask()?.state === 'ready' ? { scopeId: selected.scopeId, taskId: selected.taskId } : null;
   }, { equal: (a, b) => a?.scopeId === b?.scopeId && a?.taskId === b?.taskId });
   protected readonly commitProvider = computed<CommitFileProvider | undefined>(() => {
     const selected = this.commitTask();
@@ -53,7 +53,7 @@ export class WorkspaceTaskHeaderComponent {
   });
   private resetTimer?: ReturnType<typeof setTimeout>;
   private epoch = 0;
-  private readonly taskKey = computed(() => { const selected = this.store.taskSelection(); return selected ? `${selected.scopeId}/${selected.taskId}` : ''; });
+  private readonly taskKey = computed(() => { const selected = this.store.taskSelection(); return selected ? `${selected.scopeId}/${selected.taskId}/${this.store.selectedTask()?.state}` : ''; });
   constructor() {
     effect(() => {
       this.taskKey(); this.epoch++;
@@ -70,7 +70,7 @@ export class WorkspaceTaskHeaderComponent {
     this.closeLoading.set(true); this.closeError.set(null);
     try {
       const preview = await this.bridge.workspaceClosePreview(selection.scopeId, task.id);
-      if (epoch !== this.epoch || this.taskKey() !== `${selection.scopeId}/${task.id}`) return;
+      if (epoch !== this.epoch || this.taskKey() !== `${selection.scopeId}/${task.id}/${task.state}`) return;
       if (preview.ok) {
         const value = preview.value;
         if (!value.running && !value.terminals && !value.actions && !value.apps && !value.unpushed && value.uncommitted === 0) await this.store.closeTask();
@@ -99,6 +99,7 @@ export class WorkspaceTaskHeaderComponent {
     } catch { if (epoch === this.epoch) this.store.error.set('The branch name could not be copied.'); }
   }
   protected gitAction(action: GitAction): void {
+    if (this.store.selectedTask()?.state !== 'ready') return;
     if (this.store.offline()) { this.git.error.set(`This git action needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent.`); return; }
     if (action === 'commit' || action === 'commit-push') { if (action === 'commit-push') this.pushAfter.set(true); this.commitOpen.update(open => !open); }
     else if (action === 'push' || action === 'sync') void this.git.perform({ type: action });

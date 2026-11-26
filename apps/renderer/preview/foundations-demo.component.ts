@@ -110,7 +110,6 @@ export class FoundationsDemoComponent {
         id: `preview-notice-${number}`,
         title: `Notification ${number}`,
         action: "Undo",
-        duration: 0,
       },
     ]);
   }

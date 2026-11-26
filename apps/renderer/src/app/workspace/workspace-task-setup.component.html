@@ -3,9 +3,9 @@
   <h1>{{ task().name }}</h1>
   @if (task().state === 'finished') {
     <p role="status">This task has been closed. Select another task to continue.</p>
-  } @else if (task().state === 'failed') {
+  } @else if (task().state === 'failed' || task().state === 'released') {
     @let issue = task().setupIssue;
-    <p role="alert">{{ issue?.message ?? 'The workspace could not be prepared. Your task has been saved.' }}</p>
+    <p [attr.role]="task().state === 'released' ? 'status' : 'alert'">{{ task().state === 'released' ? 'Prepare a workspace to continue. Your conversations are saved.' : issue?.message ?? 'The workspace could not be prepared. Your task has been saved.' }}</p>
     @if (issue?.workspacePath; as path) { <div class="workspace-path"><span>Existing workspace</span><code>{{ path }}</code></div> }
     @if (issue?.code === 'external-checkout') {
       <p class="explanation">{{ issue?.canUseSnapshot ? 'Use the existing workspace, including its local edits, or start separately from the committed revision.' : 'Using this workspace includes its existing local edits.' }}</p>
@@ -28,8 +28,12 @@
         @if (issue?.canUseSnapshot) {
           <button exButton [disabled]="busy()" (click)="retryRequested.emit('snapshot')">Use committed revision</button>
         }
-        @if (issue?.code !== 'external-checkout') {
-          <button exButton [disabled]="busy()" (click)="retryRequested.emit(undefined)">Retry setup</button>
+        @if (issue?.workspaceRecovery === 'restore-branch') {
+          <button exButton variant="primary" [disabled]="busy()" (click)="retryRequested.emit('restore-branch')">Restore branch</button>
+        } @else if (issue?.workspaceRecovery === 'new-workspace') {
+          <button exButton variant="primary" [disabled]="busy()" (click)="retryRequested.emit('new-workspace')">Prepare separate workspace</button>
+        } @else if (issue?.code !== 'external-checkout') {
+          <button exButton [variant]="task().state === 'released' || issue?.workspaceRecovery === 'prepare' ? 'primary' : 'secondary'" [disabled]="busy()" (click)="retryRequested.emit(undefined)">{{ task().state === 'released' || issue?.workspaceRecovery === 'prepare' ? 'Prepare workspace' : 'Retry setup' }}</button>
         }
       </div>
       @if (busy()) { <span class="working" role="status">Preparing workspace…</span> }

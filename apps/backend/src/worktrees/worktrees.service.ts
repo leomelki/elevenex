@@ -6,6 +6,7 @@ import { promises as fs } from 'node:fs';
 import { isMissingWorktreePath } from './worktree-path.js';
 import { releaseGitWorktreeCaches } from '../git/git-worktree-cache-lifecycle.js';
 import { readGitCapabilities } from '../config/git-capabilities.js';
+import { mapWorktrees } from './worktree-observation.js';
 
 export interface BranchLastCommit {
   hash: string;
@@ -38,6 +39,8 @@ export interface WorktreeInfo {
 
 export interface ListWorktreesOptions {
   prune?: boolean;
+  /** Allocation must avoid paths still registered in Git, even if absent. */
+  includeMissing?: boolean;
 }
 
 @Injectable()
@@ -64,9 +67,10 @@ export class WorktreesService {
       ...(worktreeListNull ? ['-z'] : []),
     ]);
     const worktrees = this.parsePorcelainOutput(output, worktreeListNull);
+    if (options.includeMissing) return worktrees;
     // Git retains registrations for manually deleted directories until prune.
-    const missing = await Promise.all(
-      worktrees.map((worktree) => isMissingWorktreePath(worktree.path)),
+    const missing = await mapWorktrees(worktrees, (worktree) =>
+      isMissingWorktreePath(worktree.path),
     );
     return worktrees.filter((_, index) => !missing[index]);
   }

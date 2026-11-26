@@ -14,6 +14,7 @@ import {
 import { submitSessionPrompt } from '../mcp/tools/drive/session-prompt-delivery.js';
 import { untilSessionDeadline } from '../mcp/tools/session-deadline.js';
 import { latestConversationReply } from './conversation-export.service.js';
+import { sessionAssignmentReply } from './session-assignment-reply.js';
 import { AgentRuntimeRegistryService } from './agent-runtime-registry.service.js';
 import type {
   AgentRuntimeEvent,
@@ -37,6 +38,7 @@ export class SessionCompletionNoticesService
   private readonly changedSessions = new Set<number>();
   private readonly recipients = new Set<number>();
   private readonly delivering = new Set<number>();
+  private readonly reconciling = new Map<number, Promise<void>>();
   private readonly listeners = new Map<
     AgentRuntimeProvider,
     (event: AgentRuntimeEvent) => void
@@ -118,7 +120,7 @@ export class SessionCompletionNoticesService
     if (this.shutdown.signal.aborted) return;
     try {
       this.outbox.discardForRecipient(sessionId);
-      this.outbox.settle(sessionId, 'failed');
+      this.outbox.failSession(sessionId);
       this.sessionChanged({ sessionId });
     } catch (error) {
       this.report(error);
@@ -135,13 +137,14 @@ export class SessionCompletionNoticesService
   }
 
   private async recover(): Promise<void> {
+    this.sessions.delegationHandoffs.prompts.recover();
     this.outbox.recoverInterruptedDispatches();
     for (const state of ['waiting', 'ready'] as const) {
       let after = 0;
       while (!this.shutdown.signal.aborted) {
         const rows = this.outbox.recoverable(state, after);
         if (!rows.length) break;
-        after = rows[rows.length - 1].sessionId;
+        after = rows[rows.length - 1].id;
         await Promise.all(
           rows.map((row) =>
             this.check(() =>
@@ -186,36 +189,95 @@ export class SessionCompletionNoticesService
     }
   }
 
-  private async reconcileChild(sessionId: number): Promise<void> {
-    const child = this.outbox.waiting(sessionId);
-    if (!child) return;
-    let outcome: 'failed' | 'completed' | undefined;
-    if (terminalStatus(child.status) || child.delivery === 'failed') {
-      outcome = 'failed';
-    } else if (child.delivery === 'accepted' || child.lastCompletionAt) {
-      const runtime = this.registry.getProvider(child.provider);
-      const state = await this.readRuntime(runtime, sessionId);
-      if (state && !this.shutdown.signal.aborted) {
-        const action = pendingActionKey(state);
-        if (action !== child.actionKey)
-          this.outbox.setAction(sessionId, action);
-        if (action) {
-          this.recipients.add(child.recipientId);
-          this.schedule();
+  private reconcileChild(sessionId: number): Promise<void> {
+    const pending = this.reconciling.get(sessionId);
+    if (pending) return pending;
+    const work = this.reconcileAssignments(sessionId).finally(() => {
+      if (this.reconciling.get(sessionId) === work)
+        this.reconciling.delete(sessionId);
+    });
+    this.reconciling.set(sessionId, work);
+    return work;
+  }
+
+  private async reconcileAssignments(sessionId: number): Promise<void> {
+    const first = this.outbox.waiting(sessionId);
+    if (!first) return;
+    if (terminalStatus(first.status) || first.delivery === 'failed') {
+      if (terminalStatus(first.status)) this.outbox.failSession(sessionId);
+      else this.outbox.settle(first.id, 'failed');
+      this.recipients.add(first.recipientId);
+      this.sessions.emit('session-handoff-changed', { sessionId });
+      this.sessionChanged({ sessionId });
+      return;
+    }
+    const runtime = this.registry.getProvider(first.provider);
+    const state = await this.readRuntime(runtime, sessionId).catch(
+      () => undefined,
+    );
+    let history: AgentTranscriptItem[] | undefined;
+    const settled = isSessionSettled(state);
+    if (settled && first.lastCompletionAt)
+      history = await untilSessionDeadline(
+        runtime.getHistory(sessionId, { changeDetails: 'summary' }),
+        1_500,
+        this.shutdown.signal,
+      ).catch(() => undefined);
+    const dispositions = new Map(
+      this.outbox
+        .promptDispositions(sessionId)
+        .map((row) => [row.id, row.disposition]),
+    );
+    let after = 0;
+    while (!this.shutdown.signal.aborted) {
+      const children = this.outbox.pending(sessionId, after);
+      if (!children.length) break;
+      after = children[children.length - 1].id;
+      for (const child of children) {
+        let outcome: 'failed' | 'completed' | undefined;
+        let reply: AgentTranscriptItem | undefined;
+        if (terminalStatus(child.status) || child.delivery === 'failed')
+          outcome = 'failed';
+        else if (
+          child.delivery === 'accepted' ||
+          child.delivery === 'unconfirmed' ||
+          !child.promptId
+        ) {
+          const action = state ? pendingActionKey(state) : null;
+          if (action !== child.actionKey)
+            this.outbox.setAction(sessionId, action);
+          if (action) this.recipients.add(child.recipientId);
+          const completed =
+            child.lastCompletionAt &&
+            child.lastCompletionAt !== child.completionAfter;
+          // Providers version successful replies, not failed turns.
+          if (state?.runPhase === 'error') outcome = 'failed';
+          else if (completed && settled) {
+            reply =
+              history &&
+              sessionAssignmentReply(history, child.messageId, dispositions);
+            // Unconfirmed sends need transcript evidence. Accepted sends can finish
+            // without an excerpt, but must never borrow an older assignment's reply.
+            if (!child.promptId || child.delivery === 'accepted' || reply) {
+              outcome = 'completed';
+              if (!child.promptId && !reply && history)
+                reply = latestConversationReply(history);
+              if (child.promptId && child.delivery === 'unconfirmed' && reply)
+                this.sessions.delegationHandoffs.prompts.record(
+                  child.promptId,
+                  'accepted',
+                );
+            }
+          }
+        }
+        if (outcome) {
+          const recipient = this.outbox.settle(child.id, outcome, reply);
+          if (recipient !== undefined) this.recipients.add(recipient);
+          this.sessions.emit('session-handoff-changed', { sessionId });
         }
       }
-      if (state?.runPhase === 'error') outcome = 'failed';
-      else if (child.lastCompletionAt && isSessionSettled(state))
-        outcome = 'completed';
     }
-
-    if (outcome && !this.shutdown.signal.aborted) {
-      const recipient = this.outbox.settle(sessionId, outcome);
-      if (recipient !== undefined) {
-        this.recipients.add(recipient);
-        this.schedule();
-      }
-    }
+    if (this.recipients.size) this.schedule();
   }
 
   private readRuntime(runtime: AgentRuntimeProvider, sessionId: number) {
@@ -253,7 +315,7 @@ export class SessionCompletionNoticesService
     this.delivering.add(recipientId);
     try {
       const handoffs = this.sessions.delegationHandoffs;
-      const available = <T extends { sessionId: number }>(
+      const available = <T extends { id: number; sessionId: number }>(
         page: (after: number) => T[],
       ) => {
         const rows: T[] = [];
@@ -261,7 +323,7 @@ export class SessionCompletionNoticesService
         while (rows.length < 16) {
           const next = page(after);
           if (!next.length) break;
-          after = next[next.length - 1].sessionId;
+          after = next[next.length - 1].id;
           rows.push(
             ...next.filter(
               (row) => !handoffs.waiting(recipientId, row.sessionId),
@@ -281,23 +343,30 @@ export class SessionCompletionNoticesService
         this.outbox.discardForRecipient(recipientId);
         return;
       }
-      if (recipient.status !== 'active' || recipient.planMode || recipient.activeAgentProvider === 'antigravity') return;
+      if (
+        recipient.status !== 'active' ||
+        recipient.planMode ||
+        recipient.activeAgentProvider === 'antigravity'
+      )
+        return;
       const runtime = this.registry.getProvider(recipient.activeAgentProvider);
       const state = await this.readRuntime(runtime, recipientId);
       if (!this.deliveryMode(runtime, state)) return;
       await this.sessions.assertSessionWorkspaceLinked(recipientId);
       if (this.shutdown.signal.aborted) return;
-      const replies = new Map<number, AgentTranscriptItem>();
+      const replies = new Map<number, { id: string; content?: string }>();
       // Give the parent immediate evidence with a small, shared budget.
       await Promise.all(
         ready
           .filter((row) => row.outcome === 'completed')
-          .slice(0, 4)
+          .slice(0, 16)
           .map(async (row) => {
-            const item = await this.readReply(row.sessionId).catch(
-              () => undefined,
-            );
-            if (item?.content?.trim()) replies.set(row.sessionId, item);
+            const item = row.replyId
+              ? { id: row.replyId, content: row.replyText ?? undefined }
+              : row.messageId
+                ? undefined
+                : await this.readReply(row.sessionId).catch(() => undefined);
+            if (item?.content?.trim()) replies.set(row.id, item);
           }),
       );
       const currentActions = await Promise.all(
@@ -333,7 +402,7 @@ export class SessionCompletionNoticesService
         !handoffs.waiting(recipientId, row.sessionId);
       const claimed = this.outbox.claim(
         recipientId,
-        ready.filter(availableNow).map((row) => row.sessionId),
+        ready.filter(availableNow).map((row) => row.id),
         runtime.info.id,
       );
       const requested = this.outbox.claimActions(
@@ -342,13 +411,15 @@ export class SessionCompletionNoticesService
         currentActions.flat().filter(availableNow),
       );
       if (!claimed.length && !requested.length) return;
-      const replyCount = claimed.filter(id => replies.has(id)).length;
-      const replyLimit = Math.floor(COMPLETION_REPLY_BUDGET / Math.max(1, replyCount));
+      const replyCount = claimed.filter((id) => replies.has(id)).length;
+      const replyLimit = Math.floor(
+        COMPLETION_REPLY_BUDGET / Math.max(1, replyCount),
+      );
       const lines = ready
-        .filter((row) => claimed.includes(row.sessionId))
+        .filter((row) => claimed.includes(row.id))
         .map((row) => {
-          const reply = replies.get(row.sessionId)?.content?.trim();
-          const label = `Session #${row.sessionId}: ${row.outcome}.`;
+          const reply = replies.get(row.id)?.content?.trim();
+          const label = `Session #${row.sessionId}: ${row.outcome}. Assignment #${row.id}.`;
           return reply
             ? `${label}\nChild reply excerpt:\n${reply.slice(0, replyLimit)}${reply.length > replyLimit ? '\n[Reply truncated]' : ''}`
             : label;
@@ -364,31 +435,47 @@ export class SessionCompletionNoticesService
       ].join('\n\n');
       const message = sessionAgentPrompt(
         text,
-        { sessionId: requested[0] ?? claimed[0] },
+        {
+          sessionId:
+            requested[0] ??
+            ready.find((row) => claimed.includes(row.id))!.sessionId,
+        },
         'message',
       );
       // The provider owns the steering-to-queue fallback. A transport error
       // can leave acceptance unknown, so the outbox must not replay the notice.
-      const disposition = await submitSessionPrompt(runtime, recipientId, message, {
-        signal: this.shutdown.signal,
-        queue: mode === 'queue',
-        preferSteering: mode === 'prefer-steering',
-        recordDelivery: (delivery) => {
-          if (!claimed.length) return;
-          this.outbox.record(
-            claimed,
-            delivery === 'accepted' ? 'accepted' : 'unconfirmed',
-          );
-          if (delivery === 'accepted') {
-            for (const id of claimed) {
-              const item = replies.get(id);
-              if (item) handoffs.returned(id, item.id, recipientId);
+      const disposition = await submitSessionPrompt(
+        runtime,
+        recipientId,
+        message,
+        {
+          signal: this.shutdown.signal,
+          queue: mode === 'queue',
+          preferSteering: mode === 'prefer-steering',
+          recordDelivery: (delivery) => {
+            if (!claimed.length) return;
+            this.outbox.record(
+              claimed,
+              delivery === 'accepted' ? 'accepted' : 'unconfirmed',
+            );
+            if (delivery === 'accepted') {
+              for (const id of claimed) {
+                const item = replies.get(id);
+                const child = ready.find((row) => row.id === id);
+                if (item && child)
+                  handoffs.returned(child.sessionId, item.id, recipientId);
+              }
             }
-          }
+          },
         },
-      });
+      );
       // A steered batch may not produce an idle event for a long-running turn.
-      if (disposition === 'steered') {
+      if (
+        disposition &&
+        (disposition === 'steered' ||
+          this.outbox.ready(recipientId).length ||
+          this.outbox.readyActions(recipientId).length)
+      ) {
         this.recipients.add(recipientId);
         this.schedule();
       }

@@ -12,12 +12,15 @@ export class CodeViewportDirective {
   readonly layoutReady = input(true);
   readonly contextKey = input('');
   readonly active = input(true);
+  readonly panelResizing = input(false);
   private readonly settlement = signal(0);
   private revealWhenReady?: () => void;
   private resetContext?: () => void;
   private suspendViewport?: () => void;
+  private startLiveResize?: () => void;
   private previousContext?: string;
   private previousActive?: boolean;
+  private previousResizing = false;
   private readonly frame = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   private readonly document = inject(DOCUMENT);
 
@@ -27,13 +30,16 @@ export class CodeViewportDirective {
     afterRenderEffect(() => {
       const context = this.contextKey();
       const active = this.active();
+      const resizing = this.panelResizing();
       if (this.previousContext !== undefined && this.previousContext !== context) this.resetContext?.();
       else if (this.previousActive !== undefined && this.previousActive !== active) {
         if (active) this.resetContext?.();
         else this.suspendViewport?.();
       }
+      if (active && resizing && !this.previousResizing) this.startLiveResize?.();
       this.previousContext = context;
       this.previousActive = active;
+      this.previousResizing = resizing;
       this.settlement();
       if (active && this.layoutReady()) this.revealWhenReady?.();
     });
@@ -143,7 +149,7 @@ export class CodeViewportDirective {
       // A pseudo-element's transition (such as a shadow layer) is reported on
       // its originating element but never resizes that element's content.
       if (!('propertyName' in event) || event.propertyName !== 'width' || ('pseudoElement' in event && event.pseudoElement) || !(ancestor instanceof HTMLElement) || ancestor === this.frame || !ancestor.contains(viewport)) return;
-      if (!this.active()) return;
+      if (!this.active() || this.panelResizing()) return;
       if (event.type === 'transitionrun') {
         // Use the last settled measurement: reading layout here would flush
         // the first animated width into the child before we can freeze it.
@@ -233,6 +239,11 @@ export class CodeViewportDirective {
       this.frame.classList.remove('resizing', 'reflowing', 'cover-immediate');
       measure();
     };
+    this.startLiveResize = () => {
+      const interrupted = frozenWidth > 0 || awaitingLayout;
+      this.resetContext?.();
+      if (interrupted) this.layoutRequested.emit();
+    };
     observer?.observe(viewport);
     measure();
     for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.addEventListener(type, changed, true);
@@ -245,6 +256,7 @@ export class CodeViewportDirective {
       this.revealWhenReady = undefined;
       this.resetContext = undefined;
       this.suspendViewport = undefined;
+      this.startLiveResize = undefined;
       for (const type of ['transitionrun', 'transitionend', 'transitioncancel']) this.document.removeEventListener(type, changed, true);
       reduced.removeEventListener('change', motionChanged);
       this.frame.style.removeProperty('--code-viewport-width');

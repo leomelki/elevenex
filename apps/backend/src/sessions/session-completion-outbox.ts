@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   gt,
   inArray,
@@ -8,11 +9,14 @@ import {
   isNull,
   ne,
   or,
+  sql,
 } from 'drizzle-orm';
 import type { DrizzleDB } from '../database/database.provider.js';
 import {
   sessionCompletionNotices as notices,
   sessionLaunches,
+  sessionPromptReceipts as prompts,
+  sessionReplyReturns,
   sessions,
   workspaces,
 } from '../database/schema/index.js';
@@ -21,44 +25,120 @@ import { sessionAgentProvider } from './session-provider.js';
 type Notice = typeof notices.$inferSelect;
 type Outcome = NonNullable<Notice['outcome']>;
 
-/** The completion record belongs to the launch, even if its sidebar placement changes. */
+/** Completion ownership belongs to an assignment, independently of sidebar placement. */
 export class SessionCompletionOutbox {
   constructor(private readonly db: DrizzleDB) {}
 
-  waiting(sessionId: number) {
+  launchMessageId(sessionId: number): string | undefined {
+    return (
+      this.db
+        .select({ messageId: notices.messageId })
+        .from(notices)
+        .where(and(eq(notices.sessionId, sessionId), isNull(notices.promptId)))
+        .get()?.messageId ?? undefined
+    );
+  }
+
+  pending(sessionId: number, after = 0) {
     return this.db
       .select({
+        id: notices.id,
+        sessionId: notices.sessionId,
         recipientId: notices.recipientId,
+        messageId: notices.messageId,
+        promptId: notices.promptId,
+        completionAfter: notices.completionAfter,
         actionKey: notices.actionKey,
         provider: sessions.activeAgentProvider,
         status: sessions.status,
         lastCompletionAt: sessions.lastCompletionAt,
-        delivery: sessionLaunches.delivery,
+        delivery: sql<
+          string | null
+        >`coalesce(${prompts.delivery}, ${sessionLaunches.delivery})`,
       })
       .from(notices)
       .innerJoin(sessions, eq(sessions.id, notices.sessionId))
-      .innerJoin(
+      .leftJoin(
         sessionLaunches,
         eq(sessionLaunches.sessionId, notices.sessionId),
       )
+      .leftJoin(prompts, eq(prompts.id, notices.promptId))
       .where(
-        and(eq(notices.sessionId, sessionId), eq(notices.state, 'waiting')),
+        and(
+          eq(notices.sessionId, sessionId),
+          eq(notices.state, 'waiting'),
+          gt(notices.id, after),
+        ),
       )
-      .get();
+      .orderBy(asc(notices.id))
+      .limit(32)
+      .all();
   }
 
-  settle(sessionId: number, outcome: Outcome): number | undefined {
+  waiting(sessionId: number) {
+    return this.pending(sessionId)[0];
+  }
+
+  promptDispositions(sessionId: number) {
+    return this.db
+      .select({ id: prompts.id, disposition: prompts.disposition })
+      .from(prompts)
+      .innerJoin(notices, eq(notices.promptId, prompts.id))
+      .where(
+        and(eq(prompts.sessionId, sessionId), eq(notices.state, 'waiting')),
+      )
+      .limit(64)
+      .all();
+  }
+
+  settle(
+    id: number,
+    outcome: Outcome,
+    reply?: { id: string; content?: string },
+  ) {
+    const notice = this.db
+      .select()
+      .from(notices)
+      .where(eq(notices.id, id))
+      .get();
+    if (!notice || notice.state !== 'waiting') return;
+    const returned =
+      reply &&
+      this.db
+        .select({ id: sessionReplyReturns.itemId })
+        .from(sessionReplyReturns)
+        .where(
+          and(
+            eq(sessionReplyReturns.sessionId, notice.sessionId),
+            eq(sessionReplyReturns.recipientId, notice.recipientId),
+            eq(sessionReplyReturns.itemId, reply.id),
+          ),
+        )
+        .get();
     return this.db
       .update(notices)
-      .set({ state: 'ready', outcome })
-      .where(
-        and(eq(notices.sessionId, sessionId), eq(notices.state, 'waiting')),
-      )
+      .set({
+        state: returned ? 'consumed' : 'ready',
+        outcome,
+        replyId: reply?.id,
+        replyText: reply?.content?.trim().slice(0, 8_001),
+      })
+      .where(and(eq(notices.id, id), eq(notices.state, 'waiting')))
       .returning({ recipientId: notices.recipientId })
       .get()?.recipientId;
   }
 
-  recipientForReadyNotice(sessionId: number): number | undefined {
+  failSession(sessionId: number): void {
+    this.db
+      .update(notices)
+      .set({ state: 'ready', outcome: 'failed' })
+      .where(
+        and(eq(notices.sessionId, sessionId), eq(notices.state, 'waiting')),
+      )
+      .run();
+  }
+
+  recipientForReadyNotice(sessionId: number) {
     return this.db
       .select({ recipientId: notices.recipientId })
       .from(notices)
@@ -68,7 +148,12 @@ export class SessionCompletionOutbox {
 
   status(sessionId: number, recipientId: number) {
     return this.db
-      .select({ state: notices.state, outcome: notices.outcome })
+      .select({
+        state: notices.state,
+        outcome: notices.outcome,
+        assignmentId: notices.id,
+        promptId: notices.promptId,
+      })
       .from(notices)
       .where(
         and(
@@ -76,27 +161,66 @@ export class SessionCompletionOutbox {
           eq(notices.recipientId, recipientId),
         ),
       )
+      .orderBy(desc(notices.id))
+      .get();
+  }
+
+  latestReply(sessionId: number, recipientId: number, assignmentId?: number) {
+    return this.db
+      .select({
+        promptId: notices.promptId,
+        replyId: notices.replyId,
+        replyText: notices.replyText,
+      })
+      .from(notices)
+      .where(
+        and(
+          eq(notices.sessionId, sessionId),
+          eq(notices.recipientId, recipientId),
+          assignmentId === undefined ? undefined : eq(notices.id, assignmentId),
+        ),
+      )
+      .orderBy(desc(notices.id))
+      .get();
+  }
+
+  assignment(promptId: string) {
+    return this.db
+      .select({
+        assignmentId: notices.id,
+        state: notices.state,
+        outcome: notices.outcome,
+      })
+      .from(notices)
+      .where(eq(notices.promptId, promptId))
       .get();
   }
 
   ready(recipientId: number, after = 0) {
     return this.db
-      .select({ sessionId: notices.sessionId, outcome: notices.outcome })
+      .select({
+        id: notices.id,
+        sessionId: notices.sessionId,
+        outcome: notices.outcome,
+        replyId: notices.replyId,
+        replyText: notices.replyText,
+        messageId: notices.messageId,
+      })
       .from(notices)
       .where(
         and(
           eq(notices.recipientId, recipientId),
           eq(notices.state, 'ready'),
-          gt(notices.sessionId, after),
+          gt(notices.id, after),
         ),
       )
-      .orderBy(asc(notices.sessionId))
+      .orderBy(asc(notices.id))
       .limit(16)
       .all();
   }
 
-  claim(recipientId: number, sessionIds: number[], provider: string): number[] {
-    if (!sessionIds.length) return [];
+  claim(recipientId: number, ids: number[], provider: string): number[] {
+    if (!ids.length) return [];
     return this.db.transaction(
       (tx) => {
         if (!this.eligible(tx, recipientId, provider)) return [];
@@ -107,18 +231,17 @@ export class SessionCompletionOutbox {
             and(
               eq(notices.recipientId, recipientId),
               eq(notices.state, 'ready'),
-              inArray(notices.sessionId, sessionIds),
+              inArray(notices.id, ids),
             ),
           )
-          .returning({ sessionId: notices.sessionId })
+          .returning({ id: notices.id })
           .all()
-          .map((row) => row.sessionId);
+          .map((row) => row.id);
       },
       { behavior: 'immediate' },
     );
   }
 
-  /** Recheck after async runtime and workspace reads. */
   private eligible(
     tx: Pick<DrizzleDB, 'select'>,
     recipientId: number,
@@ -186,7 +309,11 @@ export class SessionCompletionOutbox {
 
   readyActions(recipientId: number, after = 0) {
     return this.db
-      .select({ sessionId: notices.sessionId, actionKey: notices.actionKey })
+      .select({
+        id: notices.id,
+        sessionId: notices.sessionId,
+        actionKey: notices.actionKey,
+      })
       .from(notices)
       .where(
         and(
@@ -194,10 +321,10 @@ export class SessionCompletionOutbox {
           eq(notices.state, 'waiting'),
           eq(notices.actionDelivered, false),
           isNotNull(notices.actionKey),
-          gt(notices.sessionId, after),
+          gt(notices.id, after),
         ),
       )
-      .orderBy(asc(notices.sessionId))
+      .orderBy(asc(notices.id))
       .limit(16)
       .all();
   }
@@ -207,46 +334,49 @@ export class SessionCompletionOutbox {
     provider: string,
     requests: readonly { sessionId: number; actionKey: string }[],
   ): number[] {
-    if (!requests.length) return [];
     return this.db.transaction(
       (tx) => {
         if (!this.eligible(tx, recipientId, provider)) return [];
-        // Once claimed, an uncertain send is never replayed for the same request.
-        return requests.flatMap(({ sessionId, actionKey }) => {
-          const result = tx
-            .update(notices)
-            .set({ actionDelivered: true })
-            .where(
-              and(
-                eq(notices.sessionId, sessionId),
-                eq(notices.recipientId, recipientId),
-                eq(notices.state, 'waiting'),
-                eq(notices.actionKey, actionKey),
-                eq(notices.actionDelivered, false),
-              ),
-            )
-            .run();
-          return result.changes ? [sessionId] : [];
-        });
+        return [
+          ...new Set(
+            requests.flatMap(({ sessionId, actionKey }) => {
+              const result = tx
+                .update(notices)
+                .set({ actionDelivered: true })
+                .where(
+                  and(
+                    eq(notices.sessionId, sessionId),
+                    eq(notices.recipientId, recipientId),
+                    eq(notices.state, 'waiting'),
+                    eq(notices.actionKey, actionKey),
+                    eq(notices.actionDelivered, false),
+                  ),
+                )
+                .run();
+              return result.changes ? [sessionId] : [];
+            }),
+          ),
+        ];
       },
       { behavior: 'immediate' },
     );
   }
 
-  record(sessionIds: number[], state: 'accepted' | 'unconfirmed'): void {
-    this.db
-      .update(notices)
-      .set({ state })
-      .where(
-        and(
-          eq(notices.state, 'dispatching'),
-          inArray(notices.sessionId, sessionIds),
-        ),
-      )
-      .run();
+  record(ids: number[], state: 'accepted' | 'unconfirmed'): void {
+    if (ids.length)
+      this.db
+        .update(notices)
+        .set({ state })
+        .where(and(eq(notices.state, 'dispatching'), inArray(notices.id, ids)))
+        .run();
   }
 
-  consume(sessionId: number, recipientId: number): void {
+  consume(
+    sessionId: number,
+    recipientId: number,
+    replyId?: string,
+    assignmentId?: number,
+  ): void {
     this.db
       .update(notices)
       .set({ state: 'consumed' })
@@ -254,7 +384,15 @@ export class SessionCompletionOutbox {
         and(
           eq(notices.sessionId, sessionId),
           eq(notices.recipientId, recipientId),
+          assignmentId === undefined ? undefined : eq(notices.id, assignmentId),
           inArray(notices.state, ['waiting', 'ready']),
+          // Reading an old reply must never acknowledge a newly queued assignment.
+          replyId === undefined
+            ? undefined
+            : or(
+                eq(notices.replyId, replyId),
+                and(isNull(notices.messageId), isNull(notices.replyId)),
+              ),
         ),
       )
       .run();
@@ -274,8 +412,6 @@ export class SessionCompletionOutbox {
   }
 
   recoverInterruptedDispatches(): void {
-    // A crash can occur after sending but before getting acceptance. Replaying
-    // a possibly accepted prompt could start an unintended second turn.
     this.db
       .update(notices)
       .set({ state: 'unconfirmed' })
@@ -286,12 +422,13 @@ export class SessionCompletionOutbox {
   recoverable(state: 'waiting' | 'ready', after: number) {
     return this.db
       .select({
+        id: notices.id,
         sessionId: notices.sessionId,
         recipientId: notices.recipientId,
       })
       .from(notices)
-      .where(and(eq(notices.state, state), gt(notices.sessionId, after)))
-      .orderBy(asc(notices.sessionId))
+      .where(and(eq(notices.state, state), gt(notices.id, after)))
+      .orderBy(asc(notices.id))
       .limit(32)
       .all();
   }

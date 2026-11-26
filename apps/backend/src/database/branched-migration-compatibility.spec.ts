@@ -13,8 +13,10 @@ const sidebar = 1795535000000;
 const antigravity = 1795539899320;
 const oldAppJournal = 1795529450427;
 const appJournal = 1795567035965;
+const oldAssignments = 1795649670347;
+const assignments = 1795713664585;
 
-it.each(['common schema', 'delegation', 'sidebar', 'antigravity', 'window sharing'] as const)(
+it.each(['common schema', 'delegation', 'sidebar', 'antigravity', 'early window sharing', 'window sharing', 'session assignments'] as const)(
   'applies both migration lineages on a database last upgraded through %s',
   (lineage) => {
     const sqlite = new Database(':memory:');
@@ -22,16 +24,22 @@ it.each(['common schema', 'delegation', 'sidebar', 'antigravity', 'window sharin
       sqlite.pragma('foreign_keys = ON');
       sqlite.exec('CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)');
       const record = sqlite.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)');
+      const hasAppJournal = lineage === 'early window sharing' || lineage === 'window sharing';
       for (const migration of migrations) {
         const { folderMillis, hash, sql } = migration;
         const installed = folderMillis <= lastShared ||
           (lineage === 'delegation' && folderMillis < sidebar) ||
           ((lineage === 'sidebar' || lineage === 'antigravity') && folderMillis === sidebar) ||
           (lineage === 'antigravity' && folderMillis === antigravity) ||
-          (lineage === 'window sharing' && folderMillis === appJournal);
+          (lineage === 'early window sharing' && folderMillis === appJournal) ||
+          (lineage === 'window sharing' && folderMillis <= appJournal) ||
+          (lineage === 'session assignments' && folderMillis <= assignments && folderMillis !== appJournal);
         if (!installed) continue;
         for (const statement of sql) sqlite.exec(statement);
-        const timestamp = folderMillis === sidebar ? oldSidebar : folderMillis === appJournal ? oldAppJournal : folderMillis;
+        let timestamp = folderMillis;
+        if (folderMillis === sidebar && (lineage === 'sidebar' || lineage === 'antigravity')) timestamp = oldSidebar;
+        if (folderMillis === appJournal && lineage === 'early window sharing') timestamp = oldAppJournal;
+        if (folderMillis === assignments) timestamp = oldAssignments;
         record.run(hash, timestamp);
       }
 
@@ -45,10 +53,18 @@ it.each(['common schema', 'delegation', 'sidebar', 'antigravity', 'window sharin
         INSERT INTO sessions (id, workspace_id, repo_id, branch_name, worktree_path, created_at, updated_at)
           VALUES (1, 1, 1, 'main', '/repo', '2026-11-24', '2026-11-24');
       `);
-      if (lineage === 'window sharing') {
+      if (hasAppJournal) {
         sqlite.exec(`
           INSERT INTO task_app_journal (run_id, task_id, request_hash, launch_hash, mode, phase, started_at)
             VALUES ('run', 1, 'request', 'launch', 'process', 'running', 1);
+        `);
+      }
+      if (lineage === 'session assignments') {
+        sqlite.exec(`
+          INSERT INTO session_prompt_receipts (id, key, fingerprint, session_id, delivery)
+            VALUES ('prompt', 'request', 'fingerprint', 1, 'accepted');
+          INSERT INTO session_completion_notices (session_id, recipient_id, prompt_id, state)
+            VALUES (1, 1, 'prompt', 'waiting');
         `);
       }
       if (lineage === 'antigravity') {
@@ -83,7 +99,9 @@ it.each(['common schema', 'delegation', 'sidebar', 'antigravity', 'window sharin
       expect(sqlite.prepare('SELECT delivery FROM session_launches WHERE session_id = 1').get())
         .toEqual(lineage === 'delegation' ? { delivery: 'accepted' } : undefined);
       expect(sqlite.prepare('SELECT run_id, phase FROM task_app_journal').all())
-        .toEqual(lineage === 'window sharing' ? [{ run_id: 'run', phase: 'running' }] : []);
+        .toEqual(hasAppJournal ? [{ run_id: 'run', phase: 'running' }] : []);
+      expect(sqlite.prepare('SELECT prompt_id, state FROM session_completion_notices WHERE session_id = 1').all())
+        .toEqual(lineage === 'session assignments' ? [{ prompt_id: 'prompt', state: 'waiting' }] : []);
       expect(sqlite.pragma('foreign_key_check')).toEqual([]);
     } finally {
       sqlite.close();

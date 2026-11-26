@@ -2,6 +2,8 @@
 .workspace-frame { width: 100%; height: 100%; min-height: 0; }
 .workspace-frame.onboarding { opacity: .5; filter: blur(12px) saturate(.6); transform: scale(.96); }
 .main-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.workspace-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); color: var(--ink-muted); background: var(--surface-sunken); font-size: var(--text-caption-size); }
+.workspace-recovery span { flex: 1; min-width: 16ch; }
 .empty-state { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--space-8); text-align: center; }
 .empty-state > ex-icon { color: var(--ink-muted); }
 h1 { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-title-size); line-height: var(--text-title-line); font-weight: var(--text-title-weight); letter-spacing: var(--text-title-tracking); }
