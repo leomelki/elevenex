@@ -164,7 +164,7 @@ describe('Workspace resume', () => {
   it('reports failed saves and retries on the next layout change', async () => {
     const { store, bridge, start } = setup(); await start(); TestBed.tick(); await settle();
     bridge.saveEnvironmentContext.mockRejectedValueOnce(new Error('Disk unavailable'));
-    store.panel.set('code'); TestBed.tick(); await settle();
+    store.selectPanel('code'); TestBed.tick(); await settle();
     expect(store.resumeError()).toContain('could not be saved');
     store.panelOpen.set(true); TestBed.tick(); await settle();
     expect(store.resumeError()).toBeNull();

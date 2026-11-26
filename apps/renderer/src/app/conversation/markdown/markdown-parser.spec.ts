@@ -14,6 +14,8 @@ describe("safe Markdown rendering model", () => {
       true,
     );
     expect(safeMarkdownTarget("https://example.com/docs")).toBe("web");
+    expect(safeMarkdownTarget("elevenex-app:79899b23-e16c-435d-9a57-22b0c5b407ce")).toBe("app");
+    expect(safeMarkdownTarget("elevenex-app://other/task")).toBeNull();
     expect(safeMarkdownTarget("src/payments/retry.ts")).toBe("file");
     for (const target of [
       "javascript:alert(1)",

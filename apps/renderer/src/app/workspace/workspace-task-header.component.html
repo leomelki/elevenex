@@ -27,5 +27,5 @@
   </form>
 </ex-modal-layer>
 @if (confirmingTask(); as task) {
-  <ex-close-task [open]="closing()" [title]="task.title" [sessions]="task.sessions" [running]="task.running" [unpushed]="task.unpushed" [uncommitted]="task.uncommitted ?? 0" [terminals]="task.terminals" [actions]="task.actions" [busy]="closeBusy()" [error]="closeError()" (confirmed)="confirmClose($event)" (cancelled)="closing.set(false)" />
+  <ex-close-task [open]="closing()" [title]="task.title" [sessions]="task.sessions" [running]="task.running" [unpushed]="task.unpushed" [uncommitted]="task.uncommitted ?? 0" [terminals]="task.terminals" [actions]="task.actions" [apps]="task.apps ?? 0" [busy]="closeBusy()" [error]="closeError()" (confirmed)="confirmClose($event)" (cancelled)="closing.set(false)" />
 }

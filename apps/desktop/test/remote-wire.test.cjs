@@ -227,3 +227,49 @@ test('SOCKS browser egress uses SSH byte channels and closes on transport loss w
   data = once(socket, 'data'); socket.write(opaque); assert.deepEqual((await data)[0], opaque, 'TLS bytes are tunneled without inspection');
   const closed = once(socket, 'close'); local.close(); await closed;
 });
+
+test('app media packets preserve arbitrary bytes across partial headers and adjacent JSON control frames', () => {
+  const outgoing = new PassThrough(), input = new PassThrough(), wire = new Wire(input, outgoing);
+  const chunks = [], frames = [];
+  outgoing.on('data', chunk => chunks.push(chunk));
+  wire.on('message', frame => frames.push(frame));
+  const data = Buffer.from([0, 10, 255, 123, 125, 10]);
+  wire.send({ type: 'data', id: 3, data });
+  wire.send({ type: 'ack', id: 3, bytes: data.length });
+  const bytes = Buffer.concat(chunks);
+  assert.equal(bytes.readUInt32BE(5), data.length);
+  assert.equal(bytes.indexOf(123, data.length + 9), data.length + 9);
+  for (const byte of bytes) input.write(Buffer.of(byte));
+  assert.deepEqual(frames, [{ type: 'data', id: 3, data }, { type: 'ack', id: 3, bytes: data.length }]);
+  let closed = false; wire.once('closed', () => { closed = true; });
+  const oversized = Buffer.alloc(9); oversized.writeUInt32BE(3, 1); oversized.writeUInt32BE(65537, 5);
+  input.write(oversized); assert.ok(closed);
+});
+
+test('a blocked media channel yields the next SSH drain to another ready socket', () => {
+  const wire = new (require('node:events').EventEmitter)();
+  const writes = [];
+  wire.writable = false;
+  wire.send = frame => {
+    if (frame.type !== 'data') return;
+    assert.ok(wire.writable);
+    writes.push(frame);
+    wire.writable = false;
+  };
+  const channels = new SocketChannels(wire);
+  const media = new PassThrough(), terminal = new PassThrough();
+  try {
+    channels.open(media, 0, undefined, undefined, true);
+    channels.open(terminal, 4152);
+    wire.emit('message', { type: 'opened', id: 1 });
+    wire.emit('message', { type: 'opened', id: 2 });
+    media.write(Buffer.alloc(512 * 1024));
+    terminal.write(Buffer.from('keypress'));
+    for (let turn = 0; turn < 3; turn++) {
+      wire.writable = true; wire.emit('drain');
+    }
+    assert.deepEqual(writes.map(frame => frame.id), [1, 2, 1]);
+    assert.ok(Buffer.isBuffer(writes[0].data));
+    assert.equal(writes[1].data, Buffer.from('keypress').toString('base64'));
+  } finally { channels.dispose(); media.destroy(); terminal.destroy(); }
+});

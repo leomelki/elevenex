@@ -29,6 +29,8 @@ module.exports = async function browserCodeNative() {
       await state.tab.click('button');
       await state.tab.waitFor(()=>document.querySelector('h1').textContent==='Native works');
       await state.tab.press('Tab');
+      // The browser enables Network and intentionally leaves Runtime event collection disabled.
+      await state.tab.evaluate(async () => { await (await fetch('/event-smoke')).text(); });
       await state.tab.screenshot();
       return {trusted:await state.tab.evaluate(()=>trusted),events:await state.tab.events()};
     `);
@@ -38,7 +40,7 @@ module.exports = async function browserCodeNative() {
     assert.ok(result.value.trusted.some(([type, trusted]) => type === 'input' && trusted));
     // Native observation exposes navigation and network events, and leaves console events disabled.
     assert.ok(result.value.events.items.some(event => event.method === 'Page.frameNavigated'));
-    assert.ok(result.value.events.items.some(event => event.method === 'Network.responseReceived'));
+    assert.ok(result.value.events.items.some(event => event.method === 'Network.responseReceived' && event.params.response?.url?.endsWith('/event-smoke')));
     assert.ok(!result.value.events.items.some(event => event.method === 'Runtime.consoleAPICalled'));
     assert.equal(task.pages.size, 1);
     const page = [...task.pages.values()][0];

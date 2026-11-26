@@ -141,6 +141,7 @@ export interface WorkspaceRenameTask {
 export interface WorkspaceFinishTask {
   readonly taskId: number;
   readonly confirmStop: boolean;
+  readonly confirmedApps?: number;
 }
 export interface WorkspaceUpdateProject {
   readonly projectId: number;
@@ -222,6 +223,7 @@ export interface WorkspaceClosePreview {
   readonly running: number;
   readonly terminals: number;
   readonly actions: number;
+  readonly apps?: number;
   readonly unpushed: number;
   readonly uncommitted?: number;
 }
@@ -257,6 +259,8 @@ export interface WorkspaceRevision {
   readonly version: 1;
   readonly revisionWait?: true;
   readonly chatStream?: true;
+  readonly taskApps?: true;
+  readonly appOpens?: readonly { readonly revision: number; readonly runId: string; readonly taskId: number; readonly sessionId: number }[];
   readonly sessionPriority?: true;
   readonly sessionNesting?: true;
   readonly sessionNestingOrder?: true;

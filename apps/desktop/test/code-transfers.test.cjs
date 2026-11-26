@@ -122,6 +122,40 @@ test('private editor transfer API requires visibility and the current lease, nev
   } finally {release([]);host.dispose();}
 });
 
+test('workbench imports validate scope, path and byte count before publishing', async () => {
+  const { CodeProtocol } = require('../dist/code/protocol');
+  const generation = 'a'.repeat(64), scopeId = 'b'.repeat(36), calls = [];
+  const client = {
+    state: () => ({ scope: { id: scopeId } }),
+    execute: async () => {
+      calls.push(calls.length);
+      return { ok: true, value: [{ id: 'c'.repeat(36) }, { offset: 1 }, { accepted: true }][calls.length - 1] };
+    },
+  };
+  const host = new CodeProtocol(client, 1, { scopeId, taskId: 1 }, { version: 1, taskId: 1, identity: generation, storageIdentity: generation, name: 'Task', branch: 'task' }, '', '', () => false, () => {});
+  const base = `https://${host.authority}/api/`;
+  const request = (changes = {}, origin) => {
+    const url = new URL(base + 'import-file');
+    for (const [name, value] of Object.entries({ path: '/trace desktop.gz', size: 8 * 1024 * 1024 + 1, generation, transportRevision: 0, ...changes })) url.searchParams.set(name, value);
+    return host.handle(new globalThis.Request(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...(origin ? { Origin: origin } : {}) }, body: Buffer.from('a') }));
+  };
+  try {
+    await host.handle(new globalThis.Request(base + 'ready', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transportRevision: 0 }) }));
+    assert.equal((await request()).status, 409);
+    host.active = true;
+    assert.equal((await request({}, 'https://outside.test')).status, 403);
+    assert.equal((await request({ generation: 'b'.repeat(64) })).status, 409);
+    assert.equal((await request({ transportRevision: 1 })).status, 409);
+    for (const path of ['/', '/../outside', '/.git/config', '/.elevenex-save-private']) assert.equal((await request({ path })).status, 400);
+    assert.equal((await request({ size: 2 * 1024 ** 3 + 1 })).status, 413);
+    assert.equal(calls.length, 0);
+    const truncated = await request();
+    assert.equal(truncated.status, 422);
+    assert.match((await truncated.json()).error, /before all bytes/);
+    assert.equal(calls.length, 3, 'Begin, append and abort the staging upload');
+  } finally { host.dispose(); }
+});
+
 test('transfer replies reject invalid bytes, oversized pages and false publication receipts',()=>{
   const {transferReply}=require('../dist/code/transfer-contracts');
   assert.throws(()=>transferReply('upload-commit',{accepted:false}));

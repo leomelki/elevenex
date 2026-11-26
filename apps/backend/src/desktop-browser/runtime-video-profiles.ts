@@ -36,6 +36,7 @@ export function videoTargetId(target: VideoEncoderTarget): string {
 export function videoEncoderArguments(
   target: VideoEncoderTarget,
   format: VideoFormat,
+  displayInput?: { args: readonly string[]; reportsChanges: boolean },
 ): string[] {
   const { width, height, fps, bitrate, threads } = format;
   const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
@@ -57,7 +58,7 @@ export function videoEncoderArguments(
     width < 16 ||
     height < 16 ||
     width > 1920 ||
-    height > 1440 ||
+    height > (displayInput ? 1920 : 1440) ||
     width % 2 ||
     height % 2 ||
     fps < 1 ||
@@ -71,7 +72,10 @@ export function videoEncoderArguments(
       !/^(?:[0-9]|\/dev\/dri\/renderD[0-9]{3,5})$/.test(target.device))
   )
     throw new Error('Invalid video encoder configuration');
-  const scale = `scale=${width}:${height}`;
+  const scale =
+    displayInput && !displayInput.reportsChanges
+      ? `scale=${width}:${height},mpdecimate=max=${fps - 1}:hi=1:lo=1:frac=0`
+      : `scale=${width}:${height}`;
   const device = target.device;
   const setup =
     target.kind === 'vaapi' && device
@@ -137,18 +141,23 @@ export function videoEncoderArguments(
     '1',
     ...setup,
     // Explicit lengths avoid waiting for another JPEG to delimit a static update.
-    '-f',
-    'mpjpeg',
-    '-r',
-    String(fps),
-    '-probesize',
-    '32',
-    '-analyzeduration',
-    '0',
-    '-threads',
-    '1',
-    '-i',
-    'pipe:0',
+    ...(displayInput?.args ?? [
+      '-f',
+      'mpjpeg',
+      '-r',
+      String(fps),
+      '-probesize',
+      '32',
+      '-analyzeduration',
+      '0',
+      '-threads',
+      '1',
+      '-i',
+      'pipe:0',
+    ]),
+    ...(displayInput
+      ? ['-fps_mode', 'vfr', '-force_key_frames', 'expr:gte(t,n_forced*1)']
+      : []),
     '-an',
     '-threads',
     String(threads),

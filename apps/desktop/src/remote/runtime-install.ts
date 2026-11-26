@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { remoteClientSources } from './runtime-sources';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gzip } from 'node:zlib';
@@ -8,24 +8,17 @@ import { shellQuote } from './ssh';
 /** All script substitutions are application-owned revisions, source and nonces. */
 export async function bootstrapScript(release: BackendRelease, nonce: string, serverDownload = true, developmentNamespace?: string, allowUpdate = false): Promise<{ command: string; payload: Buffer }> {
   if (developmentNamespace !== undefined && !/^[a-f0-9]{32}$/.test(developmentNamespace)) throw new Error('Invalid development runtime namespace');
-  // The uploaded bridge needs only the pure address validator, not the SOCKS server.
-  const modules = ['wire', 'runtime', 'runtime-control', 'runtime-start', 'runtime-handoff', 'agent-proxy', 'host', 'process-tree', 'browser-destination', 'node_modules/@elevenex/browser-network/dist/public-address'];
-  const sources = await Promise.all(modules.map(name => {
-    const path = name.startsWith('node_modules/')
-      ? require.resolve('@elevenex/browser-network/dist/public-address')
-      : join(__dirname, name === 'host' || name === 'process-tree' ? `../backend/${name}.js` : `${name}.js`);
-    return readFile(path, 'utf8');
-  }));
-  const clientId = createHash('sha256').update(sources.join('\n')).digest('hex');
+  const { modules, sources, clientId } = await remoteClientSources();
   const installerFiles = ['backend/download', 'backend/archive', 'backend/release', 'remote/server-install'];
   const installerSources = await Promise.all(installerFiles.map(name => readFile(join(__dirname, `../${name}.js`), 'utf8')));
   const script = `set -eu
 umask 077
 unset NODE_OPTIONS NODE_PATH ELECTRON_RUN_AS_NODE
 fail() { printf 'EX11_%s: %s\\n' "$1" "$2" >&2; exit 1; }
-for tool in uname git tar head mktemp; do command -v "$tool" >/dev/null 2>&1 || fail COMPATIBILITY "Install $tool on the remote PATH"; done
+command -v uname >/dev/null 2>&1 || fail COMPATIBILITY 'Install uname on the remote PATH'
+case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; MINGW*|MSYS*|CYGWIN*) fail COMPATIBILITY 'Windows host needs PowerShell';; *) fail COMPATIBILITY 'This remote platform is unsupported; use Linux or macOS';; esac
+for tool in git tar head mktemp; do command -v "$tool" >/dev/null 2>&1 || fail COMPATIBILITY "Install $tool on the remote PATH"; done
 command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail COMPATIBILITY 'Install sha256sum or shasum'
-case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) fail COMPATIBILITY 'This remote platform is unsupported; use Linux or macOS';; esac
 case "$(uname -m)" in x86_64|amd64) arch=x64;; arm64|aarch64) arch=arm64;; *) fail COMPATIBILITY 'Use an x64 or arm64 remote host';; esac
 root="$HOME/.elevenex/${developmentNamespace ? `desktop-remote-dev/${developmentNamespace}` : 'desktop-remote'}"
 mkdir -p "$root/runtimes" "$root/clients"

@@ -22,6 +22,9 @@ to disabled and respect `controlsDisabled` for tabs hosted in another window.
 The New button follows the last tab; the strip takes only the width its tabs need
 and scrolls with edge fades once it fills the row. Content marked `viewTabsNew` is
 projected directly after New; other projected actions stay right-aligned.
+`addable=false` removes New for tab sets created elsewhere, such as task apps.
+`ViewTab.statusLabel` names the steady `serving` dot when “Server running” does
+not describe the tab.
 
 `BrowserView.localTabsAvailable` adds a chevron beside New with remote/local
 creation intents (`added` / `localAdded`). The toolbar pill shows **Local** by

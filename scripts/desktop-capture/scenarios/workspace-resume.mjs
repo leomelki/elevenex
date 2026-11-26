@@ -26,7 +26,7 @@ export default async function* (capture) {
     await capture.viewport(1440, 960); await capture.theme(theme);
     await owner(component => component.store.selectProject('1'));
     await owner(component => component.store.selectSession({ taskId: '11', sessionId: '102' }));
-    await owner(component => { component.panel.set('browser'); component.panelOpen.set(true); component.wideReview.set(false); });
+    await owner(component => { component.store.selectPanel('browser'); component.panelOpen.set(true); component.wideReview.set(false); });
     await reopen();
     assert.deepEqual(await owner(component => [component.store.activeProject(), component.store.selected()?.sessionId, component.panel(), component.panelOpen()]), ['1', 102, 'browser', true]);
     await capture.waitFor(() => document.querySelector('ex-workspace-panels [role="tab"][aria-label="Browser"]')?.getAttribute('aria-selected') === 'true');

@@ -78,7 +78,7 @@ function environmentContext(value: unknown, workspace: (value: unknown) => Works
 function workspaceView(value: unknown): WorkspaceViewState {
   const input = object(value, ['panel', 'panelOpen', 'wideReview', 'closed', 'focused', 'filter', 'projectCursor', 'taskCursor']);
   const panel = input['panel'], filter = input['filter'];
-  if (panel !== 'terminal' && panel !== 'actions' && panel !== 'changes' && panel !== 'code' && panel !== 'browser') throw new Error('Invalid workspace panel');
+  if (panel !== 'terminal' && panel !== 'actions' && panel !== 'changes' && panel !== 'code' && panel !== 'browser' && panel !== 'apps') throw new Error('Invalid workspace panel');
   if (filter !== null && filter !== 'attention' && filter !== 'running' && filter !== 'review' && filter !== 'done') throw new Error('Invalid workspace filter');
   const flag = (key: string): boolean => {
     const value = input[key];

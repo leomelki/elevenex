@@ -10,6 +10,7 @@ export type MarkdownInline =
       readonly target: string;
       readonly children: readonly MarkdownInline[];
       readonly external: boolean;
+      readonly app?: true;
     };
 export interface MarkdownEmbed {
   readonly caption: string;
@@ -82,7 +83,12 @@ export type MarkdownAsset =
 export type MarkdownAssetResolver = (
   path: string,
 ) => MarkdownAsset | null | undefined;
-export function safeMarkdownTarget(target: string): "web" | "file" | null {
+/** Internal task-local app links never become hrefs or platform navigation. */
+export function taskAppLinkId(target: string): string | null {
+  return /^elevenex-app:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(target)?.[1]?.toLowerCase() ?? null;
+}
+export function safeMarkdownTarget(target: string): "web" | "file" | "app" | null {
+  if (taskAppLinkId(target)) return "app";
   if (/^https?:\/\//i.test(target)) {
     try {
       const url = new URL(target);
@@ -126,6 +132,7 @@ export function parseInline(
               target,
               children: parseInline(match[3], depth + 1),
               external: safe === "web",
+              ...(safe === "app" ? { app: true as const } : {}),
             }
           : { kind: "text", text: match[0] },
       );

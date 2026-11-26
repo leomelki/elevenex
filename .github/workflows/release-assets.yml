@@ -81,6 +81,14 @@ jobs:
     uses: ./.github/workflows/reusable-build-runtime.yml
     with:
       source-sha: ${{ needs.prepare.outputs.sha }}
+      release-signing: ${{ needs.prepare.outputs.tag != '' }}
+    secrets:
+      APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_ID_EMAIL: ${{ secrets.APPLE_ID_EMAIL }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_DISPLAY_PROFILE_BASE64: ${{ secrets.APPLE_APP_DISPLAY_PROFILE_BASE64 }}
 
   build-desktop:
     needs: prepare

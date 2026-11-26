@@ -1,3 +1,4 @@
+import { TaskAppModule } from './task-apps/task-app.module.js';
 import { CodeWorkspaceModule } from './code-workspace/code-workspace.module.js';
 import { DesktopWorkspaceModule } from './desktop-workspace/desktop-workspace.module.js';
 import { Module } from '@nestjs/common';
@@ -50,6 +51,7 @@ import { TasksModule } from './tasks/tasks.module.js';
     WorktreesModule,
     WorkspacesModule,
     TasksModule,
+    TaskAppModule,
     SessionsModule,
     NavigationModule,
     TerminalModule,

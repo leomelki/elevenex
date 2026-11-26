@@ -1,0 +1,26 @@
+<div #viewport class="viewport" tabindex="0" role="group" [class.actual]="actual()" [class.controlling]="controlling()"
+  [attr.aria-label]="name() + ' display. Click or press Enter to control the app; Shift Escape releases it.'" (keydown)="viewportKey($event)">
+  <canvas #canvas width="1" height="1" aria-hidden="true" [hidden]="state() !== 'live'"
+    (pointerdown)="pointer($event, 'down')" (pointermove)="pointer($event, 'move')" (pointerup)="pointer($event, 'up')"
+    (lostpointercapture)="pointerLost()" (pointercancel)="pointerLost()" (wheel)="wheel($event)" (contextmenu)="$event.preventDefault()"></canvas>
+  @if (state() === 'connecting') {
+    <div class="message" role="status">{{ recovering() ? 'Reconnecting to' : 'Connecting to' }} {{ name() }}'s display…</div>
+  } @else if (problem(); as problem) {
+    <div class="message" role="status">
+      <strong>{{ problem.title }}</strong>
+      <span>{{ problem.body }}</span>
+      <button exButton size="sm" variant="secondary" (click)="start()">Reconnect</button>
+      @if (problem.diagnostic) { <details class="diagnostic"><summary>Details</summary><p>{{ problem.diagnostic }}</p></details> }
+    </div>
+  }
+</div>
+<span class="frame" aria-hidden="true"></span>
+@if (state() === 'live') {
+  <!-- Hints sit over the surface and never take the pointer, so the app keeps its full size. -->
+  @if (notice(); as notice) { <span class="hint error" role="status"><span>{{ notice.message }}</span>@if (notice.next) { <span class="next">{{ notice.next }}</span> }</span> }
+  @else if (controlling()) { <span class="hint" aria-hidden="true"><ex-kbd>⇧ Esc</ex-kbd> to release</span> }
+  @else { <span class="hint idle" aria-hidden="true"><ex-kbd>↵</ex-kbd> to control</span> }
+}
+<textarea #keyboard class="keyboard" aria-label="Type in the remote app. Shift Escape releases the keyboard." tabindex="-1" autocapitalize="off" autocomplete="off" spellcheck="false"
+  (focus)="controlling.set(state() === 'live')" (blur)="release()" (keydown)="key($event, true)" (keyup)="key($event, false)"
+  (beforeinput)="beforeInput($event)" (compositionstart)="compositionStart()" (compositionend)="compositionEnd($event)"></textarea>

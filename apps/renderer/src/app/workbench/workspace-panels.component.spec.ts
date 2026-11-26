@@ -6,10 +6,11 @@ describe('Workspace side-view shells', () => {
   afterEach(() => { TestBed.resetTestingModule(); vi.unstubAllGlobals(); });
   it('connects each tab to one visible panel and supports keyboard navigation', () => {
     const fixture = TestBed.createComponent(WorkspacePanelsComponent);
+    fixture.componentRef.setInput('appsVisible', true);
     fixture.detectChanges();
     const root: HTMLElement = fixture.nativeElement;
     const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Terminal', 'Actions', 'Changes', 'Code', 'Browser']);
+    expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Terminal', 'Actions', 'Changes', 'Code', 'Browser', 'Apps']);
     expect(root.querySelector('[role="tabpanel"]:not([hidden])')?.getAttribute('id')).toBe('workspace-panel-changes');
     const browserTab = tabs[4]!;
     browserTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
@@ -18,11 +19,12 @@ describe('Workspace side-view shells', () => {
     expect(document.activeElement).toBe(tabs[0]);
     for (const tab of tabs) expect(root.querySelector(`#${tab.getAttribute('aria-controls')}`)).not.toBeNull();
     expect(root.querySelectorAll('[role="tabpanel"]:not([hidden])')).toHaveLength(1);
-    expect(root.querySelectorAll('[role="tabpanel"][inert]')).toHaveLength(4);
+    expect(root.querySelectorAll('[role="tabpanel"][inert]')).toHaveLength(5);
   });
 
-  it.each(['Terminal', 'Actions', 'Changes', 'Code', 'Browser'])('expands and restores %s while preserving expansion across tab changes', label => {
+  it.each(['Terminal', 'Actions', 'Changes', 'Code', 'Browser', 'Apps'])('expands and restores %s while preserving expansion across tab changes', label => {
     const fixture = TestBed.createComponent(WorkspacePanelsComponent);
+    fixture.componentRef.setInput('appsVisible', true);
     fixture.detectChanges();
     const wide = vi.fn();
     fixture.componentInstance.wideChange.subscribe(wide);
@@ -41,6 +43,26 @@ describe('Workspace side-view shells', () => {
     expect(wide).not.toHaveBeenCalled();
     root.querySelector<HTMLButtonElement>('[aria-label="Return to chat"]')!.click();
     expect(wide).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('omits Apps until available and returns keyboard focus when the selected tab is removed', () => {
+    const fixture = TestBed.createComponent(WorkspacePanelsComponent);
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    const appsTab = () => root.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Apps"]');
+    expect(appsTab()).toBeNull();
+    fixture.componentRef.setInput('appsVisible', true);
+    fixture.detectChanges();
+    appsTab()!.focus();
+    appsTab()!.click();
+    fixture.detectChanges();
+    expect(root.querySelector('[role="tabpanel"]:not([hidden])')?.id).toBe('workspace-panel-apps');
+
+    fixture.componentRef.setInput('appsVisible', false);
+    fixture.detectChanges();
+    expect(appsTab()).toBeNull();
+    expect(root.querySelector('[role="tabpanel"]:not([hidden])')?.id).toBe('workspace-panel-changes');
+    expect(document.activeElement).toBe(root.querySelector('[role="tab"][aria-label="Changes"]'));
   });
 
   it('emits close intent from an expanded side view', () => {

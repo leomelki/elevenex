@@ -5,8 +5,8 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { codePath, codeRevision, codeText } from './code-values.js';
 import type { CodeWorkspace } from './code-authorization.service.js';
+import { CODE_EDITOR_MAX_FILE_BYTES as MAX_FILE } from '@elevenex/shared';
 
-const MAX_FILE = 8 * 1024 * 1024;
 const inside = (root: string, path: string) => path === root || (!relative(root, path).startsWith('..' + sep) && relative(root, path) !== '..' && !isAbsolute(relative(root, path)));
 /** Symlinks are intentionally not traversed, including links into another task. */
 export async function confinedPath(workspace: Pick<CodeWorkspace, 'root'>, value: unknown, missing = false): Promise<string> {

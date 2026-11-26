@@ -89,3 +89,68 @@ for (const mode of ['server', 'fallback', 'development']) test(`native bootstrap
   assert.equal(await readFile(join(root, `${release.tag}-${release.target}`, 'installation.sha256'), 'utf8'), digest);
   assert.match(output, /installation:start/); assert.match(output, /runtime:start/);
 });
+
+test('Windows bootstrap transfers the complete immutable bridge as an exact-length payload', async () => {
+  const { bootstrapWindowsScript } = require('../dist/remote/runtime-install-windows');
+  const { remoteClientSources } = require('../dist/remote/runtime-sources');
+  const { gunzipSync } = require('node:zlib');
+  const nonce = 'a'.repeat(32);
+  const { command, payload } = await bootstrapWindowsScript(release, nonce, 'c'.repeat(32), true);
+  const loader = Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le');
+  assert.ok(command.length < 8191, 'Windows cmd.exe command line limit');
+  assert.ok(loader.includes('[byte[]]::new(' + payload.length + ')'));
+  const script = gunzipSync(payload).toString('utf8');
+  const { modules, sources, clientId } = await remoteClientSources();
+  const entries = [...script.matchAll(/^Write-Module '([^']+)' '([a-zA-Z0-9+/=]+)'$/gm)];
+  assert.deepEqual(entries.map(match => match[1]), modules.map(name => name + '.js'));
+  assert.deepEqual(entries.map(match => Buffer.from(match[2], 'base64').toString('utf8')), sources);
+  assert.ok(script.includes(clientId));
+  assert.ok(script.includes('EX11:' + nonce + ':platform:win32:'));
+  for (const invalid of ["bad'nonce", 'g'.repeat(32)]) {
+    await assert.rejects(bootstrapWindowsScript(release, invalid), /identity/);
+    await assert.rejects(bootstrapWindowsScript(release, nonce, invalid), /identity/);
+  }
+  await assert.rejects(bootstrapWindowsScript({ ...release, tag: "runtime-'wrong" }, nonce), /release tag/);
+});
+
+test('Windows native loader rejects truncated stdin and installed PowerShell parses the full bootstrap', { skip: process.platform !== 'win32' }, async t => {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const { gunzipSync } = require('node:zlib');
+  const { bootstrapWindowsScript } = require('../dist/remote/runtime-install-windows');
+  const { command, payload } = await bootstrapWindowsScript(release, '1'.repeat(32));
+  const child = spawn('powershell.exe', command.split(' ').slice(1), { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+  let diagnostics = '';
+  child.stderr.on('data', chunk => { diagnostics += chunk; });
+  const exited = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+  child.stdin.end(payload.subarray(0, 8));
+  assert.equal(await exited, 1);
+  assert.match(diagnostics, /Incomplete installer payload/);
+  const root = await temporary(t);
+  const path = join(root, 'bootstrap.ps1');
+  await writeFile(path, gunzipSync(payload));
+  const parse = '$tokens=$null; $errors=$null; [void][Management.Automation.Language.Parser]::ParseFile($env:EX11_PAYLOAD,[ref]$tokens,[ref]$errors); if ($errors.Count) { throw ($errors.Message -join ", ") }';
+  await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parse], { env: { ...process.env, EX11_PAYLOAD: path } });
+});
+
+test('shell detection handles localized remote command errors, cached Windows hosts and SSH authentication failures', async () => {
+  const { connectRemote } = require('../dist/remote/bootstrap');
+  const { PassThrough } = require('node:stream');
+  async function attempts(remoteShell, code, diagnostics) {
+    const shells = [];
+    await assert.rejects(connectRemote({ host: { id:'fixture', name:'Fixture', host:'fixture' }, root: tmpdir(),
+      helper: '', interactive: true, signal: AbortSignal.timeout(3000), ask: async () => null, progress() {}, release, remoteShell,
+      spawn: async (_host, command) => {
+        shells.push(command.startsWith('powershell.exe') ? 'windows' : 'posix');
+        const child = { stdin: new PassThrough(), stdout: new PassThrough(), exitCode: shells.length === 1 ? code : 255 };
+        return { child, exited: Promise.resolve(), diagnostics: () => shells.length === 1 ? diagnostics : 'Permission denied',
+          stop: async () => { child.stdin.destroy(); child.stdout.destroy(); } };
+      },
+    }));
+    return shells;
+  }
+  assert.deepEqual(await attempts(undefined, 1, 'sh : El término sh no se reconoce.'), ['posix', 'windows']);
+  assert.deepEqual(await attempts('windows', 127, 'powershell.exe: introuvable'), ['windows', 'posix']);
+  assert.deepEqual(await attempts(undefined, 255, 'Permission denied (publickey).'), ['posix']);
+  assert.deepEqual(await attempts(undefined, 1, 'EX11_COMPATIBILITY: Install tar on the remote PATH'), ['posix']);
+});

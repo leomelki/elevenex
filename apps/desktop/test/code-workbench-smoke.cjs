@@ -8,6 +8,8 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { randomBytes } = require('node:crypto');
+const { gzipSync } = require('node:zlib');
 const { BackendClient } = require('../dist/backend-client/client');
 const { CodeSurfaces } = require('../dist/code/surfaces');
 const { CodeArtifact } = require('../dist/code/artifact');
@@ -15,13 +17,14 @@ const files = require('../../backend/dist/code-workspace/code-files');
 const { CodeSearch } = require('../../backend/dist/code-workspace/code-search.service');
 const { readCodeLink, resolveCodeLink } = require('../../backend/dist/code-workspace/code-links');
 const { CodeWatch } = require('../../backend/dist/code-workspace/code-watch.service');
+const { CodeTransfers } = require('../../backend/dist/code-workspace/code-transfers.service');
 const execute = promisify(execFile);
 protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
 // The test owns shutdown, including asynchronous profile cleanup after its
 // window is destroyed. Do not let Electron quit before that cleanup completes.
 app.on('window-all-closed', () => {});
 const deadline = setTimeout(() => { console.error('Code workbench smoke deadline'); app.exit(1); }, 180_000);
-let root, server, code, search, watches, currentView, window, stopRouting;
+let root, server, code, search, watches, transfers, currentView, window, stopRouting;
 let rejectWrites = false;
 async function wait(predicate, message, timeout = 30_000) {
   const start = Date.now();
@@ -65,7 +68,7 @@ app.whenReady().then(async () => {
   await execute('git', ['-C', repository, '-c', 'user.name=Code test', '-c', 'user.email=code@example.invalid', 'commit', '-m', 'fixture']);
   await execute('git', ['-C', repository, 'worktree', 'add', '-b', 'code-smoke', worktree]);
   const workspace = { taskId: 1, identity: 'a'.repeat(64), storageIdentity: 'c'.repeat(64), root: await realpath(worktree), name: 'Code workbench smoke', branch: 'code-smoke' };
-  search = new CodeSearch(); watches = new CodeWatch(search);
+  search = new CodeSearch(); watches = new CodeWatch(search); transfers = new CodeTransfers();
   server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     try {
@@ -80,6 +83,10 @@ app.whenReady().then(async () => {
       else if (op === 'read') value = await files.codeRead(workspace, input.path);
       else if (op === 'stat') value = await files.codeStat(workspace, input.path);
       else if (op === 'directory') value = await files.codeDirectory(workspace, input.path, input.after);
+      else if (op === 'upload-begin') value = await transfers.begin(workspace, input);
+      else if (op === 'upload-chunk') value = await transfers.append(workspace, input, new AbortController().signal);
+      else if (op === 'upload-commit') value = await transfers.commit(workspace, input, async () => {}, new AbortController().signal);
+      else if (op === 'upload-abort') value = await transfers.abort(workspace, input);
       else if (op === 'write') {
         if (rejectWrites) { response.statusCode = 403; response.end(JSON.stringify({ error: 'read-only' })); return; }
         value = await files.codeWrite(workspace, input, async () => {});
@@ -134,11 +141,43 @@ app.whenReady().then(async () => {
     // may have just persisted configuration or hot-exit state during shutdown.
     const session = window.webContents.session;
     window.destroy(); await session.clearStorageData();
-    watches.onModuleDestroy(); search.onModuleDestroy();
+    watches.onModuleDestroy(); search.onModuleDestroy(); await transfers.onModuleDestroy();
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     console.log(message); clearTimeout(deadline); app.exit(0);
   };
+  if (process.argv.includes('--uploads')) {
+    const name = 'trace elevenex desktop.gz', local = join(root, name);
+    const archive = gzipSync(randomBytes(9 * 1024 * 1024));
+    await writeFile(local, archive);
+    await wait(() => codeState?.phase === 'ready', 'Task editor did not connect');
+    await code.present(window.webContents.id, target, { visible: true, compact: false });
+    await code.action(window.webContents.id, target, 'browse-files');
+    const row = await wait(() => frame.executeJavaScript(`(() => {
+      const item = [...document.querySelectorAll('.explorer-folders-view [role=treeitem]')].find(row => row.textContent.includes('hello.ts'));
+      if (!item) return;
+      const {left, top, height, width} = item.getBoundingClientRect();
+      if (height && width) return {x: left + width / 2, y: top + height / 2};
+    })()`), 'Explorer file row did not appear');
+    const bounds = await window.webContents.executeJavaScript(`(() => {
+      const {left, top} = document.querySelector('#editor iframe').getBoundingClientRect();
+      return {left, top};
+    })()`);
+    const debuggerClient = window.webContents.debugger;
+    debuggerClient.attach('1.3');
+    try {
+      for (const type of ['dragEnter', 'dragOver', 'drop']) {
+        await debuggerClient.sendCommand('Input.dispatchDragEvent', {
+          type, x: bounds.left + row.x, y: bounds.top + row.y,
+          data: { items: [], files: [local], dragOperationsMask: 1 },
+        });
+      }
+      await wait(async () => (await readFile(join(worktree, name))).length === archive.length, 'Large Explorer upload never published', 45_000);
+      assert.deepEqual(await readFile(join(worktree, name)), archive);
+      assert.equal(codeState.phase, 'ready');
+    } finally { debuggerClient.detach(); }
+    return finish('CODE_UPLOAD_SMOKE_OK');
+  }
   if (htmlPreview) {
     await wait(() => codeState?.phase === 'ready', 'Task editor did not connect');
     await window.webContents.executeJavaScript("document.querySelector('iframe').style.width='432px'");
@@ -384,6 +423,7 @@ app.whenReady().then(async () => {
   try { await code?.dispose(); } catch (cleanupError) { console.error('Editor cleanup failed', cleanupError.message); }
   stopRouting?.(); if (window && !window.isDestroyed()) window.destroy();
   watches?.onModuleDestroy(); search?.onModuleDestroy(); server?.close(); server?.closeAllConnections();
+  await transfers?.onModuleDestroy().catch(() => undefined);
   if (root) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
   clearTimeout(deadline); app.exit(1);
 });

@@ -340,6 +340,17 @@ async function main() {
     path.join(backendRoot, "bin"),
     path.join(stageBackendRoot, "bin"),
   );
+  // Portable Linux archives can be assembled from a Mac/Windows checkout.
+  // Copy only the native helper built for the target that owns this stage.
+  // The Mac helper is its signed app bundle; runtime archives cannot carry links.
+  if (process.platform === "win32") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "task-app-windows.exe"),
+    path.join(stageBackendRoot, "bin", "task-app-windows.exe"),
+  );
+  if (process.platform === "darwin") copyRequiredPath(
+    path.join(backendBundleRoot, "bin", "Elevenex Agent.app"),
+    path.join(stageBackendRoot, "bin", "Elevenex Agent.app"),
+  );
   ensureDir(path.join(stageBackendRoot, "node_modules"));
   const stagedNativePackages = new Set();
   for (const packageName of NATIVE_RUNTIME_DEPENDENCIES) {

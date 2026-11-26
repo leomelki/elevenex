@@ -1,0 +1,54 @@
+:host { display: flex; position: relative; flex: 1; flex-direction: column; width: 100%; min-width: 0; min-height: 0; overflow: hidden; color: var(--ink); font-size: var(--text-body-size); background: var(--surface); }
+h2, p { margin: 0; }
+
+/* Actions share the tab row and center on the tabs' height. */
+.tools { display: flex; flex: none; align-items: center; gap: 2px; height: var(--control-height); }
+/* Matches the small icon buttons beside it; a ratio reads better than another arrows icon. */
+.scale { display: inline-grid; place-items: center; min-width: var(--space-6); height: var(--space-6); padding: 0 var(--space-1); border: 0; border-radius: var(--radius-sm); color: var(--ink-muted); background: transparent; font: var(--text-mono-meta-weight) var(--text-overline-size)/1 var(--font-mono); cursor: pointer; transition: background var(--dur-fast), color var(--dur-fast); }
+.scale:hover { color: var(--ink); background: var(--surface); }
+.scale[aria-pressed='true'] { color: var(--accent); background: var(--accent-soft); }
+.scale:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.divider { width: 1px; height: var(--space-4); margin: 0 var(--space-1); background: var(--line); }
+
+
+.error { display: flex; flex: none; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); color: var(--ink); background: var(--danger-soft); font-size: var(--text-caption-size); overflow-wrap: anywhere; }
+.error > ex-icon { flex: none; margin-top: 3px; color: var(--danger); }
+.error-text { display: grid; flex: 1; gap: var(--space-1); min-width: 0; padding-block: 2px; }
+.error strong { color: var(--danger); font-weight: var(--text-title-weight); }
+.error ex-icon-button { flex: none; margin-block: -2px; }
+.diagnostic { font-size: var(--text-caption-size); }
+.diagnostic summary { color: var(--ink-muted); cursor: pointer; }
+.diagnostic summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.diagnostic p { margin-top: var(--space-1); color: var(--ink-muted); font-family: var(--font-mono); }
+.state .diagnostic { max-width: 36ch; }
+.state .reported { font-family: var(--font-mono); }
+
+.state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); min-height: 0; overflow: auto; padding: var(--space-6) var(--space-4); color: var(--ink-muted); text-align: center; }
+.state-mark { display: grid; place-items: center; width: var(--space-8); height: var(--space-8); margin-bottom: var(--space-1); border-radius: var(--radius-full); color: var(--ink-muted); background: var(--surface-sunken); }
+.state-mark[data-status='failed'] { color: var(--danger); background: color-mix(in oklab, var(--danger) 10%, transparent); }
+.state h2 { color: var(--ink); font-size: var(--text-ui-size); font-weight: var(--text-title-weight); }
+.state p { max-width: 36ch; font-size: var(--text-caption-size); overflow-wrap: anywhere; }
+/* Text the machine reported, set apart from Elevenex's own explanation. */
+.state .reported { padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); color: var(--ink); background: var(--surface-sunken); }
+.state button { margin-top: var(--space-1); }
+
+.request { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); min-height: 0; overflow: auto; padding: var(--space-4); }
+.request header { display: grid; gap: 2px; }
+.request h2 { font-size: var(--text-ui-size); font-weight: var(--text-title-weight); overflow-wrap: anywhere; }
+.request header p { color: var(--ink-muted); font-size: var(--text-caption-size); }
+.request .note { color: var(--attention); font-size: var(--text-caption-size); }
+/* The exact command, as one line that wraps; the person is approving this text. */
+.command { border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.command::before { content: '$ '; color: var(--ink-muted); user-select: none; }
+.actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+.setup-screen { display: grid; flex: 1; place-items: safe center; min-height: 0; overflow: auto; padding: var(--space-4); }
+.setup-screen ex-task-app-setup { width: min(100%, 26rem); }
+.setup-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+
+pre { margin: 0; padding: var(--space-2) var(--space-3); overflow: auto; color: var(--ink); background: var(--surface-sunken); font: var(--text-mono-meta-weight) var(--text-caption-size)/1.55 var(--font-mono); }
+pre:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.logs { flex: none; }
+.logs-problem { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--ink); background: var(--danger-soft); font-size: var(--text-caption-size); }
+.logs-problem strong { color: var(--danger); font-weight: var(--text-title-weight); }
+.logs pre { max-height: min(16rem, 40vh); border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }

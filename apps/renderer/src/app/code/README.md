@@ -305,11 +305,14 @@ generation. Writes capture a transport revision before awaiting storage/network
 work, so a late operation cannot acquire a new backend scope on reconnect.
 File saves compare content revisions. A bounded extension workspace-state journal
 persists a sending claim **before dispatch**, alongside upstream hot-exit backups.
+Confirmed rejections preserve the original revision and allow an explicit retry.
 Unknown writes stay blocked across restart. Read-back confirmation can acknowledge
 identical saved bytes without replaying a write. Otherwise **Inspect unconfirmed
 task save** / the editor status opens a read-only disk comparison; **Save my
 version** explicitly adopts that reviewed revision, with another server-side
-conflict check. Read-only files and failed/conflicting/unconfirmed saves retain
+conflict check. If the destination is absent, the comparison shows an empty disk
+side and the subsequent save requires that the path still be absent.
+Read-only files and failed/conflicting/unconfirmed saves retain
 local writing. No mutation is replayed on reconnection.
 
 The editor has no preload, Node or Elevenex bridge. It uses a persistent origin derived from machine configuration and task identity,
@@ -426,9 +429,9 @@ The extension adds a folder Download item only when upstream hides its own
 for lack of browser filesystem access, and adds Upload Files on file rows.
 Keep these menu conditions and aliases aligned when upgrading the pinned runtime.
 
-Native main-owned pickers grant local paths; paths and file bytes never cross
-the shell bridge or extension worker. Multiple downloads choose one destination
-folder. Single downloads choose a name through Save. Folders preserve their
+Native main-owned pickers grant local paths and keep those paths and file bytes
+inside main. Multiple downloads choose one destination folder. Single downloads
+choose a name through Save. Folders preserve their
 structure, including empty directories, and require a new destination name.
 Existing file replacements require confirmation, with Replace/Skip All for
 batch transfers. Uploads ask to save dirty task editors first; downloads offer
@@ -444,13 +447,18 @@ is no automatic retry, resume or reconnect replay.
 Transfers support binary and empty files up to 2 GiB each, 10 GiB per action,
 10,000 entries, 64 nested folder levels and 200 selected resources. They use
 256 KiB chunks, bounded directory pages and sequential I/O; the 8 MiB editor
-limit still applies to opening files for editing. Git metadata, symbolic links
-and special files are excluded. Names must be portable to the destination
+limit still applies to opening files for editing. VS Code Explorer drops and
+pastes that create a file over the editor limit pass their bytes through the
+provider to the same atomic upload staging. Use **Upload Files…** to replace a
+large file or to transfer large batches without buffering the files in VS Code.
+Git metadata, symbolic links and special files are excluded. Names must be
+portable to the destination
 filesystem; unsafe names fail the transfer without publishing that file.
 
-The private Code protocol exposes only transfer start/status/cancel to its
-registered task origin. Start requires a visible ready editor and a current
-backend lease. Main pins task, workspace generation, window and transport for
+The private Code protocol exposes transfer start/status/cancel and a scoped
+binary create request to its registered task origin. Start and binary creation
+require a visible ready editor and a current backend lease. Main pins task,
+workspace generation, window and transport for
 the action, rejects stale replies, and cancels on rebinding/disposal. Desktop
 paths come exclusively from native dialogs; backend responses cannot choose
 local paths. Staged downloads are confined to a private sibling directory and

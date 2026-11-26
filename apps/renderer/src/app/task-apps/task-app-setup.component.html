@@ -1,0 +1,48 @@
+<section class="setup" [attr.aria-label]="guide().title" [attr.aria-busy]="busy()">
+  <header>
+    <ex-status-glyph status="attention" [size]="16" />
+    <div class="heading">
+      <h3>{{ guide().title }}</h3>
+      <p>{{ guide().why }}@if (remote() && guide().inPerson) { Someone at {{ host() }} has to do this.}</p>
+    </div>
+    @if (remote()) { <ex-icon-button icon="copy" label="Copy steps" size="sm" (pressed)="copy()" /> }
+  </header>
+  @if (missingTools()) { <p class="reported">{{ missingTools() }}</p> }
+  <ol>
+    @for (step of guide().steps; track $index) {
+      <li>
+        <span class="number" aria-hidden="true">{{ $index + 1 }}</span>
+        <span class="text">{{ step.text }}</span>
+        @if (step.opens && canOpenSettings()) {
+          <button exButton size="sm" variant="secondary" [attr.aria-label]="openLabel(step)" [disabled]="busy()" (click)="openSettings.emit()">Open</button>
+        }
+      </li>
+    }
+  </ol>
+  @if (guide().agentPermission && canRevealHelper()) {
+    <details class="fallback">
+      <summary>Elevenex Agent isn't in the list?</summary>
+      <div class="fallback-body">
+        <div class="row">
+          <span>Drag it in from Finder.</span>
+          <button exButton size="sm" variant="secondary" [disabled]="busy()" (click)="revealHelper.emit()">Show in Finder</button>
+        </div>
+        @if (helperPath()) {
+          <span>Or click + in the list, press ⌘⇧G and paste:</span>
+          <div class="path">
+            <code>{{ helperPath() }}</code>
+            <ex-icon-button icon="copy" label="Copy app path" size="sm" [disabled]="busy()" (pressed)="copyHelperPath.emit()" />
+          </div>
+        }
+      </div>
+    </details>
+  }
+  <p class="feedback" role="status">{{ feedback() }}</p>
+  <ng-content />
+  @if (diagnostic()) {
+    <details class="diagnostic">
+      <summary>Details</summary>
+      <p>{{ diagnostic() }}</p>
+    </details>
+  }
+</section>

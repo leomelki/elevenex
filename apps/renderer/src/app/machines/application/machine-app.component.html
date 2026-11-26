@@ -76,7 +76,7 @@
         @else if (pending.connections === 257) { At least 257 connections are active. The update will start when they close. }
         @else { {{ pending.connections }} connections are active. The update will start when they close. }
       </p>
-      <p>Forcing the update disconnects everyone using this engine and stops running agents and terminals.</p>
+      <p>Forcing the update disconnects everyone using this engine and stops running agents, terminals and apps.</p>
       @if (updateActionError()) { <p role="alert">{{ updateActionError() }}</p> }
       <div class="update-actions">
         <button exButton [disabled]="updateActionBusy()" (click)="respondToUpdate(false)">Cancel connection</button>

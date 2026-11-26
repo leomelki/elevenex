@@ -12,6 +12,21 @@ const subscribe: Subscribe = (channel, listener) => {
 };
 
 const bridge = Object.freeze<ElevenexBridge>({
+  taskAppsRead: (...args) => invoke('task-app:read', ...args),
+  taskAppOutput: (...args) => invoke('task-app:output', ...args),
+  taskAppApprove: (...args) => invoke('task-app:approve', ...args),
+  taskAppOpenSetupSettings: (...args) => invoke('task-app:setup-settings', ...args),
+  taskAppRevealSetupHelper: (...args) => invoke('task-app:setup-helper', ...args),
+  taskAppStop: (...args) => invoke('task-app:stop', ...args),
+  taskAppWatch: (...args) => invoke('task-app:watch', ...args),
+  taskAppUnwatch: (...args) => invoke('task-app:unwatch', ...args),
+  taskAppFrameAck: (...args) => invoke('task-app:ack', ...args),
+  taskAppInput: (...args) => invoke('task-app:input', ...args),
+  taskAppReleaseInput: (...args) => invoke('task-app:release', ...args),
+  taskAppPopOut: (...args) => invoke('task-app:pop-out', ...args),
+  taskAppWindowContext: (...args) => invoke('task-app:window', ...args),
+  onTaskAppFrame: listener => subscribe('task-app:frame', listener),
+  onTaskAppClosed: listener => subscribe('task-app:closed', listener),
   taskTerminalPreferences: scope => invoke('task-terminal:preferences', scope),
   taskTerminalSavePreferences: (scope, value) => invoke('task-terminal:save-preferences', scope, value),
   taskTerminalAttach: (scope, input) => invoke('task-terminal:attach', scope, input),

@@ -1,12 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFile } = require('node:child_process');
-const { cp, mkdtemp, mkdir, rm, stat } = require('node:fs/promises');
+const { cp, link, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } = require('node:fs/promises');
 const { createRequire } = require('node:module');
 const { tmpdir } = require('node:os');
 const { dirname, join } = require('node:path');
 const { promisify } = require('node:util');
-const { pruneStagedNodeModules } = require('../../../scripts/archive-electron-backend');
+const { pruneStagedNodeModules, validateArchivableTree } = require('../../../scripts/archive-electron-backend');
+const { extractBackend } = require('../dist/backend/archive');
 const { restoreDriverLicenses } = require('../../../scripts/runtime-stage-utils');
 
 const run = promisify(execFile);
@@ -81,4 +82,27 @@ test('browser runtime packages remain usable after final pruning and archive ext
   const video = await run(ffmpeg, ['-version'], { timeout: 10000, env });
   assert.match(video.stdout, /ffmpeg version/);
   assert.ok((await stat(join(ffmpegRoot, 'LICENSE'))).isFile());
+});
+
+test('runtime archives built from an accepted stage install, and links fail the build first', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'elevenex-backend-links-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const backend = join(root, 'stage/backend');
+  const bundle = join(backend, 'bin/Elevenex Agent.app/Contents/MacOS');
+  await mkdir(bundle, { recursive: true });
+  await writeFile(join(backend, 'main.cjs'), 'module.exports = 1;');
+  await writeFile(join(bundle, 'Elevenex Agent'), 'agent', { mode: 0o755 });
+  validateArchivableTree(backend);
+  const archive = join(root, 'backend.tar.gz');
+  await run('tar', ['-czf', archive, '-C', join(root, 'stage'), 'backend']);
+  await extractBackend(archive, join(root, 'installed'), new AbortController().signal);
+  assert.equal(await readFile(join(root, 'installed/backend/bin/Elevenex Agent.app/Contents/MacOS/Elevenex Agent'), 'utf8'), 'agent');
+
+  // The desktop installer rejects these tar entries, so the build must name them.
+  await symlink('Elevenex Agent.app/Contents/MacOS/Elevenex Agent', join(backend, 'bin/task-app-macos'));
+  await link(join(backend, 'main.cjs'), join(backend, 'main-copy.cjs'));
+  assert.throws(() => validateArchivableTree(backend), error =>
+    /bin[\\/]task-app-macos \(symlink\)/.test(error.message) && /hard link to main/.test(error.message));
+  await run('tar', ['-czf', archive, '-C', join(root, 'stage'), 'backend']);
+  await assert.rejects(extractBackend(archive, join(root, 'rejected'), new AbortController().signal), /links or special files/);
 });

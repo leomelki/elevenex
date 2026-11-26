@@ -1,3 +1,4 @@
+import { TaskAppsComponent } from '../../task-apps';
 import { CodePanelComponent } from '../../code';
 import type { CodeTarget, CodeFileIntent } from '@elevenex/shared';
 import type { TaskBrowserWindowContext } from '@elevenex/shared';
@@ -26,7 +27,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [TaskAppsComponent, CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -61,6 +62,12 @@ export class MachineWorkspaceComponent {
   readonly panelOpen = this.store.panelOpen;
   readonly panel = this.store.panel;
   readonly wideReview = this.store.wideReview;
+  protected readonly taskApps = viewChild(TaskAppsComponent);
+  protected onAppsIdle(): void {
+    if (this.panel() !== 'apps') return;
+    this.store.selectPanel('changes');
+    this.store.appLink.set(null);
+  }
   readonly agentFocus = signal<AgentChatFocus | null>(null);
   readonly agentNavigationBusy = signal(false);
   readonly agentNavigationError = signal('');
@@ -191,7 +198,7 @@ export class MachineWorkspaceComponent {
       const selected = this.store.selected(), target = this.reviewTarget();
       if (selected && target && selected.taskId === target.taskId && selected.sessionId === target.sessionId && selected.scopeId !== target.scopeId && !this.store.offline() && !this.store.restoring()) this.reviewTarget.set({ ...target, scopeId: selected.scopeId });
     });
-    effect(() => this.store.connect(this.machine(), this.active() || this.preparing()));
+    effect(() => this.store.connect(this.machine(), this.active() || this.preparing(), this.active()));
     let creationOrigin: string | null = null;
     afterRenderEffect(() => {
       const key = this.store.selectedCreationKey();
@@ -357,7 +364,7 @@ export class MachineWorkspaceComponent {
     } else if (key === 'n' && !event.shiftKey && !event.altKey && this.store.projects().length) {
       event.preventDefault(); void this.store.openNewTask();
     } else if (event.shiftKey && key === 'r' && this.store.selected()) {
-      event.preventDefault(); this.panel.set('changes');
+      event.preventDefault(); this.store.selectPanel('changes');
       const wide = !this.wideReview(); this.panelOpen.set(true); this.wideReview.set(wide);
     } else if (/^[0-9]$/.test(key) && !event.shiftKey && !event.altKey && !this.store.busy()) {
       const projectId = key === '0' ? 'all' : this.store.projects()[Number(key) - 1]?.id;

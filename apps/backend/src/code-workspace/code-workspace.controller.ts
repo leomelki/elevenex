@@ -1,7 +1,7 @@
 import { CodeTransfers } from './code-transfers.service.js';
 import { CodeLifetimes } from './code-lifetimes.service.js';
 import { BadRequestException, Body, CanActivate, Controller, ExecutionContext, Get, Injectable, Param, ParseIntPipe, Post, Query, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
-import { timingSafeEqual } from 'node:crypto';
+import { hasDesktopAccess } from '../config/desktop-access.js';
 import type { Request, Response } from 'express';
 import { dirname } from 'node:path';
 import { CodeAuthorization } from './code-authorization.service.js';
@@ -15,11 +15,7 @@ import { CodeWatch } from './code-watch.service.js';
 export class CodeAccessGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    // Browsers contact the private desktop host, never backend endpoints directly.
-    if (request.headers.origin || request.headers['sec-fetch-site']) throw new UnauthorizedException();
-    if (process.env.ELEVENEX_DESKTOP_SOCKET && request.socket.remoteAddress === undefined) return true;
-    const expected = process.env.ELEVENEX_CODE_ACCESS, supplied = request.headers['x-elevenex-code-access'];
-    if (!expected || typeof supplied !== 'string' || !/^[a-f0-9]{64}$/.test(supplied) || supplied.length !== expected.length || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) throw new UnauthorizedException();
+    if (!hasDesktopAccess(request)) throw new UnauthorizedException();
     return true;
   }
 }

@@ -5,7 +5,7 @@ const { createSocket } = require('node:dgram');
 const { EventEmitter } = require('node:events');
 const { mkdir, mkdtemp, readFile, rm, symlink, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { dirname, join } = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const processes = require('node:child_process');
 const control = require('../dist/remote/runtime-control');
@@ -114,6 +114,18 @@ test('background recovery can finish an already accepted update to its expected 
   assert.equal(fixture.stops(), 0); assert.equal(fixture.starts(), 0);
 });
 
+test('a task app that did not stop blocks a runtime replacement', async t => {
+  const fixture = startupFixture(t, [old], async () => ({ ...old, appHandoffBlocked: true }));
+  await assert.rejects(ensureDaemon(startup), /task apps are running/);
+  assert.equal(fixture.starts(), 0);
+});
+
+test('a lost handoff reply still reports task apps that did not stop', async t => {
+  const fixture = startupFixture(t, [old, { ...old, appHandoffBlocked: true }], async () => { throw new Error('reply lost'); });
+  await assert.rejects(ensureDaemon(startup), /task apps are running/);
+  assert.equal(fixture.stops(), 1); assert.equal(fixture.starts(), 0);
+});
+
 test('a signed handoff rejection reports preparation failure without retrying shutdown', async t => {
   const fixture = startupFixture(t, [old], async () => old);
   await assert.rejects(ensureDaemon(startup), /handoff rejected/);
@@ -122,20 +134,26 @@ test('a signed handoff rejection reports preparation failure without retrying sh
 
 test('replacement descriptors confine the revision, runtime cache and uploaded shim', async t => {
   const root = await mkdtemp(join(tmpdir(), 'ex-handoff-plan-')); t.after(() => rm(root, { recursive: true, force: true }));
-  const installation = join(root, 'runtimes', `runtime-${target}-linux-x64`);
+  const platform = { linux: 'linux', darwin: 'macos', win32: 'windows' }[process.platform];
+  const installation = join(root, 'runtimes', `runtime-${target}-${platform}-${process.arch}`);
+  const nodePath = process.platform === 'win32' ? 'backend/node/node.exe' : 'backend/node/bin/node';
   const client = 'd'.repeat(64); const runtime = join(root, 'clients', client, 'runtime.js');
   await mkdir(join(installation, 'backend/node/bin'), { recursive: true }); await mkdir(join(root, 'clients', client), { recursive: true });
-  for (const path of [runtime, join(installation, 'backend/node/bin/node'), join(installation, 'backend/main.cjs'), join(installation, 'installation.sha256')]) await writeFile(path, 'fixture');
+  for (const path of [runtime, join(dirname(runtime), 'host.js'), join(installation, nodePath), join(installation, 'backend/main.cjs'), join(installation, 'installation.sha256')]) await writeFile(path, 'fixture');
   await publishReplacement(root, installation, runtime, target);
-  assert.deepEqual(await prepareReplacement(root, target), { installation, runtime, executable: join(installation, 'backend/node/bin/node'), version: target });
+  assert.deepEqual(await prepareReplacement(root, target), { installation, runtime, executable: join(installation, nodePath), version: target });
   const path = join(root, `handoff-${target}.json`);
   for (const value of [{ client: '../outside', installation: `runtime-${target}-linux-x64` }, { client, installation: '../../outside' },
-    { client, installation: `runtime-${version}-linux-x64` }, { client, installation: `runtime-${target}-windows-x64` }]) {
+    { client, installation: `runtime-${version}-linux-x64` }, { client, installation: `runtime-${target}-other-x64` }]) {
     await writeFile(path, JSON.stringify(value)); await assert.rejects(prepareReplacement(root, target), /Invalid replacement descriptor/);
   }
   await assert.rejects(prepareReplacement(root, '../outside'), /Invalid replacement revision/);
   await writeFile(path, 'x'.repeat(1025)); await assert.rejects(prepareReplacement(root, target), /Invalid replacement descriptor/);
   await publishReplacement(root, installation, runtime, target);
+  await rm(join(dirname(runtime), 'host.js'));
+  if (process.platform === 'win32') await assert.rejects(prepareReplacement(root, target), /ENOENT/, 'a Windows handoff requires its replacement host shim');
+  else assert.equal((await prepareReplacement(root, target)).runtime, runtime, 'older POSIX shims provide their own launch sequence');
+  await writeFile(join(dirname(runtime), 'host.js'), 'fixture');
   await rm(join(installation, 'installation.sha256')); await assert.rejects(prepareReplacement(root, target), /ENOENT/);
 });
 
@@ -219,7 +237,18 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
       const event=kind=>fs.appendFileSync(events,JSON.stringify({kind,version:${JSON.stringify(value)},pid:process.pid})+'\\n');
       if(fs.existsSync(owner)){const pid=Number(fs.readFileSync(owner,'utf8'));let live=false;try{process.kill(pid,0);live=true;}catch{}if(live){event('overlap');process.exit(2);}}
       fs.writeFileSync(owner,String(process.pid));event('start');
-      const server=http.createServer((req,res)=>res.end(JSON.stringify({backendSha:${gated ? `(fs.existsSync(path.join(data,'ready'))?${JSON.stringify(value)}:'0'.repeat(40))` : JSON.stringify(value)},pid:process.pid,keep:fs.readFileSync(path.join(data,'keep'),'utf8')})));
+      const server=http.createServer((req,res)=>{
+        if(req.url==='/api/task-app-runtime/prepare-handoff'){
+          const running=path.join(data,'app-running'),stuck=path.join(data,'app-stuck');
+          if(!fs.existsSync(running)&&!fs.existsSync(stuck))return res.writeHead(404).end();
+          if(req.headers['x-elevenex-app-handoff']!==process.env.ELEVENEX_APP_HANDOFF)return res.writeHead(403).end();
+          if(fs.existsSync(running)){fs.rmSync(running);event('apps-stopped');}
+          return res.writeHead(201).end(JSON.stringify({running:fs.existsSync(stuck)?1:0}));
+        }
+        const credential=req.headers['x-elevenex-app-access'];
+        res.end(JSON.stringify({backendSha:${gated ? `(fs.existsSync(path.join(data,'ready'))?${JSON.stringify(value)}:'0'.repeat(40))` : JSON.stringify(value)},
+          pid:process.pid,keep:fs.readFileSync(path.join(data,'keep'),'utf8'),appAuthorized:!!credential && credential===process.env.ELEVENEX_APP_ACCESS,hasAppHeader:!!credential}));
+      });
       server.listen(process.env.ELEVENEX_DESKTOP_SOCKET);
       process.on('SIGTERM',()=>{event('term');if(${ignoreTerm})return;server.close(()=>process.exit(0));});
     `);
@@ -239,6 +268,15 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
   const events = async () => (await readFile(join(root, 'data/events'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   t.diagnostic('Starting the original daemon.');
   const original = await connect(await install(version, true)); const before = await info(original);
+  const appForward = await original.forward(0, 0);
+  try {
+    const fetchGrant = path => fetch(`http://127.0.0.1:${appForward.port}${path}`, { headers: {
+      Authorization: appForward.authorization, 'X-Elevenex-App-Access': 'caller-controlled',
+    }, signal: AbortSignal.timeout(3000) }).then(res => res.json());
+    assert.equal((await fetchGrant('/api/task-apps/1')).appAuthorized, true, 'main injects only the instance credential');
+    assert.equal((await fetchGrant('/api/desktop-workspace/revision?after=1')).appAuthorized, true);
+    assert.equal((await fetchGrant('/api/info')).hasAppHeader, false, 'a different route receives no caller or engine app credential');
+  } finally { await appForward.close(); }
   const secret = await runtimeToken(); const health = await control.queryDaemon(root, 1, secret);
   assert.equal(health.activeConnections, 1);
   await mkdir(join(developmentRoot, 'data'), { recursive: true });
@@ -262,6 +300,14 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
 
   t.diagnostic('Updating with concurrent clients.');
   const nextRelease = await install(target);
+  await writeFile(join(root, 'data/app-stuck'), '1');
+  await assert.rejects(connect(nextRelease, { waitingForUpdate: (_state, force) => force() }),
+    error => error.failure?.code === 'compatibility' && /did not stop/.test(error.message));
+  assert.equal((await info(original)).pid, before.pid, 'an app that does not stop keeps the old engine');
+  await rm(join(root, 'data/app-stuck'));
+  // The old engine stops a stoppable app itself during the update.
+  await writeFile(join(root, 'data/app-running'), '1');
+
   const port = 20000 + createHash('sha256').update(`${home}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
   let watching = true; let vacant = false;
   const watcher = (async () => {
@@ -290,6 +336,7 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
   assert.equal(vacant, false, 'ownership must remain reserved throughout shutdown and daemon replacement');
   const after = await info(first);
   assert.equal(after.backendSha, target); assert.equal(after.keep, 'durable user data');
+  assert.ok((await events()).some(event => event.kind === 'apps-stopped' && event.version === version), 'the old engine stops task apps before replacement');
   assert.equal(second.instance, first.instance); assert.notEqual(first.instance, original.instance);
   assert.equal((await info(second)).pid, after.pid);
   assert.throws(() => process.kill(before.pid, 0), { code: 'ESRCH' }, 'forced shutdown must finish before replacement startup');
