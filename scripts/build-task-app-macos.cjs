@@ -2,6 +2,7 @@ const { execFileSync } = require('node:child_process');
 const { mkdirSync, copyFileSync, rmSync, readFileSync, writeFileSync, mkdtempSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
+const { prepareMacAppCaptureSigning } = require('./task-app-macos-signing.cjs');
 
 /** Build-time only. Never compile or change host permissions during viewer attachment.
  * Writes `Elevenex Agent.app` into `binDirectory`. Runtime archives contain only
@@ -50,9 +51,16 @@ async function buildMacAppDisplay({ binDirectory }) {
   if (process.env.ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING === '1' && identity === '-')
     throw new Error('Public macOS runtimes require a Developer ID signing identity for Elevenex Agent.');
   const keychain = process.env.ELEVENEX_APP_DISPLAY_KEYCHAIN;
-  execFileSync('/usr/bin/codesign', ['--force', '--options', 'runtime', '--identifier', 'com.elevenex.task-app-display',
-    ...(keychain ? ['--keychain',keychain] : []),
-    ...(identity === '-' ? [] : ['--timestamp']), '--sign', identity, bundle], { stdio: 'inherit' });
+  const signingDirectory = mkdtempSync(join(tmpdir(), 'elevenex-agent-signing-'));
+  try {
+    const captureArguments = prepareMacAppCaptureSigning({
+      contents, directory: signingDirectory, identity,
+      profile: process.env.ELEVENEX_APP_DISPLAY_PERSISTENT_CAPTURE_PROFILE,
+    });
+    execFileSync('/usr/bin/codesign', ['--force', '--options', 'runtime', '--identifier', 'com.elevenex.task-app-display',
+      ...(keychain ? ['--keychain',keychain] : []), ...captureArguments,
+      ...(identity === '-' ? [] : ['--timestamp']), '--sign', identity, bundle], { stdio: 'inherit' });
+  } finally { rmSync(signingDirectory, { recursive: true, force: true }); }
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle], { stdio: 'inherit' });
   const profile = process.env.ELEVENEX_APP_DISPLAY_NOTARY_PROFILE;
   if (process.env.ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING === '1' && !profile)

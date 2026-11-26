@@ -22,6 +22,8 @@ on:
         required: false
       APPLE_TEAM_ID:
         required: false
+      APPLE_APP_DISPLAY_PROFILE_BASE64:
+        required: false
 
 permissions:
   contents: read
@@ -90,7 +92,9 @@ jobs:
 
       - name: Verify signed macOS app capture helper and H.264 bitstream
         if: runner.os == 'macOS'
-        run: node scripts/test-task-app-macos.cjs
+        run: |
+          node --test scripts/task-app-macos-signing.test.cjs
+          node scripts/test-task-app-macos.cjs
 
       - name: Prepare Developer ID signing for the public Mac agent
         if: runner.os == 'macOS' && inputs.release-signing
@@ -100,6 +104,7 @@ jobs:
           APPLE_ID_EMAIL: ${{ secrets.APPLE_ID_EMAIL }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_DISPLAY_PROFILE_BASE64: ${{ secrets.APPLE_APP_DISPLAY_PROFILE_BASE64 }}
         run: |
           for key in APPLE_CERT_BASE64 APPLE_CERT_PASSWORD APPLE_ID_EMAIL APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             test -n "${!key}" || { echo "Missing required Mac runtime signing credential: $key"; exit 1; }
@@ -123,6 +128,12 @@ jobs:
           echo "ELEVENEX_APP_DISPLAY_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "ELEVENEX_APP_DISPLAY_NOTARY_PROFILE=elevenex-agent-runtime" >> "$GITHUB_ENV"
           echo "ELEVENEX_APP_DISPLAY_REQUIRE_SIGNING=1" >> "$GITHUB_ENV"
+          # Optional until Apple approves persistent capture for the agent App ID.
+          if [[ -n "$APPLE_APP_DISPLAY_PROFILE_BASE64" ]]; then
+            capture_profile="$RUNNER_TEMP/elevenex-agent.provisionprofile"
+            printf '%s' "$APPLE_APP_DISPLAY_PROFILE_BASE64" | base64 --decode > "$capture_profile"
+            echo "ELEVENEX_APP_DISPLAY_PERSISTENT_CAPTURE_PROFILE=$capture_profile" >> "$GITHUB_ENV"
+          fi
 
       - name: Build backend and portable Node archive
         run: pnpm desktop:backend
@@ -134,11 +145,14 @@ jobs:
         run: |
           args=()
           if [[ "$RELEASE_SIGNING" == true ]]; then args+=(--require-notarized); fi
+          if [[ -n "${ELEVENEX_APP_DISPLAY_PERSISTENT_CAPTURE_PROFILE:-}" ]]; then args+=(--require-persistent-capture); fi
           node scripts/verify-task-app-macos.cjs dist-runtime/elevenex-backend-macos-arm64.tar.gz "${args[@]}"
 
       - name: Remove temporary Mac signing keychain
         if: always() && runner.os == 'macOS' && inputs.release-signing
-        run: security delete-keychain "$RUNNER_TEMP/elevenex-agent-signing.keychain-db" || true
+        run: |
+          rm -f "$RUNNER_TEMP/elevenex-agent.provisionprofile"
+          security delete-keychain "$RUNNER_TEMP/elevenex-agent-signing.keychain-db" || true
 
       - name: Verify Windows private IPC, packaged app job and desktop capture
         if: runner.os == 'Windows'

@@ -103,6 +103,38 @@ signing credentials fail the build. Unsigned development builds use an ad hoc
 signature and can require a new grant after a rebuild. Setup writes no mutable
 state into the signed bundle.
 
+Persistent content capture is opt-in and disabled by default. Apple's
+[Persistent Content Capture entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)
+requires approval for the agent's App ID, `com.elevenex.task-app-display`.
+After approval, generate a Developer ID provisioning profile for that App ID
+and the release signing certificate with the entitlement enabled. For local
+release builds, set `ELEVENEX_APP_DISPLAY_PERSISTENT_CAPTURE_PROFILE` to the
+profile's path alongside the existing signing and notarization settings.
+For public runtime CI, add its base64-encoded contents as the optional
+`APPLE_APP_DISPLAY_PROFILE_BASE64` repository secret. An absent secret keeps
+the current capture and signing behavior; do not set it before approval.
+CI then requires the signed capture entitlement and embedded profile to survive
+archive extraction, using `scripts/verify-task-app-macos.cjs` with
+`--require-persistent-capture` alongside the existing notarization check.
+
+`scripts/task-app-macos-signing.cjs` checks that the supplied profile authorizes
+capture for the agent, allows distribution and has not expired. The build embeds
+it at `Contents/embedded.provisionprofile` before signing and claims only
+`com.apple.developer.persistent-content-capture`, `com.apple.application-identifier`
+and `com.apple.developer.team-identifier`. Other capabilities in the profile are
+not copied. Ad hoc signing and invalid profiles fail the build rather than
+silently dropping the requested entitlement. macOS and Gatekeeper still validate
+Apple's authorization and the profile's match to the signing certificate; these
+build checks do not replace that validation. See Apple's
+[provisioning profile guidance](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).
+
+This entitlement supports persistent capture; it does not grant Screen Recording
+or Accessibility permission. Keep the host setup and window/input confinement.
+Run `node --test scripts/task-app-macos-signing.test.cjs` for signing regressions.
+The native tests use unsigned CMS fixtures and inspect signed claims without
+launching them. Real entitlement authorization and prompt behavior require an
+approved profile, its Developer ID certificate and a notarized build on a Mac.
+
 An older ad hoc build's Accessibility entry can remain enabled while its code
 requirement no longer matches the current binary. Repeated checks or dropping
 the updated bundle again cannot reliably replace that entry. The recovery flow

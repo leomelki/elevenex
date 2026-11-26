@@ -6,7 +6,7 @@ const { tmpdir } = require('node:os');
 
 // Verify the public artifact after copying and archiving, not only the bundle
 // in the build checkout. A missing resource or signature invalidates setup.
-function verifyMacAgentArchive(archive, { notarized = false } = {}) {
+function verifyMacAgentArchive(archive, { notarized = false, persistentCapture = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'elevenex-agent-archive-'));
   try {
     execFileSync('/usr/bin/tar', ['-xzf', resolve(archive), '-C', directory,
@@ -17,6 +17,12 @@ function verifyMacAgentArchive(archive, { notarized = false } = {}) {
     execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle], { stdio: 'inherit' });
     const displayName = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleDisplayName', join(bundle, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
     assert.equal(displayName, 'Elevenex Agent');
+    if (persistentCapture) {
+      assert.ok(statSync(join(bundle, 'Contents/embedded.provisionprofile')).isFile(), 'Capture provisioning profile is missing');
+      const signed = execFileSync('/usr/bin/codesign', ['--display', '--entitlements', '-', '--xml', bundle]);
+      const claims = JSON.parse(execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], { input: signed, encoding: 'utf8' }));
+      assert.equal(claims['com.apple.developer.persistent-content-capture'], true, 'Signed persistent capture entitlement is missing');
+    }
     if (notarized) {
       execFileSync('/usr/bin/xcrun', ['stapler', 'validate', bundle], { stdio: 'inherit' });
       execFileSync('/usr/sbin/spctl', ['--assess', '--type', 'execute', bundle], { stdio: 'inherit' });
@@ -27,5 +33,8 @@ function verifyMacAgentArchive(archive, { notarized = false } = {}) {
 module.exports = { verifyMacAgentArchive };
 if (require.main === module) {
   if (process.platform !== 'darwin' || !process.argv[2]) throw new Error('Supply the built macOS backend archive on a Mac');
-  verifyMacAgentArchive(process.argv[2], { notarized: process.argv.includes('--require-notarized') });
+  verifyMacAgentArchive(process.argv[2], {
+    notarized: process.argv.includes('--require-notarized'),
+    persistentCapture: process.argv.includes('--require-persistent-capture'),
+  });
 }
