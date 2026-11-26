@@ -33,23 +33,24 @@ describe('Task apps panel ownership', () => {
     fixture.componentRef.setInput('remote', true);
     fixture.detectChanges();
     const element: HTMLElement = fixture.nativeElement;
-    const button = (name: string) => [...element.querySelectorAll('button')].find(b => b.textContent?.trim() === name);
-    await vi.waitFor(() => { fixture.detectChanges(); expect(button('Open setup on host')).toBeDefined(); });
+    const button = (name: string) => [...element.querySelectorAll('button')].find(b => b.textContent?.trim() === name || b.getAttribute('aria-label') === name);
+    await vi.waitFor(() => { fixture.detectChanges(); expect(button('Open Elevenex Agent setup on Studio Mac')).toBeDefined(); });
     expect(element.textContent).toContain('Screen & System Audio Recording');
+    expect(element.querySelector('.request .command')?.textContent).toBe('pnpm desktop:dev');
     expect(fixture.componentInstance.hasActiveApp()).toBe(true);
-    button('Open setup on host')!.click();
-    await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Elevenex Agent was asked to open on Studio Mac. Look at that screen to continue.');
-    expect(element.textContent).toContain('needs to do these steps'); });
+    button('Open Elevenex Agent setup on Studio Mac')!.click();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Sent to Studio Mac. Continue on its screen.');
+    expect(element.textContent).toContain('Someone at Studio Mac has to do this.'); });
     expect(taskAppOpenSetupSettings).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
     expect(taskAppApprove).not.toHaveBeenCalled();
-    button('Show agent in Finder on host')!.click();
+    button('Show in Finder')!.click();
     await vi.waitFor(() => { fixture.detectChanges(); expect(button('Copy app path')).toBeDefined(); });
     expect(taskAppRevealSetupHelper).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
     button('Copy app path')!.click();
     expect(writeClipboardText).toHaveBeenCalledWith(helperPath);
-    button('Copy instructions')!.click();
+    button('Copy steps')!.click();
     expect(writeClipboardText).toHaveBeenCalledWith(expect.stringContaining('Studio Mac'));
-    button('Check and launch')!.click();
+    button('Launch')!.click();
     await vi.waitFor(() => { fixture.detectChanges(); expect(element.textContent).toContain('Starting…'); });
     expect(taskAppApprove).toHaveBeenCalledExactlyOnceWith('machine', 2, 'request');
     expect(fixture.componentInstance.setupHelperPath()).toBe('');
@@ -75,7 +76,7 @@ describe('Task apps panel ownership', () => {
     view.detectChanges();
     await vi.waitFor(() => {
       view.detectChanges();
-      expect(view.nativeElement.textContent).toContain('That app isn\'t available');
+      expect(view.nativeElement.textContent).toContain('App not found');
     });
     expect(view.nativeElement.querySelector('button[aria-label="Stop app"]')).toBeNull();
   });
@@ -92,17 +93,16 @@ describe('Task apps panel ownership', () => {
     fixture.componentRef.setInput('machine', 'Studio Mac'); fixture.componentRef.setInput('remote', true);
     fixture.detectChanges();
     const element: HTMLElement = fixture.nativeElement;
-    const launch = () => element.querySelector<HTMLButtonElement>('.setup-actions button[data-variant=primary]')!;
+    const launch = () => element.querySelector<HTMLButtonElement>('.request .actions button[data-variant=primary]')!;
     await vi.waitFor(() => { fixture.detectChanges(); expect(launch()).not.toBeNull(); });
     launch().click(); fixture.detectChanges();
     expect(launch().disabled).toBe(true); expect(launch().textContent).toContain('Checking…');
-    expect(element.textContent).toContain('Checking Studio Mac before launching');
     launch().click(); expect(taskAppApprove).toHaveBeenCalledTimes(1);
     finish({ ok: true, value: undefined });
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(element.textContent).toContain("Preview request hasn't launched");
-      expect(element.textContent).toContain('host still reports the setup issue');
+      expect(element.querySelector('ex-task-app-setup [role=status]')?.textContent).toContain('Still blocked');
+      expect(launch().textContent).toContain('Launch');
       expect(launch().disabled).toBe(false);
     });
     expect(taskAppApprove).toHaveBeenCalledTimes(1);
@@ -126,12 +126,13 @@ describe('Task apps panel ownership', () => {
     const before = state;
     const reading = fixture.componentInstance.refresh();
     await fixture.componentInstance.act('approve');
-    expect(fixture.componentInstance.setupFeedback()).toContain('Refreshing app status');
+    expect(fixture.componentInstance.checkingLaunch()).toBe(true);
     finishRead({ ok: true, value: [before] }); await reading;
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(fixture.componentInstance.run()?.setupIssue).toBe('macos-desktop-connection');
-      expect(fixture.componentInstance.setupFeedback()).toContain("hasn't launched");
+      expect(fixture.componentInstance.setupFeedback()).toContain('Still blocked');
+      expect(fixture.componentInstance.checkingLaunch()).toBe(false);
     });
     expect(taskAppApprove).toHaveBeenCalledTimes(1);
   });
@@ -163,8 +164,9 @@ describe('Task apps panel ownership', () => {
     fixture.componentRef.setInput('taskId', 2);
     fixture.detectChanges(); await fixture.whenStable();
     const element: HTMLElement = fixture.nativeElement;
-    await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.approval pre')).not.toBeNull(); });
-    const text = element.querySelector('.approval pre')!.textContent;
+    await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.request .command')).not.toBeNull(); });
+    const text = element.querySelector('.request .command')!.textContent;
+    expect(text).toContain('pnpm run ');
     expect(text).toContain('"dev app"');
     expect(text).toContain('x\\u202ey');
     expect(taskAppApprove).not.toHaveBeenCalled();
@@ -203,7 +205,7 @@ describe('Task apps panel ownership', () => {
       fixture.componentRef.setInput('remote', remote);
       fixture.detectChanges();
       const element: HTMLElement = fixture.nativeElement;
-      const button = (name: string) => [...element.querySelectorAll('button')].find(b => b.textContent?.trim() === name);
+      const button = (name: string) => [...element.querySelectorAll('button')].find(b => b.textContent?.trim() === name || b.getAttribute('aria-label') === name);
       return { fixture, element, button };
     };
 
@@ -245,11 +247,11 @@ describe('Task apps panel ownership', () => {
       const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [setupRun] }));
       const taskAppOpenSetupSettings = vi.fn(async (): Promise<BackendResult<void>> => ({ ok: false, error: { code: 'outcome-unknown', message: 'The operation may have completed.' } }));
       const { fixture, element, button } = mount({ taskAppsRead, taskAppOpenSetupSettings });
-      await vi.waitFor(() => { fixture.detectChanges(); expect(button('Open setup on host')).toBeDefined(); });
-      button('Open setup on host')!.click();
+      await vi.waitFor(() => { fixture.detectChanges(); expect(button('Open Elevenex Agent setup on Studio Mac')).toBeDefined(); });
+      button('Open Elevenex Agent setup on Studio Mac')!.click();
       await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('[role=alert]')?.textContent).toContain('Couldn\'t confirm Elevenex Agent setup opened'); });
       expect(element.querySelector('[role=alert]')?.textContent).toContain('Studio Mac');
-      expect(element.textContent).not.toContain('was asked to open');
+      expect(element.textContent).not.toContain('Sent to');
     });
 
     it('distinguishes the private desktop connection from permission grants and speaks of this Mac locally', async () => {
@@ -257,24 +259,25 @@ describe('Task apps panel ownership', () => {
       const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [issue] }));
       const remote = mount({ taskAppsRead, taskAppOpenSetupSettings: vi.fn() });
       await vi.waitFor(() => { remote.fixture.detectChanges(); expect(remote.element.querySelector('ex-task-app-setup')).not.toBeNull(); });
-      expect(remote.element.textContent).toContain('permission check and the connection');
-      expect(remote.element.textContent).toContain('reconnect the machine to update its engine');
-      expect(remote.element.textContent).toContain('needs to do these steps');
+      expect(remote.element.textContent).toContain('Permissions alone aren\'t enough');
+      expect(remote.element.textContent).toContain('Reconnect Studio Mac to update its engine');
+      expect(remote.element.textContent).toContain('has to do this');
+      expect(remote.element.textContent).toContain('Then ask your agent');
       expect(remote.element.querySelector('.diagnostic')?.textContent).toContain('macOS refused the desktop connection.');
       TestBed.resetTestingModule();
       const local = mount({ taskAppsRead, taskAppOpenSetupSettings: vi.fn() }, false);
       await vi.waitFor(() => { local.fixture.detectChanges(); expect(local.element.querySelector('ex-task-app-setup')).not.toBeNull(); });
       expect(local.element.textContent).toContain('this Mac');
-      expect(local.element.textContent).not.toContain('needs to do these steps');
-      expect(local.element.textContent).toContain('Open setup');
+      expect(local.element.textContent).not.toContain('has to do this');
+      expect(local.button('Open Elevenex Agent setup')).toBeDefined();
     });
 
     it('explains a missing operation instead of silently disabling a launch', async () => {
       const proposal: TaskAppRun = { ...run(5, 'web'), status: 'requested', pendingLaunch: { executable: 'pnpm', args: ['dev'] } };
       const { fixture, element } = mount({ taskAppsRead: vi.fn(async () => ({ ok: true as const, value: [proposal] })) });
-      await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.approval')).not.toBeNull(); });
-      expect(element.querySelector('.approval .note')?.textContent).toContain('can\'t launch apps');
-      expect(element.querySelector<HTMLButtonElement>('.approval button[data-variant=primary]')!.disabled).toBe(true);
+      await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.request')).not.toBeNull(); });
+      expect(element.querySelector('.request .note')?.textContent).toContain('Update Elevenex to launch apps');
+      expect(element.querySelector<HTMLButtonElement>('.request button[data-variant=primary]')!.disabled).toBe(true);
     });
 
     it('keeps a failed log read apart from the output and offers a retry', async () => {

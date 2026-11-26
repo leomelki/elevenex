@@ -20,8 +20,9 @@ macOS permission prompts, the login screen and protected windows stay outside th
 
 ## Host setup
 
-Apps checks the task machine before launching. A missing prerequisite keeps
-its command available for review. On macOS, **Open setup on host** launches
+Apps checks the task machine before launching. A missing prerequisite appears
+as a short numbered card inside the launch request, between the reviewed
+command and **Decline**/**Launch**. On macOS, the step's **Open** button launches
 **Elevenex Agent** in the signed-in desktop through LaunchServices. Its small,
 floating setup card opens the relevant System Settings pane. Drag the app icon
 from the card into the permission list, then enable **Elevenex Agent**. For
@@ -29,10 +30,10 @@ Screen & System Audio Recording, use the upper app list. Accessibility is
 optional for watching and enables keyboard and mouse control.
 
 The card verifies the actual grants. A successful drop alone does not mark a
-permission enabled. **Copy app path** supports the settings file picker's
-**+ → ⌘⇧G** flow. The remote viewer can copy instructions, reveal the installed
-bundle in Finder, and copy its exact path. Permission must be granted by a
-person on the host. Setup may be closed and reopened or resumed after macOS
+permission enabled. If the agent is missing from the list, **Elevenex Agent
+isn't in the list?** reveals the installed bundle in Finder and its exact path
+for the settings file picker's **+ → ⌘⇧G** flow. A remote viewer can copy the
+steps. Permission must be granted by a person on the host. Setup may be closed and reopened or resumed after macOS
 asks to quit and reopen the agent.
 
 If Accessibility is switched on but setup keeps waiting, choose **Already
@@ -44,12 +45,12 @@ reset, the card shows how to remove the old entry with **−** and add it again.
 No Terminal is needed. Setup still waits for a fresh, verified grant before
 reporting keyboard and mouse access.
 
-**Check and launch** rechecks and launches the reviewed command. Setup does
+**Launch** rechecks and launches the reviewed command. Setup does
 not extend the request's expiration or automatically replay a launch. The
 engine must still pass its real host check, including desktop-session access.
-The button shows **Checking…** during the request. If the host check still
-blocks launch, the card explicitly says the app has not launched and shows the
-current host issue. On macOS, both this check and capture run as Elevenex Agent
+The button shows **Checking…** until a fresh status read reconciles the
+request. If the host check still blocks launch, the card says **Still
+blocked** and shows the current host issue. On macOS, both this check and capture run as Elevenex Agent
 through LaunchServices, so SSH does not substitute its own permission identity
 for the app you enabled in setup. The task's original supervisor still owns
 the app process and its working directory and environment.

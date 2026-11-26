@@ -54,8 +54,8 @@ export default async function* (capture) {
   yield { name: 'exited-with-logs', selector: 'ex-task-apps' };
   await app(c => c.fixture.propose());
   await capture.component('ex-task-apps', component => component.refresh());
-  await capture.waitFor(() => document.querySelector('.approval pre')?.textContent?.includes('"desktop:dev"'));
+  await capture.waitFor(() => document.querySelector('.request .command')?.textContent === 'pnpm run desktop:dev');
   yield { name: 'launch-request', selector: 'ex-task-apps' };
-  await capture.click('.approval button[data-variant=primary]');
+  await capture.click('.request button[data-variant=primary]');
   await capture.waitFor(() => document.querySelector('ex-task-apps h2')?.textContent === 'Starting…');
 }

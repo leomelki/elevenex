@@ -16,7 +16,9 @@ shows only its own run's tab.
 Streamed runs offer **Actual size** and **Open in a separate window**; every
 launched run offers **Logs**, which folds bounded output in under the app, and
 active runs offer **Stop app**. The rest of the panel belongs to the app or to
-a single centered state. Exited and failed runs also offer **Show logs** there.
+a single centered state: a title, at most one short line, and the one action
+that helps. Exited and failed runs offer **Show logs** there, beside what the
+machine reported.
 The machine name is omitted from the toolbar because the title island already
 shows it.
 
@@ -63,29 +65,37 @@ Video and log polling require the Apps view. Reads stop on a transport error.
 A stop with an unknown
 outcome refreshes metadata before the user can choose another action.
 
-When an agent needs the user to launch a proposed command, the panel displays
-the executable and individual arguments. **Launch** accepts that
-run. **Decline** dismisses it. Viewing the request never starts a process.
+When an agent needs the user to launch a proposed command, the panel shows one
+request screen: the app name, the machine for a remote host, and the command
+as one line. Arguments that are empty or contain anything beyond plain path
+and flag characters are JSON-quoted, so argument boundaries stay unambiguous.
+Bidirectional and zero-width characters are shown as escapes. **Launch**
+accepts that run. **Decline** dismisses it. Viewing the request never starts a
+process.
 
-When a run reports a host prerequisite, the same panel shows its setup steps
-and the machine that needs them. The open-settings intent is scoped to the
-run and opens the macOS pane on the host. Copy instructions uses the local
-clipboard. The reviewed command remains available and **Check and launch**
-rechecks the original request. The Accessibility guide leaves video attached
-while input is unavailable.
+When a run reports a host prerequisite, `TaskAppSetupComponent` shows a compact
+card: the "Needs you" glyph, a title, one line saying what the host found, and
+two or three numbered steps. A step that the host can open carries its own
+**Open** button, scoped to the run. A remote card says that someone at the
+machine has to do this only for permissions and sign-in. Remote cards also
+offer **Copy steps** for the local clipboard. In a request, the card sits
+between the command and the decision, so the command is never hidden. A failed
+run shows the card centered with **Dismiss**. Beside a live picture it becomes
+a strip above the video. The Accessibility guide keeps the video attached while
+input is unavailable.
 
-**Check and launch** shows **Checking…** while the request is in flight and
-disables duplicate clicks. A successful HTTP response can still mean that host
-setup blocked the launch. A read started after that response reconciles the
-run and reports that it has not launched if the request is still waiting, using
-the host's current setup guide. An older in-flight read cannot consume that
-result. Changing tasks/runs discards the pending feedback, and no launch replays
-automatically.
+**Launch** shows **Checking…** for a setup-blocked request and **Launching…**
+otherwise. It stays disabled until a status read started after the reply
+reconciles the run. A successful HTTP response can still mean that host setup
+blocked the launch. The card then says **Still blocked** with the host's
+current guide. An older in-flight read cannot consume that result. Changing
+tasks/runs discards the pending feedback, and no launch replays automatically.
 
-Mac permission guides offer **Show agent in Finder** on the host, followed
-by the installed helper path and **Copy app path** for the settings file
-picker. The host derives this path from its own managed runtime. Replies and
-copied-path feedback are discarded when the selected run or setup issue changes.
+Mac permission guides fold their fallback behind **Elevenex Agent isn't in the
+list?**: **Show in Finder** on the host, followed by the installed helper path
+and **Copy app path** for the settings file picker. The host derives this path
+from its own managed runtime. Replies and copied-path feedback are discarded
+when the selected run or setup issue changes.
 
 Fresh host launch events can reveal Apps for the selected conversation in the
 focused, visible workspace. The first revision after navigating or regaining
@@ -98,12 +108,13 @@ an unavailable state if the task has active apps.
 ## Errors, alerts and recovery
 
 `app-recovery.ts` words every failure the panel can show. It only describes a
-situation and never decides what happens. Each message says what happened,
-names the machine for a remote host (`this computer` for the local one), and
-ends in the next step that really is available. Primary copy never repeats
-internal text. The adapter's code, HTTP status and message sit behind a
-**Technical details** disclosure. A run's own `detail` is shown as what the
-machine reported.
+situation and never decides what happens. Each message is a short title and
+one short line: what happened, the machine when it is remote, and the next
+step that really is available. Leave out what the buttons already say and
+reassurances that nothing else changed unless the person might fear it did.
+Primary copy never repeats internal text. The adapter's code, HTTP status and
+message sit behind a **Details** disclosure. A run's own `detail` is shown in
+mono as what the machine reported.
 
 - **Reads** (run list, logs) are safe to repeat, so failures offer **Try again**.
   A failed run read stops polling until then. A missing named operation says
@@ -116,11 +127,11 @@ machine reported.
 - **Open setup** and **Show agent in Finder** claim only that the host was
   asked. The panel cannot see the host's screen, so the copy says to look there.
 - **Setup cards** begin with what the host found, then steps phrased for the
-  host (`this Mac` locally, the machine's name remotely). A remote card says that
-  someone at the machine must do the steps, because permissions cannot be
-  granted from the viewer. `macos-desktop-connection` states that granting
-  permissions does not establish the agent's private desktop connection and
-  offers a retry after reconnecting/updating the engine.
+  host (`this Mac` locally, the machine's name remotely). Guides marked
+  `inPerson` (permissions and sign-in) tell a remote viewer that someone at
+  the machine has to do them. `macos-desktop-connection` states that
+  permissions alone do not establish the agent's desktop connection and ends
+  with reconnecting/updating the engine.
 - **Displays** map the host's known ending reasons and the desktop's refusal
   codes to a title, a cause and **Reconnect**. An unknown host reason is shown
   verbatim. Input failures match `APP_INPUT_GUIDANCE` by suffix because Electron

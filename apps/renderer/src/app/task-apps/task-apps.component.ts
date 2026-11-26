@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal, untracked } from '@angular/core';
-import { DOCUMENT } from '@angular/common';
+import { DOCUMENT, NgTemplateOutlet } from '@angular/common';
 import type { TaskAppRun } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../ui';
@@ -27,10 +27,24 @@ const tabStatus: Record<TaskAppRun['status'], ViewTab['status']> = {
 function isActive(run: TaskAppRun): boolean {
   return run.status !== 'exited' && run.status !== 'failed';
 }
+/** Invisible characters that could disguise an argument; shown as escapes instead. */
+const hiddenCharacters = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+/** Arguments made only of these characters read unambiguously without quotes. */
+const plainArgument = /^[\w./:=@%+,-]+$/;
+/**
+ * One readable command line that still preserves argument boundaries: any argument that is
+ * empty or contains spaces, quotes or other characters is JSON-quoted, which also escapes controls.
+ */
+function formatCommand(executable: string, args: readonly string[]): string {
+  return [executable, ...args]
+    .map(part => plainArgument.test(part) ? part : JSON.stringify(part))
+    .join(' ')
+    .replace(hiddenCharacters, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+}
 
 @Component({
   selector: 'ex-task-apps',
-  imports: [AppStreamComponent, TaskAppSetupComponent, ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, TooltipDirective, ViewTabsComponent],
+  imports: [AppStreamComponent, TaskAppSetupComponent, ButtonComponent, FoldComponent, IconButtonComponent, IconComponent, NgTemplateOutlet, TooltipDirective, ViewTabsComponent],
   templateUrl: './task-apps.component.html', styleUrl: './task-apps.component.css', changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskAppsComponent {
@@ -66,10 +80,7 @@ export class TaskAppsComponent {
   });
   readonly requestedCommand = computed(() => {
     const proposal = this.run()?.pendingLaunch;
-    if (!proposal) return '';
-    // Preserve argument boundaries and render bidirectional formatting controls visibly.
-    return JSON.stringify([proposal.executable, ...proposal.args], null, 2)
-      .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    return proposal ? formatCommand(proposal.executable, proposal.args) : '';
   });
   readonly loading = computed(() => this.monitor() && (!this.currentSnapshot() || (this.reading() && !this.run())));
   readonly place = computed<AppPlace>(() => ({ machine: this.machine(), remote: this.remote() }));
@@ -170,7 +181,7 @@ export class TaskAppsComponent {
   async refresh(): Promise<void> {
     const target = this.target;
     if (this.disposed || !target || !this.matches(target) || !this.monitor() || this.document.hidden) return;
-    if (!this.bridge.taskAppsRead) { this.readFailure.set(clientOutdated(this.place())); return; }
+    if (!this.bridge.taskAppsRead) { this.readFailure.set(clientOutdated()); return; }
     if (this.reading()) { this.pendingRead = true; return; }
     const generation = this.generation;
     const current = () => generation === this.generation && this.matches(target);
@@ -194,12 +205,12 @@ export class TaskAppsComponent {
           reply.value.find(isActive) ?? reply.value[0];
         this.select(run?.runId ?? '');
       }
-      if (checkedLaunch && this.checkedLaunch === checkedLaunch && this.run()?.runId === checkedLaunch.runId) {
+      // Only a read started after the launch reply can say whether the launch happened.
+      if (checkedLaunch && this.checkedLaunch === checkedLaunch) {
         this.checkedLaunch = null;
-        if (this.run()?.status === 'requested') this.setupFeedback.set(
-          `The host check finished, but ${this.run()!.name} hasn't launched. ${this.run()?.setupIssue
-            ? 'The host still reports the setup issue shown above. Complete those steps on ' + this.host() + ', then check again.'
-            : 'The request is still waiting. Check again to retry the launch.'}`,
+        this.checkingLaunch.set(false);
+        if (this.run()?.runId === checkedLaunch.runId && this.run()?.status === 'requested') this.setupFeedback.set(
+          this.run()?.setupIssue ? 'Still blocked. Finish the steps above, then launch again.' : 'Not launched yet. Try again.',
         );
       }
       // An older read must not dismiss a launch link that asked for a fresh read.
@@ -271,7 +282,6 @@ export class TaskAppsComponent {
     if (!scope || !task || !run || this.busy()) return;
     this.busy.set(true); this.actionFailure.set(null); this.setupFeedback.set('');
     this.checkingLaunch.set(action === 'approve');
-    if (action === 'approve' && run.setupIssue) this.setupFeedback.set(`Checking ${this.host()} before launching…`);
     const current = () => generation === this.generation && this.run()?.runId === run.runId;
     const place = this.place();
     const kind: ActionKind = action === 'approve' ? 'launch' : action === 'setup-settings' ? 'open-setup' : run.status === 'requested' ? 'decline' : 'stop';
@@ -286,16 +296,21 @@ export class TaskAppsComponent {
       const result = await invoke.call(this.bridge, scope, task, run.runId);
       if (!current()) return;
       if (!result.ok) fail(result.error);
-      else if (action === 'approve') {
-        this.checkedLaunch = { scopeId: scope, taskId: task, runId: run.runId };
-        this.setupFeedback.set('The host check finished. Refreshing app status…');
+      // Keep showing progress until a fresh read reconciles the launch.
+      else if (action === 'approve') this.checkedLaunch = { scopeId: scope, taskId: task, runId: run.runId };
+      // The host's screen is out of sight, so only say that it was asked.
+      else if (action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue) {
+        const target = run.setupIssue?.startsWith('macos-') ? 'the Elevenex Agent window' : 'Settings';
+        this.setupFeedback.set(place.remote ? `Sent to ${hostName(place)}. Continue on its screen.` : `Look for ${target}.`);
       }
-      else if (action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue)
-        this.setupFeedback.set(run.setupIssue?.startsWith('macos-')
-          ? `Elevenex Agent was asked to open on ${macName(place)}. Look at that screen to continue. If nothing appears, check that someone is signed in and unlocked, then try again.`
-          : `System Settings was asked to open on ${hostName(place)}. Look at that screen to continue.`);
     } catch { if (current()) fail('interrupted'); }
-    finally { if (current()) { this.checkingLaunch.set(false); this.busy.set(false); void this.refresh(); } }
+    finally {
+      if (current()) {
+        if (!this.checkedLaunch) this.checkingLaunch.set(false);
+        this.busy.set(false);
+        void this.refresh();
+      }
+    }
   }
 
   async revealSetupHelper(): Promise<void> {
@@ -311,9 +326,8 @@ export class TaskAppsComponent {
       if (!current() || this.run()?.setupIssue !== run.setupIssue) return;
       if (result.ok) {
         this.setupHelperPath.set(result.value.path);
-        this.setupFeedback.set(result.value.revealed
-          ? `Finder was asked to select Elevenex Agent on ${mac}. Look at that screen to continue.`
-          : `Finder couldn't open on ${mac}. Copy the app path, then in System Settings click +, press ⌘⇧G and paste it.`);
+        this.setupFeedback.set(!result.value.revealed ? `Finder didn't open on ${mac}. Use the path instead.`
+          : place.remote ? `Sent to ${mac}. Continue in Finder there.` : 'Look for the Finder window.');
       } else fail(result.error);
     } catch { if (current()) fail('interrupted'); }
     finally { if (current()) this.busy.set(false); }
@@ -325,8 +339,8 @@ export class TaskAppsComponent {
     let message: string;
     try {
       await this.bridge.writeClipboardText(text);
-      message = success ?? (this.remote() ? `Instructions copied. Send them to whoever is at ${this.host()}.` : 'Instructions copied.');
-    } catch { message = 'Couldn\'t copy to the clipboard. Select the text on screen and copy it by hand.'; }
+      message = success ?? (this.remote() ? `Steps copied. Send them to someone at ${this.host()}.` : 'Steps copied.');
+    } catch { message = 'Couldn\'t copy. Select the text instead.'; }
     if (generation === this.generation && this.run()?.runId === run.runId && this.run()?.setupIssue === run.setupIssue)
       this.setupFeedback.set(message);
   }

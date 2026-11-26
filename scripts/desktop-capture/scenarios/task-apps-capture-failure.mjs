@@ -10,7 +10,7 @@ export default async function* (capture) {
       return element && globalThis.ng?.getComponent(element)?.fixture.watchId;
     });
     await capture.component('ex-task-apps-demo', c => c.fixture.interrupt('The host could not capture or encode the app window.'));
-    await capture.waitFor(() => document.querySelector('ex-app-stream .message')?.textContent.includes("couldn't prepare the picture"));
+    await capture.waitFor(() => document.querySelector('ex-app-stream .message')?.textContent.includes("Couldn't capture the window"));
     yield {name:theme+'-capture-failed',selector:'ex-task-apps',inspect:['ex-app-stream .message','ex-app-stream .message button']};
     if (theme === 'light') await capture.click('ex-app-stream .message button');
   }

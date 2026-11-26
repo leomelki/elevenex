@@ -41,7 +41,7 @@ export default async function* (capture) {
     sequence += batch.length;
     await capture.waitFor(expected => {
       const message = document.querySelector('ex-app-stream .message strong')?.textContent;
-      if (message === 'The picture stopped') throw new Error(document.querySelector('ex-app-stream .message').textContent);
+      if (message === 'The picture stopped' || message === 'The picture fell behind') throw new Error(document.querySelector('ex-app-stream .message').textContent);
       const demo = globalThis.ng.getComponent(document.querySelector('ex-task-apps-demo'));
       return demo.fixture.receipts >= expected && !document.querySelector('ex-app-stream canvas').hidden;
     }, expectedReceipt ?? sequence);

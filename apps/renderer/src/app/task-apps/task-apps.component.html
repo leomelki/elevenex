@@ -1,34 +1,36 @@
 @if (!scopeId() || !taskId() || !available() || readFailure() || !run()) {
   <section class="state" [attr.role]="readFailure() ? 'alert' : 'status'">
-    <span class="state-mark" [attr.data-status]="readFailure() ? 'failed' : null" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
     @if (!scopeId()) {
-      <h2>Waiting for {{ machine() || 'the machine' }}</h2>
-      <p>Apps appear here once Elevenex is connected. Nothing is launched while you wait.</p>
+      <h2>Connecting to {{ machine() || 'the machine' }}…</h2>
     }
     @else if (!taskId()) {
-      <h2>Choose a ready task</h2>
-      <p>Apps belong to a task. Select one that has finished setting up to see its apps.</p>
+      <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
+      <h2>No task selected</h2>
+      <p>Apps belong to a task.</p>
     }
     @else if (!available()) {
-      <h2>Apps need a newer engine</h2>
-      <p>The engine on {{ host() }} is too old to run task apps. {{ remote() ? 'Update or reconnect it, then reopen this panel.' : 'Update Elevenex and restart it.' }}</p>
+      <span class="state-mark" aria-hidden="true"><ex-icon name="download" [size]="18" /></span>
+      <h2>Update Elevenex to use apps</h2>
+      <p>{{ remote() ? 'Reconnect ' + host() + ' to update its engine.' : 'Update Elevenex, then restart it.' }}</p>
     }
     @else if (readFailure(); as problem) {
+      <span class="state-mark" data-status="failed" aria-hidden="true"><ex-icon name="x" [size]="18" /></span>
       <h2>{{ problem.title }}</h2>
       <p>{{ problem.body }}</p>
       <button exButton size="sm" variant="secondary" (click)="refresh()">Try again</button>
       @if (problem.diagnostic) {
-        <details class="diagnostic"><summary>Technical details</summary><p>{{ problem.diagnostic }}</p></details>
+        <details class="diagnostic"><summary>Details</summary><p>{{ problem.diagnostic }}</p></details>
       }
-    } @else if (loading()) { <p>Loading apps on {{ host() }}…</p> }
+    } @else if (loading()) { <p>Loading apps…</p> }
     @else if (selected()) {
-      <h2>That app isn't available</h2>
-      <p>It isn't in this task's current apps. It may have ended and been cleared, or the link came from another task.</p>
+      <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
+      <h2>App not found</h2>
+      <p>It may have ended, or the link is from another task.</p>
       @if (!standalone() && runs().length) { <button exButton size="sm" variant="secondary" (click)="choose(runs()[0]!.runId)">Show task apps</button> }
-      @else if (standalone()) { <p>Close this window and open Apps from the task.</p> }
     } @else {
+      <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
       <h2>No apps running</h2>
-      <p>Ask your agent to launch an app in this task. Launches that need your approval appear here first.</p>
+      <p>Ask your agent to launch one.</p>
     }
   </section>
 } @else if (run(); as app) {
@@ -53,92 +55,89 @@
       <ex-icon name="x" [size]="12" />
       <div class="error-text">
         <p><strong>{{ problem.title }}.</strong> {{ problem.body }}</p>
-        @if (problem.diagnostic) { <details class="diagnostic"><summary>Technical details</summary><p>{{ problem.diagnostic }}</p></details> }
+        @if (problem.diagnostic) { <details class="diagnostic"><summary>Details</summary><p>{{ problem.diagnostic }}</p></details> }
       </div>
       <ex-icon-button icon="x" label="Dismiss message" size="sm" (pressed)="dismissAction()" />
     </div>
   }
-  @if (setupIssue; as issue) {
+  <ng-template #setupCard let-issue>
     <ex-task-app-setup [class.alongside-stream]="streaming" [issue]="issue" [machine]="machine()" [remote]="remote()" [detail]="app.detail ?? ''"
       [canOpenSettings]="!!bridge.taskAppOpenSetupSettings" [canRevealHelper]="!!bridge.taskAppRevealSetupHelper"
       [helperPath]="setupHelperPath()" [busy]="busy()" [feedback]="setupFeedback()"
       (openSettings)="act('setup-settings')" (copyInstructions)="copySetup($event)"
-      (revealHelper)="revealSetupHelper()" (copyHelperPath)="copySetup(setupHelperPath(), 'App path copied.')">
-      @if (app.status === 'requested') {
-        <details class="setup-command">
-          <summary>Requested command</summary>
-          <pre tabindex="0" aria-label="Requested executable and arguments">{{ requestedCommand() }}</pre>
-        </details>
-        <p class="setup-next">Setup never launches this on its own. <strong>Check and launch</strong> asks {{ host() }} to check again, then starts the command only if the check passes.</p>
-        <div class="actions setup-actions">
-          <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Decline</button>
-          <button exButton size="sm" variant="primary" [disabled]="busy() || !app.pendingLaunch || !bridge.taskAppApprove" (click)="act('approve')">{{ checkingLaunch() ? 'Checking…' : 'Check and launch' }}</button>
-        </div>
-        @if (!bridge.taskAppApprove) { <p class="setup-next">This version of Elevenex can't launch apps. Update it to approve this request.</p> }
-      } @else if (app.status === 'failed') {
-        <p class="setup-next">Once setup is done, ask your agent to launch {{ app.name }} again. Elevenex won't retry on its own.</p>
-        <div class="actions setup-actions">
+      (revealHelper)="revealSetupHelper()" (copyHelperPath)="copySetup(setupHelperPath(), 'Path copied.')">
+      @if (app.status === 'failed') {
+        <div class="setup-foot">
+          <span>Then ask your agent to launch {{ app.name }} again.</span>
           <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissSetup()">Dismiss</button>
         </div>
       } @else if (app.status === 'running') {
-        <p class="setup-next">{{ issue === 'macos-accessibility'
-          ? 'After you allow it, click the app to try control again.'
-          : 'When ' + host() + ' is ready, use Reconnect on the display if it disconnected.' }}</p>
+        <span>{{ issue === 'macos-accessibility' ? 'Then click the app to take control.' : 'Then reconnect the display.' }}</span>
       }
     </ex-task-app-setup>
-  }
-  @if (streaming) {
-    @for (id of [app.runId]; track scopeId() + ':' + taskId() + ':' + id) {
-      <ex-app-stream [scopeId]="scopeId()!" [taskId]="taskId()!" [runId]="id" [name]="app.name" [machine]="machine()" [remote]="remote()" [actual]="actual()" />
-    }
-  } @else if (setupIssue) {
-    @if (detached()) { <button exButton size="sm" variant="secondary" (click)="detached.set(false)">Show here</button> }
-  } @else if (app.status === 'requested') {
-    <section class="approval" aria-label="App launch request">
-      <h2>Launch {{ app.name }}?</h2>
-      <p>Your agent wants to run this in the task checkout on {{ host() }}.</p>
-      <pre tabindex="0" aria-label="Requested executable and arguments">{{ requestedCommand() }}</pre>
-      <p>Nothing runs until you choose Launch. Requests expire after ten minutes.</p>
-      @if (!bridge.taskAppApprove) { <p class="note">This version of Elevenex can't launch apps. Update it to approve this request.</p> }
+  </ng-template>
+  @if (app.status === 'requested') {
+    <!-- The request always shows what will run. A host prerequisite sits between the command and the decision. -->
+    <section class="request" aria-label="App launch request">
+      <header>
+        <h2>Launch {{ app.name }}?</h2>
+        <p>Requested by your agent{{ remote() ? ' · runs on ' + host() : '' }}</p>
+      </header>
+      <pre class="command" tabindex="0" aria-label="Requested command">{{ requestedCommand() }}</pre>
+      @if (setupIssue) { <ng-container *ngTemplateOutlet="setupCard; context: { $implicit: setupIssue }" /> }
+      @if (!bridge.taskAppApprove) { <p class="note">Update Elevenex to launch apps.</p> }
       <div class="actions">
         <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Decline</button>
-        <button exButton size="sm" variant="primary" [disabled]="busy() || !app.pendingLaunch || !bridge.taskAppApprove" (click)="act('approve')">Launch</button>
+        <button exButton size="sm" variant="primary" [disabled]="busy() || checkingLaunch() || !app.pendingLaunch || !bridge.taskAppApprove" (click)="act('approve')">
+          {{ checkingLaunch() ? (setupIssue ? 'Checking…' : 'Launching…') : 'Launch' }}
+        </button>
       </div>
     </section>
   } @else {
-    <section class="state" role="status">
-      <span class="state-mark" [attr.data-status]="app.status" aria-hidden="true"><ex-icon [name]="app.status === 'failed' ? 'x' : app.status === 'exited' ? 'stop' : 'window'" [size]="18" /></span>
-      @if (app.status === 'failed') {
-        <h2>Launch failed</h2>
-        <p>{{ app.name }} stopped with an error on {{ host() }}.</p>
-        <p class="reported">{{ app.detail || 'No reason was reported. The logs may say why.' }}</p>
-        <p>Fix the cause, then ask your agent to launch it again. Elevenex won't retry on its own.</p>
-      } @else if (app.status === 'exited') {
-        <h2>App exited</h2>
-        <p>{{ app.name }} is no longer running on {{ host() }}.</p>
-        @if (app.detail) { <p class="reported">{{ app.detail }}</p> }
-        <p>Ask your agent to launch it again to get a new run.</p>
-      } @else if (app.status === 'stopping') {
-        <h2>Stopping…</h2>
-        <p>Waiting for {{ app.name }} and its processes to exit on {{ host() }}. If this doesn't finish, choose Retry stop.</p>
-        @if (app.detail) { <p class="reported">{{ app.detail }}</p> }
-      } @else if (app.status === 'starting') {
-        <h2>Starting…</h2>
-        <p>{{ app.mode === 'stream'
-          ? 'Waiting for ' + app.name + ' to open a window on ' + host() + '. The picture appears when it does.'
-          : app.name + ' will open in its own window on ' + host() + '.' }} If this takes longer than expected, check the logs.</p>
-      } @else if (detached()) {
-        <h2>Open in a separate window</h2>
-        <p>{{ app.name }} is showing in its own window.</p>
-        <button exButton size="sm" variant="secondary" (click)="detached.set(false)">Show here</button>
+    @if (setupIssue) {
+      @if (streaming) { <ng-container *ngTemplateOutlet="setupCard; context: { $implicit: setupIssue }" /> }
+      @else {
+        <section class="setup-screen"><ng-container *ngTemplateOutlet="setupCard; context: { $implicit: setupIssue }" /></section>
       }
-      @else if (app.mode === 'stream') {
-        <h2>Running</h2>
-        <p>Open this panel to connect to its display. {{ app.name }} keeps running either way.</p>
+    }
+    @if (streaming) {
+      @for (id of [app.runId]; track scopeId() + ':' + taskId() + ':' + id) {
+        <ex-app-stream [scopeId]="scopeId()!" [taskId]="taskId()!" [runId]="id" [name]="app.name" [machine]="machine()" [remote]="remote()" [actual]="actual()" />
       }
-      @else { <h2>Running in its own window</h2><p>Use the app window on {{ host() }}. Elevenex can't show it here.</p> }
-      @if (app.status !== 'running' && !logsOpen()) { <button exButton size="sm" variant="secondary" (click)="toggleLogs()">Show logs</button> }
-    </section>
+    } @else if (setupIssue) {
+      @if (detached()) { <button exButton size="sm" variant="secondary" (click)="detached.set(false)">Show here</button> }
+    } @else {
+      <section class="state" role="status">
+        @if (app.status === 'failed') {
+          <span class="state-mark" data-status="failed" aria-hidden="true"><ex-icon name="x" [size]="18" /></span>
+          <h2>Stopped with an error</h2>
+          <p class="reported">{{ app.detail || 'No reason reported.' }}</p>
+        } @else if (app.status === 'exited') {
+          <span class="state-mark" aria-hidden="true"><ex-icon name="stop" [size]="18" /></span>
+          <h2>App exited</h2>
+          @if (app.detail) { <p class="reported">{{ app.detail }}</p> }
+        } @else if (app.status === 'stopping') {
+          <h2>Stopping…</h2>
+          @if (app.detail) { <p class="reported">{{ app.detail }}</p> }
+        } @else if (app.status === 'starting') {
+          <h2>Starting…</h2>
+          <p>{{ app.mode === 'stream' ? 'The picture appears once a window opens.' : 'It opens in its own window' + (remote() ? ' on ' + host() : '') + '.' }}</p>
+        } @else if (detached()) {
+          <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
+          <h2>Open in another window</h2>
+          <button exButton size="sm" variant="secondary" (click)="detached.set(false)">Show here</button>
+        } @else if (app.mode === 'stream') {
+          <h2>Running</h2>
+        } @else {
+          <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
+          <h2>Running in its own window</h2>
+          @if (remote()) { <p>On {{ host() }}.</p> }
+        }
+        @if ((app.status === 'failed' || app.status === 'exited') && !logsOpen()) {
+          <button exButton size="sm" variant="secondary" (click)="toggleLogs()">Show logs</button>
+        }
+      </section>
+    }
   }
   <ex-fold class="logs" [open]="logsOpen() && app.status !== 'requested'">
     @if (logsFailure(); as problem) {

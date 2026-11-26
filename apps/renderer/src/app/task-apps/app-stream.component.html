@@ -10,7 +10,7 @@
       <strong>{{ problem.title }}</strong>
       <span>{{ problem.body }}</span>
       <button exButton size="sm" variant="secondary" (click)="start()">Reconnect</button>
-      @if (problem.diagnostic) { <details class="diagnostic"><summary>Technical details</summary><p>{{ problem.diagnostic }}</p></details> }
+      @if (problem.diagnostic) { <details class="diagnostic"><summary>Details</summary><p>{{ problem.diagnostic }}</p></details> }
     </div>
   }
 </div>

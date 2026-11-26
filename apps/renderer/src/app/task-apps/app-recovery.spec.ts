@@ -18,9 +18,9 @@ describe('App recovery guidance', () => {
     for (const kind of ['launch', 'decline', 'stop'] as const) {
       const problem = actionProblem(kind, unknown, { name: 'Dev app', place: remote });
       expect(problem.title).toMatch(/confirm/);
-      expect(problem.body).toMatch(/refreshed/);
+      expect(problem.body).toMatch(/Refreshing/);
     }
-    expect(actionProblem('launch', unknown, { name: 'Dev app', place: remote }).body).toMatch(/only if the request is still waiting/);
+    expect(actionProblem('launch', unknown, { name: 'Dev app', place: remote }).body).toContain('may have started');
     // A refusal means the host answered, so the wording must not suggest the action may have happened.
     expect(actionProblem('launch', { code: 'http', status: 409, message: 'Conflict' }, { name: 'Dev app', place: remote }).body).toContain('Nothing was launched');
   });
@@ -42,7 +42,7 @@ describe('App recovery guidance', () => {
   });
   it('distinguishes host capture/encoding failure from a lost connection or Accessibility', () => {
     const problem = streamProblem('The host could not capture or encode the app window.', 'Dev app', remote);
-    expect(problem.title).toBe("Studio Mac couldn't prepare the picture");
+    expect(problem.title).toBe("Couldn't capture the window");
     expect(problem.body).toContain('still running');
     expect(problem.body).toContain('Resize its window');
     expect(problem.body).not.toContain('Accessibility');

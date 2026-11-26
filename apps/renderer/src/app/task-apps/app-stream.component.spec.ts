@@ -73,7 +73,7 @@ describe('App stream presentation', () => {
     await fixture.whenStable();
     const element: HTMLElement = fixture.nativeElement;
     await vi.waitFor(() => { fixture.detectChanges(); expect(element.querySelector('.message strong')?.textContent).toBe('Can\'t reach Studio Mac'); });
-    expect(element.querySelector('.message')?.textContent).toContain('Dev app isn\'t affected');
+    expect(element.querySelector('.message')?.textContent).toContain('Dev app is still running');
     expect(element.querySelector('.diagnostic')?.textContent).toContain('transport');
     element.querySelector<HTMLButtonElement>('.message button')!.click();
     await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(2));

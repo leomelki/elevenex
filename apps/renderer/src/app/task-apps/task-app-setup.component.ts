@@ -1,18 +1,27 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import type { TaskAppSetupIssue } from '@elevenex/shared';
-import { ButtonComponent, IconComponent } from '../ui';
+import { ButtonComponent, IconButtonComponent, StatusGlyphComponent } from '../ui';
 import { hostName, macName, type AppPlace } from './app-recovery';
+
+interface SetupStep {
+  readonly text: string;
+  /** The step's own action: the Mac agent's setup window, or the host's settings. */
+  readonly opens?: 'setup' | 'settings';
+}
 
 interface SetupGuide {
   readonly title: string;
-  /** What the host found, in one sentence. */
+  /** What the host found, in one short sentence. */
   readonly why: string;
-  readonly steps: readonly string[];
-  /** Offers the host-side open action. `setup` is the Mac agent window; otherwise System Settings. */
-  readonly open?: 'setup' | 'settings';
+  readonly steps: readonly SetupStep[];
+  /** Offers the Finder/path fallback for adding Elevenex Agent to a permission list. */
   readonly agentPermission?: boolean;
-  /** Shown after the steps when permissions alone are not the whole fix. */
-  readonly caveat?: string;
+  /** Only a person at the machine can do it: permissions and sign-in can't be granted remotely. */
+  readonly inPerson?: boolean;
+}
+
+function updateStep(place: AppPlace): SetupStep {
+  return { text: place.remote ? `Reconnect ${hostName(place)} to update its engine.` : 'Update Elevenex, then restart it.' };
 }
 
 function guideFor(issue: TaskAppSetupIssue, place: AppPlace): SetupGuide {
@@ -20,91 +29,80 @@ function guideFor(issue: TaskAppSetupIssue, place: AppPlace): SetupGuide {
   switch (issue) {
     case 'macos-screen-recording': return {
       title: 'Allow Screen Recording',
-      why: `Elevenex Agent can't capture app windows on ${mac} until macOS allows it.`,
+      why: 'Elevenex Agent needs it to show app windows.',
       steps: [
-        `Open setup on ${mac}. A small Elevenex Agent window opens beside System Settings.`,
-        'Drag Elevenex Agent into the Screen & System Audio Recording list, then turn on its switch.',
-        'If macOS asks you to quit and reopen Elevenex Agent, accept.',
+        { text: 'Open the Elevenex Agent setup window.', opens: 'setup' },
+        { text: 'Drag Elevenex Agent into Screen & System Audio Recording and turn it on.' },
+        { text: 'If macOS asks, choose Quit & Reopen.' },
       ],
-      open: 'setup', agentPermission: true,
+      agentPermission: true, inPerson: true,
     };
     case 'macos-accessibility': return {
-      title: 'Allow keyboard and mouse control',
-      why: `Elevenex Agent can show the app but can't send your clicks and keys to it on ${mac}.`,
+      title: 'Allow Accessibility',
+      why: 'Elevenex Agent needs it to send your clicks and keys. You can still watch.',
       steps: [
-        `Open setup on ${mac}.`,
-        'Drag Elevenex Agent into the Accessibility list in System Settings, then turn on its switch.',
+        { text: 'Open the Elevenex Agent setup window.', opens: 'setup' },
+        { text: 'Drag Elevenex Agent into Accessibility and turn it on.' },
       ],
-      open: 'setup', agentPermission: true,
+      agentPermission: true, inPerson: true,
     };
     case 'macos-session': return {
-      title: 'Check the Mac desktop',
-      why: `Elevenex couldn't find a signed-in, unlocked desktop on ${mac}.`,
+      title: 'Unlock the Mac', inPerson: true,
+      why: `No one is signed in and unlocked on ${mac}.`,
       steps: [
-        `Sign in on ${mac} with the account Elevenex connects as.`,
-        'Unlock the desktop and leave the account signed in.',
-        `Open setup on ${mac} to check Elevenex Agent's permissions.`,
+        { text: 'Sign in with the account Elevenex uses, and unlock the screen.' },
+        { text: 'Open the Elevenex Agent setup window to check permissions.', opens: 'setup' },
       ],
-      open: 'setup',
     };
     case 'macos-desktop-connection': return {
-      title: 'Connect to the Mac desktop',
-      why: `Elevenex Agent couldn't establish its private connection to the desktop on ${mac}.`,
+      title: 'Can\'t reach the Mac desktop', inPerson: true,
+      why: `Permissions alone aren't enough: Elevenex Agent also needs a connection to the desktop on ${mac}.`,
       steps: [
-        `Make sure someone is signed in and unlocked at ${mac}.`,
-        `Open setup on ${mac} to check Elevenex Agent's permissions.`,
-        'Check and launch again. If the connection still fails, reconnect the machine to update its engine and retry.',
+        { text: `Make sure ${mac} is signed in and unlocked.` },
+        { text: 'Open the Elevenex Agent setup window to check permissions.', opens: 'setup' },
+        { text: place.remote ? `Still failing? Reconnect ${host} to update its engine.` : 'Still failing? Update Elevenex, then restart it.' },
       ],
-      open: 'setup',
-      caveat: `The permission check and the connection to ${mac}'s desktop must both succeed before the app can launch.`,
     };
     case 'macos-runtime': return {
       title: 'Update Elevenex on the Mac',
-      why: `The engine on ${mac} doesn't include the display helper that app sharing needs.`,
-      steps: [
-        `Check that ${mac} runs macOS 14 or later.`,
-        'Update or reconnect the managed Elevenex engine so it installs the helper.',
-      ],
+      why: `The engine on ${mac} is missing the display helper.`,
+      steps: [{ text: `Check that ${mac} runs macOS 14 or later.` }, updateStep(place)],
     };
     case 'windows-session': return {
-      title: 'Sign in to the Windows desktop',
-      why: `Elevenex couldn't reach a signed-in, unlocked desktop on ${host}.`,
+      title: 'Unlock the Windows desktop', inPerson: true,
+      why: `No one is signed in and unlocked on ${host}.`,
       steps: [
-        `Sign in on ${host} with the same account Elevenex uses to connect.`,
-        'Unlock the desktop and leave the session open.',
+        { text: 'Sign in with the account Elevenex uses.' },
+        { text: 'Unlock the screen and stay signed in.' },
       ],
     };
     case 'windows-capture': return {
-      title: 'Check Windows Graphics Capture',
-      why: `Windows on ${host} didn't allow app capture.`,
+      title: 'Windows blocked app capture',
+      why: `Windows Graphics Capture isn't available on ${host}.`,
       steps: [
-        `On ${host}, open Settings → System → About and check that Windows is version 10 (1903 or later) or 11.`,
-        'Update the graphics driver and the managed Elevenex engine. Keep the desktop signed in and unlocked.',
+        { text: 'Check that Windows is 10 (1903 or later) or 11.', opens: 'settings' },
+        { text: 'Update the graphics driver and Elevenex.' },
       ],
-      open: 'settings',
     };
     case 'windows-runtime': return {
       title: 'Update Elevenex on Windows',
-      why: `The engine on ${host} doesn't include what app sharing needs.`,
-      steps: [
-        `Update or reconnect the managed Elevenex engine on ${host}.`,
-        'Keep the Windows desktop signed in with the account Elevenex uses to connect.',
-      ],
+      why: `The engine on ${host} is missing what app sharing needs.`,
+      steps: [updateStep(place), { text: 'Keep the desktop signed in.' }],
     };
     case 'linux-display-tools': return {
-      title: 'Set up a Linux display',
-      why: `${host} is missing tools for a private app display.`,
+      title: 'Install display tools',
+      why: `${place.remote ? host : 'This computer'} is missing tools for a private display.`,
       steps: [
-        `Install the missing tools on ${host} with its package manager.`,
-        'For streaming, use Xvfb with XTEST and a working H.264 encoder.',
+        { text: 'Install them with the package manager.' },
+        { text: 'Streaming also needs Xvfb with XTEST and an H.264 encoder.' },
       ],
     };
     case 'linux-session': return {
-      title: 'Sign in to the Linux desktop',
-      why: `This request needs a graphical session on ${host}, and none is available.`,
+      title: 'No desktop session', inPerson: true,
+      why: `This app needs a graphical session on ${host}.`,
       steps: [
-        `Sign in to a graphical session on ${host}.`,
-        'On a headless machine, decline this request and ask your agent to launch a stream instead.',
+        { text: `Sign in to a desktop session on ${host}.` },
+        { text: 'On a headless machine, decline and ask your agent to stream the app instead.' },
       ],
     };
   }
@@ -112,7 +110,7 @@ function guideFor(issue: TaskAppSetupIssue, place: AppPlace): SetupGuide {
 
 @Component({
   selector: 'ex-task-app-setup',
-  imports: [ButtonComponent, IconComponent],
+  imports: [ButtonComponent, IconButtonComponent, StatusGlyphComponent],
   templateUrl: './task-app-setup.component.html',
   styleUrl: './task-app-setup.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -134,32 +132,23 @@ export class TaskAppSetupComponent {
   readonly copyInstructions = output<string>();
   readonly place = computed<AppPlace>(() => ({ machine: this.machine(), remote: this.remote() }));
   readonly host = computed(() => hostName(this.place()));
-  readonly mac = computed(() => macName(this.place()));
   readonly guide = computed(() => guideFor(this.issue(), this.place()));
   readonly missingTools = computed(() => this.issue() === 'linux-display-tools' ? this.detail() : '');
   readonly diagnostic = computed(() => this.missingTools() ? '' : this.detail());
-  readonly openLabel = computed(() => {
-    const open = this.guide().open;
-    if (!open) return '';
-    if (open === 'setup') return this.remote() ? 'Open setup on host' : 'Open setup';
-    return this.remote() ? 'Open settings on host' : 'Open System Settings';
-  });
-  /** Says what the button really does, because the host's screen is out of sight. */
-  readonly openHint = computed(() => this.guide().open === 'setup'
-    ? `Asks macOS to open Elevenex Agent on ${this.mac()}. Elevenex can't see that screen, so look there to confirm.`
-    : `Asks ${this.host()} to open System Settings. Elevenex can't see that screen, so look there to confirm.`);
+
+  openLabel(step: SetupStep): string {
+    const target = step.opens === 'setup' ? 'Elevenex Agent setup' : 'Settings';
+    return this.remote() ? `Open ${target} on ${this.host()}` : `Open ${target}`;
+  }
 
   copy(): void {
-    const { title, why, steps, caveat } = this.guide();
-    const host = this.host();
+    const { title, why, steps } = this.guide();
     this.copyInstructions.emit([
-      `Elevenex Apps needs setup on ${this.remote() ? host : 'this computer'}: ${title}.`,
+      `Elevenex needs setup on ${this.host()}: ${title}.`,
       why,
-      ...steps.map((step, index) => `${index + 1}. ${step}`),
-      ...(caveat ? [caveat] : []),
-      ...(this.helperPath() ? [`Elevenex Agent on ${host}: ${this.helperPath()}`] : []),
+      ...steps.map((step, index) => `${index + 1}. ${step.text}`),
       ...(this.missingTools() ? [this.missingTools()] : []),
-      'Someone must do these steps at the machine itself. Then retry the launch in Elevenex.',
+      ...(this.helperPath() ? [`Elevenex Agent: ${this.helperPath()}`] : []),
     ].join('\n'));
   }
 }
