@@ -52,6 +52,11 @@ export function developmentRemote(isPackaged: boolean, env: NodeJS.ProcessEnv = 
       await mkdir(root, { recursive: true, mode: 0o700 });
       const verified = await mkdtemp(join(root, '.development-verify-'));
       try { await extractBackend(path, verified, signal); }
+      catch (error) {
+        signal.throwIfAborted();
+        // Rebuilding is the only remedy, so retrying the same bytes would loop forever.
+        throw failure('installation', 'compatibility', `The development runtime archive failed validation (${error instanceof Error ? error.message : 'unreadable archive'}). Fix the runtime build, then restart pnpm desktop:dev.`, 'edit');
+      }
       finally { await rm(verified, { recursive: true, force: true, maxRetries: 3 }); }
       signal.throwIfAborted();
       progress({ receivedBytes, totalBytes: info.size });

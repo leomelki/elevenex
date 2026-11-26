@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Optional, type OnModuleDestroy } from '@nestjs/common';
 import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -40,7 +40,7 @@ const videoCommand = z
 /** Private full-duplex transport. Existing HTTP routes remain compatible. */
 @Injectable()
 export class RuntimeBrowserStream implements OnModuleDestroy {
-  private readonly videoHost = new RuntimeVideoHost();
+  private readonly videoHost: RuntimeVideoHost;
   private readonly server = new WebSocketServer({
     noServer: true,
     maxPayload: 512 * 1024,
@@ -52,7 +52,12 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
   >();
   private http?: Server;
   private routes?: RuntimeBrowserController;
-  constructor(private readonly browsers: RuntimeBrowserService) {}
+  constructor(
+    private readonly browsers: RuntimeBrowserService,
+    @Optional() private readonly sharedVideoHost?: RuntimeVideoHost,
+  ) {
+    this.videoHost = sharedVideoHost ?? new RuntimeVideoHost();
+  }
   attachToServer(server: Server, routes: RuntimeBrowserController): void {
     if (this.http) throw new Error('Browser stream transport already attached');
     this.routes = routes;
@@ -382,6 +387,6 @@ export class RuntimeBrowserStream implements OnModuleDestroy {
     this.http?.off('upgrade', this.upgrade);
     for (const ws of this.server.clients) ws.terminate();
     this.server.close();
-    await this.videoHost.destroy();
+    if (!this.sharedVideoHost) await this.videoHost.destroy();
   }
 }

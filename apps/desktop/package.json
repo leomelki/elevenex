@@ -23,7 +23,6 @@
     "capture:serve": "node ../../scripts/desktop-capture/cli.mjs --serve"
   },
   "devDependencies": {
-    "@elevenex/shared": "workspace:*",
     "@eslint/js": "10.0.1",
     "@types/node": "26.6.5",
     "@types/ws": "8.18.1",
@@ -38,6 +37,7 @@
     "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
   },
   "dependencies": {
+    "@elevenex/shared": "workspace:*",
     "@elevenex/browser-network": "workspace:*",
     "ws": "8.22.1",
     "@elevenex/browser-inspection": "workspace:*",

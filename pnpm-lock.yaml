@@ -233,13 +233,13 @@ importers:
       '@elevenex/browser-network':
         specifier: workspace:*
         version: link:../../packages/browser-network
+      '@elevenex/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       ws:
         specifier: 8.22.1
         version: 8.22.1
     devDependencies:
-      '@elevenex/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.13.0)

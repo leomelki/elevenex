@@ -1,4 +1,5 @@
 /** Remote startup and revision handoff; never signals a PID discovered on disk. */
+import { startWindowsRuntime } from './windows-runtime';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { queryDaemon, requestHandoff, type RuntimeHealth } from './runtime-control';
@@ -34,6 +35,7 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         if (health.ready && !health.replacement) return health;
       } else if (replacing) {
         if (health.instance !== replacing) throw new Error('EX11_UPDATE: competing revision acquired the daemon; retry explicitly after updating this desktop');
+        if (health.appHandoffBlocked && !health.replacement) throw new Error('EX11_UPDATE: task apps are running and did not stop; retry explicitly');
         // The stop request may have lost its reply. Observe durable ownership;
         // never replay a destructive request or stop a different instance.
       } else if (health.replacement === version) {
@@ -54,6 +56,7 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         replacing = health.instance;
         const reply = await requestHandoff(root, port, token, health, version, force).catch(() => undefined);
         if (reply && reply.instance === health.instance && reply.version === health.version && !reply.replacement) {
+          if (reply.appHandoffBlocked) throw new Error('EX11_UPDATE: task apps are running and did not stop; retry explicitly');
           if (!force && reply.activeConnections) {
             replacing = undefined;
             waitingForUpdate?.(reply);
@@ -66,6 +69,9 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         if (reply && (reply.instance !== health.instance || reply.version !== health.version || reply.replacement !== version)) {
           throw new Error('EX11_UPDATE: competing revision already requested a different handoff; retry explicitly');
         }
+        // Stopping task apps can take most of the window. Only a confirmed
+        // acceptance extends it; an unknown outcome keeps the original bound.
+        if (reply) deadline = Date.now() + 45_000;
         updateStarting?.(health.instance);
       }
     } else {
@@ -78,6 +84,12 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
       // reservation authorizes startup, including after an unconfirmed stop.
       if (!spawned) {
         spawned = true; starts++;
+        if (process.platform === 'win32') {
+          await startWindowsRuntime(signal);
+          // The scheduler can accept a request while the account is logged out.
+          // One start request is sufficient; observe readiness until the deadline.
+          continue;
+        }
         const child = spawn(process.execPath, [runtime, 'daemon', root, installation, version], { cwd: root, detached: true, stdio: 'ignore', env: process.env });
         child.once('error', () => { spawned = false; }); child.once('exit', () => { spawned = false; }); child.unref();
       }
@@ -85,5 +97,6 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
     await delay(health ? 100 : 250, undefined, { signal });
   }
   if (replacing) throw new Error('EX11_UPDATE: handoff timed out; check the remote daemon and retry explicitly');
+  if (process.platform === 'win32') throw new Error('EX11_COMPATIBILITY: Windows interactive runtime unavailable; sign in to the host with the SSH account');
   throw new Error('EX11_RUNTIME: backend did not become ready; check bundled Node compatibility and backend prerequisites');
 }

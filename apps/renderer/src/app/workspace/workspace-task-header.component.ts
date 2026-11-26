@@ -45,7 +45,7 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly gitDialogOpen = signal(false);
   protected readonly gitDraft = signal('');
   private dialogTask?: number;
-  protected readonly confirmingTask = signal<{ readonly id: number; readonly title: string; readonly sessions: number; readonly running: number; readonly unpushed: number; readonly uncommitted?: number; readonly terminals: number; readonly actions: number } | null>(null);
+  protected readonly confirmingTask = signal<{ readonly id: number; readonly title: string; readonly sessions: number; readonly running: number; readonly unpushed: number; readonly uncommitted?: number; readonly terminals: number; readonly actions: number; readonly apps?: number } | null>(null);
   protected readonly project = computed(() => this.store.projects().find(project => project.id === String(this.store.selectedTask()?.projectId)));
   protected readonly repo = computed(() => {
     const task = this.store.selectedTask();
@@ -73,7 +73,7 @@ export class WorkspaceTaskHeaderComponent {
       if (epoch !== this.epoch || this.taskKey() !== `${selection.scopeId}/${task.id}/${task.state}`) return;
       if (preview.ok) {
         const value = preview.value;
-        if (!value.running && !value.terminals && !value.actions && !value.unpushed && value.uncommitted === 0) await this.store.closeTask();
+        if (!value.running && !value.terminals && !value.actions && !value.apps && !value.unpushed && value.uncommitted === 0) await this.store.closeTask();
         else { this.confirmingTask.set({ id: task.id, title: task.name, ...value }); this.closing.set(true); }
       }
       else this.store.error.set(preview.error.message);
@@ -84,7 +84,7 @@ export class WorkspaceTaskHeaderComponent {
     if (this.confirmingTask()?.id !== this.store.selectedTask()?.id) { this.closing.set(false); return; }
     this.closeBusy.set(true); this.closeError.set(null);
     if (intent.push && !await this.git.perform({ type: 'push' })) { this.closeError.set(this.git.error()); this.closeBusy.set(false); return; }
-    await this.store.closeTask(true);
+    await this.store.closeTask(true, this.confirmingTask()?.apps);
     this.closeBusy.set(false);
     if (this.store.error()) this.closeError.set(this.store.error()); else this.closing.set(false);
   }

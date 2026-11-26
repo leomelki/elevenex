@@ -1,4 +1,4 @@
-const { existsSync, readdirSync, rmSync, statSync } = require('fs');
+const { existsSync, lstatSync, readdirSync, rmSync, statSync } = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const { formatSize, getDirectorySize } = require('./runtime-stage-utils');
@@ -447,6 +447,37 @@ function validateRuntimeLoad() {
   console.log(`Validated staged native and browser runtimes with ${bundledNode ? 'bundled Node' : 'Electron-as-Node'}`);
 }
 
+/**
+ * Desktop and SSH installers extract only regular files and directories
+ * (apps/desktop/src/backend/archive.ts). tar would encode a symlink, device,
+ * socket or a second name for the same inode as an entry those installers
+ * reject, so refuse it here, where the offending path is still known.
+ */
+function validateArchivableTree(rootDir) {
+  const seen = new Map();
+  const problems = [];
+  const pending = [rootDir];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const name of readdirSync(directory)) {
+      const entry = path.join(directory, name);
+      const info = lstatSync(entry, { bigint: true });
+      const relative = path.relative(rootDir, entry);
+      if (info.isDirectory()) { pending.push(entry); continue; }
+      if (!info.isFile()) { problems.push(`${relative} (${info.isSymbolicLink() ? 'symlink' : 'special file'})`); continue; }
+      if (info.nlink > 1n) {
+        const identity = `${info.dev}:${info.ino}`;
+        const first = seen.get(identity);
+        if (first) problems.push(`${relative} (hard link to ${first})`);
+        else seen.set(identity, relative);
+      }
+    }
+  }
+  if (problems.length) {
+    throw new Error(`Backend archives may contain only regular files and directories:\n  ${problems.sort().join('\n  ')}`);
+  }
+}
+
 function main() {
   if (!existsSync(stageBackendRoot)) {
     throw new Error(`Stage backend root is missing: ${stageBackendRoot}`);
@@ -461,6 +492,7 @@ function main() {
   pruneStagedNodeModules();
   validateNoEmbeddedAgentExecutables();
   validateRuntimeLoad();
+  validateArchivableTree(stageBackendRoot);
   logStageSizeSummary();
 
   // GNU tar treats a drive-letter prefix in the archive name as a remote host.
@@ -481,4 +513,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { pruneStagedNodeModules };
+module.exports = { pruneStagedNodeModules, validateArchivableTree };

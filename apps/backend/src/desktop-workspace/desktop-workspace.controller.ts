@@ -1,3 +1,4 @@
+import { hasAppViewerAccess } from '../config/desktop-access.js';
 import { NavigationEventsService } from '../navigation/navigation-events.service.js';
 import type { Response } from 'express';
 import { listWorkspaceFolders } from './desktop-workspace-folders.js';
@@ -56,11 +57,15 @@ export class DesktopWorkspaceController {
         response.off('close', abort);
       }
     }
+    const appOpens = after !== undefined && response.req && hasAppViewerAccess(response.req)
+      ? this.navigation.appOpensSince(Number(after)) : [];
     return {
+      ...(appOpens.length ? { appOpens } : {}),
       revision: this.navigation.revision,
       version: 1,
       revisionWait: true,
       chatStream: true,
+      taskApps: true,
       sessionPriority: true,
       sessionNesting: true,
       sessionNestingOrder: true,
@@ -184,12 +189,15 @@ export class DesktopWorkspaceController {
   }
   @Post('tasks/:id/finish') async finishTask(
     @Param('id') id: string,
-    @Body() input: { confirmStop?: boolean },
+    @Body() input: { confirmStop?: boolean; confirmedApps?: number },
   ) {
     const body = workspaceBody(input);
     if (typeof body.confirmStop !== 'boolean')
       throw new BadRequestException('A stop confirmation is required.');
-    await this.tasks.finish(resourceId(id), body.confirmStop);
+    const confirmedApps = body.confirmedApps ?? 0;
+    if (typeof confirmedApps !== 'number' || !Number.isSafeInteger(confirmedApps) || confirmedApps < 0)
+      throw new BadRequestException('Invalid app count.');
+    await this.tasks.finish(resourceId(id), body.confirmStop, undefined, { confirmedApps });
     return this.workspace.task(resourceId(id));
   }
   @Post('tasks/:id/keep-open') async keepTaskOpen(@Param('id') id: string) {

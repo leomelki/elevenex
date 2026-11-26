@@ -21,6 +21,7 @@ with tool activity, decisions, queue controls and retained drafts. Completed
 replies expose their changed files and a paginated Changes review; Browser uses a task-owned hardened local guest or remote Chromium stream with agent acquisition and explicit user Block agent/Allow agent controls;
 see [code-first browser automation](../../docs/browser-agent.md) and
 [the production browser boundary and privacy policy](../renderer/src/app/task-browser/README.md).
+Apps presents task-owned graphical programs and Android emulators through a scoped interactive stream. See [task app launch, viewing and host setup](../../docs/task-apps.md).
 Code provides a genuine task-confined web workbench; Terminal supplies real task-owned user shells and project scripts. See [Code architecture, distribution and recovery](../renderer/src/app/code/README.md), [terminal ownership and recovery](../renderer/src/app/task-terminal/README.md), [chat ownership](../renderer/src/app/session-chat/README.md)
 and the [workspace guide](../renderer/src/app/workspace/README.md).
 The app uses the backend's `desktop-workspace` routes. A versioned capability
@@ -178,7 +179,9 @@ Development revisions include dirty/untracked backend sources. Remote developmen
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
 Explicitly opening or retrying a server prepares an authenticated handoff. The
 desktop checks active Elevenex connections and waits for the engine to become
-idle. **Force update** can interrupt connected users, agents and terminals.
+idle. **Force update** can interrupt connected users, agents and terminals. Before
+the handoff, the old engine stops its task apps; if one does not stop, it keeps
+running that engine and the connection reports the failure.
 Background recovery never requests a handoff. Daemons predating authenticated
 handoff need the one-time migration in the remote guide.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer
@@ -287,6 +290,8 @@ read. Both are separate from the legacy app's `Elevenex` profile and
 `<appData>` is Electron's application-data directory, for example
 `~/Library/Application Support` on macOS. An explicit `--user-data-dir` replaces
 the profile directory, and test launchers redirect `appData` to stay isolated.
+An unpackaged desktop launched inside a task app run uses that run's profile
+and its `runtime/` directory for local backend data and remote archive caches.
 Because the profiles differ, a development build can run beside the installed
 app. Remote runtimes are already separate: `desktop-remote/` for releases and
 `desktop-remote-dev/<id>/` for development, both on the server.

@@ -4,7 +4,7 @@ import { Provider, Logger } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { reconcileSidebarMigration } from './sidebar-migration-compatibility.js';
+import { reconcileBranchedMigrations } from './branched-migration-compatibility.js';
 import * as schema from './schema/index.js';
 import { getBackendRuntimeRoot } from '../config/runtime-paths.js';
 
@@ -27,7 +27,7 @@ export const DrizzleProvider: Provider = {
 
     // Run migrations automatically on startup
     const migrationsFolder = resolveMigrationsFolder();
-    reconcileSidebarMigration(sqlite, migrationsFolder);
+    reconcileBranchedMigrations(sqlite, migrationsFolder);
     migrate(db, { migrationsFolder });
     logger.log(
       `Database migrations applied successfully from ${migrationsFolder}`,

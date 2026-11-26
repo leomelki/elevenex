@@ -61,6 +61,10 @@ export class ClaudeAgentRuntimeProvider
     return this.runtimeService.getHistory(sessionId, options);
   }
 
+  nativeAppLaunchPolicy(sessionId: number) {
+    return this.runtimeService.nativeAppLaunchPolicy(sessionId);
+  }
+
   getRuntimeState(sessionId: number) {
     return this.runtimeService.getRuntimeState(sessionId);
   }

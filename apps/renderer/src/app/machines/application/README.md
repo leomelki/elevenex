@@ -195,5 +195,5 @@ reopen/destruction, and releases contents without a timer when motion is absent.
 An explicit launch can wait for connected Elevenex clients to leave an older
 engine. The machine dialog shows the reported count and updates as it changes.
 Cancel releases the window's pending connection. Force targets the exact daemon
-instance shown and can interrupt running agents and terminals. The main process
+instance shown and can interrupt running agents, terminals and task apps. The main process
 owns the SSH update negotiation and validates the selected host and instance.

@@ -34,6 +34,7 @@ export class CloseTaskComponent {
   readonly ticket = input<string>();
   readonly terminals = input(0);
   readonly actions = input(0);
+  readonly apps = input(0);
   readonly busy = input(false);
   readonly error = input<string | null>(null);
   readonly confirmed = output<CloseTaskIntent>();

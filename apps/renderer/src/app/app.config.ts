@@ -8,6 +8,7 @@ export const appConfig: ApplicationConfig = {
     provideZonelessChangeDetection(),
     provideRouter(
       [
+        { path: 'app-window', loadComponent: () => import('./task-apps/app-window.component').then(module => module.AppWindowComponent) },
         { path: 'code-window', loadComponent: () => import('./code/code-window.component').then(module => module.CodeWindowComponent) },
         { path: 'browser-window', loadComponent: () => import('./task-browser/browser-window.component').then(module => module.BrowserWindowComponent) },
         {

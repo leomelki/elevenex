@@ -14,6 +14,14 @@ import {
 } from '../workspaces/workspace-ownership.js';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
+import type { TaskAppRun } from '@elevenex/shared';
+import type { AppLaunch, AppRunObserver } from '../task-apps/task-app-host.js';
+import {
+  buildShellCommandArgs,
+  getDefaultUserShellAsync,
+  normalizeShellForPlatform,
+} from '../config/system-paths.js';
+import { ACTION_OUTPUT_CHARS } from './action-log.js';
 import { ActionPtyManager } from './action-pty-manager.service.js';
 
 type ActionStatus = 'idle' | 'running' | 'success' | 'failed' | 'stopped';
@@ -30,6 +38,11 @@ export interface ActionStatusChangedEvent {
 
 @Injectable()
 export class ActionsService extends EventEmitter implements OnModuleInit {
+  /** Graphical runs hold the same idle reservation used by PTY starts, edits and deletes. */
+  private readonly appRuns = new Map<
+    number,
+    { output: string; stop(): Promise<void> }
+  >();
   private readonly logger = new Logger('ActionsService');
 
   constructor(
@@ -115,7 +128,7 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
 
   async listByWorktree(worktreePath: string) {
     const workspace = await currentWorkspaceForPath(this.db, worktreePath);
-    return this.db
+    const rows = await this.db
       .select()
       .from(schema.actions)
       .where(
@@ -130,6 +143,7 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
         ),
       )
       .orderBy(asc(schema.actions.createdAt));
+    return rows.map((row) => this.withLiveAppOutput(row));
   }
 
   async getRunningCount(worktreePath: string) {
@@ -156,7 +170,127 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
       throw new NotFoundException(`Action ${id} not found`);
     }
 
-    return rows[0];
+    return this.withLiveAppOutput(rows[0]);
+  }
+
+  private withLiveAppOutput(row: typeof schema.actions.$inferSelect) {
+    const active = this.appRuns.get(row.id);
+    return active && row.status === 'running'
+      ? { ...row, currentOutput: active.output }
+      : row;
+  }
+
+  private async taskAction(taskId: number, cwd: string, actionId: number) {
+    const action = await this.findOne(actionId);
+    if (
+      action.worktreePath !== cwd ||
+      (action.workspaceId ??
+        (await currentWorkspaceForPath(this.db, cwd))?.id) !== taskId
+    )
+      throw new BadRequestException(
+        'Choose a saved Action in the current task checkout.',
+      );
+    return action;
+  }
+
+  async appCommand(taskId: number, cwd: string, actionId: number) {
+    const action = await this.taskAction(taskId, cwd, actionId);
+    if (
+      !action.command ||
+      action.command.length > 8192 ||
+      action.command.includes('\0')
+    )
+      throw new BadRequestException(
+        'Apps supports saved Action commands of up to 8192 characters.',
+      );
+    const shell = normalizeShellForPlatform(
+      process.env.SHELL || (await getDefaultUserShellAsync()),
+    );
+    return {
+      name: action.name,
+      executable: shell,
+      args: buildShellCommandArgs(shell, action.command),
+      savedAction: { id: action.id, command: action.command },
+    };
+  }
+
+  async checkAppAction(
+    launch: AppLaunch,
+    saved: NonNullable<AppLaunch['savedAction']>,
+  ): Promise<void> {
+    const row = await this.taskAction(launch.taskId, launch.cwd, saved.id);
+    if (row.command !== saved.command)
+      throw new BadRequestException(
+        'The saved Action changed. Request a new app launch.',
+      );
+    if (row.status === 'running' || this.ptyManager.isRunning(saved.id))
+      throw new BadRequestException('This Action is already running.');
+  }
+
+  /** The app host owns the process; the existing Action owns its status, output and stop handle. */
+  async runAppAction(
+    launch: AppLaunch,
+    saved: NonNullable<AppLaunch['savedAction']>,
+    start: (observer: AppRunObserver) => TaskAppRun | Promise<TaskAppRun>,
+    stop: (runId: string) => Promise<unknown>,
+  ): Promise<TaskAppRun> {
+    const id = saved.id;
+    const release = this.ptyManager.reserveIdleAction(id);
+    if (!release) throw new BadRequestException('This Action is busy.');
+    let started: Promise<TaskAppRun>;
+    const binding = {
+      output: '',
+      stop: async () => {
+        const run = await started;
+        await stop(run.runId);
+      },
+    };
+    const clear = () => {
+      if (this.appRuns.get(id) === binding) this.appRuns.delete(id);
+      release();
+    };
+    this.appRuns.set(id, binding);
+    started = (async () => {
+      let marked = false;
+      try {
+        await this.checkAppAction(launch, saved);
+        await this.markRunning(id);
+        marked = true;
+        this.emit('app-action-status', id, 'running');
+        return await start({
+          output: (chunk) => {
+            binding.output = (
+              binding.output + chunk.slice(-ACTION_OUTPUT_CHARS)
+            ).slice(-ACTION_OUTPUT_CHARS);
+            this.emit('app-action-output', id, chunk);
+          },
+          finished: async (result) => {
+            const now = new Date().toISOString();
+            await this.finalizeRun(id, {
+              status: result.status,
+              currentOutput: '',
+              lastOutput: result.output,
+              lastExitCode: result.exitCode,
+              lastFinishedAt: now,
+              updatedAt: now,
+            });
+            this.emit('app-action-status', id, result.status);
+            clear();
+          },
+        });
+      } catch (error) {
+        try {
+          if (marked) {
+            await this.settleFailedStart(id, error);
+            this.emit('app-action-status', id, 'failed');
+          }
+        } finally {
+          clear();
+        }
+        throw error;
+      }
+    })();
+    return started;
   }
 
   async update(id: number, dto: { name?: string; command?: string }) {
@@ -231,6 +365,11 @@ export class ActionsService extends EventEmitter implements OnModuleInit {
 
   async stop(id: number, requireStopped = false) {
     await this.findOne(id);
+    const app = this.appRuns.get(id);
+    if (app) {
+      await app.stop();
+      return { success: true };
+    }
     const stopped = await this.ptyManager.stop(id, requireStopped);
     if (!stopped && !requireStopped) {
       throw new BadRequestException('Action is not running');

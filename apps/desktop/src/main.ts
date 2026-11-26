@@ -1,3 +1,5 @@
+import type { TaskAppWindowContext } from '@elevenex/shared';
+import { registerTaskApps } from './task-apps/ipc';
 import { CodeSurfaces } from './code/surfaces';
 import { registerCodeIpc } from './code/ipc';
 import { app, BrowserWindow, Menu, clipboard, dialog, net, nativeTheme, powerMonitor, protocol, session, shell, type WebContents, type WebFrameMain } from 'electron';
@@ -46,21 +48,25 @@ if (devUrl) {
 // Keep the new skeleton's state separate from the existing Elevenex app.
 app.setName('Elevenex Desktop');
 const profile = desktopProfile(app.isPackaged);
-// Electron resolves an explicit profile before the main script runs.
-if (!app.commandLine.getSwitchValue('user-data-dir')) {
+const taskRunDirectory = app.isPackaged ? undefined : process.env['ELEVENEX_TASK_APP_RUNTIME_DIR'];
+if (taskRunDirectory && !isAbsolute(taskRunDirectory)) throw new Error('Expected an absolute task app runtime directory');
+if (taskRunDirectory) {
+  app.setPath('userData', taskRunDirectory);
+} else if (!app.commandLine.getSwitchValue('user-data-dir')) {
   app.setPath('userData', join(app.getPath('appData'), profile.userDataName));
 }
 const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
+const runtimeRoot = taskRunDirectory ? join(taskRunDirectory, 'runtime') : profile.root;
 // Plain Node cannot read Electron's ASAR format. Only the tiny supervisor and
 // its process-tree helper are unpacked, never the renderer or privileged bridge.
 const backend = createApplicationBackend(app.isPackaged
   ? join(process.resourcesPath, 'app.asar.unpacked/dist/backend/host.js')
-  : join(__dirname, 'backend/host.js'), app.isPackaged, profile.root);
+  : join(__dirname, 'backend/host.js'), app.isPackaged, runtimeRoot);
 const remoteDevelopment = developmentRemote(app.isPackaged);
-const remoteArchives = new RemoteArchiveCache(profile.root, remoteDevelopment?.archive);
+const remoteArchives = new RemoteArchiveCache(runtimeRoot, remoteDevelopment?.archive);
 const remote = new RemoteManager({
-  root: profile.root,
+  root: runtimeRoot,
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
   settingsPath: join(app.getPath('userData'), remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
@@ -100,10 +106,10 @@ function openExternal(url: string): void {
   if (isExternalUrl(url)) void shell.openExternal(url).catch(console.error);
 }
 
-function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string, browserOnly = false): BrowserWindow {
+function createWindow(launchSelection?: EnvironmentSelection | null, editorContext?: CodeWindowContext, editorConfiguration?: string, browserOnly = false, appContext?: TaskAppWindowContext): BrowserWindow {
   const window = new BrowserWindow({
-    ...(browserOnly ? { width: 1120, height: 800, minWidth: 400, minHeight: 320 } : state.options()),
-    title: editorContext ? 'Code · ' + (editorContext.state.taskName ?? 'Task') : 'Elevenex',
+    ...(browserOnly || appContext ? { width: 1120, height: 800, minWidth: 400, minHeight: 320 } : state.options()),
+    title: editorContext ? 'Code · ' + (editorContext.state.taskName ?? 'Task') : appContext ? 'Apps · Elevenex' : 'Elevenex',
     icon: applicationIcon,
     show: false,
     frame: false,
@@ -123,7 +129,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
     },
   });
   const contents = window.webContents;
-  if (!browserOnly) state.attach(window);
+  if (!browserOnly && !appContext) state.attach(window);
   const stopCodeFrames = code.attachWindow(window.webContents, devUrl);
   window.once('closed', stopCodeFrames);
   // Home is passive on launch. Restore domain context when a machine is chosen,
@@ -181,6 +187,7 @@ function createWindow(launchSelection?: EnvironmentSelection | null, editorConte
   contents.on('will-attach-webview', (event, _preferences, params) => { if (contents.isDestroyed() || !taskBrowser?.permitsGuest(windowId, params)) event.preventDefault(); });
   const rendererUrl = new URL(devUrl ?? `${APP_ORIGIN}/`);
   if (editorContext) rendererUrl.pathname = '/code-window';
+  if (appContext) rendererUrl.pathname = '/app-window';
   if (browserOnly) rendererUrl.pathname = '/browser-window';
   void window.loadURL(rendererUrl.href).catch((error: unknown) => {
     console.error('Could not load the renderer:', error);
@@ -248,6 +255,9 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unregisterClipboard);
   const unsubscribeBackend = registerBackendIpc(backend, trusted);
   app.once('will-quit', unsubscribeBackend);
+  const unregisterApps = registerTaskApps(backendClient.client, trusted,
+    (selection, context, configuration) => createWindow(selection, undefined, configuration, false, context));
+  app.once('will-quit', unregisterApps);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
   taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted, () => createWindow(null, undefined, undefined, true));

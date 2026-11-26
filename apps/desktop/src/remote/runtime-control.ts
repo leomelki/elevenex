@@ -6,6 +6,10 @@ import { basename, dirname, join } from 'node:path';
 
 export function ownershipPort(root: string, home: string, uid: number | undefined): number {
   const namespace = basename(root);
+  if (process.platform === 'win32') {
+    const hash = createHash('sha256').update(root.toLowerCase()).digest().readUInt32BE(0);
+    return 20000 + hash % 20000;
+  }
   const development = dirname(root) === join(home, '.elevenex', 'desktop-remote-dev') && /^[a-f0-9]{32}$/.test(namespace);
   const hash = createHash('sha256').update(`${home}:${uid ?? ''}:elevenex-desktop${development ? `:${namespace}` : ''}`).digest().readUInt32BE(0);
   return development ? 10000 + hash % 10000 : 20000 + hash % 20000;
@@ -18,8 +22,11 @@ export interface RuntimeHealth {
   /** Absent on daemons predating authenticated handoff and instance sockets. */
   handoff?: 1;
   activeConnections?: number;
+  appHandoffBlocked?: true;
   replacement?: string;
 }
+/** The daemon waits this long for its backend to stop apps before a handoff. */
+export const APP_HANDOFF_LIMIT_MS = 25_000;
 export interface RuntimeLease { id: string; agent: string | null; presence?: 'active' | 'closed'; instance?: string }
 const mac = (token: string, value: string) => createHmac('sha256', token).update(value).digest('hex');
 export function sameProof(value: unknown, expected: string): boolean {
@@ -58,6 +65,10 @@ export function connectionPresence(req: IncomingMessage, token: string, nonce: s
 
 /** A retired bridge must never open the replacement backend's socket. */
 export function backendSocketPath(root: string, health: Pick<RuntimeHealth, 'instance' | 'handoff'>): string {
+  if (process.platform === 'win32') {
+    const id = createHash('sha256').update(root + ':' + health.instance).digest('hex').slice(0, 32);
+    return '\\\\.\\pipe\\elevenex-backend-' + id;
+  }
   return join(root, health.handoff === 1 ? `b-${createHash('sha256').update(health.instance).digest('hex').slice(0, 16)}` : 'backend.sock');
 }
 
@@ -96,7 +107,7 @@ async function daemonAddress(root: string, fallbackPort: number): Promise<{ port
   return { port, instance: expectedInstance };
 }
 
-async function controlRequest(root: string, fallbackPort: number, token: string, nonce: string, method: 'GET' | 'POST', path: string, headers: Record<string, string>): Promise<RuntimeHealth> {
+async function controlRequest(root: string, fallbackPort: number, token: string, nonce: string, method: 'GET' | 'POST', path: string, headers: Record<string, string>, limit = 2000): Promise<RuntimeHealth> {
   const { port, instance: expectedInstance } = await daemonAddress(root, fallbackPort);
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path, method, headers }, res => {
@@ -111,17 +122,19 @@ async function controlRequest(root: string, fallbackPort: number, token: string,
             || !('instance' in value) || typeof value.instance !== 'string' || value.instance.length > 64
             || expectedInstance !== undefined && value.instance !== expectedInstance || !('ready' in value) || typeof value.ready !== 'boolean'
             || 'handoff' in value && value.handoff !== 1
+            || 'appHandoffBlocked' in value && value.appHandoffBlocked !== true
             || 'activeConnections' in value && (typeof value.activeConnections !== 'number' || !Number.isInteger(value.activeConnections) || value.activeConnections < 0 || value.activeConnections > 257)
             || 'replacement' in value && (typeof value.replacement !== 'string' || !/^[a-f0-9]{40}$/.test(value.replacement))) throw new Error('Invalid daemon reply');
           resolve({ version: value.version, instance: value.instance, ready: value.ready,
             ...('handoff' in value ? { handoff: 1 as const } : {}),
+            ...('appHandoffBlocked' in value ? { appHandoffBlocked: true as const } : {}),
             ...('activeConnections' in value && typeof value.activeConnections === 'number' ? { activeConnections: value.activeConnections } : {}),
             ...('replacement' in value && typeof value.replacement === 'string' ? { replacement: value.replacement } : {}),
           });
         } catch (error) { reject(error); }
       });
     });
-    const deadline = setTimeout(() => req.destroy(new Error('Daemon control timed out')), 2000);
+    const deadline = setTimeout(() => req.destroy(new Error('Daemon control timed out')), limit);
     req.once('close', () => clearTimeout(deadline)); req.once('error', reject); req.end();
   });
 }
@@ -144,5 +157,5 @@ export async function requestHandoff(root: string, fallbackPort: number, token: 
     'X-Elevenex-Version': current.version, 'X-Elevenex-Target': target,
     'X-Elevenex-Proof': mac(token, `handoff:${time}:${nonce}:${current.instance}:${current.version}:${target}${signedForce ? ':force' : ''}`),
     ...(signedForce ? { 'X-Elevenex-Force': '1' } : {}),
-  });
+  }, APP_HANDOFF_LIMIT_MS + 5000);
 }

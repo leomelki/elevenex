@@ -88,12 +88,24 @@ function parseRevision(value: unknown): WorkspaceRevision {
   const response = object(value);
   if (response['version'] !== 1) throw invalidResponse();
   const revision = count(response['revision']);
-  for (const capability of ['revisionWait', 'chatStream', 'sessionPriority', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel', 'projectImages']) {
+  const rawOpens = response['appOpens'];
+  if (rawOpens !== undefined && (!Array.isArray(rawOpens) || rawOpens.length > 16)) throw invalidResponse();
+  const appOpens = Array.isArray(rawOpens) ? rawOpens.map(value => {
+    const row = object(value);
+    const runId = row['runId'];
+    const eventRevision = count(row['revision']);
+    if (typeof runId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(runId) || eventRevision > revision)
+      throw invalidResponse();
+    return { runId, revision: eventRevision, taskId: id(row['taskId']), sessionId: id(row['sessionId']) };
+  }) : undefined;
+  for (const capability of ['revisionWait', 'chatStream', 'taskApps', 'sessionPriority', 'sessionNesting', 'sessionNestingOrder', 'sessionArchiveHistory', 'sessionArchive', 'sessionArchiveChildren', 'taskRequests', 'commitPanel', 'projectImages']) {
     if (response[capability] !== undefined && response[capability] !== true) throw invalidResponse();
   }
   return {
     revision, version: 1,
+    ...(appOpens?.length ? { appOpens } : {}),
     ...(response['revisionWait'] === true ? { revisionWait: true } : {}),
+    ...(response['taskApps'] === true ? { taskApps: true } : {}),
     ...(response['chatStream'] === true ? { chatStream: true } : {}),
     ...(response['sessionPriority'] === true ? { sessionPriority: true } : {}),
     ...(response['sessionNesting'] === true ? { sessionNesting: true } : {}),
@@ -464,6 +476,7 @@ export function registerWorkspaceIpc(
           running: count(raw['running']),
           terminals: count(raw['terminals']),
           actions: count(raw['actions']),
+          ...(raw['apps'] === undefined ? {} : { apps: count(raw['apps']) }),
           unpushed: count(raw['unpushed']),
           ...(raw['uncommitted'] === undefined ? {} : { uncommitted: count(raw['uncommitted']) }),
         };
@@ -863,7 +876,8 @@ export function registerWorkspaceIpc(
       window,
       scope,
       `${base}/tasks/${taskId}/finish`,
-      { confirmStop: boolean(raw['confirmStop']) },
+      { confirmStop: boolean(raw['confirmStop']),
+        ...(raw['confirmedApps'] === undefined ? {} : { confirmedApps: count(raw['confirmedApps']) }) },
       parseWorkspaceTask,
     ).then(result => {
       if (result.ok && result.value.id === taskId && result.value.state === 'finished')

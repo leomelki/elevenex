@@ -12,6 +12,18 @@ export class NavigationEventsService
 {
   private currentRevision = 0;
   private destroyed = false;
+  private readonly appOpens = new Map<string, { revision: number; runId: string; taskId: number; sessionId: number }>();
+
+  openApp(runId: string, taskId: number, sessionId: number): void {
+    if (this.appOpens.has(runId)) return;
+    this.appOpens.set(runId, { revision: this.currentRevision + 1, runId, taskId, sessionId });
+    if (this.appOpens.size > 128) this.appOpens.delete(this.appOpens.keys().next().value!);
+    this.invalidate();
+  }
+
+  appOpensSince(revision: number) {
+    return [...this.appOpens.values()].filter(item => item.revision > revision).slice(-16);
+  }
   private readonly waiters = new Set<() => void>();
   get revision(): number {
     return this.currentRevision;

@@ -1,5 +1,5 @@
 import { SessionChatDrafts } from '../../session-chat/session-chat-drafts';
-import type { BackendResult, ElevenexBridge } from '@elevenex/shared';
+import type { BackendResult, ElevenexBridge, TaskAppRun } from '@elevenex/shared';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { ConnectedWorkspaceFixture } from '../../../../preview/connected-workspace-fixture';
 import { BackendClientService, ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
@@ -67,6 +67,95 @@ describe('Connected workspace composition', () => {
     expect(root.hasAttribute('inert')).toBe(true);
   });
 
+  it('restores Apps across session and task switches and falls back only after a current empty read', async () => {
+    const { fixture, component, platform, root } = setup();
+    const readRevision = platform.workspaceRevision.bind(platform);
+    vi.spyOn(platform, 'workspaceRevision').mockImplementation(async () => {
+      const result = await readRevision();
+      return result.ok ? { ok: true, value: { ...result.value, taskApps: true } } : result;
+    });
+    let runs: readonly TaskAppRun[] = [];
+    const proposal: TaskAppRun = {
+      taskId: 11, runId: 'demo', name: 'Dev app', status: 'requested', mode: 'native', startedAt: 1,
+      pendingLaunch: { executable: 'pnpm', args: ['dev'] },
+    };
+    const operations = {
+      taskAppsRead: vi.fn(async (_scope: string, task: number): Promise<BackendResult<readonly TaskAppRun[]>> => ({ ok: true, value: task === 11 ? runs : [] })),
+      taskAppApprove: async () => { runs = [{ ...proposal, status: 'running' }]; return { ok: true, value: undefined }; },
+      taskAppStop: async () => { runs = [{ ...proposal, status: 'exited' }]; return { ok: true, value: undefined }; },
+    };
+    Object.assign(platform, operations);
+    await settle(fixture);
+    component.store.selectSession({ taskId: '11', sessionId: '101' });
+    await settle(fixture);
+    expect(operations.taskAppsRead).not.toHaveBeenCalled();
+    component.togglePanel();
+    await settle(fixture);
+    const appsTab = () => root.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Apps"]');
+    expect(appsTab()).toBeNull();
+
+    const selected = component.store.selected()!;
+    runs = [proposal];
+    let finishLaunchRead!: (result: BackendResult<readonly TaskAppRun[]>) => void;
+    operations.taskAppsRead.mockImplementationOnce(() => new Promise(resolve => { finishLaunchRead = resolve; }));
+    component.store.openApp({ ...selected, runId: proposal.runId });
+    await settle(fixture);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    expect(root.querySelector('ex-task-apps [role="status"]')?.textContent).toContain('Loading apps');
+    finishLaunchRead({ ok: true, value: runs });
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>('[aria-label="App launch request"] button[data-variant=primary]')!.click();
+    await settle(fixture);
+    expect(root.querySelector('ex-task-apps .app-status')?.textContent).toContain('Running');
+
+    const stop = root.querySelector<HTMLButtonElement>('ex-task-apps button[aria-label="Stop app"]')!;
+    stop.focus();
+    stop.click();
+    await settle(fixture);
+    expect(appsTab()).toBeNull();
+    expect(component.panel()).toBe('changes');
+    expect(component.panelOpen()).toBe(true);
+    expect(document.activeElement).toBe(root.querySelector('[role="tab"][aria-label="Changes"]'));
+
+    runs = [{ ...proposal, status: 'running' }];
+    component.store.openApp({ ...selected, runId: proposal.runId });
+    await settle(fixture);
+    root.querySelector<HTMLButtonElement>('[role="tab"][aria-label="Changes"]')!.click();
+    await settle(fixture);
+    appsTab()!.click();
+    await settle(fixture);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    const readCount = operations.taskAppsRead.mock.calls.length;
+    component.store.selectSession({ taskId: '11', sessionId: '102' });
+    await settle(fixture);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    expect(operations.taskAppsRead).toHaveBeenCalledTimes(readCount);
+
+    let finishOtherTask!: (result: BackendResult<readonly TaskAppRun[]>) => void;
+    operations.taskAppsRead.mockImplementationOnce(() => new Promise(resolve => { finishOtherTask = resolve; }));
+    component.store.selectSession({ taskId: '12', sessionId: '103' });
+    await settle(fixture);
+    expect(appsTab()).toBeNull();
+    expect(component.panel()).toBe('changes');
+    expect(root.querySelector('ex-task-apps .app-status')).toBeNull();
+
+    let finishReturn!: (result: BackendResult<readonly TaskAppRun[]>) => void;
+    operations.taskAppsRead.mockImplementationOnce(() => new Promise(resolve => { finishReturn = resolve; }));
+    component.store.selectSession({ taskId: '11', sessionId: '101' });
+    await settle(fixture);
+    expect(operations.taskAppsRead).toHaveBeenLastCalledWith(selected.scopeId, 11);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    expect(root.querySelector('ex-task-apps .app-status')?.textContent).toContain('Dev app: Running');
+    finishOtherTask({ ok: true, value: [] });
+    await settle(fixture);
+    expect(appsTab()?.getAttribute('aria-selected')).toBe('true');
+    runs = [];
+    finishReturn({ ok: true, value: runs });
+    await settle(fixture);
+    expect(appsTab()).toBeNull();
+    expect(component.panel()).toBe('changes');
+  });
+
   for (const dispose of [false, true]) it(`prepares navigation while inert and ${dispose ? 'cancels its paint notification on destruction' : 'acknowledges the paint boundary'}`, async () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
@@ -122,7 +211,7 @@ describe('Connected workspace composition', () => {
     await settle(fixture);
     await component.store.selectProject('1');
     component.store.selectSession({ taskId: '11', sessionId: '102' });
-    component.panel.set('browser'); component.panelOpen.set(true);
+    component.store.selectPanel('browser'); component.panelOpen.set(true);
     await settle(fixture);
     fixture.destroy();
     const reopened = TestBed.createComponent(MachineWorkspaceComponent);
@@ -140,7 +229,7 @@ describe('Connected workspace composition', () => {
     await settle(reopened);
     expect(owner.store.selected()).toBeNull(); expect(owner.panelOpen()).toBe(false);
     await owner.store.selectProject('2'); owner.store.selectSession({ taskId: '13', sessionId: '104' });
-    owner.panel.set('changes'); owner.panelOpen.set(true); owner.wideReview.set(true);
+    owner.store.selectPanel('changes'); owner.panelOpen.set(true); owner.wideReview.set(true);
     await settle(reopened);
     await platform.selectEnvironment({ kind: 'local' });
     reopened.componentRef.setInput('machine', { id: 'local', name: 'This Mac', kind: 'local', conn: 'live' });

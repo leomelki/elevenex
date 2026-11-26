@@ -26,14 +26,19 @@ export async function prepareReplacement(root: string, version: string): Promise
   const path = join(root, `handoff-${version}.json`);
   const info = await stat(path);
   if (!info.isFile() || info.size > 1024) throw new Error('Invalid replacement descriptor');
+  const platform = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : process.platform;
+  if (!platform || !['arm64', 'x64'].includes(process.arch)) throw new Error('Unsupported replacement platform');
   const value: unknown = JSON.parse(await readFile(path, 'utf8'));
   if (!value || typeof value !== 'object' || !('client' in value) || typeof value.client !== 'string' || !/^[a-f0-9]{64}$/.test(value.client)
     || !('installation' in value) || typeof value.installation !== 'string'
-    || !new RegExp(`^runtime-(?:pr-[1-9]\\d*-)?${version}-(?:linux|macos)-(?:arm64|x64)$`).test(value.installation)) throw new Error('Invalid replacement descriptor');
+    || !new RegExp(`^runtime-(?:pr-[1-9]\\d*-)?${version}-${platform}-${process.arch}$`).test(value.installation)) throw new Error('Invalid replacement descriptor');
   const installation = join(root, 'runtimes', value.installation);
   const runtime = join(root, 'clients', value.client, 'runtime.js');
-  const executable = join(installation, 'backend/node/bin/node');
-  for (const path of [runtime, executable, join(installation, 'backend/main.cjs'), join(installation, 'installation.sha256')]) {
+  const executable = join(installation, process.platform === 'win32' ? 'backend/node/node.exe' : 'backend/node/bin/node');
+  // Earlier POSIX shims own their own bootstrap sequence. Only Windows uses
+  // the descriptor's host.js directly from the retained supervising daemon.
+  const supervisor = process.platform === 'win32' ? [join(dirname(runtime), 'host.js')] : [];
+  for (const path of [runtime, ...supervisor, executable, join(installation, 'backend/main.cjs'), join(installation, 'installation.sha256')]) {
     const info = await stat(path);
     if (!info.isFile() || info.size === 0) throw new Error('Incomplete replacement runtime');
   }

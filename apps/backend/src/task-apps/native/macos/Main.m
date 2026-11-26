@@ -1,0 +1,113 @@
+#import "Display.h"
+#import "Setup.h"
+#import "DesktopConnection.h"
+#import "Capture.h"
+#import <ApplicationServices/ApplicationServices.h>
+#import <signal.h>
+#import <fcntl.h>
+#import <unistd.h>
+
+static int runAgentCommand(int argc, char *argv[], BOOL desktop, int displayDescriptor, int owner) {
+    @autoreleasepool {
+        if (argc == 1 || (argc == 2 && !strcmp(argv[1], "--setup"))) {
+            NSString *identifier = NSBundle.mainBundle.bundleIdentifier;
+            if (!identifier) return 2;
+            return runAgentSetup(^{
+                NSTask *task = [NSTask new];
+                task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/tccutil"];
+                // Never reset All, Screen Recording or another build's grants.
+                task.arguments = @[@"reset", @"Accessibility", identifier];
+                return task;
+            });
+        }
+        if (argc == 3 && !strcmp(argv[1], "--write-iconset")) return writeAgentIconset(@(argv[2]));
+        if (argc == 2 && !strcmp(argv[1], "--permission-status")) return printAgentPermissions();
+        if (((argc == 2 || argc == 4) && !strcmp(argv[1], "--self-test")) ||
+            (argc == 4 && !strcmp(argv[1],"--self-test-window"))) {
+            int width = argc == 4 ? atoi(argv[2]) : 64, height = argc == 4 ? atoi(argv[3]) : 64;
+            if (!strcmp(argv[1],"--self-test-window")) {
+                CGSize size = appCaptureSize(CGSizeMake(width,height),2);
+                width = (int)size.width; height = (int)size.height;
+            }
+            if (width < 16 || height < 16 || width > 1920 || height > 1440 || (width & 1) || (height & 1)) return 2;
+            setDisplayOutput(stdout);
+            AppEncoder *encoder = [AppEncoder new];
+            encoder.failed = ^(NSError *error) {};
+            return [encoder configureWidth:width height:height] && [encoder encodeTestFrame] ? 0 : 24;
+        }
+        if (argc == 2 && !strcmp(argv[1], "--authorize")) {
+            CGRequestScreenCaptureAccess();
+            NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES };
+            return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options) && CGPreflightScreenCaptureAccess() ? 0 : 21;
+        }
+        if (argc == 2 && (!strcmp(argv[1], "--screen-settings") || !strcmp(argv[1], "--accessibility-settings"))) {
+            if (!AppSessionActive()) return 20;
+            BOOL screen = !strcmp(argv[1], "--screen-settings");
+            NSString *pane = screen ? @"Privacy_ScreenCapture" : @"Privacy_Accessibility";
+            NSURL *url = [NSURL URLWithString:[@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane]];
+            if (![NSWorkspace.sharedWorkspace openURL:url]) return 24;
+            // Request only the selected permission, so the helper is listed even on first use.
+            if (screen && !CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
+            if (!screen && !AXIsProcessTrusted()) {
+                NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES };
+                AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            }
+            return 0;
+        }
+        if (argc == 2 && !strcmp(argv[1], "--check")) {
+            if (!desktop) return runAgentInDesktop(argc,argv,-1,NULL);
+            if (!AppSessionActive()) return 20;
+            return CGPreflightScreenCaptureAccess() ? 0 : 21;
+        }
+        if (desktop && argc == 3 && !strcmp(argv[1],"--capture-owned")) {
+            char *end;
+            long group = strtol(argv[2],&end,10);
+            if (*end || group <= 1 || group > INT_MAX || kill(-(pid_t)group,0)) return 2;
+            return runAppCapture((pid_t)group,displayDescriptor,owner);
+        }
+        BOOL desktopLaunch = argc >= 3 && !strcmp(argv[1],"--launch-desktop");
+        if (argc < 3 || (!desktopLaunch && strcmp(argv[1],"--launch"))) return 2;
+        char directory[] = "/tmp/elevenex-agent-XXXXXX";
+        if (desktopLaunch) {
+            if (!mkdtemp(directory)) return 25;
+            setSupervisorDesktopDirectory(directory);
+        }
+        pid_t group = launchOwnedGroup(argv + 2);
+        if (group <= 0) { if (desktopLaunch) rmdir(directory); return 2; }
+        if (desktopLaunch) {
+            char groupText[32]; snprintf(groupText,sizeof(groupText),"%d",group);
+            char *capture[] = {argv[0],"--capture-owned",groupText,NULL};
+            int result = runAgentInDesktop(3,capture,displayDescriptor,directory);
+            if (result == 25) {
+                FILE *output = fdopen(dup(displayDescriptor),"wb");
+                if (output) { setDisplayOutput(output); displayReceipt(0,25); fclose(output); }
+            }
+            // A lost capture host ends this run through the normal supervisor
+            // cleanup path; never abandon its user process group.
+            stopOwnedGroup();
+        }
+        return runAppCapture(group,displayDescriptor,-1);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    @autoreleasepool {
+        if (argc == 3 && !strcmp(argv[1],"--desktop-connection")) {
+            AgentDesktopInvocation *invocation = connectAgentDesktop(argv[2]);
+            if (!invocation) return 25;
+            // The private desktop entry accepts only a check or capture of the
+            // authenticated native supervisor's group, never a launch command.
+            char **command = calloc(invocation.arguments.count+2,sizeof(char *));
+            if (!command) return 25;
+            command[0] = argv[0];
+            for (NSUInteger index=0; index<invocation.arguments.count; index++)
+                command[index+1] = (char *)invocation.arguments[index].UTF8String;
+            uint8_t code = runAgentCommand((int)invocation.arguments.count+1,command,YES,invocation.display,invocation.owner);
+            write(invocation.owner,&code,1);
+            close(invocation.owner);
+            free(command);
+            return code;
+        }
+        return runAgentCommand(argc,argv,NO,4,-1);
+    }
+}

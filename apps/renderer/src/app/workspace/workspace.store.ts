@@ -19,6 +19,7 @@ import { mergeNavigationSessions, readPrioritySessions, type WorkspacePrioritySe
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
 import { WorkspaceNavigationObserver } from './workspace-navigation-observer';
+import { WorkspaceAppReveal } from './workspace-app-reveal';
 import { WorkspaceResume } from './workspace-resume';
 import { WorkspaceRestoration, projectWindowCursor, type RestoredTaskWindow } from './workspace-restoration';
 
@@ -26,6 +27,8 @@ interface SessionRemovalIntent {
   readonly taskId: string;
   readonly session: Pick<TaskSession, 'id' | 'status' | 'activeChildAgents' | 'childStopRequired'>;
 }
+
+const rememberedAppsPanelLimit = 16;
 
 /** A workspace owns bounded visible pages. Resource IDs never outlive their scope. */
 @Injectable()
@@ -60,7 +63,12 @@ export class WorkspaceStore {
   readonly resumeError = this.resume.error.asReadonly();
   readonly restoring = signal(false);
   readonly panelOpen = signal(false);
-  readonly panel = signal<WorkspaceViewState['panel']>('changes');
+  private readonly workspacePanel = signal<Exclude<WorkspaceViewState['panel'], 'apps'>>('changes');
+  private readonly appsPanels = signal<readonly number[]>([]);
+  readonly panel = computed<WorkspaceViewState['panel']>(() => {
+    const taskId = this.taskSelection()?.taskId;
+    return taskId && this.appsPanels().includes(taskId) ? 'apps' : this.workspacePanel();
+  });
   readonly wideReview = signal(false);
   private resumeContext: EnvironmentContext | null = null;
   private resumeLoaded = false;
@@ -70,6 +78,12 @@ export class WorkspaceStore {
   private readonly chatStreamScope = signal<string | null>(null);
   readonly chatStreamAvailable = computed(() => !!this.chosen() && this.chosen()?.scopeId === this.chatStreamScope());
   readonly hierarchy = new WorkspaceSessionHierarchy();
+  readonly taskAppsAvailable = signal(false);
+  readonly appLink = signal<(WorkspaceSelection & { readonly runId: string }) | null>(null);
+  private showingWorkspace = false;
+  private readonly appReveal = new WorkspaceAppReveal(this.document, () =>
+    this.showingWorkspace && !this.offline() && !this.selectedCreation() && !this.dialogOpen() ? this.selected() : null,
+    target => this.openApp(target), () => { if (this.taskAppsAvailable()) this.observer?.restartWait(); });
   private readonly sessionPriorityAvailable = signal(false);
   readonly sessionNestingAvailable = signal(false);
   private readonly sessionNestingOrderAvailable = signal(false);
@@ -230,6 +244,10 @@ export class WorkspaceStore {
   private projectCompletion: { readonly scope: string; readonly projectId: number } | null = null;
 
   constructor() {
+    effect(() => {
+      this.selected(); this.selectedCreation(); this.dialogOpen();
+      if (this.taskAppsAvailable()) untracked(() => { this.appReveal.reset(); this.observer?.restartWait(); });
+    });
     const stopBrowserReveal = this.bridge.onTaskBrowserRevealTask?.(target => { if (this.scopeId() === target.scopeId && !this.offline()) void this.revealBrowserTask(target.taskId); });
     inject(DestroyRef).onDestroy(() => stopBrowserReveal?.());
     effect(() => { const saved = this.journal?.restored(); if (saved) untracked(() => { this.taskOutbox.restore(saved.tasks); this.sessionOutbox.restore(saved.sessions ?? []); }); });
@@ -251,7 +269,10 @@ export class WorkspaceStore {
             const result = await this.bridge.workspaceRevision(next);
             if (result.ok) this.applyCapabilities(next, result.value);
             return result;
-          }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } }, { wait: (after, requestId) => this.bridge.workspaceWait(next, { after, requestId }), cancel: requestId => this.bridge.workspaceCancelWait(next, requestId) });
+          }, () => this.valid(next) && !this.loading() && !this.busy() && !this.pendingTask() && !this.sessionCreation.items().some(item => item.status === 'creating'), () => { this.capable = true; return this.refreshVisible(); }, message => { if (this.valid(next)) { this.loading.set(false); this.error.set(message); } }, { wait: (after, requestId) => {
+            const wait = () => this.bridge.workspaceWait(next, { after, requestId });
+            return this.taskAppsAvailable() ? this.appReveal.wait(next, after, () => this.bridge.workspaceRevision(next), wait) : wait();
+          }, cancel: requestId => this.bridge.workspaceCancelWait(next, requestId) });
         }
       });
     });
@@ -260,7 +281,7 @@ export class WorkspaceStore {
       if (!scope || !environment || this.restoring() || this.loading() || this.busy()) return;
       this.saveView(scope, environment);
     });
-    inject(DestroyRef).onDestroy(() => { this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); this.stopBranchSearch(); this.observer?.dispose(); });
+    inject(DestroyRef).onDestroy(() => { this.appReveal.dispose(); this.saveBeforeExit(); this.taskOutbox.dispose(); this.sessionOutbox.dispose(); this.sessionCreation.dispose(); this.disposed = true; this.archives.reset(); this.revision++; this.listRevision++; this.stopPreparation(); this.stopBranchSearch(); this.observer?.dispose(); });
   }
 
   private suspend(): void {
@@ -286,7 +307,9 @@ export class WorkspaceStore {
     this.scopeId.set(scope);
   }
 
-  connect(machine: Machine, active: boolean): void {
+  connect(machine: Machine, active: boolean, showingWorkspace = active): void {
+    if (this.showingWorkspace !== showingWorkspace) this.appReveal.reset();
+    this.showingWorkspace = showingWorkspace;
     if (!active || this.machineState()?.id !== machine.id) this.saveBeforeExit();
     const identity = JSON.stringify([machine.id, machine.address, machine.key]);
     if (this.machineIdentity && this.machineIdentity !== identity) { this.reset(null); this.outbox?.clear(); this.taskOutbox.clear(); this.sessionOutbox.clear(); }
@@ -306,8 +329,26 @@ export class WorkspaceStore {
     }
   }
 
+  openApp(link: WorkspaceSelection & { readonly runId: string }): void {
+    const selected = this.selected();
+    if (!this.valid(link.scopeId) || this.offline() || selected?.scopeId !== link.scopeId ||
+      selected.taskId !== link.taskId || selected.sessionId !== link.sessionId) return;
+    this.appLink.set(link);
+    this.selectPanel('apps');
+    this.panelOpen.set(true);
+  }
   selectPanel(panel: string): void {
-    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser') this.panel.set(panel);
+    if (panel === 'terminal' || panel === 'actions' || panel === 'changes' || panel === 'code' || panel === 'browser' || panel === 'apps') {
+      this.setPanel(panel, this.taskSelection()?.taskId);
+    }
+  }
+
+  private setPanel(panel: WorkspaceViewState['panel'], taskId?: number): void {
+    if (taskId) {
+      if (panel === 'apps') this.appsPanels.update(tasks => [...tasks.filter(id => id !== taskId).slice(1 - rememberedAppsPanelLimit), taskId]);
+      else if (this.appsPanels().includes(taskId)) this.appsPanels.update(tasks => tasks.filter(id => id !== taskId));
+    }
+    if (panel !== 'apps') this.workspacePanel.set(panel);
   }
 
   async refresh(): Promise<void> {
@@ -360,7 +401,8 @@ export class WorkspaceStore {
     this.activeProject.set(context.projectId === null ? 'all' : String(context.projectId));
     const view = context.workspace;
     if (!view) return;
-    this.panel.set(view.panel); this.panelOpen.set(view.panelOpen); this.wideReview.set(view.panelOpen && view.wideReview);
+    this.setPanel(view.panel, context.taskId ?? undefined);
+    this.panelOpen.set(view.panelOpen); this.wideReview.set(view.panelOpen && view.wideReview);
     this.closed.set(view.closed); this.focused.set(view.focused); this.filter.set(view.filter);
     this.currentProjectCursor = view.projectCursor ?? undefined; this.currentTaskCursor = view.taskCursor ?? undefined;
   }
@@ -1264,11 +1306,11 @@ export class WorkspaceStore {
       if (this.scopeId() === scope) this.busy.set(false);
     }
   }
-  async closeTask(confirmStop = false): Promise<void> {
+  async closeTask(confirmStop = false, confirmedApps = 0): Promise<void> {
     const task = this.selectedTask(), scope = this.scopeId(), selection = this.chosen();
     if (!task || !scope || this.busy()) return;
     this.busy.set(true);
-    const result = await this.mutate(scope, () => this.bridge.workspaceFinishTask(scope, { taskId: task.id, confirmStop }));
+    const result = await this.mutate(scope, () => this.bridge.workspaceFinishTask(scope, { taskId: task.id, confirmStop, ...(confirmedApps ? { confirmedApps } : {}) }));
     if (result) {
       this.sessionArchiveUndo.set(null);
       this.closeUndo.set({ scopeId: scope, task });
@@ -1356,6 +1398,7 @@ export class WorkspaceStore {
     this.taskRequestsAvailable.set(capability?.taskRequests === true);
     this.commitPanelAvailable.set(capability?.commitPanel === true);
     this.projectImagesAvailable.set(capability?.projectImages === true);
+    this.taskAppsAvailable.set(capability?.taskApps === true);
     this.sessionPriorityAvailable.set(capability?.sessionPriority === true);
     this.sessionNestingAvailable.set(capability?.sessionNesting === true);
     this.sessionNestingOrderAvailable.set(capability?.sessionNestingOrder === true);
@@ -1366,6 +1409,7 @@ export class WorkspaceStore {
   private current(scope: string, revision: number): boolean { return this.valid(scope) && this.revision === revision; }
   private reset(scope: string | null): void {
     this.chatStreamScope.set(null);
+    this.taskAppsAvailable.set(false); this.appLink.set(null); this.appReveal.reset();
     this.sessionArchiveChildrenAvailable.set(false);
     this.projectImagesAvailable.set(false);
     this.priorityRecords.set(new Map()); this.sessionPriorityAvailable.set(false);
@@ -1375,7 +1419,7 @@ export class WorkspaceStore {
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;
     this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
     this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.restoring.set(scope !== null);
-    this.panelOpen.set(false); this.panel.set('changes'); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
+    this.panelOpen.set(false); this.workspacePanel.set('changes'); this.appsPanels.set([]); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
     this.sessionDisclosures.set(new Map());
     this.capable = false; this.archives.reset(); this.sessionArchiveHistoryAvailable.set(false); this.taskRequestsAvailable.set(false); this.commitPanelAvailable.set(false); this.sessionArchiveAvailable.set(false); this.sessionArchiveUndo.set(null); this.closeUndo.set(null);

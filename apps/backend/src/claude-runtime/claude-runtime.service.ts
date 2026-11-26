@@ -1606,6 +1606,13 @@ export class ClaudeRuntimeService
     return this.toRuntimeStatePayload(sessionId, state);
   }
 
+  nativeAppLaunchPolicy(sessionId: number): import('../agent-runtime/agent-runtime.types.js').NativeAppLaunchPolicy {
+    const state = this.runtimeStates.get(sessionId);
+    if (state?.planMode) return 'plan';
+    if (state?.selectedPermissionMode !== 'bypassPermissions') return 'request';
+    return this.sessionRuntimes.get(sessionId)?.canLaunchNativeApp ? 'launch' : 'request';
+  }
+
   async setPermissionMode(
     sessionId: number,
     mode: ClaudePermissionMode | null,

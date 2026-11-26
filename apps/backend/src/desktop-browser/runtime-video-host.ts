@@ -21,7 +21,9 @@ export class RuntimeVideoHost {
   readonly resources = new RuntimeVideoResources();
   readonly catalog: RuntimeVideoCatalog;
   private readonly viewers = new Set<symbol>();
-  private readonly encoders = new Set<RuntimeVideoEncoder>();
+  private readonly encoders = new Set<
+    Pick<RuntimeVideoEncoder, 'stop' | 'closed'>
+  >();
   private readonly devices = new Map<string, number>();
   private readonly work: Work[] = [];
   private running = 0;
@@ -72,7 +74,10 @@ export class RuntimeVideoHost {
       ? target.device
       : `${target.kind}:${target.device ?? 'default'}`;
   }
-  own(encoder: RuntimeVideoEncoder, target: VideoEncoderTarget): void {
+  own(
+    encoder: Pick<RuntimeVideoEncoder, 'stop' | 'closed'>,
+    target: VideoEncoderTarget,
+  ): void {
     if (this.stopped) {
       encoder.stop();
       throw new Error('Video host stopped');
@@ -137,6 +142,9 @@ export class RuntimeVideoHost {
       if (next.signal.aborted) next.cancel();
       else next.start();
     }
+  }
+  async onModuleDestroy(): Promise<void> {
+    await this.destroy();
   }
   async destroy(): Promise<void> {
     this.stopped = true;

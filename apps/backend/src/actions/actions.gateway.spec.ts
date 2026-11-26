@@ -27,7 +27,10 @@ describe('ActionsGateway bounded output', () => {
   beforeEach(() => {
     pty.getCurrentOutput.mockReturnValue('replay');
     findOne = jest.fn().mockResolvedValue({ status: 'stopped' });
-    gateway = new ActionsGateway(pty as never, { findOne } as never);
+    gateway = new ActionsGateway(
+      pty as never,
+      Object.assign(new EventEmitter(), { findOne }) as never,
+    );
     connect = (
       gateway as unknown as { handleConnection: typeof connect }
     ).handleConnection.bind(gateway);

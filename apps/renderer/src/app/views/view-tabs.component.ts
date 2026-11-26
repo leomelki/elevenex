@@ -19,6 +19,8 @@ export class ViewTabsComponent {
   readonly label = input('View tabs');
   readonly newLabel = input('New tab');
   readonly closable = input(true);
+  /** Hide New for tab sets the person cannot create from the strip. */
+  readonly addable = input(true);
   readonly disabled = input(false);
   readonly reorderable = input(false);
   readonly detachable = input(false);
