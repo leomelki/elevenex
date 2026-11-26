@@ -23,13 +23,17 @@ function fixture(t) {
 
 function profileFixture(directory, overrides = {}) {
   const payload = {
-    Entitlements: { [capture]: true, [app]: 'TESTPREFIX.com.elevenex.task-app-display', [team]: 'TESTTEAM', 'get-task-allow': true },
+    Entitlements: {
+      [capture]: true, [app]: 'TESTPREFIX.com.elevenex.task-app-display', [team]: 'TESTTEAM',
+      'get-task-allow': true, 'fixture-data': 'AAEC',
+    },
     ProvisionsAllDevices: true,
     ExpirationDate: '2099-01-01T00:00:00Z',
     ...overrides,
   };
   const plist = execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', '-'], { input: JSON.stringify(payload), encoding: 'utf8' })
-    .replace(`<string>${payload.ExpirationDate}</string>`, `<date>${payload.ExpirationDate}</date>`);
+    .replace(`<string>${payload.ExpirationDate}</string>`, `<date>${payload.ExpirationDate}</date>`)
+    .replace('<string>AAEC</string>', '<data>AAEC</data>');
   const profile = join(directory, 'fixture.provisionprofile');
   // An unsigned CMS data fixture exercises Apple's decoder and plist tools.
   // It is not an Apple-authorized profile and must never be used to launch.
@@ -98,6 +102,7 @@ for (const [name, overrides, error] of [
   ['wrong application', { Entitlements: { [capture]: true, [app]: 'TESTTEAM.com.other.app', [team]: 'TESTTEAM' } }, /profile for com.elevenex/],
   ['missing team', { Entitlements: { [capture]: true, [app]: 'TESTPREFIX.com.elevenex.task-app-display' } }, /team identifier/],
   ['development profile', { ProvisionsAllDevices: false }, /Developer ID distribution/],
+  ['distribution flag stored as a string', { ProvisionsAllDevices: 'true' }, /Developer ID distribution/],
   ['expired profile', { ExpirationDate: '2000-01-01T00:00:00Z' }, /has expired/],
 ]) {
   test(`rejects ${name} before embedding a profile`, mac, t => {

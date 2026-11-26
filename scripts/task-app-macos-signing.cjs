@@ -1,4 +1,4 @@
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { copyFileSync, writeFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 
@@ -18,17 +18,23 @@ function prepareMacAppCaptureSigning({ contents, directory, identity, profile })
   const decoded = join(directory, 'profile.plist');
   const options = { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 };
   execFileSync('/usr/bin/security', ['cms', '-D', '-i', embedded, '-o', decoded], options);
-  const extract = (key, format) => execFileSync('/usr/bin/plutil', ['-extract', key, format, '-o', '-', decoded], options).trim();
-  const entitlements = JSON.parse(extract('Entitlements', 'json'));
-  if (entitlements[persistentCapture] !== true)
+  // A profile may contain plist dates and binary data that plutil cannot emit
+  // as JSON. Read only the typed values needed to authorize signing.
+  const extract = (keyPath, type) => {
+    const result = spawnSync('/usr/bin/plutil', ['-extract', keyPath, 'raw', '-expect', type, '-n', '-o', '-', decoded], options);
+    if (result.error) throw result.error;
+    return result.status === 0 ? result.stdout : undefined;
+  };
+  const entitlementPath = key => `Entitlements.${key.replaceAll('.', '\\.')}`;
+  if (extract(entitlementPath(persistentCapture), 'bool') !== 'true')
     throw new Error('The provisioning profile does not authorize persistent content capture. Request approval from Apple first.');
-  if (typeof entitlements[teamIdentifier] !== 'string' || !entitlements[teamIdentifier] ||
-      typeof entitlements[applicationIdentifier] !== 'string' ||
-      !/^[^.]+\.com\.elevenex\.task-app-display$/.test(entitlements[applicationIdentifier]))
+  const team = extract(entitlementPath(teamIdentifier), 'string');
+  const application = extract(entitlementPath(applicationIdentifier), 'string');
+  if (!team || !application || !/^[^.]+\.com\.elevenex\.task-app-display$/.test(application))
     throw new Error('Persistent content capture requires a profile for com.elevenex.task-app-display with a team identifier.');
-  if (extract('ProvisionsAllDevices', 'raw') !== 'true')
+  if (extract('ProvisionsAllDevices', 'bool') !== 'true')
     throw new Error('Persistent content capture requires a Developer ID distribution profile.');
-  const expiration = Date.parse(extract('ExpirationDate', 'raw'));
+  const expiration = Date.parse(extract('ExpirationDate', 'date') ?? '');
   if (!Number.isFinite(expiration) || expiration <= Date.now())
     throw new Error('The persistent content capture provisioning profile has expired or has no valid expiration.');
   const entitlementFile = join(directory, 'capture-entitlements.plist');
@@ -36,8 +42,8 @@ function prepareMacAppCaptureSigning({ contents, directory, identity, profile })
   // profile allowlist. Claim only capture and its required signing identity.
   const claims = {
     [persistentCapture]: true,
-    [applicationIdentifier]: entitlements[applicationIdentifier],
-    [teamIdentifier]: entitlements[teamIdentifier],
+    [applicationIdentifier]: application,
+    [teamIdentifier]: team,
   };
   writeFileSync(entitlementFile, execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', '-'], {
     ...options, input: JSON.stringify(claims),

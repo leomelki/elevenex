@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const { mkdtemp, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
-const { join, resolve } = require('node:path');
+const { basename, dirname, join, resolve } = require('node:path');
 const { createRequire } = require('node:module');
 const { setTimeout: wait } = require('node:timers/promises');
 
@@ -146,7 +146,10 @@ async function main() {
   const directory=await mkdtemp(join(tmpdir(),'elevenex-windows-smoke-'));
   try {
     const archive=resolve(process.argv[2]||'dist-runtime/elevenex-backend-windows-x64.tar.gz');
-    execFileSync('tar.exe',['-xzf',archive,'-C',directory,'backend/bin/task-app-windows.exe'],{timeout:180000,windowsHide:true});
+    // Git for Windows can put GNU tar first on PATH, where D: looks like a remote host.
+    execFileSync('tar.exe', ['-xzf', basename(archive), '-C', directory, 'backend/bin/task-app-windows.exe'], {
+      cwd: dirname(archive), timeout: 180000, windowsHide: true,
+    });
     process.env.ELEVENEX_BACKEND_RUNTIME_ROOT=join(directory,'backend');
     const helper=join(directory,'backend','bin','task-app-windows.exe');
     await verifyJob(helper);
