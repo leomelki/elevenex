@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { SimpleGit } from 'simple-git';
+import { GitError, SimpleGit } from 'simple-git';
 import { worktreeSimpleGit } from '../config/system-paths.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -42,6 +42,8 @@ export interface ListWorktreesOptions {
   /** Allocation must avoid paths still registered in Git, even if absent. */
   includeMissing?: boolean;
 }
+
+export class LockedWorktreeRemovalError extends BadRequestException {}
 
 @Injectable()
 export class WorktreesService {
@@ -172,7 +174,9 @@ export class WorktreesService {
       throw new BadRequestException('Cannot remove the main working tree');
     }
 
-    const git: SimpleGit = worktreeSimpleGit(repoPath);
+    // Older Git omits locks from its porcelain listing but enforces them on
+    // removal. Use a stable locale to recognize that refusal from Git.
+    const git = worktreeSimpleGit(repoPath).env('LC_ALL', 'C');
 
     try {
       await git.raw(['worktree', 'remove', worktreePath]);
@@ -181,7 +185,14 @@ export class WorktreesService {
         releaseGitWorktreeCaches(normalizedWorktreePath);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException(`Failed to remove worktree: ${message}`);
+      const failure = `Failed to remove worktree: ${message}`;
+      if (
+        error instanceof GitError &&
+        /^fatal: cannot remove a locked working tree[;,]/m.test(message)
+      ) {
+        throw new LockedWorktreeRemovalError(failure);
+      }
+      throw new BadRequestException(failure);
     }
   }
 

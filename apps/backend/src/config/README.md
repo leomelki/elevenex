@@ -165,6 +165,10 @@ mutations automatically after an unknown outcome.
 | Default branch | One bounded candidate-ref query and one remote configuration query; no per-candidate process or branch subjects | Same command count and selection order |
 | Ref snapshots | Loose/packed refs retain the existing filesystem cache; reftable uses native metadata queries and table-stack version invalidation | Existing file-backed ref reads |
 
+Git 2.25 omits lock status from worktree listings. If Git refuses to remove a
+locked registration during recovery, the task keeps the registration and offers
+a checkout at the saved revision.
+
 Reftable's on-disk `HEAD` is a compatibility stub, not the real branch. Native
 reads preserve branch names, detached/unborn HEAD, linked-worktree isolation and
 remote ref updates. Snapshots coalesce concurrent requests and recheck changed

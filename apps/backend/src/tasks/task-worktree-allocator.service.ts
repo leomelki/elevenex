@@ -5,7 +5,10 @@ import * as path from 'node:path';
 import { DRIZZLE, type DrizzleDB } from '../database/database.provider.js';
 import * as schema from '../database/schema/index.js';
 import { worktreeSimpleGit } from '../config/system-paths.js';
-import { WorktreesService } from '../worktrees/worktrees.service.js';
+import {
+  LockedWorktreeRemovalError,
+  WorktreesService,
+} from '../worktrees/worktrees.service.js';
 import { WorktreePoolService } from '../worktrees/worktree-pool.service.js';
 import { TaskGitService, WorktreeStatus } from './task-git.service.js';
 import { TaskSetup } from './task.types.js';
@@ -451,13 +454,14 @@ export class TaskWorktreeAllocator {
     const previous =
       task.path && listed.find((entry) => entry.path === task.path);
     if (branch && previous && (await isMissingWorktreePath(previous.path))) {
-      if (previous.isLocked || previous.isBare)
-        throw new ConflictException({
+      const lockedCheckoutError = () =>
+        new ConflictException({
           code: 'checkout_unavailable',
           message:
             'The missing worktree is locked. Restore or unlock it, or work at its committed revision.',
           canSnapshot: true,
         });
+      if (previous.isLocked || previous.isBare) throw lockedCheckoutError();
       await this.assertRecoveryIdle(task.id);
       const [owner] = await this.db
         .select()
@@ -484,7 +488,13 @@ export class TaskWorktreeAllocator {
       if (workspaceOwner) throw this.branchConflict(workspaceOwner.id);
       // Only remove this task's missing registration, never prune unrelated
       // worktrees. Without --force Git protects restored edits and locks.
-      await this.worktrees.removeWorktree(repoPath, previous.path);
+      try {
+        await this.worktrees.removeWorktree(repoPath, previous.path);
+      } catch (error) {
+        if (error instanceof LockedWorktreeRemovalError)
+          throw lockedCheckoutError();
+        throw error;
+      }
       listed = listed.filter((entry) => entry !== previous);
     }
     return listed;

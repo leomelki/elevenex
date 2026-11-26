@@ -639,7 +639,8 @@ describe('Task lifecycle with real Git and migrations', () => {
 
   it('keeps locked missing registrations and offers a revision snapshot', async () => {
     const task = await create('locked-missing');
-    await worktreeSimpleGit(repoPath).raw(['worktree', 'lock', task.path]);
+    const git = worktreeSimpleGit(repoPath);
+    await git.raw(['worktree', 'lock', task.path]);
     await rm(task.path, { recursive: true });
     await service.get(task.id);
     await service.retry(task.id);
@@ -647,25 +648,14 @@ describe('Task lifecycle with real Git and migrations', () => {
       taskState: 'failed',
       error: { code: 'checkout_unavailable', canSnapshot: true },
     });
-    expect(
-      await worktreeSimpleGit(repoPath).raw([
-        'worktree',
-        'list',
-        '--porcelain',
-      ]),
-    ).toContain('locked');
     await service.retry(task.id, { checkoutMode: 'snapshot' });
     expect(await settled(task.id)).toMatchObject({
       taskState: 'ready',
       checkoutMode: 'snapshot',
     });
-    expect(
-      await worktreeSimpleGit(repoPath).raw([
-        'worktree',
-        'list',
-        '--porcelain',
-      ]),
-    ).toContain('locked');
+    // Git 2.25 omits lock status from the list output. Unlocking succeeds only
+    // if the original worktree registration still exists and is locked.
+    await git.raw(['worktree', 'unlock', task.path]);
   });
 
   it('skips missing paths still registered in Git even without a database lease', async () => {

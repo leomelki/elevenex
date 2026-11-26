@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import { promisify } from 'node:util';
 import { scheduledGitRaw } from '../git/git-read-scheduler.js';
 import { TaskGitService } from '../tasks/task-git.service.js';
@@ -65,9 +65,11 @@ describe('Git repository environment isolation', () => {
     expect(await new TaskGitService().repositoryKey(target)).toBe(
       join(target, '.git'),
     );
-    expect(
-      (await scheduledGitRaw(target, ['rev-parse', '--show-toplevel'])).trim(),
-    ).toBe(target);
+    const reportedRoot = await scheduledGitRaw(target, [
+      'rev-parse',
+      '--show-toplevel',
+    ]);
+    expect(normalize(reportedRoot.trim())).toBe(target);
     const before = await readFile(join(foreign, '.git', 'index'));
     await writeFile(join(target, 'target-file'), 'target');
     await worktreeSimpleGit(target).raw(['add', '--', 'target-file']);
@@ -146,9 +148,9 @@ describe('Git repository environment isolation', () => {
     expect(
       (await client.raw(['config', '--get', 'core.untrackedCache'])).trim(),
     ).toBe('false');
-    expect((await client.raw(['rev-parse', '--show-toplevel'])).trim()).toBe(
-      target,
-    );
+    expect(
+      normalize((await client.raw(['rev-parse', '--show-toplevel'])).trim()),
+    ).toBe(target);
   });
 
   it('honors per-worktree configuration without inheriting another checkout', async () => {
