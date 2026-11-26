@@ -4,6 +4,7 @@ import type { BackendRelease } from '../backend/release';
 import { boundedBody } from '../backend/download';
 import { connectRemote, type ConnectOptions, type RemoteTransport } from './bootstrap';
 import { asFailure, failure } from './failure';
+import type { SshAuthentication } from './ssh-authentication';
 
 export interface ConnectionOptions {
   readonly host: RemoteHost;
@@ -21,7 +22,14 @@ export interface ConnectionOptions {
   /** How long health may stay delayed while the transport still delivers bytes. */
   readonly delayedHealthWindow?: number;
   readonly now?: () => number;
+  /** Overrides the sign-in deadline; tests use it to observe expiry. */
+  readonly authenticationTimeout?: number;
 }
+
+/** Brief waits are ordinary agent signing; longer ones are shown as approval requests. */
+const APPROVAL_NOTICE_DELAY = 1500;
+const approvalFailure = () => failure('authentication', 'authentication',
+  'The SSH sign-in was not approved. Choose Try again, then approve it in your SSH agent (such as 1Password) or on your security key.', 'authenticate');
 
 export const disconnected = (hostId: string): RemoteConnectionStatus => ({
   hostId, phase: 'disconnected', stage: 'transport', authenticated: false, transport: 'closed', application: 'unknown',
@@ -173,27 +181,51 @@ export class RemoteConnection {
       this.attemptInteractive = interactive;
       let stage: RemoteStage = 'authentication';
       let timer: ReturnType<typeof setTimeout> | undefined;
+      // A signature request waits on a person or device, not the network.
+      // Retrying it in the background would only raise another unseen prompt.
+      let awaitingApproval = false;
+      let approvalShown = false;
+      let approvalTimer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new AbortController();
       const resetDeadline = (next: RemoteStage) => {
         if (timer) clearTimeout(timer);
-        const timeout = next === 'download' ? 360_000 : next === 'installation' ? 180_000 : next === 'authentication' && interactive ? 150_000 : 60_000;
-        timer = setTimeout(() => deadline.abort(failure(next, 'timeout', 'The remote operation timed out. Check the host and network, then retry.', 'retry', true)), timeout);
+        const timeout = next === 'download' ? 360_000 : next === 'installation' ? 180_000 : next === 'authentication' ? this.options.authenticationTimeout ?? (interactive ? 150_000 : 60_000) : 60_000;
+        timer = setTimeout(() => deadline.abort(next === 'authentication' && awaitingApproval ? approvalFailure()
+          : failure(next, 'timeout', 'The remote operation timed out. Check the host and network, then retry.', 'retry', true)), timeout);
+      };
+      const authentication = (state: SshAuthentication) => {
+        if (setupSignal.aborted || stage !== 'authentication') return;
+        awaitingApproval = state === 'awaiting-approval';
+        if (!awaitingApproval) {
+          if (approvalTimer) { clearTimeout(approvalTimer); approvalTimer = undefined; }
+          if (this.status.awaitingApproval) this.publish({ ...this.status, awaitingApproval: undefined });
+          return;
+        }
+        approvalTimer ??= setTimeout(() => {
+          approvalTimer = undefined;
+          if (!awaitingApproval || setupSignal.aborted || stage !== 'authentication') return;
+          approvalShown = true;
+          this.log('authentication', 'approval', 'SSH is waiting for a key approval outside the app.');
+          this.publish({ ...this.status, awaitingApproval: true });
+        }, APPROVAL_NOTICE_DELAY);
       };
       const setupSignal = AbortSignal.any([signal, deadline.signal]);
       try {
         this.publish({ ...this.status, phase: attempt ? 'recovering' : 'connecting', stage, authenticated: false,
-          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined });
+          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined, awaitingApproval: undefined });
         resetDeadline(stage);
         const release = await this.options.release();
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
+          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
+            awaitingApproval = false;
+            if (approvalTimer) { clearTimeout(approvalTimer); approvalTimer = undefined; }
             this.publish({ ...this.status, phase: next === 'discovery' ? 'connecting' : 'setting-up', stage: next,
-              authenticated: true, progress: value ?? null, application: next === 'runtime' ? 'starting' : 'unknown' });
+              authenticated: true, progress: value ?? null, application: next === 'runtime' ? 'starting' : 'unknown', awaitingApproval: undefined });
           },
           waitingForUpdate: (update, force) => {
             if (setupSignal.aborted || !interactive) return;
@@ -258,7 +290,10 @@ export class RemoteConnection {
         }
       } catch (error) {
         if (signal.aborted) break;
-        const problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
+        let problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
+        // An approver that declines or times out on its own makes SSH report an
+        // ordinary key failure; name the step that needs the person instead.
+        if (approvalShown && problem.stage === 'authentication' && problem.code === 'authentication') problem = approvalFailure().failure;
         this.log(problem.stage, problem.code, problem.message);
         this.interactiveOwner = undefined;
         const now = (this.options.now ?? Date.now)();
@@ -266,9 +301,10 @@ export class RemoteConnection {
         const stopped = problem.transient && now - this.outageStarted >= (this.options.retryWindow ?? 600_000);
         this.paused = stopped || !problem.transient && this.requestedInteractiveOwner === undefined;
         this.publish({ ...this.status, phase: this.paused ? 'paused' : 'recovering', stage: problem.stage,
-          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined, updateWaiting: undefined });
+          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined, updateWaiting: undefined, awaitingApproval: undefined });
       } finally {
         if (timer) clearTimeout(timer);
+        if (approvalTimer) clearTimeout(approvalTimer);
         this.forcePendingUpdate = undefined;
         this.forcedInstance = undefined;
         this.wakeup?.abort();

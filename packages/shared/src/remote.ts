@@ -59,6 +59,8 @@ export interface RemoteConnectionStatus {
   readonly unreachableSince?: number;
   readonly retryStoppedAt?: number;
   readonly failure: RemoteFailure | null;
+  /** SSH is waiting for a key signature from an agent, security key or other approver outside the app. */
+  readonly awaitingApproval?: true;
   /** An explicit launch is waiting for an authenticated daemon to become idle. */
   readonly updateWaiting?: { readonly instance: string; readonly connections: number | null };
   readonly progress: { readonly receivedBytes: number; readonly totalBytes: number | null } | null;

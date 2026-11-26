@@ -6,6 +6,7 @@ import { backendRelease } from '../backend/release';
 import type { DownloadProgress } from '../backend/download';
 import { RemoteError, failure, sshFailure } from './failure';
 import { spawnSsh } from './ssh';
+import type { SshAuthentication } from './ssh-authentication';
 import { bootstrapWindowsScript } from './runtime-install-windows';
 import { bootstrapScript } from './runtime-install';
 import { archiveFor, type PrepareRemoteArchive } from './archives';
@@ -37,6 +38,8 @@ export interface ConnectOptions {
   readonly interactive: boolean;
   readonly ask: Ask;
   readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
+  /** OpenSSH login progress before the remote shell reports its platform. */
+  readonly authentication?: (state: SshAuthentication) => void;
   readonly waitingForUpdate?: (update: NonNullable<RemoteConnectionStatus['updateWaiting']>, force: () => void) => void;
   readonly updateStarting?: (instance: string) => void;
   readonly prepareArchive?: PrepareRemoteArchive;
@@ -84,7 +87,7 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
   const { command, payload } = remoteShell === 'windows'
     ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive)
     : await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
+  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper, options.authentication).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });

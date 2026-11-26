@@ -173,7 +173,9 @@ Main retains jittered exponential recovery (up to thirty seconds), stopping its
 timed loop after ten minutes of transient failure. Wake/unlock and OS interface
 or online-state changes restart only that clock stop. Interface changes, including
 VPN interfaces, are observed every five seconds. Authentication, configuration
-and trust failures wait for an explicit retry. All timers, notifications, native
+and trust failures wait for an explicit retry. `awaitingApproval` means SSH is
+waiting for an agent, security key or other approver outside the app; the
+island asks the person to approve the sign-in instead of reporting an outage. All timers, notifications, native
 listeners, HTTP reads and SSH resources retain their owning cleanup paths.
 
 `/reconnect` composes the production window with preview-only backend/transport

@@ -48,6 +48,14 @@ Only the app's session requirements are supplied as command-line options:
 - Background restoration adds `BatchMode=yes` and denies UI prompts. Explicit
   connect/retry retains the user's BatchMode. Interactive asks use the app's
   SSH_ASKPASS broker; the real DISPLAY environment is preserved.
+- `-v` reports login progress. The app parses it in memory and keeps it out
+  of failure classification. If the server has accepted a key and the
+  signature does not arrive, the login is waiting for an approver outside the
+  app: an agent that confirms each use (1Password, `ssh-add -c`), a security key
+  or a smart card. That wait is shown as an approval request. If the sign-in
+  deadline expires during it, or the approver declines, the connection pauses
+  for an explicit retry instead of being retried as a network outage, which
+  would raise another unseen prompt every attempt.
 
 Configured LocalForward, RemoteForward and DynamicForward listeners are managed
 by OpenSSH, separately from the app's managed-forward API. Conflicts and server

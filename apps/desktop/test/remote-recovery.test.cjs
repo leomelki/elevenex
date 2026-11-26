@@ -492,3 +492,60 @@ test('a damaged chat draft file cannot erase saved data or block the existing jo
   await manager.dispose();
   assert.equal(await readFile(path, 'utf8'), damaged);
 });
+
+test('a sign-in waiting on an outside approver pauses once instead of retrying unseen prompts', { timeout: 10000 }, async t => {
+  const attempts = []; const events = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()), backoff: 1, authenticationTimeout: 2500,
+    connect: async options => {
+      attempts.push(options.interactive);
+      options.authentication('authenticating'); options.authentication('awaiting-approval');
+      await delay(30000, undefined, { signal: options.signal });
+    },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => connection.snapshot().awaitingApproval === true);
+  assert.equal(connection.snapshot().stage, 'authentication');
+  await until(() => connection.snapshot().phase === 'paused');
+  const paused = connection.snapshot();
+  assert.equal(paused.failure.code, 'authentication'); assert.equal(paused.failure.transient, false);
+  assert.match(paused.failure.message, /approve/); assert.equal(paused.awaitingApproval, undefined);
+  await delay(100);
+  assert.deepEqual(attempts, [false], 'a background approval stall must not start another prompt');
+  assert.equal(events.some(status => status.phase === 'recovering'), false);
+});
+
+test('an approver that declines after its prompt is reported as an approval, and brief signing stays silent', { timeout: 10000 }, async t => {
+  const events = []; let attempts = 0;
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()),
+    connect: async options => {
+      attempts++;
+      options.authentication('awaiting-approval'); await delay(attempts === 1 ? 10 : 1700); options.authentication('authenticating');
+      throw failure('authentication', 'authentication', 'SSH authentication requires attention.', 'authenticate');
+    },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => connection.snapshot().phase === 'paused');
+  assert.doesNotMatch(connection.snapshot().failure.message, /approve/, 'an immediate key failure keeps its own explanation');
+  assert.equal(events.some(status => status.awaitingApproval), false, 'ordinary signing does not flash an approval request');
+  connection.retry(1);
+  await until(() => attempts === 2 && connection.snapshot().phase === 'paused');
+  assert.ok(events.some(status => status.awaitingApproval));
+  assert.match(connection.snapshot().failure.message, /approve/);
+});
+
+test('a sign-in stalled before any key is accepted remains a retried network timeout', { timeout: 10000 }, async t => {
+  let attempts = 0; const failures = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => { const value = connection.snapshot().failure; if (value) failures.push(value); }, backoff: 1, authenticationTimeout: 50,
+    connect: async options => { attempts++; options.authentication('authenticating'); await delay(30000, undefined, { signal: options.signal }); },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => attempts >= 2);
+  assert.equal(failures[0].code, 'timeout');
+  assert.equal(failures[0].transient, true);
+});

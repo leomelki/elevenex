@@ -12,4 +12,9 @@ describe('Outage escalation', () => {
     expect(machineReach('dev-box', 0, 3000, remote, { id: 'key', kind: 'credential', prompt: 'Passphrase:', expiresAt: 10000 })).toMatchObject({ fresh: true, tone: 'warn', detail: 'Unlock your key' });
     expect(machineReach('dev-box', 0, 3000, { ...remote, failure: { stage: 'authentication', code: 'host-trust', message: 'Changed', action: 'verify-host', transient: false } }, null)?.tone).toBe('danger');
   });
+  it('asks for an outside SSH approval instead of reporting a network outage', () => {
+    const waiting = { ...remote, stage: 'authentication', awaitingApproval: true } as const;
+    expect(machineReach('dev-box', 0, 1000, waiting, null)?.text).toBe('dev-box · approve the SSH sign-in');
+    expect(machineReach('dev-box', 0, 60000, waiting, null)?.key).toBe('approval');
+  });
 });
