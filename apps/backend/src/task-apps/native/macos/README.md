@@ -102,12 +102,19 @@ validates that specific window's visibility, ownership and size. A separate
 native control window (including AppKit's 66×20 title-bar controls) or another
 overlapping window must not continually restart the stream. Desktop-independent
 capture does not require moving unrelated apps out of the way. Input requires
-the selected window's original process to be foreground. The helper tolerates
-the 66×20 macOS sharing control at the upper-left of that same owner's
-captured window and blocks pointer events over it. An owned dialog still
-blocks control while the primary picture stays visible. Dismiss the dialog
-on the host to resume control. Clicks, drags and scrolls carry the verified
-window number and a position in that window so AppKit can dispatch them.
+the selected window's original process to be foreground. A primary click on
+the picture can request activation of that verified process. When activation
+is needed, the first click only requests focus. Click again to interact. If
+macOS declines the request, bring the window to the front on the task Mac.
+The helper tolerates the 66×20 macOS sharing control at the upper-left of
+that same owner's captured window. Other same-process title-bar controls and
+separate same-process windows allow input when the Accessibility focused
+window matches the captured WindowServer frame. Pointer input excludes the
+actual title-bar overlap. An owned dialog over the content or a different
+focused window blocks control with its own viewer message while the picture
+stays visible. Dismiss the dialog on the host to resume control. Clicks, drags
+and scrolls carry the verified window number and a position in that window so
+AppKit can dispatch them.
 The supervisor registers the private rendezvous before starting its monitor,
 so even a fast-exiting app cleans it up. No persistent launch agent, additional
 OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
@@ -189,12 +196,13 @@ The capture helper accepts only the group it created. ScreenCaptureKit filters o
 
 Desktop main obtains a short-lived ticket before attaching to the scope-bound App stream. A close or reconnect creates a fresh viewer identity. The process-level input lease releases held keys and buttons when a controlling viewer disconnects.
 
-Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens a disposable AppKit window on the task Mac and receives real ScreenCaptureKit frames. It checks that clicks, drags, scrolling, keys, and Unicode text reach the app with sharing controls present, that a dialog blocks input while video continues, and that control resumes after the dialog closes. Leave the fixture in the foreground during the check.
+Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens disposable AppKit windows on the task Mac and receives real ScreenCaptureKit frames. It checks clicks, drags, scrolling, keys, Unicode text, dialog blocking, and click-to-focus recovery after the second app takes focus. Leave focus switching to the fixtures during the check.
 
 On a signed-in Mac, `node scripts/test-task-app-macos.cjs --window-geometry`
 also checks real WindowServer selection with a simulated picture inset, window
-movement, resizing, a covering owned window and ownership rejection. This mode
-needs no capture or input grant. The interactive check requires the actual
+movement, resizing, title-bar control geometry, separate and covering windows,
+and ownership rejection. The fixture reads its own Accessibility focus without
+a capture or input grant. The interactive check requires the actual
 stream to keep delivering frames across several window-monitor ticks before
 testing input; receiving just its first keyframe does not establish stability.
 

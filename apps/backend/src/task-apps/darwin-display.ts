@@ -201,7 +201,9 @@ export class DarwinAppDisplay {
               ? APP_INPUT_GUIDANCE.permission
               : result === 3
                 ? APP_INPUT_GUIDANCE.foreground
-                : 'App input unavailable';
+                : result === 4
+                  ? APP_INPUT_GUIDANCE.window
+                  : 'App input unavailable';
           reject(result === 2 ? new AppSetupError('macos-accessibility', message) : new Error(message));
         }
       });

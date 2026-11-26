@@ -104,7 +104,7 @@ export class TaskAppStream {
             this.pending.delete(value.id);
             const code =
               "code" in value &&
-              (value.code === "permission" || value.code === "foreground")
+              (value.code === "permission" || value.code === "foreground" || value.code === "window")
                 ? value.code
                 : undefined;
             pending.done(value.ok, code);

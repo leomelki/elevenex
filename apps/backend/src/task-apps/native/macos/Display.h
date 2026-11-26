@@ -15,6 +15,9 @@ typedef NS_ENUM(uint8_t, AppInputResult) {
     AppInputAccepted = 1,
     AppInputNeedsAccessibility = 2,
     AppInputNeedsForeground = 3,
+    AppInputWindowBlocked = 4,
+    // The capture loop verifies this request before returning an input receipt.
+    AppInputActivationRequested = 255,
 };
 
 @interface AppWindow : NSObject
@@ -31,8 +34,10 @@ typedef NS_ENUM(uint8_t, AppInputResult) {
 - (NSDictionary *)firstOwnedWindow;
 // Revalidate the selected capture window and its original WindowServer size.
 - (BOOL)currentBounds:(CGRect *)bounds;
-// Input additionally protects the target from competing owned windows.
-- (BOOL)currentInputBounds:(CGRect *)bounds;
+// Validate the selected target and distinguish a competing owned window from lost foreground.
+- (AppInputResult)inputWindowBounds:(CGRect *)bounds excluding:(NSMutableArray<NSValue *> *)occlusions
+    verifyFocus:(BOOL)verifyFocus;
+@property(nonatomic, readonly, getter=isFrontmost) BOOL frontmost;
 @property(nonatomic, readonly) BOOL hasHeldInput;
 - (AppInputResult)input:(NSDictionary *)input;
 - (void)releaseInput;

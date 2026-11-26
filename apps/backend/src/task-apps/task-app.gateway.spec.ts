@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { APP_INPUT_GUIDANCE } from '@elevenex/shared';
 import { WebSocket } from 'ws';
 import { createEdgeProxyServer } from '../proxy/edge-proxy.server.js';
 import type { TasksService } from '../tasks/tasks.service.js';
@@ -162,6 +163,13 @@ describe('task app private desktop transport', () => {
         expect.any(String),
         input,
       );
+      host.input.mockRejectedValueOnce(new Error(APP_INPUT_GUIDANCE.window));
+      ws.send(JSON.stringify({ id: 3, input }));
+      expect(JSON.parse((await once(ws, 'message'))[0].toString())).toEqual({
+        id: 3,
+        ok: false,
+        code: 'window',
+      });
       expect(frame(false, 11)).toBeUndefined();
       expect(frame(true, 12)).toBe(true);
       await once(ws, 'message');

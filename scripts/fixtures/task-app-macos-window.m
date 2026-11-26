@@ -56,13 +56,19 @@
     }
 }
 @end
-int main(void) {
+int main(int argc, char **argv) {
     @autoreleasepool {
+        BOOL competingApp = argc == 2 && !strcmp(argv[1], "--competing-app");
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidBecomeActiveNotification
+            object:NSApp queue:nil usingBlock:^(NSNotification *notification) {
+                puts(competingApp ? "competing-app-activated" : "activated");
+                fflush(stdout);
+            }];
         NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(120, 120, 480, 320)
             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-        window.title = @"Elevenex capture and input test";
+        window.title = competingApp ? @"Elevenex input test competing app" : @"Elevenex capture and input test";
         window.animationBehavior = NSWindowAnimationBehaviorNone;
         window.contentView = [[TaskAppTestView alloc] initWithFrame:window.contentView.frame];
         [window makeKeyAndOrderFront:nil];

@@ -47,6 +47,9 @@ it.each([
   expect(commands[1].kind).toBe('key');
   channel.push(receipt(commands[1].id, 2));
   await expect(input).rejects.toThrow('Accessibility');
+  const blocked = display.input({ kind: 'key', code: 'Enter', down: true });
+  channel.push(receipt(commands[2].id, 4));
+  await expect(blocked).rejects.toThrow('blocking control');
   channel.push(receipt(0, flag));
   channel.push(packet);
   await new Promise((resolve) => setImmediate(resolve));

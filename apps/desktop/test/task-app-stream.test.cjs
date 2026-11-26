@@ -43,7 +43,11 @@ test('app stream waits for a painted frame before control, rejects interrupted i
     const requested = once(peer, 'message');
     const writing = stream.control(input);
     assert.deepEqual(JSON.parse((await requested)[0]), { id: 1, input });
-    const interrupted = assert.rejects(writing, /control interrupted/);
+    peer.send(JSON.stringify({ id: 1, ok: false, code: 'window' }));
+    await assert.rejects(writing, /blocking control/);
+    const next = once(peer, 'message');
+    const interrupted = assert.rejects(stream.control(input), /control interrupted/);
+    assert.deepEqual(JSON.parse((await next)[0]), { id: 2, input });
     const releasing = stream.release();
     scope.abort();
     await Promise.all([interrupted, releasing, ended.promise]);

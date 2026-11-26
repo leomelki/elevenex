@@ -56,6 +56,37 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
         fabs(surface.size.width - 66) <= 1 && fabs(surface.size.height - 20) <= 1;
 }
 
+static BOOL focusedWindowHasBounds(pid_t owner, CGRect bounds) {
+    AXUIElementRef application = AXUIElementCreateApplication(owner);
+    if (!application) return NO;
+    CFTypeRef rawWindow = NULL;
+    AXError result = AXUIElementSetMessagingTimeout(application, 0.05f);
+    if (result == kAXErrorSuccess) result = AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute, &rawWindow);
+    CFRelease(application);
+    id windowValue = CFBridgingRelease(rawWindow);
+    if (result != kAXErrorSuccess || !windowValue ||
+        CFGetTypeID((__bridge CFTypeRef)windowValue) != AXUIElementGetTypeID()) return NO;
+
+    AXUIElementRef window = (__bridge AXUIElementRef)windowValue;
+    NSArray *attributes = @[(__bridge NSString *)kAXPositionAttribute, (__bridge NSString *)kAXSizeAttribute];
+    CFArrayRef rawValues = NULL;
+    result = AXUIElementSetMessagingTimeout(window, 0.05f);
+    if (result == kAXErrorSuccess) result = AXUIElementCopyMultipleAttributeValues(window,
+        (__bridge CFArrayRef)attributes, kAXCopyMultipleAttributeOptionStopOnError, &rawValues);
+    NSArray *values = CFBridgingRelease(rawValues);
+    CGRect focused;
+    return result == kAXErrorSuccess && values.count == 2 &&
+        CFGetTypeID((__bridge CFTypeRef)values[0]) == AXValueGetTypeID() &&
+        CFGetTypeID((__bridge CFTypeRef)values[1]) == AXValueGetTypeID() &&
+        AXValueGetValue((__bridge AXValueRef)values[0], kAXValueCGPointType, &focused.origin) &&
+        AXValueGetValue((__bridge AXValueRef)values[1], kAXValueCGSizeType, &focused.size) &&
+        CGRectEqualToRect(focused, bounds);
+}
+
+static CGMouseButton appMouseButton(NSInteger button) {
+    return button == 0 ? kCGMouseButtonLeft : button == 1 ? kCGMouseButtonCenter : kCGMouseButtonRight;
+}
+
 @implementation AppWindow {
     NSMutableSet<NSNumber *> *_keys;
     NSMutableSet<NSNumber *> *_buttons;
@@ -76,41 +107,74 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
     }
     return nil;
 }
+- (BOOL)validateWindow:(NSDictionary *)row bounds:(CGRect *)bounds {
+    return [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
+        [row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] &&
+        [row[(__bridge NSString *)kCGWindowOwnerPID] intValue] == self.owner &&
+        ownsAppProcess(self.group, self.owner) && windowRect(row, bounds) &&
+        CGSizeEqualToSize(bounds->size, self.windowBounds.size);
+}
 - (BOOL)currentBounds:(CGRect *)bounds {
     // Capture is tied to its selected window, independently of occluding app
     // windows or AppKit's separate title-bar control windows.
     NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow | kCGWindowListExcludeDesktopElements, self.window));
-    for (NSDictionary *row in rows) {
-        if ([row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != self.window ||
-            ![row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] ||
-            [row[(__bridge NSString *)kCGWindowOwnerPID] intValue] != self.owner ||
-            !ownsAppProcess(self.group, self.owner)) continue;
-        return windowRect(row, bounds) &&
-            CGSizeEqualToSize(bounds->size, self.windowBounds.size);
-    }
-    return NO;
+    return [self validateWindow:rows.firstObject bounds:bounds];
 }
-- (BOOL)currentInputBounds:(CGRect *)bounds {
-    return [self currentInputBounds:bounds chrome:nil];
-}
-- (BOOL)currentInputBounds:(CGRect *)bounds chrome:(NSMutableArray<NSValue *> *)chrome {
-    if (![self currentBounds:bounds]) return NO;
+- (AppInputResult)inputWindowBounds:(CGRect *)bounds excluding:(NSMutableArray<NSValue *> *)occlusions
+    verifyFocus:(BOOL)verifyFocus {
+    // Read the target and its overlays from the same WindowServer snapshot so
+    // a move cannot leave them measured at different screen positions.
     CGWindowListOption options = kCGWindowListOptionOnScreenAboveWindow | kCGWindowListOptionIncludingWindow |
         kCGWindowListExcludeDesktopElements;
-    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, self.window));
-    for (NSDictionary *row in rows) {
-        if ([row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window)
-            return YES;
+    NSArray<NSDictionary *> *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, self.window));
+    if (!rows.count) return AppInputUnavailable;
+    NSUInteger targetIndex = [rows indexOfObjectPassingTest:^BOOL(NSDictionary *row, NSUInteger index, BOOL *stop) {
+        return [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window;
+    }];
+    if (targetIndex == NSNotFound || ![self validateWindow:rows[targetIndex] bounds:bounds]) return AppInputUnavailable;
+
+    // Unfamiliar shallow title-bar overlaps require matching Accessibility
+    // focus. Dialogs over the content block input.
+    CGFloat titleBarDepth = MIN(48.0, bounds->size.height / 3);
+    CGRect titleBar = CGRectMake(bounds->origin.x, bounds->origin.y, bounds->size.width, titleBarDepth);
+    BOOL ambiguousFocus = NO;
+    for (NSUInteger index = 0; index < targetIndex; index++) {
+        NSDictionary *row = rows[index];
         if ([row[(__bridge NSString *)kCGWindowLayer] integerValue] != 0) continue;
         pid_t owner = [row[(__bridge NSString *)kCGWindowOwnerPID] intValue];
         if (owner != self.owner && !ownsAppProcess(self.group, owner)) continue;
         CGRect surface;
-        if (!windowRect(row, &surface)) return NO;
+        if (!windowRect(row, &surface)) return AppInputWindowBlocked;
         if (surface.size.width < 16 || surface.size.height < 16) continue;
-        if (owner != self.owner || !sharingTitleBarSurface(*bounds, surface)) return NO;
-        [chrome addObject:[NSValue valueWithRect:NSRectFromCGRect(surface)]];
+        if (owner != self.owner) return AppInputWindowBlocked;
+        CGRect overlap = CGRectIntersection(*bounds, surface);
+        if (CGRectIsEmpty(overlap)) {
+            ambiguousFocus = YES;
+            continue;
+        }
+        if (!sharingTitleBarSurface(*bounds, surface)) {
+            if (surface.size.height > titleBarDepth || !CGRectContainsRect(titleBar, overlap)) return AppInputWindowBlocked;
+            ambiguousFocus = YES;
+        }
+        [occlusions addObject:[NSValue valueWithRect:NSRectFromCGRect(overlap)]];
     }
-    return NO;
+    return verifyFocus && ambiguousFocus && !focusedWindowHasBounds(self.owner, *bounds)
+        ? AppInputWindowBlocked : AppInputAccepted;
+}
+- (BOOL)isFrontmost {
+    return self.owner > 1 && NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == self.owner;
+}
+- (BOOL)requestActivation {
+    if (!ownsAppProcess(self.group, self.owner)) return NO;
+    AXUIElementRef application = AXUIElementCreateApplication(self.owner);
+    if (!application) return NO;
+    // AppKit activation can be ignored when the helper is in the background.
+    // Use the existing Accessibility grant and bound the native call in case
+    // the owned app is unresponsive.
+    BOOL requested = AXUIElementSetMessagingTimeout(application, 0.15f) == kAXErrorSuccess &&
+        AXUIElementSetAttributeValue(application, kAXFrontmostAttribute, kCFBooleanTrue) == kAXErrorSuccess;
+    CFRelease(application);
+    return requested;
 }
 - (CGEventFlags)flags {
     CGEventFlags flags = 0;
@@ -193,16 +257,43 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
     [_buttons removeAllObjects];
 }
 - (AppInputResult)input:(NSDictionary *)input {
-    if ([input[@"kind"] isEqual:@"release"]) { [self releaseInput]; return AppInputAccepted; }
+    NSString *kind = input[@"kind"];
+    if ([kind isEqual:@"release"]) { [self releaseInput]; return AppInputAccepted; }
     if (!AXIsProcessTrusted()) { [self releaseInput]; return AppInputNeedsAccessibility; }
     if (!CGPreflightScreenCaptureAccess() || !AppSessionActive()) { [self releaseInput]; return AppInputUnavailable; }
+    NSInteger button = [input[@"button"] integerValue];
+    // A focus-only click or a button released after focus loss leaves no
+    // mouse-down event for this mouse-up to match.
+    if ([kind isEqual:@"up"] && button >= 0 && button <= 2 && ![_buttons containsObject:@(appMouseButton(button))])
+        return AppInputAccepted;
     CGRect bounds;
-    NSMutableArray<NSValue *> *chrome = [NSMutableArray array];
-    if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.owner ||
-        ![self currentInputBounds:&bounds chrome:chrome]) { [self releaseInput]; return AppInputNeedsForeground; }
-    if ([self postInput:input bounds:bounds chrome:chrome]) return AppInputAccepted;
+    NSMutableArray<NSValue *> *occlusions = [NSMutableArray array];
+    BOOL wasFrontmost = self.frontmost;
+    AppInputResult target = [self inputWindowBounds:&bounds excluding:occlusions verifyFocus:wasFrontmost];
+    if (target != AppInputAccepted) { [self releaseInput]; return target; }
+    if (!wasFrontmost || !self.frontmost) {
+        [self releaseInput];
+        if (![kind isEqual:@"down"] || button != 0) return AppInputNeedsForeground;
+        if (![self inputPoint:NULL forInput:input bounds:bounds chrome:occlusions]) return AppInputUnavailable;
+        // Activation can take until the next run-loop turn. Use this click
+        // for focus only and verify foreground again before posting input.
+        return [self requestActivation] ? AppInputActivationRequested : AppInputNeedsForeground;
+    }
+    if ([self postInput:input bounds:bounds chrome:occlusions]) return AppInputAccepted;
     [self releaseInput];
     return AppInputUnavailable;
+}
+- (BOOL)inputPoint:(NSPoint *)windowPoint forInput:(NSDictionary *)input bounds:(CGRect)bounds chrome:(NSArray<NSValue *> *)chrome {
+    CGFloat x = [input[@"x"] doubleValue], y = [input[@"y"] doubleValue];
+    if (x < 0 || y < 0 || x >= self.width || y >= self.height) return NO;
+    // The captured picture excludes any WindowServer border. Preserve that
+    // inset and follow moves without treating them as a resize.
+    CGPoint point = CGPointMake(bounds.origin.x + self.bounds.origin.x - self.windowBounds.origin.x + x * self.bounds.size.width / self.width,
+                             bounds.origin.y + self.bounds.origin.y - self.windowBounds.origin.y + y * self.bounds.size.height / self.height);
+    if (!CGRectContainsPoint(bounds, point)) return NO;
+    for (NSValue *value in chrome) if (CGRectContainsPoint(NSRectToCGRect(value.rectValue), point)) return NO;
+    if (windowPoint) *windowPoint = NSMakePoint(point.x - CGRectGetMinX(bounds), point.y - CGRectGetMinY(bounds));
+    return YES;
 }
 - (BOOL)postInput:(NSDictionary *)input bounds:(CGRect)bounds chrome:(NSArray<NSValue *> *)chrome {
     NSString *kind = input[@"kind"];
@@ -226,15 +317,7 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
         }
         return YES;
     }
-    CGFloat x = [input[@"x"] doubleValue], y = [input[@"y"] doubleValue];
-    if (x < 0 || y < 0 || x >= self.width || y >= self.height) return NO;
-    // The captured picture excludes any WindowServer border. Preserve that
-    // inset and follow moves without treating them as a resize.
-    CGPoint point = CGPointMake(bounds.origin.x + self.bounds.origin.x - self.windowBounds.origin.x + x * self.bounds.size.width / self.width,
-                             bounds.origin.y + self.bounds.origin.y - self.windowBounds.origin.y + y * self.bounds.size.height / self.height);
-    if (!CGRectContainsPoint(bounds, point)) return NO;
-    for (NSValue *value in chrome) if (CGRectContainsPoint(NSRectToCGRect(value.rectValue), point)) return NO;
-    _lastWindowPoint = NSMakePoint(point.x - CGRectGetMinX(bounds), point.y - CGRectGetMinY(bounds));
+    if (![self inputPoint:&_lastWindowPoint forInput:input bounds:bounds chrome:chrome]) return NO;
     if ([kind isEqual:@"wheel"]) return [self scroll:input];
     if ([kind isEqual:@"move"]) {
         if ([_buttons containsObject:@0]) return [self mouse:NSEventTypeLeftMouseDragged button:kCGMouseButtonLeft];
@@ -246,7 +329,7 @@ static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
     if (!down && ![kind isEqual:@"up"]) return NO;
     NSInteger dom = [input[@"button"] integerValue];
     if (dom < 0 || dom > 2) return NO;
-    CGMouseButton b = dom == 0 ? kCGMouseButtonLeft : dom == 1 ? kCGMouseButtonCenter : kCGMouseButtonRight;
+    CGMouseButton b = appMouseButton(dom);
     if (down) [_buttons addObject:@(b)]; else [_buttons removeObject:@(b)];
     NSEventType type = b == kCGMouseButtonLeft ? (down ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp) :
         b == kCGMouseButtonRight ? (down ? NSEventTypeRightMouseDown : NSEventTypeRightMouseUp) : (down ? NSEventTypeOtherMouseDown : NSEventTypeOtherMouseUp);

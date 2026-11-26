@@ -62,9 +62,8 @@ static uint8_t captureFailure(NSError *error) {
     if (self.stream) {
         CGRect bounds;
         if (![self.target currentBounds:&bounds]) { [self end:23]; return; }
-        if (self.target.hasHeldInput &&
-            (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner ||
-             ![self.target currentInputBounds:&bounds])) [self.target releaseInput];
+        if (self.target.hasHeldInput && (!self.target.frontmost ||
+            [self.target inputWindowBounds:&bounds excluding:nil verifyFocus:YES] != AppInputAccepted)) [self.target releaseInput];
         // Capture the owner on the main queue. A queued refresh can run after
         // the view has been closed or a replacement encoder has been created.
         AppEncoder *currentEncoder = self.encoder;
@@ -169,7 +168,20 @@ int runAppCapture(pid_t group, int displayDescriptor, int owner) {
                 } else {
                     AppInputResult result = [message[@"kind"] isEqual:@"release"] || display.active
                         ? [display.target input:message] : AppInputUnavailable;
-                    displayReceipt(id, result);
+                    if (result != AppInputActivationRequested) { displayReceipt(id, result); return; }
+                    // The frontmost app changes asynchronously. Give macOS one
+                    // bounded turn to confirm focus and never replay the click.
+                    NSUInteger generation = display.generation;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                        CGRect bounds;
+                        AppInputResult receipt = AppInputUnavailable;
+                        if (generation == display.generation && AppSessionActive()) {
+                            receipt = display.target.frontmost
+                                ? [display.target inputWindowBounds:&bounds excluding:nil verifyFocus:YES]
+                                : AppInputNeedsForeground;
+                        }
+                        displayReceipt(id, receipt);
+                    });
                 }
             });
         }}

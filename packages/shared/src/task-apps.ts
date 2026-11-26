@@ -3,6 +3,8 @@ export const APP_INPUT_GUIDANCE = {
     "Allow Accessibility for Elevenex Agent on the task Mac to control this window.",
   foreground:
     "Bring the owned app window to the foreground on the task machine to control it.",
+  window:
+    "A dialog or another window from the shared app is blocking control. Dismiss it on the task Mac, then click the preview again.",
 } as const;
 
 export const APP_VIDEO_MAX_AXIS = 4096;

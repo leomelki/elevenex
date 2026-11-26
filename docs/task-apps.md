@@ -6,6 +6,8 @@ The **Apps** tab appears while the selected task has a pending launch approval o
 
 The active conversation can reveal a newly requested app without moving keyboard focus. Its **Open app** link is scoped to the selected task. Click inside the picture, or Tab to it and press Enter, to interact. **Shift + Escape** returns the keyboard to Elevenex. Each run has a tab, like Browser tabs, and the same row offers actual size, a separate window, logs and stop for the selected run. Closing or detaching a viewer leaves the app running. **Reconnect** establishes a fresh viewer.
 
+If another app is in front on the task Mac, click the picture to request focus for the shared app, then click again to interact. If macOS still requires manual focus, bring the shared window to the front on the task Mac and try again.
+
 ## Agent operations and permissions
 
 - `start_app` accepts a display name, a caller-generated request UUID, and one of an executable with separate arguments, a saved `actionId`, or `androidAvd`. For example, launch `pnpm` with `["desktop:dev"]`. The backend resolves the working directory and machine from the authenticated coding session. Keep the request UUID when reconciling an interrupted launch. A Linux stream accepts an optional `virtualDisplay` with even pixel dimensions up to 1920 per axis and 2,073,600 total pixels. Its defaults are 1280×800 for desktop apps and 720×1280 for Android.

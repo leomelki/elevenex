@@ -139,9 +139,10 @@ async function interactive(directory, helperPath, control = true) {
   const display = new DarwinAppDisplay(app);
   let phase = 'waiting for capture';
   const timeout = AbortSignal.timeout(45000), timedOut = new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error(`Interactive app test timed out while ${phase}`))));
+  const countMarkers = marker => markers.split('\n').filter(line => line === marker).length;
   const waitForMarker = async (marker, count = 1) => {
     phase = `waiting for ${marker} event ${count}`;
-    while (markers.split(marker + '\n').length - 1 < count)
+    while (countMarkers(marker) < count)
       await Promise.race([new Promise(resolve => setTimeout(resolve, 25)), timedOut]);
   };
   try {
@@ -174,22 +175,19 @@ async function interactive(directory, helperPath, control = true) {
       const click = async () => {
         for (const kind of ['down', 'up']) await display.input({ kind, ...point });
       };
-      // macOS can briefly make its capture-consent prompt foreground. Wait
-      // for the fixture to be eligible while verifying the private surface
-      // itself still rejects pointer events.
+      const chromePoint = { button: 0, x: Math.round(frame.width * 28 / 480), y: Math.round(frame.height * 14 / 352) };
+      // macOS can briefly make its capture-consent prompt foreground.
       phase = 'waiting for foreground to return to the fixture';
       for (;;) {
         try {
-          await display.input({ kind: 'down', button: 0,
-            x: Math.round(frame.width * 28 / 480), y: Math.round(frame.height * 14 / 352) });
+          await display.input({ kind: 'move', x: point.x, y: point.y });
+          break;
         } catch (error) {
-          if (/input unavailable/.test(error.message)) break;
           if (!/foreground/.test(error.message)) throw error;
           await Promise.race([new Promise(resolve => setTimeout(resolve, 250)), timedOut]);
-          continue;
         }
-        assert.fail('A click on the private title-bar surface was accepted');
       }
+      await assert.rejects(display.input({ kind: 'down', ...chromePoint }), /input unavailable/);
       await click();
       await waitForMarker('clicked');
       await waitForMarker('released');
@@ -211,12 +209,35 @@ async function interactive(directory, helperPath, control = true) {
       // Wait for the dialog to enter WindowServer ordering. Its private
       // sharing policy must not accidentally classify it as title-bar chrome.
       await new Promise(resolve => setTimeout(resolve, 500));
-      await assert.rejects(display.input({ kind: 'down', ...point }), /foreground/);
+      await assert.rejects(display.input({ kind: 'down', ...point }), /blocking control/);
       await waitForMarker('dialog-closed');
       assert.ok(frames > framesBeforeDialog, 'A dialog must leave the picture live');
       await click();
       await waitForMarker('clicked', 3);
-      console.log('Native live input: click, drag, scroll, key, Unicode text, dialog rejection and restored control verified');
+      await waitForMarker('released', 3);
+
+      const competingApp = spawn(fixture, ['--competing-app'], { detached: true, stdio: ['ignore', 'pipe', 'inherit'] });
+      const competingExit = once(competingApp, 'exit');
+      competingApp.stdout.setEncoding('utf8').on('data', value => { markers += value; });
+      try {
+        await waitForMarker('competing-app-activated');
+        const activations = countMarkers('activated');
+        await assert.rejects(display.input({ kind: 'move', x: point.x, y: point.y }), /foreground/);
+        await assert.rejects(display.input({ kind: 'key', code: 'KeyA', down: true }), /foreground/);
+        await assert.rejects(display.input({ kind: 'down', ...chromePoint }), /input unavailable/);
+        assert.equal(countMarkers('activated'), activations, 'Passive and blocked events must leave focus alone');
+        await click();
+        await waitForMarker('activated', activations + 1);
+        await click();
+        await waitForMarker('clicked', 4);
+        await waitForMarker('released', 4);
+        assert.equal(countMarkers('clicked'), 4, 'The activation click must not reach the app');
+        assert.equal(countMarkers('released'), 4, 'The activation click must not send an unmatched mouse-up');
+      } finally {
+        competingApp.kill();
+        await competingExit;
+      }
+      console.log('Native live input: click, drag, scroll, key, Unicode text, dialog rejection and click-to-focus recovery verified');
     } finally { stop(); }
   } finally {
     app.stdin.end();

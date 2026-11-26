@@ -170,12 +170,7 @@ export class TaskAppGateway implements OnModuleDestroy {
           .catch((error: unknown) => {
             if (ws.readyState !== WebSocket.OPEN) return;
             const message = error instanceof Error ? error.message : undefined;
-            const code =
-              message === APP_INPUT_GUIDANCE.permission
-                ? 'permission'
-                : message === APP_INPUT_GUIDANCE.foreground
-                  ? 'foreground'
-                  : undefined;
+            const code = Object.entries(APP_INPUT_GUIDANCE).find(([, guidance]) => guidance === message)?.[0];
             ws.send(JSON.stringify({ id, ok: false, code }));
           })
           .finally(() => {
