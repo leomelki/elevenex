@@ -39,12 +39,39 @@ async function setupPreview(directory, bundle, output) {
     ['resume-input', { screen: true, input: false }, 'light', 'resume-input'],
     ['permission-transition', { screen: false, input: false }, 'light', 'transition'],
     ['reopen-after-revocation', { screen: true, input: true }, 'light', 'reopen'],
+    ['accessibility-repair-help', { screen: true, input: false }, 'light', 'reset-help'],
+    ['accessibility-repair-help-dark', { screen: true, input: false }, 'dark', 'reset-help'],
+    ['accessibility-repair-success', { screen: true, input: false }, 'light', 'reset-success'],
+    ['accessibility-repair-success-dark', { screen: true, input: false }, 'dark', 'reset-success'],
+    ['accessibility-repair-failure', { screen: true, input: false }, 'light', 'reset-failure'],
+    ['accessibility-repair-failure-dark', { screen: true, input: false }, 'dark', 'reset-failure'],
+    ['accessibility-repair-launch-failure', { screen: true, input: false }, 'light', 'reset-launch-failure'],
+    ['accessibility-repair-busy', { screen: true, input: false }, 'light', 'reset-busy'],
+    ['accessibility-repair-timeout', { screen: true, input: false }, 'light', 'reset-timeout'],
+    ['accessibility-repair-retry', { screen: true, input: false }, 'light', 'reset-retry'],
+    ['accessibility-repair-granted', { screen: true, input: false }, 'light', 'reset-then-enabled'],
+    ['accessibility-repair-close', { screen: true, input: false }, 'light', 'reset-close'],
+    ['accessibility-repair-reopen', { screen: true, input: false }, 'light', 'reset-reopen'],
+    ['accessibility-repair-compact', { screen: true, input: false }, 'light', 'reset-success-compact'],
+    ['accessibility-repair-failure-compact-dark', { screen: true, input: false }, 'dark', 'reset-failure-compact'],
   ]) {
     writeFileSync(state, JSON.stringify(permission));
-    execFileSync(executable, [join(output, name + '.png'), theme, action], {
-      stdio: 'inherit', timeout: 10000,
+    const stdout = execFileSync(executable, [join(output, name + '.png'), theme, action], {
+      stdio: ['ignore', 'pipe', 'inherit'], timeout: 10000,
       env: { ...process.env, ELEVENEX_AGENT_FIXTURE_STATE: state },
     });
+    process.stdout.write(stdout);
+    const resetChild = stdout.toString().match(/RESET_CHILD_PID=(\d+)/);
+    if (resetChild) {
+      // Allow launchd to reap the killed child after its setup parent exits.
+      const pid = Number(resetChild[1]);
+      let alive = true;
+      for (let attempt = 0; attempt < 20 && alive; attempt++) {
+        try { process.kill(pid, 0); } catch (error) { if (error.code !== 'ESRCH') throw error; alive = false; }
+        if (alive) await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(alive, false, 'Closing setup must stop its pending Accessibility reset');
+    }
     const bytes = readFileSync(join(output, name + '.png'));
     assert.equal(bytes.subarray(1,4).toString(), 'PNG');
     captures.push({ name, file: name + '.png', theme, permissions: JSON.parse(readFileSync(state, 'utf8')), action,
@@ -53,7 +80,10 @@ async function setupPreview(directory, bundle, output) {
   writeFileSync(join(output, 'report.json'), JSON.stringify({
     verified: true, kind: 'native-setup', permissionFixtures: true,
     captures, checks: ['native compilation', 'bundle signature', 'process cleanup', 'visible control bounds',
-      'missed drop feedback', 'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen'],
+      'missed drop feedback', 'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen',
+      'explicit reset intent', 'repair keyboard focus', 'reset success requires a fresh grant', 'reset failure fallback',
+      'reset launch failure', 'reset busy controls', 'reset timeout', 'reset retry', 'grant after reset', 'reset cleanup on close',
+      'reset cancellation on reopen', 'compact repair layout'],
   }, null, 2) + '\n');
 }
 

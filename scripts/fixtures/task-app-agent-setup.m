@@ -62,9 +62,86 @@ int main(int argc, char **argv) {
         }
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:7];
         __block BOOL reopened = NO;
+        __block NSUInteger resetCount = 0;
+        __block NSUInteger repairStep = 0;
+        __block NSTask *resetTask = nil;
+        __block BOOL compact = NO;
+        BOOL repair = [action hasPrefix:@"reset-"];
         [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
             NSWindow *window = NSApp.windows.firstObject;
             if (!window || !window.visible) { [NSApp terminate:nil]; exit(1); }
+            if (repair) {
+                if ([action hasSuffix:@"-compact"] && !compact) {
+                    compact = YES;
+                    NSRect frame = window.frame;
+                    frame.origin.x += 1;
+                    [window setFrame:frame display:YES];
+                    [window setContentSize:NSMakeSize(264,window.contentView.bounds.size.height)];
+                    return;
+                }
+                if (repairStep == 0) {
+                    NSButton *help = buttonNamed(window.contentView,@"Already enabled?");
+                    if (!help) { if (deadline.timeIntervalSinceNow > 0) return; exit(1); }
+                    // Merely polling or opening help must never clear a permission.
+                    if (resetCount != 0) exit(1);
+                    [help performClick:nil];
+                    NSButton *reset = buttonNamed(window.contentView,@"Reset Accessibility");
+                    if (!reset || resetCount != 0 || window.firstResponder != reset) exit(1);
+                    if ([action isEqualToString:@"reset-help"]) repairStep = 2;
+                    else {
+                        [reset performClick:nil];
+                        if (resetCount != 1) exit(1);
+                        repairStep = 1;
+                        if (![action isEqualToString:@"reset-busy"] && ![action isEqualToString:@"reset-close"] && ![action isEqualToString:@"reset-reopen"]) return;
+                        if (!resetTask.running || reset.enabled || buttonNamed(window.contentView,@"Skip").enabled) exit(1);
+                        if ([action isEqualToString:@"reset-reopen"]) {
+                            [NSApp.delegate applicationShouldHandleReopen:NSApp hasVisibleWindows:YES];
+                            repairStep = 4;
+                            return;
+                        }
+                    }
+                } else if (repairStep == 1) {
+                    BOOL failure = [action hasPrefix:@"reset-failure"] || [action isEqualToString:@"reset-launch-failure"] ||
+                        [action isEqualToString:@"reset-timeout"] || ([action isEqualToString:@"reset-retry"] && resetCount == 1);
+                    NSString *message = failure
+                        ? @"macOS couldn’t reset the entry. In Accessibility, select Elevenex Agent and click − to remove it. Add it again using the steps above, then turn on its switch."
+                        : @"Entry cleared. Add Elevenex Agent to Accessibility again using the steps above, then turn on its switch.";
+                    if (!containsText(window.contentView,message)) {
+                        if (deadline.timeIntervalSinceNow > 0) return;
+                        fprintf(stderr,"Repair did not settle: %s\n", action.UTF8String); exit(1);
+                    }
+                    NSButton *reset = buttonNamed(window.contentView,@"Reset Accessibility");
+                    if (!reset.enabled || resetTask.running || buttonNamed(window.contentView,@"Done")) exit(1);
+                    if ([action isEqualToString:@"reset-retry"] && resetCount == 1) {
+                        [reset performClick:nil];
+                        if (resetCount != 2) exit(1);
+                        return;
+                    }
+                    if ([action isEqualToString:@"reset-then-enabled"]) {
+                        NSString *path = NSProcessInfo.processInfo.environment[@"ELEVENEX_AGENT_FIXTURE_STATE"];
+                        [@"{\"screen\":true,\"input\":true}" writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+                        repairStep = 3;
+                        return;
+                    }
+                    repairStep = 2;
+                } else if (repairStep == 3) {
+                    if (!containsText(window.contentView,@"Permissions are on")) {
+                        if (deadline.timeIntervalSinceNow > 0) return;
+                        exit(1);
+                    }
+                    if (buttonNamed(window.contentView,@"Reset Accessibility") || buttonNamed(window.contentView,@"Already enabled?") ||
+                        !buttonNamed(window.contentView,@"Done")) exit(1);
+                    repairStep = 2;
+                }
+                if (repairStep == 4) {
+                    if (resetTask.running || !containsText(window.contentView,@"macOS may remember an older Elevenex Agent. Reset only its Accessibility permission, then add it again.")) {
+                        if (deadline.timeIntervalSinceNow > 0) return;
+                        exit(1);
+                    }
+                    if (!buttonNamed(window.contentView,@"Reset Accessibility").enabled) exit(1);
+                    repairStep = 2;
+                }
+            } else if (buttonNamed(window.contentView,@"Reset Accessibility") || resetCount) exit(1);
             if ([action isEqualToString:@"transition"] && !containsText(window.contentView,@"Allow keyboard and mouse")) {
                 if (deadline.timeIntervalSinceNow > 0) return;
                 exit(1);
@@ -123,14 +200,29 @@ int main(int argc, char **argv) {
                 fprintf(stderr,"A visible setup control is outside the panel\n");
                 exit(1);
             }
+            if (compact && window.contentView.bounds.size.width > 264) exit(1);
             NSBitmapImageRep *rep = [window.contentView bitmapImageRepForCachingDisplayInRect:window.contentView.bounds];
             [window.contentView cacheDisplayInRect:window.contentView.bounds toBitmapImageRep:rep];
             NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
             BOOL saved = [png writeToFile:output atomically:YES];
             printf("Setup window rendered %gx%g\n", window.contentView.bounds.size.width, window.contentView.bounds.size.height);
+            if ([action isEqualToString:@"reset-close"] || [action isEqualToString:@"reset-busy"]) printf("RESET_CHILD_PID=%d\n",resetTask.processIdentifier);
+            fflush(stdout);
             [window close];
             exit(saved ? 0 : 1);
         }];
-        return runAgentSetup();
+        return runAgentSetup(^{
+            resetCount++;
+            resetTask = [NSTask new];
+            NSString *executable = @"/usr/bin/true";
+            if ([action hasPrefix:@"reset-failure"] || ([action isEqualToString:@"reset-retry"] && resetCount == 1)) executable = @"/usr/bin/false";
+            if ([action isEqualToString:@"reset-launch-failure"]) executable = @"/no/such/elevenex-reset-test";
+            if ([action isEqualToString:@"reset-busy"] || [action isEqualToString:@"reset-close"] || [action isEqualToString:@"reset-timeout"] || [action isEqualToString:@"reset-reopen"]) {
+                executable = @"/bin/sleep";
+                resetTask.arguments = @[@"30"];
+            }
+            resetTask.executableURL = [NSURL fileURLWithPath:executable];
+            return resetTask;
+        });
     }
 }

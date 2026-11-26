@@ -2,6 +2,12 @@
 #import "SetupViews.h"
 #import <ApplicationServices/ApplicationServices.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#include <signal.h>
+
+typedef NS_ENUM(NSUInteger, AgentAccessibilityRepairState) {
+    AgentAccessibilityRepairIdle, AgentAccessibilityRepairRunning,
+    AgentAccessibilityRepairCleared, AgentAccessibilityRepairFailed,
+};
 
 int printAgentPermissions(void) {
     BOOL screen = CGPreflightScreenCaptureAccess();
@@ -54,6 +60,14 @@ int printAgentPermissions(void) {
 @property(nonatomic, strong) NSProgressIndicator *spinner;
 @property(nonatomic, strong) NSTextField *status;
 @property(nonatomic, strong) NSButton *settings;
+@property(nonatomic, strong) NSButton *repairHelp;
+@property(nonatomic, strong) NSStackView *repairWell;
+@property(nonatomic, strong) NSTextField *repairMessage;
+@property(nonatomic, strong) NSButton *repairButton;
+@property(nonatomic, copy) AgentAccessibilityResetTask createAccessibilityResetTask;
+@property(nonatomic, strong) NSTask *repairTask;
+@property(nonatomic) AgentAccessibilityRepairState repairState;
+@property(nonatomic) BOOL repairExpanded;
 @property(nonatomic, strong) NSStackView *footer;
 @property(nonatomic, strong) NSButton *cancel;
 @property(nonatomic, strong) NSButton *alternative;
@@ -225,6 +239,15 @@ int printAgentPermissions(void) {
     self.statusGroup = [self column:@[statusRow,self.settings] spacing:2];
     [statusRow.widthAnchor constraintEqualToAnchor:self.statusGroup.widthAnchor].active = YES;
 
+    self.repairHelp = [self.style button:@"Already enabled?" target:self action:@selector(showAccessibilityRepair:) primary:NO];
+    self.repairHelp.bordered = NO;
+    self.repairHelp.contentTintColor = [self.style color:@"accent"];
+    self.repairMessage = [self.style label:@"" size:13 weight:NSFontWeightRegular];
+    self.repairButton = [self.style button:@"Reset Accessibility" target:self action:@selector(resetAccessibility:) primary:NO];
+    self.repairWell = [[AgentSetupWell alloc] initWithViews:@[self.repairMessage,self.repairButton] style:self.style spacing:8];
+    self.repairWell.edgeInsets = NSEdgeInsetsMake(12,12,12,12);
+    [self.repairMessage.widthAnchor constraintEqualToAnchor:self.repairWell.widthAnchor constant:-24].active = YES;
+
     self.cancel = [self.style button:@"Not now" target:self action:@selector(cancel:) primary:NO];
     self.cancel.bordered = NO;
     self.cancel.contentTintColor = [self.style color:@"ink-muted"];
@@ -240,7 +263,7 @@ int printAgentPermissions(void) {
     self.footer.detachesHiddenViews = YES;
     NSBox *divider = [NSBox new];
     divider.boxType = NSBoxSeparator;
-    self.stack = [self column:@[self.progress,heading,self.dragItem,self.dragSteps,self.manualSteps,self.pathWell,self.summary,self.completionText,self.statusGroup,divider,self.footer] spacing:12];
+    self.stack = [self column:@[self.progress,heading,self.dragItem,self.dragSteps,self.manualSteps,self.pathWell,self.summary,self.completionText,self.statusGroup,self.repairHelp,self.repairWell,divider,self.footer] spacing:12];
     [background addSubview:self.stack];
     for (NSView *view in self.stack.arrangedSubviews) [view.widthAnchor constraintEqualToAnchor:self.stack.widthAnchor].active = YES;
     for (NSView *view in heading.arrangedSubviews) [view.widthAnchor constraintEqualToAnchor:heading.widthAnchor].active = YES;
@@ -249,10 +272,12 @@ int printAgentPermissions(void) {
         [self.stack.trailingAnchor constraintEqualToAnchor:background.trailingAnchor constant:-24],
         [self.stack.topAnchor constraintEqualToAnchor:background.topAnchor constant:12],
     ]];
-    self.dragItem.nextKeyView = self.alternative;
+    self.dragItem.nextKeyView = self.repairHelp;
+    self.repairHelp.nextKeyView = self.repairButton;
+    self.repairButton.nextKeyView = self.alternative;
     self.alternative.nextKeyView = self.cancel;
     self.cancel.nextKeyView = self.dragItem;
-    self.pathCopyButton.nextKeyView = self.alternative;
+    self.pathCopyButton.nextKeyView = self.repairHelp;
     self.done.nextKeyView = self.allowInput;
     self.allowInput.nextKeyView = self.done;
     [self render];
@@ -269,6 +294,8 @@ int printAgentPermissions(void) {
 }
 - (void)render {
     BOOL complete = [self complete];
+    BOOL repairAvailable = !complete && self.screen && !self.input;
+    BOOL repairing = self.repairState == AgentAccessibilityRepairRunning;
     BOOL audioPane = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15;
     self.progress.hidden = complete;
     self.progress.secondStep = self.screen;
@@ -297,6 +324,27 @@ int printAgentPermissions(void) {
     self.allowInput.hidden = !complete || self.input;
     self.done.hidden = !complete;
     self.done.keyEquivalent = complete ? @"\r" : @"";
+    self.repairHelp.hidden = !repairAvailable || self.repairExpanded;
+    self.repairWell.hidden = !repairAvailable || !self.repairExpanded;
+    self.repairButton.enabled = !repairing;
+    self.repairButton.title = repairing ? @"Resetting…" : @"Reset Accessibility";
+    self.cancel.enabled = !repairing;
+    self.alternative.enabled = !repairing;
+    self.pathCopyButton.enabled = !repairing;
+    switch (self.repairState) {
+        case AgentAccessibilityRepairIdle:
+            self.repairMessage.stringValue = @"macOS may remember an older Elevenex Agent. Reset only its Accessibility permission, then add it again.";
+            break;
+        case AgentAccessibilityRepairRunning:
+            self.repairMessage.stringValue = @"Clearing Elevenex Agent’s Accessibility entry…";
+            break;
+        case AgentAccessibilityRepairCleared:
+            self.repairMessage.stringValue = @"Entry cleared. Add Elevenex Agent to Accessibility again using the steps above, then turn on its switch.";
+            break;
+        case AgentAccessibilityRepairFailed:
+            self.repairMessage.stringValue = @"macOS couldn’t reset the entry. In Accessibility, select Elevenex Agent and click − to remove it. Add it again using the steps above, then turn on its switch.";
+            break;
+    }
     NSResponder *focused = self.panel.firstResponder;
     if ([focused isKindOfClass:NSView.class] && ((NSView *)focused).hiddenOrHasHiddenAncestor)
         [self.panel makeFirstResponder:complete ? self.done : self.alternative];
@@ -314,6 +362,7 @@ int printAgentPermissions(void) {
     self.footer.alignment = narrowCompletion ? NSLayoutAttributeTrailing : NSLayoutAttributeCenterY;
     for (NSTextField *label in @[self.titleLabel,self.lede]) label.preferredMaxLayoutWidth = labelWidth;
     self.status.preferredMaxLayoutWidth = labelWidth-24;
+    self.repairMessage.preferredMaxLayoutWidth = labelWidth-24;
     for (NSStackView *group in @[self.dragSteps,self.manualSteps])
         for (NSStackView *row in group.arrangedSubviews) {
             NSTextField *label = (NSTextField *)row.arrangedSubviews.lastObject;
@@ -374,7 +423,8 @@ int printAgentPermissions(void) {
     if ([self complete]) return;
     NSString *message;
     BOOL link, missed = NO;
-    if (self.checkFailed) { message = @"Couldn’t check permissions."; link = YES; }
+    if (self.repairTask) { message = @"Resetting Accessibility…"; link = NO; }
+    else if (self.checkFailed) { message = @"Couldn’t check permissions."; link = YES; }
     else if (self.paused) { message = @"Still off. Turn it on, then check again."; link = YES; }
     // Transient feedback for a drag released somewhere that did not accept it.
     else if ((missed = self.missedUntil.timeIntervalSinceNow > 0)) { message = @"Release it over the list in System Settings."; link = !self.settingsVisible; }
@@ -401,7 +451,7 @@ int printAgentPermissions(void) {
 - (void)refresh {
     [self positionPanel];
     [self updateStatus];
-    if (self.check || ([self complete] && self.hasPermissionResult)) return;
+    if (self.repairTask || self.check || ([self complete] && self.hasPermissionResult)) return;
     if (-self.started.timeIntervalSinceNow > 600) {
         self.paused = YES;
         [self.timer invalidate]; self.timer = nil;
@@ -445,6 +495,7 @@ int printAgentPermissions(void) {
     });
 }
 - (void)openSettings:(id)sender {
+    if (self.repairTask) return;
     if (self.paused || !self.timer) [self startChecks];
     NSString *pane = self.screen ? @"Privacy_Accessibility" : @"Privacy_ScreenCapture";
     NSURL *url = [NSURL URLWithString:[@"x-apple.systempreferences:com.apple.preference.security?" stringByAppendingString:pane]];
@@ -453,6 +504,57 @@ int printAgentPermissions(void) {
         self.settings.title = @"Try again";
         self.settings.hidden = NO;
     }
+}
+- (void)showAccessibilityRepair:(id)sender {
+    self.repairExpanded = YES;
+    [self render];
+    [self.panel makeFirstResponder:self.repairButton];
+}
+- (void)resetAccessibility:(id)sender {
+    if (self.repairTask || !self.screen || self.input || [self complete]) return;
+    [self stopChecks];
+    self.hintUntil = nil;
+    self.missedUntil = nil;
+    self.repairState = AgentAccessibilityRepairRunning;
+    NSTask *task = self.createAccessibilityResetTask();
+    task.standardInput = NSFileHandle.fileHandleWithNullDevice;
+    task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+    task.standardError = NSFileHandle.fileHandleWithNullDevice;
+    self.repairTask = task;
+    __weak AgentSetup *weakSelf = self;
+    task.terminationHandler = ^(NSTask *finished) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            AgentSetup *owner = weakSelf;
+            if (owner.repairTask != finished) return;
+            owner.repairTask = nil;
+            owner.repairState = finished.terminationReason == NSTaskTerminationReasonExit && finished.terminationStatus == 0
+                ? AgentAccessibilityRepairCleared : AgentAccessibilityRepairFailed;
+            // A reset is not a grant. Only the fresh permission check can complete setup.
+            owner.hasPermissionResult = NO;
+            [owner render];
+            [owner startChecks];
+            [owner openSettings:nil];
+        });
+    };
+    [self render];
+    if (![task launchAndReturnError:NULL]) {
+        self.repairTask = nil;
+        self.repairState = AgentAccessibilityRepairFailed;
+        [self render];
+        [self startChecks];
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        AgentSetup *owner = weakSelf;
+        if (owner.repairTask == task && task.running) kill(task.processIdentifier,SIGKILL);
+    });
+}
+- (void)stopAccessibilityRepair {
+    NSTask *task = self.repairTask;
+    self.repairTask = nil;
+    // tccutil has no descendants. Never leave a reset running after setup closes.
+    if (task.running) kill(task.processIdentifier,SIGKILL);
+    self.repairState = AgentAccessibilityRepairIdle;
 }
 - (void)toggleAlternative:(id)sender {
     self.manual = !self.manual;
@@ -484,11 +586,12 @@ int printAgentPermissions(void) {
     if (self.check.running) [self.check terminate];
     self.check = nil;
 }
-- (void)windowWillClose:(NSNotification *)notification { [self stopChecks]; [NSApp terminate:nil]; }
+- (void)windowWillClose:(NSNotification *)notification { [self stopAccessibilityRepair]; [self stopChecks]; [NSApp terminate:nil]; }
 - (void)windowDidMove:(NSNotification *)notification { if (self.positioned && !self.positioning) self.userMoved = YES; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)visible {
     [self.panel makeKeyAndOrderFront:nil];
     // Settings may have changed while a completed card was left open.
+    [self stopAccessibilityRepair];
     [self stopChecks];
     self.hasPermissionResult = NO;
     self.skippedInput = NO;
@@ -498,12 +601,13 @@ int printAgentPermissions(void) {
     [self startChecks];
     return YES;
 }
-- (void)applicationWillTerminate:(NSNotification *)notification { [self stopChecks]; }
+- (void)applicationWillTerminate:(NSNotification *)notification { [self stopAccessibilityRepair]; [self stopChecks]; }
 @end
 
-int runAgentSetup(void) {
+int runAgentSetup(AgentAccessibilityResetTask createAccessibilityResetTask) {
     [NSApplication sharedApplication];
     __attribute__((objc_precise_lifetime)) AgentSetup *delegate = [AgentSetup new];
+    delegate.createAccessibilityResetTask = createAccessibilityResetTask;
     NSApp.delegate = delegate;
     [NSApp run];
     return 0;

@@ -30,6 +30,17 @@ Skipping Accessibility opens a viewing-only summary with an option to resume
 input setup. Completion summarizes both grants and gives **Done** the default
 button treatment. It still asks the connected viewer to **Check and launch**.
 
+While Accessibility is off, **Already enabled?** opens recovery guidance.
+**Reset Accessibility** explicitly clears only `com.elevenex.task-app-display`’s
+Accessibility decision through `/usr/bin/tccutil`, with separate, fixed arguments.
+It never resets Screen Recording, another application, or all permissions, and
+never grants access. The user then adds and enables the current signed bundle
+in System Settings. A failed reset shows the native **−**, add and enable steps.
+The task factory supplied by the CLI is the privileged process boundary; setup
+owns its asynchronous execution, five-second timeout and cancellation on close
+or reopen. The UI disables repeat actions during the reset, resumes fresh
+permission polling afterward, and never treats a successful reset as a grant.
+
 `Setup.m` owns the setup flow, permission checks, window placement and cleanup.
 `SetupViews.m` owns the draggable item, progress, themed wells and controls.
 The build derives `AgentTheme.json` from the authoritative design tokens,
@@ -52,6 +63,14 @@ then verifies the extracted archive through Gatekeeper. Missing release
 signing credentials fail the build. Unsigned development builds use an ad hoc
 signature and can require a new grant after a rebuild. Setup writes no mutable
 state into the signed bundle.
+
+An older ad hoc build's Accessibility entry can remain enabled while its code
+requirement no longer matches the current binary. Repeated checks or dropping
+the updated bundle again cannot reliably replace that entry. The recovery flow
+supports this case without a shell. Keep the same Developer ID signing identity
+and bundle identifier across public releases; do not weaken the [designated code
+requirement](https://developer.apple.com/documentation/security/applying-code-requirements)
+to make ad hoc builds inherit another binary’s permission.
 
 The supervisor waits on stdin for the backend's durable launch receipt before creating user processes. EOF before that receipt cancels the launch. It creates a fresh process group with `posix_spawn` before the launched program can fork. It reports the new group on fd 3. The backend owns stdin and the private duplex fd 4. Both descriptors are closed in the launched app, which inherits a null stdin and normal stdout and stderr. Losing the backend closes stdin. The supervisor drains its group, including children still running after the original launcher exits. An app deliberately moving a descendant to another session or group falls outside this ownership mechanism.
 
@@ -81,3 +100,7 @@ This exercises the production AppKit views in light, dark, Accessibility and
 enabled states. A separate LaunchServices smoke on a signed-in Mac is needed
 to verify a real host window. Neither UI previews nor an ad hoc build verify
 a public Developer ID release's notarization or the user's permission grant.
+Recovery scenarios use disposable processes instead of `tccutil`; they cover
+explicit user intent, focus, busy controls, success without a grant, failure,
+launch failure, timeout, retry, a subsequent verified grant and close cleanup.
+They never clear the real agent’s permissions.

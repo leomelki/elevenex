@@ -31,6 +31,15 @@ bundle in Finder, and copy its exact path. Permission must be granted by a
 person on the host. Setup may be closed and reopened or resumed after macOS
 asks to quit and reopen the agent.
 
+If Accessibility is switched on but setup keeps waiting, choose **Already
+enabled? → Reset Accessibility** in the host card. macOS can retain an entry
+for an older build. This clears only Elevenex Agent’s Accessibility permission;
+Screen Recording and other apps are unaffected. The card opens Accessibility
+again and guides you to add and enable the current agent. If macOS refuses the
+reset, the card shows how to remove the old entry with **−** and add it again.
+No Terminal is needed. Setup still waits for a fresh, verified grant before
+reporting keyboard and mouse access.
+
 **Check and launch** rechecks and launches the reviewed command. Setup does
 not extend the request's expiration or automatically replay a launch. The
 engine must still pass its real host check, including desktop-session access.
