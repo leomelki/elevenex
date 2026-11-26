@@ -101,11 +101,13 @@ Capture initially selects the largest visible owned layer-zero window, then
 validates that specific window's visibility, ownership and size. A separate
 native control window (including AppKit's 66×20 title-bar controls) or another
 overlapping window must not continually restart the stream. Desktop-independent
-capture does not require moving unrelated apps out of the way. Input has a
-separate, stricter boundary: the selected window must still lead owned window
-ordering and its process must be foreground. An owned dialog can therefore
-block control while the primary picture stays visible; dismiss it on the host
-before controlling the primary window again.
+capture does not require moving unrelated apps out of the way. Input requires
+the selected window's original process to be foreground. The helper tolerates
+the 66×20 macOS sharing control at the upper-left of that same owner's
+captured window and blocks pointer events over it. An owned dialog still
+blocks control while the primary picture stays visible. Dismiss the dialog
+on the host to resume control. Clicks, drags and scrolls carry the verified
+window number and a position in that window so AppKit can dispatch them.
 The supervisor registers the private rendezvous before starting its monitor,
 so even a fast-exiting app cleans it up. No persistent launch agent, additional
 OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
@@ -187,7 +189,7 @@ The capture helper accepts only the group it created. ScreenCaptureKit filters o
 
 Desktop main obtains a short-lived ticket before attaching to the scope-bound App stream. A close or reconnect creates a fresh viewer identity. The process-level input lease releases held keys and buttons when a controlling viewer disconnects.
 
-Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens a disposable AppKit window on the task Mac, receives its actual ScreenCaptureKit keyframe, and verifies the app received a mouse click and a key press. Leave the fixture in the foreground during the check.
+Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens a disposable AppKit window on the task Mac and receives real ScreenCaptureKit frames. It checks that clicks, drags, scrolling, keys, and Unicode text reach the app with sharing controls present, that a dialog blocks input while video continues, and that control resumes after the dialog closes. Leave the fixture in the foreground during the check.
 
 On a signed-in Mac, `node scripts/test-task-app-macos.cjs --window-geometry`
 also checks real WindowServer selection with a simulated picture inset, window

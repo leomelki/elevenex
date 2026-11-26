@@ -62,9 +62,9 @@ static uint8_t captureFailure(NSError *error) {
     if (self.stream) {
         CGRect bounds;
         if (![self.target currentBounds:&bounds]) { [self end:23]; return; }
-        CGRect inputBounds;
-        if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner ||
-            ![self.target currentInputBounds:&inputBounds]) [self.target releaseInput];
+        if (self.target.hasHeldInput &&
+            (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner ||
+             ![self.target currentInputBounds:&bounds])) [self.target releaseInput];
         // Capture the owner on the main queue. A queued refresh can run after
         // the view has been closed or a replacement encoder has been created.
         AppEncoder *currentEncoder = self.encoder;
@@ -167,9 +167,8 @@ int runAppCapture(pid_t group, int displayDescriptor, int owner) {
                     [display end:0];
                     displayReceipt(id, 1);
                 } else {
-                    BOOL accepted = display.active && [display.target input:message];
-                    uint8_t result = accepted ? 1 : !AXIsProcessTrusted() ? 2 :
-                        NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != display.target.owner ? 3 : 0;
+                    AppInputResult result = [message[@"kind"] isEqual:@"release"] || display.active
+                        ? [display.target input:message] : AppInputUnavailable;
                     displayReceipt(id, result);
                 }
             });

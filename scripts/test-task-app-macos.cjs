@@ -134,14 +134,16 @@ async function interactive(directory, helperPath, control = true) {
   const app = spawn(helperPath, ['--launch-desktop', fixture], { stdio: ['pipe', 'pipe', 'inherit', 'pipe', 'pipe'] });
   const exited = once(app, 'exit');
   app.stdin.write('GO\n');
-  const received = Promise.withResolvers();
   let markers = '';
-  app.stdout.setEncoding('utf8').on('data', value => {
-    markers += value;
-    if (markers.includes('clicked\n') && markers.includes('typed\n')) received.resolve();
-  });
+  app.stdout.setEncoding('utf8').on('data', value => { markers += value; });
   const display = new DarwinAppDisplay(app);
-  const timeout = AbortSignal.timeout(20000), timedOut = new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error('Interactive capture or input timed out'))));
+  let phase = 'waiting for capture';
+  const timeout = AbortSignal.timeout(45000), timedOut = new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error(`Interactive app test timed out while ${phase}`))));
+  const waitForMarker = async (marker, count = 1) => {
+    phase = `waiting for ${marker} event ${count}`;
+    while (markers.split(marker + '\n').length - 1 < count)
+      await Promise.race([new Promise(resolve => setTimeout(resolve, 25)), timedOut]);
+  };
   try {
     await Promise.race([once(app.stdio[3], 'data'), timedOut]);
     const image = Promise.withResolvers();
@@ -169,9 +171,52 @@ async function interactive(directory, helperPath, control = true) {
         return;
       }
       const point = { x: Math.floor(frame.width / 2), y: Math.floor(frame.height / 2), button: 0 };
-      for (const event of [{ kind: 'down', ...point }, { kind: 'up', ...point },
-        { kind: 'key', code: 'KeyA', down: true }, { kind: 'key', code: 'KeyA', down: false }]) await display.input(event);
-      await Promise.race([received.promise, timedOut]);
+      const click = async () => {
+        for (const kind of ['down', 'up']) await display.input({ kind, ...point });
+      };
+      // macOS can briefly make its capture-consent prompt foreground. Wait
+      // for the fixture to be eligible while verifying the private surface
+      // itself still rejects pointer events.
+      phase = 'waiting for foreground to return to the fixture';
+      for (;;) {
+        try {
+          await display.input({ kind: 'down', button: 0,
+            x: Math.round(frame.width * 28 / 480), y: Math.round(frame.height * 14 / 352) });
+        } catch (error) {
+          if (/input unavailable/.test(error.message)) break;
+          if (!/foreground/.test(error.message)) throw error;
+          await Promise.race([new Promise(resolve => setTimeout(resolve, 250)), timedOut]);
+          continue;
+        }
+        assert.fail('A click on the private title-bar surface was accepted');
+      }
+      await click();
+      await waitForMarker('clicked');
+      await waitForMarker('released');
+      await display.input({ kind: 'down', ...point });
+      await display.input({ kind: 'move', x: point.x + 30, y: point.y + 30 });
+      await display.input({ kind: 'up', ...point, x: point.x + 30, y: point.y + 30 });
+      await waitForMarker('dragged');
+      await waitForMarker('released', 2);
+      await display.input({ kind: 'wheel', x: point.x, y: point.y, deltaX: 17, deltaY: 41 });
+      await waitForMarker('scrolled');
+      await display.input({ kind: 'key', code: 'KeyA', down: true });
+      await display.input({ kind: 'key', code: 'KeyA', down: false });
+      await display.input({ kind: 'text', text: 'é' });
+      await waitForMarker('typed');
+      await waitForMarker('text-received');
+      await display.input({ kind: 'key', code: 'KeyB', down: true });
+      await waitForMarker('dialog-open');
+      const framesBeforeDialog = frames;
+      // Wait for the dialog to enter WindowServer ordering. Its private
+      // sharing policy must not accidentally classify it as title-bar chrome.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await assert.rejects(display.input({ kind: 'down', ...point }), /foreground/);
+      await waitForMarker('dialog-closed');
+      assert.ok(frames > framesBeforeDialog, 'A dialog must leave the picture live');
+      await click();
+      await waitForMarker('clicked', 3);
+      console.log('Native live input: click, drag, scroll, key, Unicode text, dialog rejection and restored control verified');
     } finally { stop(); }
   } finally {
     app.stdin.end();

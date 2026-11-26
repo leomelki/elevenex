@@ -23,6 +23,7 @@ int main(void) {
         [window orderFrontRegardless];
         AppWindow *target = [AppWindow new];
         target.group = getpgrp();
+        target.owner = getpid();
         target.window = (CGWindowID)window.windowNumber;
         waitFor(^BOOL{ return [target.firstOwnedWindow[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == target.window; }, @"Select the owned test window");
         NSDictionary *row = target.firstOwnedWindow;
@@ -34,6 +35,7 @@ int main(void) {
         target.bounds = CGRectInset(original,1,1);
         __block CGRect current;
         check([target currentBounds:&current], @"An unchanged window with an inset picture must stay attached");
+        check([target currentInputBounds:&current], @"The uncovered selected window must pass the geometry gate");
         NSRect moved = window.frame;
         moved.origin.x += 40;
         [window setFrame:moved display:YES];
@@ -43,18 +45,34 @@ int main(void) {
         waitFor(^BOOL{ return ![target currentBounds:&current]; }, @"A real resize must invalidate capture and input");
         [window setFrame:NSMakeRect(window.frame.origin.x,window.frame.origin.y,original.size.width,original.size.height) display:YES];
         waitFor(^BOOL{ return [target currentBounds:&current]; }, @"Restoring the window size must restore geometry validation");
+        NSRect frame = window.frame;
+        NSWindow *chrome = [[NSWindow alloc] initWithContentRect:NSMakeRect(NSMinX(frame)+6,NSMaxY(frame)-26,66,20)
+            styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+        chrome.sharingType = NSWindowSharingReadOnly;
+        chrome.animationBehavior = NSWindowAnimationBehaviorNone;
+        [window addChildWindow:chrome ordered:NSWindowAbove];
+        waitFor(^BOOL{ return [target.firstOwnedWindow[(__bridge NSString *)kCGWindowNumber] intValue] == chrome.windowNumber; }, @"Place sharing controls above the primary window");
+        check([target currentInputBounds:&current], @"Sharing controls must allow input to the underlying app");
+        [chrome setFrameOrigin:NSMakePoint(NSMinX(frame)+6,NSMaxY(frame)-66)];
+        waitFor(^BOOL{ return ![target currentInputBounds:&current]; }, @"The same surface outside the title bar must block input");
+        [window removeChildWindow:chrome];
+        [chrome orderOut:nil];
         NSWindow *sheet = [[NSWindow alloc] initWithContentRect:NSMakeRect(160,160,240,160)
             styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        sheet.sharingType = NSWindowSharingNone;
         sheet.animationBehavior = NSWindowAnimationBehaviorNone;
         [sheet orderFrontRegardless];
         waitFor(^BOOL{ return ![target currentInputBounds:&current]; }, @"A new owned window above the selection must invalidate input");
         check([target currentBounds:&current], @"A covering owned window must not interrupt capture");
         [sheet orderOut:nil];
-        waitFor(^BOOL{ return [target currentBounds:&current]; }, @"Closing the covering window must restore selection");
+        waitFor(^BOOL{ return [target currentInputBounds:&current]; }, @"Closing the covering window must restore input");
+        target.owner = 1;
+        check(![target currentBounds:&current], @"The captured window must still have its original owner PID");
+        target.owner = getpid();
         target.group = 1;
         check(![target currentBounds:&current], @"An unowned window must be rejected");
         [window orderOut:nil];
-        puts("Native window geometry: border inset, move, resize, covering window and ownership verified");
+        puts("Native window geometry: border inset, move, resize, sharing controls, dialog and ownership verified");
     }
     return 0;
 }

@@ -1,5 +1,6 @@
 #import "Display.h"
 #import <ApplicationServices/ApplicationServices.h>
+#include <math.h>
 #import <unistd.h>
 #import <libproc.h>
 
@@ -41,27 +42,37 @@ static NSDictionary *physicalKeys(void) {
     return keys;
 }
 
+static BOOL windowRect(NSDictionary *row, CGRect *bounds) {
+    return CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], bounds);
+}
+
+static BOOL sharingTitleBarSurface(CGRect window, CGRect surface) {
+    // macOS 26 places a 66×20 sharing control six points inside the
+    // captured window's upper-left corner. WindowServer can report it as
+    // read-only to a capture-authorized process and redact that value to others.
+    // Restrict the exception to the observed geometry within the same owner.
+    return CGRectContainsRect(window, surface) &&
+        fabs(surface.origin.x - window.origin.x - 6) <= 1 && fabs(surface.origin.y - window.origin.y - 6) <= 1 &&
+        fabs(surface.size.width - 66) <= 1 && fabs(surface.size.height - 20) <= 1;
+}
+
 @implementation AppWindow {
     NSMutableSet<NSNumber *> *_keys;
     NSMutableSet<NSNumber *> *_buttons;
-    CGPoint _lastPoint;
+    NSPoint _lastWindowPoint;
 }
 - (instancetype)init {
     if ((self = [super init])) { _keys = [NSMutableSet set]; _buttons = [NSMutableSet set]; }
     return self;
 }
 - (NSDictionary *)firstOwnedWindow {
-    // After selection only inspect this window and those above it for a newly
-    // active owned sheet or top-level window. Background windows cannot receive input.
-    CGWindowListOption options = kCGWindowListExcludeDesktopElements | (self.window ?
-        kCGWindowListOptionOnScreenAboveWindow | kCGWindowListOptionIncludingWindow : kCGWindowListOptionOnScreenOnly);
-    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, self.window));
+    CGWindowListOption options = kCGWindowListExcludeDesktopElements | kCGWindowListOptionOnScreenOnly;
+    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, kCGNullWindowID));
     for (NSDictionary *row in rows) {
         pid_t owner = [row[(__bridge NSString *)kCGWindowOwnerPID] intValue];
-        if (!ownsAppProcess(self.group, owner) || [row[(__bridge NSString *)kCGWindowLayer] integerValue] != 0) continue;
+        if ([row[(__bridge NSString *)kCGWindowLayer] integerValue] != 0 || !ownsAppProcess(self.group, owner)) continue;
         CGRect rect;
-        if (CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], &rect) &&
-            rect.size.width >= 16 && rect.size.height >= 16) return row;
+        if (windowRect(row, &rect) && rect.size.width >= 16 && rect.size.height >= 16) return row;
     }
     return nil;
 }
@@ -72,16 +83,34 @@ static NSDictionary *physicalKeys(void) {
     for (NSDictionary *row in rows) {
         if ([row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != self.window ||
             ![row[(__bridge NSString *)kCGWindowIsOnscreen] boolValue] ||
-            !ownsAppProcess(self.group, [row[(__bridge NSString *)kCGWindowOwnerPID] intValue])) continue;
-        return CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], bounds) &&
+            [row[(__bridge NSString *)kCGWindowOwnerPID] intValue] != self.owner ||
+            !ownsAppProcess(self.group, self.owner)) continue;
+        return windowRect(row, bounds) &&
             CGSizeEqualToSize(bounds->size, self.windowBounds.size);
     }
     return NO;
 }
 - (BOOL)currentInputBounds:(CGRect *)bounds {
-    NSDictionary *front = self.firstOwnedWindow;
-    return front && [front[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
-        [self currentBounds:bounds];
+    return [self currentInputBounds:bounds chrome:nil];
+}
+- (BOOL)currentInputBounds:(CGRect *)bounds chrome:(NSMutableArray<NSValue *> *)chrome {
+    if (![self currentBounds:bounds]) return NO;
+    CGWindowListOption options = kCGWindowListOptionOnScreenAboveWindow | kCGWindowListOptionIncludingWindow |
+        kCGWindowListExcludeDesktopElements;
+    NSArray *rows = CFBridgingRelease(CGWindowListCopyWindowInfo(options, self.window));
+    for (NSDictionary *row in rows) {
+        if ([row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window)
+            return YES;
+        if ([row[(__bridge NSString *)kCGWindowLayer] integerValue] != 0) continue;
+        pid_t owner = [row[(__bridge NSString *)kCGWindowOwnerPID] intValue];
+        if (owner != self.owner && !ownsAppProcess(self.group, owner)) continue;
+        CGRect surface;
+        if (!windowRect(row, &surface)) return NO;
+        if (surface.size.width < 16 || surface.size.height < 16) continue;
+        if (owner != self.owner || !sharingTitleBarSurface(*bounds, surface)) return NO;
+        [chrome addObject:[NSValue valueWithRect:NSRectFromCGRect(surface)]];
+    }
+    return NO;
 }
 - (CGEventFlags)flags {
     CGEventFlags flags = 0;
@@ -102,12 +131,55 @@ static NSDictionary *physicalKeys(void) {
     CFRelease(event);
     return owned;
 }
-- (BOOL)mouse:(CGEventType)type button:(CGMouseButton)button {
-    CGEventRef event = CGEventCreateMouseEvent(NULL, type, _lastPoint, button);
-    if (!event) return NO;
+- (CGEventRef)windowMouseEvent:(NSEventType)type {
+    // A screen-position CGEvent can reach the app with window number zero.
+    // Start with an AppKit event to carry the verified window through Quartz.
+    // The target window belongs to another process, so AppKit flips the
+    // factory point against the primary screen. Compensate so the transmitted
+    // point is window-relative. CGEventSetLocation would discard that point.
+    NSScreen *primary = NSScreen.screens.firstObject;
+    if (!primary) return NULL;
+    NSPoint location = NSMakePoint(_lastWindowPoint.x, primary.frame.size.height - _lastWindowPoint.y);
+    BOOL released = type == NSEventTypeMouseMoved || type == NSEventTypeLeftMouseUp ||
+        type == NSEventTypeRightMouseUp || type == NSEventTypeOtherMouseUp;
+    NSEvent *mouse = [NSEvent mouseEventWithType:type location:location
+        modifierFlags:(NSEventModifierFlags)self.flags timestamp:NSProcessInfo.processInfo.systemUptime
+        windowNumber:self.window context:nil eventNumber:0 clickCount:1 pressure:released ? 0 : 1];
+    CGEventRef event = mouse.CGEvent;
+    if (!event) return NULL;
+    CFRetain(event);
     CGEventSetIntegerValueField(event, kCGMouseEventWindowUnderMousePointer, self.window);
-    CGEventSetIntegerValueField(event, kCGMouseEventClickState, 1);
+    CGEventSetIntegerValueField(event, kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent, self.window);
+    return event;
+}
+- (BOOL)mouse:(NSEventType)type button:(CGMouseButton)button {
+    CGEventRef event = [self windowMouseEvent:type];
+    if (!event) return NO;
+    CGEventSetIntegerValueField(event, kCGMouseEventButtonNumber, button);
     return [self post:event];
+}
+- (BOOL)scroll:(NSDictionary *)input {
+    CGEventRef wheel = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2,
+        -[input[@"deltaY"] intValue], -[input[@"deltaX"] intValue]);
+    if (!wheel) return NO;
+    CGEventRef event = [self windowMouseEvent:NSEventTypeMouseMoved];
+    if (!event) { CFRelease(wheel); return NO; }
+    // AppKit's mouse factory has no scroll constructor. Keep its window
+    // routing and copy Quartz's pixel, line and fixed-point scroll distances.
+    CGEventSetType(event, kCGEventScrollWheel);
+    const CGEventField fields[] = {
+        kCGScrollWheelEventDeltaAxis1, kCGScrollWheelEventDeltaAxis2,
+        kCGScrollWheelEventFixedPtDeltaAxis1, kCGScrollWheelEventFixedPtDeltaAxis2,
+        kCGScrollWheelEventPointDeltaAxis1, kCGScrollWheelEventPointDeltaAxis2,
+        kCGScrollWheelEventIsContinuous,
+    };
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++)
+        CGEventSetDoubleValueField(event, fields[i], CGEventGetDoubleValueField(wheel, fields[i]));
+    CFRelease(wheel);
+    return [self post:event];
+}
+- (BOOL)hasHeldInput {
+    return _keys.count || _buttons.count;
 }
 - (void)releaseInput {
     for (NSNumber *key in _keys.allObjects) {
@@ -116,17 +188,24 @@ static NSDictionary *physicalKeys(void) {
     }
     for (NSNumber *button in _buttons.allObjects) {
         CGMouseButton b = button.unsignedIntValue;
-        [self mouse:b == kCGMouseButtonLeft ? kCGEventLeftMouseUp : b == kCGMouseButtonRight ? kCGEventRightMouseUp : kCGEventOtherMouseUp button:b];
+        [self mouse:b == kCGMouseButtonLeft ? NSEventTypeLeftMouseUp : b == kCGMouseButtonRight ? NSEventTypeRightMouseUp : NSEventTypeOtherMouseUp button:b];
     }
     [_buttons removeAllObjects];
 }
-- (BOOL)input:(NSDictionary *)input {
-    NSString *kind = input[@"kind"];
-    if ([kind isEqual:@"release"]) { [self releaseInput]; return YES; }
-    if (!AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess() || !AppSessionActive() ||
-        NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.owner) { [self releaseInput]; return NO; }
+- (AppInputResult)input:(NSDictionary *)input {
+    if ([input[@"kind"] isEqual:@"release"]) { [self releaseInput]; return AppInputAccepted; }
+    if (!AXIsProcessTrusted()) { [self releaseInput]; return AppInputNeedsAccessibility; }
+    if (!CGPreflightScreenCaptureAccess() || !AppSessionActive()) { [self releaseInput]; return AppInputUnavailable; }
     CGRect bounds;
-    if (![self currentInputBounds:&bounds]) { [self releaseInput]; return NO; }
+    NSMutableArray<NSValue *> *chrome = [NSMutableArray array];
+    if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.owner ||
+        ![self currentInputBounds:&bounds chrome:chrome]) { [self releaseInput]; return AppInputNeedsForeground; }
+    if ([self postInput:input bounds:bounds chrome:chrome]) return AppInputAccepted;
+    [self releaseInput];
+    return AppInputUnavailable;
+}
+- (BOOL)postInput:(NSDictionary *)input bounds:(CGRect)bounds chrome:(NSArray<NSValue *> *)chrome {
+    NSString *kind = input[@"kind"];
     if ([kind isEqual:@"key"]) {
         NSNumber *key = physicalKeys()[input[@"code"]];
         if (!key) return NO;
@@ -151,19 +230,17 @@ static NSDictionary *physicalKeys(void) {
     if (x < 0 || y < 0 || x >= self.width || y >= self.height) return NO;
     // The captured picture excludes any WindowServer border. Preserve that
     // inset and follow moves without treating them as a resize.
-    _lastPoint = CGPointMake(bounds.origin.x + self.bounds.origin.x - self.windowBounds.origin.x + x * self.bounds.size.width / self.width,
+    CGPoint point = CGPointMake(bounds.origin.x + self.bounds.origin.x - self.windowBounds.origin.x + x * self.bounds.size.width / self.width,
                              bounds.origin.y + self.bounds.origin.y - self.windowBounds.origin.y + y * self.bounds.size.height / self.height);
-    if ([kind isEqual:@"wheel"]) {
-        CGEventRef event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, -[input[@"deltaY"] intValue], -[input[@"deltaX"] intValue]);
-        if (!event) return NO;
-        CGEventSetLocation(event, _lastPoint);
-        return [self post:event];
-    }
+    if (!CGRectContainsPoint(bounds, point)) return NO;
+    for (NSValue *value in chrome) if (CGRectContainsPoint(NSRectToCGRect(value.rectValue), point)) return NO;
+    _lastWindowPoint = NSMakePoint(point.x - CGRectGetMinX(bounds), point.y - CGRectGetMinY(bounds));
+    if ([kind isEqual:@"wheel"]) return [self scroll:input];
     if ([kind isEqual:@"move"]) {
-        if ([_buttons containsObject:@0]) return [self mouse:kCGEventLeftMouseDragged button:kCGMouseButtonLeft];
-        if ([_buttons containsObject:@1]) return [self mouse:kCGEventRightMouseDragged button:kCGMouseButtonRight];
-        if ([_buttons containsObject:@2]) return [self mouse:kCGEventOtherMouseDragged button:kCGMouseButtonCenter];
-        return [self mouse:kCGEventMouseMoved button:kCGMouseButtonLeft];
+        if ([_buttons containsObject:@0]) return [self mouse:NSEventTypeLeftMouseDragged button:kCGMouseButtonLeft];
+        if ([_buttons containsObject:@1]) return [self mouse:NSEventTypeRightMouseDragged button:kCGMouseButtonRight];
+        if ([_buttons containsObject:@2]) return [self mouse:NSEventTypeOtherMouseDragged button:kCGMouseButtonCenter];
+        return [self mouse:NSEventTypeMouseMoved button:kCGMouseButtonLeft];
     }
     BOOL down = [kind isEqual:@"down"];
     if (!down && ![kind isEqual:@"up"]) return NO;
@@ -171,8 +248,8 @@ static NSDictionary *physicalKeys(void) {
     if (dom < 0 || dom > 2) return NO;
     CGMouseButton b = dom == 0 ? kCGMouseButtonLeft : dom == 1 ? kCGMouseButtonCenter : kCGMouseButtonRight;
     if (down) [_buttons addObject:@(b)]; else [_buttons removeObject:@(b)];
-    CGEventType type = b == kCGMouseButtonLeft ? (down ? kCGEventLeftMouseDown : kCGEventLeftMouseUp) :
-        b == kCGMouseButtonRight ? (down ? kCGEventRightMouseDown : kCGEventRightMouseUp) : (down ? kCGEventOtherMouseDown : kCGEventOtherMouseUp);
+    NSEventType type = b == kCGMouseButtonLeft ? (down ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp) :
+        b == kCGMouseButtonRight ? (down ? NSEventTypeRightMouseDown : NSEventTypeRightMouseUp) : (down ? NSEventTypeOtherMouseDown : NSEventTypeOtherMouseUp);
     return [self mouse:type button:b];
 }
 @end

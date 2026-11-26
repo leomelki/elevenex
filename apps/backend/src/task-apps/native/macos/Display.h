@@ -10,6 +10,13 @@ void setSupervisorDesktopDirectory(const char *path);
 void setDisplayOutput(FILE *channel);
 void displayReceipt(uint32_t id, uint8_t flag);
 
+typedef NS_ENUM(uint8_t, AppInputResult) {
+    AppInputUnavailable = 0,
+    AppInputAccepted = 1,
+    AppInputNeedsAccessibility = 2,
+    AppInputNeedsForeground = 3,
+};
+
 @interface AppWindow : NSObject
 @property(nonatomic) pid_t group;
 @property(nonatomic) pid_t owner;
@@ -20,13 +27,14 @@ void displayReceipt(uint32_t id, uint8_t flag);
 @property(nonatomic) CGRect bounds;
 @property(nonatomic) size_t width;
 @property(nonatomic) size_t height;
-// WindowServer ordering is consulted for selection and each input boundary.
+// Visible owned windows are candidates for initial capture selection.
 - (NSDictionary *)firstOwnedWindow;
 // Revalidate the selected capture window and its original WindowServer size.
 - (BOOL)currentBounds:(CGRect *)bounds;
-// Input additionally requires the selected window to lead the owned window order.
+// Input additionally protects the target from competing owned windows.
 - (BOOL)currentInputBounds:(CGRect *)bounds;
-- (BOOL)input:(NSDictionary *)input;
+@property(nonatomic, readonly) BOOL hasHeldInput;
+- (AppInputResult)input:(NSDictionary *)input;
 - (void)releaseInput;
 @end
 
