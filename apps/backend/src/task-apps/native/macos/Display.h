@@ -14,11 +14,16 @@ void displayReceipt(uint32_t id, uint8_t flag);
 @property(nonatomic) pid_t group;
 @property(nonatomic) pid_t owner;
 @property(nonatomic) CGWindowID window;
+// WindowServer frame for change detection; ScreenCaptureKit can exclude its border.
+@property(nonatomic) CGRect windowBounds;
+// Captured picture's screen coordinates, used to map viewer input.
 @property(nonatomic) CGRect bounds;
 @property(nonatomic) size_t width;
 @property(nonatomic) size_t height;
 // WindowServer ordering is consulted for selection and each input boundary.
 - (NSDictionary *)firstOwnedWindow;
+// Revalidate the selected foreground window and its original WindowServer size.
+- (BOOL)currentBounds:(CGRect *)bounds;
 - (BOOL)input:(NSDictionary *)input;
 - (void)releaseInput;
 @end

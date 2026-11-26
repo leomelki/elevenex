@@ -65,6 +65,12 @@ static NSDictionary *physicalKeys(void) {
     }
     return nil;
 }
+- (BOOL)currentBounds:(CGRect *)bounds {
+    NSDictionary *current = self.firstOwnedWindow;
+    return current && [current[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] == self.window &&
+        CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)current[(__bridge NSString *)kCGWindowBounds], bounds) &&
+        CGSizeEqualToSize(bounds->size, self.windowBounds.size);
+}
 - (CGEventFlags)flags {
     CGEventFlags flags = 0;
     if ([_keys containsObject:@55] || [_keys containsObject:@54]) flags |= kCGEventFlagMaskCommand;
@@ -107,11 +113,8 @@ static NSDictionary *physicalKeys(void) {
     if ([kind isEqual:@"release"]) { [self releaseInput]; return YES; }
     if (!AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess() || !AppSessionActive() ||
         NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.owner) { [self releaseInput]; return NO; }
-    NSDictionary *current = self.firstOwnedWindow;
     CGRect bounds;
-    if (!current || [current[(__bridge NSString *)kCGWindowNumber] unsignedIntValue] != self.window ||
-        !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)current[(__bridge NSString *)kCGWindowBounds], &bounds) ||
-        !CGSizeEqualToSize(bounds.size, self.bounds.size)) { [self releaseInput]; return NO; }
+    if (![self currentBounds:&bounds]) { [self releaseInput]; return NO; }
     if ([kind isEqual:@"key"]) {
         NSNumber *key = physicalKeys()[input[@"code"]];
         if (!key) return NO;
@@ -134,8 +137,10 @@ static NSDictionary *physicalKeys(void) {
     }
     CGFloat x = [input[@"x"] doubleValue], y = [input[@"y"] doubleValue];
     if (x < 0 || y < 0 || x >= self.width || y >= self.height) return NO;
-    _lastPoint = CGPointMake(bounds.origin.x + x * bounds.size.width / self.width,
-                             bounds.origin.y + y * bounds.size.height / self.height);
+    // The captured picture excludes any WindowServer border. Preserve that
+    // inset and follow moves without treating them as a resize.
+    _lastPoint = CGPointMake(bounds.origin.x + self.bounds.origin.x - self.windowBounds.origin.x + x * self.bounds.size.width / self.width,
+                             bounds.origin.y + self.bounds.origin.y - self.windowBounds.origin.y + y * self.bounds.size.height / self.height);
     if ([kind isEqual:@"wheel"]) {
         CGEventRef event = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, -[input[@"deltaY"] intValue], -[input[@"deltaX"] intValue]);
         if (!event) return NO;

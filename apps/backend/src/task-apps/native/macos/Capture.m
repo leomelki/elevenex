@@ -59,14 +59,9 @@ static uint8_t captureFailure(NSError *error) {
     if (!AppSessionActive()) { [self end:20]; return; }
     if (!CGPreflightScreenCaptureAccess()) { [self end:21]; return; }
     if (kill(-self.target.group, 0) != 0) { [self end:23]; return; }
-    NSDictionary *row = self.target.firstOwnedWindow;
-    if (!row && !self.stream) { if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22]; return; }
-    CGWindowID selected = [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
     if (self.stream) {
         CGRect bounds;
-        if (!row || selected != self.target.window ||
-            !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], &bounds) ||
-            !CGSizeEqualToSize(bounds.size, self.target.bounds.size)) { [self end:23]; return; }
+        if (![self.target currentBounds:&bounds]) { [self end:23]; return; }
         if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != self.target.owner) [self.target releaseInput];
         // Capture the owner on the main queue. A queued refresh can run after
         // the view has been closed or a replacement encoder has been created.
@@ -74,6 +69,9 @@ static uint8_t captureFailure(NSError *error) {
         dispatch_async(self.frames, ^{ [currentEncoder refresh]; });
         return;
     }
+    NSDictionary *row = self.target.firstOwnedWindow;
+    if (!row) { if (CFAbsoluteTimeGetCurrent() > self.deadline) [self end:22]; return; }
+    CGWindowID selected = [row[(__bridge NSString *)kCGWindowNumber] unsignedIntValue];
     if (self.selecting) return;
     self.selecting = YES;
     NSUInteger generation = self.generation;
@@ -85,8 +83,11 @@ static uint8_t captureFailure(NSError *error) {
             for (SCWindow *window in content.windows) {
                 pid_t owner = window.owningApplication.processID;
                 if (window.windowID != selected || !ownsAppProcess(self.target.group, owner)) continue;
+                CGRect windowBounds;
+                if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)row[(__bridge NSString *)kCGWindowBounds], &windowBounds)) { [self end:23]; return; }
                 self.target.window = selected;
                 self.target.owner = owner;
+                self.target.windowBounds = windowBounds;
                 self.target.bounds = window.frame;
                 SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
                 CGSize size = appCaptureSize(window.frame.size,filter.pointPixelScale);

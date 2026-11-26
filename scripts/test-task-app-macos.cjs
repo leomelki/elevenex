@@ -136,10 +136,25 @@ async function interactive(directory, helperPath) {
   try {
     await Promise.race([once(app.stdio[3], 'data'), timedOut]);
     const image = Promise.withResolvers();
-    const stop = display.watch({ frame: frame => image.resolve(frame), end: reason => image.reject(new Error(reason)) });
+    let frames = 0;
+    const interrupted = Promise.withResolvers();
+    const stop = display.watch({ frame: frame => { frames++; image.resolve(frame); }, end: reason => {
+      const error = new Error(reason);
+      image.reject(error);
+      interrupted.resolve(error);
+    } });
     try {
       const frame = await Promise.race([image.promise, timedOut]);
       assert.ok(frame.key && frame.data.length > 0);
+      // A first keyframe alone misses a false resize at the next 500ms tick:
+      // WindowServer includes borders that ScreenCaptureKit can omit.
+      const failure = await Promise.race([
+        interrupted.promise,
+        new Promise(resolve => setTimeout(resolve, 2000)),
+        timedOut,
+      ]);
+      if (failure) throw failure;
+      assert.ok(frames >= 2, 'A static app must keep producing refresh frames');
       const point = { x: Math.floor(frame.width / 2), y: Math.floor(frame.height / 2), button: 0 };
       for (const event of [{ kind: 'down', ...point }, { kind: 'up', ...point },
         { kind: 'key', code: 'KeyA', down: true }, { kind: 'key', code: 'KeyA', down: false }]) await display.input(event);
@@ -188,6 +203,15 @@ async function main() {
     assert.throws(() => execFileSync(executable, [String(process.pid)]), error => error.status === 2,
       'A process cannot nominate an arbitrary app PID for capture');
     await testMacSupervisor(executable);
+    if (process.argv[2] === '--window-geometry') {
+      const fixture = join(dir, 'window-geometry');
+      const source = resolve(__dirname, '../apps/backend/src/task-apps/native/macos');
+      execFileSync('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-mmacosx-version-min=14.0', '-I', source,
+        join(__dirname, 'fixtures/task-app-macos-window-geometry.m'), join(source, 'Input.m'),
+        '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'ScreenCaptureKit',
+        '-o', fixture], { stdio: 'inherit' });
+      execFileSync(fixture, [], { timeout: 10000, stdio: 'inherit' });
+    }
     if (process.argv[2] === '--desktop-connection') {
       const fixture = join(dir, 'Desktop Connection Fixture.app');
       cpSync(bundle, fixture, { recursive: true });

@@ -82,6 +82,10 @@ durable launch gate and filesystem authority. Only capture and input execute
 in the LaunchServices instance. `Capture.m` owns that instance's window filter,
 encoder, control reader and lifetime. Closing its authenticated owner connection
 ends the helper; losing the helper drains the original supervisor's group.
+Window change detection compares WindowServer frames with their original
+WindowServer measurement. ScreenCaptureKit can omit the window border, so its
+picture bounds are kept separately for capture sizing and input coordinates.
+Moving a window preserves that inset; resizing still requires a fresh stream.
 The supervisor registers the private rendezvous before starting its monitor,
 so even a fast-exiting app cleans it up. No persistent launch agent, additional
 OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
@@ -150,6 +154,13 @@ The capture helper accepts only the group it created. ScreenCaptureKit filters o
 Desktop main obtains a short-lived ticket before attaching to the scope-bound App stream. A close or reconnect creates a fresh viewer identity. The process-level input lease releases held keys and buttons when a controlling viewer disconnects.
 
 Run `node scripts/test-task-app-macos.cjs` from a checkout on a Mac with Xcode Command Line Tools. It compiles and signs the native helper, verifies the code signature, checks a synthetic VideoToolbox keyframe and exercises process-group cleanup. After building the backend TypeScript and granting the installed helper its permissions, run the interactive check from the checkout. It opens a disposable AppKit window on the task Mac, receives its actual ScreenCaptureKit keyframe, and verifies the app received a mouse click and a key press. Leave the fixture in the foreground during the check.
+
+On a signed-in Mac, `node scripts/test-task-app-macos.cjs --window-geometry`
+also checks real WindowServer selection with a simulated picture inset, window
+movement, resizing, a covering owned window and ownership rejection. This mode
+needs no capture or input grant. The interactive check requires the actual
+stream to keep delivering frames across several window-monitor ticks before
+testing input; receiving just its first keyframe does not establish stability.
 
 ```sh
 node scripts/test-task-app-macos.cjs --interactive "/path/to/installed/backend/bin/Elevenex Agent.app/Contents/MacOS/Elevenex Agent"
