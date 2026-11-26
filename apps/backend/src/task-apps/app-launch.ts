@@ -162,7 +162,7 @@ export async function spawnAppSupervisor(
       ),
     };
   }
-  const launch = DarwinAppDisplay.launchCommand(command, host.darwinSession ?? 'direct');
+  const launch = DarwinAppDisplay.launchCommand(command, host.darwinSession ?? 'direct', request.mode === 'stream');
   signal.throwIfAborted();
   return {
     child: spawn(launch.executable, [...launch.args], {

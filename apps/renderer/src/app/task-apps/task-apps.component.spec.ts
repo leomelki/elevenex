@@ -79,6 +79,62 @@ describe('Task apps panel ownership', () => {
     });
     expect(view.nativeElement.querySelector('button[aria-label="Stop app"]')).toBeNull();
   });
+  it('shows progress and a visible result when a successful host check still leaves setup blocked', async () => {
+    const proposal: TaskAppRun = { ...run(2, 'request'), status: 'requested', setupIssue: 'macos-screen-recording',
+      pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
+    let finish!: (result: BackendResult<void>) => void;
+    const approval = new Promise<BackendResult<void>>(resolve => { finish = resolve; });
+    const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [proposal] }));
+    const taskAppApprove = vi.fn(() => approval);
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppsRead, taskAppApprove } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent);
+    fixture.componentRef.setInput('scopeId', 'machine'); fixture.componentRef.setInput('taskId', 2);
+    fixture.componentRef.setInput('machine', 'Studio Mac'); fixture.componentRef.setInput('remote', true);
+    fixture.detectChanges();
+    const element: HTMLElement = fixture.nativeElement;
+    const launch = () => element.querySelector<HTMLButtonElement>('.setup-actions button[data-variant=primary]')!;
+    await vi.waitFor(() => { fixture.detectChanges(); expect(launch()).not.toBeNull(); });
+    launch().click(); fixture.detectChanges();
+    expect(launch().disabled).toBe(true); expect(launch().textContent).toContain('Checking…');
+    expect(element.textContent).toContain('Checking Studio Mac before launching');
+    launch().click(); expect(taskAppApprove).toHaveBeenCalledTimes(1);
+    finish({ ok: true, value: undefined });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(element.textContent).toContain("Preview request hasn't launched");
+      expect(element.textContent).toContain('host still reports the setup issue');
+      expect(launch().disabled).toBe(false);
+    });
+    expect(taskAppApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for a read started after the check before reporting its remaining setup issue', async () => {
+    let state: TaskAppRun = { ...run(2, 'request'), status: 'requested', setupIssue: 'macos-screen-recording',
+      pendingLaunch: { executable: 'pnpm', args: ['desktop:dev'] } };
+    let finishRead!: (result: BackendResult<readonly TaskAppRun[]>) => void;
+    const oldRead = new Promise<BackendResult<readonly TaskAppRun[]>>(resolve => { finishRead = resolve; });
+    let readCount = 0;
+    const taskAppsRead = vi.fn(async () => ++readCount === 2 ? oldRead : { ok: true as const, value: [state] });
+    const taskAppApprove = vi.fn(async () => {
+      state = { ...state, setupIssue: 'macos-desktop-connection' };
+      return { ok: true as const, value: undefined };
+    });
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppsRead, taskAppApprove } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent);
+    fixture.componentRef.setInput('scopeId', 'machine'); fixture.componentRef.setInput('taskId', 2); fixture.detectChanges();
+    await vi.waitFor(() => { fixture.detectChanges(); expect(fixture.componentInstance.run()).toBeDefined(); });
+    const before = state;
+    const reading = fixture.componentInstance.refresh();
+    await fixture.componentInstance.act('approve');
+    expect(fixture.componentInstance.setupFeedback()).toContain('Refreshing app status');
+    finishRead({ ok: true, value: [before] }); await reading;
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.componentInstance.run()?.setupIssue).toBe('macos-desktop-connection');
+      expect(fixture.componentInstance.setupFeedback()).toContain("hasn't launched");
+    });
+    expect(taskAppApprove).toHaveBeenCalledTimes(1);
+  });
   it('keeps run actions in one toolbar and folds logs in under the app on request', async () => {
     const taskAppOutput = vi.fn(async () => ({ ok: true as const, value: 'ready on :5173' }));
     const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [run(3, 'native')] }));
@@ -196,12 +252,13 @@ describe('Task apps panel ownership', () => {
       expect(element.textContent).not.toContain('was asked to open');
     });
 
-    it('says plainly that SSH desktop access still needs repair after permissions, and speaks of this Mac locally', async () => {
+    it('distinguishes the private desktop connection from permission grants and speaks of this Mac locally', async () => {
       const issue: TaskAppRun = { ...run(5, 'web'), status: 'failed', setupIssue: 'macos-desktop-connection', detail: 'macOS refused the desktop connection.' };
       const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [issue] }));
       const remote = mount({ taskAppsRead, taskAppOpenSetupSettings: vi.fn() });
       await vi.waitFor(() => { remote.fixture.detectChanges(); expect(remote.element.querySelector('ex-task-app-setup')).not.toBeNull(); });
-      expect(remote.element.textContent).toContain('does not repair the SSH desktop connection by itself');
+      expect(remote.element.textContent).toContain('permission check and the connection');
+      expect(remote.element.textContent).toContain('reconnect the machine to update its engine');
       expect(remote.element.textContent).toContain('needs to do these steps');
       expect(remote.element.querySelector('.diagnostic')?.textContent).toContain('macOS refused the desktop connection.');
       TestBed.resetTestingModule();

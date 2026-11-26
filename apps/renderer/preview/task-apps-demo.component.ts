@@ -19,6 +19,11 @@ class AppsFixture implements Partial<ElevenexBridge> {
   logsFailure: BackendClientError | null = null;
   watchRefusal: BackendClientError | null = null;
   actionFailure: BackendClientError | null = null;
+  /** A successful host check can still leave a setup-blocked proposal waiting. */
+  setupBlocked = false;
+  holdApproval = false;
+  private pendingApproval?: () => void;
+  releaseApproval(): void { this.holdApproval = false; this.pendingApproval?.(); this.pendingApproval = undefined; }
   /** A rejected input call carries the host's guidance behind Electron's IPC prefix. */
   inputGuidance: keyof typeof APP_INPUT_GUIDANCE | null = null;
   async taskAppsRead(): Promise<BackendResult<readonly TaskAppRun[]>> {
@@ -48,7 +53,10 @@ class AppsFixture implements Partial<ElevenexBridge> {
     return { ok: true as const, value: { path: '/Users/demo/.elevenex/runtimes/current/backend/bin/Elevenex Agent.app', revealed: true } };
   }
   async writeClipboardText() { /* The isolated preview does not write to the host clipboard. */ }
-  async taskAppApprove() { return this.mutate(() => { this.runs = [{ ...run, status: 'starting' }]; }); }
+  async taskAppApprove() {
+    if (this.holdApproval) await new Promise<void>(resolve => { this.pendingApproval = resolve; });
+    return this.mutate(() => { if (!this.setupBlocked) this.runs = [{ ...run, status: 'starting' }]; });
+  }
   async taskAppStop() { return this.mutate(() => { this.runs = [{ ...run, status: 'exited' }]; }); }
   async taskAppWatch(_scope: string, _task: number, _run: string, id: string): Promise<BackendResult<void>> {
     if (this.watchRefusal) return { ok: false, error: this.watchRefusal };

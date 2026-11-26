@@ -6,7 +6,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
 /** Native helper lifetime smoke. The launcher exits immediately and its app keeps the group alive. */
-async function testMacSupervisor(executable) {
+async function testMacSupervisor(executable, launch = '--launch') {
   const scratch = mkdtempSync(join(tmpdir(), 'elevenex-launch-gate-'));
   const drained = join(scratch, '.supervisor-drained');
   const env = { ...process.env, ELEVENEX_TASK_APP_RUNTIME_DIR: scratch, ELEVENEX_TASK_APP_DRAIN_PROOF: '1' };
@@ -14,14 +14,14 @@ async function testMacSupervisor(executable) {
   try {
     writeFileSync(drained, '', { mode: 0o600, flag: 'wx' });
     const marker = join(scratch, 'app-started');
-    const cancelled = spawn(executable, ['--launch', '/usr/bin/touch', marker], options);
+    const cancelled = spawn(executable, [launch, '/usr/bin/touch', marker], options);
     const stopped = once(cancelled, 'exit');
     cancelled.stdin.end();
     await stopped;
     assert.equal(existsSync(marker), false, 'EOF before durable launch must leave the app unstarted');
     assert.equal(existsSync(drained), true);
 
-    const child = spawn(executable, ['--launch', '/bin/sh', '-c', 'sleep 30 & exit 0'], options);
+    const child = spawn(executable, [launch, '/bin/sh', '-c', 'sleep 30 & exit 0'], options);
     const closed = once(child, 'exit');
     const deadline = setTimeout(() => child.kill('SIGKILL'), 8000);
     try {

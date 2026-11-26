@@ -48,13 +48,35 @@ so the signed bundle carries the light/dark colors it needs without loading
 checkout files at runtime. Focus remains visible during keyboard navigation;
 mouse use does not leave a permanent outline around the draggable item.
 
-A fresh, bounded child of the app checks Screen Recording, shareable-content
+A fresh, bounded child of the setup app checks Screen Recording, shareable-content
 availability and Accessibility. The setup card uses those results, never drag
 completion, for its status. Polling stops on close or after ten minutes. The
 completed card discards its cached grants and checks again when reopened. The
 remote viewer's **Check and launch** still validates the real capture host.
 The UI's permission status alone does not prove an SSH engine can connect to
 the desktop. The signed-in account must match the SSH account.
+
+The backend's **Check and launch** probe and streamed capture also run through
+LaunchServices. A direct SSH spawn, including `launchctl asuser`, can retain
+SSH's TCC responsibility even when it can see the desktop. It can therefore
+report Screen Recording denied after setup correctly reports the agent's grant.
+`DesktopConnection.m` creates a private, short-lived Unix rendezvous in a 0700
+directory. Both peers require the same effective UID and canonical native agent
+executable, checked with kernel peer credentials/PIDs. A bounded request carries
+only a check or the supervisor's freshly minted group; `SCM_RIGHTS` transfers
+only its existing private display descriptor. This entry accepts neither a
+launch command nor a caller-supplied capture target from an untrusted process.
+The supported symlink CLI is resolved to the real bundle before opening it.
+
+The original supervisor keeps the user process, environment, cwd, stdio,
+durable launch gate and filesystem authority. Only capture and input execute
+in the LaunchServices instance. `Capture.m` owns that instance's window filter,
+encoder, control reader and lifetime. Closing its authenticated owner connection
+ends the helper; losing the helper drains the original supervisor's group.
+The supervisor registers the private rendezvous before starting its monitor,
+so even a fast-exiting app cleans it up. No persistent launch agent, additional
+OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
+entry retains its in-process capture; managed streams use `--launch-desktop`.
 
 Both development and release archives include the app's complete resources,
 icon and executable. Public runtime CI imports the configured Developer ID
@@ -88,11 +110,18 @@ Keyboard layout, system dialogs, and multiple displays need separate graphical t
 
 The implementation uses [ScreenCaptureKit window filters](https://developer.apple.com/documentation/screencapturekit/sccontentfilter/init(desktopindependentwindow:)), [VideoToolbox H.264 encoding](https://developer.apple.com/documentation/videotoolbox/vtcompressionsession) and [process-targeted Quartz events](https://developer.apple.com/documentation/coregraphics/cgevent/posttopid(_:)).
 
-An SSH engine may be denied access to the signed-in desktop's audit session.
-When `launchctl asuser` fails with “Could not switch to audit session” and
-exit 1, Apps reports a desktop connection problem. It cannot infer that the
-Mac is locked or signed out from this failure. Use Elevenex's local machine
-on the task Mac for app sharing when this handoff is denied.
+If LaunchServices cannot establish the private connection, Apps reports
+`macos-desktop-connection`, separately from missing Screen Recording or a locked
+session. The user can reconnect/update the engine and retry. A successful
+permission grant alone does not establish that the private connection works.
+
+On a signed-in Mac, `node scripts/test-task-app-macos.cjs --desktop-connection`
+uses a separately identified fixture app without granting any permissions.
+It exercises real LaunchServices, the preflight result, the durable launch gate,
+rejection of an unrelated peer and arbitrary capture groups, bidirectional
+display receipts, cwd/environment/argv/stdio preservation, exit codes and group
+cleanup. Actual authorized ScreenCaptureKit frames and input still require the
+interactive test with the installed, granted agent.
 
 For isolated native UI previews (with fixture permission states and no grants),
 run `node scripts/test-task-app-macos.cjs --setup-preview artifacts/task-app-agent/native-preview`.

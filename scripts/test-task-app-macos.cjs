@@ -6,6 +6,7 @@ const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { buildMacAppDisplay } = require('./build-task-app-macos.cjs');
 const { testMacSupervisor } = require('./test-task-app-supervisor.cjs');
+const { testMacDesktopConnection } = require('./test-task-app-macos-desktop.cjs');
 
 async function setupPreview(directory, bundle, output) {
   mkdirSync(output, { recursive: true });
@@ -94,7 +95,7 @@ async function interactive(directory, helperPath) {
   const fixture = join(directory, 'test-window');
   execFileSync('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-framework', 'AppKit',
     join(__dirname, 'fixtures/task-app-macos-window.m'), '-o', fixture], { stdio: 'inherit' });
-  const app = spawn(helperPath, ['--launch', fixture], { stdio: ['pipe', 'pipe', 'inherit', 'pipe', 'pipe'] });
+  const app = spawn(helperPath, ['--launch-desktop', fixture], { stdio: ['pipe', 'pipe', 'inherit', 'pipe', 'pipe'] });
   const exited = once(app, 'exit');
   app.stdin.write('GO\n');
   const received = Promise.withResolvers();
@@ -148,6 +149,14 @@ async function main() {
     assert.throws(() => execFileSync(outputPath, [String(process.pid)]), error => error.status === 2,
       'A process cannot nominate an arbitrary app PID for capture');
     await testMacSupervisor(outputPath);
+    if (process.argv[2] === '--desktop-connection') {
+      const fixture = join(dir, 'Desktop Connection Fixture.app');
+      cpSync(bundle, fixture, { recursive: true });
+      execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier com.elevenex.task-app-desktop-fixture', join(fixture, 'Contents/Info.plist')]);
+      execFileSync('/usr/bin/codesign', ['--force', '--identifier', 'com.elevenex.task-app-desktop-fixture', '--sign', '-', fixture], { stdio: 'inherit' });
+      await testMacDesktopConnection(join(fixture, 'Contents/MacOS/Elevenex Agent'), dir);
+      console.log('Native desktop connection: verified launch gate, permissions probe, peer rejection, control channel, cwd/env/argv/stdio, exit and cleanup.');
+    }
     if (process.argv[2] === '--setup-preview') {
       if (!process.argv[3]) throw new Error('Supply an output directory for setup previews');
       await setupPreview(dir, bundle, resolve(process.argv[3]));

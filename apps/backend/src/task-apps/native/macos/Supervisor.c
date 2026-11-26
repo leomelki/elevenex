@@ -2,6 +2,7 @@
 // live child group established here can subsequently be selected by the helper.
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -16,7 +17,17 @@
 extern char **environ;
 static pid_t group;
 static int runDirectory = -1;
+static char desktopDirectory[PATH_MAX];
+void setSupervisorDesktopDirectory(const char *path) { strlcpy(desktopDirectory,path,sizeof(desktopDirectory)); }
 static void acknowledgeDrain(void) {
+    // A fast-exiting launcher can end the supervisor before LaunchServices
+    // connects. This directory is registered before the monitor thread starts.
+    if (desktopDirectory[0]) {
+        char socketPath[PATH_MAX];
+        snprintf(socketPath,sizeof(socketPath),"%s/owner",desktopDirectory);
+        unlink(socketPath);
+        rmdir(desktopDirectory);
+    }
     if (runDirectory < 0) return;
     int marker = openat(runDirectory, ".supervisor-drained", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (marker >= 0) close(marker);
@@ -25,6 +36,7 @@ static void acknowledgeDrain(void) {
 }
 static volatile sig_atomic_t stopping;
 static void requestStop(int sig) { (void)sig; stopping = 1; }
+void stopOwnedGroup(void) { stopping = 1; for (;;) pause(); }
 static double now(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);

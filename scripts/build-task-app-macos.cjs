@@ -26,7 +26,7 @@ async function buildMacAppDisplay({ outputPath }) {
   writeFileSync(join(resources, 'AgentTheme.json'), JSON.stringify(theme));
   const executable = join(contents, 'MacOS', 'Elevenex Agent');
   execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang', '-fobjc-arc', '-O2', '-arch', process.arch === 'arm64' ? 'arm64' : 'x86_64',
-    '-mmacosx-version-min=14.0', ...['Main.m', 'Setup.m', 'SetupViews.m', 'AgentIcon.m', 'Encoder.m', 'Input.m', 'Supervisor.c'].map(file => join(source, file)),
+    '-mmacosx-version-min=14.0', ...['Main.m', 'DesktopConnection.m', 'Capture.m', 'Setup.m', 'SetupViews.m', 'AgentIcon.m', 'Encoder.m', 'Input.m', 'Supervisor.c'].map(file => join(source, file)),
     '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'ScreenCaptureKit',
     '-framework', 'VideoToolbox', '-framework', 'CoreMedia', '-framework', 'CoreVideo',
     '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', join(source, 'Info.plist'),

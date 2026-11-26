@@ -41,6 +41,8 @@ function errorForCode(code: unknown): string {
       return 'Waiting for an owned, visible app window on the task Mac. Retry when its build is ready.';
     case 23:
       return 'App window or display geometry changed. Reopen the stream.';
+    case 25:
+      return 'Elevenex Agent could not connect to the task Mac’s desktop. Sign in and unlock the same account, then retry.';
     default:
       return 'The macOS display helper is unavailable. Verify the host runtime and screen recording permission.';
   }
@@ -48,7 +50,7 @@ function errorForCode(code: unknown): string {
 
 function preflightError(code: unknown): AppSetupError {
   return new AppSetupError(
-    code === 20 ? 'macos-session' : code === 21 ? 'macos-screen-recording' : 'macos-runtime',
+    code === 20 ? 'macos-session' : code === 21 ? 'macos-screen-recording' : code === 25 ? 'macos-desktop-connection' : 'macos-runtime',
     errorForCode(code),
   );
 }
@@ -98,11 +100,12 @@ export class DarwinAppDisplay {
   static launchCommand(
     command: { executable: string; args: readonly string[] },
     session: DarwinAppSession,
+    stream = true,
   ) {
     return darwinAppCommand(
       {
         executable: helperPath(),
-        args: ['--launch', command.executable, ...command.args],
+        args: [stream ? '--launch-desktop' : '--launch', command.executable, ...command.args],
       },
       session,
     );
@@ -111,7 +114,7 @@ export class DarwinAppDisplay {
   static async preflight(): Promise<DarwinAppSession> {
     const command = { executable: helperPath(), args: ['--check'] };
     const options = {
-      timeout: 3000,
+      timeout: 8000,
       maxBuffer: 1024,
       env: { PATH: '/usr/bin:/bin' },
     };
@@ -119,20 +122,10 @@ export class DarwinAppDisplay {
       await exec(command.executable, command.args, options);
       return 'direct';
     } catch (error) {
-      if (exitCode(error) !== 20) throw preflightError(exitCode(error));
-    }
-    const graphical = darwinAppCommand(command, 'user');
-    try {
-      await exec(graphical.executable, graphical.args, options);
-      return 'user';
-    } catch (error) {
-      // launchctl uses exit 1 for a failed audit-session handoff. This says
-      // nothing about whether the user is signed in or the screen is locked.
-      const code = exitCode(error);
-      if (code === 1)
-        throw new AppSetupError('macos-desktop-connection',
-          'macOS refused the SSH engine’s connection to the signed-in desktop. Open Elevenex on the task Mac and use its local machine for app sharing.');
-      throw preflightError(code);
+      // The native check uses LaunchServices, as does the real stream. An SSH
+      // spawn or launchctl asuser retains SSH's TCC responsibility, so it must
+      // not stand in for the agent whose permissions setup actually checked.
+      throw preflightError(exitCode(error));
     }
   }
 
@@ -244,14 +237,14 @@ export class DarwinAppDisplay {
               flag = header[8];
             if (!id) {
               const disposition =
-                flag === 20 || flag === 21
+                flag === 20 || flag === 21 || flag === 25
                   ? 'permission'
                   : flag === 22
                     ? 'window-missing'
                     : flag === 23
                       ? 'window-changed'
                       : undefined;
-              const setupIssue = flag === 20 ? 'macos-session' : flag === 21 ? 'macos-screen-recording' : undefined;
+              const setupIssue = flag === 20 ? 'macos-session' : flag === 21 ? 'macos-screen-recording' : flag === 25 ? 'macos-desktop-connection' : undefined;
               this.end(errorForCode(flag), disposition, setupIssue);
             } else {
               this.controls.get(id)?.(flag);

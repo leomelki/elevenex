@@ -89,6 +89,7 @@ export class TaskAppsComponent {
   readonly logsOpen = signal(false);
   readonly logs = signal<string | null>(null);
   readonly busy = signal(false);
+  readonly checkingLaunch = signal(false);
   readonly bridge = inject(ELEVENEX_BRIDGE);
   private readonly document = inject(DOCUMENT);
   private readonly recentTasks = new Map<number, { readonly snapshot: RunSnapshot; readonly selected: string }>();
@@ -102,6 +103,7 @@ export class TaskAppsComponent {
   private logGeneration = 0;
   private disposed = false;
   private requestedRun = '';
+  private checkedLaunch: RunLink | null = null;
 
   constructor() {
     let wasMonitoring = false;
@@ -173,6 +175,7 @@ export class TaskAppsComponent {
     const generation = this.generation;
     const current = () => generation === this.generation && this.matches(target);
     const link = this.link();
+    const checkedLaunch = this.checkedLaunch;
     this.reading.set(true);
     clearTimeout(this.timer);
     try {
@@ -191,6 +194,14 @@ export class TaskAppsComponent {
           reply.value.find(isActive) ?? reply.value[0];
         this.select(run?.runId ?? '');
       }
+      if (checkedLaunch && this.checkedLaunch === checkedLaunch && this.run()?.runId === checkedLaunch.runId) {
+        this.checkedLaunch = null;
+        if (this.run()?.status === 'requested') this.setupFeedback.set(
+          `The host check finished, but ${this.run()!.name} hasn't launched. ${this.run()?.setupIssue
+            ? 'The host still reports the setup issue shown above. Complete those steps on ' + this.host() + ', then check again.'
+            : 'The request is still waiting. Check again to retry the launch.'}`,
+        );
+      }
       // An older read must not dismiss a launch link that asked for a fresh read.
       if (this.monitor() && !this.hasActiveApp() && !this.pendingRead && this.link() === link) this.idle.emit();
       if (this.viewerVisible() && this.logsOpen() && this.run()) await this.readLogs();
@@ -207,6 +218,8 @@ export class TaskAppsComponent {
   select(id: string): void {
     this.logGeneration++;
     this.selected.set(id);
+    this.checkedLaunch = null;
+    this.checkingLaunch.set(false);
     this.busy.set(false); this.actionFailure.set(null); this.detached.set(false); this.actual.set(false);
     this.setupFeedback.set('');
     this.setupHelperPath.set('');
@@ -257,6 +270,8 @@ export class TaskAppsComponent {
     const scope = this.scopeId(), task = this.taskId(), run = this.run(), generation = this.generation;
     if (!scope || !task || !run || this.busy()) return;
     this.busy.set(true); this.actionFailure.set(null); this.setupFeedback.set('');
+    this.checkingLaunch.set(action === 'approve');
+    if (action === 'approve' && run.setupIssue) this.setupFeedback.set(`Checking ${this.host()} before launching…`);
     const current = () => generation === this.generation && this.run()?.runId === run.runId;
     const place = this.place();
     const kind: ActionKind = action === 'approve' ? 'launch' : action === 'setup-settings' ? 'open-setup' : run.status === 'requested' ? 'decline' : 'stop';
@@ -271,12 +286,16 @@ export class TaskAppsComponent {
       const result = await invoke.call(this.bridge, scope, task, run.runId);
       if (!current()) return;
       if (!result.ok) fail(result.error);
+      else if (action === 'approve') {
+        this.checkedLaunch = { scopeId: scope, taskId: task, runId: run.runId };
+        this.setupFeedback.set('The host check finished. Refreshing app status…');
+      }
       else if (action === 'setup-settings' && this.run()?.setupIssue === run.setupIssue)
         this.setupFeedback.set(run.setupIssue?.startsWith('macos-')
           ? `Elevenex Agent was asked to open on ${macName(place)}. Look at that screen to continue. If nothing appears, check that someone is signed in and unlocked, then try again.`
           : `System Settings was asked to open on ${hostName(place)}. Look at that screen to continue.`);
     } catch { if (current()) fail('interrupted'); }
-    finally { if (current()) { this.busy.set(false); void this.refresh(); } }
+    finally { if (current()) { this.checkingLaunch.set(false); this.busy.set(false); void this.refresh(); } }
   }
 
   async revealSetupHelper(): Promise<void> {

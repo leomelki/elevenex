@@ -43,6 +43,12 @@ reporting keyboard and mouse access.
 **Check and launch** rechecks and launches the reviewed command. Setup does
 not extend the request's expiration or automatically replay a launch. The
 engine must still pass its real host check, including desktop-session access.
+The button shows **Checking…** during the request. If the host check still
+blocks launch, the card explicitly says the app has not launched and shows the
+current host issue. On macOS, both this check and capture run as Elevenex Agent
+through LaunchServices, so SSH does not substitute its own permission identity
+for the app you enabled in setup. The task's original supervisor still owns
+the app process and its working directory and environment.
 Windows guides sign-in and Graphics Capture checks, including opening System
 → About. Linux lists missing display tools.
 

@@ -72,7 +72,7 @@
         <p class="setup-next">Setup never launches this on its own. <strong>Check and launch</strong> asks {{ host() }} to check again, then starts the command only if the check passes.</p>
         <div class="actions setup-actions">
           <button exButton size="sm" variant="ghost" [disabled]="busy()" (click)="act('stop')">Decline</button>
-          <button exButton size="sm" variant="primary" [disabled]="busy() || !bridge.taskAppApprove" (click)="act('approve')">Check and launch</button>
+          <button exButton size="sm" variant="primary" [disabled]="busy() || !app.pendingLaunch || !bridge.taskAppApprove" (click)="act('approve')">{{ checkingLaunch() ? 'Checking…' : 'Check and launch' }}</button>
         </div>
         @if (!bridge.taskAppApprove) { <p class="setup-next">This version of Elevenex can't launch apps. Update it to approve this request.</p> }
       } @else if (app.status === 'failed') {

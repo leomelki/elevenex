@@ -49,14 +49,14 @@ function guideFor(issue: TaskAppSetupIssue, place: AppPlace): SetupGuide {
     };
     case 'macos-desktop-connection': return {
       title: 'Connect to the Mac desktop',
-      why: `The engine on ${mac} runs in an SSH session, and macOS refused to connect it to the signed-in desktop.`,
+      why: `Elevenex Agent couldn't establish its private connection to the desktop on ${mac}.`,
       steps: [
         `Make sure someone is signed in and unlocked at ${mac}.`,
-        `Open setup on ${mac} to check Elevenex Agent's permissions. This is useful, but it does not repair the SSH desktop connection by itself.`,
-        'Try again after setup. If it fails the same way, app sharing is not available for this machine over SSH yet.',
+        `Open setup on ${mac} to check Elevenex Agent's permissions.`,
+        'Check and launch again. If the connection still fails, reconnect the machine to update its engine and retry.',
       ],
       open: 'setup',
-      caveat: `For now, run Elevenex directly on ${mac} and add it as a local machine. Apps launched there use the signed-in desktop.`,
+      caveat: `The permission check and the connection to ${mac}'s desktop must both succeed before the app can launch.`,
     };
     case 'macos-runtime': return {
       title: 'Update Elevenex on the Mac',

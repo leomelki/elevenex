@@ -56,6 +56,14 @@ clipboard. The reviewed command remains available and **Check and launch**
 rechecks the original request. The Accessibility guide leaves video attached
 while input is unavailable.
 
+**Check and launch** shows **Checking…** while the request is in flight and
+disables duplicate clicks. A successful HTTP response can still mean that host
+setup blocked the launch. A read started after that response reconciles the
+run and reports that it has not launched if the request is still waiting, using
+the host's current setup guide. An older in-flight read cannot consume that
+result. Changing tasks/runs discards the pending feedback, and no launch replays
+automatically.
+
 Mac permission guides offer **Show agent in Finder** on the host, followed
 by the installed helper path and **Copy app path** for the settings file
 picker. The host derives this path from its own managed runtime. Replies and
@@ -93,8 +101,8 @@ machine reported.
   host (`this Mac` locally, the machine's name remotely). A remote card says that
   someone at the machine must do the steps, because permissions cannot be
   granted from the viewer. `macos-desktop-connection` states that granting
-  permissions does not repair the SSH desktop connection by itself and points
-  to running Elevenex directly on that Mac for now.
+  permissions does not establish the agent's private desktop connection and
+  offers a retry after reconnecting/updating the engine.
 - **Displays** map the host's known ending reasons and the desktop's refusal
   codes to a title, a cause and **Reconnect**. An unknown host reason is shown
   verbatim. Input failures keep `APP_INPUT_GUIDANCE` text exact, matched by

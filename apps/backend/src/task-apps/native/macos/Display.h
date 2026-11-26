@@ -5,6 +5,8 @@
 BOOL AppSessionActive(void);
 BOOL ownsAppProcess(pid_t group, pid_t owner);
 pid_t launchOwnedGroup(char **command);
+void stopOwnedGroup(void);
+void setSupervisorDesktopDirectory(const char *path);
 void setDisplayOutput(FILE *channel);
 void displayReceipt(uint32_t id, uint8_t flag);
 
