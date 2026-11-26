@@ -45,7 +45,13 @@ export class AppStreamComponent {
   private receipt?: { sequence: number };
   private lastComposition?: string;
   private compositionTimer?: ReturnType<typeof setTimeout>;
-  private readonly decoder = new H264Decoder({ width: APP_VIDEO_MAX_AXIS, height: APP_VIDEO_MAX_AXIS, pixels: APP_VIDEO_MAX_PIXELS });
+  // Some hardware decoders retain a macOS Baseline GOP beyond the host's
+  // eight-packet window, even with optimizeForLatency. Apps can also go idle
+  // mid-GOP, so use the supported software decoder for immediate pictures.
+  private readonly decoder = new H264Decoder(
+    { width: APP_VIDEO_MAX_AXIS, height: APP_VIDEO_MAX_AXIS, pixels: APP_VIDEO_MAX_PIXELS },
+    'prefer-software',
+  );
   private readonly lane = new AppInputQueue(async event => {
     if (this.watchId && this.controlling()) await this.bridge.taskAppInput?.(this.scopeId(), this.watchId, event);
   }, reason => {

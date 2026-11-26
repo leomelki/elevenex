@@ -29,17 +29,22 @@ Paint acknowledgments are cumulative, with one pending IPC call per viewer.
 The viewer continues decoding while that call completes.
 Video submission is also independent of paint completion: the shared decoder
 can retain a frame until another packet arrives, including with
-`optimizeForLatency`. The viewer and decoder each bound pending work to eight
+`optimizeForLatency`. The Apps viewer prefers software H.264 decoding when
+WebCodecs supports it because hardware decoding can retain macOS interframes
+beyond the viewer's queue window or while the captured window is idle.
+The platform default provides a fallback when the software preference is
+unavailable. The viewer and decoder each bound pending work to eight
 packets and 3 MB. Decoder-local timestamps match outputs to their packets;
 reset rejects pending outputs and closes late frames. Receipts still acknowledge
 only painted frames. Local decoding/drawing failures are distinguished from
 missing packets and slow transport in recovery guidance.
 
-`scripts/desktop-capture/scenarios/task-apps-native-video.mjs` exercises real
-VideoToolbox bytes through the production viewer, plus local decode-failure
-guidance in both themes. Its versioned preview fixture is a solid-black test
-frame produced by the native helper's `--self-test-window 480 352` command,
-including the helper's nine-byte header; it contains no user app content.
+`scripts/desktop-capture/scenarios/task-apps-native-video.mjs` exercises a
+VideoToolbox keyframe and interframes through the production viewer. It checks
+paint receipts, pixels during motion and idle, refresh after a pause, and
+decode-failure guidance in both themes. The versioned preview fixture was
+captured from a disposable AppKit window displaying solid colors. Each access
+unit retains the native helper's nine-byte header.
 
 Click the surface to send pointer and keyboard input. Keyboard users Tab to the
 surface and press **Enter**. **Shift + Escape** returns focus to the surface

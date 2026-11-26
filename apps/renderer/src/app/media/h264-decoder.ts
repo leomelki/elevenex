@@ -90,7 +90,10 @@ export function h264Size(
 
 /** One bounded decoder pipeline. Owners draw and close every returned frame. */
 export class H264Decoder {
-  constructor(private readonly limits: VideoLimits = browserLimits) {}
+  constructor(
+    private readonly limits: VideoLimits = browserLimits,
+    private readonly acceleration: HardwareAcceleration = "no-preference",
+  ) {}
   private decoder?: VideoDecoder;
   private epoch = "";
   private readonly pending = new Map<number, {
@@ -141,8 +144,8 @@ export class H264Decoder {
     this.submissions = this.submissions.then(async () => {
       if (revision !== this.revision || this.disposed) return;
       if (!this.decoder) {
-        const config: VideoDecoderConfig = { codec: video.codec, optimizeForLatency: true };
-        if (!(await this.checkSupport(config)) || this.disposed || revision !== this.revision)
+        const config = await this.selectConfig(video.codec, revision);
+        if (!config || this.disposed || revision !== this.revision)
           throw new Error("Video codec unavailable");
         this.decoder = new VideoDecoder({
           output: frame => {
@@ -165,7 +168,17 @@ export class H264Decoder {
     }).catch(error => { if (revision === this.revision) this.reset(error instanceof Error ? error : undefined); });
     return result;
   }
-  private async checkSupport(config: VideoDecoderConfig): Promise<boolean> {
+
+  private async selectConfig(codec: H264Packet["codec"], revision: number): Promise<VideoDecoderConfig | undefined> {
+    const config: VideoDecoderConfig = { codec, optimizeForLatency: true };
+    const probe = async () => {
+      if (this.acceleration !== "no-preference") {
+        const preferred = { ...config, hardwareAcceleration: this.acceleration };
+        if ((await VideoDecoder.isConfigSupported(preferred)).supported) return preferred;
+        if (revision !== this.revision) return undefined;
+      }
+      return (await VideoDecoder.isConfigSupported(config)).supported ? config : undefined;
+    };
     let cancel!: () => void;
     const cancelled = new Promise<never>((_resolve, reject) => {
       cancel = () => reject(new Error('Video codec unavailable'));
@@ -174,7 +187,7 @@ export class H264Decoder {
     this.support = pending;
     const timer = setTimeout(cancel, 2000);
     try {
-      return (await Promise.race([VideoDecoder.isConfigSupported(config), cancelled])).supported === true;
+      return await Promise.race([probe(), cancelled]);
     } finally {
       clearTimeout(timer);
       if (this.support === pending) this.support = undefined;

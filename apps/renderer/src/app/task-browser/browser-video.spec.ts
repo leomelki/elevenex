@@ -60,6 +60,36 @@ describe("Browser H.264 allocation boundary", () => {
     expect(await Promise.all(pending)).toEqual(Array(8).fill(true));
     expect(closed).toHaveBeenCalledOnce();
   });
+  it.each([true, false])('uses the software preference when supported (%s) and otherwise selects the default', async softwareSupported => {
+    const configure = vi.fn();
+    const isConfigSupported = vi.fn(async (config: VideoDecoderConfig) => ({
+      supported: config.hardwareAcceleration !== 'prefer-software' || softwareSupported,
+    }));
+    class Decoder {
+      static isConfigSupported = isConfigSupported;
+      state = 'configured';
+      constructor(private readonly callbacks: VideoDecoderInit) {}
+      configure(config: VideoDecoderConfig): void { configure(config); }
+      decode(chunk: EncodedVideoChunk): void {
+        this.callbacks.output({ timestamp: chunk.timestamp, close: vi.fn() } as unknown as VideoFrame);
+      }
+      close(): void { this.state = 'closed'; }
+    }
+    vi.stubGlobal('VideoDecoder', Decoder);
+    vi.stubGlobal('EncodedVideoChunk', class {
+      readonly timestamp: number;
+      constructor(init: EncodedVideoChunkInit) { this.timestamp = init.timestamp; }
+    });
+    const decoder = new BrowserVideoDecoder(undefined, 'prefer-software');
+    const config = { codec: 'avc1.42E02A' as const, optimizeForLatency: true };
+    const preferred = { ...config, hardwareAcceleration: 'prefer-software' };
+    try {
+      const frame = await decoder.decode({ codec: config.codec, epoch: 'epoch', key: true, timestamp: 0, data: sps() });
+      frame.close();
+      expect(isConfigSupported.mock.calls).toEqual(softwareSupported ? [[preferred]] : [[preferred], [config]]);
+      expect(configure).toHaveBeenCalledExactlyOnceWith(softwareSupported ? preferred : config);
+    } finally { decoder.destroy(); }
+  });
   it("reads a real baseline SPS and rejects malformed or unnegotiated parameter sets", () => {
     expect(browserVideoSize(sps())).toEqual({ width: 800, height: 600 });
     expect(browserVideoSize(new Uint8Array([0, 0, 1, 103]))).toBeNull();
