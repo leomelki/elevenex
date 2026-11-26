@@ -48,6 +48,16 @@ int main(int argc, char **argv) {
             if (state) fwrite(state.bytes, 1, state.length, stdout);
             return state ? 0 : 1;
         }
+        if (argc == 3 && (!strcmp(argv[1],"--hold-setup") || !strcmp(argv[1],"--hold-capture"))) {
+            [NSApplication sharedApplication];
+            [NSApp setActivationPolicy:!strcmp(argv[1],"--hold-setup") ? NSApplicationActivationPolicyRegular : NSApplicationActivationPolicyAccessory];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSString stringWithFormat:@"%d",NSProcessInfo.processInfo.processIdentifier] writeToFile:@(argv[2]) atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+            });
+            [NSTimer scheduledTimerWithTimeInterval:60 repeats:NO block:^(NSTimer *timer) { [NSApp terminate:nil]; }];
+            [NSApp run];
+            return 0;
+        }
         if (argc != 3 && argc != 4) return 2;
         NSString *output = @(argv[1]);
         NSString *action = argc == 4 ? @(argv[3]) : @"";

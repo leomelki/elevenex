@@ -71,7 +71,9 @@ export class TaskAppStream {
               ? "App window changed. Reopen the stream."
               : code === 4003
                 ? "No owned app window is visible on the host."
-                : "App stream disconnected";
+                : code === 4004
+                  ? "The host could not capture or encode the app window."
+                  : "App stream disconnected";
         ended(reason);
       });
       this.ws.on("error", abort);

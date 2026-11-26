@@ -119,6 +119,7 @@ export class TaskAppGateway implements OnModuleDestroy {
           if (disposition === 'permission') ws.close(4001);
           else if (disposition === 'window-changed') ws.close(4002);
           else if (disposition === 'window-missing') ws.close(4003);
+          else if (disposition === 'capture-failed') ws.close(4004);
           else ws.close(1000, 'App display ended');
         },
       });

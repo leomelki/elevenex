@@ -109,6 +109,11 @@ machine reported.
   suffix because Electron prefixes IPC errors, and add what still works and what
   to do next.
 
+  Host capture/encoding failure (stream close code 4004) keeps the app running
+  and explains that the picture could not be prepared, with resize/reconnect
+  and engine-update recovery. It is distinct from transport loss and optional
+  Accessibility input permission.
+
 Preview and capture the states with `/task-apps` and the fixture's failure
 fields (`readFailure`, `logsFailure`, `watchRefusal`, `actionFailure`,
 `inputGuidance`).

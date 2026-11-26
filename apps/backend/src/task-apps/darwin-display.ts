@@ -41,6 +41,8 @@ function errorForCode(code: unknown): string {
       return 'Waiting for an owned, visible app window on the task Mac. Retry when its build is ready.';
     case 23:
       return 'App window or display geometry changed. Reopen the stream.';
+    case 24:
+      return 'The Mac could not capture or encode the app window. Resize the app or update its engine, then reconnect.';
     case 25:
       return 'Elevenex Agent could not connect to the task Mac’s desktop. Sign in and unlock the same account, then retry.';
     default:
@@ -132,7 +134,7 @@ export class DarwinAppDisplay {
   static async openSetupSettings(): Promise<void> {
     // LaunchServices creates the setup UI in the logged-in desktop. Do not
     // run AppKit through launchctl asuser from the SSH audit session.
-    await exec('/usr/bin/open', ['-a', agentBundlePath()], {
+    await exec('/usr/bin/open', ['-n', '-a', agentBundlePath(), '--args', '--setup'], {
       timeout: 5000, maxBuffer: 1024, env: { PATH: '/usr/bin:/bin' },
     });
   }
@@ -243,7 +245,9 @@ export class DarwinAppDisplay {
                     ? 'window-missing'
                     : flag === 23
                       ? 'window-changed'
-                      : undefined;
+                      : flag === 24
+                        ? 'capture-failed'
+                        : undefined;
               const setupIssue = flag === 20 ? 'macos-session' : flag === 21 ? 'macos-screen-recording' : flag === 25 ? 'macos-desktop-connection' : undefined;
               this.end(errorForCode(flag), disposition, setupIssue);
             } else {

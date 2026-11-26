@@ -4,6 +4,18 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#include <math.h>
+
+CGSize appCaptureSize(CGSize window, CGFloat pixelScale) {
+    if (!isfinite(window.width) || !isfinite(window.height) || !isfinite(pixelScale) ||
+        window.width <= 0 || window.height <= 0 || pixelScale <= 0) return CGSizeZero;
+    // The wire advertises H.264 Baseline 4.2. Axis limits alone allow
+    // 1920x1440, which exceeds that profile's frame macroblock budget and makes
+    // VideoToolbox refuse ordinary Retina windows (e.g. 1440x959 at scale 2).
+    CGFloat scale = MIN(pixelScale,MIN(1920.0/window.width,1440.0/window.height));
+    scale = MIN(scale,sqrt((1920.0*1080.0)/(window.width*window.height)));
+    return CGSizeMake(MAX(16,(int)(scale*window.width)&~1),MAX(16,(int)(scale*window.height)&~1));
+}
 
 static uint8_t captureFailure(NSError *error) {
     BOOL denied = [error.domain isEqualToString:SCStreamErrorDomain] && error.code == SCStreamErrorUserDeclined;
@@ -77,9 +89,9 @@ static uint8_t captureFailure(NSError *error) {
                 self.target.owner = owner;
                 self.target.bounds = window.frame;
                 SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
-                CGFloat scale = MIN(filter.pointPixelScale, MIN(1920.0 / window.frame.size.width, 1440.0 / window.frame.size.height));
-                self.target.width = MAX(16, (int)(scale * window.frame.size.width) & ~1);
-                self.target.height = MAX(16, (int)(scale * window.frame.size.height) & ~1);
+                CGSize size = appCaptureSize(window.frame.size,filter.pointPixelScale);
+                self.target.width = (size_t)size.width;
+                self.target.height = (size_t)size.height;
                 SCStreamConfiguration *config = [SCStreamConfiguration new];
                 config.width = self.target.width;
                 config.height = self.target.height;

@@ -15,6 +15,14 @@ grants permission itself. Screen Recording is required for viewing.
 Accessibility is optional and enables input. A copy-path alternative works
 with the permission pane's **+ → ⌘⇧G** file picker.
 
+Opening setup always requests a new instance of the exact runtime bundle.
+LaunchServices may otherwise reactivate an older runtime with the same bundle
+identifier, and macOS's **Quit and Reopen** can leave its old setup card visible
+against the current build's grant. The new setup closes previous regular setup
+applications for the same identifier and user. Capture, supervisor and probe
+instances remain accessory/background applications and are preserved. The
+Accessibility step says that viewing is already ready and offers Skip.
+
 The draggable tile shows only the app icon and a dashed arrow running off the
 tile edge toward the System Settings window, which the panel docks beside. It
 deliberately draws no destination: a drop zone inside the panel would invite
@@ -78,6 +86,14 @@ The supervisor registers the private rendezvous before starting its monitor,
 so even a fast-exiting app cleans it up. No persistent launch agent, additional
 OS-wide grant, or reset of SSH permissions is required. The legacy `--launch`
 entry retains its in-process capture; managed streams use `--launch-desktop`.
+
+Capture sizing keeps both axis limits (1920×1440) and a 1920×1080 pixel budget,
+with even dimensions and preserved aspect ratio. The advertised H.264 Baseline
+4.2 profile cannot encode the old 1920×1278/1440 output from common Retina
+windows. Native codec regression checks encode real keyframes at production
+sizes, including a 1440×959 window, portrait windows and 4K source geometry.
+Capture/encoding failure has its own stream close code (4004), so the viewer
+shows a picture preparation error rather than reporting a network disconnect.
 
 Both development and release archives include the app's complete resources,
 icon and executable. Public runtime CI imports the configured Developer ID

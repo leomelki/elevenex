@@ -166,8 +166,11 @@ describe('task app private desktop transport', () => {
       expect(frame(true, 12)).toBe(true);
       await once(ws, 'message');
       expect(arrived).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 12]);
+      const failed = once(ws,'close');
+      source.end('Native encoder refused the window dimensions','capture-failed');
+      expect((await failed)[0]).toBe(4004);
     } finally {
-      const closed = once(ws, 'close');
+      const closed = ws.readyState === WebSocket.CLOSED ? Promise.resolve() : once(ws, 'close');
       ws.close();
       await closed;
       gateway.onModuleDestroy();

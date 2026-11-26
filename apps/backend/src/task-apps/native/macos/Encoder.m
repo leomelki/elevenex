@@ -66,8 +66,10 @@ static void deliver(void *context, void *frame, OSStatus status, VTEncodeInfoFla
     VTCompressionSessionRef _session;
     CVPixelBufferRef _last;
     CFTimeInterval _lastSent;
+    int _width, _height;
 }
 - (BOOL)configureWidth:(int)width height:(int)height {
+    _width = width; _height = height;
     if (VTCompressionSessionCreate(NULL, width, height, kCMVideoCodecType_H264, NULL, NULL, NULL,
                                    deliver, (__bridge void *)self, &_session) != noErr) return NO;
     NSDictionary *settings = @{
@@ -103,7 +105,7 @@ static void deliver(void *context, void *frame, OSStatus status, VTEncodeInfoFla
 - (BOOL)encodeTestFrame {
     CVPixelBufferRef image = NULL;
     NSDictionary *attributes = @{(__bridge NSString *)kCVPixelBufferIOSurfacePropertiesKey: @{}};
-    if (CVPixelBufferCreate(NULL, 64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, (__bridge CFDictionaryRef)attributes, &image)) return NO;
+    if (CVPixelBufferCreate(NULL, _width, _height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, (__bridge CFDictionaryRef)attributes, &image)) return NO;
     CVPixelBufferLockBaseAddress(image, 0);
     for (size_t plane = 0; plane < CVPixelBufferGetPlaneCount(image); plane++) {
         memset(CVPixelBufferGetBaseAddressOfPlane(image, plane), plane ? 128 : 16, CVPixelBufferGetBytesPerRowOfPlane(image, plane) * CVPixelBufferGetHeightOfPlane(image, plane));

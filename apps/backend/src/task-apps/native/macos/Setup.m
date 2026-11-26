@@ -3,6 +3,22 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #include <signal.h>
+#include <libproc.h>
+#include <unistd.h>
+
+static void closePreviousSetupCards(void) {
+    NSString *identifier = NSBundle.mainBundle.bundleIdentifier;
+    if (!identifier) return;
+    for (NSRunningApplication *app in [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier]) {
+        if (app.processIdentifier == getpid() || app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+        struct proc_bsdinfo process = {0};
+        if (proc_pidinfo(app.processIdentifier,PROC_PIDTBSDINFO,0,&process,sizeof(process)) != sizeof(process) || process.pbi_uid != geteuid()) continue;
+        // Only setup opts into Regular activation. Supervisors, permission
+        // probes and capture instances remain LSUIElement/accessory processes.
+        // Replace an obsolete setup card without terminating any app run.
+        [app terminate];
+    }
+}
 
 typedef NS_ENUM(NSUInteger, AgentAccessibilityRepairState) {
     AgentAccessibilityRepairIdle, AgentAccessibilityRepairRunning,
@@ -128,6 +144,7 @@ int printAgentPermissions(void) {
     return row;
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    closePreviousSetupCards();
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     self.style = [AgentSetupStyle new];
     self.started = NSDate.date;
@@ -303,7 +320,7 @@ int printAgentPermissions(void) {
     [self.progress setNeedsDisplay:YES];
     self.completeMark.hidden = !complete;
     self.titleLabel.stringValue = complete ? (self.input ? @"Permissions are on" : @"Ready to show apps") : (self.screen ? @"Allow keyboard and mouse" : @"Allow Screen Recording");
-    self.lede.stringValue = self.screen ? @"Lets you type and click in shared apps." : @"Elevenex uses it to show this Mac’s apps.";
+    self.lede.stringValue = self.screen ? @"Viewing is ready. Allow control, or skip." : @"Elevenex uses it to show this Mac’s apps.";
     self.lede.hidden = complete;
     self.dragItem.hidden = complete || self.manual;
     self.dragSteps.hidden = complete || self.manual;

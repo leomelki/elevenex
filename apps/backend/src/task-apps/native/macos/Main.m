@@ -20,11 +20,18 @@ static int runAgentCommand(int argc, char *argv[], BOOL desktop, int displayDesc
         });
         if (argc == 3 && !strcmp(argv[1], "--write-iconset")) return writeAgentIconset(@(argv[2]));
         if (argc == 2 && !strcmp(argv[1], "--permission-status")) return printAgentPermissions();
-        if (argc == 2 && !strcmp(argv[1], "--self-test")) {
+        if (((argc == 2 || argc == 4) && !strcmp(argv[1], "--self-test")) ||
+            (argc == 4 && !strcmp(argv[1],"--self-test-window"))) {
+            int width = argc == 4 ? atoi(argv[2]) : 64, height = argc == 4 ? atoi(argv[3]) : 64;
+            if (!strcmp(argv[1],"--self-test-window")) {
+                CGSize size = appCaptureSize(CGSizeMake(width,height),2);
+                width = (int)size.width; height = (int)size.height;
+            }
+            if (width < 16 || height < 16 || width > 1920 || height > 1440 || (width & 1) || (height & 1)) return 2;
             setDisplayOutput(stdout);
             AppEncoder *encoder = [AppEncoder new];
             encoder.failed = ^{};
-            return [encoder configureWidth:64 height:64] && [encoder encodeTestFrame] ? 0 : 24;
+            return [encoder configureWidth:width height:height] && [encoder encodeTestFrame] ? 0 : 24;
         }
         if (argc == 2 && !strcmp(argv[1], "--authorize")) {
             CGRequestScreenCaptureAccess();

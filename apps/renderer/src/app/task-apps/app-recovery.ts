@@ -173,6 +173,8 @@ export function streamProblem(reason: BackendClientError | string, name: string,
       return { title: 'No window to show yet', body: `${name} hasn't opened a visible window on ${host}. It may still be starting, or its window is minimized or closed. Check the logs, then reconnect.` };
     case 'App stream disconnected':
       return { title: 'The display disconnected', body: `The connection to ${name} on ${host} ended. The app may still be running. Reconnect to resume.` };
+    case 'The host could not capture or encode the app window.':
+      return { title: `${host} couldn't prepare the picture`, body: `${name} is still running. Resize its window on ${host}, then reconnect. If this repeats, update the engine on ${host}.` };
     case 'The video stream lost a frame.':
     case 'The display could not keep up with the stream.':
     case 'The app display was interrupted.':

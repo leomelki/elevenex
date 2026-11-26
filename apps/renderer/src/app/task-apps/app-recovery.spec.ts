@@ -40,4 +40,11 @@ describe('App recovery guidance', () => {
     expect(streamProblem('Display disconnected.', 'Dev app', remote).body).toContain('Display disconnected.');
     expect(streamProblem({ code: 'http', status: 404, message: 'The selected resource no longer exists.' }, 'Dev app', remote).title).toBe('This app is no longer available');
   });
+  it('distinguishes host capture/encoding failure from a lost connection or Accessibility', () => {
+    const problem = streamProblem('The host could not capture or encode the app window.', 'Dev app', remote);
+    expect(problem.title).toBe("Studio Mac couldn't prepare the picture");
+    expect(problem.body).toContain('still running');
+    expect(problem.body).toContain('Resize its window');
+    expect(problem.body).not.toContain('Accessibility');
+  });
 });

@@ -24,6 +24,33 @@ async function setupPreview(directory, bundle, output) {
   execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', fixture], { stdio: 'inherit' });
   const state = join(directory, 'permissions.json');
   const captures = [];
+  const previous = join(directory,'Previous Setup.app');
+  cpSync(fixture,previous,{recursive:true});
+  const setupPIDFile = join(directory,'previous-setup.pid'), capturePIDFile = join(directory,'active-capture.pid');
+  const alive = pid => { try { process.kill(pid,0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+  const waitFor = async condition => {
+    for (let attempt=0; attempt<100; attempt++) { if (condition()) return; await new Promise(resolve=>setTimeout(resolve,50)); }
+    throw new Error('Native setup replacement did not settle');
+  };
+  let setupPID, capturePID;
+  const heldPIDs = [];
+  try {
+    for (const [mode,marker] of [['--hold-setup',setupPIDFile],['--hold-capture',capturePIDFile]]) {
+      execFileSync('/usr/bin/open',['-n','-g','-a',previous,'--args',mode,marker],{timeout:5000});
+      await waitFor(()=>existsSync(marker));
+      heldPIDs.push(Number(readFileSync(marker,'utf8')));
+    }
+    setupPID = Number(readFileSync(setupPIDFile,'utf8')); capturePID = Number(readFileSync(capturePIDFile,'utf8'));
+    writeFileSync(state,JSON.stringify({screen:false,input:false}));
+    const file = 'replacement-current.png';
+    execFileSync(executable,[join(output,file),'light'],{timeout:10000,env:{...process.env,ELEVENEX_AGENT_FIXTURE_STATE:state}});
+    await waitFor(()=>!alive(setupPID));
+    assert.equal(alive(capturePID),true,'Opening setup must preserve an active capture instance with the same bundle ID');
+    const png = readFileSync(join(output,file));
+    captures.push({name:'replacement-current',file,theme:'light',width:png.readUInt32BE(16),height:png.readUInt32BE(20)});
+  } finally {
+    for (const pid of heldPIDs) if (alive(pid)) process.kill(pid,'SIGTERM');
+  }
   for (const [name, permission, theme, action = ''] of [
     ['screen-light', { screen: false, input: false }, 'light'],
     ['screen-dark', { screen: false, input: false }, 'dark'],
@@ -84,7 +111,7 @@ async function setupPreview(directory, bundle, output) {
       'missed drop feedback', 'manual alternative', 'Escape', 'viewing-only completion', 'resume input', 'live permission transition', 'fresh checks on reopen',
       'explicit reset intent', 'repair keyboard focus', 'reset success requires a fresh grant', 'reset failure fallback',
       'reset launch failure', 'reset busy controls', 'reset timeout', 'reset retry', 'grant after reset', 'reset cleanup on close',
-      'reset cancellation on reopen', 'compact repair layout'],
+      'reset cancellation on reopen', 'compact repair layout', 'replace old setup without stopping capture'],
   }, null, 2) + '\n');
 }
 
@@ -145,6 +172,19 @@ async function main() {
     const nals = [];
     for (let i = annexB.indexOf(start); i >= 0; i = annexB.indexOf(start, i + 4)) nals.push(annexB[i + 4] & 31);
     assert.ok([7, 8, 5].every(type => nals.includes(type)), 'A fresh viewer needs SPS, PPS and IDR');
+    for (const [width, height] of [[1440,959],[1920,1440],[1080,1920],[640,400],[3840,2160]]) {
+      // Exercise the production sizing policy and real VideoToolbox encoder.
+      // A 64x64-only codec smoke misses oversized ordinary Retina windows.
+      const encoded = execFileSync(executable, ['--self-test-window',String(width),String(height)], { timeout: 10000, maxBuffer: 3_000_009 });
+      const w = encoded.readUInt16BE(4), h = encoded.readUInt16BE(6);
+      assert.equal(encoded.readUInt32BE(0), encoded.length-9);
+      assert.equal(encoded[8],1);
+      assert.ok(w >= 16 && h >= 16 && !(w&1) && !(h&1));
+      assert.ok(w <= 1920 && h <= 1440 && w*h <= 1920*1080);
+      assert.ok(Math.ceil(w/16)*Math.ceil(h/16) <= 8704, 'Baseline 4.2 macroblock budget');
+      assert.ok(Math.abs(w/h-width/height) < 0.01, 'Preserve window aspect ratio');
+      console.log(`Native H.264 window ${width}x${height} -> ${w}x${h}: encoded keyframe`);
+    }
     assert.throws(() => execFileSync(executable, [String(process.pid)]), error => error.status === 2,
       'A process cannot nominate an arbitrary app PID for capture');
     await testMacSupervisor(executable);

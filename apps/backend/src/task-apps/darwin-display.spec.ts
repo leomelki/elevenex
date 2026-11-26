@@ -2,9 +2,10 @@ import { Duplex } from 'node:stream';
 import { DarwinAppDisplay } from './darwin-display.js';
 
 it.each([
-  { flag: 20, issue: 'macos-session' },
-  { flag: 25, issue: 'macos-desktop-connection' },
-])('keeps coalesced frames and input receipts, and reports $issue when the host becomes unavailable', async ({ flag, issue }) => {
+  { flag: 20, issue: 'macos-session', disposition: 'permission' },
+  { flag: 25, issue: 'macos-desktop-connection', disposition: 'permission' },
+  { flag: 24, issue: undefined, disposition: 'capture-failed' },
+])('keeps coalesced frames and input receipts, and reports native failure $flag', async ({ flag, issue, disposition }) => {
   const commands: { id: number; kind: string }[] = [];
   const channel = new Duplex({
     read() {},
@@ -49,7 +50,7 @@ it.each([
   channel.push(receipt(0, flag));
   channel.push(packet);
   await new Promise((resolve) => setImmediate(resolve));
-  expect(listener.end).toHaveBeenCalledWith(expect.any(String), 'permission', issue);
+  expect(listener.end).toHaveBeenCalledWith(expect.any(String), disposition, issue);
   expect(listener.frame).toHaveBeenCalledTimes(1);
   stop();
   channel.destroy();

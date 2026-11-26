@@ -1,4 +1,7 @@
 #include <sys/types.h>
+#include <CoreGraphics/CoreGraphics.h>
+
+CGSize appCaptureSize(CGSize window, CGFloat pixelScale);
 
 // The caller owns the group. owner is the mutually authenticated native
 // supervisor socket, or -1 for the legacy in-process capture entry point.

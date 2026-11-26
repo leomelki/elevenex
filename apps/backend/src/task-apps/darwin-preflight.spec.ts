@@ -67,10 +67,10 @@ describe('macOS app host preflight', () => {
     });
   });
 
-  it('opens the setup app through LaunchServices without an SSH audit-session switch', async () => {
+  it('opens a fresh setup instance from the exact runtime, rather than reusing an older bundle with the same ID', async () => {
     mockResults.push(null);
     await DarwinAppDisplay.openSetupSettings();
     expect(execFile).toHaveBeenLastCalledWith('/usr/bin/open',
-      ['-a', '/test/runtime/bin/Elevenex Agent.app'], expect.any(Object), expect.any(Function));
+      ['-n', '-a', '/test/runtime/bin/Elevenex Agent.app', '--args', '--setup'], expect.any(Object), expect.any(Function));
   });
 });

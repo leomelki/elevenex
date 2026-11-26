@@ -23,7 +23,7 @@ export interface AppFrame {
   codec: 'avc1.42E02A';
 }
 
-export type AppStreamEnd = 'permission' | 'window-changed' | 'window-missing';
+export type AppStreamEnd = 'permission' | 'window-changed' | 'window-missing' | 'capture-failed';
 export interface AppFrameListener {
   frame(frame: AppFrame): boolean | void;
   end(reason: string, disposition?: AppStreamEnd, setupIssue?: TaskAppSetupIssue): void;
