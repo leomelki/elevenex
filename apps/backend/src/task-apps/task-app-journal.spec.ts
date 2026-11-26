@@ -172,7 +172,7 @@ describe('durable task app requests', () => {
       const receipt = await host.start(request);
       expect(receipt).toMatchObject({ runId: state.runId, status: 'exited' });
       expect(host.list(store.taskId)).toHaveLength(128);
-      expect(host.beginRuntimeHandoff()).toBe(0);
+      await expect(host.prepareRuntimeHandoff()).resolves.toBe(0);
     } finally {
       await host.onModuleDestroy();
       store.sqlite.close();
@@ -374,7 +374,8 @@ describe('durable task app requests', () => {
           status: 'stopping',
         });
         expect(host.count(store.taskId)).toBe(1);
-        expect(host.beginRuntimeHandoff()).toBe(1);
+        // Unconfirmed cleanup keeps this engine and reopens launches.
+        await expect(host.prepareRuntimeHandoff()).resolves.toBe(1);
         expect((await host.start(request)).status).toBe('stopping');
         owner.kill('SIGKILL');
         await ownerClosed;

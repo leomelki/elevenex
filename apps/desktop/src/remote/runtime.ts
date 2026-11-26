@@ -12,7 +12,7 @@ import { ForwardedAgentProxy } from './agent-proxy';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wire, SocketChannels, type WireMessage } from './wire';
 import { BrowserDestinations } from './browser-destination';
-import { backendSocketPath, connectionPresence, needsLegacyOwnership, ownershipPort, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, type RuntimeHealth } from './runtime-control';
+import { backendSocketPath, connectionPresence, needsLegacyOwnership, ownershipPort, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, APP_HANDOFF_LIMIT_MS, type RuntimeHealth } from './runtime-control';
 import { ensureDaemon } from './runtime-start';
 import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
 
@@ -38,10 +38,11 @@ async function backendReady(socketPath: string, version: string, signal: AbortSi
 }
 
 // A new runtime can be installed beside an older backend without this endpoint.
+// The backend stops its apps before replying, bounded below this limit.
 async function prepareAppHandoff(socketPath: string, token: string, pipeKey?: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const req = request({ socketPath, method: 'POST', ...(pipeKey ? { createConnection: () => connectWindowsPipe(socketPath, pipeKey) } : {}), path: '/api/task-app-runtime/prepare-handoff',
-      headers: { 'x-elevenex-app-handoff': token }, signal: AbortSignal.timeout(1500) }, res => {
+      headers: { 'x-elevenex-app-handoff': token }, signal: AbortSignal.timeout(APP_HANDOFF_LIMIT_MS) }, res => {
       if (res.statusCode === 404) { res.resume(); resolve(0); return; }
       let body = '';
       res.on('data', chunk => { body += chunk; if (body.length > 512) req.destroy(new Error('Invalid app handoff reply')); });
@@ -134,6 +135,7 @@ async function daemon(root: string, installation: string, version: string, port:
       }
       if (!stopping && !replacement) {
         if (!handoff.force && activeConnections()) { respond(); return; }
+        appHandoffBlocked = false;
         preparingTarget = handoff.target;
         preparing = prepareReplacement(root, handoff.target).then(async plan => {
           // The descriptor check can yield to a new authenticated connection.

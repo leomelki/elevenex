@@ -373,6 +373,10 @@ export class TaskAppJournal {
     return held.probe;
   }
 
+  recoveringTasks(): number[] {
+    return [...new Set([...this.recovering.values()].map(({ row }) => row.taskId))];
+  }
+
   recoveryCount(taskId?: number): number {
     let active = 0;
     for (const [id, held] of this.recovering) {

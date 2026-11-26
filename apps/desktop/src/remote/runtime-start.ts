@@ -35,6 +35,7 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         if (health.ready && !health.replacement) return health;
       } else if (replacing) {
         if (health.instance !== replacing) throw new Error('EX11_UPDATE: competing revision acquired the daemon; retry explicitly after updating this desktop');
+        if (health.appHandoffBlocked && !health.replacement) throw new Error('EX11_UPDATE: task apps are running and did not stop; retry explicitly');
         // The stop request may have lost its reply. Observe durable ownership;
         // never replay a destructive request or stop a different instance.
       } else if (health.replacement === version) {
@@ -55,7 +56,7 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         replacing = health.instance;
         const reply = await requestHandoff(root, port, token, health, version, force).catch(() => undefined);
         if (reply && reply.instance === health.instance && reply.version === health.version && !reply.replacement) {
-          if (reply.appHandoffBlocked) throw new Error('EX11_UPDATE: task apps are running; stop them on the current engine before retrying');
+          if (reply.appHandoffBlocked) throw new Error('EX11_UPDATE: task apps are running and did not stop; retry explicitly');
           if (!force && reply.activeConnections) {
             replacing = undefined;
             waitingForUpdate?.(reply);
@@ -68,6 +69,9 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
         if (reply && (reply.instance !== health.instance || reply.version !== health.version || reply.replacement !== version)) {
           throw new Error('EX11_UPDATE: competing revision already requested a different handoff; retry explicitly');
         }
+        // Stopping task apps can take most of the window. Only a confirmed
+        // acceptance extends it; an unknown outcome keeps the original bound.
+        if (reply) deadline = Date.now() + 45_000;
         updateStarting?.(health.instance);
       }
     } else {

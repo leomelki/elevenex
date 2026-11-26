@@ -72,14 +72,13 @@ it('reserves a starting run before launch and handles duplicate requests and ear
     ]);
     expect(second.runId).toBe(first.runId);
     expect(host.count(launch.taskId)).toBe(1);
-    expect(host.beginRuntimeHandoff()).toBe(1);
     expect(() => host.get(99, first.runId)).toThrow();
     await expect(host.start({ ...launch, name: 'Different' })).rejects.toThrow(
       'reused',
     );
-    await host.stopAll(launch.taskId);
+    // An engine update stops the run itself and keeps launches sealed.
+    await expect(host.prepareRuntimeHandoff()).resolves.toBe(0);
     expect(host.count(launch.taskId)).toBe(0);
-    expect(host.beginRuntimeHandoff()).toBe(0);
     await expect(
       host.start({ ...launch, requestId: 'another' }),
     ).rejects.toThrow('runtime update');

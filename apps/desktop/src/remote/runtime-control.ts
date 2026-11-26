@@ -25,6 +25,8 @@ export interface RuntimeHealth {
   appHandoffBlocked?: true;
   replacement?: string;
 }
+/** The daemon waits this long for its backend to stop apps before a handoff. */
+export const APP_HANDOFF_LIMIT_MS = 25_000;
 export interface RuntimeLease { id: string; agent: string | null; presence?: 'active' | 'closed'; instance?: string }
 const mac = (token: string, value: string) => createHmac('sha256', token).update(value).digest('hex');
 export function sameProof(value: unknown, expected: string): boolean {
@@ -105,7 +107,7 @@ async function daemonAddress(root: string, fallbackPort: number): Promise<{ port
   return { port, instance: expectedInstance };
 }
 
-async function controlRequest(root: string, fallbackPort: number, token: string, nonce: string, method: 'GET' | 'POST', path: string, headers: Record<string, string>): Promise<RuntimeHealth> {
+async function controlRequest(root: string, fallbackPort: number, token: string, nonce: string, method: 'GET' | 'POST', path: string, headers: Record<string, string>, limit = 2000): Promise<RuntimeHealth> {
   const { port, instance: expectedInstance } = await daemonAddress(root, fallbackPort);
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path, method, headers }, res => {
@@ -132,7 +134,7 @@ async function controlRequest(root: string, fallbackPort: number, token: string,
         } catch (error) { reject(error); }
       });
     });
-    const deadline = setTimeout(() => req.destroy(new Error('Daemon control timed out')), 2000);
+    const deadline = setTimeout(() => req.destroy(new Error('Daemon control timed out')), limit);
     req.once('close', () => clearTimeout(deadline)); req.once('error', reject); req.end();
   });
 }
@@ -155,5 +157,5 @@ export async function requestHandoff(root: string, fallbackPort: number, token: 
     'X-Elevenex-Version': current.version, 'X-Elevenex-Target': target,
     'X-Elevenex-Proof': mac(token, `handoff:${time}:${nonce}:${current.instance}:${current.version}:${target}${signedForce ? ':force' : ''}`),
     ...(signedForce ? { 'X-Elevenex-Force': '1' } : {}),
-  });
+  }, APP_HANDOFF_LIMIT_MS + 5000);
 }

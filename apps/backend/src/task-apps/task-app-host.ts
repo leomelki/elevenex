@@ -26,6 +26,8 @@ export { appEnvironment, type AppLaunch } from './app-launch.js';
 const LOG_LIMIT = 32_768;
 const MAX_HISTORY = 128;
 const MAX_ACTIVE = 16;
+// Below the supervising daemon's request limit, including journal drains.
+const HANDOFF_STOP_LIMIT_MS = 20_000;
 
 interface AppRunResult {
   status: 'stopped' | 'success' | 'failed';
@@ -89,12 +91,35 @@ export class TaskAppHost implements OnModuleDestroy {
   private shuttingDown = false;
   private handoffUntil = 0;
 
-  beginRuntimeHandoff(): number {
-    const active = [...this.runs.values()].filter(
+  private activeRuns(): number {
+    return [...this.runs.values()].filter(
       (run) => !run.cleaned && !run.proposal,
     ).length + (this.journal?.recoveryCount() ?? 0);
-    if (!active) this.handoffUntil = performance.now() + 30_000;
-    return active;
+  }
+
+  /** An engine update stops apps through the regular stop path while launches
+   * stay sealed. A remaining run keeps this engine, so a replacement never
+   * inherits a supervisor whose cleanup this engine could not confirm. */
+  async prepareRuntimeHandoff(): Promise<number> {
+    this.handoffUntil = Number.POSITIVE_INFINITY;
+    let active = -1;
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const tasks = new Set([
+        ...[...this.runs.values()].filter((run) => !run.cleaned).map((run) => run.state.taskId),
+        ...(this.journal?.recoveringTasks() ?? []),
+      ]);
+      // Stops continue after the deadline; a later update observes their result.
+      await Promise.race([
+        Promise.allSettled([...tasks].map((taskId) => this.stopAll(taskId))),
+        new Promise((resolve) => { timeout = setTimeout(resolve, HANDOFF_STOP_LIMIT_MS); }),
+      ]);
+      active = this.activeRuns();
+      return active;
+    } finally {
+      clearTimeout(timeout);
+      this.handoffUntil = active === 0 ? performance.now() + 30_000 : 0;
+    }
   }
 
   async start(
@@ -207,10 +232,7 @@ export class TaskAppHost implements OnModuleDestroy {
   private checkCapacity(taskId: number): void {
     if (this.shuttingDown || performance.now() < this.handoffUntil)
       throw new Error('App host is preparing a runtime update');
-    const active = [...this.runs.values()].filter(
-      (run) => !run.cleaned && !run.proposal,
-    );
-    if (this.count(taskId) >= 4 || active.length + (this.journal?.recoveryCount() ?? 0) >= MAX_ACTIVE)
+    if (this.count(taskId) >= 4 || this.activeRuns() >= MAX_ACTIVE)
       throw new Error(
         'App run limit reached. Stop a running app and try again.',
       );

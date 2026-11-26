@@ -179,7 +179,9 @@ Development revisions include dirty/untracked backend sources. Remote developmen
 data is isolated per checkout under `~/.elevenex/desktop-remote-dev/<checkout-id>/`.
 Explicitly opening or retrying a server prepares an authenticated handoff. The
 desktop checks active Elevenex connections and waits for the engine to become
-idle. **Force update** can interrupt connected users, agents and terminals.
+idle. **Force update** can interrupt connected users, agents and terminals. Before
+the handoff, the old engine stops its task apps; if one does not stop, it keeps
+running that engine and the connection reports the failure.
 Background recovery never requests a handoff. Daemons predating authenticated
 handoff need the one-time migration in the remote guide.
 Restart `pnpm desktop:dev` after backend edits to rebuild the bundle. Renderer

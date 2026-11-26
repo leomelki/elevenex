@@ -114,10 +114,16 @@ test('background recovery can finish an already accepted update to its expected 
   assert.equal(fixture.stops(), 0); assert.equal(fixture.starts(), 0);
 });
 
-test('a disconnected task app blocks a runtime replacement', async t => {
+test('a task app that did not stop blocks a runtime replacement', async t => {
   const fixture = startupFixture(t, [old], async () => ({ ...old, appHandoffBlocked: true }));
   await assert.rejects(ensureDaemon(startup), /task apps are running/);
   assert.equal(fixture.starts(), 0);
+});
+
+test('a lost handoff reply still reports task apps that did not stop', async t => {
+  const fixture = startupFixture(t, [old, { ...old, appHandoffBlocked: true }], async () => { throw new Error('reply lost'); });
+  await assert.rejects(ensureDaemon(startup), /task apps are running/);
+  assert.equal(fixture.stops(), 1); assert.equal(fixture.starts(), 0);
 });
 
 test('a signed handoff rejection reports preparation failure without retrying shutdown', async t => {
@@ -233,9 +239,11 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
       fs.writeFileSync(owner,String(process.pid));event('start');
       const server=http.createServer((req,res)=>{
         if(req.url==='/api/task-app-runtime/prepare-handoff'){
-          if(!fs.existsSync(path.join(data,'app-running')))return res.writeHead(404).end();
+          const running=path.join(data,'app-running'),stuck=path.join(data,'app-stuck');
+          if(!fs.existsSync(running)&&!fs.existsSync(stuck))return res.writeHead(404).end();
           if(req.headers['x-elevenex-app-handoff']!==process.env.ELEVENEX_APP_HANDOFF)return res.writeHead(403).end();
-          return res.writeHead(201).end(JSON.stringify({running:1}));
+          if(fs.existsSync(running)){fs.rmSync(running);event('apps-stopped');}
+          return res.writeHead(201).end(JSON.stringify({running:fs.existsSync(stuck)?1:0}));
         }
         const credential=req.headers['x-elevenex-app-access'];
         res.end(JSON.stringify({backendSha:${gated ? `(fs.existsSync(path.join(data,'ready'))?${JSON.stringify(value)}:'0'.repeat(40))` : JSON.stringify(value)},
@@ -292,11 +300,13 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
 
   t.diagnostic('Updating with concurrent clients.');
   const nextRelease = await install(target);
-  await writeFile(join(root, 'data/app-running'), '1');
+  await writeFile(join(root, 'data/app-stuck'), '1');
   await assert.rejects(connect(nextRelease, { waitingForUpdate: (_state, force) => force() }),
-    error => error.failure?.code === 'compatibility' && /Apps are running/.test(error.message));
-  assert.equal((await info(original)).pid, before.pid, 'the active task app prevents a forced engine update');
-  await rm(join(root, 'data/app-running'));
+    error => error.failure?.code === 'compatibility' && /did not stop/.test(error.message));
+  assert.equal((await info(original)).pid, before.pid, 'an app that does not stop keeps the old engine');
+  await rm(join(root, 'data/app-stuck'));
+  // The old engine stops a stoppable app itself during the update.
+  await writeFile(join(root, 'data/app-running'), '1');
 
   const port = 20000 + createHash('sha256').update(`${home}:${process.getuid?.() ?? ''}:elevenex-desktop`).digest().readUInt32BE(0) % 20000;
   let watching = true; let vacant = false;
@@ -326,6 +336,7 @@ test('real remote handoff preserves data, coalesces clients, fences old bridges 
   assert.equal(vacant, false, 'ownership must remain reserved throughout shutdown and daemon replacement');
   const after = await info(first);
   assert.equal(after.backendSha, target); assert.equal(after.keep, 'durable user data');
+  assert.ok((await events()).some(event => event.kind === 'apps-stopped' && event.version === version), 'the old engine stops task apps before replacement');
   assert.equal(second.instance, first.instance); assert.notEqual(first.instance, original.instance);
   assert.equal((await info(second)).pid, after.pid);
   assert.throws(() => process.kill(before.pid, 0), { code: 'ESRCH' }, 'forced shutdown must finish before replacement startup');
