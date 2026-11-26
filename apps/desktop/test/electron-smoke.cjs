@@ -285,6 +285,10 @@ require('../dist/main.js');
 
 void (async () => {
   const window = await firstWindow;
+  assert.equal(app.name, 'Elevenex Desktop Development');
+  assert.equal(app.getPath('userData'), join(backendRoot, 'Elevenex Desktop Development'));
+  assert.equal(app.getPath('sessionData'), app.getPath('userData'));
+  assert.equal(app.hasSingleInstanceLock(), true);
   for (const [file, size] of [['icon.png', 512], ['trayTemplate.png', 22], ['trayTemplate@2x.png', 22]]) {
     const icon = nativeImage.createFromPath(require.resolve(`../assets/icons/${file}`));
     assert.equal(icon.isEmpty(), false);

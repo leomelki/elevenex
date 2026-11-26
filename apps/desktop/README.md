@@ -272,8 +272,7 @@ Shift+Cmd+N on macOS, or Shift+Ctrl+N elsewhere, opens another window.
 
 Every launch starts one application-owned backend shared by all windows. The
 renderer can open while installation proceeds; closing a window does not stop
-the backend while the application is alive. A second app process focuses the
-existing instance instead of opening a second database owner.
+the backend while the application is alive.
 
 ### Data locations
 
@@ -292,9 +291,13 @@ read. Both are separate from the legacy app's `Elevenex` profile and
 the profile directory, and test launchers redirect `appData` to stay isolated.
 An unpackaged desktop launched inside a task app run uses that run's profile
 and its `runtime/` directory for local backend data and remote archive caches.
-Because the profiles differ, a development build can run beside the installed
-app. Remote runtimes are already separate: `desktop-remote/` for releases and
-`desktop-remote-dev/<id>/` for development, both on the server.
+
+Development and release builds can run side by side. Each build selects its
+native application name and Electron profile before taking the instance lock
+and starting services. A duplicate launch for the same profile focuses the
+running window. Windows also shows the builds as separate taskbar apps.
+Remote runtimes use `desktop-remote/` for releases and
+`desktop-remote-dev/<id>/` for development on the server.
 
 The backend root contains:
 

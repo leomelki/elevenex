@@ -45,17 +45,24 @@ if (devUrl) {
   }
 }
 
-// Keep the new skeleton's state separate from the existing Elevenex app.
-app.setName('Elevenex Desktop');
 const profile = desktopProfile(app.isPackaged);
-const taskRunDirectory = app.isPackaged ? undefined : process.env['ELEVENEX_TASK_APP_RUNTIME_DIR'];
+// Electron also uses the app name for its Windows singleton startup mutex.
+app.setName(profile.userDataName);
+const taskRunDirectory = app.isPackaged ? undefined : process.env['ELEVENEX_TASK_APP_RUNTIME_DIR'] || undefined;
 if (taskRunDirectory && !isAbsolute(taskRunDirectory)) throw new Error('Expected an absolute task app runtime directory');
-if (taskRunDirectory) {
-  app.setPath('userData', taskRunDirectory);
-} else if (!app.commandLine.getSwitchValue('user-data-dir')) {
-  app.setPath('userData', join(app.getPath('appData'), profile.userDataName));
+const userData = taskRunDirectory ?? (app.commandLine.getSwitchValue('user-data-dir')
+  ? app.getPath('userData')
+  : join(app.getPath('appData'), profile.userDataName));
+app.setPath('userData', userData);
+app.setPath('sessionData', userData);
+
+// Acquire the profile lock before constructing services that own mutable state.
+if (!app.requestSingleInstanceLock()) {
+  console.info(`${app.name} could not acquire its instance lock for ${userData}`);
+  app.exit(0);
 }
-const state = new WindowStateStore(join(app.getPath('userData'), 'window-state.json'));
+
+const state = new WindowStateStore(join(userData, 'window-state.json'));
 const rendererRoot = join(__dirname, '../renderer');
 const runtimeRoot = taskRunDirectory ? join(taskRunDirectory, 'runtime') : profile.root;
 // Plain Node cannot read Electron's ASAR format. Only the tiny supervisor and
@@ -68,27 +75,23 @@ const remoteArchives = new RemoteArchiveCache(runtimeRoot, remoteDevelopment?.ar
 const remote = new RemoteManager({
   root: runtimeRoot,
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
-  settingsPath: join(app.getPath('userData'), remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
+  settingsPath: join(userData, remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
   release: remoteDevelopment?.release ?? (() => readBackendRelease(__dirname)),
   developmentNamespace: remoteDevelopment?.namespace,
 });
 const backendClient = createBackendClient(backend, remote,
   (windowId, snapshot) => sendToWindow(windowId, 'backend-client:changed', snapshot));
-const code = new CodeSurfaces(backendClient.client, join(app.getPath('userData'), 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
-const machinePreferences = new MachinePreferences(join(app.getPath('userData'), 'machine-preferences.json'));
+const code = new CodeSurfaces(backendClient.client, join(userData, 'code-runtimes'), join(rendererRoot, 'fonts'), (windowId, target, snapshot) => sendToWindow(windowId, 'code:changed', { target, state: snapshot }), (windowId, target) => sendToWindow(windowId, 'code:exit-requested', target), (context, configurationIdentity) => createWindow(context.selection, context, configurationIdentity), devUrl ? new URL(devUrl).origin : APP_ORIGIN);
+const machinePreferences = new MachinePreferences(join(userData, 'machine-preferences.json'));
 let taskBrowser: ReturnType<typeof registerTaskBrowser> | undefined;
-const terminalPreferences = new TerminalPreferences(join(app.getPath('userData'), 'terminal-preferences.json'));
+const terminalPreferences = new TerminalPreferences(join(userData, 'terminal-preferences.json'));
 let terminals = new TerminalLifetime();
 const machines = new MachineApplication(backend, remote, machinePreferences,
   (windowId, snapshot) => sendToWindow(windowId, 'machines:changed', snapshot));
 
-// Several windows share one backend and database. A second application process
-// must hand control to the first instead of starting another database owner.
-const ownsInstance = app.requestSingleInstanceLock();
 let windowsReady = false;
 let disposeIdentity: (() => void) | undefined;
-if (!ownsInstance) app.exit(0);
 app.on('second-instance', () => {
   if (!windowsReady) return;
   const window = BrowserWindow.getAllWindows()[0] ?? createWindow();
@@ -260,7 +263,7 @@ void app.whenReady().then(async () => {
   app.once('will-quit', unregisterApps);
   const unregisterCode = registerCodeIpc(code, trusted);
   app.once('will-quit', unregisterCode);
-  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(app.getPath('userData'), 'task-browsers'), trusted, () => createWindow(null, undefined, undefined, true));
+  taskBrowser = registerTaskBrowser(backendClient.client, remote, join(userData, 'task-browsers'), trusted, () => createWindow(null, undefined, undefined, true));
   const unregisterClient = registerBackendClientIpc(backendClient.client, trusted, {
     get owner() { return terminals.owner; },
     track: (endpoint, engine) => terminals.track(endpoint, engine),

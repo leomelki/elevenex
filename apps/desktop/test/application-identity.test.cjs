@@ -4,8 +4,8 @@ const { readFile } = require('node:fs/promises');
 const { dirname, join } = require('node:path');
 const vm = require('node:vm');
 
-for (const platform of ['darwin', 'win32', 'linux']) {
-  test(`${platform} identity supplies tray actions and releases native resources`, async () => {
+for (const [platform, isPackaged] of [['darwin', false], ['win32', false], ['win32', true], ['linux', false]]) {
+  test(`${platform} ${isPackaged ? 'release' : 'development'} identity supplies tray actions and releases native resources`, async () => {
     const calls = [];
     let menu;
     let click;
@@ -25,7 +25,8 @@ for (const platform of ['darwin', 'win32', 'linux']) {
       exports, __dirname: dirname(file), process: { platform },
       require: name => name === 'node:path' ? { join } : {
         Tray,
-        app: { isPackaged: false, setAppUserModelId: value => calls.push(['appId', value]),
+        app: { isPackaged, name: isPackaged ? 'Elevenex Desktop' : 'Elevenex Desktop Development',
+          setAppUserModelId: value => calls.push(['appId', value]),
           dock: { setIcon: value => calls.push(['dock', value]) }, quit: () => calls.push(['quit']) },
         Menu: { buildFromTemplate: value => value },
         nativeImage: { createFromPath: value => { imagePath = value; return image; } },
@@ -34,7 +35,9 @@ for (const platform of ['darwin', 'win32', 'linux']) {
     const dispose = exports.installApplicationIdentity(() => calls.push(['show']), () => calls.push(['new']));
     assert.ok(imagePath.endsWith(platform === 'darwin' ? 'trayTemplate.png' : 'tray.png'));
     assert.ok(calls.some(call => call[0] === 'template' && call[1] === (platform === 'darwin')));
-    assert.equal(calls.some(call => call[0] === 'dock'), platform === 'darwin');
+    assert.deepEqual(calls.find(call => call[0] === 'appId'), ['appId', isPackaged ? 'app.elevenex.desktop' : 'app.elevenex.desktop.development']);
+    assert.deepEqual(calls.find(call => call[0] === 'tooltip'), ['tooltip', isPackaged ? 'Elevenex Desktop' : 'Elevenex Desktop Development']);
+    assert.equal(calls.some(call => call[0] === 'dock'), platform === 'darwin' && !isPackaged);
     menu.find(item => item.label === 'Show Elevenex').click();
     menu.find(item => item.label === 'New Window').click();
     click();
