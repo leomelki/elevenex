@@ -224,8 +224,10 @@ windows and cancelling asynchronous work after navigation.
 
 Toast defaults still dismiss after an action. For asynchronous Undo, use
 `dismissOnAction=false`, bind `busy` to disable duplicate actions, and remove the
-toast after confirmed success. The session archive owner retains a dismissible
-notification (`duration=0`) so a failed/uncertain restore remains reviewable.
+toast after confirmed success. Every toast automatically dismisses after five
+seconds by default; a positive finite `duration` overrides that timeout. Zero,
+negative and non-finite durations use the default. Hover and keyboard focus
+pause the countdown, including for asynchronous Undo notifications.
 
 The `/agent-picker` preview exercises the agent chip and menu (harness logos,
 model list and filter, thinking track, usage) with every supported state. `Switch` accepts `size="sm"` for its reference 28×16 agent-setting form;

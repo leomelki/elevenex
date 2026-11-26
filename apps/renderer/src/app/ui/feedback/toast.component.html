@@ -22,11 +22,9 @@
   size="sm"
   (pressed)="dismiss()"
 />
-@if (duration() > 0) {
-  <span
-    class="time"
-    aria-hidden="true"
-    [style.animation-duration.ms]="duration()"
-    [style.animation-play-state]="paused() ? 'paused' : 'running'"
-  ></span>
-}
+<span
+  class="time"
+  aria-hidden="true"
+  [style.animation-duration.ms]="duration()"
+  [style.animation-play-state]="paused() ? 'paused' : 'running'"
+></span>

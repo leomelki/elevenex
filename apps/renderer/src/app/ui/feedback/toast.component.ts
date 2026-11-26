@@ -35,7 +35,10 @@ export class ToastComponent {
   readonly busy = input(false);
   readonly tone = input<"normal" | "danger">("normal");
   readonly glyph = input<Status>("done");
-  readonly duration = input(5000);
+  readonly duration = input(5000, {
+    transform: (duration: number) =>
+      Number.isFinite(duration) && duration > 0 ? duration : 5000,
+  });
   readonly actionSelected = output<void>();
   readonly dismissed = output<void>();
   protected readonly paused = signal(false);
@@ -68,7 +71,7 @@ export class ToastComponent {
   protected resume(): void {
     if (this.hovered || this.focused) return;
     this.paused.set(false);
-    if (this.finished || this.duration() === 0 || this.timer) return;
+    if (this.finished || this.timer) return;
     this.started = performance.now();
     this.timer = setTimeout(() => this.dismiss(), this.remaining);
   }
