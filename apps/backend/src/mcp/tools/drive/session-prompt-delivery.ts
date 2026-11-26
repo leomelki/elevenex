@@ -73,15 +73,15 @@ export function submitSessionPrompt(
     queue?: boolean;
     preferSteering?: boolean;
     requireSteering?: boolean;
-    recordDelivery?: (delivery: 'accepted' | 'failed') => void;
+    recordDelivery?: (delivery: 'accepted' | 'failed', disposition?: AgentPromptDisposition) => void;
     titlePrompt?: string;
   },
 ): Promise<AgentPromptDisposition | undefined> {
   options.signal.throwIfAborted();
   let detached = false;
-  const record = (delivery: 'accepted' | 'failed') => {
+  const record = (delivery: 'accepted' | 'failed', disposition?: AgentPromptDisposition) => {
     try {
-      options.recordDelivery?.(delivery);
+      options.recordDelivery?.(delivery, disposition);
     } catch (error) {
       logger.error(
         `Could not record prompt delivery session=${sessionId}: ${String(error)}`,
@@ -99,7 +99,7 @@ export function submitSessionPrompt(
         onAccepted: (disposition) => {
           if (accepted) return;
           accepted = true;
-          record('accepted');
+          record('accepted', disposition);
           resolve(disposition);
         },
       })

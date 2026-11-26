@@ -89,6 +89,16 @@ function makeServices(opts: {
           return session;
         }),
         start: jest.fn().mockResolvedValue({ success: true, resumed: false }),
+        delegationHandoffs: {
+          cancellingSession: () => false,
+          outbox: { assignment: () => undefined },
+          prompts: {
+            read: jest.fn(),
+            reserve: jest.fn(input => ({ receipt: input, created: true })),
+            arm: jest.fn(),
+            record: jest.fn(),
+          },
+        },
         fork: jest.fn().mockResolvedValue({
           id: 99,
           name: 'S7 (fork)',
@@ -141,6 +151,7 @@ describe('Drive tool group', () => {
         'get_pending_action',
         'interrupt_session',
         'prompt_session',
+        'send_session_message',
         'reset_session',
         'resume_pending_prompts',
         'resolve_action',

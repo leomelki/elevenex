@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import type {
   AgentPromptOptions,
+  AgentTranscriptItem,
   AgentRuntimeProvider,
   AgentRuntimeStatePayload,
 } from '../../agent-runtime/agent-runtime.types.js';
@@ -115,7 +116,7 @@ describe('cross-harness delegation through MCP', () => {
       getRuntimeState: jest.fn(async (_id: number) => ({
         sessionState: 'idle', runPhase: 'idle', pendingPrompts: [], backgroundWork: [] as readonly unknown[],
       })),
-      getHistory: jest.fn(async () => [
+      getHistory: jest.fn(async (): Promise<AgentTranscriptItem[]> => [
         { id: 'brief', kind: 'user', content: 'Review', timestamp: new Date().toISOString() },
         { id: 'final', kind: 'assistant', assistantPhase: 'final', content: '**Reviewed.**', timestamp: new Date().toISOString() },
       ]),
@@ -528,7 +529,7 @@ describe('cross-harness delegation through MCP', () => {
           data: { accepted: true, completion: 'notify' },
           nextStep: expect.stringContaining('end your turn when none remains'),
         });
-        expect(launched.data).not.toHaveProperty('result');
+        expect(launched).not.toHaveProperty('data.result');
         const { items: [child] } = await f.workspace.listSessions(f.task.id, {
           parentSessionId: String(f.root.id),
         });
@@ -851,4 +852,264 @@ describe('cross-harness delegation through MCP', () => {
       await f.close();
     }
   });
+
+  it('delivers a new assignment after collecting the original result, without returning an old final', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First review' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await call('await_session_event', { sessionId: child.id, timeoutMs: 500 });
+      f.startNotices();
+      await eventually(() => expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id)?.state).toBe('consumed'));
+      const history = await f.runtime.getHistory();
+      await call('prompt_session', { sessionId: child.id, prompt: 'Now create mockups', requestId: 'mockups' });
+      const sent = f.runtime.submitPrompt.mock.calls.at(-1)![1];
+      const receipt = splitSessionAgentPrompt(sent).sender!;
+      expect(receipt).toMatchObject({ purpose: 'assignment', session: { sessionId: f.root.id } });
+      // Recovery sees an idle runtime and the earlier completion, but this new prompt has not run.
+      f.startNotices();
+      await eventually(() => expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id)?.state).toBe('waiting'));
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+      f.runtime.getHistory.mockResolvedValue([...history,
+        { id: 'follow-up', kind: 'user', content: sent, timestamp: new Date().toISOString() },
+        { id: 'mockup-result', kind: 'assistant', assistantPhase: 'final', content: 'Five mockups are ready.', timestamp: new Date().toISOString() },
+      ]);
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain('Five mockups are ready.');
+      expect(f.db.select().from(schema.sessionCompletionNotices).all().map(row => row.state)).toEqual(['consumed', 'accepted']);
+    } finally { await f.close(); }
+  });
+
+  it('keeps queued assignments and their exact results distinct in one completion batch', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await call('prompt_session', { sessionId: child.id, prompt: 'Second', requestId: 'second', mode: 'queue' });
+      const [first, second] = f.runtime.submitPrompt.mock.calls.map(row => row[1]);
+      const timestamp = new Date().toISOString();
+      f.runtime.getHistory.mockResolvedValue([
+        { id: 'first', kind: 'user', content: first, timestamp },
+        { id: 'first-answer', kind: 'assistant', assistantPhase: 'final', content: 'First result.', timestamp },
+        { id: 'second', kind: 'user', content: second, timestamp },
+        { id: 'second-answer', kind: 'assistant', assistantPhase: 'final', content: 'Second result.', timestamp },
+      ]);
+      await f.sessions.markCompletionUnreviewed(child.id);
+      f.startNotices();
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      const rows = f.db.select().from(schema.sessionCompletionNotices).all();
+      expect(rows.map(row => [row.replyId, row.replyText, row.state])).toEqual([
+        ['first-answer', 'First result.', 'accepted'], ['second-answer', 'Second result.', 'accepted'],
+      ]);
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain('First result.');
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain('Second result.');
+    } finally { await f.close(); }
+  });
+
+  it('routes a nested child question to its actual delegator and safely deduplicates retries', async () => {
+    const f = await fixture();
+    try {
+      const rootCall = await f.connect(f.root.id);
+      await rootCall('create_session', { provider: 'codex', requestId: 'middle', prompt: 'Coordinate' });
+      const { items: [middle] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      const middleCall = await f.connect(middle.id);
+      await middleCall('create_session', { provider: 'codex', requestId: 'nested', prompt: 'Design' });
+      const nested = (await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) })).items.find(row => row.id !== middle.id)!;
+      const childCall = await f.connect(nested.id);
+      const retryCall = await f.connect(nested.id);
+      const args = { to: 'parent', message: 'Should the card close automatically?', requestId: 'question' };
+      const before = f.runtime.submitPrompt.mock.calls.length;
+      const results = await Promise.all([childCall('send_session_message', args), retryCall('send_session_message', args)]);
+      expect(results).toEqual([expect.objectContaining({ data: expect.objectContaining({ sessionId: middle.id }) }),
+        expect.objectContaining({ data: expect.objectContaining({ sessionId: middle.id }) })]);
+      expect(await retryCall('send_session_message', args)).toMatchObject({ data: { accepted: true } });
+      expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(before + 1);
+      const [target, sent] = f.runtime.submitPrompt.mock.calls.at(-1)!;
+      expect(target).toBe(middle.id);
+      expect(splitSessionAgentPrompt(sent).sender).toMatchObject({ purpose: 'message', session: { sessionId: nested.id } });
+      expect(f.db.select().from(schema.sessionCompletionNotices).all()).toHaveLength(2);
+      expect(await childCall('send_session_message', { ...args, message: 'Different contents' })).toHaveProperty('error');
+      expect(await childCall('send_session_message', { ...args, to: nested.id, requestId: 'self' })).toMatchObject({ error: { code: 'self_target_not_allowed' } });
+      expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(before + 1);
+    } finally { await f.close(); }
+  });
+
+  it('keeps an unconfirmed send durable across recovery and never submits the same request twice', async () => {
+    const f = await fixture();
+    let release = () => {};
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      const retry = await f.connect(f.root.id);
+      const ready = new Promise<void>(resolve => { release = resolve; });
+      f.runtime.submitPrompt.mockImplementationOnce(async (_id, _prompt, _title, _images, options) => {
+        await ready;
+        options?.onAccepted?.('queued');
+      });
+      const args = { sessionId: child.id, prompt: 'More work', requestId: 'follow-up' };
+      const sending = call('prompt_session', args);
+      await eventually(() => expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(2));
+      f.startNotices();
+      expect(await retry('prompt_session', args)).toMatchObject({ data: {
+        accepted: false, status: 'acceptance_pending', deliveryState: 'unconfirmed',
+      } });
+      release();
+      expect(await sending).toMatchObject({ data: { accepted: true, disposition: 'queued' } });
+      expect(await retry('prompt_session', args)).toMatchObject({ data: { accepted: true, deliveryState: 'accepted' } });
+      expect(f.runtime.submitPrompt).toHaveBeenCalledTimes(2);
+    } finally { release(); await f.close(); }
+  });
+
+  it('does not start a message without a parent, and does not permit an unrelated completion subscription', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      expect(await call('send_session_message', { to: 'parent', message: 'Question', requestId: 'q' }))
+        .toMatchObject({ error: { code: 'no_delegating_session' } });
+      await call('create_session', { provider: 'codex', requestId: 'standalone', mode: 'standalone', prompt: 'Independent' });
+      const independent = (await f.workspace.listSessions(f.task.id, {})).items.find(row => row.id !== f.root.id)!;
+      expect(await call('prompt_session', { sessionId: independent.id, prompt: 'Question', notifyOnCompletion: true }))
+        .toMatchObject({ error: { code: 'not_your_delegate' } });
+      expect(f.db.select().from(schema.sessionCompletionNotices).all()).toHaveLength(0);
+    } finally { await f.close(); }
+  });
+
+
+  it('waits for the new assignment and collects its result without a second automatic wake', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await call('await_session_event', { sessionId: child.id, timeoutMs: 500 });
+      f.startNotices();
+      await call('prompt_session', { sessionId: child.id, prompt: 'Follow up', requestId: 'next' });
+      expect(await call('await_session_event', { sessionId: child.id, timeoutMs: 25 }))
+        .toMatchObject({ data: { event: 'timeout' } });
+      const sent = f.runtime.submitPrompt.mock.calls.at(-1)![1];
+      const timestamp = new Date().toISOString();
+      f.runtime.getHistory.mockResolvedValue([
+        { id: 'next', kind: 'user', content: sent, timestamp },
+        { id: 'new-result', kind: 'assistant', content: 'New result.', assistantPhase: 'final', timestamp },
+      ]);
+      const waiting = call('await_session_event', { sessionId: child.id, timeoutMs: 1_000 });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      expect(await waiting).toMatchObject({ data: { event: 'completed', reply: { id: 'new-result', text: 'New result.' } } });
+      expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id)?.state).toBe('consumed');
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+  it('cancels pending follow-up completions and refuses messages that would revive a stopped parent', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await call('prompt_session', { sessionId: child.id, prompt: 'More', requestId: 'more' });
+      await call('cancel_session_delegation', { sessionId: child.id });
+      expect(f.db.select().from(schema.sessionCompletionNotices).all().map(row => row.state)).toEqual(['consumed', 'consumed']);
+      const childCall = await f.connect(child.id);
+      await f.sessions.updateStatus(f.root.id, 'stopped');
+      expect(await childCall('send_session_message', { to: 'parent', message: 'Update', requestId: 'late' }))
+        .toMatchObject({ error: { code: 'session_messaging_stopped' } });
+      expect(f.parentRuntime.submitPrompt).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+
+  it('batches more than sixteen assignments without losing the remainder or rereading child history', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      for (let index = 1; index < 17; index++)
+        await call('prompt_session', { sessionId: child.id, prompt: `Assignment ${index}`, requestId: `next-${index}`, mode: 'queue' });
+      const timestamp = new Date().toISOString();
+      f.runtime.getHistory.mockResolvedValue(f.runtime.submitPrompt.mock.calls.flatMap((row, index): AgentTranscriptItem[] => [
+        { id: `input-${index}`, kind: 'user', content: row[1], timestamp },
+        { id: `answer-${index}`, kind: 'assistant', content: `Result ${index}`, assistantPhase: 'final', timestamp },
+      ]));
+      f.runtime.getHistory.mockClear();
+      await f.sessions.markCompletionUnreviewed(child.id);
+      f.startNotices();
+      await eventually(() => expect(f.db.select().from(schema.sessionCompletionNotices).all().map(row => row.state))
+        .toEqual(Array.from({ length: 17 }, () => 'accepted')));
+      expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(2);
+      expect(f.runtime.getHistory).toHaveBeenCalledTimes(1);
+      expect(f.parentRuntime.submitPrompt.mock.calls[1][1]).toContain('Result 16');
+    } finally { await f.close(); }
+  });
+
+  it('never substitutes an old final when a completed follow-up has no readable final yet', async () => {
+    const f = await fixture();
+    try {
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await call('await_session_event', { sessionId: child.id, timeoutMs: 500 });
+      await call('prompt_session', { sessionId: child.id, prompt: 'Follow up', requestId: 'next' });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      f.startNotices();
+      const result = await call('await_session_event', { sessionId: child.id, timeoutMs: 1_000 });
+      expect(result).toMatchObject({ data: { event: 'completed' } });
+      expect(result).not.toHaveProperty('data.reply');
+    } finally { await f.close(); }
+  });
+
+
+  it('reports an archived delegate even when its provider runtime is unavailable', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.updateStatus(child.id, 'archived');
+      f.runtime.getRuntimeState.mockRejectedValue(new Error('Provider unavailable'));
+      f.runtime.getRuntimeState.mockClear();
+      f.startNotices();
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${child.id}: failed.`);
+      expect(f.runtime.getRuntimeState).not.toHaveBeenCalled();
+    } finally { await f.close(); }
+  });
+
+
+  it('reports a failed follow-up without requiring a new successful completion version', async () => {
+    const f = await fixture();
+    try {
+      await f.sessions.updateStatus(f.root.id, 'active');
+      const call = await f.connect(f.root.id);
+      await call('create_session', { provider: 'codex', requestId: 'initial', prompt: 'First' });
+      const { items: [child] } = await f.workspace.listSessions(f.task.id, { parentSessionId: String(f.root.id) });
+      await f.sessions.markCompletionUnreviewed(child.id);
+      await call('await_session_event', { sessionId: child.id, timeoutMs: 500 });
+      await call('prompt_session', { sessionId: child.id, prompt: 'More', requestId: 'more' });
+      f.runtime.getRuntimeState.mockResolvedValue({ sessionState: 'idle', runPhase: 'error', pendingPrompts: [], backgroundWork: [] });
+      f.startNotices();
+      await eventually(() => expect(f.parentRuntime.submitPrompt).toHaveBeenCalledTimes(1));
+      expect(f.parentRuntime.submitPrompt.mock.calls[0][1]).toContain(`Session #${child.id}: failed.`);
+      const failed = f.db.select().from(schema.sessionCompletionNotices).all().at(-1)!;
+      expect(failed.outcome).toBe('failed');
+      // A delayed collection of this failure cannot acknowledge a newly sent assignment.
+      f.runtime.getRuntimeState.mockResolvedValue({ sessionState: 'running', runPhase: 'running', pendingPrompts: [], backgroundWork: [] });
+      await call('prompt_session', { sessionId: child.id, prompt: 'Try a new approach', requestId: 'new' });
+      f.sessions.delegationHandoffs.collected(child.id, f.root.id, undefined, failed.id);
+      expect(f.sessions.delegationHandoffs.outbox.status(child.id, f.root.id)?.state).toBe('waiting');
+    } finally { await f.close(); }
+  });
+
 });

@@ -442,6 +442,13 @@
       "when": 1795539899320,
       "tag": "0062_antigravity",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1795649670347,
+      "tag": "0063_session_assignment_messages",
+      "breakpoints": true
     }
   ]
 }

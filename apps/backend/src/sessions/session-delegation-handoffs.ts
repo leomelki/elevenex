@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import type { DrizzleDB } from '../database/database.provider.js';
 import { sessionReplyReturns, sessions } from '../database/schema/index.js';
 import { SessionCompletionOutbox } from './session-completion-outbox.js';
+import { SessionPromptReceipts } from './session-prompt-receipts.js';
 
 /** Owns active waits and durable acknowledgements from session tools. */
 export class SessionDelegationHandoffs {
@@ -10,9 +11,11 @@ export class SessionDelegationHandoffs {
   private readonly waits = new Map<number, Map<number, number>>();
   private readonly cancelling = new Set<number>();
   readonly outbox: SessionCompletionOutbox;
+  readonly prompts: SessionPromptReceipts;
 
   constructor(private readonly db: DrizzleDB, private readonly changed: (sessionId: number) => void) {
     this.outbox = new SessionCompletionOutbox(db);
+    this.prompts = new SessionPromptReceipts(db, changed);
   }
 
   children(recipientId: number, after = 0): number[] {
@@ -83,9 +86,9 @@ export class SessionDelegationHandoffs {
     }
   }
 
-  collected(sessionId: number, recipientId: number): void {
+  collected(sessionId: number, recipientId: number, replyId?: string, assignmentId?: number): void {
     try {
-      this.outbox.consume(sessionId, recipientId);
+      this.outbox.consume(sessionId, recipientId, replyId, assignmentId);
     } catch (error) {
       this.logger.warn('Could not record completion notice collection: ' + String(error));
     }

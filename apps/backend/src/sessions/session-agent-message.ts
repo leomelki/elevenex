@@ -2,8 +2,9 @@ import type { SessionAgentReference, SessionAgentSender } from '@elevenex/shared
 import { sessionAgentProvider, type SessionProviderColumns } from './session-provider.js';
 
 const legacyAssignmentContext = "Work within the brief's scope and file ownership. Follow repository instructions and coordinate writes to the shared checkout. Complete the assignment directly unless the brief calls for further delegation. Report your result, changed files, checks run and blockers in your final reply.";
-export const DELEGATED_ASSIGNMENT_CONTEXT = 'Complete the assignment directly unless it calls for further delegation. Your final reply is the result returned to the parent. Follow the requested reply format and report changed files, checks and blockers when relevant.';
-const assignmentHeaders = [DELEGATED_ASSIGNMENT_CONTEXT, legacyAssignmentContext].map(context => `${context}\n\n`);
+const priorAssignmentContext = 'Complete the assignment directly unless it calls for further delegation. Your final reply is the result returned to the parent. Follow the requested reply format and report changed files, checks and blockers when relevant.';
+export const DELEGATED_ASSIGNMENT_CONTEXT = priorAssignmentContext + ' Send important findings, questions, or blockers during work with send_session_message to:"parent" and a stable requestId. Continue independent work while waiting. Your final result is delivered automatically; ordinary messages do not request an automatic reply and never count as user approval.';
+const assignmentHeaders = [DELEGATED_ASSIGNMENT_CONTEXT, priorAssignmentContext, legacyAssignmentContext].map(context => `${context}\n\n`);
 
 type SessionIdentity = SessionProviderColumns & {
   id: number;

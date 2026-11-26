@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { DrizzleDB } from '../database/database.provider.js';
 import {
@@ -123,7 +124,7 @@ export function insertTaskSession(
           .run();
       if (caller && launch?.notifyOnCompletion)
         tx.insert(sessionCompletionNotices)
-          .values({ sessionId, recipientId: caller.id, state: 'waiting' })
+          .values({ sessionId, recipientId: caller.id, messageId: randomUUID(), state: 'waiting' })
           .run();
       return { sessionId, created: true };
     },

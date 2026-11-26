@@ -61,7 +61,8 @@ export async function launchSessionPrompt(
     const brief = delegated
       ? `${DELEGATED_ASSIGNMENT_CONTEXT}\n\n${assignment}`
       : assignment;
-    const message = await sessionMessage(brief, ctx, delegated);
+    const message = await sessionMessage(brief, ctx, delegated,
+      delegated ? sessions.delegationHandoffs?.outbox.launchMessageId(session.id) : undefined);
     ctx.signal.throwIfAborted();
     assertSessionNotCancelling(sessions, session.id, ctx.agentSessionId);
     dispatched = true;

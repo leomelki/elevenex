@@ -30,6 +30,7 @@ interface WatchedSession extends SessionEventTarget {
 
 export interface SessionEventResult {
   event: string;
+  assignmentId?: number;
   target?: SessionEventTarget;
   actionKey?: string | null;
   state?: SessionRuntimeSnapshot;
@@ -123,19 +124,38 @@ export function waitForSessionEvent(
       const attention = getSessionAttentionStatus(target.state);
       const launchPending =
         target.delivery === 'ready' || target.delivery === 'dispatching';
+      const assignment =
+        ctx.agentSessionId === null
+          ? undefined
+          : sessions.delegationHandoffs?.outbox.status(
+              target.id,
+              ctx.agentSessionId,
+            );
+      const assignmentPending =
+        assignment?.promptId && assignment.state === 'waiting';
       const event = terminal
         ? 'failed'
-        : (attention ??
-          (!launchPending && isSessionSettled(target.state)
-            ? 'completed'
-            : null));
+        : assignment?.outcome === 'failed'
+          ? 'failed'
+          : (attention ??
+            (!launchPending &&
+            !assignmentPending &&
+            isSessionSettled(target.state)
+              ? 'completed'
+              : null));
       if (
         event &&
         (event === 'paused' ||
           wanted.has(event) ||
           hasPausedQueue(target.state))
       )
-        finish({ event, target, state: target.state, actionKey: target.actionKey });
+        finish({
+          event,
+          target,
+          state: target.state,
+          actionKey: target.actionKey,
+          assignmentId: assignment?.assignmentId,
+        });
     };
 
     const inspect = (target: WatchedSession) => {
@@ -163,6 +183,9 @@ export function waitForSessionEvent(
     }
     for (const target of watched) {
       release.push(
+        sessionEvents.handoff.subscribe(sessions, target.id, () =>
+          inspect(target),
+        ),
         sessionEvents.status.subscribe(sessions, target.id, ({ status }) => {
           target.status = status;
           consider(target);

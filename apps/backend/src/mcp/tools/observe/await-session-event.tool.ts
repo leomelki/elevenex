@@ -75,7 +75,8 @@ export const awaitSessionEventTool = defineTool({
     if (ctx.agentSessionId !== null && ids.includes(ctx.agentSessionId))
       throw new ToolError({
         code: 'cannot_wait_for_current_session',
-        message: 'Wait on other sessions. This tool call keeps the current session active.',
+        message:
+          'Wait on other sessions. This tool call keeps the current session active.',
       });
     const targets = await Promise.all(
       ids.map(async (id) => {
@@ -95,12 +96,8 @@ export const awaitSessionEventTool = defineTool({
     const release =
       callerId === null ? undefined : handoffs?.observe(callerId, ids);
     try {
-      const { event, target, state, actionKey } = await waitForSessionEvent(
-        targets,
-        wanted,
-        args.timeoutMs,
-        ctx,
-      );
+      const { event, target, state, actionKey, assignmentId } =
+        await waitForSessionEvent(targets, wanted, args.timeoutMs, ctx);
       if (!target)
         return {
           data: { sessionIds: ids, event, status: event },
@@ -113,29 +110,45 @@ export const awaitSessionEventTool = defineTool({
       const pending = state?.pendingPrompts?.length ?? 0;
       const turnEnded =
         state?.sessionState === 'idle' && state.runPhase === 'idle';
+      const assignedReply =
+        callerId === null ||
+        event !== 'completed' ||
+        args.includeReply === false
+          ? undefined
+          : handoffs?.outbox.latestReply(target.id, callerId, assignmentId);
       const outcome =
         event === 'completed' && args.includeReply !== false
-          ? await untilSessionDeadline(
-              target.runtime
-                .getHistory(target.id, { changeDetails: 'summary' })
-                .then((history) => {
-                  const item = latestConversationReply(history);
-                  const boundary = history.findLastIndex(
-                    (row) => row.kind === 'user',
-                  );
-                  let changes;
-                  for (let at = history.length - 1; at > boundary; at--) {
-                    if (history[at].turnChanges) {
-                      changes = changeSummary(history[at].turnChanges, 3);
-                      break;
+          ? assignedReply?.promptId
+            ? {
+                item: assignedReply.replyId
+                  ? {
+                      id: assignedReply.replyId,
+                      content: assignedReply.replyText ?? undefined,
                     }
-                  }
-                  return { item, changes };
-                })
-                .catch(() => undefined),
-              1_500,
-              ctx.signal,
-            )
+                  : undefined,
+                changes: undefined,
+              }
+            : await untilSessionDeadline(
+                target.runtime
+                  .getHistory(target.id, { changeDetails: 'summary' })
+                  .then((history) => {
+                    const item = latestConversationReply(history);
+                    const boundary = history.findLastIndex(
+                      (row) => row.kind === 'user',
+                    );
+                    let changes;
+                    for (let at = history.length - 1; at > boundary; at--) {
+                      if (history[at].turnChanges) {
+                        changes = changeSummary(history[at].turnChanges, 3);
+                        break;
+                      }
+                    }
+                    return { item, changes };
+                  })
+                  .catch(() => undefined),
+                1_500,
+                ctx.signal,
+              )
           : undefined;
       const item = outcome?.item;
       const text = item?.content?.trim();
@@ -189,13 +202,19 @@ export const awaitSessionEventTool = defineTool({
         if (reply) handoffs?.returned(target.id, reply.id, callerId);
         if (event === 'requires_action' && actionKey)
           handoffs?.acknowledgedAction(target.id, callerId, actionKey);
-        if (reply || event === 'failed')
-          handoffs?.collected(target.id, callerId);
+        if (reply || (event === 'failed' && assignmentId !== undefined))
+          handoffs?.collected(
+            target.id,
+            callerId,
+            reply?.id,
+            reply ? undefined : assignmentId,
+          );
       }
 
       return {
         data: {
           sessionId: target.id,
+          ...(assignmentId !== undefined ? { assignmentId } : {}),
           ...(session ? { session } : {}),
           event,
           status: event,

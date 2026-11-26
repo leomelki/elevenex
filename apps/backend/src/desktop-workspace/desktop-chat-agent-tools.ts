@@ -9,6 +9,7 @@ import { chatItemFailed, record } from './desktop-chat-tool-outcome.js';
 const tools: Readonly<Record<string, SessionAgentOperation['type']>> = {
   create_session: 'launch',
   prompt_session: 'message',
+  send_session_message: 'message',
   await_session_event: 'wait',
   interrupt_session: 'stop',
   read_session: 'read',
@@ -65,7 +66,7 @@ function operation(call: AgentTranscriptItem): SessionAgentOperation | undefined
   if (!tool || !Object.hasOwn(tools, tool)) return;
   const type = tools[tool];
   const args = record(input.arguments ?? input);
-  const targets: readonly unknown[] = Array.isArray(args.sessionIds) ? args.sessionIds.slice(0, 16) : [args.sessionId];
+  const targets: readonly unknown[] = Array.isArray(args.sessionIds) ? args.sessionIds.slice(0, 16) : [args.sessionId ?? args.to];
   const sessions = [...new Set(targets.flatMap(value => id(value) ?? []))];
   return {
     type,
@@ -75,7 +76,7 @@ function operation(call: AgentTranscriptItem): SessionAgentOperation | undefined
       requestId: line(args.requestId, 128),
       identity: selection(args),
     } : {}),
-    ...(type === 'message' ? { message: line(args.prompt, 400) } : {}),
+    ...(type === 'message' ? { message: line(args.prompt ?? args.message, 400), requestId: line(args.requestId, 128) } : {}),
   };
 }
 

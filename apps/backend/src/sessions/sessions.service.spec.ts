@@ -922,6 +922,16 @@ describe('SessionsService', () => {
   });
 
   describe('completion marker', () => {
+    it('gives fast consecutive completions distinct versions', async () => {
+      const session = await service.create({ repoId, branchName: 'main', worktreePath: '/path' });
+      const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-26T00:00:00.000Z'));
+      try {
+        const first = await service.markCompletionUnreviewed(session.id);
+        const second = await service.markCompletionUnreviewed(session.id);
+        expect(second.lastCompletionAt! > first.lastCompletionAt!).toBe(true);
+        expect((await service.markCompletionReviewed(session.id, first.lastCompletionAt!)).hasUnreviewedCompletion).toBe(true);
+      } finally { now.mockRestore(); }
+    });
     it('acknowledges only the completion actually seen, idempotently', async () => {
       const session = await service.create({ repoId, branchName: 'main', worktreePath: '/path' });
       const completed = await service.markCompletionUnreviewed(session.id);
