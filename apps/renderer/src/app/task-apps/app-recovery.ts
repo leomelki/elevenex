@@ -177,8 +177,9 @@ export function streamProblem(reason: BackendClientError | string, name: string,
       return { title: `${host} couldn't prepare the picture`, body: `${name} is still running. Resize its window on ${host}, then reconnect. If this repeats, update the engine on ${host}.` };
     case 'The video stream lost a frame.':
     case 'The display could not keep up with the stream.':
-    case 'The app display was interrupted.':
       return { title: 'The picture stopped', body: `The video fell behind or lost data on its way from ${host}. Reconnect for a fresh picture. If this repeats, the connection may be slow.` };
+    case 'The app display was interrupted.':
+      return { title: 'The picture stopped', body: `This computer couldn't decode or draw the video from ${host}. Reconnect for a fresh picture. If this repeats, update Elevenex on this computer.` };
     case 'The display could not connect.':
       return { title: 'Couldn\'t connect to the display', body: `Elevenex couldn't reach ${host}'s video stream. Check the connection, then reconnect.` };
     case 'Streaming is unavailable on this machine.':

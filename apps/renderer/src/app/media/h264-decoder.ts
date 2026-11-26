@@ -88,96 +88,82 @@ export function h264Size(
   }
 }
 
-/** One decoder and one pending output. Owner draws and closes every returned frame. */
+/** One bounded decoder pipeline. Owners draw and close every returned frame. */
 export class H264Decoder {
   constructor(private readonly limits: VideoLimits = browserLimits) {}
   private decoder?: VideoDecoder;
   private epoch = "";
-  private pending?: {
+  private readonly pending = new Map<number, {
     resolve(frame: VideoFrame): void;
     reject(error: Error): void;
-  };
+    timer?: ReturnType<typeof setTimeout>;
+    bytes: number;
+  }>();
+  private queuedBytes = 0;
+  private nextTimestamp = 0;
+  private submissions: Promise<void> = Promise.resolve();
   private disposed = false;
   private revision = 0;
   private support?: { cancel(): void };
-  async decode(
-    video: H264Packet,
-  ): Promise<VideoFrame> {
-    if (
-      this.disposed ||
-      this.pending ||
-      this.support ||
-      typeof VideoDecoder === "undefined" ||
-      video.data.byteLength > 3_000_000 ||
-      video.codec !== "avc1.42E02A"
-    )
-      throw new Error("Video decoder unavailable");
-    // Only a key access unit may introduce exactly one validated SPS. A delta
-    // must never smuggle replacement allocation parameters into the decoder.
-    let parameters = 0;
-    for (let i = 0; i + 4 < video.data.length; i++) {
-      if (
-        video.data[i] === 0 &&
-        video.data[i + 1] === 0 &&
-        video.data[i + 2] === 1 &&
-        (video.data[i + 3]! & 31) === 7
-      ) {
-        if (
-          !video.key ||
-          ++parameters > 1 ||
-          !h264Size(video.data.subarray(i), this.limits)
-        )
-          throw new Error("Invalid video parameters");
-      }
-    }
-    if (video.epoch !== this.epoch) {
-      if (!video.key || !h264Size(video.data, this.limits))
-        throw new Error("Invalid video keyframe");
-      this.reset();
-      const revision = this.revision;
-      const config: VideoDecoderConfig = {
-        codec: video.codec,
-        optimizeForLatency: true,
-      };
-      if (
-        !(await this.checkSupport(config)) ||
-        this.disposed || revision !== this.revision
-      )
-        throw new Error("Video codec unavailable");
-      this.decoder = new VideoDecoder({
-        output: (frame) => {
-          if (revision !== this.revision || this.disposed) { frame.close(); return; }
-          const pending = this.pending;
-          this.pending = undefined;
-          if (pending) pending.resolve(frame);
-          else frame.close();
-        },
-        error: () => { if (revision === this.revision) this.reset(); },
-      });
-      this.decoder.configure(config);
-      this.epoch = video.epoch;
-    } else if (video.key && !h264Size(video.data, this.limits))
-      throw new Error("Invalid video keyframe");
-    const result = new Promise<VideoFrame>((resolve, reject) => {
-      this.pending = { resolve, reject };
-    });
-    const timer = setTimeout(() => this.reset(), 2000);
+
+  decode(video: H264Packet): Promise<VideoFrame> {
     try {
-      try {
-        this.decoder!.decode(
-          new EncodedVideoChunk({
-            type: video.key ? "key" : "delta",
-            timestamp: video.timestamp,
-            data: video.data.slice(),
-          }),
-        );
-      } catch {
-        this.reset();
+      if (this.disposed || typeof VideoDecoder === "undefined" || video.data.byteLength > 3_000_000 || video.codec !== "avc1.42E02A")
+        throw new Error("Video decoder unavailable");
+      // Only a key access unit may introduce exactly one validated SPS. A delta
+      // must never smuggle replacement allocation parameters into the decoder.
+      let parameters = 0;
+      for (let i = 0; i + 4 < video.data.length; i++) {
+        if (video.data[i] === 0 && video.data[i + 1] === 0 && video.data[i + 2] === 1 && (video.data[i + 3]! & 31) === 7) {
+          if (!video.key || ++parameters > 1 || !h264Size(video.data.subarray(i), this.limits))
+            throw new Error("Invalid video parameters");
+        }
       }
-      return await result;
-    } finally {
-      clearTimeout(timer);
-    }
+      if (video.epoch !== this.epoch) {
+        if (!video.key || !h264Size(video.data, this.limits)) throw new Error("Invalid video keyframe");
+        this.reset();
+        this.epoch = video.epoch;
+      } else if (video.key && !h264Size(video.data, this.limits)) throw new Error("Invalid video keyframe");
+      if (this.pending.size >= 8 || this.queuedBytes + video.data.byteLength > 3_000_000)
+        throw new Error("Video decoder queue exceeded its budget");
+    } catch (error) { return Promise.reject(error); }
+
+    const revision = this.revision;
+    // Decoder-local timestamps uniquely match outputs even if host timestamps
+    // coincide. They are private bookkeeping, not playback timing.
+    const timestamp = ++this.nextTimestamp;
+    const result = new Promise<VideoFrame>((resolve, reject) => {
+      this.pending.set(timestamp, { resolve, reject, bytes: video.data.byteLength });
+      this.queuedBytes += video.data.byteLength;
+    });
+    // Serialize configuration and submission, not output. VideoToolbox may
+    // retain a frame until the next chunk arrives even with optimizeForLatency.
+    this.submissions = this.submissions.then(async () => {
+      if (revision !== this.revision || this.disposed) return;
+      if (!this.decoder) {
+        const config: VideoDecoderConfig = { codec: video.codec, optimizeForLatency: true };
+        if (!(await this.checkSupport(config)) || this.disposed || revision !== this.revision)
+          throw new Error("Video codec unavailable");
+        this.decoder = new VideoDecoder({
+          output: frame => {
+            if (revision !== this.revision || this.disposed) { frame.close(); return; }
+            const pending = this.pending.get(frame.timestamp);
+            if (!pending) { frame.close(); return; }
+            this.pending.delete(frame.timestamp);
+            this.queuedBytes -= pending.bytes;
+            clearTimeout(pending.timer);
+            pending.resolve(frame);
+          },
+          error: () => { if (revision === this.revision) this.reset(); },
+        });
+        this.decoder.configure(config);
+      }
+      const pending = this.pending.get(timestamp);
+      if (!pending) return;
+      pending.timer = setTimeout(() => this.reset(), 2000);
+      this.decoder.decode(new EncodedVideoChunk({ type: video.key ? "key" : "delta", timestamp, data: video.data.slice() }));
+    }).catch(error => { if (revision === this.revision) this.reset(error instanceof Error ? error : undefined); });
+    return result;
   }
   private async checkSupport(config: VideoDecoderConfig): Promise<boolean> {
     let cancel!: () => void;
@@ -186,8 +172,6 @@ export class H264Decoder {
     });
     const pending = { cancel };
     this.support = pending;
-    // A hung GPU capability query precedes decode's own deadline. Without this
-    // boundary it holds the paint lane even across stream resets and JPEG recovery.
     const timer = setTimeout(cancel, 2000);
     try {
       return (await Promise.race([VideoDecoder.isConfigSupported(config), cancelled])).supported === true;
@@ -196,18 +180,17 @@ export class H264Decoder {
       if (this.support === pending) this.support = undefined;
     }
   }
-  reset(): void {
+  reset(reason = new Error("Video decoding interrupted")): void {
     this.revision++;
     this.support?.cancel();
     this.support = undefined;
-    this.pending?.reject(new Error("Video decoding interrupted"));
-    this.pending = undefined;
+    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(reason); }
+    this.pending.clear();
+    this.queuedBytes = 0;
+    this.submissions = Promise.resolve();
     if (this.decoder && this.decoder.state !== "closed") this.decoder.close();
     this.decoder = undefined;
     this.epoch = "";
   }
-  destroy(): void {
-    this.disposed = true;
-    this.reset();
-  }
+  destroy(): void { this.disposed = true; this.reset(); }
 }

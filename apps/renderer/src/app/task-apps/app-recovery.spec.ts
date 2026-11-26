@@ -47,4 +47,9 @@ describe('App recovery guidance', () => {
     expect(problem.body).toContain('Resize its window');
     expect(problem.body).not.toContain('Accessibility');
   });
+  it('does not attribute a local decoding failure to a slow connection', () => {
+    const problem = streamProblem('The app display was interrupted.', 'Dev app', remote);
+    expect(problem.body).toContain("couldn't decode or draw");
+    expect(problem.body).not.toContain('connection may be slow');
+  });
 });

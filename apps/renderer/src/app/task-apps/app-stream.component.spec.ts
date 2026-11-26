@@ -10,7 +10,7 @@ describe('App stream presentation', () => {
     vi.restoreAllMocks();
   });
 
-  it('paints queued frames while a receipt is pending and acknowledges them cumulatively', async () => {
+  it('submits through decoder buffering, paints while a receipt is pending and acknowledges cumulatively', async () => {
     let deliver!: (frame: TaskAppFrame) => void;
     let completeReceipt!: () => void;
     const ack = vi.fn(async (_scope: string, _watch: string, sequence: number) => {
@@ -22,7 +22,14 @@ describe('App stream presentation', () => {
     const drawImage = vi.fn();
     const close = vi.fn();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
-    vi.spyOn(H264Decoder.prototype, 'decode').mockResolvedValue({ displayWidth: 1280, displayHeight: 800, close } as unknown as VideoFrame);
+    let submitted = 0;
+    let ready!: () => void;
+    const buffering = new Promise<void>(resolve => { ready = resolve; });
+    vi.spyOn(H264Decoder.prototype, 'decode').mockImplementation(async () => {
+      if (++submitted === 2) ready();
+      await buffering;
+      return { displayWidth: 1280, displayHeight: 800, close } as unknown as VideoFrame;
+    });
     TestBed.configureTestingModule({
       providers: [{ provide: ELEVENEX_BRIDGE, useValue: {
         onTaskAppFrame: (receive: (frame: TaskAppFrame) => void) => { deliver = receive; },

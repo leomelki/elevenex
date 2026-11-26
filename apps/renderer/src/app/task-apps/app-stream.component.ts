@@ -40,9 +40,8 @@ export class AppStreamComponent {
   private watchId?: string;
   private sequence = 0;
   private disposed = false;
-  private queue: TaskAppFrame[] = [];
+  private inFlight = 0;
   private queuedBytes = 0;
-  private painting = false;
   private receipt?: { sequence: number };
   private lastComposition?: string;
   private compositionTimer?: ReturnType<typeof setTimeout>;
@@ -104,25 +103,18 @@ export class AppStreamComponent {
     if (this.disposed || frame.watchId !== this.watchId || frame.scopeId !== this.scopeId() ||
       frame.taskId !== this.taskId() || frame.runId !== this.runId()) return;
     if (frame.sequence !== this.sequence + 1) { this.interrupt('The video stream lost a frame.'); return; }
-    if (this.queue.length >= 8 || this.queuedBytes + frame.data.byteLength > APP_VIDEO_MAX_BYTES) {
+    if (this.inFlight >= 8 || this.queuedBytes + frame.data.byteLength > APP_VIDEO_MAX_BYTES) {
       this.interrupt('The display could not keep up with the stream.'); return;
     }
     this.sequence = frame.sequence;
-    this.queue.push(frame);
+    this.inFlight++;
     this.queuedBytes += frame.data.byteLength;
-    void this.drain();
-  }
-
-  private async drain(): Promise<void> {
-    if (this.painting) return;
-    this.painting = true;
-    try {
-      while (this.queue.length) {
-        const frame = this.queue.shift()!;
+    void this.paint(frame).finally(() => {
+      if (this.watchId === frame.watchId) {
+        this.inFlight--;
         this.queuedBytes -= frame.data.byteLength;
-        await this.paint(frame);
       }
-    } finally { this.painting = false; }
+    });
   }
 
   private async paint(frame: TaskAppFrame): Promise<void> {
@@ -165,7 +157,7 @@ export class AppStreamComponent {
         if (sequence === receipt.sequence) break;
       }
     } catch {
-      if (this.receipt === receipt) this.interrupt('The app display was interrupted.');
+      if (this.receipt === receipt) this.interrupt('App stream disconnected');
     } finally {
       if (this.receipt === receipt) this.receipt = undefined;
     }
@@ -178,7 +170,7 @@ export class AppStreamComponent {
     const id = this.watchId;
     this.watchId = undefined;
     this.receipt = undefined;
-    this.queue = []; this.queuedBytes = 0;
+    this.inFlight = 0; this.queuedBytes = 0;
     this.width = this.height = 0;
     this.decoder.reset();
     const canvas = this.canvas()?.nativeElement;
