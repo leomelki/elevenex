@@ -128,7 +128,7 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   await writeConfig(agentPath, 'key.pub'); challenges.length = 0;
   assert.equal((await connect('printf AGENT_AUTH_OK', false)).output, 'AGENT_AUTH_OK'); assert.equal(challenges.length, 0);
   // An agent that confirms each use (1Password, ssh-add -c, a security key)
-  // holds the signature request. OpenSSH must report that wait as approval.
+  // holds the signature request. OpenSSH must report that wait after key acceptance.
   const approvingPath = join(root, 'approving-agent.sock'); const approvalDelay = 800;
   const approving = createServer(client => {
     const upstream = connectSocket(agentPath); let pending = Buffer.alloc(0); let queue = Promise.resolve();
@@ -149,8 +149,8 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   const approved = await connect('printf APPROVED_OK', false, undefined, {}, timeline);
   assert.equal(approved.output, 'APPROVED_OK', approved.diagnostics);
   assert.equal(approved.authentication.at(-1), 'authenticated', approved.authentication.join());
-  const waits = timeline.flatMap((value, index) => value.state === 'awaiting-approval' && timeline[index + 1] ? [timeline[index + 1].at - value.at] : []);
-  assert.ok(waits.length >= 1 && waits.every(wait => wait >= approvalDelay - 50), `approval waits ${waits.join()} ms`);
+  const waits = timeline.flatMap((value, index) => value.state === 'key-accepted' && timeline[index + 1] ? [timeline[index + 1].at - value.at] : []);
+  assert.ok(waits.length >= 1 && waits.every(wait => wait >= approvalDelay - 50), `key-accepted waits ${waits.join()} ms`);
   assert.doesNotMatch(approved.diagnostics, /^debug1: /m, 'verbose progress stays out of failure diagnostics');
   await writeConfig(agentPath, 'key.pub');
   // Local, remote and dynamic forwards remain ordinary OpenSSH configuration.

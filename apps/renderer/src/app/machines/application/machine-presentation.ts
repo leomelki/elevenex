@@ -25,8 +25,8 @@ export function remotePresentation(connection: RemoteConnectionStatus): Pick<Mac
     authentication: connection.phase === 'awaiting-input' ? 'Waiting for your sign-in' : 'Connecting over SSH',
     discovery: 'Checking the server', download: 'Downloading the engine', installation: 'Installing the engine', runtime: 'Starting the engine', transport: 'Connecting', application: 'Starting Elevenex',
   };
-  const step = connection.awaitingApproval ? 'Approve the SSH sign-in' : connection.phase === 'recovering' ? 'Reconnecting' : labels[connection.stage];
-  return { conn: 'idle', busy: { step,
+  const step = connection.slowSignIn ? 'Still signing in' : connection.phase === 'recovering' ? 'Reconnecting' : labels[connection.stage];
+  return { conn: 'idle', busy: { step, ...(connection.slowSignIn ? { meta: 'a key prompt may be waiting' } : {}),
     progress: connection.progress ? progress(connection.progress.receivedBytes, connection.progress.totalBytes) : undefined } };
 }
 

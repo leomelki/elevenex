@@ -12,9 +12,10 @@ describe('Outage escalation', () => {
     expect(machineReach('dev-box', 0, 3000, remote, { id: 'key', kind: 'credential', prompt: 'Passphrase:', expiresAt: 10000 })).toMatchObject({ fresh: true, tone: 'warn', detail: 'Unlock your key' });
     expect(machineReach('dev-box', 0, 3000, { ...remote, failure: { stage: 'authentication', code: 'host-trust', message: 'Changed', action: 'verify-host', transient: false } }, null)?.tone).toBe('danger');
   });
-  it('asks for an outside SSH approval instead of reporting a network outage', () => {
-    const waiting = { ...remote, stage: 'authentication', awaitingApproval: true } as const;
-    expect(machineReach('dev-box', 0, 1000, waiting, null)?.text).toBe('dev-box · approve the SSH sign-in');
-    expect(machineReach('dev-box', 0, 60000, waiting, null)?.key).toBe('approval');
+  it('reports a slow sign-in quietly instead of a network outage', () => {
+    const waiting = { ...remote, stage: 'authentication', slowSignIn: true } as const;
+    expect(machineReach('dev-box', 0, 1000, waiting, null)).toMatchObject({ key: 'slow-sign-in', text: 'dev-box · still signing in', tone: 'warn', fresh: false });
+    expect(machineReach('dev-box', 0, 60000, waiting, null)?.key).toBe('slow-sign-in');
+    expect(machineReach('dev-box', 0, 3000, waiting, { id: 'pin', kind: 'credential', prompt: 'Enter PIN:', expiresAt: 10000 })?.key).toBe('needs-credential');
   });
 });

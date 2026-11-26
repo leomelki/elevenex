@@ -20,7 +20,8 @@ export function machineReach(name: string, since: number, now: number, remote: R
     return { key: 'needs-' + challenge.kind, text: fresh ? `${name} needs you to reconnect` : `${name} · ${action}`, detail: action[0]!.toUpperCase() + action.slice(1), tone: 'warn', fresh };
   }
   if (remote?.phase === 'awaiting-input') return { key: 'other-window', text: `${name} · sign-in open in another window`, detail: 'A window on this machine already has the SSH prompt. Answer there once to reconnect every window.', tone: 'warn', fresh: false };
-  if (remote?.awaitingApproval) return { key: 'approval', text: `${name} · approve the SSH sign-in`, detail: 'SSH is waiting for you to approve the sign-in in your SSH agent (such as 1Password) or on your security key.', tone: 'warn', fresh: false };
+  // Quiet and hedged: the wait is often a confirmation outside the app, not always.
+  if (remote?.slowSignIn) return { key: 'slow-sign-in', text: `${name} · still signing in`, detail: 'Signing in is taking longer than usual. If your SSH agent, security key or PIN prompt is asking you to confirm, confirm it there.', tone: 'warn', fresh: false };
   if (remote?.retryStoppedAt !== undefined) return { key: 'stopped', text: `Couldn’t reconnect to ${name} · Try again`, detail: 'Timed retries stopped after ten minutes. A network change or waking this computer tries again.', tone: 'warn', fresh: false };
   if (remote?.phase === 'paused') return { key: 'paused', text: `${name} needs you to reconnect · Try again`, detail: remote.failure?.message ?? 'Check the machine, then try again.', tone: 'warn', fresh };
   if (elapsed < 2000) return null;

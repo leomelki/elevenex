@@ -558,11 +558,11 @@ test('SSH stderr reports login progress and keeps verbose output out of failure 
   let kept = stderr.write('OpenSSH_10.0p2, LibreSSL 3.3.6\r\ndebug1: Connecting to host [10.0.0.1] port 22.\ndebug1: Authenticating to host:22 as \'me\'\ndebug1: Offering public key: k ED25519 SHA256:x agent\ndebug1: Server acc');
   assert.deepEqual(states, ['authenticating']);
   kept += stderr.write('epts key: k ED25519 SHA256:x agent\n');
-  assert.equal(stderr.authentication, 'awaiting-approval');
+  assert.equal(stderr.authentication, 'key-accepted');
   kept += stderr.write('sign_and_send_pubkey: signing failed for ED25519 "k" from agent: agent refused operation\ndebug1: Next authentication method: password\n');
   kept += stderr.write('Authenticated to host ([10.0.0.1]:22) using "publickey".\nTransferred: sent 1, received 2 bytes, in 0.1 seconds\nEX11_CONFIGURATION: Invalid archive size');
   kept += stderr.end();
-  assert.deepEqual(states, ['authenticating', 'awaiting-approval', 'authenticating', 'authenticated']);
+  assert.deepEqual(states, ['authenticating', 'key-accepted', 'authenticating', 'authenticated']);
   assert.equal(kept, 'sign_and_send_pubkey: signing failed for ED25519 "k" from agent: agent refused operation\nEX11_CONFIGURATION: Invalid archive size');
   const multiplexed = new SshStderr(); multiplexed.write('debug1: mux_client_request_session: master session id: 6\n');
   assert.equal(multiplexed.authentication, 'authenticated');

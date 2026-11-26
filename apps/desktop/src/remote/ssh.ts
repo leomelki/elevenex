@@ -30,8 +30,8 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     broker = await createAskpass(ask, interactive, signal);
     // Do not build a parallel SSH policy or parse/rewrite the user's settings.
     // With no -F, OpenSSH reads its native user and system configuration.
-    // -v reports login progress so a sign-in waiting on an agent or security
-    // key is not mistaken for a network stall. SshStderr removes that output.
+    // -v reports login progress, which separates a sign-in waiting after key
+    // acceptance from a network stall. SshStderr removes that output.
     const args = ['-v', '-T', '-o', 'RemoteCommand=none', '-o', 'SessionType=default',
       '-o', 'StdinNull=no', '-o', 'ForkAfterAuthentication=no', '-o', 'ControlMaster=no'];
     // Reusing an existing ControlPath is safe. Publishing a shared master here
@@ -65,11 +65,12 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     delete env['NODE_OPTIONS']; delete env['NODE_PATH']; delete env['ELECTRON_RUN_AS_NODE']; delete env['SSH_ASKPASS_PROMPT'];
     const child = spawn('ssh', args, { cwd: homedir(), env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let diagnostics = '';
+    const record = (text: string) => { if (text) diagnostics = (diagnostics + text).slice(-16384); };
     const stderr = new SshStderr(authentication);
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (text: string) => { diagnostics = (diagnostics + stderr.write(text)).slice(-16384); });
-    child.stderr.once('end', () => { diagnostics = (diagnostics + stderr.end()).slice(-16384); });
-    child.on('error', error => { diagnostics = (diagnostics + error.message).slice(-16384); });
+    child.stderr.on('data', (text: string) => record(stderr.write(text)));
+    child.stderr.once('end', () => record(stderr.end()));
+    child.on('error', error => record(error.message));
     const processExited = new Promise<void>(resolve => { child.once('error', () => resolve()); child.once('exit', () => resolve()); });
     const exited = new Promise<void>(resolve => { child.once('close', () => resolve()); });
     let stopping: Promise<void> | undefined;
