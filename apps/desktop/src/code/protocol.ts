@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
-import type { CodeSurfaceState, CodeTarget } from '@elevenex/shared';
+import { CODE_EDITOR_MAX_FILE_BYTES, type CodeSurfaceState, type CodeTarget } from '@elevenex/shared';
 import type { BackendClient } from '../backend-client/client';
 import { requestBackendJson } from '../backend-client/transport';
 import { CODE_OPERATIONS, object, reply, type CodeOperation, type WorkspaceDescriptor } from './validation';
@@ -12,7 +12,8 @@ import { isCodeWebviewOrigin, isMarkdownPreviewResource, codeWebviewAsset, codeW
 import { codeTransferCall } from './transfer-client';
 import { CodeLinks } from './links';
 import { CodeTransfers } from './transfers';
-import type { TransferDialogs } from './transfer-contracts';
+import { taskPath, TRANSFER_MAX_FILE, TransferError, type TransferDialogs } from './transfer-contracts';
+import { uploadFile } from './upload';
 import { externalLinkUrl, HtmlPreview } from './html-preview';
 
 const MIME: Readonly<Record<string, string>> = { '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.txt': 'text/plain' };
@@ -28,6 +29,7 @@ export class CodeProtocol {
   readonly htmlPreview: HtmlPreview;
   private transfers?: CodeTransfers;
   private transferId?: string;
+  private importCancellation?: AbortController;
   dirty = 0;
   active = false;
   embedded = true;
@@ -55,7 +57,7 @@ export class CodeProtocol {
     } catch { return false; }
   }
   bind(target: CodeTarget): boolean { const changed = target.scopeId !== this.target.scopeId || target.taskId !== this.target.taskId; if (changed) this.reset(); this.target = target; return changed; }
-  reset(): void { this.transfers?.dispose(); this.links.clear(); this.htmlPreview.reset(); this.transportRevision++; this.ready = false; }
+  reset(): void { this.transfers?.dispose(); this.importCancellation?.abort(); this.links.clear(); this.htmlPreview.reset(); this.transportRevision++; this.ready = false; }
   whenReady(): Promise<boolean> {
     if (this.ready) return Promise.resolve(true);
     if (this.closed || this.readyWaiters.size >= 32) return Promise.resolve(false);
@@ -87,6 +89,7 @@ export class CodeProtocol {
     }
     try {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+      if (url.pathname === '/api/import-file') return this.importFile(request, url, headers);
       if (url.pathname.startsWith('/api/')) return this.api(request, url.pathname.slice(5), headers);
       if (!['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 405 });
       if (url.pathname === '/') {
@@ -123,6 +126,51 @@ export class CodeProtocol {
       }
       return new Response(request.method === 'HEAD' ? null : Readable.toWeb(createReadStream(actual)) as ReadableStream<Uint8Array>, { headers });
     } catch { return new Response(null, { status: 404, headers }); }
+  }
+  private async importFile(request: Request, url: URL, headers: Record<string, string>): Promise<Response> {
+    if (request.method !== 'POST' || request.headers.get('content-type') !== 'application/octet-stream' || !request.body) return new Response(null, { status: 400, headers });
+    const { windowId, target: { scopeId, taskId }, workspace: { identity: generation }, transportRevision } = this;
+    const current = () => !this.closed && this.windowId === windowId && this.transportRevision === transportRevision &&
+      this.workspace.identity === generation && this.client.state(windowId).scope?.id === scopeId;
+    if (!this.ready || !this.active || !current() || url.searchParams.get('generation') !== generation ||
+        url.searchParams.get('transportRevision') !== String(transportRevision)) return new Response(null, { status: 409, headers });
+    if (this.importCancellation) return new Response(null, { status: 429, headers });
+    const size = Number(url.searchParams.get('size'));
+    if (!Number.isSafeInteger(size) || size <= CODE_EDITOR_MAX_FILE_BYTES || size > TRANSFER_MAX_FILE) return new Response(null, { status: 413, headers });
+    let path: string;
+    try { path = taskPath(url.searchParams.get('path')); if (path === '/') throw new Error('Invalid import destination'); }
+    catch { return new Response(null, { status: 400, headers }); }
+    const cancellation = new AbortController();
+    this.importCancellation = cancellation;
+    const signal = AbortSignal.any([cancellation.signal, request.signal, this.lifetime.signal]);
+    const reader = request.body.getReader();
+    async function* source() {
+      const cancel = () => { void reader.cancel().catch(() => undefined); };
+      signal.addEventListener('abort', cancel, { once: true });
+      try {
+        for (;;) {
+          signal.throwIfAborted();
+          // Electron supplies the reader. Bound a stalled producer separately
+          // from the backend request timeout applied to each transfer chunk.
+          const timer = setTimeout(() => cancellation.abort(new TransferError('Upload stopped while waiting for file bytes.')), 30_000);
+          const chunk = await reader.read().finally(() => clearTimeout(timer));
+          signal.throwIfAborted();
+          if (chunk.done) return;
+          yield chunk.value;
+        }
+      } finally { signal.removeEventListener('abort', cancel); }
+    }
+    try {
+      const call = codeTransferCall(this.client, { windowId, scopeId, taskId, generation }, current, this.lifetime.signal);
+      await uploadFile(call, { path, size, revision: null }, source(), signal);
+      return Response.json({ accepted: true }, { headers });
+    } catch (error) {
+      return Response.json({ error: error instanceof TransferError ? error.message : 'Upload failed. Refresh and review the destination before uploading again.' }, { status: 422, headers });
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+      this.importCancellation = undefined;
+    }
   }
   private async api(request: Request, operation: string, headers: Record<string, string>): Promise<Response> {
     if (request.method !== 'POST' || request.headers.get('content-type')?.split(';')[0] !== 'application/json') return new Response(null, { status: 405 });
@@ -210,7 +258,7 @@ export class CodeProtocol {
     if (this.workspace.identity !== generation || this.transportRevision !== transportRevision) return Response.json({ error: 'workspace-changed' }, { status: 409, headers });
     if (!result.ok) {
       if (result.error.status === 409 && ['Task workspace changed.', 'Task workspace is unavailable.'].includes(result.error.message)) this.changed('disconnected', 'Workspace changed · saves blocked');
-      if (result.error.status !== 404 && result.error.status !== 400 && result.error.status !== 403 && result.error.status !== 409) this.changed('disconnected', result.error.code === 'outcome-unknown' ? 'Save unconfirmed · edits retained' : 'Disconnected · edits retained');
+      if (result.error.status === undefined || result.error.status >= 500) this.changed('disconnected', result.error.code === 'outcome-unknown' ? 'Save unconfirmed · edits retained' : 'Disconnected · edits retained');
       return Response.json({ error: result.error.status === 409 ? result.error.message === 'File changed on disk.' ? 'file-conflict' : result.error.message === 'File is changing.' ? 'file-changing' : result.error.message === 'Destination already exists.' ? 'target-exists' : 'workspace-changed' : result.error.code }, { status: result.error.status ?? (result.error.code === 'stale-scope' ? 409 : 503), headers });
     }
     if (op === 'changes') { const metadata = object(result.value); if (typeof metadata['taskName'] === 'string' && typeof metadata['branch'] === 'string') this.workspace = { ...this.workspace, name: metadata['taskName'], branch: metadata['branch'] }; }
