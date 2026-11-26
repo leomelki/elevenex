@@ -4,9 +4,9 @@ import { link, lstat, mkdir, mkdtemp, open, opendir, realpath, rename, rm } from
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { object, number, string } from './validation';
-import { taskPath, transferName, transferStat, TRANSFER_CHUNK, TRANSFER_MAX_FILE, type TransferDialogs, type TransferOperation } from './transfer-contracts';
+import { taskPath, transferName, transferStat, TRANSFER_CHUNK, TRANSFER_MAX_FILE, TransferError, type TransferCall, type TransferDialogs, type TransferOperation } from './transfer-contracts';
+import { uploadFile } from './upload';
 
-type Call = (operation: TransferOperation, input: object, signal: AbortSignal) => Promise<unknown>;
 interface Job { readonly state: TransferState; readonly controller: AbortController; touched: number; done?: Promise<void> }
 const missing = (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 const sameFile = (a: Awaited<ReturnType<typeof lstat>>, b: Awaited<ReturnType<typeof lstat>>) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
@@ -14,7 +14,7 @@ const sameFile = (a: Awaited<ReturnType<typeof lstat>>, b: Awaited<ReturnType<ty
  * neither the extension nor backend can supply a desktop filesystem capability. */
 export class CodeTransfers {
   private job?: Job;
-  constructor(private readonly dialogs: TransferDialogs, private readonly call: Call) {}
+  constructor(private readonly dialogs: TransferDialogs, private readonly call: TransferCall) {}
   dispose(): void { this.job?.controller.abort(); }
   start(input: Record<string, unknown>): { id: string } {
     if (this.job?.state.phase === 'running') throw new Error('A transfer is already running in this editor.');
@@ -77,25 +77,21 @@ export class CodeTransfers {
       if (current.exists && !await replace(target)) return;
       budget(info.size, target);
       const file = await open(local, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      let id: string | undefined;
-      try {
-        if (!sameFile(info, await file.stat())) throw new TransferError('A source file changed. Try uploading it again when its writer finishes.');
-        id = string(object(await invoke('upload-begin', { path: target, size: info.size, revision: current.revision }))['id'], 36);
-        let offset = 0;
-        while (offset < info.size) {
+      async function* source() {
+        for (let offset = 0; offset < info.size;) {
           const bytes = Buffer.alloc(Math.min(TRANSFER_CHUNK, info.size - offset));
           let received = 0;
           while (received < bytes.length) { const result = await file.read(bytes, received, bytes.length - received, offset + received); if (!result.bytesRead) throw new TransferError('A source file changed during upload.'); received += result.bytesRead; signal.throwIfAborted(); }
-          const reply = object(await invoke('upload-chunk', { id, offset, content: bytes.toString('base64') }));
-          offset += bytes.length; if (number(reply['offset'], info.size) !== offset) throw new Error('Invalid upload acknowledgement.');
-          job.state.bytes = offset;
+          offset += bytes.length;
+          yield bytes;
         }
         if (!sameFile(info, await file.stat())) throw new TransferError('A source file changed during upload. Try again when its writer finishes.');
-        await invoke('upload-commit', { id }); id = undefined; job.state.files++;
-      } finally {
-        await file.close();
-        if (id) await this.call('upload-abort', { id }, AbortSignal.timeout(5000)).catch(() => undefined);
       }
+      try {
+        if (!sameFile(info, await file.stat())) throw new TransferError('A source file changed. Try uploading it again when its writer finishes.');
+        await uploadFile(this.call, { path: target, size: info.size, revision: current.revision }, source(), signal, offset => { job.state.bytes = offset; });
+        job.state.files++;
+      } finally { await file.close(); }
     };
     const download = async (path: string, local: string, depth = 0): Promise<void> => {
       check(depth);
@@ -166,7 +162,4 @@ export class CodeTransfers {
       }
     } finally { clearInterval(timer); }
   }
-}
-export class TransferError extends Error {
-  constructor(message: string, readonly outcomeUnknown = false) { super(message); }
 }

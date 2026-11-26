@@ -1,4 +1,6 @@
 import type { EnvironmentSelection } from './remote';
+
+export const CODE_EDITOR_MAX_FILE_BYTES = 8 * 1024 * 1024;
 /** Task-owned workbench controls. No credentials or absolute paths. */
 export interface CodeTarget {
   readonly scopeId: string;
