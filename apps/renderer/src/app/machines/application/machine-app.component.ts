@@ -13,6 +13,8 @@ import { machineReach } from './machine-reach';
 import { MachineErrorDialogComponent } from './machine-error-dialog.component';
 
 type WaitingUpdate = NonNullable<RemoteConnectionStatus['updateWaiting']> & { readonly hostId: string; readonly name: string };
+interface ServerChoice { readonly hostId: string; readonly name: string }
+const signInHint = 'Sign in on that PC in person or with Remote Desktop.';
 
 /** Production composition. Presentational families remain supplied-data APIs. */
 @Component({
@@ -53,6 +55,26 @@ export class MachineAppComponent {
   readonly retainedUpdate = linkedSignal<WaitingUpdate | null, WaitingUpdate | null>({
     source: this.waitingUpdate, computation: (update, previous) => update ?? previous?.value ?? null,
   });
+  /** A Windows connect paused because nobody is signed in to the desktop. */
+  readonly sessionChoice = computed<ServerChoice | null>(() => {
+    const environment = this.connection.state()?.environment;
+    if (!environment || environment.selection.kind !== 'remote') return null;
+    const connection = environment.connection;
+    return connection?.phase === 'paused' && connection.failure?.action === 'choose-session' ? this.serverChoice(environment.selection.hostId) : null;
+  });
+  readonly retainedSessionChoice = linkedSignal<ServerChoice | null, ServerChoice | null>({
+    source: this.sessionChoice, computation: (choice, previous) => choice ?? previous?.value ?? null,
+  });
+  readonly sessionChoiceBusy = signal(false);
+  readonly sessionChoiceError = signal('');
+  readonly signInHint = signInHint;
+  /** Confirmation for moving a background Windows engine to the desktop session. */
+  readonly desktopSwitch = signal<ServerChoice | null>(null);
+  readonly retainedDesktopSwitch = linkedSignal<ServerChoice | null, ServerChoice | null>({
+    source: this.desktopSwitch, computation: (choice, previous) => choice ?? previous?.value ?? null,
+  });
+  readonly desktopSwitchBusy = signal(false);
+  readonly desktopSwitchError = signal('');
   readonly challenge = computed(() => this.connection.state()?.environment.challenge ?? null);
   // Keep the last dialog and its data mounted throughout ModalLayer's exit.
   readonly retainedChallenge = linkedSignal<RemoteChallenge | null, RemoteChallenge | null>({
@@ -175,6 +197,41 @@ export class MachineAppComponent {
   async retry(): Promise<void> {
     try { await this.connection.retry(); }
     catch { if (!this.destroy.destroyed) this.launcher.error.set('The connection could not be retried. Try opening the machine again.'); }
+  }
+  async chooseSession(choice: 'without-apps' | 'retry' | 'cancel'): Promise<void> {
+    const pending = this.sessionChoice();
+    if (!pending || this.sessionChoiceBusy()) return;
+    this.sessionChoiceBusy.set(true); this.sessionChoiceError.set('');
+    try {
+      if (choice === 'without-apps') await this.connection.startWithoutApps(pending.hostId);
+      else if (choice === 'retry') await this.connection.retry();
+      else { this.launcher.pendingId.set(null); await this.connection.disconnect(); }
+    } catch {
+      if (!this.destroy.destroyed && this.sessionChoice()?.hostId === pending.hostId) this.sessionChoiceError.set('The request could not be sent. Try again.');
+    } finally { if (!this.destroy.destroyed) this.sessionChoiceBusy.set(false); }
+  }
+  requestDesktopSession(): void {
+    const selection = this.connection.state()?.environment.selection;
+    if (selection?.kind !== 'remote' || this.desktopSwitch()) return;
+    this.desktopSwitchError.set('');
+    this.desktopSwitch.set(this.serverChoice(selection.hostId));
+  }
+  closeDesktopSwitch(): void { if (!this.desktopSwitchBusy()) this.desktopSwitch.set(null); }
+  async confirmDesktopSession(): Promise<void> {
+    const pending = this.desktopSwitch();
+    if (!pending || this.desktopSwitchBusy()) return;
+    this.desktopSwitchBusy.set(true); this.desktopSwitchError.set('');
+    try {
+      const outcome = await this.connection.useDesktopSession(pending.hostId);
+      if (this.destroy.destroyed) return;
+      if (outcome === 'switching') this.desktopSwitch.set(null);
+      else this.desktopSwitchError.set(`Nobody is signed in to Windows on ${pending.name} yet. ${signInHint} Then switch again.`);
+    } catch {
+      if (!this.destroy.destroyed) this.desktopSwitchError.set('The engine could not be switched. Check the connection, then try again.');
+    } finally { if (!this.destroy.destroyed) this.desktopSwitchBusy.set(false); }
+  }
+  private serverChoice(hostId: string): ServerChoice {
+    return { hostId, name: this.launcher.machines().find(machine => machine.id === hostId)?.name ?? 'this server' };
   }
   async respondToUpdate(force: boolean): Promise<void> {
     const update = this.waitingUpdate();

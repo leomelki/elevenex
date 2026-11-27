@@ -85,6 +85,8 @@ export class RemoteConnection {
   private backendForward: Awaited<ReturnType<RemoteTransport['forward']>> | undefined;
   private forcePendingUpdate: (() => void) | undefined;
   private forcedInstance: string | undefined;
+  /** "Start without apps" lasts for this connection; every new connect asks again. */
+  private backgroundSession = false;
 
   constructor(private readonly options: ConnectionOptions) { this.status = disconnected(options.host.id); }
   snapshot(): RemoteConnectionStatus { return structuredClone(this.status); }
@@ -121,6 +123,7 @@ export class RemoteConnection {
       this.options.changed();
     }
     if (this.owners.size) return;
+    this.backgroundSession = false;
     this.lifetime?.abort(); this.wakeup?.abort();
     await this.loop;
     if (!this.active) this.publish({ ...disconnected(this.options.host.id), generation: this.status.generation });
@@ -136,6 +139,21 @@ export class RemoteConnection {
     this.forcePendingUpdate = undefined;
     this.forcedInstance = instance;
     this.publish({ ...this.status, updateWaiting: undefined });
+  }
+  /** Accept a runtime without a Windows desktop session after a connect paused for that choice. */
+  allowBackgroundSession(): void {
+    if (this.status.phase !== 'paused' || this.status.failure?.action !== 'choose-session') throw new Error('This server is no longer waiting for a Windows sign-in.');
+    this.backgroundSession = true;
+  }
+  async useDesktopSession(windowId: number): Promise<'switching' | 'signed-out'> {
+    if (!this.owners.has(windowId)) throw new Error('This window is not connected to the server.');
+    const transport = this.currentTransport();
+    if (!transport?.useDesktopSession) throw new Error('Apps are already available on this server, or it is reconnecting.');
+    const outcome = await transport.useDesktopSession(AbortSignal.timeout(30_000));
+    // The bridge closes after a confirmed switch; recovery then starts the
+    // desktop runtime, or asks again if the account signed out meanwhile.
+    if (outcome === 'switching') { this.backgroundSession = false; this.log('runtime', 'desktop-session', 'Moving the remote runtime to the Windows desktop session.'); }
+    return outcome;
   }
   networkChanged(): void {
     if (!this.active) return;
@@ -228,13 +246,13 @@ export class RemoteConnection {
       const authentication = (state: SshAuthentication) => { if (!setupSignal.aborted && stage === 'authentication') signIn.update(state); };
       try {
         this.publish({ ...this.status, phase: attempt ? 'recovering' : 'connecting', stage, authenticated: false,
-          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined, slowSignIn: undefined });
+          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined, slowSignIn: undefined, windowsSession: undefined });
         resetDeadline(stage);
         const release = await this.options.release();
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
+          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace, allowBackgroundSession: this.backgroundSession,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
@@ -272,7 +290,8 @@ export class RemoteConnection {
         this.outageStarted = undefined;
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
-          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, updateWaiting: undefined });
+          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, updateWaiting: undefined,
+          windowsSession: transport.windowsSession });
         const connectedAt = Date.now();
         const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
         void transportLost.catch(() => undefined);

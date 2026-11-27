@@ -137,11 +137,24 @@ before publishing the runtime in the account's private
 `desktop-remote\dev\<namespace>`. Reparse points and unexpected permissions
 on runtime paths can prevent startup.
 
-The SSH user must also be signed in to a Windows graphical session to start
-the engine. Setup registers an on-demand **Elevenex Desktop <user SID>
-<production or development namespace>** task with a limited interactive token.
-It stores no password and has no login or startup trigger. The machine bridge
-uses an authenticated private pipe. This registration is specific to that Windows
+Apps need the engine to run in the SSH user's Windows desktop session. Setup
+registers an on-demand **Elevenex Desktop <user SID> <production or development
+namespace>** task with a limited interactive token. It stores no password and
+has no login or startup trigger. When that account has a console or Remote
+Desktop session, including a locked or disconnected one, the scheduler starts
+the engine there. The machine bridge uses an authenticated private pipe.
+
+When nobody is signed in, the connection pauses and asks. **Start without apps**
+launches the same engine through WMI as that account in session 0, outside the
+SSH session's job so that it survives disconnection. Agents, terminals and files
+work, but apps report that they need a Windows sign-in, and credentials that
+require an interactive logon, such as Windows Credential Manager, may be
+unavailable, as they are for SSH commands. The choice lasts for that connection;
+each new connect asks again. After signing in, **Switch to desktop session** in
+Apps checks for the sign-in, stops the background engine with a signed,
+instance-bound request, and reconnects to the desktop-session engine. The switch
+interrupts running agents, terminals and other connected desktops. Signing out
+of Windows ends a desktop-session engine; the next connection asks again. This registration is specific to that Windows
 account and namespace. To remove it, finish or stop owned work first, close
 the machine connection, and delete the corresponding task in Windows Task
 Scheduler. The runtime root also contains user data and task history. Keep or

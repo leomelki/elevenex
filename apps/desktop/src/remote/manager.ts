@@ -384,6 +384,22 @@ export class RemoteManager {
     if (!connection) throw new Error('This remote update is no longer waiting.');
     connection.forceUpdate(windowId, instance);
   }
+  async startWithoutApps(windowId: number, hostId: string): Promise<EnvironmentSnapshot> {
+    this.assertWritable();
+    if (this.hostId(this.remoteWindow(windowId)) !== hostId) throw new Error('The selected server changed.');
+    const connection = this.connections.get(hostId);
+    if (!connection) throw new Error('This server is no longer waiting for a Windows sign-in.');
+    connection.allowBackgroundSession();
+    return this.retry(windowId);
+  }
+  useDesktopSession(windowId: number, hostId: string): Promise<'switching' | 'signed-out'> {
+    this.assertWritable();
+    const window = this.remoteWindow(windowId);
+    if (this.hostId(window) !== hostId || window.intent !== 'connected') throw new Error('The selected server changed.');
+    const connection = this.connections.get(hostId);
+    if (!connection) throw new Error('This server is not connected.');
+    return connection.useDesktopSession(windowId);
+  }
   async disconnect(windowId: number, pause = false): Promise<EnvironmentSnapshot> {
     this.assertWritable(); const window = this.remoteWindow(windowId);
     ++window.revision;

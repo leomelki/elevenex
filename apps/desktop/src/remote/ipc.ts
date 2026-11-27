@@ -38,6 +38,14 @@ export function registerRemoteIpc(remote: RemoteManager, backend: BackendManager
     if (typeof hostId !== 'string' || typeof instance !== 'string') throw new Error('Invalid remote update');
     remote.forceUpdate(window, hostId, instance);
   });
+  register('remote:start-without-apps', 1, (window, hostId) => {
+    if (typeof hostId !== 'string') throw new Error('Invalid remote host');
+    return remote.startWithoutApps(window, hostId);
+  });
+  register('remote:use-desktop-session', 1, (window, hostId) => {
+    if (typeof hostId !== 'string') throw new Error('Invalid remote host');
+    return remote.useDesktopSession(window, hostId);
+  });
   register('remote:pause', 0, window => remote.disconnect(window, true));
   register('remote:disconnect', 0, window => remote.disconnect(window));
   register('remote:answer', 2, (window, id, answer) => remote.answer(window, id, answer));

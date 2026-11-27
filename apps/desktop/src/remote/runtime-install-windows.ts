@@ -34,7 +34,7 @@ try {
 }
 
 export async function bootstrapWindowsScript(
-  release: BackendRelease, nonce: string, developmentNamespace?: string, allowUpdate = false,
+  release: BackendRelease, nonce: string, developmentNamespace?: string, allowUpdate = false, allowBackground = false,
 ): Promise<{ command: string; payload: Buffer }> {
   // These identifiers are the only metadata embedded in executable source.
   backendRelease(release, 'win32', 'x64');
@@ -240,7 +240,7 @@ Report ('EX11:${nonce}:runtime:start')
 # stdout and stdin to text and break the live bridge framing.
 $start=[Diagnostics.ProcessStartInfo]::new()
 $start.FileName=$node
-$start.Arguments='"'+$runtime+'" bridge "'+$root+'" "'+$cache+'" ${release.version} ${allowUpdate ? 'update' : 'join'}'
+$start.Arguments='"'+$runtime+'" bridge "'+$root+'" "'+$cache+'" ${release.version} ${allowUpdate ? 'update' : 'join'} ${allowBackground ? 'background' : 'desktop'}'
 $start.WorkingDirectory=$root
 $start.UseShellExecute=$false
 $process=[Diagnostics.Process]::Start($start)

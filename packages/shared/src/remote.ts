@@ -37,7 +37,8 @@ export interface RemoteFailure {
   readonly stage: RemoteStage;
   readonly code: 'authentication' | 'host-trust' | 'configuration' | 'compatibility' | 'timeout' | 'unavailable';
   readonly message: string;
-  readonly action: 'retry' | 'authenticate' | 'verify-host' | 'edit' | 'install-prerequisites';
+  /** choose-session: nobody is signed in to a Windows host; retry after signing in, or start without apps. */
+  readonly action: 'retry' | 'authenticate' | 'verify-host' | 'edit' | 'install-prerequisites' | 'choose-session';
   readonly transient: boolean;
 }
 export interface RemoteChallenge {
@@ -67,6 +68,11 @@ export interface RemoteConnectionStatus {
   readonly slowSignIn?: true;
   /** An explicit launch is waiting for an authenticated daemon to become idle. */
   readonly updateWaiting?: { readonly instance: string; readonly connections: number | null };
+  /**
+   * Windows hosts only. A background runtime started while nobody was signed in
+   * to Windows; it cannot run apps until it moves to the desktop session.
+   */
+  readonly windowsSession?: 'desktop' | 'background';
   readonly progress: { readonly receivedBytes: number; readonly totalBytes: number | null } | null;
   /** Changes after every successful reconnection. Reject work from older generations. */
   readonly generation: number;

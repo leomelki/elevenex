@@ -203,6 +203,24 @@ describe('Production machine application', () => {
     expect(machine?.error).toBeUndefined(); expect(machine?.busy).toBeDefined();
   });
 
+  it('asks how to start a Windows server nobody is signed in to, and switches it to the desktop only once signed in', async () => {
+    const { platform, launcher, connection } = setup(); await flush();
+    const host = await connection.addHost({ name: 'Gaming PC', host: 'pc' });
+    await launcher.choose(host.id); platform.needsWindowsSignIn(); await flush();
+    const paused = launcher.machines().find(machine => machine.id === host.id)!;
+    expect(paused.error?.action).toBe('Choose how to start');
+    await connection.startWithoutApps(host.id); await flush();
+    const background = launcher.machines().find(machine => machine.id === host.id)!;
+    expect(background.backgroundSession).toBe(true); expect(background.status).toContain('Windows sign-in');
+    await expect(connection.startWithoutApps(host.id)).rejects.toThrow(/Stale/);
+    const signedOut = connection.useDesktopSession(host.id); await vi.advanceTimersByTimeAsync(600);
+    expect(await signedOut).toBe('signed-out');
+    platform.desktopSignedIn = true;
+    const switching = connection.useDesktopSession(host.id); await vi.advanceTimersByTimeAsync(600);
+    expect(await switching).toBe('switching'); await connection.refresh(); await flush();
+    expect(launcher.machines().find(machine => machine.id === host.id)!.backgroundSession).toBeUndefined();
+  });
+
   it('accepts explicit SSH destinations and rejects command syntax and invalid ports', () => {
     expect(parseSshDestination('leo@dev-box:2222')).toEqual({ name: 'leo@dev-box:2222', host: 'dev-box', user: 'leo', port: 2222 });
     expect(parseSshDestination('dev')).toEqual({ name: 'dev', host: 'dev' });

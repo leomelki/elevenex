@@ -1,7 +1,13 @@
-@if (!scopeId() || !taskId() || !available() || readFailure() || !run()) {
+@if (!scopeId() || !taskId() || !available() || backgroundSession() || readFailure() || !run()) {
   <section class="state" [attr.role]="readFailure() ? 'alert' : 'status'">
     @if (!scopeId()) {
       <h2>Connecting to {{ machine() || 'the machine' }}…</h2>
+    }
+    @else if (backgroundSession()) {
+      <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
+      <h2>Apps need your Windows desktop</h2>
+      <p>Nobody was signed in to Windows on {{ host() }} when its engine started. Sign in on that PC in person or with Remote Desktop, then switch.</p>
+      <button exButton size="sm" variant="secondary" (click)="desktopSessionRequested.emit()">Switch to desktop session…</button>
     }
     @else if (!taskId()) {
       <span class="state-mark" aria-hidden="true"><ex-icon name="window" [size]="18" /></span>
