@@ -14,6 +14,8 @@ const calls = [
   ['saveEnvironmentContext', 'environment:context', [{ projectId: null, taskId: null, sessionId: null, draft: '', cursor: null }, { kind: 'local' }]],
   ['retryRemote', 'remote:retry', []],
   ['forceRemoteUpdate', 'remote:force-update', ['host-id', '33333333-3333-4333-8333-333333333333']],
+  ['startRemoteWithoutApps', 'remote:start-without-apps', ['host-id']],
+  ['useRemoteDesktopSession', 'remote:use-desktop-session', ['host-id']],
   ['pauseRemoteRecovery', 'remote:pause', []],
   ['disconnectRemote', 'remote:disconnect', []],
   ['answerRemoteChallenge', 'remote:answer', ['challenge-id', null]],

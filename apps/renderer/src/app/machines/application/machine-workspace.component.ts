@@ -43,6 +43,7 @@ export class MachineWorkspaceComponent {
   readonly prepared = output<{ readonly machineId: string; readonly generation: number }>();
   readonly changeRequested = output<void>();
   readonly reconnectRequested = output<void>();
+  readonly desktopSessionRequested = output<void>();
   readonly store = inject(WorkspaceStore);
   readonly outbox = inject(SessionChatOutbox);
   readonly writingJournal = inject(WorkspaceWritingJournal);

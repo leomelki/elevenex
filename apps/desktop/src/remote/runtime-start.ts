@@ -1,5 +1,5 @@
 /** Remote startup and revision handoff; never signals a PID discovered on disk. */
-import { startWindowsRuntime } from './windows-runtime';
+import { desktopSessionAvailable, startBackgroundRuntime, startWindowsRuntime } from './windows-runtime';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { queryDaemon, requestHandoff, type RuntimeHealth } from './runtime-control';
@@ -13,13 +13,15 @@ interface RuntimeStartup {
   readonly runtime: string;
   /** Only an explicit connect/retry may interrupt another revision's work. */
   readonly allowUpdate: boolean;
+  /** Windows only: start without a desktop session (apps unavailable) instead of failing. */
+  readonly allowBackground?: boolean;
   readonly waitingForUpdate?: (health: RuntimeHealth) => boolean;
   readonly updateStarting?: (instance: string) => void;
   readonly signal?: AbortSignal;
 }
 
 export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHealth> {
-  const { root, installation, version, port, token, runtime, allowUpdate, waitingForUpdate, updateStarting, signal } = options;
+  const { root, installation, version, port, token, runtime, allowUpdate, allowBackground, waitingForUpdate, updateStarting, signal } = options;
   let spawned = false;
   let starts = 0;
   let sawVacancy = false;
@@ -85,8 +87,9 @@ export async function ensureDaemon(options: RuntimeStartup): Promise<RuntimeHeal
       if (!spawned) {
         spawned = true; starts++;
         if (process.platform === 'win32') {
-          await startWindowsRuntime(signal);
-          // The scheduler can accept a request while the account is logged out.
+          if (await desktopSessionAvailable(signal)) await startWindowsRuntime(signal);
+          else if (allowBackground) await startBackgroundRuntime({ root, installation, version, runtime }, signal);
+          else throw new Error('EX11_SIGNIN: nobody is signed in to the Windows desktop');
           // One start request is sufficient; observe readiness until the deadline.
           continue;
         }

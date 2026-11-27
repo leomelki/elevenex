@@ -5,7 +5,9 @@ import { Socket, isIP } from 'node:net';
 import type { BrowserSocketTarget } from '@elevenex/browser-network';
 
 export type WireMessage =
-  | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean; browserProxy?: true; appViewerAccess?: string; appBinary?: true }
+  | { type: 'hello'; version: string; instance: string; ready: boolean; agentForwarding: boolean; browserProxy?: true; appViewerAccess?: string; appBinary?: true; session?: 'desktop' | 'background' }
+  | { type: 'desktop-session'; id: number }
+  | { type: 'desktop-session-result'; id: number; outcome: 'switching' | 'signed-out' }
   | { type: 'update-waiting'; instance: string; connections: number | null }
   | { type: 'update-starting'; instance: string }
   | { type: 'force-update'; instance: string }
@@ -29,6 +31,7 @@ function message(value: unknown): WireMessage {
     if (input['appBinary'] !== undefined && input['appBinary'] !== true) throw new Error('Invalid media capability');
     if (input['appViewerAccess'] !== undefined && (typeof input['appViewerAccess'] !== 'string' || !/^[a-f0-9]{64}$/.test(input['appViewerAccess']))) throw new Error('Invalid app viewer credential');
     if (input['browserProxy'] !== undefined && input['browserProxy'] !== true) throw new Error('Invalid browser proxy capability');
+    if (input['session'] !== undefined && input['session'] !== 'desktop' && input['session'] !== 'background') throw new Error('Invalid Windows session');
   } else if (type === 'update-waiting' || type === 'update-starting' || type === 'force-update') {
     if (typeof input['instance'] !== 'string' || !/^[a-f0-9-]{36}$/.test(input['instance'])) throw new Error('Invalid update instance');
     const count = input['connections'];
@@ -48,9 +51,11 @@ function message(value: unknown): WireMessage {
       if (typeof input['data'] !== 'string' || input['data'].length > 87384 || !/^[A-Za-z0-9+/]*={0,2}$/.test(input['data'])) throw new Error('Invalid bridge data');
     } else if (type === 'probed') {
       if (typeof input['available'] !== 'boolean') throw new Error('Invalid service probe');
+    } else if (type === 'desktop-session-result') {
+      if (input['outcome'] !== 'switching' && input['outcome'] !== 'signed-out') throw new Error('Invalid desktop session reply');
     } else if (type === 'pong') {
       if (typeof input['ready'] !== 'boolean' || typeof input['instance'] !== 'string' || input['instance'].length > 64) throw new Error('Invalid health reply');
-    } else if (!['ping', 'opened', 'end', 'close', 'error'].includes(String(type))) throw new Error('Unknown bridge message');
+    } else if (!['ping', 'opened', 'end', 'close', 'error', 'desktop-session'].includes(String(type))) throw new Error('Unknown bridge message');
   }
   return value as WireMessage;
 }

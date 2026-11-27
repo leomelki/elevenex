@@ -24,6 +24,8 @@ export interface RuntimeHealth {
   activeConnections?: number;
   appHandoffBlocked?: true;
   replacement?: string;
+  /** Windows daemon started without a desktop session; absent means the desktop session. */
+  session?: 'background';
 }
 /** The daemon waits this long for its backend to stop apps before a handoff. */
 export const APP_HANDOFF_LIMIT_MS = 25_000;
@@ -55,6 +57,16 @@ export function verifyHandoffRequest(req: IncomingMessage, token: string, curren
     || (force !== undefined && force !== '1')) return null;
   return sameProof(req.headers['x-elevenex-proof'], mac(token, `handoff:${time}:${nonce}:${instance}:${version}:${target}${force ? ':force' : ''}`))
     ? { nonce, target, ...(force ? { force: true as const } : {}) } : null;
+}
+
+/** Bind a request to stop a background daemon to that one instance and revision. */
+export function verifySessionRequest(req: IncomingMessage, token: string, current: RuntimeHealth): string | null {
+  const time = req.headers['x-elevenex-time']; const nonce = req.headers['x-elevenex-nonce'];
+  const instance = req.headers['x-elevenex-instance']; const version = req.headers['x-elevenex-version'];
+  if (req.method !== 'POST' || req.url !== '/session' || typeof time !== 'string' || !/^\d{13}$/.test(time)
+    || Math.abs(Date.now() - Number(time)) > 10_000 || typeof nonce !== 'string' || !/^[a-f0-9]{64}$/.test(nonce)
+    || instance !== current.instance || version !== current.version) return null;
+  return sameProof(req.headers['x-elevenex-proof'], mac(token, `session:${time}:${nonce}:${instance}:${version}`)) ? nonce : null;
 }
 
 export function connectionPresence(req: IncomingMessage, token: string, nonce: string, id: string, instance: string): RuntimeLease['presence'] | null {
@@ -124,12 +136,14 @@ async function controlRequest(root: string, fallbackPort: number, token: string,
             || 'handoff' in value && value.handoff !== 1
             || 'appHandoffBlocked' in value && value.appHandoffBlocked !== true
             || 'activeConnections' in value && (typeof value.activeConnections !== 'number' || !Number.isInteger(value.activeConnections) || value.activeConnections < 0 || value.activeConnections > 257)
-            || 'replacement' in value && (typeof value.replacement !== 'string' || !/^[a-f0-9]{40}$/.test(value.replacement))) throw new Error('Invalid daemon reply');
+            || 'replacement' in value && (typeof value.replacement !== 'string' || !/^[a-f0-9]{40}$/.test(value.replacement))
+            || 'session' in value && value.session !== 'background') throw new Error('Invalid daemon reply');
           resolve({ version: value.version, instance: value.instance, ready: value.ready,
             ...('handoff' in value ? { handoff: 1 as const } : {}),
             ...('appHandoffBlocked' in value ? { appHandoffBlocked: true as const } : {}),
             ...('activeConnections' in value && typeof value.activeConnections === 'number' ? { activeConnections: value.activeConnections } : {}),
             ...('replacement' in value && typeof value.replacement === 'string' ? { replacement: value.replacement } : {}),
+            ...('session' in value ? { session: 'background' as const } : {}),
           });
         } catch (error) { reject(error); }
       });
@@ -158,4 +172,13 @@ export async function requestHandoff(root: string, fallbackPort: number, token: 
     'X-Elevenex-Proof': mac(token, `handoff:${time}:${nonce}:${current.instance}:${current.version}:${target}${signedForce ? ':force' : ''}`),
     ...(signedForce ? { 'X-Elevenex-Force': '1' } : {}),
   }, APP_HANDOFF_LIMIT_MS + 5000);
+}
+
+/** Ask a background daemon to stop so the desktop-session runtime can take over. */
+export async function requestDesktopSession(root: string, fallbackPort: number, token: string, current: RuntimeHealth): Promise<RuntimeHealth> {
+  const nonce = randomBytes(32).toString('hex'); const time = String(Date.now());
+  return controlRequest(root, fallbackPort, token, nonce, 'POST', '/session', {
+    'X-Elevenex-Time': time, 'X-Elevenex-Nonce': nonce, 'X-Elevenex-Instance': current.instance, 'X-Elevenex-Version': current.version,
+    'X-Elevenex-Proof': mac(token, `session:${time}:${nonce}:${current.instance}:${current.version}`),
+  });
 }

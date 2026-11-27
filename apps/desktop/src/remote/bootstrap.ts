@@ -6,6 +6,7 @@ import { backendRelease } from '../backend/release';
 import type { DownloadProgress } from '../backend/download';
 import { RemoteError, failure, sshFailure } from './failure';
 import { spawnSsh } from './ssh';
+import type { SshAuthentication } from './ssh-authentication';
 import { bootstrapWindowsScript } from './runtime-install-windows';
 import { bootstrapScript } from './runtime-install';
 import { archiveFor, type PrepareRemoteArchive } from './archives';
@@ -25,6 +26,10 @@ export interface RemoteTransport {
   health(signal: AbortSignal): Promise<{ ready: boolean; instance: string }>;
   /** Time of the latest bytes received from the bridge. Optional for injected/older transports. */
   receivedAt?(): number;
+  /** Windows hosts only; absent on older bridges, which always run in the desktop session. */
+  readonly windowsSession?: 'desktop' | 'background';
+  /** Stop a background Windows runtime so the next connection starts it in the signed-in desktop. */
+  useDesktopSession?(signal: AbortSignal): Promise<'switching' | 'signed-out'>;
   close(): Promise<void>;
 }
 export interface ConnectOptions {
@@ -37,11 +42,15 @@ export interface ConnectOptions {
   readonly interactive: boolean;
   readonly ask: Ask;
   readonly progress: (stage: RemoteStage, progress?: DownloadProgress) => void;
+  /** OpenSSH login progress before the remote shell reports its platform. */
+  readonly authentication?: (state: SshAuthentication) => void;
   readonly waitingForUpdate?: (update: NonNullable<RemoteConnectionStatus['updateWaiting']>, force: () => void) => void;
   readonly updateStarting?: (instance: string) => void;
   readonly prepareArchive?: PrepareRemoteArchive;
   /** Unpackaged launcher only; isolates custom runtimes and their mutable data. */
   readonly developmentNamespace?: string;
+  /** Windows: start a runtime without a desktop session (apps unavailable) when nobody is signed in. */
+  readonly allowBackgroundSession?: boolean;
   /** Process boundary injection for native failure-path tests; never exposed over IPC. */
   readonly spawn?: typeof spawnSsh;
 }
@@ -82,9 +91,9 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
   const { progress } = options;
   const nonce = randomBytes(16).toString('hex');
   const { command, payload } = remoteShell === 'windows'
-    ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive)
+    ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive, options.allowBackgroundSession)
     : await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper).catch((error: unknown) => {
+  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper, options.authentication).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });
@@ -94,6 +103,7 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
   const transportEnded = ssh.exited.then(() => {
     const stderr = ssh.diagnostics();
     if (stage === 'authentication' && missingShell(remoteShell, ssh.child.exitCode, stderr)) throw new RemoteShellUnavailable();
+    if (/EX11_SIGNIN/.test(stderr)) throw failure('runtime', 'compatibility', 'Nobody is signed in to Windows on this server. Sign in there to use apps, or start without apps.', 'choose-session');
     if (/Windows interactive runtime unavailable|EX11_WINDOWS_LOGIN/.test(stderr)) throw failure('runtime', 'compatibility', 'Sign in to Windows with the SSH account so that its interactive app host can start, then retry.', 'retry');
     if (/EX11_UPDATE: legacy daemon/.test(stderr)) throw failure('runtime', 'compatibility', 'The running remote daemon predates automatic updates. Stop that verified daemon once using the remote development guide, then Retry. Later updates stop and replace it automatically.', 'retry');
     if (/EX11_UPDATE: explicit connection required/.test(stderr)) throw failure('runtime', 'compatibility', 'Another backend revision is running on this server. Choose Retry to replace it with this desktop’s version. Updating interrupts remote agents, terminals and apps.', 'retry');
@@ -265,7 +275,21 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
       if (closing) { await close(); throw new Error('Remote transport is closing'); }
       return { port: address.port, authorization, reachable, close };
     };
+    const useDesktopSession = (requestSignal: AbortSignal) => new Promise<'switching' | 'signed-out'>((resolve, reject) => {
+      const id = ++sequence;
+      const cleanup = () => { channel.removeListener('message', receive); channel.removeListener('closed', closed); requestSignal.removeEventListener('abort', aborted); };
+      const receive = (message: WireMessage) => {
+        if (message.type === 'desktop-session-result' && message.id === id) { cleanup(); resolve(message.outcome); }
+      };
+      const closed = () => { cleanup(); reject(new Error('The connection closed before the engine replied. Reconnect and check whether apps are available.')); };
+      const aborted = () => { cleanup(); reject(requestSignal.reason); };
+      channel.on('message', receive); channel.once('closed', closed); requestSignal.addEventListener('abort', aborted, { once: true });
+      if (requestSignal.aborted) { aborted(); return; }
+      try { channel.send({ type: 'desktop-session', id }); } catch { closed(); }
+    });
     return { instance: hello.instance, remoteShell, exited: ssh.exited, health, forward, receivedAt: () => channel.receivedAt,
+      ...(hello.session ? { windowsSession: hello.session } : {}),
+      ...(hello.session === 'background' ? { useDesktopSession } : {}),
       browserProxy: async (authorize: (host: string, port: number) => void) => {
         if (closing || !hello.browserProxy) throw new Error('Reconnect this server to enable local browser tabs.');
         const proxy = await browserSocks(async (host, port) => {

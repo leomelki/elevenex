@@ -492,3 +492,78 @@ test('a damaged chat draft file cannot erase saved data or block the existing jo
   await manager.dispose();
   assert.equal(await readFile(path, 'utf8'), damaged);
 });
+
+test('a sign-in stalled after key acceptance pauses once instead of raising unseen prompts', { timeout: 10000 }, async t => {
+  const attempts = []; const events = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()), backoff: 1, authenticationTimeout: 4000,
+    connect: async options => {
+      attempts.push(options.interactive);
+      options.authentication('authenticating'); options.authentication('key-accepted');
+      await delay(30000, undefined, { signal: options.signal });
+    },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => connection.snapshot().slowSignIn === true);
+  assert.equal(connection.snapshot().stage, 'authentication');
+  await until(() => connection.snapshot().phase === 'paused');
+  const paused = connection.snapshot();
+  assert.equal(paused.failure.code, 'authentication'); assert.equal(paused.failure.transient, false);
+  assert.match(paused.failure.message, /didn’t finish.*If your SSH agent/); assert.equal(paused.slowSignIn, undefined);
+  await delay(100);
+  assert.deepEqual(attempts, [false], 'a background stall after key acceptance must not start another prompt');
+  assert.equal(events.some(status => status.phase === 'recovering'), false);
+  assert.equal(events.filter(status => status.slowSignIn).length, 1, 'the notice is published once');
+});
+
+test('a declined confirmation keeps the sign-in explanation, and brief signing stays silent', { timeout: 15000 }, async t => {
+  const events = []; let attempts = 0;
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()),
+    connect: async options => {
+      attempts++;
+      options.authentication('key-accepted'); await delay(attempts === 1 ? 10 : 3300); options.authentication('authenticating');
+      throw failure('authentication', 'authentication', 'SSH authentication requires attention.', 'authenticate');
+    },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => connection.snapshot().phase === 'paused');
+  assert.equal(connection.snapshot().failure.message, 'SSH authentication requires attention.', 'an immediate key failure keeps its own explanation');
+  assert.equal(events.some(status => status.slowSignIn), false, 'ordinary signing shows no notice');
+  connection.retry(1);
+  await until(() => attempts === 2 && connection.snapshot().phase === 'paused');
+  assert.ok(events.some(status => status.slowSignIn));
+  assert.match(connection.snapshot().failure.message, /didn’t finish/);
+});
+
+test('a sign-in stalled before any key is accepted remains a retried network timeout', { timeout: 10000 }, async t => {
+  let attempts = 0; const failures = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => { const value = connection.snapshot().failure; if (value) failures.push(value); }, backoff: 1, authenticationTimeout: 50,
+    connect: async options => { attempts++; options.authentication('authenticating'); await delay(30000, undefined, { signal: options.signal }); },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, false);
+  await until(() => attempts >= 2);
+  assert.equal(failures[0].code, 'timeout');
+  assert.equal(failures[0].transient, true);
+});
+
+test('a passphrase prompt shown in the app is neither a slow sign-in notice nor its failure', { timeout: 10000 }, async t => {
+  const events = [];
+  const connection = new RemoteConnection({ root: '', helper: '', host: { id: 'test', name: 'test', host: 'test' }, release: async () => release,
+    changed: () => events.push(connection.snapshot()), authenticationTimeout: 4000,
+    connect: async options => {
+      options.authentication('key-accepted');
+      await options.ask({ id: 'key', kind: 'credential', prompt: 'Enter passphrase:', expiresAt: Date.now() + 10000 }, options.signal);
+      options.signal.throwIfAborted();
+    },
+  });
+  t.after(() => connection.dispose());
+  connection.acquire(1, true);
+  await until(() => connection.snapshot().phase === 'paused' || connection.snapshot().phase === 'recovering');
+  assert.equal(events.some(status => status.slowSignIn), false);
+  assert.doesNotMatch(connection.snapshot().failure.message, /didn’t finish/);
+});

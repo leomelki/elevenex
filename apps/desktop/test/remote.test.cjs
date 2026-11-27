@@ -439,7 +439,8 @@ test('native OpenSSH configuration owns connection policy while the app reserves
     'clearallforwardings no', 'controlmaster false', 'controlpath /chosen/control.sock', 'controlpersist 90', 'requesttty false',
     'stdinnull no', 'forkafterauthentication no', 'sessiontype default',
     'localforward 9999 [localhost]:80', 'remoteforward 9998 [localhost]:81', 'dynamicforward 9997']) assert.ok(output.includes(line), `${line}\n${output}`);
-  assert.match(output, /^loglevel (QUIET|SILENT)$/m);
+  // The app's -v reports login progress; SshStderr keeps that output out of diagnostics.
+  assert.match(output, /^loglevel DEBUG1?$/m);
   assert.equal(output.includes('remotecommand false'), false);
 });
 
@@ -549,4 +550,20 @@ test('an interrupted runtime transfer removes only its staging files and preserv
   assert.equal(await readFile(join(old, 'keep'), 'utf8'), 'working');
   const entries = await require('node:fs/promises').readdir(join(root, 'runtimes'));
   assert.deepEqual(entries, ['older-working-release']);
+});
+
+test('SSH stderr reports login progress and keeps verbose output out of failure diagnostics', () => {
+  const { SshStderr } = require('../dist/remote/ssh-authentication');
+  const states = []; const stderr = new SshStderr(state => states.push(state));
+  let kept = stderr.write('OpenSSH_10.0p2, LibreSSL 3.3.6\r\ndebug1: Connecting to host [10.0.0.1] port 22.\ndebug1: Authenticating to host:22 as \'me\'\ndebug1: Offering public key: k ED25519 SHA256:x agent\ndebug1: Server acc');
+  assert.deepEqual(states, ['authenticating']);
+  kept += stderr.write('epts key: k ED25519 SHA256:x agent\n');
+  assert.equal(stderr.authentication, 'key-accepted');
+  kept += stderr.write('sign_and_send_pubkey: signing failed for ED25519 "k" from agent: agent refused operation\ndebug1: Next authentication method: password\n');
+  kept += stderr.write('Authenticated to host ([10.0.0.1]:22) using "publickey".\nTransferred: sent 1, received 2 bytes, in 0.1 seconds\nEX11_CONFIGURATION: Invalid archive size');
+  kept += stderr.end();
+  assert.deepEqual(states, ['authenticating', 'key-accepted', 'authenticating', 'authenticated']);
+  assert.equal(kept, 'sign_and_send_pubkey: signing failed for ED25519 "k" from agent: agent refused operation\nEX11_CONFIGURATION: Invalid archive size');
+  const multiplexed = new SshStderr(); multiplexed.write('debug1: mux_client_request_session: master session id: 6\n');
+  assert.equal(multiplexed.authentication, 'authenticated');
 });

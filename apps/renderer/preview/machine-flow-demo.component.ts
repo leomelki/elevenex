@@ -10,6 +10,8 @@ const SAVED: readonly Machine[] = [
   { id: 'dev', name: 'dev-box', kind: 'ssh', conn: 'live', color: 'ocean', status: '3 running · 1 needs you', windows: 1 },
   { id: 'mini', name: 'Studio Mac', kind: 'peer', conn: 'idle', color: 'plum', last: 'Paired · opened yesterday' },
   { id: 'build', name: 'build-arm64', kind: 'ssh', conn: 'idle', color: 'rust', last: 'Opened 3 days ago', update: '1.5.2' },
+  // Matches remotePresentation() for a sign-in waiting after key acceptance.
+  { id: 'lab', name: 'lab-mac', kind: 'ssh', conn: 'idle', color: 'ocean', busy: { step: 'Still signing in', meta: 'a key prompt may be waiting' } },
 ];
 
 /** Preview-only application owner: no real SSH, filesystem, engines or pairing. */

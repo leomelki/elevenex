@@ -68,10 +68,11 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
     await writeFile(config, `${prefix}Host target jump\n HostName 127.0.0.1\n Port ${port}\n User ${userInfo().username}\n IdentityFile ${root}/${identity}\n IdentitiesOnly yes\n IdentityAgent ${agentPath}\n UserKnownHostsFile ${knownHosts}\n StrictHostKeyChecking ask\n FingerprintHash md5\n NumberOfPasswordPrompts 2\n ExitOnForwardFailure yes\n${forwarding === null ? '' : ` ForwardAgent ${forwarding}\n`}Host target\n ProxyJump jump\n`);
   }
   await writeConfig(); const challenges = [];
-  async function connect(command, interactive = true, answer = challenge => challenge.kind === 'credential' ? 'fixture-passphrase' : 'yes', overrides = {}) {
+  async function connect(command, interactive = true, answer = challenge => challenge.kind === 'credential' ? 'fixture-passphrase' : 'yes', overrides = {}, authentication = []) {
     const session = await spawnSsh({ id: 'fixture', name: 'fixture', host: 'target', configFile: config, ...overrides }, command,
-      async challenge => { challenges.push(challenge); return answer(challenge); }, interactive, AbortSignal.timeout(10000), require.resolve('../dist/remote/askpass-helper.js'));
-    sessions.push(session); let output = ''; session.child.stdout.on('data', bytes => { output += bytes; }); await session.exited; await session.stop(); return { output, diagnostics: session.diagnostics(), code: session.child.exitCode, signal: session.child.signalCode };
+      async challenge => { challenges.push(challenge); return answer(challenge); }, interactive, AbortSignal.timeout(10000), require.resolve('../dist/remote/askpass-helper.js'),
+      state => authentication.push({ state, at: Date.now() }));
+    sessions.push(session); let output = ''; session.child.stdout.on('data', bytes => { output += bytes; }); await session.exited; await session.stop(); return { output, diagnostics: session.diagnostics(), code: session.child.exitCode, signal: session.child.signalCode, authentication: authentication.map(value => value.state) };
   }
   const initialConnection = await connect('printf SSH_FIXTURE_OK');
   assert.equal(initialConnection.code, 0, `${initialConnection.diagnostics}\n${serverLog}`);
@@ -126,6 +127,32 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   await run('ssh-add', [join(root, 'key')], { ...process.env, SSH_AUTH_SOCK: agentPath, SSH_ASKPASS: fixtureAskpass, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'fixture:0' });
   await writeConfig(agentPath, 'key.pub'); challenges.length = 0;
   assert.equal((await connect('printf AGENT_AUTH_OK', false)).output, 'AGENT_AUTH_OK'); assert.equal(challenges.length, 0);
+  // An agent that confirms each use (1Password, ssh-add -c, a security key)
+  // holds the signature request. OpenSSH must report that wait after key acceptance.
+  const approvingPath = join(root, 'approving-agent.sock'); const approvalDelay = 800;
+  const approving = createServer(client => {
+    const upstream = connectSocket(agentPath); let pending = Buffer.alloc(0); let queue = Promise.resolve();
+    client.on('error', () => upstream.destroy()); upstream.on('error', () => client.destroy()); upstream.pipe(client);
+    client.on('data', bytes => {
+      pending = Buffer.concat([pending, bytes]);
+      while (pending.length >= 4 && pending.length >= 4 + pending.readUInt32BE(0)) {
+        const frame = pending.subarray(0, 4 + pending.readUInt32BE(0)); pending = pending.subarray(frame.length);
+        const signing = frame[4] === 13; // SSH_AGENTC_SIGN_REQUEST
+        queue = queue.then(() => signing ? new Promise(resolve => setTimeout(resolve, approvalDelay)) : undefined).then(() => { upstream.write(frame); });
+      }
+    });
+  });
+  await new Promise(resolve => approving.listen(approvingPath, resolve));
+  t.after(() => new Promise(resolve => approving.close(resolve)));
+  await writeConfig(approvingPath, 'key.pub');
+  const timeline = [];
+  const approved = await connect('printf APPROVED_OK', false, undefined, {}, timeline);
+  assert.equal(approved.output, 'APPROVED_OK', approved.diagnostics);
+  assert.equal(approved.authentication.at(-1), 'authenticated', approved.authentication.join());
+  const waits = timeline.flatMap((value, index) => value.state === 'key-accepted' && timeline[index + 1] ? [timeline[index + 1].at - value.at] : []);
+  assert.ok(waits.length >= 1 && waits.every(wait => wait >= approvalDelay - 50), `key-accepted waits ${waits.join()} ms`);
+  assert.doesNotMatch(approved.diagnostics, /^debug1: /m, 'verbose progress stays out of failure diagnostics');
+  await writeConfig(agentPath, 'key.pub');
   // Local, remote and dynamic forwards remain ordinary OpenSSH configuration.
   const sockets = new Set();
   const echo = createServer(socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.pipe(socket); });
@@ -156,7 +183,8 @@ test('native SSH follows config for trust, keys, jumps, agents, forwards and mul
   master.on('error', () => undefined);
   await until(() => access(controlPath).then(() => true, () => false));
   const multiplexed = await connect('printf MUX_OK', false, undefined, { host: 'jump' });
-  assert.equal(multiplexed.output, 'MUX_OK'); assert.match(multiplexed.diagnostics, /mux_client_request_session|multiplexing/);
+  // A multiplexed session is authenticated by the existing master without a new login.
+  assert.equal(multiplexed.output, 'MUX_OK'); assert.deepEqual(multiplexed.authentication, ['authenticated']);
   assert.equal(master.exitCode, null); await run('ssh', ['-F', config, '-S', controlPath, '-O', 'check', 'jump']);
   const masterExited = new Promise(resolve => master.once('close', resolve)); master.kill('SIGTERM'); await masterExited;
   // Configured AddKeysToAgent ask is a confirmation, not a password prompt.
