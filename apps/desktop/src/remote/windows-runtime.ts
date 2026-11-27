@@ -31,20 +31,25 @@ export function listsProcesses(output: string): boolean {
  * SSH sessions run in session 0; any process of this account in another
  * session means a console or Remote Desktop sign-in (including a locked or
  * disconnected one) where the scheduler can start the runtime.
+ *
+ * Only a definite "no session" answer changes the start path. If the check
+ * itself fails, report a session so the scheduler is tried as before.
  */
 export async function desktopSessionAvailable(signal?: AbortSignal): Promise<boolean> {
-  const user = process.env['USERNAME']; const domain = process.env['USERDOMAIN'];
-  if (!user || !domain || /["\\]/.test(user + domain)) throw new Error('EX11_CONFIGURATION: missing Windows account identity');
+  const options = { windowsHide: true, signal, timeout: 10_000 };
   try {
+    // OpenSSH can set USERDOMAIN to the workgroup rather than the account's
+    // machine or domain, which tasklist would never match. whoami reports the
+    // account exactly as tasklist does.
+    const account = (await execute(join(system32(), 'whoami.exe'), [], { ...options, maxBuffer: 4096 })).stdout.trim();
+    if (!/^[^"\\\r\n]+\\[^"\\\r\n]+$/.test(account)) return true;
     const { stdout } = await execute(join(system32(), 'tasklist.exe'),
-      ['/FI', `USERNAME eq ${domain}\\${user}`, '/FI', 'SESSION ne 0', '/FO', 'CSV', '/NH'],
-      { windowsHide: true, signal, timeout: 10_000, maxBuffer: 1024 * 1024 });
+      ['/FI', `USERNAME eq ${account}`, '/FI', 'SESSION ne 0', '/FO', 'CSV', '/NH'], { ...options, maxBuffer: 1024 * 1024 });
     return listsProcesses(stdout);
-  } catch (error) {
+  } catch {
     signal?.throwIfAborted();
-    // A very busy desktop can exceed the output bound; that still proves a session.
-    if (error instanceof Error && 'code' in error && error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return true;
-    throw new Error('EX11_CONFIGURATION: the Windows desktop session could not be checked', { cause: error });
+    // Includes a desktop busy enough to exceed the output bound.
+    return true;
   }
 }
 
