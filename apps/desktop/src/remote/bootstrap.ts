@@ -51,6 +51,8 @@ export interface ConnectOptions {
   readonly developmentNamespace?: string;
   /** Windows: start a runtime without a desktop session (apps unavailable) when nobody is signed in. */
   readonly allowBackgroundSession?: boolean;
+  /** The local environment for OpenSSH and the config commands it runs; defaults to process.env. */
+  readonly environment?: (signal: AbortSignal) => Promise<NodeJS.ProcessEnv>;
   /** Process boundary injection for native failure-path tests; never exposed over IPC. */
   readonly spawn?: typeof spawnSsh;
 }
@@ -93,7 +95,8 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
   const { command, payload } = remoteShell === 'windows'
     ? await bootstrapWindowsScript(options.release, nonce, options.developmentNamespace, options.interactive, options.allowBackgroundSession)
     : await bootstrapScript(options.release, nonce, !options.developmentNamespace, options.developmentNamespace, options.interactive);
-  const ssh = await (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper, options.authentication).catch((error: unknown) => {
+  const ssh = await Promise.resolve(options.environment?.(signal)).then(environment =>
+    (options.spawn ?? spawnSsh)(options.host, command, options.ask, options.interactive, signal, options.helper, options.authentication, environment)).catch((error: unknown) => {
     if (error instanceof RemoteError) throw error;
     throw sshFailure(error instanceof Error ? error.message : '', 'authentication');
   });

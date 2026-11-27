@@ -19,7 +19,7 @@ function includePath(value: string): string {
 
 /** OpenSSH owns configuration; these arguments only reserve the app's stdio session. */
 export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, interactive: boolean, signal: AbortSignal, helper: string,
-  authentication?: (state: SshAuthentication) => void): Promise<{
+  authentication?: (state: SshAuthentication) => void, environment: NodeJS.ProcessEnv = process.env): Promise<{
   child: ChildProcessWithoutNullStreams; exited: Promise<void>; diagnostics(): string; stop(): Promise<void>;
 }> {
   for (const file of [host.identityFile, host.configFile]) if (file) await access(file);
@@ -60,7 +60,7 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     // so %, ${...}, spaces and quotes in real filenames are never reinterpreted.
     if (host.identityFile) args.push('-o', 'IdentityFile="${ELEVENEX_SSH_IDENTITY}"');
     args.push('--', host.host, command);
-    const env: NodeJS.ProcessEnv = { ...process.env, ...broker.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force' };
+    const env: NodeJS.ProcessEnv = { ...environment, ...broker.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force' };
     if (host.identityFile) env['ELEVENEX_SSH_IDENTITY'] = host.identityFile;
     delete env['NODE_OPTIONS']; delete env['NODE_PATH']; delete env['ELECTRON_RUN_AS_NODE']; delete env['SSH_ASKPASS_PROMPT'];
     const child = spawn('ssh', args, { cwd: homedir(), env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });

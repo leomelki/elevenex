@@ -10,6 +10,7 @@ export interface ConnectionOptions {
   readonly host: RemoteHost;
   readonly root: string;
   readonly helper: string;
+  readonly environment?: ConnectOptions['environment'];
   readonly release: () => Promise<BackendRelease>;
   readonly connect?: (options: ConnectOptions) => Promise<RemoteTransport>;
   readonly prepareArchive?: ConnectOptions['prepareArchive'];
@@ -252,7 +253,7 @@ export class RemoteConnection {
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace, allowBackgroundSession: this.backgroundSession,
+          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, environment: this.options.environment, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace, allowBackgroundSession: this.backgroundSession,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }

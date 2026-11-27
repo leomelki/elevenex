@@ -20,6 +20,11 @@ the `-F` pathname unquoted in ProxyJump commands, so this indirection preserves
 chosen paths containing spaces or shell syntax. As with native `ssh -F`, a custom
 file replaces default user/system configuration. Config files are trusted
 executable configuration: Match exec, ProxyCommand and enabled LocalCommand can run programs.
+On macOS and Linux the client runs with the user's interactive login-shell
+environment, captured once at launch (bounded, refreshed in the background), so
+those commands find the same PATH and agent variables as in a terminal even when
+the app was opened from Finder, the Dock or a launcher. If the capture fails or
+times out, the inherited environment plus common install directories is used.
 Custom config/identity paths must come from the main-process native file picker
 or an already saved host. Renderer-provided arbitrary file paths are rejected.
 Selected paths are treated literally, including spaces, quotes, percent signs,

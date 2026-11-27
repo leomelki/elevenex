@@ -18,6 +18,7 @@ import { registerBackendIpc } from './backend/ipc';
 import { notifyRecovery } from './remote/recovery-notifications';
 import { monitorNetwork } from './remote/network-monitor';
 import { RemoteManager } from './remote/manager';
+import { SshEnvironment } from './remote/ssh-environment';
 import { registerRemoteIpc } from './remote/ipc';
 import { readBackendRelease } from './backend/release';
 import { developmentRemote } from './remote/development';
@@ -72,8 +73,11 @@ const backend = createApplicationBackend(app.isPackaged
   : join(__dirname, 'backend/host.js'), app.isPackaged, runtimeRoot);
 const remoteDevelopment = developmentRemote(app.isPackaged);
 const remoteArchives = new RemoteArchiveCache(runtimeRoot, remoteDevelopment?.archive);
+// Finder/Dock launches lack the terminal PATH that ssh_config commands rely on.
+const sshEnvironment = new SshEnvironment();
 const remote = new RemoteManager({
   root: runtimeRoot,
+  environment: signal => sshEnvironment.read(signal),
   prepareArchive: (release, signal, progress) => remoteArchives.prepare(release, signal, progress),
   settingsPath: join(userData, remoteDevelopment?.settingsFilename ?? 'remote-settings.json'),
   helper: app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked/dist/remote/askpass-helper.js') : join(__dirname, 'remote/askpass-helper.js'),
@@ -234,6 +238,8 @@ async function registerRendererProtocol(): Promise<void> {
 }
 
 void app.whenReady().then(async () => {
+  // Read the login shell before the first remote connection needs it.
+  sshEnvironment.warm();
   // Pointer lock is needed only by the trusted streamed-page canvas. Website
   // guests and editor subframes keep their separate deny-by-default sessions.
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => callback(
@@ -279,7 +285,7 @@ void app.whenReady().then(async () => {
   const stopNetwork = monitorNetwork(() => net.isOnline(), resumed);
   powerMonitor.on('resume', resumed);
   powerMonitor.on('unlock-screen', resumed);
-  app.once('will-quit', () => { stopRecoveryNotifications(); stopNetwork(); unregisterRemote(); unsubscribeRemote(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
+  app.once('will-quit', () => { stopRecoveryNotifications(); stopNetwork(); unregisterRemote(); unsubscribeRemote(); sshEnvironment.dispose(); powerMonitor.removeListener('resume', resumed); powerMonitor.removeListener('unlock-screen', resumed); });
   handle('git:status', trusted, (path) => {
     if (typeof path !== 'string' || !path.trim() || path.length > 4096 || path.includes('\0')) {
       throw new Error('A nonempty workspace path is required');
