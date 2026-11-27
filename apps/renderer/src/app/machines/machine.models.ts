@@ -22,6 +22,8 @@ export interface Machine {
   readonly update?: string;
   readonly error?: { readonly step: string; readonly tone?: 'warn' | 'danger'; readonly progress?: number; readonly action?: string };
   readonly busy?: { readonly step: string; readonly progress?: number; readonly meta?: string };
+  /** A Windows engine running without the desktop session; apps stay off until it moves there. */
+  readonly backgroundSession?: true;
 }
 
 export type AddMachineKind = Exclude<MachineKind, 'local'>;

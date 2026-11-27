@@ -9,6 +9,24 @@ const run = (taskId: number, runId: string): TaskAppRun => ({
 
 describe('Task apps panel ownership', () => {
   afterEach(() => TestBed.resetTestingModule());
+  it('explains a background Windows engine and asks the owner to switch it, without listing apps', () => {
+    const taskAppsRead = vi.fn(async () => ({ ok: true as const, value: [run(2, 'blocked')] }));
+    TestBed.configureTestingModule({ providers: [{ provide: ELEVENEX_BRIDGE, useValue: { taskAppsRead } }] });
+    const fixture = TestBed.createComponent(TaskAppsComponent), requested = vi.fn();
+    fixture.componentRef.setInput('scopeId', 'machine'); fixture.componentRef.setInput('taskId', 2);
+    fixture.componentRef.setInput('machine', 'Gaming PC'); fixture.componentRef.setInput('remote', true);
+    fixture.componentRef.setInput('backgroundSession', true);
+    fixture.componentInstance.desktopSessionRequested.subscribe(requested);
+    fixture.detectChanges();
+    const element: HTMLElement = fixture.nativeElement;
+    expect(element.querySelector('[role=status] h2')?.textContent).toBe('Apps need your Windows desktop');
+    expect(element.textContent).toContain('Gaming PC');
+    const button = [...element.querySelectorAll('button')].find(candidate => candidate.textContent?.trim() === 'Switch to desktop session…')!;
+    button.click();
+    expect(requested).toHaveBeenCalledOnce();
+    fixture.componentRef.setInput('backgroundSession', false); fixture.detectChanges();
+    expect(element.textContent).not.toContain('Apps need your Windows desktop');
+  });
   it('guides the remote viewer to host settings and launches only after a separate confirmation', async () => {
     let state: TaskAppRun = {
       ...run(2, 'request'), mode: 'stream', status: 'requested', setupIssue: 'macos-screen-recording',

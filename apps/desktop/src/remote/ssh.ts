@@ -6,6 +6,7 @@ import type { RemoteHost } from '@elevenex/shared';
 import { createAskpass, type Ask } from './askpass';
 import { signalBackendTree } from '../backend/process-tree';
 import { windowsAskpass } from './windows-askpass';
+import { SshStderr, type SshAuthentication } from './ssh-authentication';
 
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 function includePath(value: string): string {
@@ -17,7 +18,8 @@ function includePath(value: string): string {
 }
 
 /** OpenSSH owns configuration; these arguments only reserve the app's stdio session. */
-export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, interactive: boolean, signal: AbortSignal, helper: string): Promise<{
+export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, interactive: boolean, signal: AbortSignal, helper: string,
+  authentication?: (state: SshAuthentication) => void): Promise<{
   child: ChildProcessWithoutNullStreams; exited: Promise<void>; diagnostics(): string; stop(): Promise<void>;
 }> {
   for (const file of [host.identityFile, host.configFile]) if (file) await access(file);
@@ -28,7 +30,9 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     broker = await createAskpass(ask, interactive, signal);
     // Do not build a parallel SSH policy or parse/rewrite the user's settings.
     // With no -F, OpenSSH reads its native user and system configuration.
-    const args = ['-T', '-o', 'RemoteCommand=none', '-o', 'SessionType=default',
+    // -v reports login progress, which separates a sign-in waiting after key
+    // acceptance from a network stall. SshStderr removes that output.
+    const args = ['-v', '-T', '-o', 'RemoteCommand=none', '-o', 'SessionType=default',
       '-o', 'StdinNull=no', '-o', 'ForkAfterAuthentication=no', '-o', 'ControlMaster=no'];
     // Reusing an existing ControlPath is safe. Publishing a shared master here
     // would let stopping this app's process kill other windows or terminal work.
@@ -61,8 +65,12 @@ export async function spawnSsh(host: RemoteHost, command: string, ask: Ask, inte
     delete env['NODE_OPTIONS']; delete env['NODE_PATH']; delete env['ELECTRON_RUN_AS_NODE']; delete env['SSH_ASKPASS_PROMPT'];
     const child = spawn('ssh', args, { cwd: homedir(), env, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let diagnostics = '';
-    child.stderr.on('data', (bytes: Buffer) => { diagnostics = (diagnostics + bytes.toString('utf8')).slice(-16384); });
-    child.on('error', error => { diagnostics = (diagnostics + error.message).slice(-16384); });
+    const record = (text: string) => { if (text) diagnostics = (diagnostics + text).slice(-16384); };
+    const stderr = new SshStderr(authentication);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (text: string) => record(stderr.write(text)));
+    child.stderr.once('end', () => record(stderr.end()));
+    child.on('error', error => record(error.message));
     const processExited = new Promise<void>(resolve => { child.once('error', () => resolve()); child.once('exit', () => resolve()); });
     const exited = new Promise<void>(resolve => { child.once('close', () => resolve()); });
     let stopping: Promise<void> | undefined;

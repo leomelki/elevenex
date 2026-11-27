@@ -17,15 +17,17 @@ export function localMachine(status: BackendStatus, name: string): Machine {
   }
 }
 
-export function remotePresentation(connection: RemoteConnectionStatus): Pick<Machine, 'conn' | 'status' | 'last' | 'busy' | 'error'> {
-  if (connection.phase === 'ready') return { conn: 'live', status: 'Ready to work' };
+export function remotePresentation(connection: RemoteConnectionStatus): Pick<Machine, 'conn' | 'status' | 'last' | 'busy' | 'error' | 'backgroundSession'> {
+  if (connection.phase === 'ready') return connection.windowsSession === 'background'
+    ? { conn: 'live', status: 'Ready · apps need a Windows sign-in', backgroundSession: true } : { conn: 'live', status: 'Ready to work' };
   if (connection.updateWaiting) return { conn: 'idle', busy: { step: 'Waiting to update the engine' } };
-  if (connection.phase === 'paused' || connection.phase === 'disconnected') return { conn: connection.failure ? 'fail' : 'idle', last: connection.failure?.message ?? 'Open to connect', error: connection.failure ? { step: failureStep(connection.failure.message), tone: connection.failure.code === 'host-trust' ? 'danger' : 'warn', progress: connection.progress ? progress(connection.progress.receivedBytes, connection.progress.totalBytes) : undefined, action: connection.failure.action === 'verify-host' ? 'Review the key' : 'Try again' } : undefined };
+  if (connection.phase === 'paused' || connection.phase === 'disconnected') return { conn: connection.failure ? 'fail' : 'idle', last: connection.failure?.message ?? 'Open to connect', error: connection.failure ? { step: failureStep(connection.failure.message), tone: connection.failure.code === 'host-trust' ? 'danger' : 'warn', progress: connection.progress ? progress(connection.progress.receivedBytes, connection.progress.totalBytes) : undefined, action: connection.failure.action === 'verify-host' ? 'Review the key' : connection.failure.action === 'choose-session' ? 'Choose how to start' : 'Try again' } : undefined };
   const labels: Record<RemoteConnectionStatus['stage'], string> = {
     authentication: connection.phase === 'awaiting-input' ? 'Waiting for your sign-in' : 'Connecting over SSH',
     discovery: 'Checking the server', download: 'Downloading the engine', installation: 'Installing the engine', runtime: 'Starting the engine', transport: 'Connecting', application: 'Starting Elevenex',
   };
-  return { conn: 'idle', busy: { step: connection.phase === 'recovering' ? 'Reconnecting' : labels[connection.stage],
+  const step = connection.slowSignIn ? 'Still signing in' : connection.phase === 'recovering' ? 'Reconnecting' : labels[connection.stage];
+  return { conn: 'idle', busy: { step, ...(connection.slowSignIn ? { meta: 'a key prompt may be waiting' } : {}),
     progress: connection.progress ? progress(connection.progress.receivedBytes, connection.progress.totalBytes) : undefined } };
 }
 

@@ -617,7 +617,9 @@ single task or null without performing setup. Older engines omit the capability.
 
 Automatic SSH retries stop after ten minutes of transient outage. Wake and
 bounded main-owned network-interface/online-state observation resume that stop;
-authentication and host-trust failures always require a person. Existing
+authentication and host-trust failures always require a person. A sign-in
+that expires after the server accepted a key is an authentication failure, not
+a transient outage: it usually waits on a confirmation outside the app. Existing
 main-owned transport credentials, CSP and the named bridge remain unchanged.
 
 Remote Browser viewer routes require the managed private IPC transport and a

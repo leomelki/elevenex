@@ -45,6 +45,11 @@ export class MachineConnectionService {
     await this.bridge.forceRemoteUpdate(hostId, instance);
     await this.refresh();
   }
+  async startWithoutApps(hostId: string): Promise<void> {
+    await this.bridge.startRemoteWithoutApps(hostId);
+    await this.refresh();
+  }
+  useDesktopSession(hostId: string): Promise<'switching' | 'signed-out'> { return this.bridge.useRemoteDesktopSession(hostId); }
   async opened(selection: EnvironmentSelection): Promise<void> { this.accept(await this.bridge.markMachineOpened(selection)); }
   async addHost(input: RemoteHostInput) {
     const host = await this.bridge.saveRemoteHost(input, null);

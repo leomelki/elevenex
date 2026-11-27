@@ -34,7 +34,7 @@ try {
 }
 
 export async function bootstrapWindowsScript(
-  release: BackendRelease, nonce: string, developmentNamespace?: string, allowUpdate = false,
+  release: BackendRelease, nonce: string, developmentNamespace?: string, allowUpdate = false, allowBackground = false,
 ): Promise<{ command: string; payload: Buffer }> {
   // These identifiers are the only metadata embedded in executable source.
   backendRelease(release, 'win32', 'x64');
@@ -98,9 +98,21 @@ function Assert-Runtime([string]$path) {
     if ($file.Length -eq 0) { throw 'EX11_CONFIGURATION: Incomplete runtime installation.' }
   }
 }
+function Archive-Input {
+  # Windows PowerShell's console stream stops returning SSH pipe input partway
+  # through a large transfer, which stalls the archive indefinitely. Read the
+  # same inherited handle through an unbuffered FileStream. The handle is not
+  # owned here: the bridge process inherits it once installation completes.
+  $field=$channel.GetType().GetField('_handle',[Reflection.BindingFlags]'NonPublic,Instance')
+  if (!$field) { throw 'EX11_COMPATIBILITY: Windows PowerShell 5.1 on .NET Framework 4 is required.' }
+  $handle=[Microsoft.Win32.SafeHandles.SafeFileHandle]::new($field.GetValue($channel).DangerousGetHandle(),$false)
+  return [IO.FileStream]::new($handle,[IO.FileAccess]::Read,1)
+}
 function Read-Archive([string]$path) {
-  # Read from the original binary stream. Text readers buffer past the LF and
-  # would discard the first compressed bytes or the first live wire packet.
+  # Read from the original binary stream without buffering. Text readers buffer
+  # past the LF and would discard the first compressed bytes or the first live
+  # wire packet.
+  $channel=Archive-Input
   $header=[Text.StringBuilder]::new()
   while ($header.Length -lt 80) {
     $b=$channel.ReadByte()
@@ -228,7 +240,7 @@ Report ('EX11:${nonce}:runtime:start')
 # stdout and stdin to text and break the live bridge framing.
 $start=[Diagnostics.ProcessStartInfo]::new()
 $start.FileName=$node
-$start.Arguments='"'+$runtime+'" bridge "'+$root+'" "'+$cache+'" ${release.version} ${allowUpdate ? 'update' : 'join'}'
+$start.Arguments='"'+$runtime+'" bridge "'+$root+'" "'+$cache+'" ${release.version} ${allowUpdate ? 'update' : 'join'} ${allowBackground ? 'background' : 'desktop'}'
 $start.WorkingDirectory=$root
 $start.UseShellExecute=$false
 $process=[Diagnostics.Process]::Start($start)

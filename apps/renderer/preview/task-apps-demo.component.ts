@@ -80,7 +80,7 @@ class AppsFixture implements Partial<ElevenexBridge> {
 }
 @Component({
   selector: 'ex-task-apps-demo', imports: [TaskAppsComponent], providers: [AppsFixture, { provide: ELEVENEX_BRIDGE, useExisting: AppsFixture }],
-  template: '<ex-task-apps scopeId="preview" [taskId]="41" [machine]="machine()" [remote]="remote()" />',
+  template: '<ex-task-apps scopeId="preview" [taskId]="41" [machine]="machine()" [remote]="remote()" [backgroundSession]="backgroundSession()" (desktopSessionRequested)="desktopSessionRequests.update(count => count + 1)" />',
   styles: ':host { display: flex; max-width: 800px; height: 100%; margin: auto; border-inline: 1px solid var(--line); background: var(--surface); }',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -88,4 +88,7 @@ export class TaskAppsDemoComponent {
   readonly fixture = inject(AppsFixture);
   readonly machine = signal('Development server');
   readonly remote = signal(true);
+  /** A Windows engine started without the desktop session. */
+  readonly backgroundSession = signal(false);
+  readonly desktopSessionRequests = signal(0);
 }

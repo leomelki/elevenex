@@ -36,7 +36,7 @@
           @for (machine of [launcher.workspace()]; track machine?.id) { @if (machine) {
 
             <div class="workspace" [hidden]="!!update()">
-              <ex-machine-workspace [reconnectAction]="recoveryAction()" [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" (reconnectRequested)="reconnect()" />
+              <ex-machine-workspace [reconnectAction]="recoveryAction()" [machine]="machine" [generation]="launcher.workspaceGeneration()" [active]="launcher.open()" [preparing]="launcher.pendingId() === machine.id" (prepared)="launcher.workspacePrepared($event.machineId, $event.generation)" (changeRequested)="home()" (reconnectRequested)="reconnect()" (desktopSessionRequested)="requestDesktopSession()" />
             </div>
             @if (update()) { <div class="update"><ex-getting-ready [icon]="machine.kind === 'local' ? 'laptop' : 'server'" [title]="'Getting ' + machine.name + ' ready'" sub="Your projects and files stay on this machine." [steps]="steps()" /></div> }
           } }
@@ -81,6 +81,34 @@
       <div class="update-actions">
         <button exButton [disabled]="updateActionBusy()" (click)="respondToUpdate(false)">Cancel connection</button>
         <button exButton variant="danger" [disabled]="updateActionBusy()" (click)="respondToUpdate(true)">Force update</button>
+      </div>
+    </section>
+  }
+</ex-modal-layer>
+<ex-modal-layer [open]="!!sessionChoice()" (closeRequested)="chooseSession('cancel')">
+  @if (retainedSessionChoice(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="windows-sign-in-title" [attr.inert]="sessionChoice() ? null : ''">
+      <h2 id="windows-sign-in-title">Nobody is signed in to Windows on {{ pending.name }}</h2>
+      <p>Apps need a Windows desktop session. {{ signInHint }} Then try again.</p>
+      <p>You can also start without apps. Agents, terminals and files work, and you can switch to the desktop session later from Apps.</p>
+      @if (sessionChoiceError()) { <p role="alert">{{ sessionChoiceError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="sessionChoiceBusy()" (click)="chooseSession('cancel')">Cancel</button>
+        <button exButton [disabled]="sessionChoiceBusy()" (click)="chooseSession('retry')">Try again</button>
+        <button exButton variant="primary" [disabled]="sessionChoiceBusy()" (click)="chooseSession('without-apps')">Start without apps</button>
+      </div>
+    </section>
+  }
+</ex-modal-layer>
+<ex-modal-layer [open]="!!desktopSwitch()" (closeRequested)="closeDesktopSwitch()">
+  @if (retainedDesktopSwitch(); as pending) {
+    <section class="machine-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-session-title" [attr.inert]="desktopSwitch() ? null : ''" [attr.aria-busy]="desktopSwitchBusy() ? 'true' : null">
+      <h2 id="desktop-session-title">Switch {{ pending.name }} to your desktop session?</h2>
+      <p>The engine restarts inside your signed-in Windows desktop so apps can run. Running agents and terminals stop, and other computers connected to {{ pending.name }} reconnect.</p>
+      @if (desktopSwitchError()) { <p role="alert">{{ desktopSwitchError() }}</p> }
+      <div class="update-actions">
+        <button exButton [disabled]="desktopSwitchBusy()" (click)="closeDesktopSwitch()">Cancel</button>
+        <button exButton variant="danger" [disabled]="desktopSwitchBusy()" (click)="confirmDesktopSession()">{{ desktopSwitchBusy() ? 'Switching…' : 'Switch and restart' }}</button>
       </div>
     </section>
   }

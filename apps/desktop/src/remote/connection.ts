@@ -4,6 +4,7 @@ import type { BackendRelease } from '../backend/release';
 import { boundedBody } from '../backend/download';
 import { connectRemote, type ConnectOptions, type RemoteTransport } from './bootstrap';
 import { asFailure, failure } from './failure';
+import type { SshAuthentication } from './ssh-authentication';
 
 export interface ConnectionOptions {
   readonly host: RemoteHost;
@@ -21,6 +22,42 @@ export interface ConnectionOptions {
   /** How long health may stay delayed while the transport still delivers bytes. */
   readonly delayedHealthWindow?: number;
   readonly now?: () => number;
+  /** Overrides the sign-in deadline; tests use it to observe expiry. */
+  readonly authenticationTimeout?: number;
+}
+
+/** Ordinary agent and hardware signing finishes well within this delay. */
+const SLOW_SIGN_IN_NOTICE = 3000;
+// Hedged: the wait is usually a confirmation outside the app, but can be a slow
+// server-side account check. Either way it needs a person, not timed retries.
+const unfinishedSignIn = () => failure('authentication', 'authentication',
+  'SSH sign-in didn’t finish. If your SSH agent, security key or PIN asked you to confirm, choose Try again and confirm it.', 'authenticate');
+
+/** One attempt's SSH login progress; owns the delayed slow-sign-in notice. */
+class SignInProgress {
+  private state: SshAuthentication = 'connecting';
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private showing = false;
+  /** The notice appeared during this attempt; later failures are explained in its terms. */
+  noticed = false;
+  constructor(private readonly notice: (slow: boolean) => void, private readonly suppressed: () => boolean) {}
+  /** The server accepted a key and the login has not finished. */
+  get afterKeyAccepted(): boolean { return this.state === 'key-accepted'; }
+  update(state: SshAuthentication): void {
+    this.state = state;
+    if (state !== 'key-accepted') { this.finish(); return; }
+    this.timer ??= setTimeout(() => {
+      this.timer = undefined;
+      // A prompt inside this app (passphrase, PIN) already says what to do.
+      if (this.state !== 'key-accepted' || this.suppressed()) return;
+      this.showing = this.noticed = true; this.notice(true);
+    }, SLOW_SIGN_IN_NOTICE);
+  }
+  /** Login left the waiting state or the attempt ended. */
+  finish(): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+    if (this.showing) { this.showing = false; this.notice(false); }
+  }
 }
 
 export const disconnected = (hostId: string): RemoteConnectionStatus => ({
@@ -48,6 +85,8 @@ export class RemoteConnection {
   private backendForward: Awaited<ReturnType<RemoteTransport['forward']>> | undefined;
   private forcePendingUpdate: (() => void) | undefined;
   private forcedInstance: string | undefined;
+  /** "Start without apps" lasts for this connection; every new connect asks again. */
+  private backgroundSession = false;
 
   constructor(private readonly options: ConnectionOptions) { this.status = disconnected(options.host.id); }
   snapshot(): RemoteConnectionStatus { return structuredClone(this.status); }
@@ -84,6 +123,7 @@ export class RemoteConnection {
       this.options.changed();
     }
     if (this.owners.size) return;
+    this.backgroundSession = false;
     this.lifetime?.abort(); this.wakeup?.abort();
     await this.loop;
     if (!this.active) this.publish({ ...disconnected(this.options.host.id), generation: this.status.generation });
@@ -99,6 +139,21 @@ export class RemoteConnection {
     this.forcePendingUpdate = undefined;
     this.forcedInstance = instance;
     this.publish({ ...this.status, updateWaiting: undefined });
+  }
+  /** Accept a runtime without a Windows desktop session after a connect paused for that choice. */
+  allowBackgroundSession(): void {
+    if (this.status.phase !== 'paused' || this.status.failure?.action !== 'choose-session') throw new Error('This server is no longer waiting for a Windows sign-in.');
+    this.backgroundSession = true;
+  }
+  async useDesktopSession(windowId: number): Promise<'switching' | 'signed-out'> {
+    if (!this.owners.has(windowId)) throw new Error('This window is not connected to the server.');
+    const transport = this.currentTransport();
+    if (!transport?.useDesktopSession) throw new Error('Apps are already available on this server, or it is reconnecting.');
+    const outcome = await transport.useDesktopSession(AbortSignal.timeout(30_000));
+    // The bridge closes after a confirmed switch; recovery then starts the
+    // desktop runtime, or asks again if the account signed out meanwhile.
+    if (outcome === 'switching') { this.backgroundSession = false; this.log('runtime', 'desktop-session', 'Moving the remote runtime to the Windows desktop session.'); }
+    return outcome;
   }
   networkChanged(): void {
     if (!this.active) return;
@@ -174,24 +229,34 @@ export class RemoteConnection {
       let stage: RemoteStage = 'authentication';
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new AbortController();
+      const setupSignal = AbortSignal.any([signal, deadline.signal]);
+      // A login stalled after key acceptance usually waits on a confirmation the
+      // app cannot see. Retrying it in the background would raise another one.
+      const signIn = new SignInProgress(slow => {
+        if (!slow && !this.status.slowSignIn) return;
+        if (slow) this.log('authentication', 'slow-sign-in', 'SSH sign-in is waiting after the server accepted a key.');
+        this.publish({ ...this.status, slowSignIn: slow ? true : undefined });
+      }, () => this.challenge !== undefined || setupSignal.aborted);
       const resetDeadline = (next: RemoteStage) => {
         if (timer) clearTimeout(timer);
-        const timeout = next === 'download' ? 360_000 : next === 'installation' ? 180_000 : next === 'authentication' && interactive ? 150_000 : 60_000;
-        timer = setTimeout(() => deadline.abort(failure(next, 'timeout', 'The remote operation timed out. Check the host and network, then retry.', 'retry', true)), timeout);
+        const timeout = next === 'download' ? 360_000 : next === 'installation' ? 180_000 : next === 'authentication' ? this.options.authenticationTimeout ?? (interactive ? 150_000 : 60_000) : 60_000;
+        timer = setTimeout(() => deadline.abort(next === 'authentication' && signIn.afterKeyAccepted && !this.challenge ? unfinishedSignIn()
+          : failure(next, 'timeout', 'The remote operation timed out. Check the host and network, then retry.', 'retry', true)), timeout);
       };
-      const setupSignal = AbortSignal.any([signal, deadline.signal]);
+      const authentication = (state: SshAuthentication) => { if (!setupSignal.aborted && stage === 'authentication') signIn.update(state); };
       try {
         this.publish({ ...this.status, phase: attempt ? 'recovering' : 'connecting', stage, authenticated: false,
-          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined });
+          transport: 'opening', application: 'unknown', attempt: ++attempt, retryAt: null, failure: null, progress: null, updateWaiting: undefined, slowSignIn: undefined, windowsSession: undefined });
         resetDeadline(stage);
         const release = await this.options.release();
         this.log(stage, 'revision', `Expected backend revision ${release.version}; attempt ${attempt}.`);
         setupSignal.throwIfAborted();
         const transport = await (this.options.connect ?? connectRemote)({
-          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace,
+          remoteShell: this.remoteShell, host: this.options.host, root: this.options.root, helper: this.options.helper, release, signal: setupSignal, interactive, ask: this.ask, authentication, prepareArchive: this.options.prepareArchive, developmentNamespace: this.options.developmentNamespace, allowBackgroundSession: this.backgroundSession,
           progress: (next, value) => {
             if (setupSignal.aborted) return;
             if (stage !== next) { stage = next; resetDeadline(stage); this.log(stage, 'stage', `Remote ${stage} started.`); }
+            if (stage !== 'authentication') signIn.finish();
             this.publish({ ...this.status, phase: next === 'discovery' ? 'connecting' : 'setting-up', stage: next,
               authenticated: true, progress: value ?? null, application: next === 'runtime' ? 'starting' : 'unknown' });
           },
@@ -225,7 +290,8 @@ export class RemoteConnection {
         this.outageStarted = undefined;
         this.log('application', 'ready', 'Remote application readiness verified.');
         this.publish({ ...this.status, phase: 'ready', stage: 'application', authenticated: true, transport: 'healthy', application: 'ready',
-          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, updateWaiting: undefined });
+          generation: this.status.generation + 1, instanceId: ready.instance, failure: null, progress: null, retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, updateWaiting: undefined,
+          windowsSession: transport.windowsSession });
         const connectedAt = Date.now();
         const transportLost = transport.exited.then(() => { throw failure('transport', 'unavailable', 'The SSH transport closed. Reconnecting to the existing remote work.', 'retry', true); });
         void transportLost.catch(() => undefined);
@@ -258,7 +324,10 @@ export class RemoteConnection {
         }
       } catch (error) {
         if (signal.aborted) break;
-        const problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
+        let problem = asFailure(deadline.signal.aborted ? deadline.signal.reason : error, stage);
+        // An approver that declines or times out on its own makes SSH report an
+        // ordinary key failure; keep explaining it as the sign-in the person saw.
+        if (signIn.noticed && problem.stage === 'authentication' && problem.code === 'authentication') problem = unfinishedSignIn().failure;
         this.log(problem.stage, problem.code, problem.message);
         this.interactiveOwner = undefined;
         const now = (this.options.now ?? Date.now)();
@@ -266,9 +335,10 @@ export class RemoteConnection {
         const stopped = problem.transient && now - this.outageStarted >= (this.options.retryWindow ?? 600_000);
         this.paused = stopped || !problem.transient && this.requestedInteractiveOwner === undefined;
         this.publish({ ...this.status, phase: this.paused ? 'paused' : 'recovering', stage: problem.stage,
-          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined, updateWaiting: undefined });
+          transport: 'unresponsive', application: 'unavailable', failure: problem, progress: null, retryAt: null, unreachableSince: this.outageStarted, retryStoppedAt: stopped ? now : undefined, updateWaiting: undefined, slowSignIn: undefined });
       } finally {
         if (timer) clearTimeout(timer);
+        signIn.finish();
         this.forcePendingUpdate = undefined;
         this.forcedInstance = undefined;
         this.wakeup?.abort();

@@ -199,6 +199,9 @@ export interface InvokeContracts {
   'environment:context': { args: [context: EnvironmentContext, expectedEnvironment: EnvironmentSelection]; result: EnvironmentSnapshot };
   'remote:retry': { args: []; result: EnvironmentSnapshot };
   'remote:force-update': { args: [hostId: string, instance: string]; result: void };
+  'remote:start-without-apps': { args: [hostId: string]; result: EnvironmentSnapshot };
+  /** Restarts a background Windows runtime in the signed-in desktop session, interrupting its work. */
+  'remote:use-desktop-session': { args: [hostId: string]; result: 'switching' | 'signed-out' };
   'remote:pause': { args: []; result: EnvironmentSnapshot };
   'remote:disconnect': { args: []; result: EnvironmentSnapshot };
   'remote:answer': { args: [challengeId: string, answer: string | null]; result: void };
@@ -393,6 +396,8 @@ export interface ElevenexBridge {
   saveEnvironmentContext(context: EnvironmentContext, expectedEnvironment: EnvironmentSelection): Promise<EnvironmentSnapshot>;
   retryRemote(): Promise<EnvironmentSnapshot>;
   forceRemoteUpdate(hostId: string, instance: string): Promise<void>;
+  startRemoteWithoutApps(hostId: string): Promise<EnvironmentSnapshot>;
+  useRemoteDesktopSession(hostId: string): Promise<'switching' | 'signed-out'>;
   pauseRemoteRecovery(): Promise<EnvironmentSnapshot>;
   disconnectRemote(): Promise<EnvironmentSnapshot>;
   answerRemoteChallenge(id: string, answer: string | null): Promise<void>;

@@ -57,7 +57,10 @@ export class TaskAppsComponent {
   readonly viewerVisible = input(true);
   readonly link = input<RunLink | null>(null);
   readonly standalone = input(false);
+  /** A Windows engine without the desktop session: apps cannot start until it switches. */
+  readonly backgroundSession = input(false);
   readonly idle = output<void>();
+  readonly desktopSessionRequested = output<void>();
   readonly labels = labels;
   private readonly snapshot = signal<RunSnapshot | null>(null);
   private readonly currentSnapshot = computed(() => {

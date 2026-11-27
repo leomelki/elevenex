@@ -106,6 +106,22 @@ export class MachineStartupFixture {
     if (connection?.hostId !== hostId || connection.updateWaiting?.instance !== instance) throw new Error('Stale remote update');
     this.updateConnections(undefined);
   };
+  startRemoteWithoutApps = async (hostId: string) => {
+    const connection = this.state.environment.connection;
+    if (connection?.hostId !== hostId || connection.failure?.action !== 'choose-session') throw new Error('Stale sign-in choice');
+    this.ready('background');
+    return this.state.environment;
+  };
+  /** Preview only: `desktopSignedIn` decides whether the switch succeeds. */
+  desktopSignedIn = false;
+  useRemoteDesktopSession = async (hostId: string): Promise<'switching' | 'signed-out'> => {
+    const connection = this.state.environment.connection;
+    if (connection?.hostId !== hostId || connection.windowsSession !== 'background') throw new Error('Not a background engine');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    if (!this.desktopSignedIn) return 'signed-out';
+    this.ready('desktop');
+    return 'switching';
+  };
   disconnectRemote = async () => {
     const environment = this.state.environment;
     this.publish({ environment: { ...environment, challenge: null, connection: environment.connection ? { ...environment.connection, phase: 'disconnected', updateWaiting: undefined } : null } });
@@ -128,9 +144,9 @@ export class MachineStartupFixture {
       updateWaiting: connections === undefined ? undefined : { instance: '33333333-3333-4333-8333-333333333333', connections },
     } } });
   }
-  ready(): void {
+  ready(windowsSession?: 'desktop' | 'background'): void {
     const environment = this.state.environment;
-    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'ready', transport: 'healthy', application: 'ready', authenticated: true, generation: environment.connection.generation + 1, instanceId: 'test', retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, failure: null } } });
+    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'ready', transport: 'healthy', application: 'ready', authenticated: true, generation: environment.connection.generation + 1, instanceId: 'test', retryAt: null, retryStoppedAt: undefined, unreachableSince: undefined, failure: null, windowsSession } } });
     else this.setLocal({ phase: 'ready', version: 'a'.repeat(40), url: 'http://127.0.0.1:11111' });
   }
   challenge(kind: RemoteChallenge['kind'] = 'trust'): void {
@@ -145,6 +161,11 @@ export class MachineStartupFixture {
     const environment = this.state.environment;
     if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'paused', failure: { stage: 'authentication', code: safety ? 'host-trust' : 'authentication', message: safety ? 'The host key changed. Check it before connecting.' : 'Sign-in was refused. Check your SSH key and try again.', action: safety ? 'verify-host' : 'authenticate', transient: false } } } });
     else this.setLocal({ phase: 'failed', version: null, message: 'The engine download was interrupted. Open this machine to try again.' });
+  }
+  /** A Windows connect that found nobody signed in to the desktop. */
+  needsWindowsSignIn(): void {
+    const environment = this.state.environment;
+    if (environment.connection) this.publish({ environment: { ...environment, challenge: null, connection: { ...environment.connection, phase: 'paused', stage: 'runtime', authenticated: true, failure: { stage: 'runtime', code: 'compatibility', message: 'Nobody is signed in to Windows on this server. Sign in there to use apps, or start without apps.', action: 'choose-session', transient: false } } } });
   }
   stopRetries(): void {
     const environment = this.state.environment;

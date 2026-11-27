@@ -12,7 +12,8 @@ import { ForwardedAgentProxy } from './agent-proxy';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Wire, SocketChannels, type WireMessage } from './wire';
 import { BrowserDestinations } from './browser-destination';
-import { backendSocketPath, connectionPresence, needsLegacyOwnership, ownershipPort, queryDaemon, publishDaemon, verifyHealthRequest, verifyHandoffRequest, healthResponseProof, APP_HANDOFF_LIMIT_MS, type RuntimeHealth } from './runtime-control';
+import { backendSocketPath, connectionPresence, needsLegacyOwnership, ownershipPort, queryDaemon, publishDaemon, requestDesktopSession, verifyHealthRequest, verifyHandoffRequest, verifySessionRequest, healthResponseProof, APP_HANDOFF_LIMIT_MS, type RuntimeHealth } from './runtime-control';
+import { desktopSessionAvailable } from './windows-runtime';
 import { ensureDaemon } from './runtime-start';
 import { inheritOwnership, launchReplacement, prepareReplacement, publishReplacement, type RuntimeReplacement } from './runtime-handoff';
 
@@ -89,7 +90,7 @@ async function reserveOwnership(port: number): Promise<OwnershipSocket> {
   } catch (error) { socket.close(); throw error; }
 }
 
-async function daemon(root: string, installation: string, version: string, port: number, token: string, inherited?: OwnershipSocket): Promise<void> {
+async function daemon(root: string, installation: string, version: string, port: number, token: string, inherited?: OwnershipSocket, background = false): Promise<void> {
   const windows = process.platform === 'win32';
   let instance = randomUUID();
   let socketPath = backendSocketPath(root, { instance, handoff: 1 });
@@ -111,7 +112,7 @@ async function daemon(root: string, installation: string, version: string, port:
     for (const [id, expires] of connections) if (expires <= now) connections.delete(id);
     return connections.size + Number(overflowUntil > now);
   };
-  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, activeConnections: activeConnections(), ...(appHandoffBlocked ? { appHandoffBlocked: true as const } : {}), ...(replacement ? { replacement } : {}) });
+  const snapshot = (): RuntimeHealth => ({ version, instance, ready: ready && !replacement, handoff: 1, activeConnections: activeConnections(), ...(appHandoffBlocked ? { appHandoffBlocked: true as const } : {}), ...(replacement ? { replacement } : {}), ...(background ? { session: 'background' as const } : {}) });
   const stop = () => {
     if (stopping) return;
     stopping = true; ready = false; lifetime.abort();
@@ -121,12 +122,21 @@ async function daemon(root: string, installation: string, version: string, port:
   const agents = windows ? undefined : new ForwardedAgentProxy(agentPath);
   const health = createServer((req, res) => {
     const handoff = verifyHandoffRequest(req, token, snapshot());
-    const nonce = handoff?.nonce ?? verifyHealthRequest(req, token);
+    const session = handoff ? null : verifySessionRequest(req, token, snapshot());
+    const nonce = handoff?.nonce ?? session ?? verifyHealthRequest(req, token);
     if (nonce === null) { res.writeHead(403).end(); return; }
     const respond = (state = snapshot()) => {
       const body = JSON.stringify(state);
       res.setHeader('Content-Type', 'application/json'); res.setHeader('X-Elevenex-Proof', healthResponseProof(token, nonce, body)); res.end(body);
     };
+    if (session) {
+      // The person confirmed interrupting this engine's work. A background
+      // daemon cannot run apps, so there is nothing to hand off; stop it and
+      // let the next bridge start the desktop-session runtime.
+      if (background && !stopping && !replacement && !preparing) { ready = false; respond(); stop(); }
+      else respond();
+      return;
+    }
     if (handoff) {
       if (preparing) {
         if (preparingTarget === handoff.target) void preparing.then(() => respond(), () => respond());
@@ -301,7 +311,7 @@ async function bridge(root: string, installation: string, version: string, port:
   let lease: { id: string; agent: string | null; presence: 'active'; instance: string } | undefined;
   try {
     await publishReplacement(root, installation, __filename, version);
-    health = await ensureDaemon({ root, installation, version, port, token, runtime: __filename, allowUpdate: process.argv[6] === 'update', signal: setup.signal,
+    health = await ensureDaemon({ root, installation, version, port, token, runtime: __filename, allowUpdate: process.argv[6] === 'update', allowBackground: process.argv[7] === 'background', signal: setup.signal,
       waitingForUpdate: current => {
         waitingInstance = current.instance;
         const force = forceInstance === current.instance;
@@ -346,12 +356,27 @@ async function bridge(root: string, installation: string, version: string, port:
       socket.setTimeout(3000, () => finish(false)); socket.once(privatePipe && message.port === 0 ? 'secureConnect' : 'connect', () => finish(true)); socket.once('error', () => finish(false));
       wire.once('closed', closed);
     }
+    else if (message.type === 'desktop-session') {
+      void switchToDesktop().then(outcome => {
+        try { wire.send({ type: 'desktop-session-result', id: message.id, outcome }); } catch { /* Closed transport. */ }
+        // The stopped daemon ends this bridge's backend; reconnect to the new one.
+        if (outcome === 'switching') close();
+      }, () => wire.close());
+    }
     else if (message.type === 'ping') {
       void queryDaemon(root, port, token, activeLease).then(current => {
         wire.send({ type: 'pong', id: message.id, ready: current.ready && current.version === version && current.instance === health.instance && !current.replacement, instance: current.instance });
       }).catch(() => wire.close());
     }
   });
+  let switching: Promise<'switching' | 'signed-out'> | undefined;
+  const switchToDesktop = () => switching ??= (async () => {
+    if (process.platform !== 'win32' || health.session !== 'background') throw new Error('Not a background runtime');
+    if (!await desktopSessionAvailable()) return 'signed-out' as const;
+    const reply = await requestDesktopSession(root, port, token, health);
+    if (reply.instance !== health.instance || reply.ready) throw new Error('The background runtime did not stop');
+    return 'switching' as const;
+  })().finally(() => { switching = undefined; });
   let closing = false;
   const close = () => {
     if (closing) return; closing = true;
@@ -359,7 +384,8 @@ async function bridge(root: string, installation: string, version: string, port:
     void queryDaemon(root, port, token, { ...activeLease, agent: null, presence: 'closed' }).catch(() => undefined);
   };
   wire.once('closed', close); process.once('SIGTERM', close);
-  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: activeLease.agent !== null, appViewerAccess: appViewerAccess(token, health.instance), browserProxy: true, appBinary: true });
+  wire.send({ type: 'hello', version, instance: health.instance, ready: true, agentForwarding: activeLease.agent !== null, appViewerAccess: appViewerAccess(token, health.instance), browserProxy: true, appBinary: true,
+    ...(process.platform === 'win32' ? { session: health.session ?? 'desktop' } : {}) });
 }
 
 async function main(): Promise<void> {
@@ -373,7 +399,9 @@ async function main(): Promise<void> {
     await mkdir(join(root, 'data'), { recursive: true, mode: 0o700 });
     const token = await controlToken(root);
     const port = ownershipPort(root, homedir(), process.getuid?.());
-    if (mode === 'daemon' || mode === 'handoff') { delegated = true; await daemon(root, installation, version, port, token, inherited); }
+    if (mode === 'daemon' || mode === 'handoff' || mode === 'daemon-background' && process.platform === 'win32') {
+      delegated = true; await daemon(root, installation, version, port, token, inherited, mode === 'daemon-background');
+    }
     else if (mode === 'bridge') await bridge(root, installation, version, port, token);
     else throw new Error('EX11_CONFIGURATION: unknown remote runtime mode');
   } finally { if (inherited && !delegated) inherited.close(); }

@@ -183,6 +183,14 @@ describe('Production machine application', () => {
     expect(machineHomeStatus([machine])?.tone).toBe('warn');
   });
 
+  it('describes a slow SSH sign-in as a possibility while it continues', async () => {
+    const { platform, connection } = setup(); await flush();
+    const host = await connection.addHost({ name: 'dev-box', host: 'dev-box' }); await connection.select({ kind: 'remote', hostId: host.id });
+    const status = (await platform.machineState()).environment.connection!;
+    expect(remotePresentation({ ...status, phase: 'recovering', stage: 'authentication', slowSignIn: true })).toEqual({ conn: 'idle', busy: { step: 'Still signing in', meta: 'a key prompt may be waiting', progress: undefined } });
+    expect(remotePresentation({ ...status, phase: 'recovering', stage: 'authentication' }).busy).toEqual({ step: 'Reconnecting', progress: undefined });
+  });
+
   it('keeps a failed server actionable after another machine is selected, until it retries', async () => {
     const { platform, launcher, connection } = setup(); await flush();
     const host = await connection.addHost({ name: 'dev-box', host: 'dev-box' });
@@ -193,6 +201,24 @@ describe('Production machine application', () => {
     await launcher.choose(host.id); await flush();
     const machine = launcher.machines().find(machine => machine.id === host.id);
     expect(machine?.error).toBeUndefined(); expect(machine?.busy).toBeDefined();
+  });
+
+  it('asks how to start a Windows server nobody is signed in to, and switches it to the desktop only once signed in', async () => {
+    const { platform, launcher, connection } = setup(); await flush();
+    const host = await connection.addHost({ name: 'Gaming PC', host: 'pc' });
+    await launcher.choose(host.id); platform.needsWindowsSignIn(); await flush();
+    const paused = launcher.machines().find(machine => machine.id === host.id)!;
+    expect(paused.error?.action).toBe('Choose how to start');
+    await connection.startWithoutApps(host.id); await flush();
+    const background = launcher.machines().find(machine => machine.id === host.id)!;
+    expect(background.backgroundSession).toBe(true); expect(background.status).toContain('Windows sign-in');
+    await expect(connection.startWithoutApps(host.id)).rejects.toThrow(/Stale/);
+    const signedOut = connection.useDesktopSession(host.id); await vi.advanceTimersByTimeAsync(600);
+    expect(await signedOut).toBe('signed-out');
+    platform.desktopSignedIn = true;
+    const switching = connection.useDesktopSession(host.id); await vi.advanceTimersByTimeAsync(600);
+    expect(await switching).toBe('switching'); await connection.refresh(); await flush();
+    expect(launcher.machines().find(machine => machine.id === host.id)!.backgroundSession).toBeUndefined();
   });
 
   it('accepts explicit SSH destinations and rejects command syntax and invalid ports', () => {
