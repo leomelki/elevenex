@@ -1,9 +1,36 @@
+import { createHash } from 'node:crypto';
 import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { backendRelease, type BackendRelease } from '../backend/release';
 import { remoteClientSources } from './runtime-sources';
 
 const compress = promisify(gzip);
+
+// Task Scheduler starts this GUI executable in the user's desktop session.
+// A console executable as the task action can open Windows Terminal before
+// any JavaScript runs. Keep the task active for the lifetime of its daemon.
+const launcherSource = String.raw`
+using System.Diagnostics;
+
+public static class ElevenexRuntimeLauncher {
+  public static int Main(string[] args) {
+    if (args.Length != 5) return 1;
+    try {
+      var start = new ProcessStartInfo(args[0],
+        "\"" + args[1] + "\" daemon \"" + args[2] + "\" \"" + args[3] + "\" " + args[4]);
+      start.WorkingDirectory = args[2];
+      start.UseShellExecute = false;
+      start.CreateNoWindow = true;
+      using (var daemon = Process.Start(start)) {
+        daemon.WaitForExit();
+        return daemon.ExitCode;
+      }
+    } catch {
+      return 1;
+    }
+  }
+}
+`;
 
 /** Windows OpenSSH can invoke either cmd or PowerShell. The fixed UTF-16 loader fits
  * both command lines. It consumes exactly the gzip payload, leaving the SSH stream
@@ -42,6 +69,7 @@ export async function bootstrapWindowsScript(
     throw new Error('Invalid Windows runtime bootstrap identity');
   }
   const { sources, modules, clientId } = await remoteClientSources();
+  const windowsClientId = createHash('sha256').update(clientId).update(launcherSource).digest('hex');
   const sourceFiles = sources.map((source, i) => `Write-Module '${modules[i]}.js' '${Buffer.from(source).toString('base64')}'`).join('\n');
   const script = String.raw`
 $ErrorActionPreference='Stop'
@@ -188,7 +216,7 @@ if ([IO.Directory]::Exists($cache)) {
     Assert-Runtime $cache
   } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage,$true) } }
 }
-$client=Join-Path $clients '${clientId}'
+$client=Join-Path $clients '${windowsClientId}'
 if (![IO.Directory]::Exists($client)) {
   $stage=Join-Path $clients ('.client-'+[Guid]::NewGuid().ToString('N'))
   Private-Directory $stage
@@ -199,12 +227,17 @@ if (![IO.Directory]::Exists($client)) {
       [IO.File]::WriteAllBytes($path,[Convert]::FromBase64String($content))
     }
 ${sourceFiles}
+    # Compile the fixed launcher once in the staged private client directory.
+    Add-Type -OutputAssembly (Join-Path $stage 'runtime-launcher.exe') -OutputType WindowsApplication -TypeDefinition @'
+${launcherSource}'@
     Publish $stage $client
   } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage,$true) } }
 }
 Private-Item ([IO.DirectoryInfo]::new($client))
 $runtime=Join-Path $client 'runtime.js'
 Private-Item ([IO.FileInfo]::new($runtime))
+$launcher=Join-Path $client 'runtime-launcher.exe'
+Private-Item ([IO.FileInfo]::new($launcher))
 $node=Join-Path $cache 'backend\node\node.exe'
 & $node -e 'if(Number(process.versions.node.split(String.fromCharCode(46))[0])<22)process.exit(1)'
 if ($LASTEXITCODE -ne 0) { throw 'EX11_COMPATIBILITY: Bundled Node cannot run on this Windows host.' }
@@ -212,7 +245,7 @@ $name='Elevenex Desktop '+$sid.Value+' ${developmentNamespace ?? 'production'}'
 $description='Elevenex on-demand desktop engine '+$sid.Value+' ${developmentNamespace ?? 'production'}'
 # Windows filenames cannot contain a double quote; each argument is a file
 # or a directory without a trailing separator, including profiles with spaces.
-$arguments='"'+$runtime+'" daemon "'+$root+'" "'+$cache+'" ${release.version}'
+$arguments='"'+$node+'" "'+$runtime+'" "'+$root+'" "'+$cache+'" ${release.version}'
 $existing=Get-ScheduledTask -TaskPath '\' -TaskName $name -ErrorAction SilentlyContinue
 if ($existing) {
   try {
@@ -224,8 +257,10 @@ if ($existing) {
 if ($existing -and ($existing.Description -cne $description -or $existing.Principal.RunLevel -ne 'Limited' -or $existing.Principal.LogonType -ne 'Interactive' -or $existing.Triggers.Count -ne 0)) {
   throw 'EX11_CONFIGURATION: The scheduler entry is already used by another task.'
 }
-if (!$existing -or ($existing.State -ne 'Running' -and ($existing.Actions.Count -ne 1 -or $existing.Actions[0].Execute -ne $node -or $existing.Actions[0].Arguments -ne $arguments))) {
-  $action=New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $root
+# An active task owns the current daemon, including through a revision handoff.
+# Replace its action only once it is idle.
+if (!$existing -or ($existing.State -ne 'Running' -and ($existing.Actions.Count -ne 1 -or $existing.Actions[0].Execute -ne $launcher -or $existing.Actions[0].Arguments -ne $arguments))) {
+  $action=New-ScheduledTaskAction -Execute $launcher -Argument $arguments -WorkingDirectory $root
   $principal=New-ScheduledTaskPrincipal -UserId $sid.Value -LogonType Interactive -RunLevel Limited
   $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
   # Only overwrite the previously verified user-owned task. An unexpected

@@ -240,7 +240,7 @@ async function daemon(root: string, installation: string, version: string, port:
       // Reuse the local backend's process lease. Daemon death closes its IPC
       // pipe, so a replacement daemon cannot leave an orphan database owner.
       child = fork(childToolchain.supervisor, [join(installation, 'backend/main.cjs'), join(installation, 'backend'), ...(windows ? [] : ['--ownership'])], {
-        execPath: childToolchain.executable, execArgv: [], cwd: join(installation, 'backend'), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {
+        execPath: childToolchain.executable, execArgv: [], cwd: join(installation, 'backend'), windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: {
           ...env, NODE_ENV: 'production', ELEVENEX_BACKEND_MODE: 'remote', ELEVENEX_BACKEND_SUPERVISED: '1',
           ELEVENEX_DATA_ROOT: join(root, 'data'), DB_PATH: join(root, 'data/elevenex.db'),
           ELEVENEX_BACKEND_RUNTIME_ROOT: join(installation, 'backend'), ELEVENEX_BIND_HOST: '127.0.0.1',

@@ -129,9 +129,10 @@ x64/arm64 backend with a bundled Node and native modules compatible with the
 host. Alpine/musl requires a different runtime. Home paths longer than the
 Unix socket limit require a shorter remote home.
 
-Windows SSH hosts use Windows PowerShell 5.1, built-in tar.exe, Task Scheduler,
-and Git on PATH. The desktop transfers the validated Windows x64/arm64 archive
-over SSH on the first connection. The Windows host verifies the size and digest
+Windows SSH hosts use Windows PowerShell 5.1 with its built-in `Add-Type`
+compiler, built-in tar.exe, Task Scheduler, and Git on PATH. The desktop
+transfers the validated Windows x64/arm64 archive over SSH on the first
+connection. The Windows host verifies the size and digest
 before publishing the runtime in the account's private
 `%LOCALAPPDATA%\Elevenex\desktop-remote` directory. Checkout builds use
 `desktop-remote\dev\<namespace>`. Reparse points and unexpected permissions
@@ -142,7 +143,10 @@ registers an on-demand **Elevenex Desktop <user SID> <production or development
 namespace>** task with a limited interactive token. It stores no password and
 has no login or startup trigger. When that account has a console or Remote
 Desktop session, including a locked or disconnected one, the scheduler starts
-the engine there. The machine bridge uses an authenticated private pipe.
+the engine there without opening a console window. Setup compiles the launcher
+in the account's private runtime directory and updates an existing task's
+launcher when the task is idle. Windows application control must permit that
+launcher to run. The machine bridge uses an authenticated private pipe.
 
 When nobody is signed in, the connection pauses and asks. **Start without apps**
 launches the same engine through WMI as that account in session 0, outside the
