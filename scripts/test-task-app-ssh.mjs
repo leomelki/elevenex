@@ -10,14 +10,17 @@ import { startViewer, verifyApp } from './task-app-smoke/viewer.mjs';
 async function main() {
   const { values } = parseArgs({ options: {
     'rtt-ms': { type: 'string', default: '0' },
+    'down-kbps': { type: 'string', default: '0' },
     help: { type: 'boolean' },
   } });
   if (values.help) {
-    console.log('Usage: node scripts/test-task-app-ssh.mjs [--rtt-ms 0|20|80]');
+    console.log('Usage: node scripts/test-task-app-ssh.mjs [--rtt-ms 0..200] [--down-kbps 0..100000]');
     return;
   }
   const rttMs = Number(values['rtt-ms']);
   assert.ok(Number.isInteger(rttMs) && rttMs >= 0 && rttMs <= 200, '--rtt-ms must be between 0 and 200');
+  const kbps = Number(values['down-kbps']);
+  assert.ok(Number.isInteger(kbps) && kbps >= 0 && kbps <= 100_000, '--down-kbps must be between 0 and 100000');
   assert.equal(process.platform, 'linux', 'This smoke test uses a disposable Linux OpenSSH host');
   assert.ok(process.env.DISPLAY, 'Run on a graphical desktop or with xvfb-run');
   const target = process.arch === 'x64' ? 'linux-unpacked' : 'linux-' + process.arch + '-unpacked';
@@ -29,7 +32,7 @@ async function main() {
   // prefix short enough for sockaddr_un, including on shared build machines.
   const directory = await mkdtemp('/tmp/ea-');
   const output = join(root, 'artifacts/task-apps');
-  const screenshot = join(output, 'packaged-ssh-' + rttMs + 'ms.png');
+  const screenshot = join(output, `packaged-ssh-${rttMs}ms${kbps ? `-${kbps}kbps` : ''}.png`);
   const cleanup = [];
   const controller = new AbortController();
   const interrupt = () => controller.abort(new Error('Interrupted'));
@@ -39,8 +42,8 @@ async function main() {
   let failure;
   try {
     await mkdir(output, { recursive: true });
-    console.log('Starting isolated SSH host (added round-trip delay ' + rttMs + ' ms)');
-    const task = await startTaskHost(directory, rttMs, signal, cleanup);
+    console.log(`Starting isolated SSH host (${rttMs} ms added RTT, ${kbps ? `${kbps} kbps downstream` : 'unlimited downstream'})`);
+    const task = await startTaskHost(directory, { rttMs, kbps }, signal, cleanup);
     const viewer = await startViewer(binary, join(directory, 'viewer'), task, signal, cleanup);
     try {
       await verifyApp(viewer, task, signal, screenshot);

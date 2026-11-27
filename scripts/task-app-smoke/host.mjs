@@ -109,9 +109,9 @@ async function requestApp(socketPath, token, checkout, signal) {
   return run;
 }
 
-async function sshHost(directory, home, rttMs, signal, cleanup) {
+async function sshHost(directory, home, { rttMs, kbps }, signal, cleanup) {
   const port = await unusedPort();
-  const relay = rttMs ? await startDelayRelay(port, rttMs) : undefined;
+  const relay = rttMs || kbps ? await startDelayRelay(port, rttMs, kbps) : undefined;
   if (relay) cleanup.push(() => relay.close());
   const clientPort = relay?.port ?? port;
   for (const name of ['host-key', 'client-key']) {
@@ -143,13 +143,13 @@ async function sshHost(directory, home, rttMs, signal, cleanup) {
   return { id: randomUUID(), name: 'App smoke', host: 'app-smoke', configFile };
 }
 
-export async function startTaskHost(directory, rttMs, signal, cleanup) {
+export async function startTaskHost(directory, link, signal, cleanup) {
   const home = join(directory, 'server');
   const checkout = join(directory, 'checkout');
   const remoteRoot = join(home, '.elevenex/desktop-remote');
   const { release, installation, daemon } = await stageBackend(remoteRoot);
   const { projectId, taskId, sessionId, token } = await seedTask(home, remoteRoot, checkout, signal);
-  const host = await sshHost(directory, home, rttMs, signal, cleanup);
+  const host = await sshHost(directory, home, link, signal, cleanup);
   // Start and own the real managed daemon ourselves. Its teardown stops the
   // backend and its entire task process tree even after an interrupted test.
   const child = startProcess(process.execPath, [daemon, 'daemon', remoteRoot, installation, release.version], { env: testEnvironment(home) });

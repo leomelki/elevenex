@@ -206,6 +206,23 @@ describe('adaptive interactive video', () => {
       steadyRate,
     );
   });
+  it('reduces bytes and capture dimensions before a queued viewer has recovered, then restores quality in steps', () => {
+    const policy = new RuntimeVideoQuality(settings);
+    policy.acknowledged(80, 0);
+    const healthy = policy.select(viewport, true, plenty, 1, 0);
+    expect(policy.overdue(155)).toBe(false);
+    expect(policy.overdue(165)).toBe(true);
+    policy.observePressure(true, 165);
+    policy.observePressure(true, 325);
+    const congested = policy.select(viewport, true, plenty, 1, 325);
+    expect(congested.width).toBeLessThan(healthy.width);
+    expect(congested.bitrate).toBeLessThan(healthy.bitrate);
+    expect(congested.lowBandwidth).toBe(true);
+    policy.acknowledged(80, 500);
+    expect(policy.select(viewport, true, plenty, 1, 10_000)).toEqual(congested);
+    policy.acknowledged(80, 13_000);
+    expect(policy.select(viewport, true, plenty, 1, 13_000)).toEqual(healthy);
+  });
   it('reduces resolution promptly, recovers slowly, and preserves aspect after a real viewport change', () => {
     const policy = new RuntimeVideoQuality(settings);
     const reduced = policy.select(

@@ -52,6 +52,7 @@ export class AppStreamComponent {
   private liveSince?: number;
   private inFlight = 0;
   private queuedBytes = 0;
+  private latestDecoded = 0;
   private receipt?: { sequence: number };
   private lastComposition?: string;
   private compositionTimer?: ReturnType<typeof setTimeout>;
@@ -146,14 +147,25 @@ export class AppStreamComponent {
       bitmap = await this.decoder.decode({ ...frame, epoch: frame.watchId });
       if (frame.watchId !== this.watchId) return;
       if (bitmap.displayWidth !== frame.width || bitmap.displayHeight !== frame.height) throw new Error('Invalid display dimensions');
+      // Annex B keyframes carry validated dimensions. Keeping one decoder per
+      // watch lets it finish pending outputs during a size change.
+      this.latestDecoded = Math.max(this.latestDecoded, frame.sequence);
+      // Coalesce outputs from the same burst without waiting for a refresh tick.
+      if (this.liveSince !== undefined && this.inFlight > 1) await Promise.resolve();
+      if (frame.watchId !== this.watchId || frame.sequence !== this.latestDecoded) return;
       const canvas = this.canvas()!.nativeElement;
       if (canvas.width !== bitmap.displayWidth) canvas.width = bitmap.displayWidth;
       if (canvas.height !== bitmap.displayHeight) canvas.height = bitmap.displayHeight;
       const context = canvas.getContext('2d', { alpha: false });
       if (!context) throw new Error('Canvas unavailable');
+      const { width, height } = frame.inputSize ?? frame;
+      if (width !== this.width || height !== this.height) {
+        this.width = width;
+        this.height = height;
+        canvas.style.setProperty('--app-display-width', `${width}px`);
+        canvas.style.setProperty('--app-display-ratio', String(width / height));
+      }
       context.drawImage(bitmap, 0, 0);
-      this.width = frame.width;
-      this.height = frame.height;
       this.liveSince ??= performance.now();
       this.recovering.set(false);
       this.state.set('live');
@@ -222,6 +234,7 @@ export class AppStreamComponent {
     this.watchId = undefined;
     this.receipt = undefined;
     this.inFlight = 0; this.queuedBytes = 0;
+    this.latestDecoded = 0;
     this.width = this.height = 0;
     this.liveSince = undefined;
     this.decoder.reset();

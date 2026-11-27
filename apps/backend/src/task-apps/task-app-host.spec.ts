@@ -139,15 +139,38 @@ while True:
           host.get(21, run.runId).status === 'running',
       );
       let key = false;
+      let congested = false;
+      let downscaled = false;
       const unwatch = host.watch(21, run.runId, {
+        scaledVideo: true,
         frame: (frame) => {
           if (frame.key && frame.width === 720 && frame.height === 1280 && frame.data.length > 100)
             key = true;
+          if (frame.key && frame.width < 720 && frame.height < 1280 &&
+            frame.inputSize?.width === 720 && frame.inputSize.height === 1280)
+            downscaled = true;
+          return !congested || downscaled;
         },
         end: () => undefined,
       });
       try {
         await until(() => key);
+        congested = true;
+        await until(() => downscaled);
+        let legacyKey = false;
+        const unwatchLegacy = host.watch(21, run.runId, {
+          frame: (frame) => {
+            if (frame.key && frame.width === 720 && frame.height === 1280 && !frame.inputSize)
+              legacyKey = true;
+            return true;
+          },
+          end: () => undefined,
+        });
+        try {
+          await until(() => legacyKey);
+        } finally {
+          unwatchLegacy();
+        }
         host.acquireInput(21, run.runId, 'viewer1');
         expect(() => host.acquireInput(21, run.runId, 'viewer2')).toThrow(
           'Another viewer',

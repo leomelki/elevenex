@@ -1,4 +1,5 @@
 import type { VideoFormat } from './runtime-video-profiles.js';
+import { VIDEO_RESOLUTION_SCALES, VideoDeliveryLatency } from './video-delivery.js';
 import type {
   VideoResources,
   VideoSettings,
@@ -8,11 +9,12 @@ import type {
 export class RuntimeVideoQuality {
   private encodeMs = 0;
   private samples = 0;
-  private baselineRtt = Infinity;
-  private readonly receipts: { time: number; milliseconds: number }[] = [];
-  private congestion = 0;
+  private readonly delivery = new VideoDeliveryLatency();
+  private pressureSince?: number;
   private tier = 0;
-  private changed = -Infinity;
+  private networkChange = -Infinity;
+  private lastPressure = -Infinity;
+  private resolutionChange = -Infinity;
   private previous?: VideoFormat;
   private viewport = '';
   constructor(
@@ -33,39 +35,43 @@ export class RuntimeVideoQuality {
   }
   acknowledged(milliseconds: number, now = performance.now()): void {
     if (!Number.isFinite(milliseconds) || milliseconds < 0) return;
-    while (
-      this.receipts.length &&
-      (this.receipts[0].time < now - 20_000 || this.receipts.length >= 64)
-    )
-      this.receipts.shift();
-    this.receipts.push({ time: now, milliseconds });
-    this.baselineRtt = Math.min(
-      ...this.receipts.map((receipt) => receipt.milliseconds),
-    );
-    this.congestion =
-      milliseconds > this.baselineRtt + 150
-        ? this.congestion + 1
-        : Math.max(0, this.congestion - 1);
-    if (this.congestion >= 3 && now - this.changed > 2000) {
-      this.tier = Math.min(5, this.tier + 1);
-      this.changed = now;
-      this.congestion = 0;
-    } else if (
-      !this.congestion &&
-      this.tier > 0 &&
-      now - this.changed > 10_000
+    this.delivery.acknowledge(milliseconds, now);
+    this.observePressure(this.delivery.overdue(milliseconds), now);
+    if (
+      this.tier &&
+      now - Math.max(this.networkChange, this.lastPressure) > 12_000
     ) {
       this.tier--;
-      this.changed = now;
+      this.networkChange = now;
+    }
+  }
+  overdue(milliseconds: number): boolean {
+    return this.delivery.overdue(milliseconds);
+  }
+  observePressure(delayed: boolean, now: number): void {
+    if (!delayed) {
+      this.pressureSince = undefined;
+      return;
+    }
+    this.lastPressure = now;
+    this.pressureSince ??= now;
+    if (
+      now - this.pressureSince >= 150 &&
+      now - this.networkChange >= 1000 &&
+      this.tier < VIDEO_RESOLUTION_SCALES.length - 1
+    ) {
+      this.tier++;
+      this.networkChange = now;
     }
   }
   window(maximum: number, fps: number): number {
+    const baselineRtt = this.delivery.baseline;
     return Math.max(
       2,
       Math.min(
         maximum,
-        Number.isFinite(this.baselineRtt)
-          ? Math.ceil((this.baselineRtt * fps) / 1000) + 1
+        Number.isFinite(baselineRtt)
+          ? Math.ceil((baselineRtt * fps) / 1000) + 1
           : 3,
       ),
     );
@@ -84,6 +90,7 @@ export class RuntimeVideoQuality {
     }
     const count = Math.max(1, viewers),
       cores = Math.max(0.1, resources.cores);
+    const baselineRtt = this.delivery.baseline;
     const pressure =
       resources.busy > 0.9 ? 0.5 : resources.busy > 0.75 ? 0.75 : 1;
     const pixelsPerSecond = Math.max(
@@ -100,8 +107,8 @@ export class RuntimeVideoQuality {
           this.settings.maxFps,
           hardware ? 60 : 30,
           this.encodeMs ? 700 / this.encodeMs : 60,
-          Number.isFinite(this.baselineRtt)
-            ? ((this.maximumWindow - 1) * 1000) / Math.max(1, this.baselineRtt)
+          Number.isFinite(baselineRtt)
+            ? ((this.maximumWindow - 1) * 1000) / Math.max(1, baselineRtt)
             : 60,
         ),
       ),
@@ -122,7 +129,8 @@ export class RuntimeVideoQuality {
     // a resource-limited 30 FPS view can absorb several reductions without slowing.
     fps = Math.max(2, Math.floor(fps * 0.8 ** this.tier));
     const memoryPixels = resources.memory / (count * 48);
-    const maximumScale = scale;
+    const maximumScale = scale * VIDEO_RESOLUTION_SCALES[this.tier];
+    const bitrateScale = 0.7 ** this.tier;
     scale = Math.min(
       scale,
       Math.sqrt(
@@ -146,12 +154,16 @@ export class RuntimeVideoQuality {
     const previous = this.previous;
     // Fast reductions, slow recovery: CPU/memory fluctuations must not repeatedly
     // restart encoders and flood the network with larger keyframes.
-    if (previous && width > previous.width && now - this.changed < 10_000) {
+    if (
+      previous &&
+      width > previous.width &&
+      now - this.resolutionChange < 10_000
+    ) {
       width = previous.width;
       height = previous.height;
     }
     if (!previous || width < previous.width || height < previous.height)
-      this.changed = now;
+      this.resolutionChange = now;
     // H.264 level 4.2 constrains macroblocks/second, including retina/tall viewports.
     fps = Math.min(
       fps,
@@ -164,10 +176,10 @@ export class RuntimeVideoQuality {
       [60, 45, 30, 24, 20, 15, 10, 8, 5, 2, 1].find((rate) => rate <= fps) ?? 1;
     const targetBitrate = Math.max(
       250_000,
-      Math.min(
+      bitrateScale * Math.min(
         this.settings.maxBitrate,
         // Sparse pages and RTT-limited streams still need sharp keyframes.
-        width * height * Math.max(15, fps) * 0.28 * 0.85 ** this.tier,
+        width * height * Math.max(15, fps) * 0.28,
       ),
     );
     const bitrate = Math.max(
@@ -179,6 +191,7 @@ export class RuntimeVideoQuality {
       height,
       fps,
       bitrate,
+      ...(this.tier ? { lowBandwidth: true } : {}),
       threads: Math.max(
         1,
         Math.min(this.settings.threads, Math.floor((cores * 0.5) / count)),

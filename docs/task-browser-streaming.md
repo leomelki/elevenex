@@ -39,7 +39,7 @@ polling on this path. Decode requests use `optimizeForLatency`; each returned
 | Capture | Existing private CDP compositor events; one latest JPEG, quality 95, adaptive resolution bounded to 1920×1440 and the H.264 level ceiling; at most 60 updates/second; static seeding only when necessary |
 | Encoder | One persistent FFmpeg subprocess per visible presentation; baseline H.264, one reference and no B frames; GPU-specific low-latency profiles with libx264 `ultrafast`/`zerolatency` fallback; adaptive FPS, bitrate and thread budget |
 | Local encoder I/O | Length-delimited multipart JPEG input prevents waiting for a subsequent image; encoded packet sizes use FFmpeg's private `stats_mux_pre` pipe, so output never waits for another Annex B delimiter or a container fragment |
-| Delivery | Three packets for older peers; newer peers negotiate up to eight, paced by recent display latency; 3 MB per packet; pause capture/encoding above 512 KiB socket buffering or 3 MB in flight; fifteen-second stalled-viewer deadline |
+| Delivery | Three packets for older peers; newer peers negotiate up to eight, paced by recent display latency; 3 MB per packet; pause capture and encoding when 192 KiB is queued or in flight, or when the oldest pending receipt exceeds the recent delay budget; fifteen-second stalled-viewer deadline |
 | Receiver | Scoped subscription ID, strict contiguous sequence, bounded queue, cumulative display receipts; no replay after transport failure |
 | Decoder | Fresh epoch begins with a keyframe; validate baseline SPS allocation bounds before decoding; one pending decode/output; two-second output deadline; close decoder and frames on replacement/destruction |
 
@@ -118,8 +118,11 @@ reduce work. Resolution reduction reaches the CDP producer as well as FFmpeg,
 reducing intermediate JPEG costs. The logical browser viewport and input coordinate
 generation remain unchanged. Recovery waits before increasing resolution; actual
 viewport changes immediately replace the encoder without retaining the old aspect.
-Recent RTT is distinguished from excess display queuing, and the baseline ages
-so a route change is not treated as permanent congestion.
+Recent send-to-paint RTT is distinguished from excess queuing by a rolling
+20-second baseline. Persistent delay reduces encoded and CDP capture resolution,
+frame rate, bitrate and encoder burst size. Stable delivery allows gradual
+recovery. The SSH adapter uses binary transport for the authenticated Browser
+WebSocket when the bridge supports binary channels.
 
 The host admits at most one queued encoding operation per presentation, up to 48
 presentations, with one to four concurrent operations based on available cores.

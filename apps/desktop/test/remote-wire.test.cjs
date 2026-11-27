@@ -258,8 +258,11 @@ test('a blocked media channel yields the next SSH drain to another ready socket'
   };
   const channels = new SocketChannels(wire);
   const media = new PassThrough(), terminal = new PassThrough();
+  let noDelay = false;
+  media.setNoDelay = enabled => { noDelay = enabled; };
   try {
     channels.open(media, 0, undefined, undefined, true);
+    assert.equal(noDelay, true);
     channels.open(terminal, 4152);
     wire.emit('message', { type: 'opened', id: 1 });
     wire.emit('message', { type: 'opened', id: 2 });

@@ -270,6 +270,7 @@ export class SocketChannels {
   }
   private attach(id: number, socket: Socket, onOpen?: (available: boolean) => void, appBinary = false): boolean {
     if (this.channels.size >= 64) { socket.destroy(); onOpen?.(false); this.send({ type: 'error', id }); return false; }
+    if (appBinary) socket.setNoDelay(true);
     socket.allowHalfOpen = true; socket.pause();
     const timer = setTimeout(() => this.closeChannel(id), 10_000);
     const entry: SocketChannel = { appBinary, socket, timer, sent: 0, receiving: 0, opened: false, localEnded: false, remoteEnded: false, socketClosed: false, onOpen };

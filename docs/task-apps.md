@@ -80,7 +80,7 @@ The backend app host owns admission, launcher processes, display helpers, bounde
 
 A viewer obtains a one-use, short-lived attachment ticket. The host authenticates both its issue and the WebSocket upgrade. The desktop keeps credentials in main and exposes named, scoped operations through preload. Windows authenticates the private named-pipe transport with TLS-PSK. SSH app operations carry an additional per-engine credential. Application processes receive a filtered environment. The viewer never receives an arbitrary network, OS-input or process-execution bridge.
 
-The host delivers bounded baseline H.264 access units. Compatible viewers share a capture source, and each has an independent queue with cumulative paint receipts. A slow viewer resumes at a keyframe. The sandboxed renderer validates codec parameters and decoded dimensions before allocation, paints through WebCodecs and releases frames. One viewer controls each run at a time. Blur, disconnection and lease expiry release held input. Peers supporting binary app media send length-delimited bytes on the app channel and keep ordinary control messages on the existing JSON wire. Older peers use the existing byte tunnel. Both paths share SSH TCP congestion with other traffic.
+The host delivers bounded baseline H.264 access units. Compatible viewers share a capture source, and each has an independent queue with cumulative paint receipts. The host limits outstanding bytes and stops sending to a viewer whose oldest receipt is overdue. That viewer resumes at a keyframe. On Linux, sustained pressure across viewers lowers frame rate, bitrate, and, when all viewers support it, encoded resolution. The logical display and input coordinates stay fixed. Windows and macOS use the same per-viewer backlog limits with their native capture paths. The sandboxed renderer validates codec parameters and decoded dimensions before allocation, paints through WebCodecs and releases frames. One viewer controls each run at a time. Blur, disconnection and lease expiry release held input. Peers supporting binary app media send length-delimited bytes on the app channel and keep ordinary control messages on the existing JSON wire. Older peers use the existing byte tunnel. Both paths share SSH TCP congestion with other traffic.
 
 Host implementations and limits live under [the host guide](../apps/backend/src/task-apps/README.md). See the [renderer guide](../apps/renderer/src/app/task-apps/README.md) for interaction tests and the [browser streaming design](task-browser-streaming.md) for the shared encoder infrastructure.
 
@@ -99,6 +99,7 @@ pnpm desktop:package --linux --dir
 xvfb-run -a node scripts/test-task-app-ssh.mjs
 xvfb-run -a node scripts/test-task-app-ssh.mjs --rtt-ms 20
 xvfb-run -a node scripts/test-task-app-ssh.mjs --rtt-ms 80
+xvfb-run -a node scripts/test-task-app-ssh.mjs --rtt-ms 80 --down-kbps 1000
 ```
 
 You can omit `xvfb-run -a` in a graphical session. The fixture starts a private
@@ -108,5 +109,6 @@ run without publishing a release archive. A restricted MCP session requests
 a real Electron launch. The packaged desktop approves it through Apps, opens
 a companion window, types into the streamed app, verifies the returned frames,
 reattaches to the running app, and stops it. The optional delay applies to both
-directions of the SSH connection. The runner reports input-to-frame measurements
+directions of the SSH connection, and the downstream cap applies from the host
+to the desktop. The runner reports input-to-frame measurements
 and saves a PNG under `artifacts/task-apps/`.

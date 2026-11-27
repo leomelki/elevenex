@@ -81,7 +81,7 @@ export async function verifyApp({ page, targets, attach, scope }, task, signal, 
   const output = () => page.evaluate(({ scope, taskId, runId }) =>
     window.elevenex.taskAppOutput(scope, taskId, runId), identity);
   const apps = '[role=tabpanel][aria-label=Apps]';
-  await clickControl(page, apps + ' [aria-label="App launch request"] button', 'Launch on machine', signal);
+  await clickControl(page, apps + ' [aria-label="App launch request"] button', 'Launch', signal);
   await until('launching the approved Electron fixture', async () => {
     const result = await output();
     return result.ok && result.value.includes('fixture-ready');
@@ -98,7 +98,7 @@ export async function verifyApp({ page, targets, attach, scope }, task, signal, 
   }, { selector: canvasSelector, fraction });
   const windowTarget = async () => (await targets()).find(target => target.url.includes('/app-window'));
   const openWindow = async () => {
-    await clickControl(page, apps + ' button', 'Open app in separate window', signal);
+    await clickControl(page, apps + ' button', 'Open in a separate window', signal);
     const target = await until('opening the Apps companion', windowTarget, signal);
     const window = await attach(target);
     await until('decoding the remote Electron canvas', () => canvasPoint(window, .2), signal);
@@ -106,7 +106,8 @@ export async function verifyApp({ page, targets, attach, scope }, task, signal, 
   };
   const color = page => page.evaluate(selector => {
     const canvas = document.querySelector(selector);
-    return canvas.getContext('2d').getImageData(Math.floor(canvas.width / 5), Math.floor(canvas.height / 5), 1, 1).data[0] > 128;
+    // Sample away from the pointer, which is included in X11 capture.
+    return canvas.getContext('2d').getImageData(Math.floor(canvas.width / 3), Math.floor(canvas.height / 5), 1, 1).data[0] > 128;
   }, canvasSelector);
   async function typeAndCheck(window, text, fixtureText) {
     const before = await color(window);
@@ -156,7 +157,7 @@ export async function verifyApp({ page, targets, attach, scope }, task, signal, 
   await until('closing the Apps companion', async () => !await windowTarget(), signal);
   // Reopen the real companion and prove that the same Electron process still
   // has the previous text and takes input through the new stream attachment.
-  await clickControl(page, apps + ' button', 'View here', signal);
+  await clickControl(page, apps + ' button', 'Show here', signal);
   window = await openWindow();
   point = await canvasPoint(window, .9);
   assert.ok(point);

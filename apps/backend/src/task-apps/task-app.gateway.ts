@@ -1,19 +1,22 @@
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
 import {
   APP_INPUT_GUIDANCE,
+  APP_VIDEO_FRAME_HEADER_BYTES,
   APP_VIDEO_MAX_BYTES,
+  APP_VIDEO_SCALE_HEADER,
+  APP_VIDEO_SCALED_HEADER_BYTES,
   validTaskAppInput,
 } from '@elevenex/shared';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
+import { VIDEO_PENDING_BYTES, VideoDeliveryLatency } from '../desktop-browser/video-delivery.js';
 import { TaskAppHost } from './task-app-host.js';
 import type { TaskAppController } from './task-app.controller.js';
 
 const streamPath = /^\/api\/task-apps\/([1-9]\d*)\/([a-f0-9-]{36})\/stream$/;
 const frameLimit = APP_VIDEO_MAX_BYTES;
-const headerSize = 17;
 
 /** ACKs are issued after renderer display. A slow viewer resumes at the next IDR. */
 @Injectable()
@@ -41,16 +44,18 @@ export class TaskAppGateway implements OnModuleDestroy {
         return;
       }
       this.server.handleUpgrade(req, socket, head, (ws) =>
-        this.connect(ws, taskId, runId),
+        this.connect(ws, taskId, runId, req.headers[APP_VIDEO_SCALE_HEADER] === '1'),
       );
     };
     http.on('upgrade', upgrade);
     this.detach = () => http.off('upgrade', upgrade);
   }
 
-  private connect(ws: WebSocket, taskId: number, runId: string): void {
+  private connect(ws: WebSocket, taskId: number, runId: string, scaledVideo: boolean): void {
     const viewer = randomUUID();
-    const sent = new Map<number, number>();
+    const sent = new Map<number, { time: number; bytes: number }>();
+    const latency = new VideoDeliveryLatency();
+    const headerSize = scaledVideo ? APP_VIDEO_SCALED_HEADER_BYTES : APP_VIDEO_FRAME_HEADER_BYTES;
     let sequence = 0,
       inFlight = 0,
       awaitingKey = true,
@@ -85,16 +90,20 @@ export class TaskAppGateway implements OnModuleDestroy {
     ws.once('close', close);
     try {
       stop = this.apps.watch(taskId, runId, {
+        scaledVideo: scaledVideo ? true : undefined,
         frame: (frame) => {
           if (closed || ws.readyState !== WebSocket.OPEN) return;
           if (!frame.data.length || frame.data.length > frameLimit) {
             awaitingKey = true;
             return;
           }
+          const now = performance.now();
+          const oldest = sent.values().next().value;
           if (
             sent.size >= 8 ||
             inFlight + frame.data.length > frameLimit ||
-            ws.bufferedAmount > 524288
+            ws.bufferedAmount >= VIDEO_PENDING_BYTES ||
+            (oldest && (inFlight >= VIDEO_PENDING_BYTES || latency.overdue(now - oldest.time)))
           ) {
             awaitingKey = true;
             return false;
@@ -102,7 +111,7 @@ export class TaskAppGateway implements OnModuleDestroy {
           if (awaitingKey && !frame.key) return;
           awaitingKey = false;
           if (!sent.size) lastAck = Date.now();
-          sent.set(++sequence, frame.data.length);
+          sent.set(++sequence, { bytes: frame.data.length, time: now });
           inFlight += frame.data.length;
           const packet = Buffer.allocUnsafe(headerSize + frame.data.length);
           packet.writeUInt32BE(sequence);
@@ -110,6 +119,10 @@ export class TaskAppGateway implements OnModuleDestroy {
           packet.writeUInt16BE(frame.height, 6);
           packet.writeUInt8(Number(frame.key), 8);
           packet.writeDoubleBE(frame.timestamp, 9);
+          if (scaledVideo) {
+            packet.writeUInt16BE(frame.inputSize?.width ?? frame.width, 17);
+            packet.writeUInt16BE(frame.inputSize?.height ?? frame.height, 19);
+          }
           packet.set(frame.data, headerSize);
           ws.send(packet);
           return true;
@@ -124,7 +137,7 @@ export class TaskAppGateway implements OnModuleDestroy {
           else ws.close(1000, 'App display ended');
         },
       });
-      ws.send(JSON.stringify({ ready: true }));
+      ws.send(JSON.stringify(scaledVideo ? { ready: true, scaledVideo: true } : { ready: true }));
     } catch {
       ws.close(1011, 'App display unavailable');
       return;
@@ -139,10 +152,12 @@ export class TaskAppGateway implements OnModuleDestroy {
           typeof value.ack === 'number' &&
           sent.has(value.ack)
         ) {
-          for (const [id, bytes] of sent) {
+          const now = performance.now();
+          latency.acknowledge(now - sent.get(value.ack)!.time, now);
+          for (const [id, receipt] of sent) {
             if (id > value.ack) break;
             sent.delete(id);
-            inFlight -= bytes;
+            inFlight -= receipt.bytes;
           }
           displayed = true;
           lastAck = Date.now();

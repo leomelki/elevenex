@@ -21,10 +21,12 @@ export interface AppFrame {
   height: number;
   timestamp: number;
   codec: 'avc1.42E02A';
+  inputSize?: AppDisplaySize;
 }
 
 export type AppStreamEnd = 'permission' | 'window-changed' | 'window-missing' | 'capture-failed' | 'capture-stopped';
 export interface AppFrameListener {
+  readonly scaledVideo?: true;
   frame(frame: AppFrame): boolean | void;
   end(reason: string, disposition?: AppStreamEnd, setupIssue?: TaskAppSetupIssue): void;
 }
@@ -102,6 +104,8 @@ function isIdr(packet: Buffer): boolean {
 export class DisplayCapture {
   private readonly listeners = new Map<AppFrameListener, boolean>();
   private child?: ChildProcess;
+  private target?: VideoEncoderTarget;
+  private scaled = false;
   private rate = new CaptureRate();
   private readonly excluded = new Set<string>();
   private watchLifetime?: AbortController;
@@ -189,6 +193,10 @@ export class DisplayCapture {
                 this.close('App encoder unavailable');
             });
         }
+      } else if (this.scaled && !listener.scaledVideo && this.target) {
+        // Legacy viewers use decoded pixels for input. Restore the original
+        // geometry for everyone before the legacy viewer receives a keyframe.
+        this.replaceEncoder(this.target);
       }
     } catch (error) {
       this.listeners.delete(listener);
@@ -196,17 +204,24 @@ export class DisplayCapture {
       throw error;
     }
     return () => {
-      this.listeners.delete(listener);
+      if (!this.listeners.delete(listener)) return;
       if (!this.listeners.size) this.close('View closed');
     };
   }
 
+  private resolutionScale(): number {
+    return this.source.restartable &&
+      [...this.listeners.keys()].every((listener) => listener.scaledVideo)
+      ? this.rate.resolutionScale
+      : 1;
+  }
+
   private replaceEncoder(target: VideoEncoderTarget): void {
-    this.child?.kill('SIGKILL');
-    this.child = undefined;
+    const previous = this.child;
+    this.start(target);
     for (const subscriber of this.listeners.keys())
       this.listeners.set(subscriber, false);
-    this.start(target);
+    previous?.kill('SIGKILL');
   }
 
   private start(target: VideoEncoderTarget): void {
@@ -230,13 +245,16 @@ export class DisplayCapture {
         )
       : 30;
     const fps = Math.max(5, Math.floor(capacityFps * this.rate.fpsScale));
+    const scale = this.resolutionScale();
+    const width = Math.max(16, 2 * Math.floor((this.source.width * scale) / 2));
+    const height = Math.max(16, 2 * Math.floor((this.source.height * scale) / 2));
     const bitrate = Math.min(
       this.host.settings.maxBitrate,
       Math.max(
-        500_000,
+        250_000,
         Math.round(
-          this.source.width *
-            this.source.height *
+          width *
+            height *
             fps *
             0.18 *
             this.rate.bitrateScale,
@@ -244,10 +262,11 @@ export class DisplayCapture {
       ),
     );
     const format = {
-      width: this.source.width,
-      height: this.source.height,
+      width,
+      height,
       fps,
       bitrate,
+      lowBandwidth: this.rate.bitrateScale < 1,
       threads: Math.max(
         1,
         Math.min(this.host.settings.threads, Math.ceil(share / 2)),
@@ -266,6 +285,8 @@ export class DisplayCapture {
       },
     );
     this.child = child;
+    this.target = target;
+    this.scaled = scale < 1;
     const closed = new Promise<void>((resolve) =>
       child.once('close', () => resolve()),
     );
@@ -314,8 +335,9 @@ export class DisplayCapture {
       const frame: AppFrame = {
         data,
         key,
-        width: this.source.width,
-        height: this.source.height,
+        width,
+        height,
+        ...(scale < 1 ? { inputSize: { width: this.source.width, height: this.source.height } } : {}),
         timestamp: Math.round(performance.now() * 1000),
         codec: 'avc1.42E02A',
       };
@@ -371,6 +393,8 @@ export class DisplayCapture {
     this.unregister = undefined;
     const child = this.child;
     this.child = undefined;
+    this.target = undefined;
+    this.scaled = false;
     child?.kill('SIGKILL');
     const listeners = [...this.listeners.keys()];
     this.listeners.clear();

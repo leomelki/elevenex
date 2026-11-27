@@ -24,9 +24,11 @@ shows it.
 
 Native runs present in their platform window. Streamed runs use a bounded H.264
 viewer over the named preload operations. The surface fits the available space
-by default. **Actual size** preserves pixels and allows scrolling. Separate
+by default. **Actual size** uses the logical display size and allows scrolling. Separate
 windows connect independently.
-Fitting is local to the viewer and leaves the host capture size unchanged.
+Fitting is local to the viewer. When the host sends fewer encoded pixels under
+network pressure, the visible canvas and input coordinates still follow the
+logical display size.
 Paint acknowledgments are cumulative, with one pending IPC call per viewer.
 The viewer continues decoding while that call completes.
 Video submission is also independent of paint completion: the shared decoder
@@ -38,7 +40,7 @@ The platform default provides a fallback when the software preference is
 unavailable. The viewer and decoder each bound pending work to eight
 packets and 3 MB. Decoder-local timestamps match outputs to their packets;
 reset rejects pending outputs and closes late frames. Receipts still acknowledge
-only painted frames. Local decoding/drawing failures are distinguished from
+only painted frames and can cover older decoded frames when outputs arrive together. Local decoding/drawing failures are distinguished from
 missing packets and slow transport in recovery guidance.
 
 `scripts/desktop-capture/scenarios/task-apps-native-video.mjs` exercises a

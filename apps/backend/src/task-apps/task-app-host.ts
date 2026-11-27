@@ -580,6 +580,7 @@ export class TaskAppHost implements OnModuleDestroy {
       }
     };
     const close = run.capture.watch({
+      scaledVideo: listener.scaledVideo,
       frame: (frame) => {
         if (run.state.setupIssue && run.state.setupIssue !== 'macos-accessibility') {
           const { setupIssue, ...state } = run.state;

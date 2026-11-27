@@ -14,7 +14,7 @@ test('task and run identity and bounded metadata are checked before presentation
   assert.throws(() => taskPath(1, '../another-task'));
 });
 
-test('app stream waits for a painted frame before control, rejects interrupted input and releases the socket on scope change', async () => {
+for (const scaled of [false, true]) test(`app stream validates frames and gates control on a paint receipt (scaled video: ${scaled})`, async () => {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: false });
   await once(server, 'listening');
   const connected = once(server, 'connection');
@@ -27,16 +27,20 @@ test('app stream waits for a painted frame before control, rejects interrupted i
   const [peer, req] = await connected;
   try {
     assert.equal(req.headers['x-elevenex-app-view'], token);
+    assert.equal(req.headers['x-elevenex-app-video-scale'], '1');
     assert.equal(req.headers.authorization, 'Bearer desktop');
-    peer.send(JSON.stringify({ ready: true }));
+    peer.send(JSON.stringify(scaled ? { ready: true, scaledVideo: true } : { ready: true }));
     await stream.ready;
     const input = { kind: 'down', x: 42, y: 28, button: 0 };
     await assert.rejects(stream.control(input), /first app frame/);
-    const packet = Buffer.alloc(21);
+    const packet = Buffer.alloc(scaled ? 25 : 21);
     packet.writeUInt32BE(1); packet.writeUInt16BE(640, 4); packet.writeUInt16BE(480, 6);
-    packet.writeUInt8(1, 8); packet.writeDoubleBE(12345, 9); packet.set([0, 0, 1, 5], 17);
+    packet.writeUInt8(1, 8); packet.writeDoubleBE(12345, 9);
+    if (scaled) { packet.writeUInt16BE(1280, 17); packet.writeUInt16BE(960, 19); }
+    packet.set([0, 0, 1, 5], scaled ? 21 : 17);
     peer.send(packet);
-    assert.deepEqual(await frame.promise, { ...target, sequence: 1, width: 640, height: 480, key: true, timestamp: 12345, data: Uint8Array.of(0, 0, 1, 5), codec: 'avc1.42E02A' });
+    assert.deepEqual(await frame.promise, { ...target, sequence: 1, width: 640, height: 480, key: true, timestamp: 12345, data: Uint8Array.of(0, 0, 1, 5), codec: 'avc1.42E02A',
+      ...(scaled ? { inputSize: { width: 1280, height: 960 } } : {}) });
     const credit = once(peer, 'message');
     stream.acknowledge(1);
     assert.deepEqual(JSON.parse((await credit)[0]), { ack: 1 });

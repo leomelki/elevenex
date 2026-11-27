@@ -248,9 +248,9 @@ async function connectShell(options: ConnectOptions, remoteShell: 'posix' | 'win
             forwarded.push('X-Elevenex-App-Access: ' + hello.appViewerAccess);
           if (!upgrade) forwarded.push('Connection: close');
           const request = Buffer.concat([Buffer.from(forwarded.join('\r\n') + '\r\n\r\n', 'latin1'), header.subarray(end + 4)]);
-          const appStream = upgrade && hello.appBinary === true &&
-            /^GET \/api\/task-apps\/[1-9]\d*\/[a-f0-9-]{36}\/stream HTTP\/1\.[01]$/.test(lines[0] ?? '');
-          socket.unshift(request); channels.open(socket, remotePort, undefined, undefined, appStream);
+          const mediaStream = upgrade && hello.appBinary === true &&
+            /^GET \/api\/(?:task-apps\/[1-9]\d*\/[a-f0-9-]{36}|desktop-browser\/runtime\/tasks\/[1-9]\d*)\/stream HTTP\/1\.[01]$/.test(lines[0] ?? '');
+          socket.unshift(request); channels.open(socket, remotePort, undefined, undefined, mediaStream);
         };
         socket.on('data', authenticate);
       });

@@ -2,9 +2,12 @@ import { WebSocket } from "ws";
 import {
   APP_INPUT_GUIDANCE,
   APP_SHARING_STOPPED,
+  APP_VIDEO_FRAME_HEADER_BYTES,
   APP_VIDEO_MAX_AXIS,
   APP_VIDEO_MAX_PIXELS,
   APP_VIDEO_MAX_BYTES,
+  APP_VIDEO_SCALE_HEADER,
+  APP_VIDEO_SCALED_HEADER_BYTES,
   type TaskAppFrame,
   type TaskAppInput,
 } from "@elevenex/shared";
@@ -20,6 +23,12 @@ export interface AppPresentation {
   readonly runId: string;
   readonly watchId: string;
   readonly scopeId: string;
+}
+
+function validDimensions(width: number, height: number): boolean {
+  return width >= 16 && width <= APP_VIDEO_MAX_AXIS &&
+    height >= 16 && height <= APP_VIDEO_MAX_AXIS &&
+    width * height <= APP_VIDEO_MAX_PIXELS;
 }
 
 /** One scoped viewer. The host's eight-frame window ends at renderer acknowledgement. */
@@ -49,13 +58,18 @@ export class TaskAppStream {
     );
     url.protocol = "ws:";
     this.ws = new WebSocket(url, {
-      headers: { ...endpoint.headers, "x-elevenex-app-view": token },
+      headers: {
+        ...endpoint.headers,
+        "x-elevenex-app-view": token,
+        [APP_VIDEO_SCALE_HEADER]: "1",
+      },
       perMessageDeflate: false,
       followRedirects: false,
-      maxPayload: APP_VIDEO_MAX_BYTES + 17,
+      maxPayload: APP_VIDEO_MAX_BYTES + APP_VIDEO_SCALED_HEADER_BYTES,
       handshakeTimeout: 7000,
     });
     this.ready = new Promise((resolve, reject) => {
+      let scaledVideo = false;
       const deadline = setTimeout(() => this.close(), 10000);
       const abort = () => this.close();
       signal.addEventListener("abort", abort, { once: true });
@@ -88,6 +102,8 @@ export class TaskAppStream {
             const value: unknown = JSON.parse(raw.toString("utf8"));
             if (!value || typeof value !== "object") throw invalidResponse();
             if ("ready" in value && value.ready === true && !this.opened) {
+              if ("scaledVideo" in value && value.scaledVideo !== true) throw invalidResponse();
+              scaledVideo = "scaledVideo" in value;
               this.opened = true;
               clearTimeout(deadline);
               resolve();
@@ -113,9 +129,11 @@ export class TaskAppStream {
             pending.done(value.ok, code);
             return;
           }
+          const headerSize = scaledVideo ? APP_VIDEO_SCALED_HEADER_BYTES : APP_VIDEO_FRAME_HEADER_BYTES;
           if (
             !this.opened ||
-            raw.length <= 17 ||
+            raw.length <= headerSize ||
+            raw.length - headerSize > APP_VIDEO_MAX_BYTES ||
             ++this.lastFrame !== raw.readUInt32BE() ||
             this.lastFrame - this.lastAck > 8
           )
@@ -124,12 +142,13 @@ export class TaskAppStream {
             height = raw.readUInt16BE(6),
             flag = raw.readUInt8(8),
             timestamp = raw.readDoubleBE(9);
+          const inputWidth = scaledVideo ? raw.readUInt16BE(17) : width;
+          const inputHeight = scaledVideo ? raw.readUInt16BE(19) : height;
           if (
-            width < 16 ||
-            width > APP_VIDEO_MAX_AXIS ||
-            height < 16 ||
-            height > APP_VIDEO_MAX_AXIS ||
-            width * height > APP_VIDEO_MAX_PIXELS ||
+            !validDimensions(width, height) ||
+            !validDimensions(inputWidth, inputHeight) ||
+            inputWidth < width ||
+            inputHeight < height ||
             flag > 1 ||
             (this.lastFrame === 1 && !flag) ||
             !Number.isSafeInteger(timestamp) ||
@@ -143,9 +162,12 @@ export class TaskAppStream {
             codec: "avc1.42E02A",
             width,
             height,
+            ...(inputWidth !== width || inputHeight !== height
+              ? { inputSize: { width: inputWidth, height: inputHeight } }
+              : {}),
             timestamp,
             key: flag === 1,
-            data: Uint8Array.from(raw.subarray(17)),
+            data: Uint8Array.from(raw.subarray(headerSize)),
           });
         } catch {
           abort();

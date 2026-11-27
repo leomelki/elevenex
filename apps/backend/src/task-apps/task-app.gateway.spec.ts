@@ -1,3 +1,4 @@
+import { APP_VIDEO_SCALE_HEADER } from '@elevenex/shared';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -91,7 +92,7 @@ describe('task app private desktop transport', () => {
     expect(revealSetupHelper).toHaveBeenCalledWith(17, runId);
   });
 
-  it('delivers scoped binary video over the shipped edge and restarts a slow subscriber on a keyframe', async () => {
+  it.each([false, true])('delivers binary video and recovers a slow subscriber (scaled video: %s)', async (scaled) => {
     let source!: AppFrameListener;
     const release = jest.fn(async () => undefined);
     let didStop!: () => void;
@@ -122,7 +123,7 @@ describe('task app private desktop transport', () => {
     const { token } = await routes.watch(request(headers), '17', runId);
     const ws = new WebSocket(
       `ws://127.0.0.1:${(edge.address() as AddressInfo).port}/api/task-apps/${taskId}/${runId}/stream`,
-      { headers: { ...headers, 'x-elevenex-app-view': token } },
+      { headers: { ...headers, 'x-elevenex-app-view': token, ...(scaled ? { [APP_VIDEO_SCALE_HEADER]: '1' } : {}) } },
     );
     const frame = (key: boolean, value: number) =>
       source.frame({
@@ -130,12 +131,14 @@ describe('task app private desktop transport', () => {
         data: Buffer.from([0, 0, 1, key ? 5 : 1]),
         timestamp: value,
         key,
-        width: 1280,
-        height: 800,
+        width: scaled ? 640 : 1280,
+        height: scaled ? 400 : 800,
+        ...(scaled ? { inputSize: { width: 1280, height: 800 } } : {}),
       });
     try {
       const [ready] = await once(ws, 'message');
-      expect(JSON.parse(ready.toString())).toEqual({ ready: true });
+      expect(JSON.parse(ready.toString())).toEqual(scaled ? { ready: true, scaledVideo: true } : { ready: true });
+      expect(source.scaledVideo).toBe(scaled ? true : undefined);
       const input = { kind: 'key', code: 'Enter', down: true };
       ws.send(JSON.stringify({ id: 1, input }));
       expect(JSON.parse((await once(ws, 'message'))[0].toString())).toEqual({
@@ -145,7 +148,14 @@ describe('task app private desktop transport', () => {
       expect(host.input).not.toHaveBeenCalled();
       const arrived: number[] = [];
       ws.on('message', (raw, binary) => {
-        if (binary && Buffer.isBuffer(raw)) arrived.push(raw.readDoubleBE(9));
+        if (!binary || !Buffer.isBuffer(raw)) return;
+        arrived.push(raw.readDoubleBE(9));
+        expect(raw.readUInt16BE(4)).toBe(scaled ? 640 : 1280);
+        expect(raw.length).toBe(scaled ? 25 : 21);
+        if (scaled) {
+          expect(raw.readUInt16BE(17)).toBe(1280);
+          expect(raw.readUInt16BE(19)).toBe(800);
+        }
       });
       for (let n = 1; n <= 8; n++) expect(frame(n === 1, n)).toBe(true);
       expect(frame(false, 9)).toBe(false);
@@ -174,6 +184,14 @@ describe('task app private desktop transport', () => {
       expect(frame(true, 12)).toBe(true);
       await once(ws, 'message');
       expect(arrived).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 12]);
+      const elapsed = jest.spyOn(performance, 'now').mockReturnValue(performance.now() + 1000);
+      try {
+        // A single stale in-flight packet can stall the picture before the
+        // packet-count limit is reached.
+        expect(frame(false, 13)).toBe(false);
+      } finally {
+        elapsed.mockRestore();
+      }
       const failed = once(ws,'close');
       source.end('Native encoder refused the window dimensions','capture-failed');
       expect((await failed)[0]).toBe(4004);

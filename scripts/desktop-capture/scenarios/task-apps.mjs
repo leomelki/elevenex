@@ -7,10 +7,11 @@ const ffmpeg = createRequire(new URL('../../../apps/backend/package.json', impor
 // A real video access unit enters the production WebCodecs/display/input boundary.
 // The host and machine transport exercise separate native integration tests.
 export default async function* (capture) {
-  const { stdout } = await promisify(execFile)(ffmpeg, ['-nostdin', '-v', 'error', '-f', 'lavfi',
-    '-i', 'testsrc2=size=640x400:rate=1', '-frames:v', '1', '-threads', '1', '-c:v', 'libx264',
+  const encode = async size => (await promisify(execFile)(ffmpeg, ['-nostdin', '-v', 'error', '-f', 'lavfi',
+    '-i', 'testsrc2=size=' + size + ':rate=1', '-frames:v', '1', '-threads', '1', '-c:v', 'libx264',
     '-profile:v', 'baseline', '-level:v', '4.2', '-preset', 'ultrafast', '-tune', 'zerolatency', '-f', 'h264', 'pipe:1'],
-    { encoding: 'buffer', timeout: 10000, maxBuffer: 500000 });
+    { encoding: 'buffer', timeout: 10000, maxBuffer: 500000 })).stdout;
+  const [stdout, smaller] = await Promise.all([encode('640x400'), encode('320x200')]);
   await capture.evaluate(() => { location.href = '/task-apps'; });
   await capture.waitFor(() => document.querySelector('ex-task-apps-demo'));
   await capture.waitFor(() => !!globalThis.ng?.getComponent(document.querySelector('ex-task-apps-demo'))?.fixture.watchId);
@@ -32,6 +33,16 @@ export default async function* (capture) {
     await capture.waitFor(() => document.activeElement?.matches('ex-app-stream .viewport'));
     yield { name: theme + '-live', selector: 'ex-task-apps', inspect: ['ex-app-stream canvas', 'ex-task-apps ex-view-tabs', 'ex-app-stream .hint'] };
   }
+  const canvasBox = () => capture.evaluate(() => document.querySelector('ex-app-stream canvas').getBoundingClientRect().toJSON());
+  const original = await canvasBox();
+  await app((c, bytes) => c.fixture.deliver(Uint8Array.from(bytes), c.fixture.receipts + 1, c.fixture.watchId, { width: 320, height: 200 }, true, { width: 640, height: 400 }), [...smaller]);
+  await capture.waitFor(() => document.querySelector('ex-app-stream canvas')?.width === 320);
+  assert.deepEqual(await canvasBox(), original);
+  await capture.click('ex-app-stream canvas');
+  const lastDown = await app(c => c.fixture.input.findLast(event => event.kind === 'down'));
+  assert.ok(Math.abs(lastDown.x - 320) < 3 && Math.abs(lastDown.y - 200) < 3);
+  yield { name: 'dark-lower-resolution', selector: 'ex-task-apps' };
+  await capture.press('Escape', 8);
   await capture.reducedMotion(true);
   const old = await app(c => c.fixture.watchId);
   await app(c => c.fixture.interrupt());

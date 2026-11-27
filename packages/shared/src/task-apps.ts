@@ -12,6 +12,9 @@ export const APP_SHARING_STOPPED = 'App sharing was stopped on the host.';
 export const APP_VIDEO_MAX_AXIS = 4096;
 export const APP_VIDEO_MAX_PIXELS = 4_194_304;
 export const APP_VIDEO_MAX_BYTES = 3_000_000;
+export const APP_VIDEO_SCALE_HEADER = "x-elevenex-app-video-scale";
+export const APP_VIDEO_FRAME_HEADER_BYTES = 17;
+export const APP_VIDEO_SCALED_HEADER_BYTES = 21;
 
 export const TASK_APP_SETUP_ISSUES = [
   "macos-screen-recording", "macos-accessibility", "macos-session", "macos-desktop-connection", "macos-runtime",
@@ -73,6 +76,7 @@ export interface TaskAppFrame {
   readonly sequence: number;
   readonly width: number;
   readonly height: number;
+  readonly inputSize?: { readonly width: number; readonly height: number };
   readonly key: boolean;
   readonly timestamp: number;
   readonly codec: "avc1.42E02A";

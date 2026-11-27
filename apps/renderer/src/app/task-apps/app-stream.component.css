@@ -1,13 +1,13 @@
 :host { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
 /* Same surface as the selected app tab, so the tab and its picture read as one sheet. */
-.viewport { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: auto; background: var(--surface); }
+.viewport { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: auto; background: var(--surface); container-type: size; }
 .viewport:focus-visible { outline: none; }
 /* Paint above the canvas: an inset shadow on the viewport is covered by the video. */
 .frame { position: absolute; inset: 0; box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
 .viewport.controlling ~ .frame, .viewport:focus-visible ~ .frame { opacity: 1; }
-canvas { display: block; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; width: auto; height: auto; touch-action: none; box-shadow: 0 0 0 1px var(--line); }
+canvas { display: block; flex: none; margin: auto; width: min(var(--app-display-width, 1px), 100cqw, calc(100cqh * var(--app-display-ratio, 1))); height: auto; aspect-ratio: var(--app-display-ratio, 1); touch-action: none; box-shadow: 0 0 0 1px var(--line); }
 canvas[hidden] { display: none; }
-.actual canvas { max-width: none; max-height: none; }
+.actual canvas { width: var(--app-display-width, 1px); }
 .message { display: grid; justify-items: center; gap: var(--space-2); max-width: 36ch; margin: auto; padding: var(--space-4); color: var(--ink-muted); font-size: var(--text-caption-size); text-align: center; overflow-wrap: anywhere; }
 .message strong { color: var(--ink); font-size: var(--text-ui-size); font-weight: var(--text-title-weight); }
 .message button { margin-top: var(--space-1); }

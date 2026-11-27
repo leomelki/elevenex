@@ -19,6 +19,7 @@ export interface VideoFormat {
   readonly fps: number;
   readonly bitrate: number;
   readonly threads: number;
+  readonly lowBandwidth?: boolean;
 }
 export const VIDEO_ENCODERS: Readonly<Record<VideoEncoderKind, string>> = {
   videotoolbox: 'h264_videotoolbox',
@@ -191,7 +192,7 @@ export function videoEncoderArguments(
     '-bufsize',
     // At least two frame budgets: a fixed 1/15-second buffer forces blocky
     // keyframes when capture or network feedback reduces the frame rate.
-    String(Math.round(Math.max(bitrate / 2, (bitrate * 2) / fps))),
+    String(Math.round(Math.max(bitrate / (format.lowBandwidth ? 8 : 2), (bitrate * 2) / fps))),
     // Packet framing uses a private sideband, never a buffered video container.
     '-stats_mux_pre',
     'pipe:3',

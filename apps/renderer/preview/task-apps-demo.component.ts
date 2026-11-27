@@ -73,8 +73,8 @@ class AppsFixture implements Partial<ElevenexBridge> {
   onTaskAppFrame(listener: (frame: TaskAppFrame) => void) { this.frame = listener; return () => { this.frame = undefined; }; }
   onTaskAppClosed(listener: (event: TaskAppClosed) => void) { this.closed = listener; return () => { this.closed = undefined; }; }
   interrupt(reason = 'Display disconnected.') { if (this.watchId) this.closed?.({ scopeId: 'preview', watchId: this.watchId, reason }); }
-  deliver(data: Uint8Array, sequence: number, watchId = this.watchId, size = { width: 640, height: 400 }, key = true) {
-    this.frame?.({ scopeId: 'preview', taskId: run.taskId, runId: run.runId, watchId, sequence, ...size,
+  deliver(data: Uint8Array, sequence: number, watchId = this.watchId, size = { width: 640, height: 400 }, key = true, inputSize?: TaskAppFrame['inputSize']) {
+    this.frame?.({ scopeId: 'preview', taskId: run.taskId, runId: run.runId, watchId, sequence, ...size, ...(inputSize ? { inputSize } : {}),
       key, timestamp: sequence * 33000, codec: 'avc1.42E02A', data });
   }
 }

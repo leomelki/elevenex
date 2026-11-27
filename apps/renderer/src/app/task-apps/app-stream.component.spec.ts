@@ -11,7 +11,7 @@ describe('App stream presentation', () => {
     vi.restoreAllMocks();
   });
 
-  it('submits through decoder buffering, paints while a receipt is pending and acknowledges cumulatively', async () => {
+  it('submits through decoder buffering, coalesces a paint burst and keeps logical display size', async () => {
     let deliver!: (frame: TaskAppFrame) => void;
     let completeReceipt!: () => void;
     const ack = vi.fn(async (_scope: string, _watch: string, sequence: number) => {
@@ -26,10 +26,10 @@ describe('App stream presentation', () => {
     let submitted = 0;
     let ready!: () => void;
     const buffering = new Promise<void>(resolve => { ready = resolve; });
-    vi.spyOn(H264Decoder.prototype, 'decode').mockImplementation(async () => {
+    vi.spyOn(H264Decoder.prototype, 'decode').mockImplementation(async (packet) => {
       if (++submitted === 2) ready();
       await buffering;
-      return { displayWidth: 1280, displayHeight: 800, close } as unknown as VideoFrame;
+      return { displayWidth: packet.timestamp === 3 ? 640 : 1280, displayHeight: packet.timestamp === 3 ? 400 : 800, close } as unknown as VideoFrame;
     });
     TestBed.configureTestingModule({
       providers: [{ provide: ELEVENEX_BRIDGE, useValue: {
@@ -50,12 +50,17 @@ describe('App stream presentation', () => {
     for (const sequence of [1, 2, 3]) {
       deliver({
         scopeId: 'machine', taskId: 1, runId: 'app', watchId: watchId!,
-        sequence, width: 1280, height: 800, timestamp: sequence,
-        codec: 'avc1.42E02A', data: Uint8Array.of(1), key: sequence === 1,
+        sequence, width: sequence === 3 ? 640 : 1280, height: sequence === 3 ? 400 : 800, timestamp: sequence,
+        ...(sequence === 3 ? { inputSize: { width: 1280, height: 800 } } : {}),
+        codec: 'avc1.42E02A', data: Uint8Array.of(1), key: sequence !== 2,
       });
     }
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(3));
-    expect(drawImage).toHaveBeenCalledTimes(3);
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    const canvas: HTMLCanvasElement = fixture.nativeElement.querySelector('canvas');
+    expect(canvas.width).toBe(640);
+    expect(canvas.height).toBe(400);
+    expect(canvas.style.getPropertyValue('--app-display-width')).toBe('1280px');
     expect(ack.mock.calls).toEqual([['machine', watchId, 1]]);
     completeReceipt();
     await vi.waitFor(() => expect(ack.mock.calls).toEqual([['machine', watchId, 1], ['machine', watchId, 3]]));

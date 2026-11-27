@@ -7,6 +7,7 @@ import {
 } from './runtime-video-encoder.js';
 import { RuntimeVideoHost } from './runtime-video-host.js';
 import { RuntimeVideoQuality } from './runtime-video-quality.js';
+import { VIDEO_PENDING_BYTES } from './video-delivery.js';
 import {
   videoTargetId,
   type VideoEncoderTarget,
@@ -40,6 +41,7 @@ export class RuntimeBrowserVideo {
     number,
     { sent: number; bytes: number }
   >();
+  private outstandingBytes = 0;
   private wake?: () => void;
   private sequence = 0;
   private fps = 30;
@@ -74,11 +76,15 @@ export class RuntimeBrowserVideo {
   acknowledge(sequence: number): void {
     if (sequence > this.sequence)
       throw new Error('Invalid video acknowledgment');
-    const now = performance.now();
     const receipt = this.outstanding.get(sequence);
-    if (receipt) this.quality.acknowledged(now - receipt.sent, now);
-    for (const id of this.outstanding.keys())
-      if (id <= sequence) this.outstanding.delete(id);
+    if (!receipt) return;
+    const now = performance.now();
+    this.quality.acknowledged(now - receipt.sent, now);
+    for (const [id, pending] of this.outstanding) {
+      if (id > sequence) break;
+      this.outstandingBytes -= pending.bytes;
+      this.outstanding.delete(id);
+    }
     this.wake?.();
   }
   stop(): void {
@@ -111,20 +117,18 @@ export class RuntimeBrowserVideo {
       started = performance.now();
     while (!this.lifetime.signal.aborted && current()) {
       const now = performance.now();
-      if (
-        [...this.outstanding.values()].some(
-          (receipt) => now - receipt.sent > 15000,
-        )
-      )
+      const oldest = this.outstanding.values().next().value;
+      const age = oldest ? now - oldest.sent : 0;
+      if (age > 15000)
         throw new Error('Video viewer stalled');
+      const delayed = this.quality.overdue(age);
+      this.quality.observePressure(delayed, now);
       if (
+        delayed ||
         this.outstanding.size >=
           this.quality.window(this.maximumWindow, this.fps) ||
-        [...this.outstanding.values()].reduce(
-          (sum, receipt) => sum + receipt.bytes,
-          0,
-        ) >= 3_000_000 ||
-        (this.options.bufferedBytes?.() ?? 0) > 512 * 1024
+        this.outstandingBytes >= VIDEO_PENDING_BYTES ||
+        (this.options.bufferedBytes?.() ?? 0) >= VIDEO_PENDING_BYTES
       ) {
         await this.pause();
         continue;
@@ -175,7 +179,8 @@ export class RuntimeBrowserVideo {
         const retune =
           format &&
           (format.bitrate !== desired.bitrate ||
-            format.threads !== desired.threads) &&
+            format.threads !== desired.threads ||
+            format.lowBandwidth !== desired.lowBandwidth) &&
           performance.now() - lastRestart > 3000;
         if (!this.encoder || resized || retune || changedDocument) {
           this.encoder?.stop();
@@ -209,6 +214,7 @@ export class RuntimeBrowserVideo {
         }
         if (!current() || this.lifetime.signal.aborted) return;
         const sequence = ++this.sequence;
+        this.outstandingBytes += packet.data.length;
         this.outstanding.set(sequence, {
           sent: performance.now(),
           bytes: packet.data.length,
