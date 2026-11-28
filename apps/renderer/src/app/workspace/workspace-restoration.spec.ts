@@ -26,7 +26,7 @@ it('resolves older project, task and session windows without enumerating history
   bridge.workspaceTask.mockResolvedValue(ok({ ...task, projectId: 77 }));
   bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.cursor === '6' ? [session] : [{ ...session, id: 500 }])));
   expect(await restoration.projects('scope', target, () => true)).toEqual(ok({ page: page([{ ...project, id: 77 }]), cursor: '76' }));
-  const result = await restoration.tasks('scope', { saved: target, projectId: 77, archiveHistory: true }, () => true);
+  const result = await restoration.tasks('scope', { saved: target, projectId: 77, archiveHistory: true, view: 'active' }, () => true);
   expect(result).toMatchObject({ ok: true, value: { cursor: '4', selection: { taskId: 3, sessionId: 5 }, sessions: { taskId: 3, page: page([session]) } } });
   expect(bridge.workspaceProjects).toHaveBeenCalledTimes(2);
   expect(bridge.workspaceTasks).toHaveBeenCalledTimes(2);
@@ -39,7 +39,7 @@ it('returns archived pages for their owner to adopt, preserving the normal sessi
   const normal = { ...session, id: 20 };
   const archived = { ...session, status: 'archived' };
   bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.state === 'archived' ? [archived] : [normal])));
-  const result = await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: true }, () => true);
+  const result = await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: true, view: 'active' }, () => true);
   expect(result).toMatchObject({ ok: true, value: {
     sessions: { taskId: 3, page: page([normal]) },
     archive: { taskId: 3, cursor: '6', page: page([archived]) }, selection: { taskId: 3, sessionId: 5 },
@@ -50,7 +50,7 @@ it('retains archived history when the saved session was deleted from its older w
   const { bridge, restoration } = setup();
   const newerArchive = { ...session, id: 20, status: 'archived' };
   bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.state === 'archived' && !query.cursor ? [newerArchive] : [])));
-  const result = await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: true }, () => true);
+  const result = await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: true, view: 'active' }, () => true);
   expect(result).toMatchObject({ ok: true, value: { archive: { cursor: undefined, page: page([newerArchive]) } } });
   if (result.ok) expect(result.value.selection).toBeUndefined();
 });
@@ -59,7 +59,7 @@ it('returns a paused preparation context without preparing or creating a session
   const { bridge, restoration } = setup();
   const preparing = { ...task, state: 'preparing' as const };
   bridge.workspaceTasks.mockResolvedValue(ok(page([preparing])));
-  const result = await restoration.tasks('scope', { saved: { ...saved, sessionId: null }, projectId: 1, archiveHistory: false }, () => true);
+  const result = await restoration.tasks('scope', { saved: { ...saved, sessionId: null }, projectId: 1, archiveHistory: false, view: 'active' }, () => true);
   expect(result).toMatchObject({ ok: true, value: { pendingTask: preparing } });
   expect(bridge.workspaceSessions).not.toHaveBeenCalled();
 });
@@ -72,7 +72,7 @@ it('does not dispatch reads after cancellation and stops follow-up reads after a
   let complete!: (value: BackendResult<WorkspaceTask>) => void;
   bridge.workspaceTasks.mockResolvedValue(ok(page([])));
   bridge.workspaceTask.mockReturnValue(new Promise(resolve => { complete = resolve; }));
-  const pending = restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false }, () => active);
+  const pending = restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false, view: 'active' }, () => active);
   await vi.waitFor(() => expect(bridge.workspaceTask).toHaveBeenCalled());
   active = false; complete(ok(task));
   expect(await pending).toMatchObject({ ok: false, error: { code: 'stale-scope' } });
@@ -84,7 +84,24 @@ it('distinguishes deleted tasks from transient read failures', async () => {
   const { bridge, restoration } = setup();
   bridge.workspaceTasks.mockResolvedValue(ok(page([])));
   bridge.workspaceTask.mockResolvedValueOnce({ ok: false, error: { code: 'http', status: 404, message: 'Missing' } });
-  expect(await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false }, () => true)).toEqual(ok({ page: page([]), cursor: undefined, closed: false }));
+  expect(await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false, view: 'active' }, () => true)).toEqual(ok({ page: page([]), cursor: undefined, closed: false }));
   bridge.workspaceTask.mockRejectedValueOnce(new Error('Connection closed'));
-  expect(await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false }, () => true)).toMatchObject({ ok: false, error: { code: 'transport' } });
+  expect(await restoration.tasks('scope', { saved, projectId: 1, archiveHistory: false, view: 'active' }, () => true)).toMatchObject({ ok: false, error: { code: 'transport' } });
+});
+
+it('discards an older active page when the saved task was finished between reads', async () => {
+  const { bridge, restoration } = setup();
+  const context: EnvironmentContext = { ...saved, workspace: {
+    panel: 'changes', panelOpen: false, wideReview: false, closed: false, focused: false, filter: null, projectCursor: null, taskCursor: '9',
+  } };
+  const latest = { ...task, id: 20 };
+  bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.cursor === '9' ? [{ ...task, id: 8 }] : [latest])));
+  bridge.workspaceTask.mockResolvedValue(ok({ ...task, state: 'finished', archivedAt: 'now' }));
+  expect(await restoration.tasks('scope', { saved: context, projectId: 1, archiveHistory: true, view: 'active' }, () => true))
+    .toEqual(ok({ page: page([latest]), cursor: undefined, closed: false }));
+  expect(bridge.workspaceTasks.mock.calls).toEqual([
+    ['scope', { projectId: 1, state: 'active', limit: 20, cursor: '9' }],
+    ['scope', { projectId: 1, state: 'active', limit: 20 }],
+  ]);
+  expect(bridge.workspaceSessions).not.toHaveBeenCalled();
 });

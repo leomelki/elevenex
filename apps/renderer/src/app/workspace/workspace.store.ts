@@ -72,6 +72,7 @@ export class WorkspaceStore {
   readonly wideReview = signal(false);
   private resumeContext: EnvironmentContext | null = null;
   private resumeLoaded = false;
+  private resumeNavigationCancelled = false;
   readonly taskRequestsAvailable = signal(false);
   readonly commitPanelAvailable = signal(false);
   readonly projectImagesAvailable = signal(false);
@@ -362,8 +363,9 @@ export class WorkspaceStore {
       const context = await this.resume.load(environment, () => this.current(scope, revision));
       if (!this.current(scope, revision)) return;
       this.resumeLoaded = context !== null;
-      this.resumeContext = context;
-      if (context) { this.restoring.set(true); this.applyView(context); }
+      if (context && !this.resumeNavigationCancelled) {
+        this.resumeContext = context; this.restoring.set(true); this.applyView(context);
+      }
     }
     if (!this.capable) {
       const capability = await this.read(scope, () => this.bridge.workspaceRevision(scope));
@@ -390,7 +392,11 @@ export class WorkspaceStore {
       this.projectPage.set(!!this.currentProjectCursor);
       if (this.activeProject() !== 'all' && !projects.items.some(project => String(project.id) === this.activeProject())) this.activeProject.set('all');
       if (saved) await this.restoreTasks(scope, revision, saved);
-      else await this.loadTasks();
+      else {
+        // A failed settings read can be retried until the user navigates.
+        this.leaveResume(false);
+        await this.loadTaskWindow(undefined, false);
+      }
       if (this.current(scope, revision) && !this.error()) { this.resumeContext = null; this.restoring.set(false); this.asOf.set(null); this.outbox?.connect(scope); this.taskOutbox.connect(scope); this.sessionOutbox.connect(scope); }
       if (this.current(scope, revision) && !this.error()) { this.mutationUncertain.set(false); this.uncertainSetup = null; }
     }
@@ -403,8 +409,8 @@ export class WorkspaceStore {
     if (!view) return;
     this.setPanel(view.panel, context.taskId ?? undefined);
     this.panelOpen.set(view.panelOpen); this.wideReview.set(view.panelOpen && view.wideReview);
-    this.closed.set(view.closed); this.focused.set(view.focused); this.filter.set(view.filter);
-    this.currentProjectCursor = view.projectCursor ?? undefined; this.currentTaskCursor = view.taskCursor ?? undefined;
+    this.focused.set(view.focused); this.filter.set(view.closed ? null : view.filter);
+    this.currentProjectCursor = view.projectCursor ?? undefined;
   }
 
   private saveView(scope: string, environment: EnvironmentSelection): void {
@@ -422,9 +428,10 @@ export class WorkspaceStore {
     const projectId = this.activeProject() === 'all' ? null : Number(this.activeProject());
     const restored = await this.read(scope, () => this.restoration.tasks(scope, {
       saved, projectId, archiveHistory: this.sessionArchiveHistoryAvailable(),
+      // Only navigation already visible in this store can survive a reconnect.
+      view: this.closed() ? 'closed' : 'active',
     }, current), current);
     if (!restored || !current()) return;
-    this.closed.set(restored.closed);
     this.currentTaskCursor = restored.cursor;
     await this.hydrateTasks(scope, listRevision, restored.page, restored.cursor, restored);
     if (!current() || this.error()) return;
@@ -433,7 +440,8 @@ export class WorkspaceStore {
     this.preparationPaused.set(!!restored.pendingTask);
   }
 
-  private leaveResume(): void {
+  private leaveResume(cancelSavedNavigation = true): void {
+    if (cancelSavedNavigation) this.resumeNavigationCancelled = true;
     if (!this.restoring()) return;
     this.restoring.set(false); this.resumeContext = null; this.revision++;
   }
@@ -494,13 +502,13 @@ export class WorkspaceStore {
   }
 
   async loadTasks(cursor?: string): Promise<void> {
+    this.leaveResume();
     await this.loadTaskWindow(cursor, false);
   }
 
   private async loadTaskWindow(cursor: string | undefined, background: boolean): Promise<void> {
     const scope = this.scopeId();
     if (!scope) return;
-    this.leaveResume();
     const revision = ++this.listRevision;
     if (!background && cursor !== this.currentTaskCursor) this.localSessionId.set(null);
     this.currentTaskCursor = cursor;
@@ -665,7 +673,7 @@ export class WorkspaceStore {
     if (!task) {
       const result = await this.restoration.tasks(scopeId, {
         saved: { taskId, sessionId, projectId: null, cursor: null, draft: '' },
-        projectId: null, archiveHistory: this.sessionArchiveHistoryAvailable(),
+        projectId: null, archiveHistory: this.sessionArchiveHistoryAvailable(), view: 'linked',
       }, current);
       if (!current()) return null;
       if (!result.ok || !result.value.selection) {
@@ -1425,7 +1433,7 @@ export class WorkspaceStore {
     this.sessionCreation.reset(); this.localSessionId.set(null); this.sessionRenderIds.set(new Map());
     this.uncertainTaskRequest = null; this.editingWaitingTask = null; this.editingTask.set(null); this.outageTasks = null;
     this.suspended = false; this.asOf.set(null); this.outbox?.connect(null); this.taskOutbox.connect(null); this.sessionOutbox.connect(null);
-    this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.restoring.set(scope !== null);
+    this.resume.reset(); this.resumeLoaded = false; this.resumeContext = null; this.resumeNavigationCancelled = false; this.restoring.set(scope !== null);
     this.panelOpen.set(false); this.workspacePanel.set('changes'); this.appsPanels.set([]); this.wideReview.set(false); this.closed.set(false); this.filter.set(null);
     this.projectCompletion = null; this.projectCreated.set(null); this.dialogFrom.set(null);
     this.sessionDisclosures.set(new Map());

@@ -30,6 +30,7 @@ interface TaskRestorationRequest {
   readonly saved: EnvironmentContext;
   readonly projectId: number | null;
   readonly archiveHistory: boolean;
+  readonly view: 'active' | 'closed' | 'linked';
 }
 
 /** The workspace protocol orders projects ascending and tasks/sessions descending
@@ -68,39 +69,42 @@ export class WorkspaceRestoration {
   }
 
   async tasks(scope: string, request: TaskRestorationRequest, current: () => boolean): Promise<BackendResult<RestoredTaskWindow>> {
-    const { saved, projectId, archiveHistory } = request;
-    let closed = saved.workspace?.closed ?? false;
-    let cursor = saved.workspace?.taskCursor ?? undefined;
-    const readWindow = () => this.read(current, () => this.bridge.workspaceTasks(scope, {
+    const { saved, projectId, archiveHistory, view } = request;
+    let closed = view === 'closed';
+    // A saved task cursor belongs to its original project and list.
+    let cursor = saved.projectId === projectId && (saved.workspace?.closed ?? false) === closed
+      ? saved.workspace?.taskCursor ?? undefined : undefined;
+    const readWindow = (cursor?: string) => this.read(current, () => this.bridge.workspaceTasks(scope, {
       projectId, state: closed ? 'finished' : 'active', limit: 20, ...(cursor ? { cursor } : {}),
     }));
-    let tasks = await readWindow();
+    let tasks = await readWindow(cursor);
     if (!tasks.ok) return tasks;
+    const defaultWindow = async (): Promise<BackendResult<RestoredTaskWindow>> => {
+      const latest = cursor ? await readWindow() : tasks;
+      return latest.ok ? { ok: true, value: { page: latest.value, cursor: undefined, closed } } : latest;
+    };
     const taskId = saved.taskId;
-    let task = tasks.value.items.find(task => task.id === taskId);
+    const findTask = (page: WorkspacePage<WorkspaceTask>) => page.items.find(task => task.id === taskId && (workspaceTaskStage(task) === 'closed') === closed);
+    let task = findTask(tasks.value);
     if (taskId !== null && !task) {
       const result = await this.read(current, () => this.bridge.workspaceTask(scope, taskId));
       if (!result.ok) {
-        if (result.error.code === 'http' && result.error.status === 404) {
-          if (cursor) { cursor = undefined; tasks = await readWindow(); }
-          return tasks.ok ? { ok: true, value: { page: tasks.value, cursor, closed } } : tasks;
-        }
+        if (result.error.code === 'http' && result.error.status === 404) return defaultWindow();
         return result.error.code === 'stale-scope' ? result : {
           ok: false, error: { ...result.error, message: 'The previous task could not be loaded. Refresh to try again.' },
         };
       }
-      task = result.value;
-      if (projectId !== null && task.projectId !== projectId) return { ok: true, value: { page: tasks.value, cursor, closed } };
-      closed = workspaceTaskStage(task) === 'closed';
-      cursor = historyWindowCursor(task.id);
-      tasks = await readWindow();
+      if (projectId !== null && result.value.projectId !== projectId) return defaultWindow();
+      const taskClosed = workspaceTaskStage(result.value) === 'closed';
+      if (view !== 'linked' && taskClosed !== closed) return defaultWindow();
+      closed = taskClosed;
+      cursor = historyWindowCursor(taskId);
+      tasks = await readWindow(cursor);
       if (!tasks.ok) return tasks;
-      if (!tasks.value.items.some(item => item.id === taskId)) {
-        cursor = undefined;
-        tasks = await readWindow();
-        return tasks.ok ? { ok: true, value: { page: tasks.value, cursor, closed } } : tasks;
-      }
+      task = findTask(tasks.value);
+      if (!task) return defaultWindow();
     }
+    if (!task && !tasks.value.items.length && cursor) return defaultWindow();
     const window: RestoredTaskWindow = { page: tasks.value, cursor, closed };
     if (!task) return { ok: true, value: window };
     if (saved.sessionId === null) {

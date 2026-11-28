@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionPage, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery } from '@elevenex/shared';
+import type { BackendClientState, BackendResult, ElevenexBridge, WorkspaceCreateTask, WorkspacePage, WorkspaceProject, WorkspaceProjectDetail, WorkspaceSession, WorkspaceSessionPage, WorkspaceSessionQuery, WorkspaceTask, WorkspaceTaskRecovery, WorkspaceViewState } from '@elevenex/shared';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { SessionChatDrafts } from '../session-chat/session-chat-drafts';
 import { WorkspaceStore } from './workspace.store';
@@ -10,6 +10,7 @@ import { WorkspaceNavigationComponent } from './workspace-navigation.component';
 const project: WorkspaceProject = { id: 1, name: 'Project', agentInstructions: null };
 const session: WorkspaceSession = { id: 5, taskId: 3, repoId: 2, name: 'Session', status: 'created', provider: 'claude', updatedAt: '' };
 const task: WorkspaceTask = { id: 3, projectId: 1, repoId: 2, name: 'Task', branchName: 'task', stage: 'active', state: 'ready', archivedAt: null, updatedAt: '' };
+const finishedTask: WorkspaceTask = { ...task, state: 'finished', archivedAt: 'now' };
 const detail: WorkspaceProjectDetail = { project, repositories: { items: [{ id: 2, projectId: 1, name: 'repo', path: '/repo', defaultBase: 'main' }], nextCursor: null } };
 const page = <T>(items: readonly T[]): WorkspacePage<T> => ({ items, nextCursor: null });
 const ok = <T>(value: T): BackendResult<T> => ({ ok: true, value });
@@ -59,11 +60,16 @@ function setup(history = false) {
 afterEach(() => { TestBed.resetTestingModule(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Workspace resume', () => {
+  const activeView: WorkspaceViewState = { panel: 'terminal', panelOpen: true, wideReview: false, closed: false, focused: true, filter: 'review', projectCursor: null, taskCursor: null };
+  const savedClosedView: WorkspaceViewState = { ...activeView, closed: true, taskCursor: '2' };
+
   function saved(bridge: ReturnType<typeof setup>['bridge'], context: Partial<import('@elevenex/shared').EnvironmentContext> = {}) {
-    bridge.environmentStatus.mockResolvedValue({ selection: { kind: 'local' }, connection: null, challenge: null, forwards: [], context: {
+    const snapshot = { selection: { kind: 'local' as const }, connection: null, challenge: null, forwards: [], context: {
       projectId: 1, taskId: 3, sessionId: 5, draft: 'keep unsent input', cursor: 'keep event cursor',
-      workspace: { panel: 'terminal', panelOpen: true, wideReview: false, closed: false, focused: true, filter: 'review', projectCursor: null, taskCursor: null }, ...context,
-    } });
+      workspace: activeView, ...context,
+    } };
+    bridge.environmentStatus.mockResolvedValue(snapshot);
+    return snapshot;
   }
 
   it('restores selection and layout before saving, preserving unrelated context fields', async () => {
@@ -116,14 +122,118 @@ describe('Workspace resume', () => {
     expect(store.restoring()).toBe(false); expect(store.error()).toBeNull();
   });
 
-  it('resumes a closed task read-only and never reopens it', async () => {
-    const { store, bridge, start } = setup(); saved(bridge);
-    const finished = { ...task, state: 'finished' as const, archivedAt: 'now' };
-    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.state === 'finished' ? [finished] : [])));
-    bridge.workspaceTask.mockResolvedValue(ok(finished));
-    await start(); await settle(); TestBed.tick(); await settle();
-    expect(store.closed()).toBe(true); expect(store.selected()?.sessionId).toBe(5);
+  it('opens the active project even while a saved Closed view and its exact task are loading', async () => {
+    const { store, bridge, start } = setup(); saved(bridge, { workspace: savedClosedView });
+    const sibling = { ...task, id: 4 };
+    let complete!: (value: BackendResult<WorkspaceTask>) => void;
+    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.state === 'finished' ? [finishedTask] : [sibling])));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.taskId === 3 ? [{ ...session, status: 'archived' }] : [])));
+    bridge.workspaceTask.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+    await start();
+    expect(store.loading()).toBe(true); expect(store.closed()).toBe(false); expect(store.filter()).toBeNull();
+    expect(bridge.workspaceTasks).toHaveBeenCalledExactlyOnceWith('scope', { projectId: 1, state: 'active', limit: 20 });
+    expect(bridge.workspaceTask).toHaveBeenCalledWith('scope', 3);
+    complete(ok(finishedTask)); await settle(); TestBed.tick(); await settle();
+    expect(store.closed()).toBe(false); expect(store.selected()).toBeNull();
+    expect(store.activeProject()).toBe('1'); expect(store.tasks().map(row => row.id)).toEqual(['4']);
+    expect(store.taskPage()).toBe(false); expect(store.focused()).toBe(true);
+    expect(bridge.workspaceSessions).not.toHaveBeenCalledWith('scope', expect.objectContaining({ taskId: 3 }));
     expect(bridge.workspaceReopenTask).not.toHaveBeenCalled();
+
+    await store.showClosed(true);
+    expect(bridge.workspaceTasks).toHaveBeenLastCalledWith('scope', { projectId: 1, state: 'finished', limit: 20 });
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    expect(store.closed()).toBe(true); expect(store.selectedSession()?.status).toBe('archived');
+    expect(store.tasks()[0]?.archive).toBeUndefined();
+    await store.showClosed(false);
+    expect(store.closed()).toBe(false); expect(store.selected()).toBeNull();
+    expect(bridge.workspaceTasks).toHaveBeenLastCalledWith('scope', { projectId: 1, state: 'active', limit: 20 });
+  });
+
+  it('restores a reopened task on the active list using its own keyset window', async () => {
+    const { store, bridge, start } = setup(); saved(bridge, { workspace: savedClosedView });
+    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.cursor === '4' ? [task] : [{ ...task, id: 8 }])));
+    await start();
+    expect(store.closed()).toBe(false); expect(store.selected()?.sessionId).toBe(5);
+    expect(bridge.workspaceTasks.mock.calls).toEqual([
+      ['scope', { projectId: 1, state: 'active', limit: 20 }],
+      ['scope', { projectId: 1, state: 'active', limit: 20, cursor: '4' }],
+    ]);
+  });
+
+  it('starts with the default empty active list when Closed was saved without a selection', async () => {
+    const { store, bridge, start } = setup(); saved(bridge, { taskId: null, sessionId: null, workspace: savedClosedView });
+    bridge.workspaceTasks.mockResolvedValue(ok(page([])));
+    await start();
+    expect(store.closed()).toBe(false); expect(store.activeProject()).toBe('1');
+    expect(store.tasks()).toEqual([]); expect(store.taskPage()).toBe(false);
+    expect(bridge.workspaceTasks).toHaveBeenCalledExactlyOnceWith('scope', { projectId: 1, state: 'active', limit: 20 });
+    expect(bridge.workspaceTask).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit Closed navigation when a pending startup task lookup completes', async () => {
+    const { store, bridge, start } = setup(); saved(bridge);
+    let complete!: (value: BackendResult<WorkspaceTask>) => void;
+    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.state === 'finished' ? [finishedTask] : [])));
+    bridge.workspaceTask.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+    await start();
+    expect(bridge.workspaceTask).toHaveBeenCalled();
+    await store.showClosed(true);
+    complete(ok(task)); await settle();
+    expect(store.closed()).toBe(true); expect(store.tasks().map(row => row.id)).toEqual(['3']);
+    expect(store.restoring()).toBe(false); expect(store.loading()).toBe(false);
+    expect(bridge.workspaceTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps explicit navigation on Refresh after the initial saved context read was superseded', async () => {
+    const { store, bridge, start } = setup();
+    const snapshot = saved(bridge, { workspace: savedClosedView });
+    let complete!: (value: typeof snapshot) => void;
+    bridge.environmentStatus.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await start();
+    await store.selectProject('all');
+    complete(snapshot); await settle();
+    await store.refresh();
+    expect(store.activeProject()).toBe('all'); expect(store.closed()).toBe(false);
+    expect(store.selected()).toBeNull(); expect(store.restoring()).toBe(false);
+    expect(bridge.workspaceTasks).toHaveBeenLastCalledWith('scope', { projectId: null, state: 'active', limit: 20 });
+  });
+
+  it.each([false, true])('reconnects in the live view when Closed was explicitly chosen: %s', async closed => {
+    const { store, bridge, start, emit } = setup();
+    await start();
+    const sibling = { ...task, id: 4 };
+    if (closed) {
+      bridge.workspaceTasks.mockResolvedValueOnce(ok(page([finishedTask])));
+      await store.showClosed(true);
+    }
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    emit({ revision: 2, scope: null }); TestBed.tick();
+    bridge.workspaceTask.mockResolvedValue(ok(finishedTask));
+    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.state === 'finished' ? [finishedTask] : [sibling])));
+    emit({ revision: 3, scope: { id: 'recovered', environment: { kind: 'local' } } }); TestBed.tick();
+    await start();
+    expect(store.restoring()).toBe(false); expect(store.closed()).toBe(closed);
+    expect(store.tasks().map(row => row.id)).toEqual([closed ? '3' : '4']);
+    expect(store.selected()).toEqual(closed ? { scopeId: 'recovered', taskId: 3, sessionId: 5 } : null);
+    expect(bridge.workspaceTasks.mock.calls.filter(([scope]) => scope === 'recovered')).toEqual([
+      ['recovered', { projectId: null, state: closed ? 'finished' : 'active', limit: 20 }],
+    ]);
+  });
+
+  it('does not carry the live Closed view or saved Closed pagination to a different machine', async () => {
+    const { store, bridge, start, emit } = setup(); await start(); await store.showClosed(true);
+    const selection = { kind: 'remote', hostId: 'other' } as const;
+    bridge.environmentStatus.mockResolvedValue({ selection, connection: null, challenge: null, forwards: [], context: {
+      projectId: 1, taskId: null, sessionId: null, draft: '', cursor: null, workspace: savedClosedView,
+    } });
+    store.connect({ id: 'other', name: 'Other server', kind: 'ssh', conn: 'live' }, true);
+    emit({ revision: 2, scope: { id: 'other-scope', environment: selection } }); TestBed.tick();
+    await start();
+    expect(store.closed()).toBe(false); expect(store.activeProject()).toBe('1');
+    expect(bridge.workspaceTasks.mock.calls.filter(([scope]) => scope === 'other-scope')).toEqual([
+      ['other-scope', { projectId: 1, state: 'active', limit: 20 }],
+    ]);
   });
 
   it('drops deleted tasks and sessions without replaying mutations', async () => {
@@ -321,6 +431,20 @@ describe('WorkspaceStore', () => {
     release(ok(page([{ ...reviewer, id: 9 }])));
     expect(await pending).toBeNull();
     expect(store.selectedSession()?.id).toBe(5);
+  });
+
+  it('opens an explicit agent link to a finished task as a read-only conversation', async () => {
+    const { store, bridge, start } = setup(true); await start();
+    const finished = { ...finishedTask, id: 2 };
+    const archived = { ...session, taskId: 2, id: 4, status: 'archived' };
+    bridge.workspaceTask.mockResolvedValue(ok(finished));
+    bridge.workspaceTasks.mockImplementation(async (_scope, query) => ok(page(query.state === 'finished' ? [finished] : [task])));
+    bridge.workspaceSessions.mockImplementation(async (_scope, query) => ok(page(query.taskId === finished.id ? [archived] : [session])));
+    store.selectSession({ taskId: '3', sessionId: '5' });
+    expect(await store.openLinkedSession(store.selected()!, { taskId: 2, sessionId: 4 })).toMatchObject({ taskId: 2, sessionId: 4 });
+    expect(store.closed()).toBe(true); expect(store.selectedSession()?.status).toBe('archived');
+    expect(store.tasks()[0]?.archive).toBeUndefined();
+    expect(bridge.workspaceRestoreSession).not.toHaveBeenCalled();
   });
 
   it('revalidates in place and retries a failed revision without loading or error flashes', async () => {

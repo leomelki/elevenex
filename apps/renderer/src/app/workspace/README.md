@@ -41,8 +41,13 @@ bridge. The backend connection service continues to own connection state alone.
 The workspace saves its selected project/task/session, Closed view, focus/status
 filter, bounded project/task cursors and side-panel tab/open/wider-review state
 through `saveEnvironmentContext`. Main stores a separate context per window and
-backend (local or saved SSH host) in application data. Returning from Home,
-reconnecting or reopening the app reconciles that context before saving again.
+backend (local or saved SSH host) in application data. Opening a fresh workspace
+always starts in Active tasks. A saved Closed view's task cursor and status
+filter are discarded. A reopened task can resume in the active list. If the
+selected task finished while the workspace was away, the workspace shows the
+project's default active list. A reconnect in the same workspace owner can
+retain Closed when it is already visible. Explicit chat links still open
+their target conversation, including read-only history for finished tasks.
 Old contexts without layout fields retain the default closed Changes panel.
 Unsent input and domain-event cursors in the existing context are preserved.
 
@@ -66,10 +71,11 @@ family's public component/store API and persisted context format are unchanged.
 Restoration uses bounded keyset windows around saved IDs when newer tasks or
 sessions have displaced them. Missing resources clear selection; transient read
 failures retain the saved state for Refresh. Explicit navigation and scope
-changes discard late restoration replies. Archived and closed conversations
-remain archived/closed; task setup, commands, prompts and session creation are
-never replayed. Panels currently restore their frames and selected tab, not
-terminal/browser processes or unsent modal forms. Failed saves appear in the
+changes discard late restoration replies. Archived conversations under active
+tasks remain read-only when selected. Task setup, commands, prompts and session
+creation are never replayed. Panels restore their frames and selected tab.
+Terminal and browser processes and unsent modal forms are outside layout
+restoration. Failed saves appear in the
 navigation notice and retry on the next change. Exit dispatches the latest queued
 snapshot before releasing the workspace owner.
 
