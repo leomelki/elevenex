@@ -47,6 +47,7 @@ export default async function* (capture) {
       await finish();
       assert.equal(await capture.evaluate(() => !!document.querySelector('ex-task-header ex-git-bar')), false);
       assert.equal(await capture.evaluate(() => !!document.querySelector('ex-task-header .link')), false);
+      assert.equal(await capture.evaluate(() => !!document.querySelector('ex-task-header ex-task-stage')), false);
       const loading = await geometry();
       assert.equal(loading.overflow, false);
       assert.equal(loading.header.height, narrow ? 69 : 48);
@@ -59,11 +60,11 @@ export default async function* (capture) {
       assert.deepEqual(await geometry(), loading, 'Git status must preserve the toolbar, title start, and trailing controls');
       yield { name: `${name}-current`, inspect: ['ex-task-header', 'ex-task-header .row'], metadata: await geometry() };
 
-      await capture.click('ex-task-header .stage');
-      await capture.press('Escape'); await finish();
-      assert.equal(await capture.evaluate(() => document.activeElement?.classList.contains('stage')), true);
+      await capture.evaluate(() => document.querySelector('ex-task-header .close-task').focus());
+      await capture.press('Tab'); await finish();
+      assert.equal(await capture.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Toggle side panel');
       assert.notEqual(await capture.evaluate(() => getComputedStyle(document.activeElement).boxShadow), 'none');
-      yield { name: `${name}-keyboard`, selector: 'ex-task-header', inspect: ['ex-task-header .stage'] };
+      yield { name: `${name}-keyboard`, selector: 'ex-task-header', inspect: ['ex-task-header .panel-toggle button'] };
       await capture.press('Escape');
 
       await arm();

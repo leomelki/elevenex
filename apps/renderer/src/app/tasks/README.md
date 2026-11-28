@@ -46,9 +46,9 @@ See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harne
 | `ProjectRail` | `projects`, `all`, `activeId` | `selectProject(id)`, `addProject(tile)`, `reorderProjects(ids)` |
 | `StatusSummary` | `counts`, `active` | `selectStatus(status or null)`; a second click clears the filter |
 | `StageGlyph` | `stage`, `size` | None |
-| `TaskStage` | `stage`, `glyphOnly` | `stageChange(stage)` |
+| `TaskStage` | `stage` | `stageChange(stage)` |
 | `LinkChip` | `kind`, `label`, `state`, `href`, `compact` | `activated()` |
-| `TaskHeader` | `title`, `repo`, `parent`, `stage`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `panelOpen`, `branchCopied` | `stageChange`, `closeRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
+| `TaskHeader` | `title`, `repo`, `parent`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `panelOpen`, `branchCopied` | `closeRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
 | `CloseTask` | `title`, `sessions`, `running`, `apps`, `actions`, `terminals`, `unpushed`, `uncommitted`, `ticket` | `confirmed({push, moveTicket})`, `cancelled()` |
 | `RepoTag` | `repo: Repo or string`, `size` | None; hover exposes name/path |
 | `SubtaskGlyph` | `depth` | None; a fixed-width stair mark capped at three levels |
@@ -106,8 +106,8 @@ continues to work without these optional inputs. `canLink` and
 `canManageWorkspaces` disable unsupported integrations while preserving the
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
-`TaskHeader.closed` hides stage/close controls for archived history.
-The 48px toolbar leads with the stage glyph, title and branch breadcrumb.
+`TaskHeader.closed` hides Close task for archived history.
+The 48px toolbar leads with the title and branch breadcrumb.
 An optional parent breadcrumb sits above it. In All projects, the connected
 header also shows the project mark when space permits. The Link action appears
 on hover or keyboard focus when linking is available and no link is set.

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
-import { CommitPanelComponent, CloseTaskComponent, TaskHeaderComponent, type CommitIntent, type CommitFileProvider, type CloseTaskIntent, type GitAction, type TaskStage } from '../tasks';
+import { CommitPanelComponent, CloseTaskComponent, TaskHeaderComponent, type CommitIntent, type CommitFileProvider, type CloseTaskIntent, type GitAction } from '../tasks';
 import { ELEVENEX_BRIDGE } from '../backend/backend-client.service';
 import { ButtonComponent, IconComponent, ModalLayerComponent, SetFieldComponent, StatusGlyphComponent, TooltipDirective } from '../ui';
 import { WorkspaceStore } from './workspace.store';
@@ -108,7 +108,6 @@ export class WorkspaceTaskHeaderComponent {
     inject(DestroyRef).onDestroy(() => { this.epoch++; clearTimeout(this.resetTimer); });
   }
 
-  protected stage(stage: TaskStage): void { if (stage === 'closed') this.close(); else void this.store.setStage(stage); }
   async close(): Promise<void> {
     if (this.store.offline()) { this.store.error.set(`Close task needs ${this.store.machine()?.name ?? 'the machine'}. Nothing was sent. Try again once it’s back.`); return; }
     const { task, scopeId } = this.closeTarget(), key = this.taskKey(), epoch = this.epoch;

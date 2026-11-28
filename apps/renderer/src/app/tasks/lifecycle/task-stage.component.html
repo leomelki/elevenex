@@ -3,15 +3,10 @@
   type="button"
   [disabled]="disabled()"
   [cdkMenuTriggerFor]="menu"
-  [class.glyph-only]="glyphOnly()"
-  [attr.aria-label]="glyphOnly() ? 'Change task stage: ' + labels[stage()] : 'Change task stage'"
-  [exTooltip]="glyphOnly() ? 'Task stage: ' + labels[stage()] : ''"
-  tooltipSide="bottom"
+  aria-label="Change task stage"
 >
-  <ex-stage-glyph [stage]="stage()" [size]="glyphOnly() ? 16 : 12" />
-  @if (!glyphOnly()) {
-    {{ labels[stage()] }}<ex-icon name="chevron-down" [size]="12" />
-  }
+  <ex-stage-glyph [stage]="stage()" [size]="12" />{{ labels[stage()]
+  }}<ex-icon name="chevron-down" [size]="12" />
 </button>
 <ng-template #menu
   ><ex-dropdown-menu label="Task stage">

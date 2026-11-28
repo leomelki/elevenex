@@ -12,13 +12,11 @@ import type {
   Repo,
   TaskParentContext,
   TaskLink,
-  TaskStage,
 } from '../task.models';
 import { ProjectMarkComponent } from '../projects/project-mark.component';
 import { RepoTagComponent } from './repo-tag.component';
 import { BranchChipComponent } from '../branches/branch-chip.component';
 import { GitBarComponent } from '../navigation/git-bar.component';
-import { TaskStageComponent } from './task-stage.component';
 import { LinkChipComponent } from './link-chip.component';
 @Component({
   selector: 'ex-task-header',
@@ -29,7 +27,6 @@ import { LinkChipComponent } from './link-chip.component';
     ProjectMarkComponent,
     BranchChipComponent,
     GitBarComponent,
-    TaskStageComponent,
     LinkChipComponent,
     RepoTagComponent,
     TooltipDirective,
@@ -43,7 +40,6 @@ export class TaskHeaderComponent {
   readonly repo = input<Repo | string>();
   readonly parent = input<TaskParentContext>();
   readonly parentRequested = output<TaskParentContext>();
-  readonly stage = input<TaskStage>('active');
   readonly branch = input<string>();
   readonly links = input<readonly TaskLink[]>([]);
   readonly meta = input<string>();
@@ -60,7 +56,6 @@ export class TaskHeaderComponent {
   readonly gitActionsDisabled = input(false);
   readonly gitQuietLabel = input('Up to date');
   readonly unreachable = input<string>();
-  readonly stageChange = output<TaskStage>();
   readonly closeRequested = output<void>();
   readonly panelToggle = output<void>();
   readonly branchRename = output<string>();

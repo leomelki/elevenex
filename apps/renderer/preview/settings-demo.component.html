@@ -7,7 +7,7 @@
       <ex-task-list [tasks]="tasks()" selected="s1" />
     </div>
     <div shellMain class="main">
-      <ex-task-header title="Refund button on the order page" stage="active" [project]="project()" [repo]="repos()[1]" branch="leo/refund-button" meta="Wire the endpoint" [git]="{files: 2, add: 17, del: 0}" />
+      <ex-task-header title="Refund button on the order page" [project]="project()" [repo]="repos()[1]" branch="leo/refund-button" meta="Wire the endpoint" [git]="{files: 2, add: 17, del: 0}" />
       <div class="content"><p>{{ note() }}</p><div class="actions"><button id="open-settings" exButton variant="primary" (click)="show()">Project settings</button><button id="add-repository" exButton (click)="show('repos', true)">Add a repository</button></div></div>
     </div>
   </ex-app-shell>

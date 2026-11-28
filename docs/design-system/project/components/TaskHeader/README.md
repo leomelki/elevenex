@@ -1,12 +1,12 @@
 # TaskHeader
 
-The selected task has a 48px toolbar. Its stage glyph opens the stage menu, followed by the title and branch breadcrumb. All projects can also show the project mark. Git status and actions, Close task, a hairline, and the side-panel toggle anchor the right edge.
+The selected task has a 48px toolbar with the title and branch breadcrumb. All projects can also show the project mark. Git status and actions, Close task, a hairline, and the side-panel toggle anchor the right edge.
 
 As the pane narrows, the branch label gives way to its glyph and Git actions keep their counts alongside their icons. The narrowest split panes put identity and actions on separate lines so their controls fit.
 
 **In a project with several repositories** (`repo`): the task's `RepoTag`, a size up with the repo icon, sits before the branch. Git and Changes don't change: a task works in one repository.
 
-**Provide:** `title`, `repo`, `stage`, optional `branch` (name), `links` (LinkChip props), `meta` (e.g. the session name · session count), `project` (ProjectMark props), `git` (GitBar props), `closeSuggested` (true when the linked PR merged or the work looks finished: Close task turns accent), `onClose`, `panelOpen`.
+**Provide:** `title`, `repo`, optional `branch` (name), `links` (LinkChip props), `meta` (e.g. the session name · session count), `project` (ProjectMark props), `git` (GitBar props), `closeSuggested` (true when the linked PR merged or the work looks finished: Close task turns accent), `onClose`, `panelOpen`.
 
 - Do keep Close task one click away at all times. We can't know when someone is done: while working, after a push, or long after a merge.
 - **Close task** uses a quiet ticked-square icon with a tooltip. A thin line sets it apart from the side-panel toggle, which uses a neutral pressed state. The actionable Git step uses the accent fill.

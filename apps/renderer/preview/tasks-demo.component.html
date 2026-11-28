@@ -36,7 +36,6 @@
   <main>
     <ex-task-header
       title="Rate-limit refunds"
-      [stage]="stage()"
       [project]="project"
       [branch]="branchName()"
       [links]="[
@@ -47,7 +46,6 @@
       [git]="git()"
       [panelOpen]="panelOpen()"
       [branchCopied]="copied()"
-      (stageChange)="changeStage($event)"
       (closeRequested)="closeOpen.set(true)"
       (panelToggle)="togglePanel()"
       (branchCopy)="copyBranch($event)"

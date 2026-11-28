@@ -100,7 +100,6 @@ export class TasksDemoComponent {
   protected readonly scope = signal('all');
   protected readonly filter = signal<SummaryStatus | null>(null);
   protected readonly selected = signal('rate-code');
-  protected readonly stage = signal<TaskStage>('active');
   protected readonly panel = signal('changes');
   protected readonly panelOpen = signal(true);
   protected readonly closeOpen = signal(false);
@@ -305,7 +304,6 @@ export class TasksDemoComponent {
     this.note.set(`Saved ${task.title} as planned.`);
   }
   protected changeStage(stage: TaskStage): void {
-    this.stage.set(stage);
     this.tasks.update((tasks) =>
       tasks.map((task) => (task.id === 'rate' ? { ...task, stage } : task)),
     );
