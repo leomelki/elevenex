@@ -63,7 +63,7 @@
       <button
         exButton
         class="primary"
-        [variant]="job() || compact() ? 'secondary' : 'primary'"
+        [variant]="job() || (compact() && !toolbar()) ? 'secondary' : 'primary'"
         [disabled]="!!busy() || !step() || actionsDisabled()"
         [attr.aria-busy]="!!busy() || (!!job() && !job()?.waiting)"
         [attr.aria-expanded]="job() && !job()?.waiting ? jobOpen() : null"
@@ -71,14 +71,14 @@
         [title]="
           job()
             ? job()?.waiting
-              ? 'Open the session that needs you'
-              : 'Show the steps'
+              ? actionLabel() + ' · Open the session that needs you'
+              : actionLabel() + ' · Show the steps'
             : step() === 'merge'
               ? 'Merge ' +
                 ahead() +
                 (ahead() === 1 ? ' commit into ' : ' commits into ') +
                 mergeInto()
-              : ''
+              : toolbar() ? actionLabel() : ''
         "
         [attr.aria-label]="actionLabel()"
         (click)="primary()"
@@ -102,7 +102,7 @@
                     [size]="14"
                   />
                 }
-                <span>{{ view.label }}</span>
+                <span class="action-label" [class.has-count]="view.count">{{ view.label }}</span>
                 @if (view.count) {
                   <span class="count rolling">
                     @for (count of [{ value: view.count }]; track count.value) {
@@ -126,7 +126,7 @@
         exButton
         class="more"
         [hidden]="!hasMore()"
-        [variant]="job() || compact() ? 'secondary' : 'primary'"
+        [variant]="job() || (compact() && !toolbar()) ? 'secondary' : 'primary'"
         [disabled]="!!busy() || !step() || actionsDisabled()"
         [cdkMenuTriggerFor]="job() ? null : menu"
         [attr.aria-expanded]="job() ? jobOpen() : null"
@@ -149,7 +149,7 @@
             class="measure-icon"
             [style.width.px]="view.busy ? 13 : 14"
           ></span>
-          <span>{{ view.label }}</span>
+          <span class="action-label" [class.has-count]="view.count">{{ view.label }}</span>
           @if (view.count) {
             <span class="count">{{ view.count }}</span>
           }

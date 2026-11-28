@@ -15,6 +15,7 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
     type="button"
     [attr.aria-label]="label()"
     [exTooltip]="label()"
+    [tooltipSide]="tooltipSide()"
     [attr.aria-pressed]="active()"
     [disabled]="disabled()"
     [class.small]="size() === 'sm'"
@@ -29,8 +30,8 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
     }
     button {
       font: inherit;
-      width: 28px;
-      height: 28px;
+      width: var(--icon-button-size, 28px);
+      height: var(--icon-button-size, 28px);
       display: inline-grid;
       place-items: center;
       padding: 0;
@@ -49,8 +50,8 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
       color: var(--ink);
     }
     button[aria-pressed="true"] {
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--icon-button-active-background, var(--accent-soft));
+      color: var(--icon-button-active-color, var(--accent));
     }
     button.small {
       width: var(--space-6);
@@ -73,6 +74,7 @@ import { TooltipDirective } from "../tooltip/tooltip.directive";
 export class IconButtonComponent {
   readonly icon = input.required<string>();
   readonly label = input.required<string>();
+  readonly tooltipSide = input<"top" | "bottom" | "end">("top");
   readonly active = input<boolean>();
   readonly disabled = input(false);
   readonly size = input<"md" | "sm">("md");

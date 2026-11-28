@@ -2,7 +2,8 @@
   ><button
     class="name"
     type="button"
-    [title]="canRename() ? 'Branch · rename' : 'Branch'"
+    [title]="canRename() ? 'Rename branch: ' + name() : 'Branch: ' + name()"
+    [attr.aria-label]="canRename() ? 'Rename branch: ' + name() : 'Branch: ' + name()"
     [disabled]="!canRename()"
     (click)="renameRequested.emit(name())"
   >
@@ -17,6 +18,7 @@
     class="copy"
     type="button"
     [attr.aria-label]="copied() ? 'Copied' : 'Copy branch name'"
+    [title]="breadcrumb() ? name() : null"
     (click)="copyRequested.emit(name())"
   >
     <ex-icon [name]="copied() ? 'check' : 'copy'" [size]="12" /></button

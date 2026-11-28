@@ -46,7 +46,10 @@
       } @else if (!commitOpen() && git.error(); as error) {
         <div class="git-status error" role="alert">
           <span [title]="error">{{ error }}</span>
-          <button exButton size="sm" variant="ghost" [disabled]="git.loading() || !!git.busy()" (click)="git.refresh()">Refresh status</button>
+          <button exButton variant="ghost" aria-label="Refresh Git status" tooltipSide="bottom"
+            [exTooltip]="error + '\nRefresh Git status.'" [disabled]="git.loading() || !!git.busy()" (click)="git.refresh()">
+            <ex-icon name="refresh" [size]="14" />
+          </button>
         </div>
       } @else if (pull(); as update) {
         <button class="pull" exButton size="sm" variant="secondary" tooltipSide="bottom"

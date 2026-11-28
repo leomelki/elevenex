@@ -1,32 +1,32 @@
 :host {
   display: block;
   min-width: 0;
-  container-type: inline-size;
+  container: task-header / inline-size;
 }
 header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  padding-inline: var(--space-3) var(--space-2);
   border-bottom: 1px solid var(--line);
 }
 .row,
-.heading,
-.metadata {
+.identity,
+.actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
 }
-.heading {
-  overflow: hidden;
-}
 .row {
-  /* Git status arrives after the branch: reserve its control height while loading. */
-  min-height: var(--control-height);
+  min-height: calc(2 * var(--space-6) - 1px);
+}
+.identity {
+  flex: 1;
+}
+.actions {
+  justify-content: flex-end;
 }
 h1 {
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: min(10ch, 25%);
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -36,24 +36,28 @@ h1 {
   line-height: var(--text-title-line);
   letter-spacing: var(--text-title-tracking);
 }
-.grow {
-  flex: 1;
-  min-width: var(--space-2);
+.breadcrumb-divider {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: var(--text-caption-size);
 }
-.metadata {
-  gap: 6px;
-  overflow: clip;
-  overflow-clip-margin: 4px;
+.identity ex-branch-chip {
+  flex: 0 1 auto;
+  min-width: calc(var(--space-8) + var(--space-4));
 }
-.metadata ex-branch-chip { flex: 0 1 auto; }
+.identity ex-project-mark,
+ex-git-bar {
+  flex: none;
+}
 .git-status {
   display: flex;
-  flex: none;
   align-items: center;
   min-width: 0;
-  max-width: 45%;
+  max-width: 22cqi;
 }
-.git-status:empty { display: none; }
+.git-status:empty {
+  display: none;
+}
 .meta {
   min-width: 0;
   overflow: hidden;
@@ -63,53 +67,118 @@ h1 {
   font-size: var(--text-caption-size);
 }
 .link {
+  flex: none;
+  color: var(--ink-muted);
+}
+@media (hover: hover) {
+  .link {
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+  .row:hover .link,
+  .row:focus-within .link {
+    opacity: 1;
+  }
+}
+.parent {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: 20px;
-  flex: none;
-  padding: 0 5px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-muted);
   font: inherit;
   font-size: var(--text-caption-size);
-  cursor: pointer;
   white-space: nowrap;
+  cursor: pointer;
 }
-.link:hover {
+.parent:hover {
   background: var(--surface-sunken);
   color: var(--ink);
 }
-.link:focus-visible {
+.parent b,
+.parent .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parent b {
+  color: var(--ink);
+  font-weight: var(--text-title-weight);
+}
+.parent .mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono-meta-size);
+}
+.parent:focus-visible {
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
-ex-icon-button,
-ex-task-stage,
-ex-git-bar {
+.close-task {
   flex: none;
+  width: var(--control-height);
+  padding: 0;
+  color: var(--ink-muted);
 }
-@container (max-width: 480px) {
-  .metadata .link:disabled { display: none; }
+.close-task.suggested {
+  color: var(--accent);
 }
-@media (max-width: 720px) {
+.close-task.suggested:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.separator {
+  flex: none;
+  width: 1px;
+  height: var(--text-mono-meta-line);
+  background: var(--line);
+}
+.panel-toggle {
+  --icon-button-size: var(--control-height);
+  --icon-button-active-background: var(--surface-sunken);
+  --icon-button-active-color: var(--ink);
+}
+@container task-header (width <= 620px) {
+  .breadcrumb-divider,
   .meta {
     display: none;
   }
+  .link span {
+    display: none;
+  }
+  .link {
+    padding-inline: var(--space-1);
+  }
 }
-
-.parent { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; margin: 0 0 2px; padding: 2px 6px 2px 4px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--text-caption-size); cursor: pointer; }
-.parent:hover { background: var(--surface-sunken); color: var(--ink); }
-.parent b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.parent .mono { font-family: var(--font-mono); font-size: 11px; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.parent:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
-
-.close-task { display: inline-flex; align-items: center; gap: 5px; flex: none; height: var(--control-height); padding: 0 var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--text-caption-size); cursor: pointer; white-space: nowrap; }
-.close-task.suggested { color: var(--accent); }
-.close-task:hover { background: var(--surface-sunken); color: var(--ink); }
-.close-task.suggested:hover { background: var(--accent-soft); color: var(--accent); }
-.close-task:focus-visible { outline: 2px solid transparent; box-shadow: var(--focus-ring); }
-.close-task:disabled { opacity: .45; cursor: default; }
-.separator { height: 14px; width: 1px; background: var(--line); flex: none; }
+@container task-header (width <= 480px) {
+  header {
+    padding-inline: var(--space-2);
+  }
+  .row,
+  .identity,
+  .actions {
+    gap: var(--space-1);
+  }
+  .identity ex-project-mark {
+    display: none;
+  }
+}
+@container task-header (width <= 360px) {
+  .row {
+    display: grid;
+    gap: 0;
+    padding-block: var(--space-1);
+  }
+  .identity,
+  .actions {
+    min-height: var(--control-height);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .link {
+    transition: none;
+  }
+}

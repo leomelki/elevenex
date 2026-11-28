@@ -211,6 +211,45 @@
   display: inline-block;
   flex: none;
 }
+:host(.toolbar) {
+  --git-action-padding: var(--space-2);
+  --git-toolbar-density: full;
+}
+:host(.toolbar) .split > .primary {
+  padding-inline: var(--git-action-padding);
+}
+:host(.toolbar) .action-content {
+  margin-inline: var(--git-action-padding);
+}
+:host(.toolbar) .action-label {
+  max-width: min(24ch, 25cqi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Both the measured and painted copies respond to the same header width. */
+@container task-header (width <= 620px) {
+  :host(.toolbar) {
+    --git-toolbar-density: counts;
+  }
+  :host(.toolbar) .action-label.has-count {
+    display: none;
+  }
+}
+@container task-header (width <= 400px) {
+  :host(.toolbar) {
+    --git-action-padding: var(--space-1);
+    --git-toolbar-density: icons;
+  }
+  :host(.toolbar) .stat,
+  :host(.toolbar) .split > .more {
+    padding-inline: var(--space-1);
+  }
+  :host(.toolbar) .stat .add,
+  :host(.toolbar) .stat .del,
+  :host(.toolbar) .action-label {
+    display: none;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .ink-enter,
   .count-enter {

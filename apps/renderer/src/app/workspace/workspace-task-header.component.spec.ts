@@ -27,7 +27,8 @@ describe('Workspace task header status', () => {
     const store = {
       selectedTask: signal({ id: 11, name: 'A task', branchName: 'work', projectId: 1, projectRepositoryCount: 1, state: 'ready' }),
       taskSelection: signal({ scopeId: 'scope', taskId: 11 }), selectedTaskStage: signal('active'),
-      projects: signal([]), selectedCreation: signal(null), busy: signal(false), offline: signal(false),
+      activeProject: signal('all'), projects: signal([{ id: '1', name: 'Project' }]),
+      selectedCreation: signal(null), busy: signal(false), offline: signal(false),
       commitPanelAvailable: signal(false), machine: signal({ name: 'This machine' }),
     };
     TestBed.configureTestingModule({ providers: [
@@ -39,19 +40,20 @@ describe('Workspace task header status', () => {
     return { fixture, git, store, root: fixture.nativeElement as HTMLElement };
   }
 
-  it('keeps delayed loading, behind and error feedback inside the metadata row with reachable actions', async () => {
+  it('keeps delayed loading, behind and error feedback inside the task toolbar with reachable actions', async () => {
     const { fixture, git, root } = setup();
     await fixture.whenStable();
     const header = root.querySelector('ex-task-header header');
-    const metadataRow = root.querySelector('.metadata')?.parentElement;
+    const row = header?.querySelector('.row');
     expect(header).not.toBeNull();
-    expect(metadataRow?.textContent).toContain('Checking Git status');
+    expect(row?.textContent).toContain('Checking Git status');
+    expect(row?.querySelector('[aria-label="Link PR or ticket"]')).toBeNull();
     git.loading.set(false);
     git.summary.set({ ...behind, behind: 37 });
     git.state.set({ files: 0 });
     fixture.detectChanges(); await fixture.whenStable();
     const pull = root.querySelector<HTMLButtonElement>('button.pull');
-    expect(pull?.closest('.row')).toBe(metadataRow);
+    expect(pull?.closest('.row')).toBe(row);
     expect(pull?.getAttribute('aria-label')).toBe('Pull 37 commits');
     expect(pull?.getAttribute('aria-description')).toContain(`From ${upstream} into ${branch}.`);
     pull?.click();
@@ -61,14 +63,22 @@ describe('Workspace task header status', () => {
     git.error.set(message);
     fixture.detectChanges(); await fixture.whenStable();
     const alert = root.querySelector('[role="alert"]');
-    expect(alert?.closest('.row')).toBe(metadataRow);
+    expect(alert?.closest('.row')).toBe(row);
     expect(alert?.textContent).toContain(message);
     alert?.querySelector<HTMLButtonElement>('button')?.click();
     expect(git.refresh).toHaveBeenCalledOnce();
     expect(root.querySelector('ex-task-header header')).toBe(header);
-    expect(header?.querySelectorAll('.row')).toHaveLength(2);
-    expect(root.querySelector('.git-notice')).toBeNull();
+    expect(header?.querySelectorAll('.row')).toHaveLength(1);
     fixture.destroy();
+  });
+
+  it('shows project identity when the rail is in All projects', async () => {
+    const { fixture, store, root } = setup();
+    await fixture.whenStable();
+    expect(root.querySelector('ex-task-header ex-project-mark')).not.toBeNull();
+    store.activeProject.set('1');
+    fixture.detectChanges();
+    expect(root.querySelector('ex-task-header ex-project-mark')).toBeNull();
   });
 
   it('shows progress on the same control, disables Git writes, and keeps review reachable', async () => {

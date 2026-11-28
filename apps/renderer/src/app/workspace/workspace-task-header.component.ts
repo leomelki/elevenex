@@ -82,7 +82,9 @@ export class WorkspaceTaskHeaderComponent {
   protected readonly gitDraft = signal('');
   private dialogTask?: number;
   protected readonly confirmingTask = signal<{ readonly key: string; readonly title: string; readonly sessions: number; readonly running: number; readonly unpushed: number; readonly uncommitted?: number; readonly terminals: number; readonly actions: number; readonly apps?: number } | null>(null);
-  protected readonly project = computed(() => this.store.projects().find(project => project.id === String(this.store.selectedTask()?.projectId)));
+  protected readonly project = computed(() => this.store.activeProject() === 'all'
+    ? this.store.projects().find(project => project.id === String(this.store.selectedTask()?.projectId))
+    : undefined);
   protected readonly repo = computed(() => {
     const task = this.store.selectedTask();
     return task?.projectRepositoryCount === 1 ? undefined : task?.repoName;

@@ -47,6 +47,7 @@ interface StatContent {
 
 @Component({
   selector: "ex-git-bar",
+  host: { "[class.toolbar]": "toolbar()" },
   imports: [
     CdkMenuTrigger,
     OverlayModule,
@@ -73,6 +74,7 @@ export class GitBarComponent {
   readonly mergeInto = input<string>();
   readonly job = input<GitJob>();
   readonly compact = input(false);
+  readonly toolbar = input(false);
   readonly allowedActions = input<readonly GitAction[]>();
   readonly actionsDisabled = input(false);
   readonly quietLabel = input('Up to date');

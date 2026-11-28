@@ -369,7 +369,7 @@ it("keeps Close task the same size and identity when suggested", () => {
   fixture.componentRef.setInput("title", "Task");
   fixture.detectChanges();
   const button = fixture.nativeElement.querySelector(".close-task");
-  expect(button.textContent).toContain("Close task");
+  expect(button.getAttribute("aria-label")).toBe("Close task");
   fixture.componentRef.setInput("closeSuggested", true);
   fixture.detectChanges();
   expect(fixture.nativeElement.querySelector(".close-task")).toBe(button);

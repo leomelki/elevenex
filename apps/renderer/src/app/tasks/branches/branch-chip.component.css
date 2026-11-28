@@ -77,8 +77,35 @@ button:focus-visible {
 .copied .copy {
   color: var(--accent);
 }
+:host(.breadcrumb) .name,
+:host(.breadcrumb) .copy {
+  height: var(--control-height);
+  border-radius: var(--radius-sm);
+}
+:host(.breadcrumb) .name {
+  padding-inline: var(--space-1);
+  background: transparent;
+  color: var(--ink-muted);
+}
+:host(.breadcrumb) .name:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+:host(.breadcrumb) .copy {
+  width: var(--space-6);
+}
+@container task-header (width <= 620px) {
+  :host(.breadcrumb) .name span {
+    display: none;
+  }
+}
 @media (hover: none) {
   .copy {
     opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy {
+    transition: none;
   }
 }

@@ -15,7 +15,7 @@ export default async function* (capture) {
     await owner(component => component.store.selectSession({ taskId: '11', sessionId: '101' }));
     await finish();
     assert.equal(await capture.evaluate(() => document.querySelectorAll('article.current .new-session, article.current .empty-session').length), 0);
-    assert.equal(await capture.evaluate(() => document.querySelector('ex-task-header .close-task')?.textContent.includes('Close task')), true);
+    assert.equal(await capture.evaluate(() => document.querySelector('ex-task-header .close-task')?.getAttribute('aria-label')), 'Close task');
     yield {name: `${theme}-task`, inspect: ['ex-task-header', 'article.current .add']};
     await capture.motion.freeze();
     await capture.click('ex-git-bar .primary');

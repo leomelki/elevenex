@@ -20,6 +20,7 @@ export class GitBarMotion {
   private visibility: GitBarVisibility = { action: false, stat: false };
   private actionVisible = false;
   private statVisible = false;
+  private toolbarDensity = "";
   private readonly animations = new Set<Animation>();
   private readonly widths = new Map<HTMLElement, Animation>();
   private readonly fades = new Map<HTMLElement, Animation>();
@@ -82,7 +83,11 @@ export class GitBarMotion {
     const keyboardMargin = style.getPropertyValue("--kbd-margin");
     if (actionMeasure.style.getPropertyValue("--kbd-margin") !== keyboardMargin)
       actionMeasure.style.setProperty("--kbd-margin", keyboardMargin);
-    const move = animate && !this.motion?.matches;
+    const density = style.getPropertyValue("--git-toolbar-density");
+    // A shell resize is already moving the surrounding layout. Snap to the
+    // responsive measurements rather than animating from the wider controls.
+    const move = animate && !this.motion?.matches && density === this.toolbarDensity;
+    this.toolbarDensity = density;
     // The DOM already contains the new digits here. Keep the previous layout
     // width, or the current painted width when interrupted, as the origin.
     const counts = new Set(

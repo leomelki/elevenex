@@ -4,7 +4,7 @@ import {
   input,
   output,
 } from '@angular/core';
-import { IconButtonComponent, IconComponent } from '../../ui';
+import { ButtonComponent, IconButtonComponent, IconComponent, TooltipDirective } from '../../ui';
 import type {
   GitAction,
   GitState,
@@ -23,6 +23,7 @@ import { LinkChipComponent } from './link-chip.component';
 @Component({
   selector: 'ex-task-header',
   imports: [
+    ButtonComponent,
     IconButtonComponent,
     IconComponent,
     ProjectMarkComponent,
@@ -31,6 +32,7 @@ import { LinkChipComponent } from './link-chip.component';
     TaskStageComponent,
     LinkChipComponent,
     RepoTagComponent,
+    TooltipDirective,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-header.component.html',

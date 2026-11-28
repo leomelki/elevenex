@@ -25,5 +25,20 @@
   outline: 2px solid transparent;
   box-shadow: var(--focus-ring);
 }
+.stage.glyph-only {
+  justify-content: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.stage.glyph-only:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+.stage:disabled {
+  opacity: .55;
+  cursor: default;
+}
 
 .grow { flex: 1; min-width: 0; }

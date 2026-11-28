@@ -46,7 +46,7 @@ See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harne
 | `ProjectRail` | `projects`, `all`, `activeId` | `selectProject(id)`, `addProject(tile)`, `reorderProjects(ids)` |
 | `StatusSummary` | `counts`, `active` | `selectStatus(status or null)`; a second click clears the filter |
 | `StageGlyph` | `stage`, `size` | None |
-| `TaskStage` | `stage` | `stageChange(stage)` |
+| `TaskStage` | `stage`, `glyphOnly` | `stageChange(stage)` |
 | `LinkChip` | `kind`, `label`, `state`, `href`, `compact` | `activated()` |
 | `TaskHeader` | `title`, `repo`, `parent`, `stage`, `branch`, `links`, `meta`, `project`, `git`, `closeSuggested`, `panelOpen`, `branchCopied` | `stageChange`, `closeRequested`, `panelToggle`, `branchRename`, `branchCopy`, `linkRequested`, `linkActivated(link)`, `gitAction`, `changesRequested`, `parentRequested(TaskParentContext)` |
 | `CloseTask` | `title`, `sessions`, `running`, `apps`, `actions`, `terminals`, `unpushed`, `uncommitted`, `ticket` | `confirmed({push, moveTicket})`, `cancelled()` |
@@ -54,7 +54,7 @@ See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harne
 | `SubtaskGlyph` | `depth` | None; a fixed-width stair mark capped at three levels |
 | `TaskLine` | `task: TaskContext`, `branchCopied` | `renameRequested()`, `branchRename(name)`, `branchCopy(name)` |
 | `BranchPicker` | `query`, `branches` or precomputed `items`, `allowCreate`, `allowHeld`, `disabled`, `base`, `highlighted`, `label`, `listId` | `pick(row)` |
-| `BranchChip` | `name`, `base`, `compact`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
+| `BranchChip` | `name`, `base`, `compact`, `breadcrumb`, `copied` | `renameRequested(name)`, `copyRequested(name)` |
 | `WorkspacePicker` | `value`, `items` | `valueChange(name or 'auto')`, `newWorkspace()`, `manageWorkspaces()` |
 | `NewTask` | `project`, optional `projectMenu`, `active`, `repos`, initial `repo`, pure `branchesFor(repoId)`, `branches`, `bases`, `base`, `branchPrefix`, initial `title`, initial `step`, initial `branchQuery`, `baseQuery`, `hi`, `workspace`, `workspaces`, `links`, `autoFocus` | `create(CreatedTask)`, `plan(PlannedTask)`, `cancelled()`, `linkRequested()`, `projectRequested()`, `addRepository()`, `workspaceRequested('new' or 'manage')` |
 | `SessionRow` | `session`, `selected`, `muted` (boundary title only), `depth`, optional `context` for a two-line attention shortcut, `allowArchive` (default false), `archived`, `allowRestore` | `activated(sessionId)`, `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)` |
@@ -62,7 +62,7 @@ See [cross-harness delegation](../../../../backend/src/mcp/README.md#cross-harne
 | `TaskGroup` | `task`, `selected`, optional `reveal: {sessionId}` request, `filter`, `showProject`, `showLink`, `allowAdd`, `allowAddSubtask`, `allowArchive`, `archiveDisabled`, `cap` (5; 0 uncapped), `capStep` (5), `sessionDisclosure` (model) | `archiveRequested(TaskSession)`, `deleteRequested(TaskSession)`, `restoreRequested(TaskSession)`, `archivedSessionsRequested(latest or earlier)`, `selectSession(sessionId)`, `addSession(taskId)`, `addSubtaskSession(subtaskId)` |
 | `TaskList` | `tasks`, `selected`, `filter`, `showProjects`, `sessionCap` (5), `allowArchive` (false), `sessionDisclosures` (model) | `archiveRequested({taskId, session})`, `deleteRequested({taskId, session})`, `restoreRequested({taskId, session})`, `archivedSessionsRequested({taskId, page})`, `selectSession({taskId, sessionId})`, `addSession(taskId)`, `addSubtaskSession({taskId, subtaskId})`, `closedRequested()` |
 | `PanelTabs` | `tabs`, `active`, `labelled`, `label` | `selectTab(id)` |
-| `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `busyLabel`, `compact`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
+| `GitBar` | `files`, `add`, `del`, `ahead`, `busy`, `busyLabel`, `compact`, `toolbar`, `mergeInto`, `job` | `action(GitAction)`, `changesRequested()`, `jobSessionRequested(sessionId)`, `jobCancelled(jobId)` |
 
 The `Component` suffix and `ex-` selector prefix apply to the names above. `branchItems`, `branchFromTitle`, `validBranchName` and `matchesSessionFilter` are pure exported operations, independently testable without rendering.
 
@@ -107,9 +107,18 @@ continues to work without these optional inputs. `canLink` and
 designed form. `WorkspacePicker.canManage` controls its new/manage commands.
 
 `TaskHeader.closed` hides stage/close controls for archived history.
-Project task-specific buttons with `[taskActions]` alongside **Close task**.
-The optional `[gitStatus]` projection sits beside Git actions inside the reserved
-metadata row. Owners can show bounded loading, retry or upstream controls there;
+The 48px toolbar leads with the stage glyph, title and branch breadcrumb.
+An optional parent breadcrumb sits above it. In All projects, the connected
+header also shows the project mark when space permits. The Link action appears
+on hover or keyboard focus when linking is available and no link is set.
+In narrow panes the branch label and Git action words give way to icons.
+Branch rename/copy and Git actions keep their accessible names. The Git bar's
+toolbar presentation compacts the measured and painted labels together.
+Project task-specific buttons such as **Keep open** with `[taskActions]`.
+At pane widths of 360px or less, the toolbar puts identity and actions on
+separate lines. Its height within each layout stays fixed as Git state changes.
+The optional `[gitStatus]` projection sits beside Git actions in the toolbar.
+Owners can show bounded loading, retry or upstream controls there;
 asynchronous status must not add rows below the header and displace a conversation.
 Keep projected content to one line, with long messages truncated visually while
 retaining their accessible text.
@@ -149,7 +158,7 @@ first-project flight, later creation, controlled selection and cancellation.
 
 ## Commit panel and task-screen update (2026-10-27)
 
-`TaskHeader` always shows the quiet **Close task** action for an open task.
+`TaskHeader` always shows the quiet **Close task** icon for an open task.
 `closeSuggested` only changes its color; the button keeps its identity and size.
 The owner checks authoritative close counts: a clean, idle task closes directly
 with Toast/Undo, while running, uncommitted or unpushed work opens `CloseTask`.

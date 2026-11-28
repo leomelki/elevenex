@@ -3,7 +3,15 @@
     <button class="parent" type="button" [title]="'Open ' + parent.title" (click)="parentRequested.emit(parent)"><ex-icon name="subtask" [size]="12" />Sub-task of <b>{{ parent.title }}</b>@if (parent.branch) { <span class="mono">{{ parent.branch }}</span> }</button>
   }
   <div class="row">
-    <div class="heading">
+    <div class="identity">
+      @if (!closed()) {
+        <ex-task-stage
+          [stage]="stage()"
+          [disabled]="disabled()"
+          [glyphOnly]="true"
+          (stageChange)="stageChange.emit($event)"
+        />
+      }
       @if (project(); as mark) {
         <ex-project-mark
           [name]="mark.name"
@@ -16,35 +24,16 @@
           [decorative]="true"
         />
       }
-      <h1>{{ title() }}</h1>
-      @if (!closed()) { <ex-task-stage
-        [stage]="stage()"
-        [disabled]="disabled()"
-        (stageChange)="stageChange.emit($event)"
-      /> }
-    </div>
-    <span class="grow"></span>
-    <ng-content select="[taskActions]" />
-    @if (!closed()) {
-      <button type="button" class="close-task" [class.suggested]="closeSuggested()" [disabled]="disabled()" (click)="closeRequested.emit()">
-        <ex-icon name="close-task" [size]="14" />Close task
-      </button>
-      <span class="separator" aria-hidden="true"></span>
-    }
-    <ex-icon-button
-      icon="panel"
-      label="Toggle side panel"
-      [active]="panelOpen()"
-      (pressed)="panelToggle.emit()"
-    />
-  </div>
-  <div class="row">
-    <div class="metadata">
-      @if (repo(); as repo) { <ex-repo-tag [repo]="repo" size="md" /> }
+      <h1 [title]="title()">{{ title() }}</h1>
+      @if (repo() || branch()) {
+        <span class="breadcrumb-divider" aria-hidden="true">/</span>
+      }
+      @if (repo(); as repo) { <ex-repo-tag [repo]="repo" /> }
       @if (branch(); as name) {
         <ex-branch-chip
           [name]="name"
           [compact]="true"
+          [breadcrumb]="true"
           [copied]="branchCopied()"
           [canRename]="canRenameBranch() && !disabled()"
           (renameRequested)="branchRename.emit($event)"
@@ -57,38 +46,64 @@
           [label]="link.label"
           [state]="link.state"
           [href]="link.href"
+          [compact]="true"
           (activated)="linkActivated.emit(link)"
         />
       } @empty {
-        <button class="link" type="button" [disabled]="!canLink() || disabled()" (click)="linkRequested.emit()">
-          <ex-icon name="link" [size]="12" />Link PR or ticket
-        </button>
+        @if (canLink() && !disabled()) {
+          <button exButton variant="ghost" size="sm" class="link" aria-label="Link PR or ticket"
+            exTooltip="Link PR or ticket" tooltipSide="bottom" (click)="linkRequested.emit()">
+            <ex-icon name="link" [size]="14" /><span>Link</span>
+          </button>
+        }
       }
       @if (meta()) {
-        <span class="meta">{{ meta() }}</span>
+        <span class="meta" [title]="meta()">{{ meta() }}</span>
       }
+      <ng-content select="[taskActions]" />
     </div>
-    <span class="grow"></span>
-    <div class="git-status"><ng-content select="[gitStatus]" /></div>
-    @if (git(); as state) {
-      <ex-git-bar [unreachable]="unreachable()"
-        [files]="state.files ?? 0"
-        [add]="state.add ?? 0"
-        [del]="state.del ?? 0"
-        [ahead]="state.ahead ?? 0"
-        [busy]="state.busy"
-        [busyLabel]="state.busyLabel"
-        [mergeInto]="state.mergeInto"
-        [job]="state.job"
-        [compact]="true"
-        [allowedActions]="gitAllowedActions()"
-        [actionsDisabled]="gitActionsDisabled()"
-        [quietLabel]="gitQuietLabel()"
-        (action)="gitAction.emit($event)"
-        (jobSessionRequested)="gitJobSessionRequested.emit($event)"
-        (jobCancelled)="gitJobCancelled.emit($event)"
-        (changesRequested)="changesRequested.emit()"
-      ><div gitPanel><ng-content select="[gitPanel]" /></div></ex-git-bar>
-    }
+    <div class="actions">
+      <div class="git-status"><ng-content select="[gitStatus]" /></div>
+      @if (git(); as state) {
+        <ex-git-bar
+          [unreachable]="unreachable()"
+          [files]="state.files ?? 0"
+          [add]="state.add ?? 0"
+          [del]="state.del ?? 0"
+          [ahead]="state.ahead ?? 0"
+          [busy]="state.busy"
+          [busyLabel]="state.busyLabel"
+          [mergeInto]="state.mergeInto"
+          [job]="state.job"
+          [compact]="true"
+          [toolbar]="true"
+          [allowedActions]="gitAllowedActions()"
+          [actionsDisabled]="gitActionsDisabled()"
+          [quietLabel]="gitQuietLabel()"
+          (action)="gitAction.emit($event)"
+          (jobSessionRequested)="gitJobSessionRequested.emit($event)"
+          (jobCancelled)="gitJobCancelled.emit($event)"
+          (changesRequested)="changesRequested.emit()"
+        >
+          <div gitPanel><ng-content select="[gitPanel]" /></div>
+        </ex-git-bar>
+      }
+      @if (!closed()) {
+        <button exButton variant="ghost" class="close-task" aria-label="Close task"
+          exTooltip="Close task" tooltipSide="bottom" [class.suggested]="closeSuggested()"
+          [disabled]="disabled()" (click)="closeRequested.emit()">
+          <ex-icon name="close-task" [size]="16" />
+        </button>
+        <span class="separator" aria-hidden="true"></span>
+      }
+      <ex-icon-button
+        class="panel-toggle"
+        icon="panel"
+        label="Toggle side panel"
+        tooltipSide="bottom"
+        [active]="panelOpen()"
+        (pressed)="panelToggle.emit()"
+      />
+    </div>
   </div>
 </header>
