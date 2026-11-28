@@ -12,6 +12,20 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   overflow-anchor: auto;
+  scroll-padding-block-end: var(--chat-scroll-end-fade, 0px);
+}
+/* Paint over the last few pixels of the transcript, below the floating controls
+   and clear of the native scrollbar and pointer input. */
+:host::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-block-end: 0;
+  inset-inline: 0 var(--scrollbar-width, 0px);
+  block-size: var(--chat-scroll-end-fade, 0px);
+  max-block-size: 100%;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
 }
 .viewport.reconciling-history {
   overflow-anchor: none;
@@ -45,7 +59,7 @@
   gap: var(--space-8);
   max-width: var(--chat-max);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-4) var(--space-8);
+  padding: var(--space-6) var(--space-4) calc(var(--space-8) + var(--chat-scroll-end-inset, 0px));
 }
 /* Pinned reminder of the prompt the reply in view answers: a centered glass
    capsule that sizes to the prompt, echoing the title island. One line at rest;

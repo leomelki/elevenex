@@ -151,6 +151,11 @@ range subscriptions are released with the rail. The `/conversation` preview has
 
 `ChatScroll` follows growth only while at the bottom, retains browser scroll anchoring while reading history, and shows a way back down. User messages expose `data-user-message` through `messageId`. The scroll owner finds the current prompt with a binary search, coalesces observations into animation frames, and refreshes its prompt index only when message elements change. Resize/mutation observers, scheduled frames and highlight animations are cleaned up on destruction. All message content remains readable in full; the reminder is the only clamped copy.
 
+In `Chat`, the transcript and its native scrollbar extend to the composer’s
+top edge. A short fade ends at that edge and leaves the scrollbar and scroll
+controls clear. Moving the gap into the transcript’s end padding keeps the
+last item above the fade and preserves its clearance from the composer.
+
 End following also reconciles viewport-only height changes, including composer
 growth, without marking existing messages unread. A late scroll event from the
 previous bottom position or a transient restoration of that offset preserves

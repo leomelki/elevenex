@@ -19,6 +19,8 @@
 }
 ex-chat-scroll {
   height: 100%;
+  --chat-scroll-end-fade: var(--space-6);
+  --chat-scroll-end-inset: var(--space-3);
 }
 ex-turn-nav {
   position: absolute;
@@ -31,7 +33,7 @@ ex-turn-nav {
   width: 100%;
   max-width: var(--chat-max);
   margin: 0 auto;
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
 }
 
 :host.center-composer { justify-content: center; overflow-y: auto; }
@@ -42,6 +44,7 @@ ex-turn-nav {
   max-height: 100%;
   min-height: 0;
   margin: auto;
+  padding-block-start: var(--space-3);
 }
 
 .message-sender {
