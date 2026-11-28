@@ -983,15 +983,11 @@ export class TasksService
           'Choose a base branch for this repository.',
         );
       if (initialSetup.mode === 'new') initialSetup.baseRef = base;
-      initialSetup.preparationStage = 'refreshing_ref';
-      await this.update(
-        id,
-        { taskConfig: JSON.stringify(initialSetup) },
-        'preparing',
-      );
+      await this.setPreparationStage(id, initialSetup, 'refreshing_ref');
       // Network work is coalesced independently and never holds checkout leases.
       await this.git.refresh(repo.path, base, initialSetup.useSavedRef);
     }
+    await this.setPreparationStage(id, initialSetup, 'waiting_for_checkout');
     await this.git.exclusive(key, async () => {
       const current = await this.record(id);
       if (current.archivedAt || current.taskState !== 'preparing') return;
@@ -1099,8 +1095,7 @@ export class TasksService
       }
       if (setup.mode === 'new')
         setup.contextRootRef ??= current.startingCommit ?? setup.resolvedCommit;
-      setup.preparationStage = 'preparing_checkout';
-      await this.update(id, { taskConfig: JSON.stringify(setup) });
+      await this.setPreparationStage(id, setup, 'preparing_checkout');
       const environment = await this.allocator.allocate(
         repo,
         await this.record(id),
@@ -1170,8 +1165,7 @@ export class TasksService
         // Existing branches still need their earlier branch work summarized.
         setup.contextRootRef ?? null,
       );
-      setup.preparationStage = 'restoring_sessions';
-      await this.update(id, { taskConfig: JSON.stringify(setup) });
+      await this.setPreparationStage(id, setup, 'restoring_sessions');
       await this.restoreSessions(id, environment.path, setup.localBranch!);
       setup.preparationStage = undefined;
       await this.update(id, {
@@ -2238,6 +2232,21 @@ export class TasksService
       .update(schema.actions)
       .set({ worktreePath })
       .where(eq(schema.actions.workspaceId, id));
+  }
+
+  /**
+   * Stage writes change only task configuration, which ordinary updates do not
+   * announce. Desktop windows show the current step, so each change invalidates
+   * navigation once (a few times per setup, never while polling).
+   */
+  private async setPreparationStage(
+    id: number,
+    setup: TaskSetup,
+    stage: NonNullable<TaskSetup['preparationStage']>,
+  ) {
+    setup.preparationStage = stage;
+    await this.update(id, { taskConfig: JSON.stringify(setup) }, 'preparing');
+    this.navigationEvents?.invalidate();
   }
 
   private async update(

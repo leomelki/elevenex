@@ -1,4 +1,6 @@
-export type MachineKind = 'local' | 'ssh' | 'peer';
+import type { ProgressStep } from '../ui';
+
+export type MachineKind ='local' | 'ssh' | 'peer';
 export type MachineConnection = 'live' | 'kept' | 'idle' | 'fail';
 export type MachineColor = 'ocean' | 'pine' | 'plum' | 'rust' | 'steel' | 'rose';
 
@@ -60,14 +62,8 @@ export interface MachineGuest {
   readonly since: string;
 }
 
-export interface ReadyStep {
-  readonly id: string;
-  readonly label: string;
-  readonly detail?: string;
-  readonly state: 'todo' | 'active' | 'done' | 'failed';
-  readonly progress?: number;
-  readonly meta?: string;
-}
+/** Machine readiness uses the shared step vocabulary. */
+export type ReadyStep = ProgressStep;
 
 export interface SshHost {
   readonly id: string;

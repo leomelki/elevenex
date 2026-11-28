@@ -592,6 +592,28 @@ describe('DesktopWorkspaceService', () => {
       task.setupIssue,
     );
   });
+  it('reports the setup step while preparing and where a failed setup stopped, never the raw configuration', async () => {
+    const config = (preparationStage: string) =>
+      JSON.stringify({ mode: 'new', branchName: 'x', preparationStage, secret: 'private' });
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'preparing', taskConfig: config('preparing_checkout') })
+      .where(eq(schema.workspaces.id, taskId));
+    const preparing = await service.task(taskId);
+    expect(preparing).toMatchObject({ state: 'preparing', setupStep: 'checkout' });
+    expect(JSON.stringify(preparing)).not.toContain('private');
+    expect((await service.listTasks({})).items[0].setupStep).toBe('checkout');
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'failed', taskError: JSON.stringify({ code: 'branch_exists' }) })
+      .where(eq(schema.workspaces.id, taskId));
+    expect((await service.task(taskId)).setupStep).toBe('checkout');
+    await database.db
+      .update(schema.workspaces)
+      .set({ taskState: 'ready', taskError: null, taskConfig: config('restoring_sessions') })
+      .where(eq(schema.workspaces.id, taskId));
+    expect(await service.task(taskId)).not.toHaveProperty('setupStep');
+  });
   it('detects a missing visible checkout and recovers when the directory returns, without Git or losing history', async () => {
     await rm(checkout, { recursive: true });
     const missing = await service.task(taskId);

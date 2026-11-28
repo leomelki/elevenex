@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
-import { IconComponent, ProgressLineComponent, StatusGlyphComponent } from '../ui';
+import { IconComponent, StepListComponent } from '../ui';
 import { ReadyStep } from './machine.models';
 
 @Component({
   selector: 'ex-getting-ready',
-  imports: [IconComponent, ProgressLineComponent, StatusGlyphComponent],
+  imports: [IconComponent, StepListComponent],
   templateUrl: './getting-ready.component.html',
   styleUrl: './getting-ready.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

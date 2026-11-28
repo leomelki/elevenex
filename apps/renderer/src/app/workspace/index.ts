@@ -6,3 +6,4 @@ export * from './workspace-dialogs.component';
 export * from './workspace-onboarding.component';
 export * from './workspace-task-header.component';
 export * from './workspace-task-setup.component';
+export { workspaceTaskSignal } from './workspace-task-progress';

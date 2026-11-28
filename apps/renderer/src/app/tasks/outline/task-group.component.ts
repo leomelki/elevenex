@@ -207,6 +207,12 @@ export class TaskGroupComponent implements OnChanges {
       this.everyone().filter((session) => session.status === "running").length +
         this.everyone().reduce((total, row) => total + (row.childSummary?.status === 'running' ? this.hiddenChildren().get(row.id) ?? 0 : 0), 0),
   );
+  protected readonly headerTooltip = computed(() => {
+    const task = this.task();
+    return [task.title, task.workspace?.description,
+      task.temporary ? "The creating agent can close this temporary task" : undefined,
+    ].filter(Boolean).join(" · ");
+  });
   protected readonly leadLink = computed(
     () =>
       this.task().links?.find((link) => link.kind === "pr") ??

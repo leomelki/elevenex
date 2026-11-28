@@ -324,6 +324,12 @@ switching sessions, the persistent header + tooltip on hover and keyboard focus,
 native Enter creation, empty-task discovery, unavailable actions and narrow
 reduced-motion layouts in both themes, using the same preview URL.
 
+`scenarios/task-setup-progress.mjs` drives the `/task-setup` preview through
+each workspace setup step, a failed step with its recovery, the older-runtime
+fallback and the sidebar's workspace signals (no overlap with task titles) in
+both themes and a narrow reduced-motion layout. Use the same preview URL with
+`--timeout 180`.
+
 ```sh
 pnpm desktop:capture scripts/desktop-capture/scenarios/sidebar-motion.mjs --url http://127.0.0.1:4310 --timeout 180
 pnpm desktop:capture scripts/desktop-capture/scenarios/git-motion.mjs --url http://127.0.0.1:4310 --timeout 180

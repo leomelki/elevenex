@@ -22,6 +22,24 @@
       background: var(--attention-soft);
       color: var(--attention);
     }
+    .workspace {
+      max-width: 112px;
+      color: var(--ink-muted);
+      font-weight: 500;
+    }
+    .workspace.attention {
+      padding: 1px 6px 1px 4px;
+      border-radius: var(--radius-full);
+      background: var(--attention-soft);
+      color: var(--attention);
+      font-weight: 600;
+    }
+    .workspace .label {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
     .running,
     .count {
       color: var(--ink-muted);

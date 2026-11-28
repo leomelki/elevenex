@@ -4,7 +4,7 @@ import {
 } from './desktop-project-repositories.js';
 import { moveSession, sessionChildCount } from '../sessions/session-hierarchy.js';
 import { sidebarPriorityPage, type SidebarSessionRow } from './sidebar-priority-page.js';
-import { desktopTaskSetupIssue } from './desktop-task-setup.js';
+import { desktopTaskSetupIssue, desktopTaskSetupStep } from './desktop-task-setup.js';
 import { DesktopWorkspaceActivityService } from './desktop-workspace-activity.service.js';
 import { DesktopSessionDelegates } from './desktop-session-delegates.js';
 import { sessionAgentReference } from '../sessions/session-agent-message.js';
@@ -219,6 +219,9 @@ export class DesktopWorkspaceService {
     const stage = ['planned', 'active', 'waiting'].includes(String(meta.stage))
       ? (meta.stage as Stage)
       : 'active';
+    const setupStep = row.archivedAt || needsWorkspace
+      ? undefined
+      : desktopTaskSetupStep(row.taskState, row.taskConfig);
     return {
       id: row.id,
       projectId,
@@ -231,6 +234,7 @@ export class DesktopWorkspaceService {
           ? 'failed'
           : row.taskState,
       ...(row.taskTemporary && !row.archivedAt ? { temporary: true as const } : {}),
+      ...(setupStep ? { setupStep } : {}),
       stage,
       archivedAt: row.archivedAt,
       updatedAt: row.updatedAt,

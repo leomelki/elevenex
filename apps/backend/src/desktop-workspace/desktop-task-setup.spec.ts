@@ -1,4 +1,4 @@
-import { desktopTaskSetupIssue } from './desktop-task-setup.js';
+import { desktopTaskSetupIssue, desktopTaskSetupStep } from './desktop-task-setup.js';
 
 describe('Desktop task setup display boundary', () => {
   it('explains the workspace quota without forwarding raw errors', () => {
@@ -81,5 +81,30 @@ describe('Desktop task setup display boundary', () => {
         path: '/work/\ninvalid',
       })?.workspacePath,
     ).toBeUndefined();
+  });
+});
+
+describe('Desktop task setup step', () => {
+  const config = (preparationStage?: string) => JSON.stringify({ mode: 'new', branchName: 'x', preparationStage });
+  it.each([
+    ['refreshing_ref', 'fetching'],
+    ['waiting_for_checkout', 'waiting'],
+    ['preparing_checkout', 'checkout'],
+    ['restoring_sessions', 'sessions'],
+  ])('maps the %s stage to a bounded display step', (stage, step) => {
+    expect(desktopTaskSetupStep('preparing', config(stage))).toBe(step);
+    expect(desktopTaskSetupStep('failed', config(stage))).toBe(step);
+  });
+  it('reports a queued setup that has not started a stage', () => {
+    expect(desktopTaskSetupStep('preparing', config())).toBe('queued');
+    expect(desktopTaskSetupStep('preparing', null)).toBe('queued');
+  });
+  it('omits the step outside setup and for unknown or malformed stages', () => {
+    expect(desktopTaskSetupStep('failed', config())).toBeUndefined();
+    expect(desktopTaskSetupStep('ready', config('preparing_checkout'))).toBeUndefined();
+    expect(desktopTaskSetupStep('finishing', config('preparing_checkout'))).toBeUndefined();
+    expect(desktopTaskSetupStep('failed', config('private-stage'))).toBeUndefined();
+    expect(desktopTaskSetupStep('failed', '{not json')).toBeUndefined();
+    expect(desktopTaskSetupStep('preparing', config('__proto__'))).toBe('queued');
   });
 });

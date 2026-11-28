@@ -15,6 +15,38 @@ export interface DesktopTaskSetupIssue {
   readonly workspaceRecovery?: 'prepare' | 'restore-branch' | 'new-workspace';
 }
 
+export type DesktopTaskSetupStep = 'queued' | 'fetching' | 'waiting' | 'checkout' | 'sessions';
+
+const SETUP_STEPS: ReadonlyMap<string, DesktopTaskSetupStep> = new Map([
+  ['refreshing_ref', 'fetching'],
+  ['waiting_for_checkout', 'waiting'],
+  ['preparing_checkout', 'checkout'],
+  ['restoring_sessions', 'sessions'],
+]);
+
+/**
+ * The display step of a task's workspace setup: its current step while
+ * preparing, or the step where a failed setup stopped. Failures outside setup
+ * (missing folders, close cleanup) record no stage and report none.
+ */
+export function desktopTaskSetupStep(
+  state: string,
+  taskConfig: string | null,
+): DesktopTaskSetupStep | undefined {
+  if (state !== 'preparing' && state !== 'failed') return undefined;
+  let stage: unknown;
+  try {
+    stage = taskConfig && taskConfig.length <= 65536
+      ? (JSON.parse(taskConfig) as { preparationStage?: unknown }).preparationStage
+      : undefined;
+  } catch {
+    stage = undefined;
+  }
+  const step = typeof stage === 'string' ? SETUP_STEPS.get(stage) : undefined;
+  // Accepted but not yet started: a retry or a setup waiting for its turn.
+  return step ?? (state === 'preparing' ? 'queued' : undefined);
+}
+
 export function desktopTaskSetupIssue(
   value: unknown,
 ): DesktopTaskSetupIssue | undefined {

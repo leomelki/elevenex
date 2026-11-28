@@ -9,9 +9,9 @@ import { ELEVENEX_BRIDGE } from '../../backend/backend-client.service';
 import type { TerminalBrowserIntent } from '@elevenex/shared';
 import { jumpHome, settleMark, type CreateProjectIntent } from '../../projects';
 import { AppShellComponent } from '../../shell/app-shell.component';
-import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent } from '../../ui';
+import { AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent } from '../../ui';
 import { WorkspacePanelsComponent } from '../../workbench/workspace-panels.component';
-import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent } from '../../workspace';
+import { WorkspaceDialogsComponent, WorkspaceNavigationComponent, WorkspaceOnboardingComponent, WorkspaceProjectRailComponent, WorkspaceStore, WorkspaceTaskSetupComponent, WorkspaceTaskHeaderComponent, workspaceTaskSignal } from '../../workspace';
 import { OpensWhenBackComponent, type Machine } from '../index';
 import { SessionChatReviewComponent, type ChatReviewTarget } from '../../session-chat/session-chat-review.component';
 import { SessionChatComponent, type AgentChatFocus } from '../../session-chat/session-chat.component';
@@ -27,7 +27,7 @@ import { SessionChatClient } from '../../backend/session-chat-client.service';
 @Component({
   selector: 'ex-machine-workspace',
   providers: [WorkspaceStore, SessionChatDrafts, SessionChatClient, SessionChatOutbox, WorkspaceWritingJournal],
-  imports: [TaskAppsComponent, CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
+  imports: [TaskAppsComponent, CodePanelComponent, TaskBrowserComponent, TaskTerminalComponent, AutoHeightDirective, FoldComponent, OpensWhenBackComponent, SessionChatReviewComponent, SessionChatComponent, AppShellComponent, AutoHeightDirective, ButtonComponent, FoldComponent, IconComponent, SkeletonComponent, StatusGlyphComponent, WorkspacePanelsComponent, WorkspaceProjectRailComponent, WorkspaceNavigationComponent, WorkspaceTaskHeaderComponent, WorkspaceDialogsComponent, WorkspaceOnboardingComponent, WorkspaceTaskSetupComponent],
   templateUrl: './machine-workspace.component.html',
   styleUrl: './machine-workspace.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -45,6 +45,8 @@ export class MachineWorkspaceComponent {
   readonly reconnectRequested = output<void>();
   readonly desktopSessionRequested = output<void>();
   readonly store = inject(WorkspaceStore);
+  /** Lifecycle of the open session's workspace while it isn't simply ready. */
+  protected readonly workspaceNotice = computed(() => { const task = this.store.selectedTask(); return task ? workspaceTaskSignal(task) : null; });
   readonly outbox = inject(SessionChatOutbox);
   readonly writingJournal = inject(WorkspaceWritingJournal);
   readonly browserWindowContext = computed<TaskBrowserWindowContext | null>(() => {

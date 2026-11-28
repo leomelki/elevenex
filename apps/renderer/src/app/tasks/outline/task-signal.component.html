@@ -1,23 +1,33 @@
-
+    @let setup = workspace();
+    <span
+      class="workspace"
+      [class.hidden]="!setup"
+      [class.working]="setup?.tone === 'working'"
+      [class.attention]="setup?.tone === 'attention'"
+      [attr.aria-hidden]="!setup"
+      >@if (setup?.tone === 'working') {<ex-status-glyph status="running" [size]="12" />}
+      @else if (setup?.tone === 'attention') {<ex-status-glyph status="attention" [size]="12" />}
+      <span class="label">{{ setup?.label }}</span></span
+    >
     <span
       class="ask"
-      [class.hidden]="!attention()"
-      [attr.aria-hidden]="!attention()"
+      [class.hidden]="!attention() || !!setup"
+      [attr.aria-hidden]="!attention() || !!setup"
       ><ex-status-glyph status="attention" [size]="12" /><ex-ticker
         [value]="attention() || 1"
     /></span>
     <span
       class="running"
-      [class.hidden]="!running() || !!attention()"
-      [attr.aria-hidden]="!running() || !!attention()"
+      [class.hidden]="!running() || !!attention() || !!setup"
+      [attr.aria-hidden]="!running() || !!attention() || !!setup"
       ><ex-status-glyph status="running" [size]="12" /><ex-ticker
         [value]="running() || 1"
     /></span>
     <span
       class="count"
-      [class.hidden]="!!attention() || !!running() || !collapsed() || !total()"
+      [class.hidden]="!!attention() || !!running() || !collapsed() || !total() || !!setup"
       [attr.aria-hidden]="
-        !!attention() || !!running() || !collapsed() || !total()
+        !!attention() || !!running() || !collapsed() || !total() || !!setup
       "
       ><ex-ticker [value]="total()"
     /></span>

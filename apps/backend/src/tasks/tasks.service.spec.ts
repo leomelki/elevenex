@@ -3022,6 +3022,41 @@ describe('Task lifecycle with real Git and migrations', () => {
     expect(await db.select().from(schema.workspaces)).toHaveLength(0);
   });
 
+  it('reports a setup waiting for the repository checkout lock, then completes it', async () => {
+    // Another setup in the same repository holds the checkout lock.
+    const blocker = gate();
+    const holding = gate();
+    const held = gitService.exclusive(await gitService.repositoryKey(repoPath), async () => {
+      holding.release();
+      await blocker.promise;
+    });
+    await holding.promise;
+    const queued = gate();
+    const original = gitService.exclusive.bind(gitService);
+    const exclusive = jest
+      .spyOn(gitService, 'exclusive')
+      .mockImplementation((lockKey, operation) => {
+        queued.release();
+        return original(lockKey, operation);
+      });
+    const preparing = await service.create(repo.id, {
+      requestId: randomUUID(),
+      mode: 'new',
+      branchName: 'waits-for-checkout',
+      baseRef: 'main',
+    });
+    try {
+      await queued.promise;
+      expect((await service.get(preparing.id)).preparationStage).toBe('waiting_for_checkout');
+    } finally {
+      exclusive.mockRestore();
+      blocker.release();
+      await held;
+    }
+    await Promise.allSettled([...(service as any).operations.values()]);
+    expect(await service.get(preparing.id)).toMatchObject({ taskState: 'ready', preparationStage: null });
+  });
+
   it('allows finishing other tasks and cancelling setup during a stalled remote refresh', async () => {
     const ready = await create('existing');
     let release!: () => void;

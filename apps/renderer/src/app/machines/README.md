@@ -134,7 +134,8 @@ resume from current progress; destination input remains usable during motion.
 `GettingReady` is only for an update inside a window already on a machine.
 Center it in the window in place of all machine content, and mirror progress in
 the title island. Initial downloads, connecting and installation belong on Home's
-cards. It shows stable-ID steps; `stagedSteps` maps progress onto ascending marks.
+cards. It shows stable-ID steps through the shared `ui` `StepList` (`ReadyStep`
+is its `ProgressStep`); `stagedSteps` maps progress onto ascending marks.
 Engine compatibility and actual progress come from the owning integration.
 
 All sample data and simulated operations remain outside the production entry.

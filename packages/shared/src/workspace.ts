@@ -34,6 +34,12 @@ export interface WorkspaceTask {
   readonly projectName?: string;
   readonly repoName?: string;
   readonly setupIssue?: WorkspaceTaskSetupIssue;
+  /**
+   * The current workspace setup step while `preparing`, or the step where a
+   * `failed` setup stopped. Omitted by older runtimes and by failures outside
+   * setup, such as a missing folder or close cleanup.
+   */
+  readonly setupStep?: WorkspaceTaskSetupStep;
   readonly id: number;
   readonly projectId: number;
   readonly repoId: number;
@@ -51,7 +57,14 @@ export interface WorkspaceTask {
   readonly archivedAt: string | null;
   readonly updatedAt: string;
 }
-export type WorkspaceTaskRecovery = 'use-existing' | 'snapshot' | 'exceed-worktree-limit' | 'restore-branch' | 'new-workspace';
+/**
+ * Setup runs in this order: `queued` (accepted, not started), `fetching`
+ * (refreshing the base from its remote), `waiting` (checkout work is serialized
+ * per repository), `checkout` (reserving and checking out the workspace), then
+ * `sessions` (restoring or opening conversations).
+ */
+export type WorkspaceTaskSetupStep = 'queued' | 'fetching' | 'waiting' | 'checkout' | 'sessions';
+export type WorkspaceTaskRecovery ='use-existing' | 'snapshot' | 'exceed-worktree-limit' | 'restore-branch' | 'new-workspace';
 export interface WorkspaceTaskSetupIssue {
   readonly code: 'external-checkout' | 'branch-in-use' | 'environment-busy' | 'other';
   readonly message: string;

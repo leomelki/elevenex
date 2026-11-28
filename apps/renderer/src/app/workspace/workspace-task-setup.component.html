@@ -1,6 +1,9 @@
 <section [attr.aria-label]="task().setupIssue?.closeFailed ? 'Task close recovery' : 'Task workspace preparation'">
   <ex-icon name="workspace" [size]="28" />
   <h1>{{ task().name }}</h1>
+  @if (task().state !== 'finished' && branch()) {
+    <p class="branch"><ex-icon name="branch" [size]="12" /><span class="visually-hidden">Branch </span><span class="branch-name">{{ branch() }}</span></p>
+  }
   @if (task().state === 'finished') {
     <p role="status">This task has been closed. Select another task to continue.</p>
   } @else if (task().setupIssue?.closeFailed) {
@@ -16,6 +19,9 @@
     }
   } @else if (task().state === 'failed' || task().state === 'released') {
     @let issue = task().setupIssue;
+    @if (steps(); as steps) {
+      <ex-step-list class="steps" [steps]="steps" label="Workspace setup" />
+    }
     <p [attr.role]="task().state === 'released' ? 'status' : 'alert'">{{ task().state === 'released' ? 'Prepare a workspace to continue. Your conversations are saved.' : issue?.message ?? 'The workspace could not be prepared. Your task has been saved.' }}</p>
     @if (issue?.workspacePath; as path) { <div class="workspace-path"><span>Existing workspace</span><code>{{ path }}</code></div> }
     @if (issue?.code === 'external-checkout') {
@@ -52,7 +58,13 @@
   } @else if (paused()) {
     <p role="status">Setup is taking longer than expected. Refresh to check your saved task.</p>
     <button exButton [disabled]="busy()" (click)="refreshRequested.emit()">{{ busy() ? 'Checking…' : 'Refresh setup' }}</button>
+  } @else if (steps(); as steps) {
+    <p>Setting up a workspace for this task. Its first session opens when it’s ready.</p>
+    <ex-step-list class="steps" [steps]="steps" label="Workspace setup" />
+    <p class="visually-hidden" role="status">{{ announcement() }}</p>
+    <p class="note">Setup keeps going if you switch to another task.</p>
   } @else {
+    <!-- Older runtimes report no step; keep the indeterminate line rather than invent one. -->
     <p role="status">Preparing your workspace. The first session will open when it is ready.</p>
     <ex-progress-line label="Preparing task workspace" />
   }

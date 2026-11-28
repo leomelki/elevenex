@@ -101,3 +101,66 @@ describe('Saved task setup recovery', () => {
   });
 
 });
+
+describe('Task workspace setup progress', () => {
+  const preparing: WorkspaceTask = { ...failed, state: 'preparing', setupIssue: undefined, setupStep: 'fetching' };
+  const stepStates = (root: HTMLElement) => Array.from(root.querySelectorAll('ex-step-list li'), item =>
+    item.classList.contains('active') ? 'active' : item.classList.contains('failed') ? 'failed' : item.classList.contains('todo') ? 'todo' : 'done');
+
+  it('shows the reported step, its branch and one announcement per step', () => {
+    const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
+    fixture.componentRef.setInput('task', preparing); fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(stepStates(root)).toEqual(['active', 'todo', 'todo']);
+    expect(root.querySelector('.branch')?.textContent).toContain('feature/existing');
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('fetching the latest commits');
+    expect(root.querySelector('ex-step-list [aria-current="step"]')?.textContent).toContain('Fetch the latest commits');
+
+    fixture.componentRef.setInput('task', { ...preparing, setupStep: 'checkout' }); fixture.detectChanges();
+    expect(stepStates(root)).toEqual(['done', 'active', 'todo']);
+    expect(root.querySelector('ex-step-list li.active')?.textContent).toContain('Checking out feature/existing');
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('checking out the branch');
+    expect(root.querySelector('ex-progress-line')).toBeNull();
+  });
+
+  it('explains a repository wait and counts elapsed time without announcing it', () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
+      fixture.componentRef.setInput('task', { ...preparing, setupStep: 'waiting' }); fixture.detectChanges();
+      const root: HTMLElement = fixture.nativeElement;
+      expect(root.querySelector('li.active')?.textContent).toContain('one at a time');
+      expect(root.querySelector('li.active .meta')).toBeNull();
+      vi.advanceTimersByTime(6_000); fixture.detectChanges();
+      expect(root.querySelector('li.active .meta')?.textContent).toBe('0:06');
+      expect(root.querySelector('[role="status"]')?.textContent).not.toContain('0:06');
+      fixture.componentRef.setInput('task', { ...preparing, setupStep: 'checkout' }); fixture.detectChanges();
+      expect(root.querySelector('li.active .meta')).toBeNull();
+      vi.advanceTimersByTime(21_000); fixture.detectChanges();
+      expect(root.querySelector('li.active')?.textContent).toContain('Large repositories can take a few minutes');
+      fixture.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('marks where a failed setup stopped and keeps its recovery actions', () => {
+    const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
+    fixture.componentRef.setInput('task', { ...failed, setupStep: 'checkout' }); fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(stepStates(root)).toEqual(['done', 'failed', 'todo']);
+    expect(root.querySelector('li.failed')?.textContent).toContain('Failed: Prepare the workspace');
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain('already checked out');
+    expect(root.textContent).toContain('Use existing workspace');
+  });
+
+  it('keeps the indeterminate line for runtimes without steps and never animates a paused setup', () => {
+    const fixture = TestBed.createComponent(WorkspaceTaskSetupComponent);
+    fixture.componentRef.setInput('task', { ...preparing, setupStep: undefined }); fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+    expect(root.querySelector('ex-step-list')).toBeNull();
+    expect(root.querySelector('ex-progress-line')).not.toBeNull();
+    fixture.componentRef.setInput('task', preparing); fixture.componentRef.setInput('paused', true); fixture.detectChanges();
+    expect(root.querySelector('ex-step-list')).toBeNull();
+    expect(root.textContent).toContain('Refresh setup');
+  });
+});

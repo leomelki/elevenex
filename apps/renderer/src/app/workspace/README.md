@@ -220,6 +220,26 @@ setup. Project/session navigation, Closed, scope replacement and destruction
 stop polling and reject late responses. Empty task rows reopen this preparation
 context, or create a session once the workspace is ready.
 
+Tasks may carry an optional `setupStep` (`queued`, `fetching`, `waiting`,
+`checkout`, `sessions`): the current step while preparing, or the step where a
+failed setup stopped. `workspace-task-progress.ts` owns its presentation. The
+setup surface shows a `StepList` checklist (Fetch the latest commits → Prepare
+the workspace → Open the session) with the branch, the active step's detail
+(including the per-repository wait, since checkout work is serialized) and a
+locally observed elapsed time after five seconds. Fetch and checkout say large
+repositories can take a few minutes after 20 seconds. Only step changes are
+announced; the ticking time stays out of the live region, and its timer stops
+with the setup or the component. A failed setup marks its step above the
+recovery actions. A paused setup and runtimes that report no step keep the
+indeterminate line rather than inferring progress from time.
+
+`workspaceTaskSignal(task)` summarizes any workspace that isn't simply ready
+(setting up, needs setup, close failed, closing, releasing, released). The
+sidebar row shows its short label in place of session counts with the full
+description in the tooltip, and an open session shows it as a banner above the
+chat; attention and released states offer **Review setup** (or **Review close**).
+Stage changes invalidate navigation, so these update without polling.
+
 Failed task replies may carry optional `setupIssue` display data. The backend
 maps persisted setup errors to bounded messages and supported choices; raw Git
 output, setup configuration and credentials stay private. An existing branch

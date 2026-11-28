@@ -15,6 +15,7 @@ import type { SessionAgentReference } from '@elevenex/shared';
 import { projectFace, type CreateProjectIntent, type FolderProvider, type ProjectNameProvider, type ProjectAppearance } from '../projects';
 import { branchFromTitle, type BranchInfo, type CreatedTask, type PlannedTask, type Project, type StatusCounts, type SummaryStatus, type TaskBranchSearch, type TaskOutline, type TaskSession, type TaskSessionDisclosure, type TaskSessionHistoryRequest, type TaskRepository, type TaskStage } from '../tasks';
 import { workspaceAgentRow, workspaceSessionStatus, workspaceTaskStage, type WorkspaceSelection } from './workspace.models';
+import { workspaceTaskSignal } from './workspace-task-progress';
 import { mergeNavigationSessions, readPrioritySessions, type WorkspacePrioritySessions } from './workspace-priority-sessions';
 import { WorkspaceSessionHierarchy } from './workspace-session-hierarchy';
 import { WorkspaceSessionArchives } from './workspace-session-archives';
@@ -191,6 +192,7 @@ export class WorkspaceStore {
   readonly tasks = computed<readonly TaskOutline[]>(() => this.taskRecords().map(task => ({
     id: String(task.id), title: task.name, stage: workspaceTaskStage(task),
     temporary: task.temporary,
+    ...(this.closed() ? {} : { workspace: workspaceTaskSignal(task) ?? undefined }),
     ...(this.sessionArchiveHistoryAvailable() && !this.closed() && task.state === 'ready' && this.hasArchivedSessions(task.id) ? { archive: {
       sessions: (this.archives.pages().get(task.id)?.sessions ?? []).map(session => ({ ...workspaceAgentRow(session), id: String(session.id), canDelete: session.canDelete, mentionScope: this.scopeId() ?? undefined, title: session.name, status: workspaceSessionStatus(session) })),
       loaded: this.archives.pages().get(task.id)?.loaded ?? false,

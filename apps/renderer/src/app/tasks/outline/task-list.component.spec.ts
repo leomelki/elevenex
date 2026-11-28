@@ -56,6 +56,26 @@ describe('task outline ownership', () => {
     expect(selected).toHaveBeenCalledWith({ taskId: 'task', sessionId: '42' });
   });
 
+  it('shows a workspace that is not ready in place of session counts, then settles to them', () => {
+    const fixture = TestBed.createComponent(TaskListComponent);
+    const setup: TaskOutline = { ...tasks[0]!, workspace: { tone: 'working', label: 'Setting up', description: 'Setting up workspace · checking out the branch' } };
+    fixture.componentRef.setInput('tasks', [setup]); fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const signal = root.querySelector<HTMLElement>('[data-task-id="first"] ex-task-signal')!;
+    const visible = () => Array.from(signal.querySelectorAll(':scope > span:not(.hidden)'), span => span.className.split(' ')[0]);
+    expect(visible()).toEqual(['workspace']);
+    expect(signal.textContent).toContain('Setting up');
+    expect(signal.title).toBe('Setting up workspace · checking out the branch');
+    expect(signal.querySelector('.ask')?.getAttribute('aria-hidden')).toBe('true');
+
+    fixture.componentRef.setInput('tasks', [{ ...setup, workspace: { tone: 'attention', label: 'Needs setup', description: 'Setup stopped.' } }]); fixture.detectChanges();
+    expect(signal.querySelector('.workspace')?.classList).toContain('attention');
+    fixture.componentRef.setInput('tasks', [tasks[0]!]); fixture.detectChanges();
+    expect(root.querySelector('[data-task-id="first"] ex-task-signal')).toBe(signal);
+    expect(visible()).toEqual(['ask']);
+    expect(signal.querySelector('.workspace')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('forwards deletion of an unstarted session to its owning task and disables it during mutations', () => {
     const fixture = TestBed.createComponent(TaskListComponent);
     const session = { id: 'unused', title: 'Unused', status: 'queued' as const, canDelete: true };

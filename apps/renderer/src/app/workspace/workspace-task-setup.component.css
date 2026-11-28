@@ -3,6 +3,12 @@ section { width: 100%; min-height: 100%; display: flex; flex-direction: column; 
 section > ex-icon { flex: none; color: var(--ink-muted); }
 h1 { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-title-size); line-height: var(--text-title-line); font-weight: var(--text-title-weight); letter-spacing: var(--text-title-tracking); overflow-wrap: anywhere; }
 p { max-width: 52ch; margin: 0 0 var(--space-4); color: var(--ink-muted); font-size: var(--text-body-size); line-height: var(--text-body-line); }
+.branch { display: inline-flex; align-items: center; gap: 6px; max-width: min(100%, 52ch); margin-top: calc(-1 * var(--space-1)); color: var(--ink-muted); font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
+.branch > ex-icon { flex: none; }
+.branch-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--font-mono); }
+/* The checklist reads top to bottom, so it stays left-aligned inside the centered column. */
+.steps { width: min(100%, 360px); margin-bottom: var(--space-4); padding: var(--space-1); box-sizing: border-box; border-radius: var(--radius-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.note { margin-bottom: 0; font-size: var(--text-caption-size); line-height: var(--text-caption-line); }
 .workspace-path { display: flex; flex-direction: column; gap: var(--space-2); max-width: 100%; margin-bottom: var(--space-4); padding: var(--space-3); box-sizing: border-box; border-radius: var(--radius-sm); background: var(--surface-sunken); }
 .workspace-path > span, .working { color: var(--ink-muted); font-size: var(--text-caption-size); }
 code { font-family: var(--font-mono); font-size: var(--text-caption-size); overflow-wrap: anywhere; }

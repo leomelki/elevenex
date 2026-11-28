@@ -24,6 +24,14 @@ close it, keeping the row on one line. The row's tooltip explains the badge and
 the icon has the accessible name "Temporary task".
 The badge clears when the user chooses **Keep open** in the task header.
 
+`TaskOutline.workspace` (`TaskWorkspaceSignal`: `tone`, `label`, `description`)
+reports a workspace that isn't ready: setting up, needing setup, closing. The
+owner supplies the words and omits it once ready. The row's signal shows the
+label in place of its session counts (`working` with a running ring, `attention`
+in the amber pill, `quiet` as muted text) and appends the description to the
+header tooltip. The signal stays mounted, so the change crossfades in place
+without moving the title.
+
 The connected sidebar shows same-task MCP delegates in their coding session's
 child disclosure. When an already nested conversation delegates, its new child
 appears alongside it to keep the outline two levels deep. Sidebar moves change

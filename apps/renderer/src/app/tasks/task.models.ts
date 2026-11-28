@@ -145,10 +145,22 @@ export interface SubTask {
   readonly merged?: boolean;
   readonly diff?: { readonly add: number; readonly del: number };
 }
+/**
+ * A workspace that isn't simply ready (setting up, closing, needing setup).
+ * The owner supplies the words; the row shows `label` in place of its session
+ * counts and `description` in its tooltip.
+ */
+export interface TaskWorkspaceSignal {
+  readonly tone: 'working' | 'attention' | 'quiet';
+  readonly label: string;
+  readonly description: string;
+}
 export interface TaskOutline {
   readonly id: string;
   readonly title: string;
   readonly temporary?: true;
+  /** Omit while the workspace is ready. */
+  readonly workspace?: TaskWorkspaceSignal;
   readonly sessions: readonly TaskSession[];
   /** Optional, independently paginated archived history supplied by the owner. */
   readonly archive?: TaskSessionArchive;

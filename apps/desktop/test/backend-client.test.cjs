@@ -421,6 +421,9 @@ test('workspace response mapping strips unknown fields and rejects malformed or 
   assert.equal(parseWorkspaceTask({ ...task, projectRepositoryCount: 2 }).projectRepositoryCount, 2);
   for (const projectRepositoryCount of [0, -1, 1.5, '2', null]) assert.throws(() => parseWorkspaceTask({ ...task, projectRepositoryCount }));
   for (const value of [{ ...task, state: 'unknown' }, { ...task, stage: 'done' }, { ...task, id: -1 }, { ...task, name: 'x'.repeat(161) }]) assert.throws(() => parseWorkspaceTask(value));
+  for (const setupStep of ['queued', 'fetching', 'waiting', 'checkout', 'sessions']) assert.equal(parseWorkspaceTask({ ...task, state: 'preparing', setupStep }).setupStep, setupStep);
+  assert.equal('setupStep' in parseWorkspaceTask(task), false);
+  for (const setupStep of ['refreshing_ref', '', null, 3]) assert.throws(() => parseWorkspaceTask({ ...task, setupStep }));
   const setupIssue = { code: 'external-checkout', message: 'Already checked out.', workspacePath: '/work/existing', canUseSnapshot: true, secret: 'private' };
   assert.deepEqual(parseWorkspaceTask({ ...task, state: 'failed', setupIssue }).setupIssue, { code: setupIssue.code, message: setupIssue.message, workspacePath: setupIssue.workspacePath, canUseSnapshot: true });
   const quotaIssue = { code: 'other', message: 'Workspace limit reached.', canUseSnapshot: false, canExceedWorktreeLimit: true };

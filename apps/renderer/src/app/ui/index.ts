@@ -24,3 +24,4 @@ export * from "./feedback/toast-stack.component";
 export * from './sheet';
 export * from "./feedback/ticker.component";
 export * from "./motion/fitted-highlight.directive";
+export * from "./feedback/step-list.component";

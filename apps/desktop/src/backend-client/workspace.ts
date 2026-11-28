@@ -172,6 +172,9 @@ export function parseWorkspaceTask(value: unknown): WorkspaceTask {
   )
     throw invalidResponse();
   if (raw['temporary'] !== undefined && raw['temporary'] !== true) throw invalidResponse();
+  const setupStep = raw['setupStep'];
+  if (setupStep !== undefined && setupStep !== 'queued' && setupStep !== 'fetching' && setupStep !== 'waiting' &&
+    setupStep !== 'checkout' && setupStep !== 'sessions') throw invalidResponse();
   return {
     ...(raw['temporary'] === true ? { temporary: true as const } : {}),
     ...(raw['projectName'] === undefined
@@ -190,6 +193,7 @@ export function parseWorkspaceTask(value: unknown): WorkspaceTask {
     branchName: text(raw['branchName'], 240),
     state,
     ...(raw['setupIssue'] === undefined ? {} : { setupIssue: setupIssue(raw['setupIssue']) }),
+    ...(setupStep === undefined ? {} : { setupStep }),
     stage: stage(raw['stage']),
     archivedAt: nullable(raw['archivedAt'], 64),
     updatedAt: text(raw['updatedAt'], 64),
