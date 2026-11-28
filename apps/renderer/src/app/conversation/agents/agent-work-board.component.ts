@@ -1,6 +1,7 @@
 import {
-  ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, linkedSignal, output, signal,
+  ChangeDetectionStrategy, Component, ElementRef, computed, effect, inject, input, output, signal,
 } from '@angular/core';
+import type { SessionAgentSelection } from '@elevenex/shared';
 import {
   AutoHeightDirective, ButtonComponent, EaseSwapComponent, FlipDirective, FoldComponent, IconComponent,
   StatusGlyphComponent, TickerComponent, TooltipDirective,
@@ -21,28 +22,10 @@ export class AgentWorkBoardComponent {
   readonly active = input(true);
   readonly controlsDisabled = input(false);
   readonly requested = output<AgentWorkIntent>();
-  readonly layoutChanging = output<HTMLElement>();
   protected readonly grouped = computed(() => this.board().agents.length > 1);
   protected readonly structure = computed(() => this.board().agents.map(agent => agent.id).join('\0'));
-  protected readonly expanded = linkedSignal({
-    source: this.grouped,
-    computation: (grouped, previous): string | null => grouped && previous?.source ? previous.value : null,
-  });
   protected readonly live = computed(() => this.board().agents.some(agent => agentWorkLive(agent.status)));
   protected readonly now = signal(Date.now());
-  protected readonly tally = computed(() => {
-    const counts = new Map<ReturnType<typeof agentWorkState>['glyph'], { count: number; label: string }>();
-    for (const agent of this.board().agents) {
-      const state = agentWorkState(agent.status);
-      if (state.glyph === 'queued') continue;
-      const count = (counts.get(state.glyph)?.count ?? 0) + 1;
-      counts.set(state.glyph, { count, label: state.label.toLowerCase() });
-    }
-    return (['attention', 'running', 'failed', 'done'] as const).flatMap(status => {
-      const entry = counts.get(status);
-      return entry ? [{ status, ...entry }] : [];
-    });
-  });
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef).nativeElement;
   protected readonly identity = agentIdentity;
   protected readonly state = agentWorkState;
@@ -65,14 +48,21 @@ export class AgentWorkBoardComponent {
     return { major: hours ? hours + 'h ' + minutes + 'm' : minutes ? minutes + 'm ' : '', seconds: seconds % 60 };
   }
 
-  protected toggle(id: string, control: HTMLElement): void {
-    this.layoutChanging.emit(control);
-    this.expanded.update(current => current === id ? null : id);
+  protected activity(agent: AgentWorkCard, statusLabel: string): string {
+    const detail = agent.detail.trim();
+    return detail.replace(/[.!…]+$/, '').toLowerCase() === statusLabel.toLowerCase() ? '' : detail;
+  }
+
+  protected compactIdentity(selection: SessionAgentSelection): string {
+    return agentIdentity({ ...selection, model: selection.model?.split('/').at(-1) || selection.model });
   }
 
   protected request(agent: AgentWorkCard, action: AgentWorkIntent['action'], event: Event): void {
-    if (!agent.target || !this.active()) return;
-    const origin = agentControl(event)?.closest<HTMLElement>('.agent') ?? this.element;
+    const control = agentControl(event);
+    if (!agent.target || !this.active() ||
+        (agent.target.kind === 'session' && this.controlsDisabled()) ||
+        control?.getAttribute('aria-disabled') === 'true') return;
+    const origin = control?.closest<HTMLElement>('.agent') ?? this.element;
     this.requested.emit({ target: agent.target, action, origin });
   }
 }

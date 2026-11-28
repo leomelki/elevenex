@@ -936,6 +936,8 @@ test('background work is optional, bounded and validated, and stop targets only 
   const event = { id: 'hook:1', kind: 'hook', tone: 'danger', title: 'Hook failed', detail: 'exit 2', at: null };
   const parsed = parseChatPage({ ...page, state: { ...state, work: { running: [{ ...item, private: 'drop' }], recent: [{ ...event, raw: {} }] } } }, 1, 2);
   assert.deepEqual(parsed.state.work, { running: [item], recent: [event] });
+  const nativeCompletion = { ...event, kind: 'finished', agentId: 'child', agentStatus: 'completed', model: 'Sonnet', effort: 'high' };
+  assert.deepEqual(parseChatPage({ ...page, state: { ...state, work: { running: [], recent: [nativeCompletion] } } }, 1, 2).state.work.recent, [nativeCompletion]);
   const agent = { ...item, id: 'subagent:a', kind: 'agent', label: 'Review · reviewer', title: 'Review', role: 'reviewer', agentName: 'James' };
   assert.deepEqual(parseChatPage({ ...page, state: { ...state, work: { running: [agent], recent: [] } } }, 1, 2).state.work.running, [agent]);
   for (const work of [
@@ -950,6 +952,7 @@ test('background work is optional, bounded and validated, and stop targets only 
     { running: [{ ...item, startedAt: 'yesterday' }], recent: [] },
     { running: [{ ...item, stoppable: 'yes' }], recent: [] },
     { running: [], recent: [{ ...event, tone: 'loud' }] },
+    { running: [], recent: [{ ...nativeCompletion, model: 'x'.repeat(161) }] },
     { running: [], recent: [{ ...event, detail: 'x'.repeat(1101) }] },
   ]) assert.throws(() => parseChatPage({ ...page, state: { ...state, work } }, 1, 2));
   assert.deepEqual(parseChatAction({ type: 'stop-background', id: 'subagent:a', extra: 1 }), { type: 'stop-background', id: 'subagent:a' });

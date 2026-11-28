@@ -453,6 +453,8 @@ export interface SessionChatWorkEvent {
   readonly at: string | null;
   readonly agentId?: string;
   readonly agentStatus?: SessionChatWorkStatus;
+  readonly model?: string;
+  readonly effort?: string;
   readonly parentToolUseId?: string;
 }
 export interface SessionChatWork {

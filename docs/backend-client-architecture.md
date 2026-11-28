@@ -166,6 +166,9 @@ and the selected chat's existing stream provide updates without hydrating child
 transcripts. Decision changes wake the feed immediately. Tool activity is
 coalesced across sessions and does not invalidate navigation pages. Main
 validates the optional records, bounds and scoped session identities.
+Recent native agent completion events can carry the runtime's reported model
+and effort. Both fields are optional and Main applies the same limits as for
+live work. The renderer uses a reported selection when available.
 
 Engines advertising `presetEditing` accept saved preset update, reorder,
 delete and restore actions through `sessionChatCommand`. The desktop

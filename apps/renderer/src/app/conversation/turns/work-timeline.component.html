@@ -62,8 +62,7 @@
         >
           @if (step.agentBoard; as board) {
             <ex-agent-work-board class="agent-step" [board]="board" [active]="rowVisible"
-              [controlsDisabled]="agentNavigationDisabled()" (requested)="agentRequested.emit($event)"
-              (layoutChanging)="layoutChanging.emit($event)" />
+              [controlsDisabled]="agentNavigationDisabled()" (requested)="agentRequested.emit($event)" />
           } @else if (step.agentReply; as reply) {
             <ex-agent-work-reply class="agent-step" [reply]="reply" [active]="rowVisible"
               [handoff]="arrivals().has(step.id)" [controlsDisabled]="agentNavigationDisabled()" [copiedCode]="copiedCode()"

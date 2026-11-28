@@ -7,10 +7,7 @@ import {
   type AgentWorkAction, type AgentWorkCard, type AgentWorkMessage, type AgentWorkTarget,
   type ChatExchange, type WorkStep,
 } from '../conversation';
-import { formatUsage } from './session-activity-model';
-
 const CARD_LIMIT = 16;
-const MESSAGE_LIMIT = 6;
 const timestamp = (value?: string | null) => {
   const at = value ? Date.parse(value) : NaN;
   return Number.isFinite(at) ? at : undefined;
@@ -95,7 +92,7 @@ function describe(entry: SessionAgentTurnEntry, runtime: Runtime, live: boolean)
       return {
         label: (failed ? 'Couldn’t message ' : active ? 'Messaging ' : 'Messaged ') + name,
         detail: detail ?? operation.message,
-        status: active || entry.endedAt ? messageStatus(entry, session && runtime.sessions.get(session.sessionId)) : 'Unconfirmed',
+        status: active || entry.endedAt || failed ? messageStatus(entry, session && runtime.sessions.get(session.sessionId)) : 'Unconfirmed',
         target: target(session),
       };
     case 'wait': {
@@ -155,13 +152,12 @@ function cardFor(launch: Launch, operations: readonly SessionAgentTurnEntry[], r
       id: key, title: work?.title || operation.title || work?.label || 'Agent',
       status, selection: operation.identity || state?.provider ? {
         provider: operation.identity?.provider ?? state?.provider ?? 'agent',
-        model: work?.model ?? operation.identity?.model, effort: work?.effort ?? operation.identity?.effort,
+        model: work?.model ?? recent?.model ?? operation.identity?.model,
+        effort: work?.effort ?? recent?.effort ?? operation.identity?.effort,
       } : undefined,
-      role: work?.role ?? operation.message,
       detail: work?.detail || received?.detail || recent?.detail || result?.detail || '',
       startedAt: timestamp(work?.startedAt) ?? startedAt,
       endedAt: agentWorkLive(status) ? undefined : timestamp(recent?.at ?? received?.endedAt) ?? endedAt,
-      usage: work ? formatUsage(work) : '', stoppable: work?.stoppable,
       target: agentId && (state?.nativeAgentInspection || work?.inspectable || recent)
         ? { kind: 'native', agentId } : undefined,
     };
@@ -184,17 +180,14 @@ function cardFor(launch: Launch, operations: readonly SessionAgentTurnEntry[], r
   const status = recorded?.result?.status ?? progress?.status ??
     (failed ? 'error' : result?.status === 'running' && !live ? 'unavailable' : result?.status) ??
     (live ? 'pending' : 'unavailable');
-  const messages = related.filter(op => op.operation.type === 'message' && op.operation.message).slice(-MESSAGE_LIMIT)
-    .map(op => ({ id: op.id, text: op.operation.message!, status: !live && !op.endedAt ? 'Unconfirmed' as const : messageStatus(op, progress) }));
   return {
     id: key, title: ref?.title || operation.title || (ref ? sessionAgentTitle(ref) : 'Agent session'),
-    status, selection: ref?.selection ?? operation.identity, ownSession: true,
+    status, selection: ref?.selection ?? operation.identity,
     detail: recorded?.result?.detail || (failed && !progress ? result?.detail : undefined) || progress?.detail || result?.detail || '',
     startedAt: recorded ? startedAt : timestamp(progress?.startedAt) ?? startedAt,
     endedAt: agentWorkLive(status) ? undefined : timestamp(recorded?.endedAt ?? progress?.endedAt) ?? endedAt,
-    usage: progress ? formatUsage(progress) : '', target: target(ref),
+    target: target(ref),
     stoppable: !recorded && (progress?.status === 'running' || progress?.status === 'waiting'),
-    ...(messages.length ? { messages } : {}),
   };
 }
 
@@ -273,13 +266,14 @@ function project(exchange: ChatExchange, runtime: Runtime, state: AgentState | n
     if (step.id === first && cards.length)
       return [{ ...step, agentBoard: { agents: cards, wait, waiting: !!wait && !waiting?.endedAt }, status: live ? 'running' : 'done' }];
     if ((entry.operation.type === 'launch' || entry.operation.type === 'native') && groupedLaunches.has(launchIdentity(entry))) return [];
-    const ref = sessionOf(entry, runtime);
-    const mergedMessage = entry.operation.type === 'message' && ref && ownSessions.has(ref.sessionId);
     const mergedWait = entry.operation.type === 'wait' && !entry.failed &&
       !!entry.operation.sessions?.length && entry.operation.sessions.every(id => ownSessions.has(id)) &&
       (entry === waiting || entry.result?.status === 'completed');
-    if (mergedMessage || mergedWait || (entry.operation.type === 'native-wait' && !entry.failed && coversNative(entry))) return [];
-    return [{ ...step, agentAction: describe(entry, runtime, live) }];
+    if (mergedWait || (entry.operation.type === 'native-wait' && !entry.failed && coversNative(entry))) return [];
+    const status = entry.operation.type === 'message' && (entry.failed || entry.endedAt || entry.result)
+      ? entry.failed ? 'failed' : 'done'
+      : step.status;
+    return [{ ...step, status, agentAction: describe(entry, runtime, live) }];
   });
   const boundary = exchange.answerBeforeStepId
     ? exchange.steps.slice(exchange.steps.findIndex(step => step.id === exchange.answerBeforeStepId))

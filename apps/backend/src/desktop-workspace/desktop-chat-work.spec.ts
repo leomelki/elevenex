@@ -338,6 +338,16 @@ describe('desktop chat background work', () => {
       ['worker finished', 'success'],
     ]);
   });
+  it('includes reported model and effort in a native completion event', () => {
+    const work = chatWork({ subagents: [
+      { agentId: 'known', status: 'stopped', executionStatus: 'completed', model: 'Sonnet', reasoningEffort: 'high', timestamp: at(9) },
+      { agentId: 'unknown', status: 'stopped', executionStatus: 'completed', timestamp: at(8) },
+    ] }, { ...controls, inspectAgent: true });
+    expect(work.recent.find(event => event.agentId === 'known')).toMatchObject({
+      agentStatus: 'completed', model: 'Sonnet', effort: 'high',
+    });
+    expect(work.recent.find(event => event.agentId === 'unknown')).not.toHaveProperty('model');
+  });
   it('includes owned live children without backgroundWork and gates foreground controls', () => {
     const work = chatWork(
       {

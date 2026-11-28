@@ -10,7 +10,7 @@ const parent = { sessionId: 101, taskId: 11, title: 'Coordinate the retry fix', 
 const review = { sessionId: 202, taskId: 11, title: 'Review the retry boundary', selection: { provider: 'codex', model: 'GPT-6', effort: 'high' } };
 const tests = { sessionId: 203, taskId: 11, title: 'Write regression tests', selection: { provider: 'codex', model: 'GPT-6', effort: 'medium' } };
 const docs = { sessionId: 204, taskId: 11, title: 'Check provider documentation', selection: { provider: 'pi', model: 'Sonnet', effort: 'low' } };
-const openCode = { sessionId: 205, taskId: 11, title: 'Check the fallback path', selection: { provider: 'opencode', model: 'openrouter/anthropic/claude-sonnet', effort: 'high' } };
+const openCode = { sessionId: 205, taskId: 11, title: 'Check the provider fallback path for retried payments and delayed callback receipts', selection: { provider: 'opencode', model: 'openrouter/anthropic/claude-sonnet', effort: 'high' } };
 const reply = 'Both requests can reach the provider before the original check records the claim.\n\n' +
   '### What I checked\n\n- The retry key stays stable while a pending request is owned.\n' +
   '- Delayed successes preserve the existing claim.\n- Conflicting requests now share the same result.\n\n' +
@@ -70,7 +70,8 @@ export function seedDelegation(chat: SessionChatFixture, scene: DelegationScene)
   chat.seed(101, { items, state: { ...base, provider: 'claude', providerLocked: true, model: 'Opus', nativeAgentInspection: true,
     phase: done ? 'idle' : 'running', canInterrupt: !done, ...(!done ? { activePromptId: items[0]!.id } : {}),
     work: { running: [], recent: started ? [{ id: 'native:done', kind: 'finished', tone: 'success', title: 'Audit the callback paths',
-      detail: 'The callback preserves the original retry key.', agentId: 'native-inspect', agentStatus: 'completed', at: at(5000) }] : [],
+      detail: 'The callback preserves the original retry key.', agentId: 'native-inspect', agentStatus: 'completed',
+      model: 'Sonnet', at: at(5000) }] : [],
     sessions },
   } });
   const brief = 'Trace the retry claim from the request to the provider callback.\n\n' +

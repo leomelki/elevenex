@@ -49,9 +49,25 @@ describe('session agent turn projection', () => {
     const before = projector.project([ordinary, annotated], streams([]), 4);
     const after = projector.project([ordinary, annotated], streams(['send-id']), 4);
     expect(before[0]).toBe(after[0]);
-    expect(before[1]?.agentCards?.[0]?.messages?.[0]?.status).toBe('Queued');
-    expect(after[1]?.agentCards?.[0]?.messages?.[0]?.status).toBe('Delivered');
+    expect(before[1]?.steps[1]).toMatchObject({
+      id: 'message', status: 'done', agentAction: { label: 'Messaged Review retries', detail: 'Check the timeout.', status: 'Queued' },
+    });
+    expect(after[1]?.steps[1]).toMatchObject({ id: 'message', agentAction: { status: 'Delivered' } });
     expect(projector.project([ordinary, annotated], streams(['send-id']), 4)[1]).toBe(after[1]);
+  });
+
+  it('retains a reported Claude native model at completion and leaves an unknown model absent', () => {
+    const native: SessionAgentTurnEntry = {
+      id: 'claude-agent', at, operation: { type: 'native', title: 'Check callbacks' },
+      result: { agentId: 'child', status: 'completed' },
+    };
+    const project = (model?: string) => new SessionAgentTurnProjection().project([exchange([step(native)])], {
+      provider: 'claude',
+      work: { running: [], recent: [{ id: 'child-finished', kind: 'finished', tone: 'success', title: 'Check callbacks', detail: '', at: later,
+        agentId: 'child', agentStatus: 'completed', model }] },
+    })[0]?.agentCards?.[0]?.selection;
+    expect(project('Sonnet')).toMatchObject({ provider: 'claude', model: 'Sonnet' });
+    expect(project()?.model).toBeUndefined();
   });
 
   it('keeps OpenCode native tasks inspectable before completion and reconciles a resumed task and its background result', () => {

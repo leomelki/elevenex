@@ -510,6 +510,8 @@ function work(value: unknown, sessionId?: number, taskId?: number): SessionChatW
         at: workTime(event["at"]),
         ...(event["agentId"] === undefined ? {} : { agentId: chatText(event["agentId"], 256) }),
         ...(event["agentStatus"] === undefined ? {} : { agentStatus: oneOf(event["agentStatus"], agentStatuses) }),
+        ...(event["model"] === undefined ? {} : { model: chatText(event["model"], 160) }),
+        ...(event["effort"] === undefined ? {} : { effort: chatText(event["effort"], 80) }),
         ...(event["parentToolUseId"] === undefined ? {} : { parentToolUseId: chatText(event["parentToolUseId"]) }),
       };
     }),

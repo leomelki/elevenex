@@ -102,10 +102,15 @@ Activating the preview opens the full-size viewer.
 `ChatExchange` accepts a structured sender, an agent list and returned reply
 receipts. `WorkStep` accepts a board, a quoted reply or a named tool action.
 Keep stable IDs on launches and messages so status changes keep the row and
-disclosure mounted. The board handles single-to-group layout, pending message
-states and expandable detail. Quoted replies use the Markdown renderer and
-bounded changed-file chips. The owning chat handles typed `AgentWorkIntent`
-outputs, including opening sessions and inspecting native agents.
+disclosure mounted. Each board row shows the agent's title, status, elapsed
+time when available, and one activity line or decision summary. Running
+and completed rows use a glyph with an accessible status label. Wider rows
+show the reported model and effort beside the title. The same primary action stays
+mounted through single-to-group and status changes. Sent-message receipts
+appear as chronological agent actions in the work timeline. Quoted
+replies use the Markdown renderer and bounded changed-file chips. The owning
+chat handles typed `AgentWorkIntent` outputs, including opening sessions and
+inspecting native agents.
 
 Use the `chatHeader` slot for a linked session breadcrumb. The agent identity
 exports also have a small `conversation/agents` entry for UI families that need

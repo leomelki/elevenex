@@ -50,6 +50,8 @@ export interface ChatWorkEvent {
   at: string | null;
   agentId?: string;
   agentStatus?: ReturnType<typeof agentStatus>;
+  model?: string;
+  effort?: string;
   parentToolUseId?: string;
 }
 export interface ChatWork {
@@ -84,6 +86,11 @@ const line = (value: unknown, limit = 240): string =>
       ?.trim() ?? '',
     limit,
   );
+function workSelection(agent?: Record<string, unknown>): Pick<ChatBackgroundWork, 'model' | 'effort'> {
+  const model = line(agent?.model, 160);
+  const effort = line(agent?.reasoningEffort, 80);
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
 /** Hook output explains failures at its end, so keep the last lines. */
 const tail = (value: unknown, limit = 600): string => {
   const output = text(value);
@@ -265,8 +272,7 @@ function running(
                   agent.canBackground === true,
               }
             : {}),
-          ...(text(agent?.model) ? { model: line(agent?.model, 160) } : {}),
-          ...(text(agent?.reasoningEffort) ? { effort: line(agent?.reasoningEffort, 80) } : {}),
+          ...workSelection(agent),
           ...(context ? { context } : {}),
           ...(count(usage.totalTokens) !== undefined
             ? { tokens: count(usage.totalTokens) }
@@ -324,6 +330,7 @@ function finished(
       kind: 'finished',
       ...(controls.inspectAgent && agent
         ? { agentId: text(agent.agentId), agentStatus: agentStatus(agent),
+            ...workSelection(agent),
             ...(text(agent.parentToolUseId ?? task.toolUseId) ? { parentToolUseId: clip(text(agent.parentToolUseId ?? task.toolUseId), 1000) } : {}) }
         : {}),
       tone: failed
@@ -365,6 +372,7 @@ function finished(
       id: clip(`finished:subagent:${id}`, 400),
       kind: 'finished',
       ...(controls.inspectAgent ? { agentId: id, agentStatus: status,
+        ...workSelection(agent),
         ...(text(agent.parentToolUseId) ? { parentToolUseId: clip(text(agent.parentToolUseId), 1000) } : {}) } : {}),
       tone: failed
         ? 'danger'
